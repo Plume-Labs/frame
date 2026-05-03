@@ -33,6 +33,7 @@ import { useKV } from '@github/spark/hooks'
 function App() {
   const [nodes, setNodes] = useState<ClusterNode[]>(() => generateClusterNodes(32))
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
+  const [selectedRack, setSelectedRack] = useState<string | null>(null)
   const [events, setEvents] = useState<SystemEvent[]>([])
   const previousNodesRef = useRef<ClusterNode[]>(nodes)
   const isMobile = useIsMobile()
@@ -144,6 +145,8 @@ function App() {
                 nodes={nodes}
                 selectedNode={selectedNode}
                 onSelectNode={setSelectedNode}
+                selectedRack={selectedRack}
+                onSelectRack={setSelectedRack}
               />
             </TabsContent>
             <TabsContent value="metrics" className="space-y-4 mt-6">
@@ -179,6 +182,8 @@ function App() {
                   nodes={nodes}
                   selectedNode={selectedNode}
                   onSelectNode={setSelectedNode}
+                  selectedRack={selectedRack}
+                  onSelectRack={setSelectedRack}
                 />
               </div>
 

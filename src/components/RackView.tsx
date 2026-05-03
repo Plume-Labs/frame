@@ -1,18 +1,19 @@
-import { ClusterNode } from '@/lib/types'
+import { ClusterNode, RackPowerCooling } from '@/lib/types'
 import { RackData } from '@/lib/rack'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { RackNode } from './RackNode'
-import { HardDrives, CheckCircle, WarningCircle } from '@phosphor-icons/react'
+import { HardDrives, CheckCircle, WarningCircle, Lightning, ThermometerSimple } from '@phosphor-icons/react'
 import { Progress } from '@/components/ui/progress'
 
 interface RackViewProps {
   rack: RackData
+  powerCooling?: RackPowerCooling
   selectedNode: ClusterNode | null
   onSelectNode: (node: ClusterNode) => void
 }
 
-export function RackView({ rack, selectedNode, onSelectNode }: RackViewProps) {
+export function RackView({ rack, powerCooling, selectedNode, onSelectNode }: RackViewProps) {
   const getHealthBadgeColor = () => {
     if (rack.healthScore >= 80) return 'bg-primary/20 text-primary border-primary'
     if (rack.healthScore >= 60) return 'bg-warning/20 text-warning border-warning'
@@ -22,6 +23,16 @@ export function RackView({ rack, selectedNode, onSelectNode }: RackViewProps) {
   const storagePercent = rack.totalCapacity > 0 
     ? (rack.usedCapacity / rack.totalCapacity) * 100 
     : 0
+
+  const powerUtilization = powerCooling 
+    ? (powerCooling.power.currentDraw / powerCooling.power.maxCapacity) * 100 
+    : 0
+
+  const getTempColor = (temp: number) => {
+    if (temp > 35) return 'text-destructive'
+    if (temp > 32) return 'text-warning'
+    return 'text-primary'
+  }
 
   return (
     <Card className="bg-card/50 border-2">
@@ -55,6 +66,33 @@ export function RackView({ rack, selectedNode, onSelectNode }: RackViewProps) {
             </div>
             <Progress value={storagePercent} className="h-1" />
           </div>
+
+          {powerCooling && (
+            <>
+              <div className="space-y-1 pt-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground font-mono flex items-center gap-1">
+                    <Lightning className="w-3 h-3" weight="duotone" />
+                    Power
+                  </span>
+                  <span className="font-mono font-semibold">
+                    {powerCooling.power.currentDraw}W
+                  </span>
+                </div>
+                <Progress value={powerUtilization} className="h-1" />
+              </div>
+
+              <div className="flex justify-between text-xs pt-1">
+                <span className="text-muted-foreground font-mono flex items-center gap-1">
+                  <ThermometerSimple className="w-3 h-3" weight="duotone" />
+                  Outlet
+                </span>
+                <span className={`font-mono font-semibold ${getTempColor(powerCooling.cooling.outletTemp)}`}>
+                  {powerCooling.cooling.outletTemp}°C
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </CardHeader>
 
