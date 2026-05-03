@@ -26,6 +26,7 @@ import { CapacityPlanCard } from '@/components/CapacityPlanCard'
 import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { AnomalyAlerts } from '@/components/AnomalyAlerts'
 import { RackVisualization } from '@/components/RackVisualization'
+import { ZoneView } from '@/components/ZoneView'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useKV } from '@github/spark/hooks'
 
@@ -126,6 +127,7 @@ function App() {
         <Tabs defaultValue="overview" className="w-full">
           <TabsList className="font-mono mb-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="zones">Zones</TabsTrigger>
             <TabsTrigger value="topology">Topology</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
@@ -153,6 +155,14 @@ function App() {
             {alerts.length > 0 && (
               <CapacityPlanningDashboard alerts={alerts} />
             )}
+          </TabsContent>
+
+          <TabsContent value="zones" className="space-y-6">
+            <ZoneView
+              nodes={nodes}
+              selectedNode={selectedNode}
+              onSelectNode={setSelectedNode}
+            />
           </TabsContent>
 
           <TabsContent value="topology" className="space-y-6">
