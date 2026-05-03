@@ -28,6 +28,7 @@ import { AnomalyAlerts } from '@/components/AnomalyAlerts'
 import { RackVisualization } from '@/components/RackVisualization'
 import { ZoneView } from '@/components/ZoneView'
 import { ZoneHeatmap } from '@/components/ZoneHeatmap'
+import { NodesSummaryCard } from '@/components/NodesSummaryCard'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useKV } from '@github/spark/hooks'
 
@@ -130,6 +131,7 @@ function App() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="font-mono mb-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="racks">Racks</TabsTrigger>
             <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             <TabsTrigger value="zones">Zones</TabsTrigger>
             <TabsTrigger value="topology">Topology</TabsTrigger>
@@ -139,13 +141,7 @@ function App() {
 
           <TabsContent value="overview" className="space-y-6">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <RackVisualization
-                nodes={nodes}
-                selectedNode={selectedNode}
-                onSelectNode={setSelectedNode}
-                selectedRack={selectedRack}
-                onSelectRack={setSelectedRack}
-              />
+              <NodesSummaryCard nodes={nodes} />
               <div className="space-y-6">
                 <NetworkDashboard nodes={nodes} />
                 <StorageDashboard nodes={nodes} />
@@ -159,6 +155,16 @@ function App() {
             {alerts.length > 0 && (
               <CapacityPlanningDashboard alerts={alerts} />
             )}
+          </TabsContent>
+
+          <TabsContent value="racks" className="space-y-6">
+            <RackVisualization
+              nodes={nodes}
+              selectedNode={selectedNode}
+              onSelectNode={setSelectedNode}
+              selectedRack={selectedRack}
+              onSelectRack={setSelectedRack}
+            />
           </TabsContent>
 
           <TabsContent value="heatmap" className="space-y-6">
