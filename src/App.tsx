@@ -29,6 +29,7 @@ import { RackVisualization } from '@/components/RackVisualization'
 import { ZoneView } from '@/components/ZoneView'
 import { ZoneHeatmap } from '@/components/ZoneHeatmap'
 import { NodesSummaryCard } from '@/components/NodesSummaryCard'
+import { DragDropRackManager } from '@/components/DragDropRackManager'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useKV } from '@github/spark/hooks'
 
@@ -132,6 +133,7 @@ function App() {
           <TabsList className="font-mono mb-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="racks">Racks</TabsTrigger>
+            <TabsTrigger value="organize">Organize</TabsTrigger>
             <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             <TabsTrigger value="zones">Zones</TabsTrigger>
             <TabsTrigger value="topology">Topology</TabsTrigger>
@@ -164,6 +166,15 @@ function App() {
               onSelectNode={setSelectedNode}
               selectedRack={selectedRack}
               onSelectRack={setSelectedRack}
+            />
+          </TabsContent>
+
+          <TabsContent value="organize" className="space-y-6">
+            <DragDropRackManager
+              nodes={nodes}
+              onNodesUpdate={setNodes}
+              selectedNode={selectedNode}
+              onSelectNode={setSelectedNode}
             />
           </TabsContent>
 
