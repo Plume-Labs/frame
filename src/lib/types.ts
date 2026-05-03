@@ -48,6 +48,8 @@ export interface ClusterNode {
   storage: StorageInfo
   hardware: HardwareInfo
   zone: string
+  rackId: string
+  rackPosition: number
 }
 
 export type EventSeverity = 'info' | 'warning' | 'error' | 'success'
