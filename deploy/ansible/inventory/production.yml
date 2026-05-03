@@ -1,0 +1,93 @@
+---
+all:
+  vars:
+    cluster_name: bare-metal-cluster
+    kubernetes_version: "1.28.5"
+    container_runtime: containerd
+    cni_plugin: calico
+    
+    control_plane_endpoint: 192.168.1.10
+    pod_network_cidr: 10.244.0.0/16
+    service_cidr: 10.96.0.0/12
+    
+    rdma_enabled: true
+    rdma_driver: mlx5_core
+    
+    pxe_server: 192.168.1.5
+    pxe_boot_enabled: true
+    
+    ceph_enabled: true
+    ceph_network: 192.168.2.0/24
+    
+    monitoring_enabled: true
+    prometheus_retention: 30d
+    grafana_admin_password: "{{ vault_grafana_password }}"
+
+control_plane:
+  hosts:
+    control-01:
+      ansible_host: 192.168.1.11
+      ansible_user: root
+      ipmi_address: 192.168.0.11
+    control-02:
+      ansible_host: 192.168.1.12
+      ansible_user: root
+      ipmi_address: 192.168.0.12
+    control-03:
+      ansible_host: 192.168.1.13
+      ansible_user: root
+      ipmi_address: 192.168.0.13
+
+workers:
+  hosts:
+    worker-01:
+      ansible_host: 192.168.1.21
+      ansible_user: root
+      ipmi_address: 192.168.0.21
+      rdma_interface: ib0
+      ceph_osd_devices:
+        - /dev/nvme0n1
+        - /dev/nvme1n1
+    worker-02:
+      ansible_host: 192.168.1.22
+      ansible_user: root
+      ipmi_address: 192.168.0.22
+      rdma_interface: ib0
+      ceph_osd_devices:
+        - /dev/nvme0n1
+        - /dev/nvme1n1
+    worker-03:
+      ansible_host: 192.168.1.23
+      ansible_user: root
+      ipmi_address: 192.168.0.23
+      rdma_interface: ib0
+      ceph_osd_devices:
+        - /dev/nvme0n1
+        - /dev/nvme1n1
+    worker-04:
+      ansible_host: 192.168.1.24
+      ansible_user: root
+      ipmi_address: 192.168.0.24
+      rdma_interface: ib0
+      ceph_osd_devices:
+        - /dev/nvme0n1
+        - /dev/nvme1n1
+
+ceph_mons:
+  hosts:
+    control-01:
+    control-02:
+    control-03:
+
+ceph_osds:
+  hosts:
+    worker-01:
+    worker-02:
+    worker-03:
+    worker-04:
+
+pxe_server_group:
+  hosts:
+    pxe-01:
+      ansible_host: 192.168.1.5
+      ansible_user: root

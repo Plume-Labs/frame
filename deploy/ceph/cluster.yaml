@@ -1,0 +1,116 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ceph-config
+  namespace: rook-ceph
+data:
+  config: |
+    [global]
+    mon_host = 192.168.2.11:6789,192.168.2.12:6789,192.168.2.13:6789
+    
+    [client.libvirt]
+    admin socket = /var/run/ceph/$cluster-$type.$id.$pid.$cctid.asok
+    log file = /var/log/ceph/qemu-guest-$pid.log
+---
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v18.2.0
+    allowUnsupported: false
+  dataDirHostPath: /var/lib/rook
+  skipUpgradeChecks: false
+  continueUpgradeAfterChecksEvenIfNotHealthy: false
+  waitTimeoutForHealthyOSDInMinutes: 10
+  
+  mon:
+    count: 3
+    allowMultiplePerNode: false
+    
+  mgr:
+    count: 2
+    allowMultiplePerNode: false
+    modules:
+      - name: pg_autoscaler
+        enabled: true
+      - name: rook
+        enabled: true
+        
+  dashboard:
+    enabled: true
+    ssl: true
+    
+  monitoring:
+    enabled: true
+    
+  network:
+    provider: host
+    connections:
+      encryption:
+        enabled: false
+      compression:
+        enabled: false
+    
+  crashCollector:
+    disable: false
+    
+  logCollector:
+    enabled: true
+    periodicity: daily
+    maxLogSize: 500M
+    
+  cleanupPolicy:
+    confirmation: ""
+    sanitizeDisks:
+      method: quick
+      dataSource: zero
+      iteration: 1
+    allowUninstallWithVolumes: false
+    
+  resources:
+    mon:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+    osd:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+    mgr:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+        
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+      - name: "worker-01"
+        devices:
+          - name: "/dev/nvme0n1"
+          - name: "/dev/nvme1n1"
+      - name: "worker-02"
+        devices:
+          - name: "/dev/nvme0n1"
+          - name: "/dev/nvme1n1"
+      - name: "worker-03"
+        devices:
+          - name: "/dev/nvme0n1"
+          - name: "/dev/nvme1n1"
+      - name: "worker-04"
+        devices:
+          - name: "/dev/nvme0n1"
+          - name: "/dev/nvme1n1"

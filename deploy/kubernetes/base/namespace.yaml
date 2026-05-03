@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cluster-control
+  labels:
+    name: cluster-control
+    monitoring: enabled

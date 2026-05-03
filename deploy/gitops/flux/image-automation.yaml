@@ -1,0 +1,46 @@
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: cluster-control
+  namespace: flux-system
+spec:
+  image: ghcr.io/your-org/cluster-control
+  interval: 1m
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: cluster-control
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: cluster-control
+  policy:
+    semver:
+      range: '>=1.0.0'
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImageUpdateAutomation
+metadata:
+  name: cluster-control
+  namespace: flux-system
+spec:
+  interval: 1m
+  sourceRef:
+    kind: GitRepository
+    name: cluster-control
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        email: fluxbot@cluster.local
+        name: FluxBot
+      messageTemplate: |
+        [ci skip] Update cluster-control to {{range .Updated.Images}}{{println .}}{{end}}
+    push:
+      branch: main
+  update:
+    path: ./deploy/kubernetes/overlays/production
+    strategy: Setters

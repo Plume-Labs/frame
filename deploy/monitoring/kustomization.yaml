@@ -1,0 +1,7 @@
+resources:
+  - prometheus.yaml
+  - grafana.yaml
+  - node-exporter.yaml
+  - kube-state-metrics.yaml
+
+namespace: monitoring

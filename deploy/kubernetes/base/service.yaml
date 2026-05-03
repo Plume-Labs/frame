@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-control-ui
+  namespace: cluster-control
+  labels:
+    app: cluster-control
+    component: ui
+spec:
+  type: ClusterIP
+  selector:
+    app: cluster-control
+    component: ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  sessionAffinity: ClientIP

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rook-ceph
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rook-ceph-operator-config
+  namespace: rook-ceph
+data:
+  ROOK_CSI_ENABLE_CEPHFS: "true"
+  ROOK_CSI_ENABLE_RBD: "true"
+  ROOK_CSI_ENABLE_NFS: "false"
+  CSI_ENABLE_TOPOLOGY: "true"
+  CSI_PROVISIONER_REPLICAS: "2"
+  CSI_PLUGIN_ENABLE_SELINUX_HOST_MOUNT: "false"
+  ROOK_ENABLE_DISCOVERY_DAEMON: "true"
+  ROOK_CSI_ALLOW_UNSUPPORTED_VERSION: "false"

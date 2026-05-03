@@ -1,0 +1,65 @@
+---
+- name: Hot Add Node to Cluster
+  hosts: localhost
+  gather_facts: false
+  
+  vars_prompt:
+    - name: new_node_ip
+      prompt: "Enter new node IP address"
+      private: no
+    - name: new_node_hostname
+      prompt: "Enter new node hostname"
+      private: no
+    - name: node_type
+      prompt: "Node type (control/worker)"
+      private: no
+      default: worker
+      
+  tasks:
+    - name: Trigger PXE boot via IPMI
+      shell: |
+        ipmitool -I lanplus -H {{ ipmi_address }} -U {{ ipmi_user }} -P {{ ipmi_password }} \
+          chassis bootdev pxe options=persistent
+        ipmitool -I lanplus -H {{ ipmi_address }} -U {{ ipmi_user }} -P {{ ipmi_password }} \
+          power cycle
+      when: pxe_boot_enabled
+      
+    - name: Wait for node to be reachable
+      wait_for:
+        host: "{{ new_node_ip }}"
+        port: 22
+        delay: 300
+        timeout: 1800
+        
+    - name: Add node to inventory
+      add_host:
+        name: "{{ new_node_hostname }}"
+        groups: "{{ node_type }}s,new_nodes"
+        ansible_host: "{{ new_node_ip }}"
+        
+    - name: Configure new node
+      include_role:
+        name: "kubernetes-{{ node_type }}"
+      delegate_to: "{{ new_node_hostname }}"
+      
+    - name: Join node to cluster
+      include_role:
+        name: kubernetes-join
+      delegate_to: "{{ new_node_hostname }}"
+      
+    - name: Label node for workloads
+      command: |
+        kubectl label node {{ new_node_hostname }} \
+          node-role.kubernetes.io/{{ node_type }}= \
+          topology.kubernetes.io/zone=default \
+          hot-provisioned=true
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      
+    - name: Verify node health
+      command: kubectl get node {{ new_node_hostname }}
+      register: node_status
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      
+    - name: Display node status
+      debug:
+        var: node_status.stdout_lines
