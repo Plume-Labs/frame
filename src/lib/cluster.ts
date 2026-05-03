@@ -1,4 +1,4 @@
-import { ClusterNode, NodeStatus, NodeMetrics, SystemEvent, EventSeverity, ClusterStats } from './types'
+import { ClusterNode, NodeStatus, NodeMetrics, SystemEvent, EventSeverity, ClusterStats, NetworkInfo, StorageInfo, HardwareInfo } from './types'
 
 const NODE_NAMES = [
   'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
@@ -6,6 +6,16 @@ const NODE_NAMES = [
   'rho', 'sigma', 'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega',
   'nebula', 'pulsar', 'quasar', 'vega', 'sirius', 'rigel', 'deneb', 'altair'
 ]
+
+const CPU_MODELS = [
+  'Intel Xeon Gold 6248R',
+  'AMD EPYC 7763',
+  'Intel Xeon Platinum 8380',
+  'AMD EPYC 7713',
+  'Intel Xeon Gold 6330'
+]
+
+const ZONES = ['zone-a', 'zone-b', 'zone-c']
 
 function randomInRange(min: number, max: number): number {
   return Math.random() * (max - min) + min
@@ -36,6 +46,42 @@ function generateMetrics(): NodeMetrics {
   }
 }
 
+function generateNetworkInfo(): NetworkInfo {
+  return {
+    rxBytes: randomInRange(1000000, 50000000000),
+    txBytes: randomInRange(1000000, 50000000000),
+    latency: randomInRange(0.1, 5),
+    rdmaActive: Math.random() > 0.3,
+    rdmaQueuePairs: Math.floor(randomInRange(64, 512)),
+    bandwidth: randomInRange(10000, 100000),
+    packetLoss: randomInRange(0, 0.5)
+  }
+}
+
+function generateStorageInfo(): StorageInfo {
+  return {
+    cephOSDs: Math.floor(randomInRange(4, 12)),
+    cephPGs: Math.floor(randomInRange(128, 512)),
+    totalCapacity: 2048,
+    usedCapacity: randomInRange(500, 1800),
+    readIOPS: Math.floor(randomInRange(1000, 50000)),
+    writeIOPS: Math.floor(randomInRange(500, 30000)),
+    replicationFactor: 3
+  }
+}
+
+function generateHardwareInfo(index: number): HardwareInfo {
+  return {
+    cpuModel: CPU_MODELS[index % CPU_MODELS.length],
+    cpuCores: Math.random() > 0.5 ? 48 : 64,
+    memoryGB: Math.random() > 0.5 ? 256 : 512,
+    storageGB: 2048,
+    networkAdapters: Math.random() > 0.5 ? 2 : 4,
+    pxeBooted: Math.random() > 0.2,
+    temperature: randomInRange(35, 75)
+  }
+}
+
 export function generateClusterNodes(count: number = 32): ClusterNode[] {
   const nodes: ClusterNode[] = []
   const now = Date.now()
@@ -48,7 +94,11 @@ export function generateClusterNodes(count: number = 32): ClusterNode[] {
       status,
       metrics: generateMetrics(),
       uptime: status === 'offline' ? 0 : randomInRange(3600000, 7776000000),
-      lastSeen: status === 'offline' ? now - randomInRange(60000, 600000) : now
+      lastSeen: status === 'offline' ? now - randomInRange(60000, 600000) : now,
+      network: generateNetworkInfo(),
+      storage: generateStorageInfo(),
+      hardware: generateHardwareInfo(i),
+      zone: ZONES[i % ZONES.length]
     })
   }
 
@@ -69,6 +119,24 @@ export function updateNodeMetrics(node: ClusterNode): ClusterNode {
       memory: Math.max(0, Math.min(100, node.metrics.memory + randomInRange(-delta, delta))),
       storage: Math.max(0, Math.min(100, node.metrics.storage + randomInRange(-delta * 0.5, delta * 0.5))),
       network: Math.max(0, node.metrics.network + randomInRange(-500, 500))
+    },
+    network: {
+      ...node.network,
+      rxBytes: node.network.rxBytes + randomInRange(1000000, 10000000),
+      txBytes: node.network.txBytes + randomInRange(1000000, 10000000),
+      latency: Math.max(0.1, node.network.latency + randomInRange(-0.5, 0.5)),
+      bandwidth: Math.max(0, node.network.bandwidth + randomInRange(-2000, 2000)),
+      packetLoss: Math.max(0, Math.min(5, node.network.packetLoss + randomInRange(-0.1, 0.1)))
+    },
+    storage: {
+      ...node.storage,
+      usedCapacity: Math.max(0, Math.min(node.storage.totalCapacity, node.storage.usedCapacity + randomInRange(-10, 20))),
+      readIOPS: Math.floor(Math.max(0, node.storage.readIOPS + randomInRange(-1000, 1000))),
+      writeIOPS: Math.floor(Math.max(0, node.storage.writeIOPS + randomInRange(-500, 500)))
+    },
+    hardware: {
+      ...node.hardware,
+      temperature: Math.max(30, Math.min(85, node.hardware.temperature + randomInRange(-2, 2)))
     },
     uptime: node.uptime + 2000,
     lastSeen: Date.now()
