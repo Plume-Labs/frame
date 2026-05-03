@@ -1,12 +1,25 @@
 import { useState, useMemo, useEffect } from 'react'
 import { ClusterNode } from '@/lib/types'
 import { organizeNodesByRack, organizeRacksByZone, RackData } from '@/lib/rack'
+import { 
+  validateRackPlacement, 
+  validateDeviceMove, 
+  ValidationResult,
+  RackConstraints,
+  DEFAULT_RACK_CONSTRAINTS,
+  getValidationSummary
+} from '@/lib/rackValidation'
 import { DraggableRack } from './DraggableRack'
 import { DevicePalette } from './DevicePalette'
+import { RackValidationPanel } from './RackValidationPanel'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Buildings, ArrowCounterClockwise, CheckCircle, Database } from '@phosphor-icons/react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Buildings, ArrowCounterClockwise, CheckCircle, Database, Gear, ShieldWarning } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useKV } from '@github/spark/hooks'
 
@@ -40,6 +53,10 @@ export function DragDropRackManager({
   const [pendingChanges, setPendingChanges] = useState<ClusterNode[]>(nodes)
   const [hasChanges, setHasChanges] = useState(false)
   const [savedLayouts, setSavedLayouts] = useKV<{ name: string; nodes: ClusterNode[]; timestamp: number }[]>('rack-layouts', [])
+  const [constraints, setConstraints] = useKV<RackConstraints>('rack-constraints', DEFAULT_RACK_CONSTRAINTS)
+  const [showConstraintsDialog, setShowConstraintsDialog] = useState(false)
+  const [showValidation, setShowValidation] = useState(true)
+  const [selectedRackForValidation, setSelectedRackForValidation] = useState<string | null>(null)
 
   useEffect(() => {
     setPendingChanges(nodes)
@@ -50,6 +67,27 @@ export function DragDropRackManager({
     const zoneMap = organizeRacksByZone(racksMap)
     return { racksMap, zoneMap }
   }, [pendingChanges])
+
+  const rackValidations = useMemo(() => {
+    const validations = new Map<string, ValidationResult>()
+    racksMap.forEach((rack, rackId) => {
+      const validation = validateRackPlacement(rack, constraints || DEFAULT_RACK_CONSTRAINTS)
+      validations.set(rackId, validation)
+    })
+    return validations
+  }, [racksMap, constraints])
+
+  const overallValid = useMemo(() => {
+    return Array.from(rackValidations.values()).every(v => v.valid)
+  }, [rackValidations])
+
+  const totalErrors = useMemo(() => {
+    return Array.from(rackValidations.values()).reduce((sum, v) => sum + v.errors.length, 0)
+  }, [rackValidations])
+
+  const totalWarnings = useMemo(() => {
+    return Array.from(rackValidations.values()).reduce((sum, v) => sum + v.warnings.length, 0)
+  }, [rackValidations])
 
   const handleDragStart = (device: DraggedDevice) => {
     setDraggedDevice(device)
@@ -72,12 +110,37 @@ export function DragDropRackManager({
     if (draggedDevice.type === 'node' && draggedDevice.nodeId) {
       const nodeIndex = updatedNodes.findIndex(n => n.id === draggedDevice.nodeId)
       if (nodeIndex !== -1) {
+        const movedNode = updatedNodes[nodeIndex]
+        
+        const sourceRackMap = organizeNodesByRack(updatedNodes)
+        const sourceRack = sourceRackMap.get(movedNode.rackId)!
+        const targetRack = sourceRackMap.get(target.rackId)!
+        
+        const validation = validateDeviceMove(
+          sourceRack,
+          targetRack,
+          movedNode,
+          target.position,
+          constraints || DEFAULT_RACK_CONSTRAINTS
+        )
+        
+        if (!validation.valid) {
+          const criticalErrors = validation.errors.filter(e => e.severity === 'critical')
+          if (criticalErrors.length > 0) {
+            toast.error('Move blocked - Critical constraint violation', {
+              description: criticalErrors[0].message
+            })
+            setDraggedDevice(null)
+            setDropTarget(null)
+            return
+          }
+        }
+        
         const existingNodeAtPosition = updatedNodes.find(
           n => n.rackId === target.rackId && n.rackPosition === target.position
         )
 
         if (existingNodeAtPosition && existingNodeAtPosition.id !== draggedDevice.nodeId) {
-          const movedNode = updatedNodes[nodeIndex]
           updatedNodes[nodeIndex] = {
             ...movedNode,
             rackId: target.rackId,
@@ -91,9 +154,15 @@ export function DragDropRackManager({
             rackPosition: movedNode.rackPosition
           }
 
-          toast.success('Devices swapped', {
-            description: `${movedNode.name} ↔ ${existingNodeAtPosition.name}`
-          })
+          if (validation.warnings.length > 0) {
+            toast.warning('Devices swapped with warnings', {
+              description: `${validation.warnings.length} warning(s): ${validation.warnings[0].message}`
+            })
+          } else {
+            toast.success('Devices swapped', {
+              description: `${movedNode.name} ↔ ${existingNodeAtPosition.name}`
+            })
+          }
         } else {
           updatedNodes[nodeIndex] = {
             ...updatedNodes[nodeIndex],
@@ -101,9 +170,15 @@ export function DragDropRackManager({
             rackPosition: target.position
           }
 
-          toast.success('Device moved', {
-            description: `${updatedNodes[nodeIndex].name} → ${target.rackId} @ U${target.position}`
-          })
+          if (validation.warnings.length > 0) {
+            toast.warning('Device moved with warnings', {
+              description: `${validation.warnings.length} warning(s): ${validation.warnings[0].message}`
+            })
+          } else {
+            toast.success('Device moved', {
+              description: `${updatedNodes[nodeIndex].name} → ${target.rackId} @ U${target.position}`
+            })
+          }
         }
 
         setPendingChanges(updatedNodes)
@@ -168,6 +243,15 @@ export function DragDropRackManager({
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowConstraintsDialog(true)}
+            className="font-mono"
+          >
+            <Gear className="w-4 h-4 mr-2" />
+            Constraints
+          </Button>
           {hasChanges && (
             <>
               <Button
@@ -184,6 +268,7 @@ export function DragDropRackManager({
                 size="sm"
                 onClick={handleApplyChanges}
                 className="font-mono"
+                disabled={!overallValid}
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
                 Apply Changes
@@ -201,6 +286,38 @@ export function DragDropRackManager({
           </Button>
         </div>
       </div>
+
+      {!overallValid && hasChanges && (
+        <Card className="border-destructive bg-destructive/5">
+          <CardContent className="pt-4 flex items-start gap-3">
+            <ShieldWarning className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" weight="fill" />
+            <div className="flex-1">
+              <p className="text-sm font-mono font-semibold text-destructive">
+                Critical Validation Errors Detected
+              </p>
+              <p className="text-xs text-muted-foreground font-mono mt-1">
+                {totalErrors} error(s) across {Array.from(rackValidations.entries()).filter(([_, v]) => !v.valid).length} rack(s) must be resolved before applying changes
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {totalWarnings > 0 && overallValid && hasChanges && (
+        <Card className="border-warning bg-warning/5">
+          <CardContent className="pt-4 flex items-start gap-3">
+            <ShieldWarning className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" weight="fill" />
+            <div className="flex-1">
+              <p className="text-sm font-mono font-semibold text-warning">
+                {totalWarnings} Warning(s) Detected
+              </p>
+              <p className="text-xs text-muted-foreground font-mono mt-1">
+                Configuration meets minimum requirements but has optimization opportunities
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {hasChanges && (
         <Card className="border-warning bg-warning/5">
@@ -237,6 +354,197 @@ export function DragDropRackManager({
       )}
 
       <DevicePalette onDragStart={handleDragStart} />
+
+      {showValidation && (
+        <Tabs defaultValue="overview" className="w-full">
+          <TabsList className="font-mono">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="racks">By Rack</TabsTrigger>
+          </TabsList>
+          <TabsContent value="overview" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg font-mono flex items-center gap-2">
+                  <ShieldWarning className="w-5 h-5" weight="duotone" />
+                  Validation Summary
+                </CardTitle>
+                <CardDescription className="font-mono">
+                  Review constraint violations across all racks
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {Array.from(rackValidations.entries())
+                  .filter(([_, validation]) => !validation.valid || validation.warnings.length > 0)
+                  .map(([rackId, validation]) => (
+                    <div key={rackId} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-mono text-sm font-semibold">{rackId}</h4>
+                        <Badge 
+                          variant={validation.valid ? "outline" : "destructive"}
+                          className="font-mono"
+                        >
+                          {getValidationSummary(validation)}
+                        </Badge>
+                      </div>
+                      {(!validation.valid || validation.warnings.length > 0) && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => setSelectedRackForValidation(rackId)}
+                          className="font-mono h-auto p-0 text-xs"
+                        >
+                          View Details →
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                {Array.from(rackValidations.values()).every(v => v.valid && v.warnings.length === 0) && (
+                  <p className="text-sm text-muted-foreground font-mono text-center py-4">
+                    All racks meet validation requirements
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="racks" className="space-y-4">
+            {Array.from(rackValidations.entries()).map(([rackId, validation]) => (
+              <RackValidationPanel
+                key={rackId}
+                rackId={rackId}
+                validation={validation}
+              />
+            ))}
+          </TabsContent>
+        </Tabs>
+      )}
+
+      {selectedRackForValidation && rackValidations.has(selectedRackForValidation) && (
+        <Dialog open={!!selectedRackForValidation} onOpenChange={() => setSelectedRackForValidation(null)}>
+          <DialogContent className="max-w-2xl">
+            <RackValidationPanel
+              rackId={selectedRackForValidation}
+              validation={rackValidations.get(selectedRackForValidation)!}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <Dialog open={showConstraintsDialog} onOpenChange={setShowConstraintsDialog}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="font-mono flex items-center gap-2">
+              <Gear className="w-5 h-5" weight="duotone" />
+              Rack Placement Constraints
+            </DialogTitle>
+            <DialogDescription className="font-mono">
+              Configure physical, power, and cooling limits for rack validation
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="maxPowerWatts" className="font-mono text-sm">Max Power (W)</Label>
+              <Input
+                id="maxPowerWatts"
+                type="number"
+                value={constraints?.maxPowerWatts || DEFAULT_RACK_CONSTRAINTS.maxPowerWatts}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), maxPowerWatts: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxCoolingBTU" className="font-mono text-sm">Max Cooling (BTU/h)</Label>
+              <Input
+                id="maxCoolingBTU"
+                type="number"
+                value={constraints?.maxCoolingBTU || DEFAULT_RACK_CONSTRAINTS.maxCoolingBTU}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), maxCoolingBTU: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxUnits" className="font-mono text-sm">Max Rack Units</Label>
+              <Input
+                id="maxUnits"
+                type="number"
+                value={constraints?.maxUnits || DEFAULT_RACK_CONSTRAINTS.maxUnits}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), maxUnits: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="minSpacingUnits" className="font-mono text-sm">Min Spacing (U)</Label>
+              <Input
+                id="minSpacingUnits"
+                type="number"
+                value={constraints?.minSpacingUnits || DEFAULT_RACK_CONSTRAINTS.minSpacingUnits}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), minSpacingUnits: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxPowerDensity" className="font-mono text-sm">Max Power Density (W/U)</Label>
+              <Input
+                id="maxPowerDensity"
+                type="number"
+                value={constraints?.maxPowerDensity || DEFAULT_RACK_CONSTRAINTS.maxPowerDensity}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), maxPowerDensity: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxAmperage" className="font-mono text-sm">Max Amperage (A)</Label>
+              <Input
+                id="maxAmperage"
+                type="number"
+                value={constraints?.maxAmperage || DEFAULT_RACK_CONSTRAINTS.maxAmperage}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), maxAmperage: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="maxWeight" className="font-mono text-sm">Max Weight (kg)</Label>
+              <Input
+                id="maxWeight"
+                type="number"
+                value={constraints?.maxWeight || DEFAULT_RACK_CONSTRAINTS.maxWeight}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), maxWeight: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="minAirflowCFM" className="font-mono text-sm">Min Airflow (CFM)</Label>
+              <Input
+                id="minAirflowCFM"
+                type="number"
+                value={constraints?.minAirflowCFM || DEFAULT_RACK_CONSTRAINTS.minAirflowCFM}
+                onChange={(e) => setConstraints(c => ({ ...(c || DEFAULT_RACK_CONSTRAINTS), minAirflowCFM: parseInt(e.target.value) }))}
+                className="font-mono"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setConstraints(DEFAULT_RACK_CONSTRAINTS)
+                toast.info('Reset to defaults')
+              }}
+              className="font-mono"
+            >
+              Reset to Defaults
+            </Button>
+            <Button
+              onClick={() => {
+                setShowConstraintsDialog(false)
+                toast.success('Constraints updated')
+              }}
+              className="font-mono"
+            >
+              Apply
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="space-y-6">
         {Array.from(zoneMap.entries()).map(([zoneName, racks]) => {
