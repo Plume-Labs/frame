@@ -9,17 +9,17 @@ interface StorageDashboardProps {
 }
 
 export function StorageDashboard({ nodes }: StorageDashboardProps) {
-  const activeNodes = nodes.filter(n => n.status !== 'offline')
+  const activeNodes = nodes.filter(n => n.status !== 'offline' && n.storage)
   
-  const totalOSDs = activeNodes.reduce((sum, n) => sum + n.storage.cephOSDs, 0)
-  const totalPGs = activeNodes.reduce((sum, n) => sum + n.storage.cephPGs, 0)
-  const totalCapacity = activeNodes.reduce((sum, n) => sum + n.storage.totalCapacity, 0)
-  const totalUsed = activeNodes.reduce((sum, n) => sum + n.storage.usedCapacity, 0)
-  const totalReadIOPS = activeNodes.reduce((sum, n) => sum + n.storage.readIOPS, 0)
-  const totalWriteIOPS = activeNodes.reduce((sum, n) => sum + n.storage.writeIOPS, 0)
-  const avgReplication = activeNodes.reduce((sum, n) => sum + n.storage.replicationFactor, 0) / activeNodes.length
+  const totalOSDs = activeNodes.reduce((sum, n) => sum + (n.storage?.cephOSDs || 0), 0)
+  const totalPGs = activeNodes.reduce((sum, n) => sum + (n.storage?.cephPGs || 0), 0)
+  const totalCapacity = activeNodes.reduce((sum, n) => sum + (n.storage?.totalCapacity || 0), 0)
+  const totalUsed = activeNodes.reduce((sum, n) => sum + (n.storage?.usedCapacity || 0), 0)
+  const totalReadIOPS = activeNodes.reduce((sum, n) => sum + (n.storage?.readIOPS || 0), 0)
+  const totalWriteIOPS = activeNodes.reduce((sum, n) => sum + (n.storage?.writeIOPS || 0), 0)
+  const avgReplication = activeNodes.length > 0 ? activeNodes.reduce((sum, n) => sum + (n.storage?.replicationFactor || 0), 0) / activeNodes.length : 0
 
-  const usagePercent = (totalUsed / totalCapacity) * 100
+  const usagePercent = totalCapacity > 0 ? (totalUsed / totalCapacity) * 100 : 0
   const totalAvailable = totalCapacity - totalUsed
 
   return (

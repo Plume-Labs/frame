@@ -15,18 +15,18 @@ function formatBytes(bytes: number): string {
 }
 
 export function NetworkDashboard({ nodes }: NetworkDashboardProps) {
-  const activeNodes = nodes.filter(n => n.status !== 'offline')
+  const activeNodes = nodes.filter(n => n.status !== 'offline' && n.network)
   
-  const totalRx = activeNodes.reduce((sum, n) => sum + n.network.rxBytes, 0)
-  const totalTx = activeNodes.reduce((sum, n) => sum + n.network.txBytes, 0)
-  const avgLatency = activeNodes.reduce((sum, n) => sum + n.network.latency, 0) / activeNodes.length
-  const avgPacketLoss = activeNodes.reduce((sum, n) => sum + n.network.packetLoss, 0) / activeNodes.length
-  const rdmaNodes = activeNodes.filter(n => n.network.rdmaActive).length
-  const totalBandwidth = activeNodes.reduce((sum, n) => sum + n.network.bandwidth, 0)
-  const totalQueuePairs = activeNodes.reduce((sum, n) => sum + n.network.rdmaQueuePairs, 0)
+  const totalRx = activeNodes.reduce((sum, n) => sum + (n.network?.rxBytes || 0), 0)
+  const totalTx = activeNodes.reduce((sum, n) => sum + (n.network?.txBytes || 0), 0)
+  const avgLatency = activeNodes.length > 0 ? activeNodes.reduce((sum, n) => sum + (n.network?.latency || 0), 0) / activeNodes.length : 0
+  const avgPacketLoss = activeNodes.length > 0 ? activeNodes.reduce((sum, n) => sum + (n.network?.packetLoss || 0), 0) / activeNodes.length : 0
+  const rdmaNodes = activeNodes.filter(n => n.network?.rdmaActive).length
+  const totalBandwidth = activeNodes.reduce((sum, n) => sum + (n.network?.bandwidth || 0), 0)
+  const totalQueuePairs = activeNodes.reduce((sum, n) => sum + (n.network?.rdmaQueuePairs || 0), 0)
 
-  const highLatencyNodes = activeNodes.filter(n => n.network.latency > 3)
-  const highPacketLossNodes = activeNodes.filter(n => n.network.packetLoss > 0.3)
+  const highLatencyNodes = activeNodes.filter(n => n.network && n.network.latency > 3)
+  const highPacketLossNodes = activeNodes.filter(n => n.network && n.network.packetLoss > 0.3)
 
   return (
     <Card>
