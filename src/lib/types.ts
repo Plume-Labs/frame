@@ -183,3 +183,41 @@ export interface AnomalyPattern {
   recentTrend: 'increasing' | 'decreasing' | 'stable'
   lastUpdated: number
 }
+
+export interface PowerMetrics {
+  currentDraw: number
+  maxCapacity: number
+  efficiency: number
+  powerUsageEffectiveness: number
+  peakDraw: number
+  averageDraw: number
+}
+
+export interface CoolingMetrics {
+  inletTemp: number
+  outletTemp: number
+  ambientTemp: number
+  fanSpeed: number
+  airflowCFM: number
+  deltaT: number
+  coolingEfficiency: number
+}
+
+export interface RackPowerCooling {
+  rackId: string
+  power: PowerMetrics
+  cooling: CoolingMetrics
+  thermalLoad: number
+  powerDensity: number
+  alerts: PowerCoolingAlert[]
+}
+
+export interface PowerCoolingAlert {
+  id: string
+  type: 'power' | 'cooling' | 'thermal'
+  severity: 'info' | 'warning' | 'critical'
+  message: string
+  timestamp: number
+  value: number
+  threshold: number
+}
