@@ -27,6 +27,7 @@ import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { AnomalyAlerts } from '@/components/AnomalyAlerts'
 import { RackVisualization } from '@/components/RackVisualization'
 import { ZoneView } from '@/components/ZoneView'
+import { ZoneHeatmap } from '@/components/ZoneHeatmap'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useKV } from '@github/spark/hooks'
 
@@ -35,6 +36,8 @@ function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
   const [events, setEvents] = useState<SystemEvent[]>([])
+  const [activeTab, setActiveTab] = useState('overview')
+  const [selectedZoneFromHeatmap, setSelectedZoneFromHeatmap] = useState<string | null>(null)
   const previousNodesRef = useRef<ClusterNode[]>(nodes)
 
   const [historicalData, setHistoricalData] = useKV<ResourceDataPoint[]>('capacity-historical-data', [])
@@ -124,9 +127,10 @@ function App() {
           <ClusterStatsDashboard stats={stats} compact />
         </header>
 
-        <Tabs defaultValue="overview" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="font-mono mb-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             <TabsTrigger value="zones">Zones</TabsTrigger>
             <TabsTrigger value="topology">Topology</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
@@ -155,6 +159,16 @@ function App() {
             {alerts.length > 0 && (
               <CapacityPlanningDashboard alerts={alerts} />
             )}
+          </TabsContent>
+
+          <TabsContent value="heatmap" className="space-y-6">
+            <ZoneHeatmap
+              nodes={nodes}
+              onZoneClick={(zoneName) => {
+                setSelectedZoneFromHeatmap(zoneName)
+                setActiveTab('zones')
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="zones" className="space-y-6">
