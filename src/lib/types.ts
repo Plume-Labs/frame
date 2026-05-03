@@ -154,3 +154,30 @@ export interface HistoricalTrendData {
   data: ResourceDataPoint[]
   statistics: TrendStatistics[]
 }
+
+export type AnomalyType = 'spike' | 'drop' | 'pattern_deviation' | 'sustained_high' | 'oscillation'
+
+export interface Anomaly {
+  id: string
+  timestamp: number
+  type: AnomalyType
+  resource: 'cpu' | 'memory' | 'storage' | 'network'
+  severity: 'low' | 'medium' | 'high' | 'critical'
+  value: number
+  expectedValue: number
+  deviation: number
+  confidence: number
+  description: string
+  recommendation: string
+  nodeId?: string
+  duration?: number
+}
+
+export interface AnomalyPattern {
+  resource: 'cpu' | 'memory' | 'storage' | 'network'
+  baseline: number
+  baselineStdDev: number
+  movingAverage: number[]
+  recentTrend: 'increasing' | 'decreasing' | 'stable'
+  lastUpdated: number
+}
