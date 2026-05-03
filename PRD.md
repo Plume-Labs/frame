@@ -7,8 +7,8 @@ A visual distributed systems cluster monitor that simulates real-time node orche
 2. **Dynamic** - Live updating visualizations show cluster health, resource flow, and node communication in real-time
 3. **Authoritative** - Design conveys control and observability over complex distributed architecture
 
-**Complexity Level**: Light Application (multiple features with basic state)
-This is a simulation/visualization tool with multiple coordinated views showing cluster state, node metrics, and network topology. While conceptually representing complex systems, the implementation focuses on realistic UI patterns and state management rather than actual infrastructure integration.
+**Complexity Level**: Complex Application (advanced functionality, likely with multiple views)
+This is both a simulation/visualization tool AND a complete production deployment infrastructure. The frontend provides coordinated views of cluster state, node metrics, and network topology. The backend infrastructure includes comprehensive IaC for bare-metal Kubernetes provisioning, RDMA networking, Ceph distributed storage, PXE boot automation, and GitOps-based continuous delivery with Flux/ArgoCD.
 
 ## Essential Features
 
@@ -40,6 +40,15 @@ This is a simulation/visualization tool with multiple coordinated views showing 
 - Progression: Event occurs → New entry prepends to log → Entry fades in → Old entries scroll down → Auto-prune after 100 entries
 - Success criteria: Events appear in real-time, timestamps accurate, color-coded by severity
 
+## Essential Features (Continued)
+
+**GitOps Deployment Infrastructure**
+- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, PXE boot, Ceph storage, and GitOps workflows
+- Purpose: Production-ready deployment scripts for mainframe-like clustering with automated provisioning and continuous delivery
+- Trigger: Operations team uses deployment scripts and Ansible playbooks to provision infrastructure
+- Progression: Run bootstrap script → PXE provisions bare metal → Ansible configures K8s → Flux/ArgoCD syncs from Git → Monitoring UI deployed
+- Success criteria: Full cluster deployed with RDMA networking, Ceph storage, automated GitOps, hot-add node capability, comprehensive monitoring
+
 ## Edge Case Handling
 
 - **All Nodes Offline**: Display prominent alert banner with cluster unavailable message
@@ -47,6 +56,8 @@ This is a simulation/visualization tool with multiple coordinated views showing 
 - **Rapid State Changes**: Debounce updates to prevent UI thrashing during simulated chaos scenarios
 - **Mobile Viewport**: Stack topology and metrics vertically, reduce node grid density
 - **Empty State**: Show "Initializing cluster..." skeleton loaders during first render
+- **Hot Node Addition**: Support dynamic node provisioning via IPMI/PXE without cluster disruption
+- **Storage Failures**: Gracefully handle Ceph OSD failures with visible cluster health degradation
 
 ## Design Direction
 

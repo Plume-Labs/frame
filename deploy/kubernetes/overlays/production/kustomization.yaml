@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cluster-control
+
+bases:
+  - ../../base
+
+patchesStrategicMerge:
+  - deployment-patch.yaml
+  - ingress-patch.yaml
+
+replicas:
+  - name: cluster-control-ui
+    count: 5
+
+images:
+  - name: cluster-control
+    newName: ghcr.io/your-org/cluster-control
+    newTag: v1.0.0
+
+configMapGenerator:
+  - name: cluster-control-config
+    literals:
+      - ENV=production
+      - LOG_LEVEL=info
+
+labels:
+  - pairs:
+      environment: production

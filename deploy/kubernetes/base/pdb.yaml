@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cluster-control-ui-pdb
+  namespace: cluster-control
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: cluster-control
+      component: ui

@@ -1,0 +1,65 @@
+---
+- name: Bootstrap Kubernetes Cluster on Bare Metal
+  hosts: all
+  become: true
+  gather_facts: true
+  
+  pre_tasks:
+    - name: Check connectivity
+      ping:
+      
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+  roles:
+    - common
+    - kernel-tuning
+    - rdma-drivers
+    - container-runtime
+    - kubernetes-packages
+
+- name: Initialize Control Plane
+  hosts: control_plane
+  become: true
+  serial: 1
+  
+  roles:
+    - kubernetes-control-plane
+    - cni-calico
+    - cert-manager
+
+- name: Join Worker Nodes
+  hosts: workers
+  become: true
+  
+  roles:
+    - kubernetes-worker
+    - rdma-device-plugin
+    - multus-cni
+
+- name: Deploy Storage Layer
+  hosts: ceph_osds
+  become: true
+  
+  roles:
+    - ceph-common
+    - ceph-osd
+
+- name: Configure Ceph Monitors
+  hosts: ceph_mons
+  become: true
+  
+  roles:
+    - ceph-mon
+
+- name: Deploy Monitoring Stack
+  hosts: control_plane[0]
+  become: false
+  
+  roles:
+    - prometheus-operator
+    - grafana
+    - cluster-control-ui

@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cluster-control
+
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - pdb.yaml
+
+commonLabels:
+  app.kubernetes.io/name: cluster-control
+  app.kubernetes.io/part-of: monitoring-platform
+
+images:
+  - name: cluster-control
+    newName: ghcr.io/your-org/cluster-control
+    newTag: latest

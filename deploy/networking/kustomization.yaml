@@ -1,0 +1,7 @@
+resources:
+  - rdma-device-plugin.yaml
+  - network-attachment-definitions.yaml
+  - rdma-network-tuning.yaml
+  - multus-daemonset.yaml
+
+namespace: kube-system

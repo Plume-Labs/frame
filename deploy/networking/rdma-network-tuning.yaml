@@ -1,0 +1,59 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sysctl-rdma
+  namespace: kube-system
+data:
+  99-rdma.conf: |
+    net.ipv4.tcp_timestamps = 1
+    net.ipv4.tcp_sack = 1
+    net.core.netdev_max_backlog = 250000
+    net.core.rmem_max = 536870912
+    net.core.wmem_max = 536870912
+    net.core.rmem_default = 536870912
+    net.core.wmem_default = 536870912
+    net.core.optmem_max = 536870912
+    net.ipv4.tcp_rmem = 4096 87380 536870912
+    net.ipv4.tcp_wmem = 4096 65536 536870912
+    net.ipv4.tcp_low_latency = 1
+    net.ipv4.tcp_adv_win_scale = 1
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rdma-network-tuning
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: rdma-network-tuning
+  template:
+    metadata:
+      labels:
+        app: rdma-network-tuning
+    spec:
+      hostNetwork: true
+      hostPID: true
+      nodeSelector:
+        rdma: "true"
+      initContainers:
+        - name: sysctl-tuning
+          image: busybox
+          command:
+            - sh
+            - -c
+            - |
+              sysctl -w net.ipv4.tcp_timestamps=1
+              sysctl -w net.ipv4.tcp_sack=1
+              sysctl -w net.core.netdev_max_backlog=250000
+              sysctl -w net.core.rmem_max=536870912
+              sysctl -w net.core.wmem_max=536870912
+              sysctl -w net.ipv4.tcp_rmem="4096 87380 536870912"
+              sysctl -w net.ipv4.tcp_wmem="4096 65536 536870912"
+              echo "RDMA network tuning applied"
+          securityContext:
+            privileged: true
+      containers:
+        - name: pause
+          image: gcr.io/google_containers/pause:3.2
