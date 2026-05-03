@@ -85,9 +85,16 @@ function generateHardwareInfo(index: number): HardwareInfo {
 export function generateClusterNodes(count: number = 32): ClusterNode[] {
   const nodes: ClusterNode[] = []
   const now = Date.now()
+  const nodesPerRack = 8
+  const racksPerZone = Math.ceil(count / ZONES.length / nodesPerRack)
 
   for (let i = 0; i < count; i++) {
     const status = generateRandomStatus()
+    const zoneIndex = i % ZONES.length
+    const rackIndexInZone = Math.floor((i / ZONES.length) % racksPerZone)
+    const rackId = `${ZONES[zoneIndex]}-rack-${String(rackIndexInZone + 1).padStart(2, '0')}`
+    const rackPosition = Math.floor(i / ZONES.length / racksPerZone) % nodesPerRack + 1
+    
     nodes.push({
       id: generateNodeId(i),
       name: generateNodeName(i),
@@ -98,7 +105,9 @@ export function generateClusterNodes(count: number = 32): ClusterNode[] {
       network: generateNetworkInfo(),
       storage: generateStorageInfo(),
       hardware: generateHardwareInfo(i),
-      zone: ZONES[i % ZONES.length]
+      zone: ZONES[zoneIndex],
+      rackId,
+      rackPosition
     })
   }
 

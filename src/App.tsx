@@ -25,6 +25,7 @@ import { ForecastChart } from '@/components/ForecastChart'
 import { CapacityPlanCard } from '@/components/CapacityPlanCard'
 import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { AnomalyAlerts } from '@/components/AnomalyAlerts'
+import { RackVisualization } from '@/components/RackVisualization'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useKV } from '@github/spark/hooks'
@@ -124,8 +125,8 @@ function App() {
           <Tabs defaultValue="topology" className="w-full">
             <TabsList className="grid w-full grid-cols-7 text-xs">
               <TabsTrigger value="topology" className="font-mono">Nodes</TabsTrigger>
-              <TabsTrigger value="metrics" className="font-mono">Metrics</TabsTrigger>
-              <TabsTrigger value="infra" className="font-mono">Infra</TabsTrigger>
+              <TabsTrigger value="racks" className="font-mono">Racks</TabsTrigger>
+              <TabsTrigger value="metrics" className="font-mono">Stats</TabsTrigger>
               <TabsTrigger value="trends" className="font-mono">Trends</TabsTrigger>
               <TabsTrigger value="capacity" className="font-mono">Plan</TabsTrigger>
               <TabsTrigger value="anomalies" className="font-mono">Alerts</TabsTrigger>
@@ -138,10 +139,15 @@ function App() {
                 onSelectNode={setSelectedNode}
               />
             </TabsContent>
+            <TabsContent value="racks" className="space-y-4 mt-6">
+              <RackVisualization
+                nodes={nodes}
+                selectedNode={selectedNode}
+                onSelectNode={setSelectedNode}
+              />
+            </TabsContent>
             <TabsContent value="metrics" className="space-y-4 mt-6">
               <ClusterStatsDashboard stats={stats} />
-            </TabsContent>
-            <TabsContent value="infra" className="space-y-4 mt-6">
               <NetworkDashboard nodes={nodes} />
               <StorageDashboard nodes={nodes} />
             </TabsContent>
@@ -165,6 +171,17 @@ function App() {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
+              <div className="space-y-4">
+                <h2 className="text-2xl font-mono font-semibold text-foreground">
+                  Rack Visualization
+                </h2>
+                <RackVisualization
+                  nodes={nodes}
+                  selectedNode={selectedNode}
+                  onSelectNode={setSelectedNode}
+                />
+              </div>
+
               <div className="space-y-4">
                 <h2 className="text-2xl font-mono font-semibold text-foreground">
                   Node Topology
