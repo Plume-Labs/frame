@@ -3,9 +3,12 @@ import { ClusterNode, RackPowerCooling } from '@/lib/types'
 import { organizeNodesByRack, organizeRacksByZone, calculateRackPowerCooling } from '@/lib/rack'
 import { RackView } from './RackView'
 import { RackPowerCoolingCard } from './RackPowerCoolingCard'
+import { RackConfigDialog } from './RackConfigDialog'
+import { RackLegend } from './RackLegend'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Buildings } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 
 interface RackVisualizationProps {
   nodes: ClusterNode[]
@@ -39,6 +42,22 @@ export function RackVisualization({
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div className="text-sm text-muted-foreground font-mono">
+          Rack visualization with unit markers and device type annotations
+        </div>
+        <div className="flex gap-2">
+          <RackLegend />
+          <RackConfigDialog
+            onAddDevice={(config) => {
+              toast.success(`Device ${config.name} configured for provisioning`, {
+                description: `${config.deviceType} (${config.rackUnits}U) → ${config.rackId} @ U${config.rackPosition}`
+              })
+            }}
+          />
+        </div>
+      </div>
+
       {selectedRackData && selectedRackPowerCooling && onSelectRack && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">

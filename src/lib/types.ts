@@ -27,6 +27,8 @@ export interface StorageInfo {
   replicationFactor: number
 }
 
+export type DeviceType = 'server' | 'storage' | 'network' | 'pdu' | 'ups' | 'blank'
+
 export interface HardwareInfo {
   cpuModel: string
   cpuCores: number
@@ -35,6 +37,8 @@ export interface HardwareInfo {
   networkAdapters: number
   pxeBooted: boolean
   temperature: number
+  deviceType: DeviceType
+  rackUnits: number
 }
 
 export interface ClusterNode {

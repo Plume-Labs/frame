@@ -1,7 +1,7 @@
-import { ClusterNode } from '@/lib/types'
+import { ClusterNode, DeviceType } from '@/lib/types'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Cpu, HardDrive, ChartBar, Thermometer } from '@phosphor-icons/react'
+import { Cpu, HardDrive, ChartBar, Thermometer, Database, WifiHigh } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 
 interface RackNodeProps {
@@ -32,22 +32,43 @@ export function RackNode({ node, onSelect, isSelected }: RackNodeProps) {
     return 'text-primary'
   }
 
+  const getDeviceIcon = () => {
+    switch (node.hardware.deviceType) {
+      case 'storage':
+        return <Database className="w-3.5 h-3.5 text-muted-foreground" weight="duotone" />
+      case 'network':
+        return <WifiHigh className="w-3.5 h-3.5 text-muted-foreground" weight="duotone" />
+      default:
+        return <Cpu className="w-3.5 h-3.5 text-muted-foreground" weight="duotone" />
+    }
+  }
+
+  const rackUnits = node.hardware.rackUnits
+  const heightClass = rackUnits === 2 ? 'h-32' : rackUnits === 4 ? 'h-64' : 'h-16'
+
   return (
     <div
       onClick={onSelect}
       className={cn(
-        'relative h-16 border-2 rounded cursor-pointer transition-all duration-200',
+        'relative border-2 rounded cursor-pointer transition-all duration-200',
         getStatusColor(),
+        heightClass,
         isSelected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
       )}
     >
       <div className="flex items-center justify-between h-full px-3 gap-2">
         <div className="flex flex-col justify-center min-w-0 flex-shrink">
-          <span className="text-xs font-mono font-semibold truncate">
-            {node.name}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {getDeviceIcon()}
+            <span className="text-xs font-mono font-semibold truncate">
+              {node.name}
+            </span>
+          </div>
           <span className="text-[10px] font-mono text-muted-foreground truncate">
-            U{node.rackPosition}
+            U{node.rackPosition} · {rackUnits}U
+          </span>
+          <span className="text-[10px] font-mono text-muted-foreground capitalize truncate">
+            {node.hardware.deviceType}
           </span>
         </div>
 

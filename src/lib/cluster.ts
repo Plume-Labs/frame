@@ -71,6 +71,10 @@ function generateStorageInfo(): StorageInfo {
 }
 
 function generateHardwareInfo(index: number): HardwareInfo {
+  const rand = Math.random()
+  const deviceType = rand > 0.8 ? 'storage' : rand > 0.95 ? 'network' : 'server'
+  const rackUnits = deviceType === 'storage' ? 2 : deviceType === 'network' ? 1 : 1
+  
   return {
     cpuModel: CPU_MODELS[index % CPU_MODELS.length],
     cpuCores: Math.random() > 0.5 ? 48 : 64,
@@ -78,7 +82,9 @@ function generateHardwareInfo(index: number): HardwareInfo {
     storageGB: 2048,
     networkAdapters: Math.random() > 0.5 ? 2 : 4,
     pxeBooted: Math.random() > 0.2,
-    temperature: randomInRange(35, 75)
+    temperature: randomInRange(35, 75),
+    deviceType,
+    rackUnits
   }
 }
 
