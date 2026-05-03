@@ -10,6 +10,8 @@ import {
 import { NodeGrid } from '@/components/NodeGrid'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
+import { NetworkDashboard } from '@/components/NetworkDashboard'
+import { StorageDashboard } from '@/components/StorageDashboard'
 import { EventLog } from '@/components/EventLog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIsMobile } from '@/hooks/use-mobile'
@@ -68,9 +70,10 @@ function App() {
 
         {isMobile ? (
           <Tabs defaultValue="topology" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="topology" className="font-mono">Topology</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-4 text-xs">
+              <TabsTrigger value="topology" className="font-mono">Nodes</TabsTrigger>
               <TabsTrigger value="metrics" className="font-mono">Metrics</TabsTrigger>
+              <TabsTrigger value="infra" className="font-mono">Infra</TabsTrigger>
               <TabsTrigger value="events" className="font-mono">Events</TabsTrigger>
             </TabsList>
             <TabsContent value="topology" className="space-y-4 mt-6">
@@ -82,6 +85,10 @@ function App() {
             </TabsContent>
             <TabsContent value="metrics" className="space-y-4 mt-6">
               <ClusterStatsDashboard stats={stats} />
+            </TabsContent>
+            <TabsContent value="infra" className="space-y-4 mt-6">
+              <NetworkDashboard nodes={nodes} />
+              <StorageDashboard nodes={nodes} />
             </TabsContent>
             <TabsContent value="events" className="space-y-4 mt-6">
               <EventLog events={events} />
@@ -101,6 +108,8 @@ function App() {
                 />
               </div>
 
+              <NetworkDashboard nodes={nodes} />
+              <StorageDashboard nodes={nodes} />
               <EventLog events={events} />
             </div>
 

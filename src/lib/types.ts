@@ -7,6 +7,36 @@ export interface NodeMetrics {
   network: number
 }
 
+export interface NetworkInfo {
+  rxBytes: number
+  txBytes: number
+  latency: number
+  rdmaActive: boolean
+  rdmaQueuePairs: number
+  bandwidth: number
+  packetLoss: number
+}
+
+export interface StorageInfo {
+  cephOSDs: number
+  cephPGs: number
+  totalCapacity: number
+  usedCapacity: number
+  readIOPS: number
+  writeIOPS: number
+  replicationFactor: number
+}
+
+export interface HardwareInfo {
+  cpuModel: string
+  cpuCores: number
+  memoryGB: number
+  storageGB: number
+  networkAdapters: number
+  pxeBooted: boolean
+  temperature: number
+}
+
 export interface ClusterNode {
   id: string
   name: string
@@ -14,6 +44,10 @@ export interface ClusterNode {
   metrics: NodeMetrics
   uptime: number
   lastSeen: number
+  network: NetworkInfo
+  storage: StorageInfo
+  hardware: HardwareInfo
+  zone: string
 }
 
 export type EventSeverity = 'info' | 'warning' | 'error' | 'success'
