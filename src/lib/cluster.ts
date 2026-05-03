@@ -150,11 +150,21 @@ export function simulateStatusChange(node: ClusterNode): ClusterNode {
     const statuses: NodeStatus[] = ['online', 'degraded', 'offline', 'provisioning']
     const newStatus = statuses[Math.floor(Math.random() * statuses.length)]
     
+    if (newStatus === 'offline') {
+      return {
+        ...node,
+        status: newStatus,
+        uptime: 0,
+        lastSeen: Date.now()
+      }
+    }
+    
     return {
       ...node,
       status: newStatus,
-      uptime: newStatus === 'offline' ? 0 : node.uptime,
-      lastSeen: Date.now()
+      lastSeen: Date.now(),
+      network: node.network || generateNetworkInfo(),
+      storage: node.storage || generateStorageInfo()
     }
   }
 
