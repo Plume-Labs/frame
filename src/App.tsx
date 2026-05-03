@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ClusterNode, SystemEvent, ResourceDataPoint, ResourceForecast, CapacityAlert, CapacityPlan } from '@/lib/types'
+import { ClusterNode, SystemEvent, ResourceDataPoint, ResourceForecast, CapacityAlert, CapacityPlan, Anomaly } from '@/lib/types'
 import {
   generateClusterNodes,
   updateNodeMetrics,
@@ -13,6 +13,7 @@ import {
   generateCapacityPlan,
   collectHistoricalData
 } from '@/lib/forecasting'
+import { buildAnomalyPatterns, detectAnomalies } from '@/lib/anomaly'
 import { NodeGrid } from '@/components/NodeGrid'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
@@ -23,6 +24,7 @@ import { CapacityPlanningDashboard } from '@/components/CapacityPlanningDashboar
 import { ForecastChart } from '@/components/ForecastChart'
 import { CapacityPlanCard } from '@/components/CapacityPlanCard'
 import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
+import { AnomalyAlerts } from '@/components/AnomalyAlerts'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useKV } from '@github/spark/hooks'
@@ -38,6 +40,7 @@ function App() {
   const [forecast, setForecast] = useState<ResourceForecast>({ cpu: [], memory: [], storage: [], network: [] })
   const [alerts, setAlerts] = useState<CapacityAlert[]>([])
   const [capacityPlan, setCapacityPlan] = useState<CapacityPlan | null>(null)
+  const [anomalies, setAnomalies] = useState<Anomaly[]>([])
 
   useEffect(() => {
     const metricsInterval = setInterval(() => {
@@ -95,6 +98,11 @@ function App() {
 
       const plan = generateCapacityPlan(newForecast, stats, nodes, 6)
       setCapacityPlan(plan)
+
+      const patterns = buildAnomalyPatterns(historicalData)
+      const currentData = collectHistoricalData(stats)
+      const detectedAnomalies = detectAnomalies(currentData, historicalData, patterns, nodes)
+      setAnomalies(detectedAnomalies)
     }
   }, [historicalData, nodes])
 
@@ -114,12 +122,13 @@ function App() {
 
         {isMobile ? (
           <Tabs defaultValue="topology" className="w-full">
-            <TabsList className="grid w-full grid-cols-6 text-xs">
+            <TabsList className="grid w-full grid-cols-7 text-xs">
               <TabsTrigger value="topology" className="font-mono">Nodes</TabsTrigger>
               <TabsTrigger value="metrics" className="font-mono">Metrics</TabsTrigger>
               <TabsTrigger value="infra" className="font-mono">Infra</TabsTrigger>
               <TabsTrigger value="trends" className="font-mono">Trends</TabsTrigger>
               <TabsTrigger value="capacity" className="font-mono">Plan</TabsTrigger>
+              <TabsTrigger value="anomalies" className="font-mono">Alerts</TabsTrigger>
               <TabsTrigger value="events" className="font-mono">Events</TabsTrigger>
             </TabsList>
             <TabsContent value="topology" className="space-y-4 mt-6">
@@ -146,6 +155,9 @@ function App() {
               {historicalData && historicalData.length >= 5 && <ForecastChart forecast={forecast} />}
               {capacityPlan && <CapacityPlanCard plan={capacityPlan} />}
             </TabsContent>
+            <TabsContent value="anomalies" className="space-y-4 mt-6">
+              <AnomalyAlerts anomalies={anomalies} />
+            </TabsContent>
             <TabsContent value="events" className="space-y-4 mt-6">
               <EventLog events={events} />
             </TabsContent>
@@ -170,6 +182,13 @@ function App() {
               {historicalData && historicalData.length > 0 && (
                 <HistoricalTrendsAnalysis historicalData={historicalData} />
               )}
+
+              <div className="space-y-4">
+                <h2 className="text-2xl font-mono font-semibold text-foreground">
+                  Anomaly Detection
+                </h2>
+                <AnomalyAlerts anomalies={anomalies} />
+              </div>
 
               <div className="space-y-4">
                 <h2 className="text-2xl font-mono font-semibold text-foreground">
