@@ -129,3 +129,28 @@ export interface CapacityPlan {
   estimatedCost: number
   timeframe: string
 }
+
+export type TimeframeOption = '1h' | '6h' | '24h' | '7d' | '30d' | 'all'
+
+export interface TrendStatistics {
+  resource: 'cpu' | 'memory' | 'storage' | 'network'
+  timeframe: TimeframeOption
+  current: number
+  average: number
+  min: number
+  max: number
+  median: number
+  stdDeviation: number
+  trend: 'increasing' | 'decreasing' | 'stable'
+  trendPercentage: number
+  peakTime: number
+  peakValue: number
+  lowTime: number
+  lowValue: number
+}
+
+export interface HistoricalTrendData {
+  timeframe: TimeframeOption
+  data: ResourceDataPoint[]
+  statistics: TrendStatistics[]
+}

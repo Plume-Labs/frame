@@ -22,6 +22,7 @@ import { EventLog } from '@/components/EventLog'
 import { CapacityPlanningDashboard } from '@/components/CapacityPlanningDashboard'
 import { ForecastChart } from '@/components/ForecastChart'
 import { CapacityPlanCard } from '@/components/CapacityPlanCard'
+import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useKV } from '@github/spark/hooks'
@@ -113,10 +114,11 @@ function App() {
 
         {isMobile ? (
           <Tabs defaultValue="topology" className="w-full">
-            <TabsList className="grid w-full grid-cols-5 text-xs">
+            <TabsList className="grid w-full grid-cols-6 text-xs">
               <TabsTrigger value="topology" className="font-mono">Nodes</TabsTrigger>
               <TabsTrigger value="metrics" className="font-mono">Metrics</TabsTrigger>
               <TabsTrigger value="infra" className="font-mono">Infra</TabsTrigger>
+              <TabsTrigger value="trends" className="font-mono">Trends</TabsTrigger>
               <TabsTrigger value="capacity" className="font-mono">Plan</TabsTrigger>
               <TabsTrigger value="events" className="font-mono">Events</TabsTrigger>
             </TabsList>
@@ -133,6 +135,11 @@ function App() {
             <TabsContent value="infra" className="space-y-4 mt-6">
               <NetworkDashboard nodes={nodes} />
               <StorageDashboard nodes={nodes} />
+            </TabsContent>
+            <TabsContent value="trends" className="space-y-4 mt-6">
+              {historicalData && historicalData.length > 0 && (
+                <HistoricalTrendsAnalysis historicalData={historicalData} />
+              )}
             </TabsContent>
             <TabsContent value="capacity" className="space-y-4 mt-6">
               <CapacityPlanningDashboard alerts={alerts} />
@@ -159,6 +166,10 @@ function App() {
 
               <NetworkDashboard nodes={nodes} />
               <StorageDashboard nodes={nodes} />
+
+              {historicalData && historicalData.length > 0 && (
+                <HistoricalTrendsAnalysis historicalData={historicalData} />
+              )}
 
               <div className="space-y-4">
                 <h2 className="text-2xl font-mono font-semibold text-foreground">
