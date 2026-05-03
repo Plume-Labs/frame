@@ -27,7 +27,6 @@ import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { AnomalyAlerts } from '@/components/AnomalyAlerts'
 import { RackVisualization } from '@/components/RackVisualization'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useIsMobile } from '@/hooks/use-mobile'
 import { useKV } from '@github/spark/hooks'
 
 function App() {
@@ -36,7 +35,6 @@ function App() {
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
   const [events, setEvents] = useState<SystemEvent[]>([])
   const previousNodesRef = useRef<ClusterNode[]>(nodes)
-  const isMobile = useIsMobile()
 
   const [historicalData, setHistoricalData] = useKV<ResourceDataPoint[]>('capacity-historical-data', [])
   const [forecast, setForecast] = useState<ResourceForecast>({ cpu: [], memory: [], storage: [], network: [] })
@@ -112,35 +110,29 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto p-4 sm:p-6 space-y-6">
-        <header className="space-y-2">
-          <h1 className="text-4xl font-mono font-bold text-primary tracking-tight">
-            CLUSTER CONTROL
-          </h1>
-          <p className="text-muted-foreground">
-            Distributed Systems Monitor
-          </p>
+      <div className="container mx-auto p-4 sm:p-6">
+        <header className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-mono font-bold text-primary tracking-tight">
+              CLUSTER CONTROL
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Distributed Systems Monitor
+            </p>
+          </div>
+          <ClusterStatsDashboard stats={stats} compact />
         </header>
 
-        {isMobile ? (
-          <Tabs defaultValue="topology" className="w-full">
-            <TabsList className="grid w-full grid-cols-7 text-xs">
-              <TabsTrigger value="topology" className="font-mono">Nodes</TabsTrigger>
-              <TabsTrigger value="racks" className="font-mono">Racks</TabsTrigger>
-              <TabsTrigger value="metrics" className="font-mono">Stats</TabsTrigger>
-              <TabsTrigger value="trends" className="font-mono">Trends</TabsTrigger>
-              <TabsTrigger value="capacity" className="font-mono">Plan</TabsTrigger>
-              <TabsTrigger value="anomalies" className="font-mono">Alerts</TabsTrigger>
-              <TabsTrigger value="events" className="font-mono">Events</TabsTrigger>
-            </TabsList>
-            <TabsContent value="topology" className="space-y-4 mt-6">
-              <NodeGrid
-                nodes={nodes}
-                selectedNode={selectedNode}
-                onSelectNode={setSelectedNode}
-              />
-            </TabsContent>
-            <TabsContent value="racks" className="space-y-4 mt-6">
+        <Tabs defaultValue="overview" className="w-full">
+          <TabsList className="font-mono mb-6">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="topology">Topology</TabsTrigger>
+            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            <TabsTrigger value="events">Events</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="space-y-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <RackVisualization
                 nodes={nodes}
                 selectedNode={selectedNode}
@@ -148,87 +140,48 @@ function App() {
                 selectedRack={selectedRack}
                 onSelectRack={setSelectedRack}
               />
-            </TabsContent>
-            <TabsContent value="metrics" className="space-y-4 mt-6">
-              <ClusterStatsDashboard stats={stats} />
-              <NetworkDashboard nodes={nodes} />
-              <StorageDashboard nodes={nodes} />
-            </TabsContent>
-            <TabsContent value="trends" className="space-y-4 mt-6">
-              {historicalData && historicalData.length > 0 && (
-                <HistoricalTrendsAnalysis historicalData={historicalData} />
-              )}
-            </TabsContent>
-            <TabsContent value="capacity" className="space-y-4 mt-6">
-              <CapacityPlanningDashboard alerts={alerts} />
-              {historicalData && historicalData.length >= 5 && <ForecastChart forecast={forecast} />}
-              {capacityPlan && <CapacityPlanCard plan={capacityPlan} />}
-            </TabsContent>
-            <TabsContent value="anomalies" className="space-y-4 mt-6">
+              <div className="space-y-6">
+                <NetworkDashboard nodes={nodes} />
+                <StorageDashboard nodes={nodes} />
+              </div>
+            </div>
+            
+            {anomalies.length > 0 && (
               <AnomalyAlerts anomalies={anomalies} />
-            </TabsContent>
-            <TabsContent value="events" className="space-y-4 mt-6">
-              <EventLog events={events} />
-            </TabsContent>
-          </Tabs>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-6">
-              <div className="space-y-4">
-                <h2 className="text-2xl font-mono font-semibold text-foreground">
-                  Rack Visualization
-                </h2>
-                <RackVisualization
-                  nodes={nodes}
-                  selectedNode={selectedNode}
-                  onSelectNode={setSelectedNode}
-                  selectedRack={selectedRack}
-                  onSelectRack={setSelectedRack}
-                />
-              </div>
+            )}
+            
+            {alerts.length > 0 && (
+              <CapacityPlanningDashboard alerts={alerts} />
+            )}
+          </TabsContent>
 
-              <div className="space-y-4">
-                <h2 className="text-2xl font-mono font-semibold text-foreground">
-                  Node Topology
-                </h2>
-                <NodeGrid
-                  nodes={nodes}
-                  selectedNode={selectedNode}
-                  onSelectNode={setSelectedNode}
-                />
-              </div>
+          <TabsContent value="topology" className="space-y-6">
+            <NodeGrid
+              nodes={nodes}
+              selectedNode={selectedNode}
+              onSelectNode={setSelectedNode}
+            />
+          </TabsContent>
 
-              <NetworkDashboard nodes={nodes} />
-              <StorageDashboard nodes={nodes} />
-
-              {historicalData && historicalData.length > 0 && (
-                <HistoricalTrendsAnalysis historicalData={historicalData} />
+          <TabsContent value="analytics" className="space-y-6">
+            {historicalData && historicalData.length > 0 && (
+              <HistoricalTrendsAnalysis historicalData={historicalData} />
+            )}
+            
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              {historicalData && historicalData.length >= 5 && (
+                <ForecastChart forecast={forecast} />
               )}
-
-              <div className="space-y-4">
-                <h2 className="text-2xl font-mono font-semibold text-foreground">
-                  Anomaly Detection
-                </h2>
-                <AnomalyAlerts anomalies={anomalies} />
-              </div>
-
-              <div className="space-y-4">
-                <h2 className="text-2xl font-mono font-semibold text-foreground">
-                  Capacity Planning
-                </h2>
-                <CapacityPlanningDashboard alerts={alerts} />
-                {historicalData && historicalData.length >= 5 && <ForecastChart forecast={forecast} />}
-              </div>
-
-              <EventLog events={events} />
+              {capacityPlan && (
+                <CapacityPlanCard plan={capacityPlan} />
+              )}
             </div>
+          </TabsContent>
 
-            <div className="space-y-6">
-              <ClusterStatsDashboard stats={stats} />
-              {capacityPlan && <CapacityPlanCard plan={capacityPlan} />}
-            </div>
-          </div>
-        )}
+          <TabsContent value="events" className="space-y-6">
+            <EventLog events={events} />
+          </TabsContent>
+        </Tabs>
 
         <NodeDetailPanel
           node={selectedNode}
