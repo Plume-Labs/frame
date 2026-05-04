@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { ClusterNode, RackPowerCooling } from '@/lib/types'
 import { organizeNodesByRack, organizeRacksByZone, calculateRackPowerCooling, RackData } from '@/lib/rack'
 import { RackView } from './RackView'
@@ -19,6 +19,8 @@ interface ZoneViewProps {
   nodes: ClusterNode[]
   selectedNode: ClusterNode | null
   onSelectNode: (node: ClusterNode) => void
+  initialZone?: string | null
+  onZoneConsumed?: () => void
 }
 
 interface ZoneStats {
@@ -38,9 +40,18 @@ interface ZoneStats {
   warningAlerts: number
 }
 
-export function ZoneView({ nodes, selectedNode, onSelectNode }: ZoneViewProps) {
-  const [selectedZone, setSelectedZone] = useState<string | null>(null)
+export function ZoneView({ nodes, selectedNode, onSelectNode, initialZone, onZoneConsumed }: ZoneViewProps) {
+  const [selectedZone, setSelectedZone] = useState<string | null>(initialZone ?? null)
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
+
+  // When a zone is selected externally (e.g. from the heatmap), navigate to it
+  useEffect(() => {
+    if (initialZone) {
+      setSelectedZone(initialZone)
+      setSelectedRack(null)
+      onZoneConsumed?.()
+    }
+  }, [initialZone, onZoneConsumed])
 
   const { zoneStats, racksMap, rackPowerCooling } = useMemo(() => {
     const racksMap = organizeNodesByRack(nodes)

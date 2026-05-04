@@ -2,8 +2,7 @@ import {
   ResourceDataPoint,
   Anomaly,
   AnomalyPattern,
-  AnomalyType,
-  ClusterNode
+  AnomalyType
 } from './types'
 
 function calculateMean(values: number[]): number {
@@ -266,8 +265,7 @@ function getRecommendation(anomaly: {
 export function detectAnomalies(
   currentData: ResourceDataPoint,
   historicalData: ResourceDataPoint[],
-  patterns: ReturnType<typeof buildAnomalyPatterns>,
-  nodes?: ClusterNode[]
+  patterns: ReturnType<typeof buildAnomalyPatterns>
 ): Anomaly[] {
   if (historicalData.length < 5) {
     return []
@@ -380,39 +378,4 @@ export function detectAnomalies(
     const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 }
     return severityOrder[a.severity] - severityOrder[b.severity]
   })
-}
-
-export function detectNodeAnomalies(
-  nodes: ClusterNode[],
-  historicalNodeMetrics: Map<string, ResourceDataPoint[]>
-): Anomaly[] {
-  const anomalies: Anomaly[] = []
-  let anomalyId = 0
-
-  nodes.forEach(node => {
-    const nodeHistory = historicalNodeMetrics.get(node.id) || []
-    if (nodeHistory.length < 5) return
-
-    const currentMetrics: ResourceDataPoint = {
-      timestamp: Date.now(),
-      cpu: node.metrics.cpu,
-      memory: node.metrics.memory,
-      storage: node.metrics.storage,
-      network: node.metrics.network
-    }
-
-    const patterns = buildAnomalyPatterns(nodeHistory)
-    const nodeAnomalies = detectAnomalies(currentMetrics, nodeHistory, patterns, [node])
-
-    nodeAnomalies.forEach(anomaly => {
-      anomalies.push({
-        ...anomaly,
-        id: `node-anomaly-${anomalyId++}`,
-        nodeId: node.id,
-        description: `Node ${node.name}: ${anomaly.description}`
-      })
-    })
-  })
-
-  return anomalies
 }
