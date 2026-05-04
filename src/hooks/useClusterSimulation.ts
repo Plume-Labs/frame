@@ -21,7 +21,9 @@ export function useClusterSimulation(count: number = 32) {
 
   // Always reflects the latest nodes without causing re-subscriptions
   const nodesRef = useRef<ClusterNode[]>(nodes)
-  const previousNodesRef = useRef<ClusterNode[]>([])
+  // Initialized with initial nodes so generateSystemEvent has a valid comparison
+  // baseline on the very first tick (avoids undefined-index reads into an empty array)
+  const previousNodesRef = useRef<ClusterNode[]>(nodes)
 
   // Keep nodesRef current on every render so interval callbacks see fresh data
   nodesRef.current = nodes
