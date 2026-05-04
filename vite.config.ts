@@ -22,4 +22,14 @@ export default defineConfig({
       '@': resolve(projectRoot, 'src')
     }
   },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/lib/**/*.ts'],
+      exclude: ['src/lib/types.ts']
+    }
+  }
 });

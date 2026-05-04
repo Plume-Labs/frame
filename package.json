@@ -7,6 +7,9 @@
         "dev": "vite",
         "kill": "fuser -k 5000/tcp",
         "build": "tsc -b && vite build",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
         "lint": "eslint .",
         "optimize": "vite optimize",
         "preview": "vite preview"
@@ -49,12 +52,9 @@
         "@tanstack/react-query": "^5.83.1",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
-        "cmdk": "^1.1.1",
         "d3": "^7.9.0",
         "date-fns": "^3.6.0",
-        "embla-carousel-react": "^8.5.2",
         "framer-motion": "^12.6.2",
-        "input-otp": "^1.4.2",
         "lucide-react": "^0.484.0",
         "marked": "^15.0.7",
         "next-themes": "^0.4.6",
@@ -68,10 +68,8 @@
         "recharts": "^2.15.1",
         "sonner": "^2.0.1",
         "tailwind-merge": "^3.0.2",
-        "three": "^0.175.0",
         "tw-animate-css": "^1.2.4",
         "uuid": "^11.1.0",
-        "vaul": "^1.1.2",
         "zod": "^3.25.76"
     },
     "devDependencies": {
@@ -80,6 +78,7 @@
         "@types/react": "^19.0.10",
         "@types/react-dom": "^19.0.4",
         "@vitejs/plugin-react-swc": "^4.2.2",
+        "@vitest/coverage-v8": "^4.1.5",
         "eslint": "^9.28.0",
         "eslint-plugin-react-hooks": "^5.2.0",
         "eslint-plugin-react-refresh": "^0.4.19",
@@ -87,7 +86,8 @@
         "tailwindcss": "^4.1.11",
         "typescript": "~5.7.2",
         "typescript-eslint": "^8.38.0",
-        "vite": "^7.3.2"
+        "vite": "^7.3.2",
+        "vitest": "^4.1.5"
     },
     "workspaces": {
         "packages": [
