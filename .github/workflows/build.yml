@@ -1,4 +1,4 @@
-name: Build and Push Container
+name: CI/CD Pipeline
 
 on:
   push:
@@ -10,17 +10,45 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20'
 
 jobs:
-  build:
+  # ── 1. Quality gate: lint + typecheck + unit tests ────────────────────────
+  test:
+    name: Test
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+  # ── 2. Build and push container image ────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,7 +74,7 @@ jobs:
             type=sha,prefix={{branch}}-
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
@@ -54,3 +82,76 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── 3. Integration test on a kind virtual cluster ─────────────────────────
+  integration:
+    name: Integration (kind)
+    runs-on: ubuntu-latest
+    needs: test
+    # Run on pushes to main/develop and on tags; skip for PRs to save time
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for kind
+        run: docker build -t cluster-control:ci .
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: cluster-control-ci
+
+      - name: Load image into cluster
+        run: kind load docker-image cluster-control:ci --name cluster-control-ci
+
+      - name: Create CI kustomize overlay
+        run: |
+          mkdir -p /tmp/ci-overlay
+          cat > /tmp/ci-overlay/kustomization.yaml << EOF
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          bases:
+            - $GITHUB_WORKSPACE/deploy/kubernetes/overlays/development
+          images:
+            - name: cluster-control
+              newName: cluster-control
+              newTag: ci
+          EOF
+
+      - name: Deploy to virtual cluster
+        run: kubectl apply -k /tmp/ci-overlay/
+
+      - name: Wait for rollout
+        run: kubectl -n cluster-control rollout status deployment/cluster-control-ui --timeout=120s
+
+      - name: Smoke test
+        run: |
+          kubectl -n cluster-control port-forward svc/cluster-control-ui 8080:80 &
+          sleep 5
+          curl -fsS http://localhost:8080/
+
+  # ── 4. Create a versioned release package on tags ─────────────────────────
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build, integration]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -sL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/kustomize
+
+      - name: Render production manifest
+        run: |
+          kustomize build deploy/kubernetes/overlays/production/ > cluster-control-${{ github.ref_name }}.yaml
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cluster-control-${{ github.ref_name }}.yaml
+          generate_release_notes: true
