@@ -1,4 +1,4 @@
-import { ClusterNode, DeviceType } from './types'
+import { ClusterNode, DeviceType, RackPowerCooling } from './types'
 import { RackData, calculateRackPowerCooling } from './rack'
 
 export interface RackConstraints {
@@ -70,13 +70,14 @@ export function calculateDeviceWeight(node: ClusterNode): number {
 
 export function validatePowerConstraints(
   rack: RackData,
-  constraints: RackConstraints
+  constraints: RackConstraints,
+  powerMetrics?: RackPowerCooling
 ): { errors: ValidationError[]; warnings: ValidationWarning[] } {
   const errors: ValidationError[] = []
   const warnings: ValidationWarning[] = []
   
-  const powerMetrics = calculateRackPowerCooling(rack)
-  const totalPower = powerMetrics.power.currentDraw
+  const metrics = powerMetrics ?? calculateRackPowerCooling(rack)
+  const totalPower = metrics.power.currentDraw
   const powerUtilization = (totalPower / constraints.maxPowerWatts) * 100
   
   if (totalPower > constraints.maxPowerWatts) {
@@ -116,12 +117,12 @@ export function validatePowerConstraints(
     })
   }
   
-  if (powerMetrics.powerDensity > constraints.maxPowerDensity) {
+  if (metrics.powerDensity > constraints.maxPowerDensity) {
     warnings.push({
       type: 'power',
-      message: `High power density detected (${powerMetrics.powerDensity}W/U)`,
+      message: `High power density detected (${metrics.powerDensity}W/U)`,
       recommendation: 'Distribute high-power devices across multiple racks',
-      currentValue: powerMetrics.powerDensity,
+      currentValue: metrics.powerDensity,
       thresholdValue: constraints.maxPowerDensity
     })
   }
@@ -131,13 +132,14 @@ export function validatePowerConstraints(
 
 export function validateCoolingConstraints(
   rack: RackData,
-  constraints: RackConstraints
+  constraints: RackConstraints,
+  powerMetrics?: RackPowerCooling
 ): { errors: ValidationError[]; warnings: ValidationWarning[] } {
   const errors: ValidationError[] = []
   const warnings: ValidationWarning[] = []
   
-  const powerMetrics = calculateRackPowerCooling(rack)
-  const thermalLoad = powerMetrics.thermalLoad
+  const metrics = powerMetrics ?? calculateRackPowerCooling(rack)
+  const thermalLoad = metrics.thermalLoad
   
   if (thermalLoad > constraints.maxCoolingBTU) {
     errors.push({
@@ -165,30 +167,30 @@ export function validateCoolingConstraints(
     })
   }
   
-  if (powerMetrics.cooling.outletTemp > 35) {
+  if (metrics.cooling.outletTemp > 35) {
     errors.push({
       type: 'cooling',
       severity: 'critical',
-      message: `Outlet temperature (${powerMetrics.cooling.outletTemp}°C) exceeds safe operating limit`,
-      currentValue: powerMetrics.cooling.outletTemp,
+      message: `Outlet temperature (${metrics.cooling.outletTemp}°C) exceeds safe operating limit`,
+      currentValue: metrics.cooling.outletTemp,
       limitValue: 35
     })
-  } else if (powerMetrics.cooling.outletTemp > 32) {
+  } else if (metrics.cooling.outletTemp > 32) {
     warnings.push({
       type: 'thermal',
       message: `Elevated outlet temperature detected`,
       recommendation: 'Improve airflow or reduce thermal load',
-      currentValue: powerMetrics.cooling.outletTemp,
+      currentValue: metrics.cooling.outletTemp,
       thresholdValue: 32
     })
   }
   
-  if (powerMetrics.cooling.airflowCFM < constraints.minAirflowCFM) {
+  if (metrics.cooling.airflowCFM < constraints.minAirflowCFM) {
     warnings.push({
       type: 'cooling',
-      message: `Insufficient airflow (${powerMetrics.cooling.airflowCFM} CFM)`,
+      message: `Insufficient airflow (${metrics.cooling.airflowCFM} CFM)`,
       recommendation: 'Increase fan speed or remove airflow obstructions',
-      currentValue: powerMetrics.cooling.airflowCFM,
+      currentValue: metrics.cooling.airflowCFM,
       thresholdValue: constraints.minAirflowCFM
     })
   }
@@ -329,8 +331,10 @@ export function validateRackPlacement(
   rack: RackData,
   constraints: RackConstraints = DEFAULT_RACK_CONSTRAINTS
 ): ValidationResult {
-  const powerValidation = validatePowerConstraints(rack, constraints)
-  const coolingValidation = validateCoolingConstraints(rack, constraints)
+  // Compute once so both power and cooling validation see the same random values
+  const powerMetrics = calculateRackPowerCooling(rack)
+  const powerValidation = validatePowerConstraints(rack, constraints, powerMetrics)
+  const coolingValidation = validateCoolingConstraints(rack, constraints, powerMetrics)
   const spacingValidation = validatePhysicalSpacing(rack, constraints)
   const capacityValidation = validateCapacityLimits(rack, constraints)
   
