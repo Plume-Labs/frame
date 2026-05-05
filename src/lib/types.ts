@@ -459,3 +459,186 @@ export interface SpecDecodeMetrics {
   routes: SpecDecodeRouteStats[]
 }
 
+// ── PTP / IEEE 1588 Clock Synchronization ─────────────────────────────────────
+
+export type PTPPortState = 'MASTER' | 'SLAVE' | 'PASSIVE' | 'FAULTY' | 'LISTENING'
+
+export interface PTPNodeStatus {
+  nodeId: string
+  nodeName: string
+  portState: PTPPortState
+  /** Offset from grandmaster clock (nanoseconds) */
+  offsetNs: number
+  /** Mean path delay to grandmaster (nanoseconds) */
+  pathDelayNs: number
+  /** Frequency correction applied by servo (ppb) */
+  freqAdjPpb: number
+  /** Grandmaster clock identity */
+  grandmasterClockId: string
+  /** Number of sync messages received per second */
+  syncRateHz: number
+  /** PTP4L servo state: 's1'=freq-only, 's2'=locked */
+  servoState: 's0' | 's1' | 's2'
+}
+
+export interface PTPClusterStats {
+  grandmasterNode: string
+  totalNodes: number
+  lockedNodes: number
+  /** Maximum offset across all nodes (ns) */
+  maxOffsetNs: number
+  /** Mean offset across all nodes (ns) */
+  meanOffsetNs: number
+  nodes: PTPNodeStatus[]
+}
+
+// ── NVIDIA MPS (Multi-Process Service) ───────────────────────────────────────
+
+export interface MPSClientInfo {
+  pid: number
+  cmdline: string
+  gpuIndex: number
+  /** SM (streaming multiprocessor) utilization share (0–100) */
+  smUtilPct: number
+  /** Memory used (MB) */
+  memUsedMB: number
+  /** Active since timestamp */
+  startedAt: number
+}
+
+export interface MPSNodeStatus {
+  nodeId: string
+  nodeName: string
+  enabled: boolean
+  /** Pipe directory for this MPS server */
+  pipeDir: string
+  activeClients: MPSClientInfo[]
+  /** Total SM utilization across all clients (0–100) */
+  totalSMUtil: number
+  /** Active threads percentage limit configured (default 100) */
+  activeThreadPct: number
+  /** GPU index this MPS daemon serves */
+  gpuIndex: number
+}
+
+// ── Burst Buffer NVMe ─────────────────────────────────────────────────────────
+
+export type BurstBufferState = 'idle' | 'absorbing' | 'draining' | 'full'
+
+export interface BurstBufferNodeStats {
+  nodeId: string
+  nodeName: string
+  state: BurstBufferState
+  /** NVMe capacity used for burst buffer (GB) */
+  usedGB: number
+  /** Total NVMe capacity allocated as burst buffer (GB) */
+  totalGB: number
+  /** Write throughput currently being absorbed (MB/s) */
+  writeRateMBps: number
+  /** Drain throughput to Ceph/object store (MB/s) */
+  drainRateMBps: number
+  /** Alluxio worker space used (GB) */
+  alluxioWorkerGB: number
+  /** Number of Ray checkpoint files currently staged */
+  stagedCheckpoints: number
+}
+
+export interface BurstBufferClusterStats {
+  nodes: BurstBufferNodeStats[]
+  /** Total cluster write rate being absorbed (MB/s) */
+  totalWriteRateMBps: number
+  /** Total drain rate to Ceph (MB/s) */
+  totalDrainRateMBps: number
+  /** Total staged capacity (GB) */
+  totalUsedGB: number
+  /** Total burst buffer capacity (GB) */
+  totalCapacityGB: number
+}
+
+// ── Backfill Scheduling (Volcano) ─────────────────────────────────────────────
+
+export interface BackfillSlot {
+  /** Queue the backfill slot is available in */
+  queue: string
+  /** Estimated free window start (epoch ms) */
+  startAt: number
+  /** Estimated free window duration (minutes) */
+  durationMin: number
+  cpuAvailable: number
+  memAvailableGi: number
+  gpuAvailable: number
+}
+
+export interface BackfillJob {
+  name: string
+  queue: string
+  requestedCPU: number
+  requestedMemGi: number
+  requestedGPU: number
+  estimatedDurationMin: number
+  /** Whether the backfill scheduler has placed this job */
+  placed: boolean
+  slotStartAt?: number
+}
+
+// ── KSM (Kernel Same-Page Merging) ───────────────────────────────────────────
+
+export interface KSMNodeStats {
+  nodeId: string
+  nodeName: string
+  enabled: boolean
+  /** Pages currently merged (de-duplicated) */
+  pagesMerged: number
+  /** Pages sharing (candidate pages identified) */
+  pagesSharing: number
+  /** Memory saved by KSM (MB) */
+  memorySavedMB: number
+  /** KSM scan rate (pages/s) */
+  scanRatePagesPerSec: number
+  /** Sleep interval between scans (ms) */
+  scanIntervalMs: number
+}
+
+export interface KSMClusterStats {
+  nodes: KSMNodeStats[]
+  /** Total memory saved cluster-wide (GB) */
+  totalSavedGB: number
+  /** Total pages merged cluster-wide */
+  totalPagesMerged: number
+  /** Nodes with KSM enabled */
+  enabledNodes: number
+}
+
+// ── Pipeline Parallelism prefill/decode ──────────────────────────────────────
+
+export type PPStageRole = 'prefill' | 'decode' | 'combined'
+
+export interface PPStageStats {
+  stageId: number
+  role: PPStageRole
+  /** GPU indices assigned to this stage */
+  gpuIndices: number[]
+  /** Number of pipeline micro-batches currently in-flight */
+  microBatchesInFlight: number
+  /** Stage utilization (0–100) */
+  utilizationPct: number
+  /** Mean bubble ratio — fraction of time the stage stalls (0–1) */
+  bubbleRatio: number
+  /** Tokens/s processed by this stage */
+  tokensPerSec: number
+}
+
+export interface PipelinePPMetrics {
+  /** Total pipeline stages (pp degree) */
+  pipelineDegree: number
+  /** Tensor parallel degree within each stage */
+  tensorParallelDegree: number
+  /** Number of micro-batches per forward pass */
+  microBatches: number
+  /** Mean end-to-end pipeline latency (ms) */
+  e2eLatencyMs: number
+  /** Overall pipeline efficiency (1 - avg bubble ratio) */
+  efficiency: number
+  stages: PPStageStats[]
+}
+

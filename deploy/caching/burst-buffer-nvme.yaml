@@ -1,0 +1,150 @@
+---
+# Burst Buffer NVMe — Alluxio Write-Behind on Local NVMe
+# Absorbs checkpoint I/O spikes from Ray/PyTorch training before draining
+# asynchronously to Ceph. Prevents Ceph overload during large model saves.
+#
+# Apply with: kubectl apply -f deploy/caching/burst-buffer-nvme.yaml
+#
+# Architecture:
+#   GPU Node (training) ──write──► NVMe (local, fast, 400 GB/node)
+#                                      │ async drain (ASYNC_THROUGH)
+#                                      ▼
+#                                 Ceph RBD/CephFS (persistent)
+#
+# Requires: Alluxio operator or manual Alluxio worker DaemonSet
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: alluxio
+  labels:
+    frame.plume-labs.io/managed: "true"
+---
+# ── Alluxio worker configuration (tiered NVMe → Ceph) ────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alluxio-worker-config
+  namespace: alluxio
+  labels:
+    frame.plume-labs.io/optimization: burst-buffer-nvme
+data:
+  alluxio-site.properties: |
+    # Tier 0: local NVMe (burst buffer)
+    alluxio.worker.ramdisk.size=0
+    alluxio.worker.tieredstore.levels=2
+
+    alluxio.worker.tieredstore.level0.alias=SSD
+    alluxio.worker.tieredstore.level0.dirs.path=/mnt/nvme-burst
+    alluxio.worker.tieredstore.level0.dirs.quota=400GB
+    alluxio.worker.tieredstore.level0.watermark.high.ratio=0.85
+    alluxio.worker.tieredstore.level0.watermark.low.ratio=0.70
+
+    # Tier 1: Ceph (via CSI PV)
+    alluxio.worker.tieredstore.level1.alias=HDD
+    alluxio.worker.tieredstore.level1.dirs.path=/mnt/ceph-drain
+    alluxio.worker.tieredstore.level1.dirs.quota=10TB
+    alluxio.worker.tieredstore.level1.watermark.high.ratio=0.90
+    alluxio.worker.tieredstore.level1.watermark.low.ratio=0.80
+
+    # Write-behind: data lands on NVMe first, drained async to Ceph
+    alluxio.user.file.writetype.default=ASYNC_THROUGH
+    alluxio.worker.tieredstore.reserver.interval=1s
+    alluxio.worker.tieredstore.reserver.enabled=true
+
+    # Block size tuned for checkpoint files (typically 256 MB+)
+    alluxio.user.block.size.bytes.default=256MB
+
+    # Worker network
+    alluxio.worker.web.port=30000
+    alluxio.worker.rpc.port=29999
+    alluxio.worker.data.port=29998
+---
+# ── Alluxio worker DaemonSet ──────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alluxio-worker
+  namespace: alluxio
+  labels:
+    app: alluxio-worker
+    frame.plume-labs.io/optimization: burst-buffer-nvme
+spec:
+  selector:
+    matchLabels:
+      app: alluxio-worker
+  template:
+    metadata:
+      labels:
+        app: alluxio-worker
+    spec:
+      nodeSelector:
+        nvme: "true"   # only nodes with local NVMe drives
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: alluxio-worker
+          image: alluxio/alluxio:3.4.0
+          command: [/entrypoint.sh, worker]
+          env:
+            - name: ALLUXIO_JAVA_OPTS
+              value: >-
+                -Dalluxio.conf.dir=/opt/alluxio/conf
+                -Xms4g -Xmx8g
+          ports:
+            - name: rpc
+              containerPort: 29999
+            - name: data
+              containerPort: 29998
+            - name: web
+              containerPort: 30000
+          resources:
+            requests:
+              cpu: "2"
+              memory: 10Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          volumeMounts:
+            - name: alluxio-config
+              mountPath: /opt/alluxio/conf
+            - name: nvme-burst
+              mountPath: /mnt/nvme-burst
+            - name: ceph-drain
+              mountPath: /mnt/ceph-drain
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: web
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+      volumes:
+        - name: alluxio-config
+          configMap:
+            name: alluxio-worker-config
+        - name: nvme-burst
+          hostPath:
+            path: /mnt/nvme0n1/alluxio-burst
+            type: DirectoryOrCreate
+        - name: ceph-drain
+          persistentVolumeClaim:
+            claimName: ceph-alluxio-drain-pvc
+---
+# ── StorageClass — Alluxio-backed for Ray checkpoint PVCs ────────────────────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: alluxio-burst-buffer
+  labels:
+    frame.plume-labs.io/optimization: burst-buffer-nvme
+provisioner: alluxio-csi
+parameters:
+  alluxioPath: /ray-checkpoints
+  writeType: ASYNC_THROUGH
+  cacheMediaType: SSD
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
