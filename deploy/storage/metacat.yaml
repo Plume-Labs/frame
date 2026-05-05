@@ -1,0 +1,213 @@
+---
+# DataHub — metadata catalog tracking datasets, schemas, lineage, and ownership
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: datahub-gms
+  namespace: data-fabric
+  labels:
+    app: datahub-gms
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: datahub-gms
+  template:
+    metadata:
+      labels:
+        app: datahub-gms
+    spec:
+      priorityClassName: neura-medium
+      containers:
+        - name: datahub-gms
+          image: linkedin/datahub-gms:v0.13.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: EBEAN_DATASOURCE_HOST
+              value: postgres-gms.data-fabric.svc.cluster.local
+            - name: EBEAN_DATASOURCE_PORT
+              value: "5432"
+            - name: EBEAN_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-postgres-secret
+                  key: username
+            - name: EBEAN_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-postgres-secret
+                  key: password
+            - name: EBEAN_DATASOURCE_DRIVER
+              value: org.postgresql.Driver
+            - name: KAFKA_BOOTSTRAP_SERVER
+              value: kafka.data-fabric.svc.cluster.local:9092
+            - name: ELASTICSEARCH_HOST
+              value: elasticsearch.data-fabric.svc.cluster.local
+            - name: ELASTICSEARCH_PORT
+              value: "9200"
+            - name: NEO4J_HOST
+              value: bolt://neo4j.data-fabric.svc.cluster.local:7687
+            - name: GRAPH_SERVICE_IMPL
+              value: neo4j
+            - name: METADATA_AUDIT_EVENT_NAME
+              value: MetadataAuditEvent_v4
+            - name: METADATA_CHANGE_EVENT_NAME
+              value: MetadataChangeEvent_v4
+            - name: FAILED_METADATA_CHANGE_EVENT_NAME
+              value: FailedMetadataChangeEvent_v4
+            - name: DATAHUB_ANALYTICS_ENABLED
+              value: "true"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: datahub-gms
+  namespace: data-fabric
+spec:
+  selector:
+    app: datahub-gms
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# DataHub frontend UI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: datahub-frontend
+  namespace: data-fabric
+  labels:
+    app: datahub-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: datahub-frontend
+  template:
+    metadata:
+      labels:
+        app: datahub-frontend
+    spec:
+      priorityClassName: neura-medium
+      containers:
+        - name: datahub-frontend
+          image: linkedin/datahub-frontend-react:v0.13.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9002
+              name: http
+          env:
+            - name: DATAHUB_GMS_HOST
+              value: datahub-gms.data-fabric.svc.cluster.local
+            - name: DATAHUB_GMS_PORT
+              value: "8080"
+            - name: DATAHUB_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: datahub-secret
+                  key: secret
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: datahub-frontend
+  namespace: data-fabric
+spec:
+  selector:
+    app: datahub-frontend
+  ports:
+    - name: http
+      port: 9002
+      targetPort: 9002
+---
+# Ceph ObjectStore — S3-compatible endpoint for the data fabric
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStore
+metadata:
+  name: neura-store
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 3
+  dataPool:
+    replicated:
+      size: 3
+    deviceClass: nvme
+  preservePoolsOnDelete: false
+  gateway:
+    type: s3
+    port: 80
+    securePort: 443
+    instances: 3
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+  healthCheck:
+    bucket:
+      disabled: false
+      period: 60s
+---
+# Ceph Filesystem — POSIX-compatible access for training data and checkpoints
+apiVersion: ceph.rook.io/v1
+kind: CephFilesystem
+metadata:
+  name: neura-fs
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 3
+  dataPools:
+    - name: default
+      replicated:
+        size: 3
+    - name: nvme-tier
+      deviceClass: nvme
+      replicated:
+        size: 2
+  preserveFilesystemOnDelete: false
+  metadataServer:
+    activeCount: 2
+    activeStandby: true
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+      limits:
+        cpu: "8"
+        memory: 16Gi

@@ -1,67 +1,83 @@
 # Planning Guide
 
-A visual distributed systems cluster monitor that simulates real-time node orchestration, resource allocation, and network topology with an authentic mainframe-inspired aesthetic.
+Frame is a **mainframe framework for Kubernetes** — not merely a monitoring dashboard. It provides a complete operator control plane (REST API, TypeScript SDK, and UI) that lets operators, workloads, and CI pipelines manage jobs, scheduling policies, resource quotas, storage, networking, and resilience programmatically or through the interface.
+
+> **Cluster scope:** Frame manages a **single local cluster** — one physical location, with one or more racks. The RDMA fabric (InfiniBand or RoCE) is a local, intra-datacenter interconnect and does **not** traverse the internet or WAN. `zones` and `racks` are failure-domain labels within the same site. Multi-site / multi-region federation is **out of scope** for this version.
 
 **Experience Qualities**:
-1. **Technical** - Interface evokes the precision and depth of enterprise infrastructure tooling with detailed metrics and system status
-2. **Dynamic** - Live updating visualizations show cluster health, resource flow, and node communication in real-time
-3. **Authoritative** - Design conveys control and observability over complex distributed architecture
+1. **Control-first** - The interface leads with operator actions: job submission, policy management, resource provisioning, and resilience controls. Observability is present but secondary.
+2. **Programmable** - Every framework action available in the UI is also exposed through the REST API and TypeScript SDK so workloads and automation can interact without a human in the loop.
+3. **Authoritative** - Design conveys ownership and control over complex distributed infrastructure, not just passive visibility into it.
 
-**Complexity Level**: Complex Application (advanced functionality, likely with multiple views)
-This is both a simulation/visualization tool AND a complete production deployment infrastructure. The frontend provides coordinated views of cluster state, node metrics, and network topology. The backend infrastructure includes comprehensive IaC for bare-metal Kubernetes provisioning, RDMA networking, Ceph distributed storage, PXE boot automation, and GitOps-based continuous delivery with Flux/ArgoCD.
+**Complexity Level**: Complex Application (advanced functionality, multiple views, client/server split)
+Frame is a full-stack mainframe framework: a React control-plane UI, an Express REST API server, a TypeScript operator SDK, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph/MinIO storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
 
 ## Essential Features
 
-**Cluster Topology View**
+**Operator REST API & TypeScript SDK** *(primary)*
+- Functionality: HTTP REST API (`server/index.ts`) exposing endpoints for job submission, scheduling policy management, resource quota control, and node inspection; TypeScript `FrameClient` SDK wrapping the API
+- Purpose: Lets workloads, CI pipelines, and operator CLIs interact with Frame programmatically without the UI
+- Trigger: Any client calls `POST /api/jobs`, `POST /api/scheduler/policies`, `PUT /api/resources/quotas/:ns`, etc.
+- Progression: Client calls SDK → SDK calls REST API → API mutates in-memory/cluster state → Response returned with updated resource
+- Success criteria: All CRUD operations complete with correct status codes; TypeScript types are accurate; full OpenAPI spec (`deploy/api/openapi.yaml`) documents every endpoint
+
+**Job Orchestration Control Surface** *(primary)*
+- Functionality: UI for submitting, monitoring, and cancelling Argo Workflow jobs; DAG visualisation; checkpoint/resume status
+- Purpose: Operators submit training/inference jobs without writing Argo YAML manually
+- Trigger: Active by default on app load (Jobs tab is the first tab)
+- Progression: Operator opens UI → selects pipeline template → sets parameters → submits job → watches DAG progress
+- Success criteria: Jobs visible in real-time; DAG nodes colour-coded by status; cancel action works
+
+**Scheduling Policy Management** *(primary)*
+- Functionality: Create/edit/delete PriorityClasses, PodGroups, and queue policies for Volcano or YuniKorn
+- Purpose: Operators tune job priority, preemption, and fair-share without kubectl YAML
+- Trigger: User opens Scheduler tab
+- Success criteria: Policies persist; scheduler type (volcano/yunikorn/default) selectable; changes reflected in queue view
+
+**Resource Provisioning** *(primary)*
+- Functionality: Assign service classes (HIGH/MEDIUM/LOW) to nodes; set per-namespace GPU/CPU/memory quotas; configure MIG partitioning
+- Purpose: Control workload placement and resource isolation
+- Trigger: User opens Service Classes or GPU tabs
+- Success criteria: Service class changes propagate to node cards; quota edits persist; MIG instance counts agree with migEnabled flag
+
+**Cluster Topology View** *(secondary — management)*
 - Functionality: Visual grid/network display of compute nodes with status indicators
-- Purpose: Provides at-a-glance understanding of cluster health and node distribution
-- Trigger: Loads on app initialization, updates in real-time
-- Progression: App loads → Nodes render in grid → Status colors indicate health → Hover reveals detailed metrics → Click node for expanded view
-- Success criteria: All nodes visible, color-coded by status, smooth animations, accurate metric display
+- Purpose: Inspect and manage node state, rack placement, and zone health
+- Trigger: User opens Nodes, Racks, or Zones tab
+- Success criteria: All nodes visible, colour-coded by status, smooth animations, accurate metric display
 
-**Node Detail Panel**
-- Functionality: Expanded metrics panel showing CPU, memory, network I/O, storage for selected node
-- Purpose: Deep dive into individual node performance and resource utilization
-- Trigger: User clicks any node in topology view
-- Progression: Node clicked → Panel slides in from right → Metrics animate in → Real-time graphs update → Close button dismisses
-- Success criteria: Metrics update smoothly, graphs render correctly, panel transitions feel fluid
-
-**Resource Allocation Dashboard**
-- Functionality: Overview charts showing aggregate cluster resources (CPU, RAM, storage, network bandwidth)
-- Purpose: Understanding total capacity and utilization across the cluster
-- Trigger: Visible on initial load alongside topology
-- Progression: Dashboard loads → Progress bars/charts render → Values count up → Updates reflect node changes
-- Success criteria: Accurate aggregation, responsive to node state changes, clear visual hierarchy
-
-**System Event Log**
-- Functionality: Scrolling feed of cluster events (node joins, provisioning, failovers, resource alerts)
-- Purpose: Audit trail and real-time awareness of system changes
-- Trigger: Auto-generates events based on simulated cluster activity
-- Progression: Event occurs → New entry prepends to log → Entry fades in → Old entries scroll down → Auto-prune after 100 entries
-- Success criteria: Events appear in real-time, timestamps accurate, color-coded by severity
+**Observability** *(secondary — monitoring)*
+- Functionality: Aggregate CPU/memory/network metrics, anomaly alerts, capacity forecasts, Prometheus/Grafana integration, Jaeger tracing, data lineage graph
+- Purpose: Passive visibility into cluster health; not the primary interaction mode
+- Trigger: User opens Observe, Lineage, or Events tab
+- Success criteria: Metrics update smoothly; anomaly alerts fire at correct thresholds; lineage graph renders correctly
 
 ## Essential Features (Continued)
 
 **GitOps Deployment Infrastructure**
-- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, PXE boot, Ceph storage, and GitOps workflows
+- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, PXE boot, Ceph/MinIO storage, HPC scheduling (Volcano/YuniKorn), Argo Workflows, and GitOps workflows
 - Purpose: Production-ready deployment scripts for mainframe-like clustering with automated provisioning and continuous delivery
 - Trigger: Operations team uses deployment scripts and Ansible playbooks to provision infrastructure
-- Progression: Run bootstrap script → PXE provisions bare metal → Ansible configures K8s → Flux/ArgoCD syncs from Git → Monitoring UI deployed
-- Success criteria: Full cluster deployed with RDMA networking, Ceph storage, automated GitOps, hot-add node capability, comprehensive monitoring
+- Progression: Run bootstrap script → PXE provisions bare metal → Ansible configures K8s → Flux/ArgoCD syncs from Git → Frame API + UI deployed
+- Success criteria: Full cluster deployed with RDMA networking, Ceph/MinIO storage, automated GitOps, hot-add node capability, HPC scheduler, and Frame API server running
 
 ## Edge Case Handling
 
+- **API Server Unavailable**: UI falls back to simulated data; banner indicates API is offline
 - **All Nodes Offline**: Display prominent alert banner with cluster unavailable message
+- **Job Submission Validation**: API returns 400 with clear error if required fields missing; UI shows inline validation
+- **Policy Conflict**: If a new policy conflicts with an existing queue, API returns descriptive error; UI surfaces it inline
 - **Single Node Selected**: Gracefully handle detail panel for nodes with varying metric availability
 - **Rapid State Changes**: Debounce updates to prevent UI thrashing during simulated chaos scenarios
 - **Mobile Viewport**: Stack topology and metrics vertically, reduce node grid density
 - **Empty State**: Show "Initializing cluster..." skeleton loaders during first render
 - **Hot Node Addition**: Support dynamic node provisioning via IPMI/PXE without cluster disruption
 - **Storage Failures**: Gracefully handle Ceph OSD failures with visible cluster health degradation
+- **Multi-site Request**: Out of scope — Frame manages a single local cluster. If a user requests multi-region federation, surface a clear message that it is not yet supported.
 
 ## Design Direction
 
-The design should evoke the aesthetic of legacy mainframe terminals merged with modern observability tools - think green phosphor displays reimagined with contemporary data visualization. High information density balanced with clear visual hierarchy. The interface should feel like mission-critical infrastructure monitoring: precise, dense with data, but never cluttered.
+The design should evoke the aesthetic of legacy mainframe terminals merged with modern infrastructure control panels — think green phosphor displays reimagined with contemporary data visualisation. High information density balanced with clear visual hierarchy. The interface should feel like mission-critical **control** infrastructure: precise, dense with data, but never cluttered. Actions (submit, cancel, apply policy) should be visually prominent; monitoring views are present but visually subordinate.
 
 ## Color Selection
 

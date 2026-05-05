@@ -56,7 +56,10 @@ data:
       evaluation_interval: 15s
       external_labels:
         cluster: 'bare-metal-cluster'
-    
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
     scrape_configs:
       - job_name: 'kubernetes-apiservers'
         kubernetes_sd_configs:
@@ -109,6 +112,124 @@ data:
           - source_labels: [__meta_kubernetes_node_label_rdma]
             action: keep
             regex: "true"
+
+      - job_name: 'dcgm-gpu-metrics'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [monitoring]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: dcgm-exporter
+
+      - job_name: 'argo-workflows'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [argo]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: workflow-controller
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:9090
+
+      - job_name: 'volcano-scheduler'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [volcano-system]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: volcano-scheduler
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:8080
+
+      - job_name: 'alluxio'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [alluxio]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: alluxio-master
+
+      - job_name: 'redis-cluster'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [redis-cache]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: redis-cluster
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:9121
+---
+# Prometheus recording rules for GPU, NUMA, cache, and job SLO metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-recording-rules
+  namespace: monitoring
+data:
+  recording-rules.yml: |
+    groups:
+      - name: gpu_aggregations
+        interval: 30s
+        rules:
+          - record: cluster:gpu_utilization:avg
+            expr: avg(DCGM_FI_DEV_GPU_UTIL)
+          - record: cluster:gpu_memory_utilization:avg
+            expr: avg(DCGM_FI_DEV_MEM_COPY_UTIL)
+          - record: cluster:gpu_power_total_watts
+            expr: sum(DCGM_FI_DEV_POWER_USAGE)
+          - record: cluster:gpu_ecc_errors_total
+            expr: sum(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL)
+          - record: cluster:gpu_nvlink_bandwidth_gbps
+            expr: sum(rate(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL[5m])) / 1024 / 1024
+          - record: node:gpu_utilization:max
+            expr: max by (node) (DCGM_FI_DEV_GPU_UTIL)
+          - record: node:gpu_temp:max
+            expr: max by (node) (DCGM_FI_DEV_GPU_TEMP)
+
+      - name: inference_slo
+        interval: 15s
+        rules:
+          - record: neura:inference_latency_p99:seconds
+            expr: histogram_quantile(0.99, sum by (le) (rate(neura_inference_duration_seconds_bucket[5m])))
+          - record: neura:inference_latency_p95:seconds
+            expr: histogram_quantile(0.95, sum by (le) (rate(neura_inference_duration_seconds_bucket[5m])))
+          - record: neura:inference_slo_compliance:ratio
+            expr: (1 - sum(rate(neura_inference_duration_seconds_count{status="timeout"}[5m])) / sum(rate(neura_inference_duration_seconds_count[5m])))
+          - record: neura:cache_hit_rate:ratio
+            expr: sum(rate(neura_cache_hits_total[5m])) / (sum(rate(neura_cache_hits_total[5m])) + sum(rate(neura_cache_misses_total[5m])))
+
+      - name: job_orchestration
+        interval: 60s
+        rules:
+          - record: argo:workflow_success_rate:ratio
+            expr: sum(rate(argo_workflows_count{phase="Succeeded"}[1h])) / sum(rate(argo_workflows_count[1h]))
+          - record: argo:workflow_duration_p95:seconds
+            expr: histogram_quantile(0.95, sum by (le) (rate(argo_workflow_duration_seconds_bucket[1h])))
+          - record: volcano:gang_scheduling_efficiency:ratio
+            expr: sum(volcano_queue_allocated_milli_cpu) / sum(volcano_queue_guaranteed_milli_cpu)
+
+      - name: data_locality
+        interval: 30s
+        rules:
+          - record: alluxio:cache_hit_rate:ratio
+            expr: sum(rate(alluxio_cache_bytes_read_cache_total[5m])) / (sum(rate(alluxio_cache_bytes_read_cache_total[5m])) + sum(rate(alluxio_cache_bytes_read_external_total[5m])))
+          - record: alluxio:worker_capacity_used:ratio
+            expr: sum(alluxio_worker_capacity_used) / sum(alluxio_worker_capacity_total)
+          - record: redis:memory_used_ratio
+            expr: redis_memory_used_bytes / redis_memory_max_bytes
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -139,12 +260,17 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
             - name: storage
               mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-recording-rules
         - name: storage
           persistentVolumeClaim:
             claimName: prometheus-storage

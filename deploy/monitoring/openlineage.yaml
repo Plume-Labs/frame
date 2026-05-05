@@ -1,0 +1,171 @@
+---
+# OpenLineage — data lineage tracking integrated with Argo Workflows and Spark
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openlineage-server
+  namespace: monitoring
+  labels:
+    app: openlineage-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: openlineage-server
+  template:
+    metadata:
+      labels:
+        app: openlineage-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      priorityClassName: neura-medium
+      containers:
+        - name: marquez
+          image: marquezproject/marquez:0.45.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - /etc/marquez/marquez.yml
+          ports:
+            - name: api
+              containerPort: 8080
+            - name: admin
+              containerPort: 8081
+          env:
+            - name: MARQUEZ_DB_HOST
+              value: postgres-lineage.monitoring.svc.cluster.local
+            - name: MARQUEZ_DB_PORT
+              value: "5432"
+            - name: MARQUEZ_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: marquez-postgres-secret
+                  key: username
+            - name: MARQUEZ_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: marquez-postgres-secret
+                  key: password
+            - name: MARQUEZ_DB_NAME
+              value: marquez
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: admin
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: admin
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: marquez-config
+              mountPath: /etc/marquez
+      volumes:
+        - name: marquez-config
+          configMap:
+            name: marquez-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: marquez-config
+  namespace: monitoring
+data:
+  marquez.yml: |
+    server:
+      applicationConnectors:
+        - type: http
+          port: 8080
+      adminConnectors:
+        - type: http
+          port: 8081
+    db:
+      driverClass: org.postgresql.Driver
+      url: jdbc:postgresql://${MARQUEZ_DB_HOST}:${MARQUEZ_DB_PORT}/${MARQUEZ_DB_NAME}
+      user: ${MARQUEZ_DB_USER}
+      password: ${MARQUEZ_DB_PASSWORD}
+    migrateOnStartup: true
+    tagsFile: /etc/marquez/tags.yml
+    integrations:
+      enabled: true
+      argo:
+        enabled: true
+        namespace: argo
+      airflow:
+        enabled: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openlineage-server
+  namespace: monitoring
+spec:
+  selector:
+    app: openlineage-server
+  ports:
+    - name: api
+      port: 8080
+      targetPort: 8080
+    - name: admin
+      port: 8081
+      targetPort: 8081
+---
+# OpenLineage Marquez UI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marquez-web
+  namespace: monitoring
+  labels:
+    app: marquez-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: marquez-web
+  template:
+    metadata:
+      labels:
+        app: marquez-web
+    spec:
+      containers:
+        - name: marquez-web
+          image: marquezproject/marquez-web:0.45.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: MARQUEZ_HOST
+              value: openlineage-server.monitoring.svc.cluster.local
+            - name: MARQUEZ_PORT
+              value: "8080"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: marquez-web
+  namespace: monitoring
+spec:
+  selector:
+    app: marquez-web
+  ports:
+    - port: 3000
+      targetPort: 3000

@@ -37,3 +37,75 @@ spec:
         "range": "192.168.101.0/24"
       }
     }
+---
+# SR-IOV network attachment — high-throughput inter-pod communication via VFs
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: sriov-mlnx-rdma
+  namespace: kube-system
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: mellanox.com/mlnx_sriov_rdma
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "sriov-mlnx-rdma",
+      "type": "sriov",
+      "ipam": {
+        "type": "whereabouts",
+        "range": "192.168.200.0/24",
+        "range_start": "192.168.200.10",
+        "range_end": "192.168.200.250"
+      }
+    }
+---
+# SR-IOV network attachment — Intel NIC VF for low-latency east-west traffic
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: sriov-intel-vf
+  namespace: kube-system
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: intel.com/intel_sriov_netdevice
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "sriov-intel-vf",
+      "type": "sriov",
+      "vlan": 200,
+      "ipam": {
+        "type": "whereabouts",
+        "range": "192.168.201.0/24"
+      }
+    }
+---
+# DPDK userspace network attachment — VFIO-based zero-copy packet processing
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: dpdk-vfio
+  namespace: kube-system
+  annotations:
+    k8s.v1.cni.cncf.io/resourceName: intel.com/intel_sriov_netdevice
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "dpdk-vfio",
+      "type": "userspace",
+      "kubeconfig": "/etc/cni/net.d/multus.d/multus.kubeconfig",
+      "logFile": "/var/log/userspace-dpdk.log",
+      "logLevel": "debug",
+      "host": {
+        "engine": "ovs-dpdk",
+        "iftype": "vhostuser",
+        "netType": "interface"
+      },
+      "container": {
+        "engine": "ovs-dpdk",
+        "iftype": "vhostuser",
+        "netType": "interface"
+      }
+    }

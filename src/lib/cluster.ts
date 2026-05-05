@@ -1,4 +1,4 @@
-import { ClusterNode, NodeStatus, NodeMetrics, SystemEvent, EventSeverity, ClusterStats, NetworkInfo, StorageInfo, HardwareInfo, DeviceType } from './types'
+import { ClusterNode, NodeStatus, NodeMetrics, SystemEvent, EventSeverity, ClusterStats, NetworkInfo, StorageInfo, HardwareInfo, DeviceType, ServiceClass, GPUMetrics } from './types'
 
 const NODE_NAMES = [
   'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
@@ -54,7 +54,11 @@ function generateNetworkInfo(): NetworkInfo {
     rdmaActive: Math.random() > 0.3,
     rdmaQueuePairs: Math.floor(randomInRange(64, 512)),
     bandwidth: randomInRange(10000, 100000),
-    packetLoss: randomInRange(0, 0.5)
+    packetLoss: randomInRange(0, 0.5),
+    sriovVFs: Math.floor(randomInRange(0, 32)),
+    dpdkEnabled: Math.random() > 0.5,
+    ciliumVersion: '1.15.3',
+    ebpfBypassActive: Math.random() > 0.4
   }
 }
 
@@ -66,9 +70,15 @@ function generateStorageInfo(): StorageInfo {
     usedCapacity: randomInRange(500, 1800),
     readIOPS: Math.floor(randomInRange(1000, 50000)),
     writeIOPS: Math.floor(randomInRange(500, 30000)),
-    replicationFactor: 3
+    replicationFactor: 3,
+    dataFabricEnabled: Math.random() > 0.2,
+    metadataEntries: Math.floor(randomInRange(1000, 100000)),
+    activeDatasets: Math.floor(randomInRange(5, 200))
   }
 }
+
+const STORAGE_TIERS = ['ram', 'nvme', 'object'] as const
+const TOPOLOGY_POLICIES = ['none', 'best-effort', 'restricted', 'single-numa-node'] as const
 
 function generateHardwareInfo(index: number): HardwareInfo {
   const rand = Math.random()
@@ -91,9 +101,40 @@ function generateHardwareInfo(index: number): HardwareInfo {
     pxeBooted: Math.random() > 0.2,
     temperature: randomInRange(35, 75),
     deviceType,
-    rackUnits
+    rackUnits,
+    numaNode: Math.floor(randomInRange(0, 2)),
+    cacheHitRate: randomInRange(0.4, 0.98),
+    storageTier: STORAGE_TIERS[Math.floor(Math.random() * STORAGE_TIERS.length)],
+    gpuMIGInstances: Math.random() > 0.6 ? Math.floor(randomInRange(0, 7)) : 0,
+    hugepagesGB: Math.random() > 0.4 ? Math.floor(randomInRange(16, 64)) : 0,
+    cpuPinnedCores: Math.random() > 0.5 ? Math.floor(randomInRange(0, 16)) : 0,
+    topologyManagerPolicy: TOPOLOGY_POLICIES[Math.floor(Math.random() * TOPOLOGY_POLICIES.length)]
   }
 }
+
+const GPU_MODELS = ['NVIDIA A100 80GB', 'NVIDIA H100 80GB', 'NVIDIA A30', 'NVIDIA RTX A6000']
+
+function generateGPUMetrics(count: number): GPUMetrics[] {
+  return Array.from({ length: count }, (_, i) => {
+    const migEnabled = Math.random() > 0.5
+    return {
+      gpuIndex: i,
+      model: GPU_MODELS[i % GPU_MODELS.length],
+      utilizationPercent: randomInRange(10, 99),
+      memoryUsedGB: randomInRange(5, 75),
+      memoryTotalGB: 80,
+      temperatureC: randomInRange(40, 85),
+      powerWatts: randomInRange(100, 400),
+      nvlinkBandwidthGBps: randomInRange(50, 600),
+      smOccupancyPercent: randomInRange(20, 95),
+      eccErrors: Math.random() > 0.95 ? Math.floor(randomInRange(1, 5)) : 0,
+      migEnabled,
+      migInstances: migEnabled ? Math.floor(randomInRange(1, 7)) : 0
+    }
+  })
+}
+
+const SERVICE_CLASSES: ServiceClass[] = ['HIGH', 'MEDIUM', 'LOW']
 
 export function generateClusterNodes(count: number = 32): ClusterNode[] {
   const nodes: ClusterNode[] = []
@@ -120,7 +161,9 @@ export function generateClusterNodes(count: number = 32): ClusterNode[] {
       hardware: generateHardwareInfo(i),
       zone: ZONES[zoneIndex],
       rackId,
-      rackPosition
+      rackPosition,
+      serviceClass: SERVICE_CLASSES[i % SERVICE_CLASSES.length],
+      gpuMetrics: Math.random() > 0.4 ? generateGPUMetrics(Math.floor(randomInRange(1, 4))) : undefined
     })
   }
 
@@ -158,8 +201,18 @@ export function updateNodeMetrics(node: ClusterNode): ClusterNode {
     },
     hardware: {
       ...node.hardware,
-      temperature: Math.max(30, Math.min(85, node.hardware.temperature + randomInRange(-2, 2)))
+      temperature: Math.max(30, Math.min(85, node.hardware.temperature + randomInRange(-2, 2))),
+      cacheHitRate: Math.max(0, Math.min(1, node.hardware.cacheHitRate + randomInRange(-0.02, 0.02)))
     },
+    gpuMetrics: node.gpuMetrics?.map(gpu => ({
+      ...gpu,
+      utilizationPercent: Math.max(0, Math.min(100, gpu.utilizationPercent + randomInRange(-5, 5))),
+      memoryUsedGB: Math.max(0, Math.min(gpu.memoryTotalGB, gpu.memoryUsedGB + randomInRange(-2, 2))),
+      temperatureC: Math.max(30, Math.min(95, gpu.temperatureC + randomInRange(-2, 2))),
+      powerWatts: Math.max(50, Math.min(500, gpu.powerWatts + randomInRange(-20, 20))),
+      nvlinkBandwidthGBps: Math.max(0, gpu.nvlinkBandwidthGBps + randomInRange(-10, 10)),
+      smOccupancyPercent: Math.max(0, Math.min(100, gpu.smOccupancyPercent + randomInRange(-5, 5)))
+    })),
     uptime: node.uptime + 2000,
     lastSeen: Date.now()
   }

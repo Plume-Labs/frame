@@ -18,6 +18,12 @@ data:
     net.ipv4.tcp_wmem = 4096 65536 536870912
     net.ipv4.tcp_low_latency = 1
     net.ipv4.tcp_adv_win_scale = 1
+    # InfiniBand / RoCE v2 specific tuning
+    net.ipv4.tcp_ecn = 1
+    net.ipv4.tcp_ecn_fallback = 0
+    net.core.somaxconn = 65535
+    vm.swappiness = 0
+    kernel.numa_balancing = 0
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -51,7 +57,20 @@ spec:
               sysctl -w net.core.wmem_max=536870912
               sysctl -w net.ipv4.tcp_rmem="4096 87380 536870912"
               sysctl -w net.ipv4.tcp_wmem="4096 65536 536870912"
-              echo "RDMA network tuning applied"
+              sysctl -w net.ipv4.tcp_ecn=1
+              sysctl -w net.ipv4.tcp_ecn_fallback=0
+              sysctl -w net.core.somaxconn=65535
+              sysctl -w vm.swappiness=0
+              sysctl -w kernel.numa_balancing=0
+              # MLX5 InfiniBand driver: set RoCE v2 mode on all ports
+              for dev in /sys/class/infiniband/*/ports/*/gid_attrs/types/*; do
+                echo "RoCE v2" > "$dev" 2>/dev/null || true
+              done
+              # Disable adaptive interrupts for lower latency
+              for dev in /sys/class/net/*/device/mlx5_num_cpus; do
+                echo 0 > "$dev" 2>/dev/null || true
+              done
+              echo "RDMA + InfiniBand network tuning applied"
           securityContext:
             privileged: true
       containers:

@@ -90,11 +90,12 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
           <Separator />
 
           <Tabs defaultValue="metrics" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="metrics">Metrics</TabsTrigger>
               <TabsTrigger value="hardware">Hardware</TabsTrigger>
               <TabsTrigger value="network">Network</TabsTrigger>
               <TabsTrigger value="storage">Storage</TabsTrigger>
+              <TabsTrigger value="resources">Resources</TabsTrigger>
             </TabsList>
             
             <TabsContent value="metrics" className="space-y-4 mt-4">
@@ -289,6 +290,73 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                     <div className="font-mono text-lg font-bold">
                       {formatNumber(node.storage.writeIOPS)}
                     </div>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* Resource Isolation Panel — GPU MIG, hugepages, CPU pinning */}
+            <TabsContent value="resources" className="space-y-4 mt-4">
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg bg-secondary/30">
+                  <div className="text-xs text-muted-foreground uppercase mb-2">GPU MIG Instances</div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-2xl font-bold text-primary">{node.hardware.gpuMIGInstances}</span>
+                    <span className="text-xs text-muted-foreground">MIG partitions active</span>
+                  </div>
+                  {node.gpuMetrics && node.gpuMetrics.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {node.gpuMetrics.map(gpu => (
+                        <div key={gpu.gpuIndex} className="flex items-center justify-between text-xs">
+                          <span className="font-mono text-muted-foreground">GPU {gpu.gpuIndex} — {gpu.model}</span>
+                          <span className={`font-mono font-bold ${gpu.migEnabled ? 'text-accent' : 'text-muted-foreground'}`}>
+                            {gpu.migEnabled ? `MIG ×${gpu.migInstances}` : 'Full GPU'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">Hugepages</div>
+                    <div className="font-mono text-lg font-bold text-primary">{node.hardware.hugepagesGB} GB</div>
+                    <div className="text-xs text-muted-foreground">1 GiB pages</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">Pinned CPU Cores</div>
+                    <div className="font-mono text-lg font-bold">{node.hardware.cpuPinnedCores}</div>
+                    <div className="text-xs text-muted-foreground">of {node.hardware.cpuCores} total</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">NUMA Node</div>
+                    <div className="font-mono text-lg font-bold text-accent">{node.hardware.numaNode}</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">Topology Manager</div>
+                    <div className="font-mono text-sm font-bold">{node.hardware.topologyManagerPolicy}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">Cache Hit Rate</div>
+                    <div className={`font-mono text-lg font-bold ${node.hardware.cacheHitRate > 0.7 ? 'text-accent' : 'text-[oklch(0.75_0.18_75)]'}`}>
+                      {(node.hardware.cacheHitRate * 100).toFixed(1)}%
+                    </div>
+                    <div className="text-xs text-muted-foreground">Alluxio / Redis</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">Storage Tier</div>
+                    <div className={`font-mono text-lg font-bold ${
+                      node.hardware.storageTier === 'ram' ? 'text-accent' :
+                      node.hardware.storageTier === 'nvme' ? 'text-primary' :
+                      'text-[oklch(0.75_0.18_75)]'
+                    }`}>{node.hardware.storageTier.toUpperCase()}</div>
                   </div>
                 </div>
               </div>

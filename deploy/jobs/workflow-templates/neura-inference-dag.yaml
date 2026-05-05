@@ -1,0 +1,160 @@
+---
+# Neura Inference Pipeline — DAG workflow for real-time model serving
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: neura-inference-dag
+  namespace: argo
+  labels:
+    app: neura
+    pipeline: inference
+    service-class: high
+spec:
+  entrypoint: inference-dag
+  serviceAccountName: argo
+  podPriorityClassName: neura-critical
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  ttlStrategy:
+    secondsAfterCompletion: 3600
+  retryStrategy:
+    limit: "3"
+    retryPolicy: OnError
+    backoff:
+      duration: 5s
+      factor: "2"
+      maxDuration: 60s
+  templates:
+    - name: inference-dag
+      dag:
+        tasks:
+          - name: validate-input
+            template: validate-input
+          - name: cache-lookup
+            template: cache-lookup
+            dependencies: [validate-input]
+          - name: preprocess
+            template: preprocess
+            dependencies: [validate-input, cache-lookup]
+            when: "{{tasks.cache-lookup.outputs.result}} == 'miss'"
+          - name: model-inference
+            template: model-inference
+            dependencies: [preprocess]
+            when: "{{tasks.cache-lookup.outputs.result}} == 'miss'"
+          - name: postprocess
+            template: postprocess
+            dependencies: [model-inference]
+            when: "{{tasks.cache-lookup.outputs.result}} == 'miss'"
+          - name: cache-store
+            template: cache-store
+            dependencies: [postprocess]
+            when: "{{tasks.cache-lookup.outputs.result}} == 'miss'"
+          - name: emit-result
+            template: emit-result
+            dependencies: [cache-store, cache-lookup]
+
+    - name: validate-input
+      container:
+        image: neura/pipeline-utils:latest
+        command: [python, /app/validate_input.py]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+
+    - name: cache-lookup
+      container:
+        image: neura/pipeline-utils:latest
+        command: [python, /app/cache_lookup.py]
+        env:
+          - name: REDIS_CLUSTER_ADDR
+            value: "redis-cluster-lb.redis-cache.svc.cluster.local:6379"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+      outputs:
+        parameters:
+          - name: result
+            valueFrom:
+              path: /tmp/cache-result
+
+    - name: preprocess
+      container:
+        image: neura/preprocessor:latest
+        command: [python, /app/preprocess.py]
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "8"
+            memory: 16Gi
+
+    - name: model-inference
+      container:
+        image: neura/inference-server:latest
+        command: [python, /app/run_inference.py]
+        resources:
+          requests:
+            cpu: "4"
+            memory: 16Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "8"
+            memory: 32Gi
+            nvidia.com/gpu: "1"
+        env:
+          - name: MODEL_PATH
+            value: /models/neura-v2
+          - name: ALLUXIO_MASTER
+            value: "alluxio-master-0.alluxio-master.alluxio.svc.cluster.local:19998"
+
+    - name: postprocess
+      container:
+        image: neura/postprocessor:latest
+        command: [python, /app/postprocess.py]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 2Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+
+    - name: cache-store
+      container:
+        image: neura/pipeline-utils:latest
+        command: [python, /app/cache_store.py]
+        env:
+          - name: REDIS_CLUSTER_ADDR
+            value: "redis-cluster-lb.redis-cache.svc.cluster.local:6379"
+          - name: CACHE_TTL_SECONDS
+            value: "3600"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+
+    - name: emit-result
+      container:
+        image: neura/pipeline-utils:latest
+        command: [python, /app/emit_result.py]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi

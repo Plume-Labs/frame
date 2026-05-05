@@ -1,0 +1,72 @@
+---
+# DPDK hugepage init DaemonSet — allocates 1Gi hugepages on each node for DPDK workloads
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dpdk-hugepage-init
+  namespace: kube-system
+  labels:
+    app: dpdk-hugepage-init
+spec:
+  selector:
+    matchLabels:
+      app: dpdk-hugepage-init
+  template:
+    metadata:
+      labels:
+        app: dpdk-hugepage-init
+    spec:
+      hostPID: true
+      hostIPC: true
+      priorityClassName: system-node-critical
+      nodeSelector:
+        dpdk: "true"
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: dpdk-hugepage-setup
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # Allocate 1Gi hugepages (DPDK recommends 1G pages for best performance)
+              echo 64 > /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+              # Allocate 2Mi hugepages for smaller allocations
+              echo 4096 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+              # Mount hugetlbfs if not already mounted
+              if ! mountpoint -q /dev/hugepages; then
+                mkdir -p /dev/hugepages
+                mount -t hugetlbfs nodev /dev/hugepages -o pagesize=1GB
+              fi
+              if ! mountpoint -q /dev/hugepages2M; then
+                mkdir -p /dev/hugepages2M
+                mount -t hugetlbfs nodev /dev/hugepages2M -o pagesize=2MB
+              fi
+              echo "Hugepages allocated: $(cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages) x 1Gi"
+              echo "Hugepages allocated: $(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages) x 2Mi"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: sys
+              mountPath: /sys
+            - name: dev
+              mountPath: /dev
+      containers:
+        - name: pause
+          image: gcr.io/google_containers/pause:3.9
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 10m
+              memory: 8Mi
+      volumes:
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: dev
+          hostPath:
+            path: /dev
