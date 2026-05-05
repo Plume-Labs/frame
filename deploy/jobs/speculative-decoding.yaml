@@ -62,7 +62,7 @@ spec:
       labels:
         app: vllm-speculative
     spec:
-      priorityClassName: frame-high
+      priorityClassName: acme-high
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

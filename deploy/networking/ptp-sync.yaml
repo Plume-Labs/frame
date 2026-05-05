@@ -97,6 +97,10 @@ spec:
             - -i
             - eth0
             - -m
+          ports:
+            - name: metrics
+              containerPort: 9017
+              protocol: TCP
           securityContext:
             privileged: true
           volumeMounts:
@@ -136,6 +140,26 @@ spec:
         - name: run
           hostPath:
             path: /var/run
+---
+# ── Service — expose ptp4l metrics port for Prometheus discovery ──────────────
+# This headless Service selects all linuxptp DaemonSet pods and advertises
+# the prometheus-exporter port so the ServiceMonitor below can find them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: linuxptp-metrics
+  namespace: ptp
+  labels:
+    app: linuxptp
+spec:
+  clusterIP: None   # headless — one Endpoint per DaemonSet pod
+  selector:
+    app: linuxptp
+  ports:
+    - name: metrics
+      port: 9017
+      targetPort: metrics
+      protocol: TCP
 ---
 # ── ServiceMonitor — expose ptp4l metrics to Prometheus ──────────────────────
 apiVersion: monitoring.coreos.com/v1
