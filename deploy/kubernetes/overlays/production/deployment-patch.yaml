@@ -14,3 +14,11 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1000m"
+      # Topology Manager — bind to single NUMA node for consistent memory access
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: cluster-control

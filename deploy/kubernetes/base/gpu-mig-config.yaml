@@ -1,0 +1,132 @@
+---
+# NVIDIA GPU Operator — manages GPU drivers, runtime, and device plugin lifecycle
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-operator
+  labels:
+    name: gpu-operator
+---
+# GPU Operator ClusterPolicy — defines GPU management strategy cluster-wide
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata:
+  name: gpu-cluster-policy
+  namespace: gpu-operator
+spec:
+  operator:
+    defaultRuntime: containerd
+    runtimeClass: nvidia
+  daemonsets:
+    priorityClassName: system-node-critical
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+  # MIG Manager — partitions A100/H100 GPUs into multiple isolated instances
+  migManager:
+    enabled: true
+    config:
+      name: mig-parted-config
+      default: "all-disabled"
+  driver:
+    enabled: true
+    version: "550.54.15"
+    manager:
+      image: nvcr.io/nvidia/cloud-native/k8s-driver-manager:v0.6.4
+  toolkit:
+    enabled: true
+    version: v1.14.6-centos7
+  devicePlugin:
+    enabled: true
+    version: v0.14.5
+    config:
+      name: device-plugin-config
+      default: "default"
+  dcgm:
+    enabled: true
+    version: 3.3.4-1-ubuntu22.04
+  dcgmExporter:
+    enabled: true
+    version: 3.3.4-3.2.6-ubuntu22.04
+    config:
+      name: dcgm-exporter-metrics-config
+    serviceMonitor:
+      enabled: true
+  nodeStatusExporter:
+    enabled: true
+    version: v0.1.0
+  gfd:
+    enabled: true
+    version: v0.8.2
+---
+# MIG Parted ConfigMap — defines MIG profiles per GPU model
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mig-parted-config
+  namespace: gpu-operator
+data:
+  config.yaml: |
+    version: v1
+    mig-configs:
+      # A100 80GB — 7 MIG instances (7x 1g.10gb) for multi-tenant inference
+      a100-7x1g:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            "1g.10gb": 7
+
+      # A100 80GB — 4 MIG instances (4x 2g.20gb) for medium batch jobs
+      a100-4x2g:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            "2g.20gb": 4
+
+      # A100 80GB — 2 MIG instances (2x 3g.40gb) for large inference
+      a100-2x3g:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            "3g.40gb": 2
+
+      # H100 80GB — full GPU for distributed training (no MIG)
+      h100-full:
+        - devices: all
+          mig-enabled: false
+
+      # H100 80GB — 4 MIG instances for shared inference
+      h100-4x2g:
+        - devices: all
+          mig-enabled: true
+          mig-devices:
+            "2g.20gb": 4
+
+      # Disabled — MIG off, full GPU visible
+      all-disabled:
+        - devices: all
+          mig-enabled: false
+---
+# Device Plugin ConfigMap — maps MIG resources to Kubernetes device names
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: device-plugin-config
+  namespace: gpu-operator
+data:
+  default: |
+    version: v1
+    flags:
+      migStrategy: mixed
+    sharing:
+      timeSlicing:
+        resources: []
+  mig-single: |
+    version: v1
+    flags:
+      migStrategy: single
+  mig-mixed: |
+    version: v1
+    flags:
+      migStrategy: mixed

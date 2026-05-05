@@ -1,0 +1,170 @@
+---
+# Kubernetes Checkpoint Controller — CRIU-based pod checkpointing via alpha API
+# Requires Kubernetes 1.25+ with --feature-gates=ContainerCheckpoint=true on kubelet
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checkpoint-system
+  labels:
+    name: checkpoint-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: checkpoint-controller
+  namespace: checkpoint-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: checkpoint-controller
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/checkpoint]
+    verbs: [create]
+  - apiGroups: ["checkpoint.neura.io"]
+    resources: [checkpointpolicies, checkpointschedules, checkpointstatus]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [configmaps, events]
+    verbs: [get, list, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: checkpoint-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: checkpoint-controller
+subjects:
+  - kind: ServiceAccount
+    name: checkpoint-controller
+    namespace: checkpoint-system
+---
+# CheckpointPolicy CRD — defines when and how to checkpoint workloads
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: checkpointpolicies.checkpoint.neura.io
+spec:
+  group: checkpoint.neura.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                selector:
+                  type: object
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                intervalMinutes:
+                  type: integer
+                  minimum: 1
+                retentionCount:
+                  type: integer
+                  minimum: 1
+                storageLocation:
+                  type: string
+                enabled:
+                  type: boolean
+  scope: Namespaced
+  names:
+    plural: checkpointpolicies
+    singular: checkpointpolicy
+    kind: CheckpointPolicy
+---
+# Default CheckpointPolicy — checkpoint inference pods every 15 minutes
+apiVersion: checkpoint.neura.io/v1alpha1
+kind: CheckpointPolicy
+metadata:
+  name: inference-checkpoint
+  namespace: neura-inference
+spec:
+  selector:
+    matchLabels:
+      app: neura-inference
+      checkpoint: "enabled"
+  intervalMinutes: 15
+  retentionCount: 4
+  storageLocation: s3://neura-checkpoints/inference
+  enabled: true
+---
+# Default CheckpointPolicy — checkpoint training workers every 10 minutes
+apiVersion: checkpoint.neura.io/v1alpha1
+kind: CheckpointPolicy
+metadata:
+  name: training-checkpoint
+  namespace: neura-training
+spec:
+  selector:
+    matchLabels:
+      app: neura-training
+  intervalMinutes: 10
+  retentionCount: 6
+  storageLocation: s3://neura-checkpoints/training
+  enabled: true
+---
+# Checkpoint Controller deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkpoint-controller
+  namespace: checkpoint-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: checkpoint-controller
+  template:
+    metadata:
+      labels:
+        app: checkpoint-controller
+    spec:
+      serviceAccountName: checkpoint-controller
+      priorityClassName: neura-high
+      containers:
+        - name: checkpoint-controller
+          image: neura/checkpoint-controller:v0.1.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --leader-elect=true
+            - --checkpoint-storage=s3://neura-checkpoints
+            - --minio-endpoint=http://minio-lb.data-fabric.svc.cluster.local:9000
+            - --loglevel=info
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: checkpoint-s3-credentials
+                  key: accessKeyId
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: checkpoint-s3-credentials
+                  key: secretAccessKey
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

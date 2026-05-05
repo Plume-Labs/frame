@@ -1,0 +1,169 @@
+---
+# PriorityClass: neura-critical — reserved for system-critical + real-time inference
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: neura-critical
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >
+  System-critical workloads (real-time inference, latency-sensitive serving).
+  Equivalent to mainframe HIGH service class. Will preempt MEDIUM and LOW.
+---
+# PriorityClass: neura-high — database queries and interactive request serving
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: neura-high
+value: 100000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >
+  High-priority interactive workloads (database queries, request serving).
+  Equivalent to mainframe MEDIUM service class. Will preempt LOW.
+---
+# PriorityClass: neura-low — batch processing and model training
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: neura-low
+value: 1000
+globalDefault: false
+preemptionPolicy: Never
+description: >
+  Low-priority batch workloads (model training, preprocessing pipelines).
+  Equivalent to mainframe LOW service class. Never preempts other workloads.
+---
+# ResourceQuota for HIGH service class namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: neura-high-quota
+  namespace: neura-inference
+spec:
+  hard:
+    requests.cpu: "200"
+    requests.memory: 400Gi
+    limits.cpu: "400"
+    limits.memory: 800Gi
+    requests.nvidia.com/gpu: "32"
+    pods: "200"
+    persistentvolumeclaims: "50"
+---
+# LimitRange for HIGH service class namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: neura-high-limits
+  namespace: neura-inference
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "4"
+        memory: 8Gi
+      defaultRequest:
+        cpu: "2"
+        memory: 4Gi
+      max:
+        cpu: "64"
+        memory: 512Gi
+      min:
+        cpu: 100m
+        memory: 128Mi
+    - type: Pod
+      max:
+        cpu: "128"
+        memory: 1Ti
+---
+# ResourceQuota for MEDIUM service class namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: neura-medium-quota
+  namespace: neura-database
+spec:
+  hard:
+    requests.cpu: "100"
+    requests.memory: 200Gi
+    limits.cpu: "200"
+    limits.memory: 400Gi
+    pods: "500"
+    persistentvolumeclaims: "100"
+---
+# LimitRange for MEDIUM service class namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: neura-medium-limits
+  namespace: neura-database
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+        memory: 4Gi
+      defaultRequest:
+        cpu: "1"
+        memory: 2Gi
+      max:
+        cpu: "32"
+        memory: 128Gi
+      min:
+        cpu: 100m
+        memory: 128Mi
+---
+# ResourceQuota for LOW service class namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: neura-low-quota
+  namespace: neura-training
+spec:
+  hard:
+    requests.cpu: "400"
+    requests.memory: 800Gi
+    limits.cpu: "800"
+    limits.memory: 1600Gi
+    requests.nvidia.com/gpu: "64"
+    pods: "1000"
+    persistentvolumeclaims: "200"
+---
+# LimitRange for LOW service class namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: neura-low-limits
+  namespace: neura-training
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "8"
+        memory: 16Gi
+      defaultRequest:
+        cpu: "4"
+        memory: 8Gi
+      max:
+        cpu: "128"
+        memory: 1Ti
+      min:
+        cpu: 100m
+        memory: 256Mi
+---
+# PodGroup CRD example — gang scheduling for distributed training
+# Minimum 8 pods must be schedulable together before any start
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: PodGroup
+metadata:
+  name: neura-training-gang
+  namespace: neura-training
+spec:
+  minMember: 8
+  queue: neura-low
+  priorityClassName: neura-low
+  minResources:
+    cpu: "32"
+    memory: 128Gi
+    nvidia.com/gpu: "8"

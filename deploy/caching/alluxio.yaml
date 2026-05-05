@@ -1,0 +1,211 @@
+---
+# Alluxio — distributed cache with RAM → NVMe → Object Storage tiering
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: alluxio
+  labels:
+    name: alluxio
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alluxio-config
+  namespace: alluxio
+data:
+  ALLUXIO_JAVA_OPTS: >-
+    -Dalluxio.master.hostname=alluxio-master-0.alluxio-master.alluxio.svc.cluster.local
+    -Dalluxio.master.journal.type=UFS
+    -Dalluxio.master.journal.folder=/journal
+    -Dalluxio.worker.tieredstore.levels=3
+    -Dalluxio.worker.tieredstore.level0.alias=MEM
+    -Dalluxio.worker.tieredstore.level0.dirs.path=/dev/shm
+    -Dalluxio.worker.tieredstore.level0.dirs.quota=64GB
+    -Dalluxio.worker.tieredstore.level0.watermark.high.ratio=0.95
+    -Dalluxio.worker.tieredstore.level0.watermark.low.ratio=0.7
+    -Dalluxio.worker.tieredstore.level1.alias=SSD
+    -Dalluxio.worker.tieredstore.level1.dirs.path=/nvme-cache
+    -Dalluxio.worker.tieredstore.level1.dirs.quota=2TB
+    -Dalluxio.worker.tieredstore.level1.watermark.high.ratio=0.95
+    -Dalluxio.worker.tieredstore.level1.watermark.low.ratio=0.7
+    -Dalluxio.worker.tieredstore.level2.alias=HDD
+    -Dalluxio.worker.tieredstore.level2.dirs.path=/underfs
+    -Dalluxio.worker.tieredstore.level2.dirs.quota=20TB
+    -Dalluxio.underfs.address=s3a://neura-datalake/
+    -Dalluxio.s3a.accessKeyId=${AWS_ACCESS_KEY_ID}
+    -Dalluxio.s3a.secretKey=${AWS_SECRET_ACCESS_KEY}
+    -Dalluxio.worker.memory.size=64GB
+    -Dalluxio.worker.network.reader.buffer.size=128MB
+    -Dalluxio.worker.network.block.reader.threads.max=256
+    -Dalluxio.master.replication.min=2
+    -Dalluxio.master.replication.max=3
+---
+# Alluxio Master StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: alluxio-master
+  namespace: alluxio
+spec:
+  serviceName: alluxio-master
+  replicas: 3
+  selector:
+    matchLabels:
+      app: alluxio-master
+  template:
+    metadata:
+      labels:
+        app: alluxio-master
+    spec:
+      priorityClassName: neura-high
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: alluxio-master
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: alluxio-master
+          image: alluxio/alluxio:3.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/entrypoint.sh"]
+          args: ["master"]
+          envFrom:
+            - configMapRef:
+                name: alluxio-config
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: alluxio-s3-credentials
+                  key: accessKeyId
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alluxio-s3-credentials
+                  key: secretAccessKey
+          ports:
+            - containerPort: 19998
+              name: rpc
+            - containerPort: 19999
+              name: web
+            - containerPort: 20001
+              name: embedded
+            - containerPort: 20002
+              name: embedded-ra
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          volumeMounts:
+            - name: alluxio-journal
+              mountPath: /journal
+  volumeClaimTemplates:
+    - metadata:
+        name: alluxio-journal
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: ceph-rbd
+        resources:
+          requests:
+            storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alluxio-master
+  namespace: alluxio
+spec:
+  clusterIP: None
+  selector:
+    app: alluxio-master
+  ports:
+    - name: rpc
+      port: 19998
+    - name: web
+      port: 19999
+    - name: embedded
+      port: 20001
+    - name: embedded-ra
+      port: 20002
+---
+# Alluxio Worker DaemonSet — runs on every node with RDMA/NVMe
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alluxio-worker
+  namespace: alluxio
+spec:
+  selector:
+    matchLabels:
+      app: alluxio-worker
+  template:
+    metadata:
+      labels:
+        app: alluxio-worker
+    spec:
+      priorityClassName: neura-high
+      nodeSelector:
+        nvme: "true"
+      hostNetwork: false
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: alluxio-worker
+          image: alluxio/alluxio:3.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/entrypoint.sh"]
+          args: ["worker"]
+          envFrom:
+            - configMapRef:
+                name: alluxio-config
+          env:
+            - name: ALLUXIO_WORKER_HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: alluxio-s3-credentials
+                  key: accessKeyId
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alluxio-s3-credentials
+                  key: secretAccessKey
+          ports:
+            - containerPort: 29998
+              name: rpc
+            - containerPort: 29999
+              name: web
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+              hugepages-1Gi: 64Gi
+            limits:
+              cpu: "16"
+              memory: 128Gi
+              hugepages-1Gi: 64Gi
+          volumeMounts:
+            - name: nvme-cache
+              mountPath: /nvme-cache
+            - name: ramdisk
+              mountPath: /dev/shm
+          securityContext:
+            capabilities:
+              add:
+                - IPC_LOCK
+      volumes:
+        - name: nvme-cache
+          hostPath:
+            path: /mnt/nvme0
+            type: DirectoryOrCreate
+        - name: ramdisk
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Gi

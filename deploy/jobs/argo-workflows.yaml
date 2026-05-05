@@ -1,0 +1,207 @@
+---
+# Argo Workflows — DAG-based job orchestration for Neura AI pipelines
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argo
+  labels:
+    name: argo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo
+  namespace: argo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-server
+  namespace: argo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argo-role
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/exec, pods/log, configmaps, secrets, events, persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [argoproj.io]
+    resources: [workflows, workflowtemplates, cronworkflows, workflowartifactgctasks]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [scheduling.volcano.sh]
+    resources: [podgroups]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argo-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argo-role
+subjects:
+  - kind: ServiceAccount
+    name: argo
+    namespace: argo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workflow-controller-configmap
+  namespace: argo
+data:
+  config: |
+    containerRuntimeExecutor: emissary
+    parallelism: 50
+    resourceRateLimit:
+      limit: 20
+      burst: 40
+    workflowDefaults:
+      spec:
+        serviceAccountName: argo
+        ttlStrategy:
+          secondsAfterCompletion: 86400
+          secondsAfterSuccess: 3600
+          secondsAfterFailure: 259200
+        podGC:
+          strategy: OnPodCompletion
+        tolerations:
+          - key: neura-workload
+            operator: Exists
+    executor:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    persistence:
+      archive: true
+      archiveLabelSelector:
+        matchLabels:
+          workflows.argoproj.io/archive-strategy: "true"
+      postgresql:
+        host: postgres.argo.svc.cluster.local
+        port: 5432
+        database: argo
+        tableName: argo_workflows
+        userNameSecret:
+          name: argo-postgres-config
+          key: username
+        passwordSecret:
+          name: argo-postgres-config
+          key: password
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflow-controller
+  namespace: argo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: workflow-controller
+  template:
+    metadata:
+      labels:
+        app: workflow-controller
+    spec:
+      serviceAccountName: argo
+      priorityClassName: neura-high
+      containers:
+        - name: workflow-controller
+          image: quay.io/argoproj/workflow-controller:v3.5.5
+          command: [workflow-controller]
+          args:
+            - --configmap
+            - workflow-controller-configmap
+            - --executor-image
+            - quay.io/argoproj/argoexec:v3.5.5
+            - --loglevel
+            - info
+          env:
+            - name: LEADER_ELECTION_IDENTITY
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+          ports:
+            - name: metrics
+              containerPort: 9090
+            - name: telemetry
+              containerPort: 8081
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-server
+  namespace: argo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: argo-server
+  template:
+    metadata:
+      labels:
+        app: argo-server
+    spec:
+      serviceAccountName: argo-server
+      priorityClassName: neura-high
+      containers:
+        - name: argo-server
+          image: quay.io/argoproj/argocli:v3.5.5
+          command: [argo]
+          args:
+            - server
+            - --namespaced=false
+            - --auth-mode=server
+            - --secure=false
+          ports:
+            - name: web
+              containerPort: 2746
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 2746
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argo-server
+  namespace: argo
+spec:
+  selector:
+    app: argo-server
+  ports:
+    - name: web
+      port: 2746
+      targetPort: 2746

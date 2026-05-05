@@ -1,0 +1,176 @@
+---
+# Volcano Scheduler — hybrid batch + gang scheduling for distributed AI workloads
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: volcano-system
+  labels:
+    name: volcano-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: volcano-scheduler
+  namespace: volcano-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: volcano-scheduler
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, namespaces, persistentvolumeclaims, persistentvolumes, services, replicationcontrollers, resourcequotas]
+    verbs: [get, list, watch, create, delete, update, patch]
+  - apiGroups: [apps]
+    resources: [replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [volcano.sh]
+    resources: [jobs, queues, podgroups]
+    verbs: [get, list, watch, create, update, delete, patch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [create, patch, update]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, csinodes]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: volcano-scheduler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: volcano-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: volcano-scheduler
+    namespace: volcano-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: volcano-scheduler-configmap
+  namespace: volcano-system
+data:
+  volcano-scheduler.conf: |
+    actions: "enqueue, allocate, backfill, preempt"
+    tiers:
+    - plugins:
+      - name: priority
+      - name: gang
+        arguments:
+          minAvailable: 1
+      - name: conformance
+    - plugins:
+      - name: overcommit
+      - name: drf
+      - name: predicates
+      - name: proportion
+      - name: nodeorder
+        arguments:
+          leastRequestedWeight: 1
+          mostAllocatedWeight: 0
+          balancedResourceWeight: 1
+          nodeAffinityWeight: 1
+          podAffinityWeight: 2
+          taintTolerationWeight: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: volcano-scheduler
+  namespace: volcano-system
+  labels:
+    app: volcano-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: volcano-scheduler
+  template:
+    metadata:
+      labels:
+        app: volcano-scheduler
+    spec:
+      serviceAccountName: volcano-scheduler
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: volcano-scheduler
+          image: volcanosh/vc-scheduler:v1.8.2
+          args:
+            - --logtostderr
+            - --scheduler-conf=/volcano.scheduler/volcano-scheduler.conf
+            - --enable-healthz=true
+            - --healthz-address=0.0.0.0
+            - --healthz-port=8080
+            - --leader-elect=true
+            - -v=3
+          ports:
+            - containerPort: 8080
+              name: healthz
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: scheduler-config
+              mountPath: /volcano.scheduler
+      volumes:
+        - name: scheduler-config
+          configMap:
+            name: volcano-scheduler-configmap
+---
+# Volcano Queue — HIGH priority (real-time inference)
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: neura-high
+spec:
+  weight: 100
+  capability:
+    cpu: "200"
+    memory: 400Gi
+  reclaimable: false
+---
+# Volcano Queue — MEDIUM priority (database / query workloads)
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: neura-medium
+spec:
+  weight: 50
+  capability:
+    cpu: "100"
+    memory: 200Gi
+  reclaimable: true
+---
+# Volcano Queue — LOW priority (batch / training)
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: neura-low
+spec:
+  weight: 10
+  capability:
+    cpu: "400"
+    memory: 800Gi
+  reclaimable: true

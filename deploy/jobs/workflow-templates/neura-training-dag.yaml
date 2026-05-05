@@ -1,0 +1,250 @@
+---
+# Neura Training Pipeline — DAG workflow with gang scheduling, checkpointing, and retry
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: neura-training-dag
+  namespace: argo
+  labels:
+    app: neura
+    pipeline: training
+    service-class: low
+spec:
+  entrypoint: training-dag
+  serviceAccountName: argo
+  podPriorityClassName: neura-low
+  parallelism: 16
+  ttlStrategy:
+    secondsAfterCompletion: 604800
+  retryStrategy:
+    limit: "5"
+    retryPolicy: OnError
+    backoff:
+      duration: 30s
+      factor: "2"
+      maxDuration: 600s
+  arguments:
+    parameters:
+      - name: model-version
+        value: v3
+      - name: dataset-path
+        value: s3://neura-datalake/datasets/latest
+      - name: num-gpus
+        value: "8"
+      - name: checkpoint-interval-steps
+        value: "500"
+  templates:
+    - name: training-dag
+      dag:
+        tasks:
+          - name: data-validation
+            template: data-validation
+            arguments:
+              parameters:
+                - name: dataset-path
+                  value: "{{workflow.parameters.dataset-path}}"
+          - name: data-preprocessing
+            template: data-preprocessing
+            dependencies: [data-validation]
+            arguments:
+              parameters:
+                - name: dataset-path
+                  value: "{{workflow.parameters.dataset-path}}"
+          - name: restore-checkpoint
+            template: restore-checkpoint
+            dependencies: [data-validation]
+            arguments:
+              parameters:
+                - name: model-version
+                  value: "{{workflow.parameters.model-version}}"
+          - name: distributed-training
+            template: distributed-training
+            dependencies: [data-preprocessing, restore-checkpoint]
+            arguments:
+              parameters:
+                - name: model-version
+                  value: "{{workflow.parameters.model-version}}"
+                - name: num-gpus
+                  value: "{{workflow.parameters.num-gpus}}"
+                - name: checkpoint-interval
+                  value: "{{workflow.parameters.checkpoint-interval-steps}}"
+          - name: model-evaluation
+            template: model-evaluation
+            dependencies: [distributed-training]
+          - name: model-export
+            template: model-export
+            dependencies: [model-evaluation]
+            arguments:
+              parameters:
+                - name: model-version
+                  value: "{{workflow.parameters.model-version}}"
+          - name: update-model-registry
+            template: update-model-registry
+            dependencies: [model-export]
+
+    - name: data-validation
+      inputs:
+        parameters:
+          - name: dataset-path
+      container:
+        image: neura/data-utils:latest
+        command: [python, /app/validate_dataset.py]
+        args: ["--path", "{{inputs.parameters.dataset-path}}"]
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "8"
+            memory: 16Gi
+
+    - name: data-preprocessing
+      inputs:
+        parameters:
+          - name: dataset-path
+      container:
+        image: neura/data-utils:latest
+        command: [python, /app/preprocess_dataset.py]
+        args:
+          - --input-path
+          - "{{inputs.parameters.dataset-path}}"
+          - --output-path
+          - /tmp/preprocessed
+          - --alluxio-master
+          - alluxio-master-0.alluxio-master.alluxio.svc.cluster.local:19998
+        resources:
+          requests:
+            cpu: "16"
+            memory: 64Gi
+          limits:
+            cpu: "32"
+            memory: 128Gi
+
+    - name: restore-checkpoint
+      inputs:
+        parameters:
+          - name: model-version
+      container:
+        image: neura/checkpoint-utils:latest
+        command: [python, /app/restore_checkpoint.py]
+        args: ["--model-version", "{{inputs.parameters.model-version}}"]
+        env:
+          - name: CHECKPOINT_BUCKET
+            value: s3://neura-checkpoints
+        resources:
+          requests:
+            cpu: "2"
+            memory: 8Gi
+          limits:
+            cpu: "8"
+            memory: 32Gi
+      outputs:
+        parameters:
+          - name: checkpoint-path
+            valueFrom:
+              path: /tmp/checkpoint-path
+
+    - name: distributed-training
+      inputs:
+        parameters:
+          - name: model-version
+          - name: num-gpus
+          - name: checkpoint-interval
+      metadata:
+        annotations:
+          # Gang scheduling: all worker pods must start together
+          scheduling.volcano.sh/group-name: neura-training-gang
+          scheduling.volcano.sh/queue-name: neura-low
+      steps:
+        - - name: launch-workers
+            template: training-worker
+            arguments:
+              parameters:
+                - name: rank
+                  value: "{{item}}"
+                - name: world-size
+                  value: "{{inputs.parameters.num-gpus}}"
+                - name: checkpoint-interval
+                  value: "{{inputs.parameters.checkpoint-interval}}"
+            withSequence:
+              start: "0"
+              end: "{{inputs.parameters.num-gpus}}"
+
+    - name: training-worker
+      inputs:
+        parameters:
+          - name: rank
+          - name: world-size
+          - name: checkpoint-interval
+      container:
+        image: neura/trainer:latest
+        command: [torchrun]
+        args:
+          - --nproc_per_node=1
+          - --nnodes={{inputs.parameters.world-size}}
+          - --node_rank={{inputs.parameters.rank}}
+          - --master_addr=$(MASTER_ADDR)
+          - --master_port=29500
+          - /app/train.py
+          - --checkpoint-interval={{inputs.parameters.checkpoint-interval}}
+          - --checkpoint-bucket=s3://neura-checkpoints
+        env:
+          - name: MASTER_ADDR
+            value: "neura-training-master.argo.svc.cluster.local"
+          - name: NCCL_IB_DISABLE
+            value: "0"
+          - name: NCCL_NET_GDR_LEVEL
+            value: "5"
+          - name: NCCL_IB_HCA
+            value: mlx5_0,mlx5_1
+        resources:
+          requests:
+            cpu: "32"
+            memory: 128Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "64"
+            memory: 256Gi
+            nvidia.com/gpu: "1"
+
+    - name: model-evaluation
+      container:
+        image: neura/evaluator:latest
+        command: [python, /app/evaluate.py]
+        resources:
+          requests:
+            cpu: "8"
+            memory: 32Gi
+            nvidia.com/gpu: "2"
+          limits:
+            cpu: "16"
+            memory: 64Gi
+            nvidia.com/gpu: "2"
+
+    - name: model-export
+      inputs:
+        parameters:
+          - name: model-version
+      container:
+        image: neura/exporter:latest
+        command: [python, /app/export_model.py]
+        args: ["--version", "{{inputs.parameters.model-version}}"]
+        resources:
+          requests:
+            cpu: "4"
+            memory: 16Gi
+          limits:
+            cpu: "8"
+            memory: 32Gi
+
+    - name: update-model-registry
+      container:
+        image: neura/registry-utils:latest
+        command: [python, /app/update_registry.py]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi

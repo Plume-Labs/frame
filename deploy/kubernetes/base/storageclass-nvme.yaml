@@ -1,0 +1,54 @@
+---
+# Local NVMe StorageClass — for latency-sensitive, data-locality-aware workloads
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-nvme
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: false
+---
+# StorageClass using Ceph RBD (block device) backed by NVMe OSDs
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ceph-nvme-rbd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: rook-ceph.rbd.csi.ceph.com
+volumeBindingMode: Immediate
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+parameters:
+  clusterID: rook-ceph
+  pool: nvme-pool
+  imageFormat: "2"
+  imageFeatures: layering,fast-diff,object-map,deep-flatten,exclusive-lock
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+  csi.storage.k8s.io/fstype: ext4
+mountOptions:
+  - discard
+---
+# Ceph pool backed exclusively by NVMe devices for highest IOPS
+apiVersion: ceph.rook.io/v1
+kind: CephBlockPool
+metadata:
+  name: nvme-pool
+  namespace: rook-ceph
+spec:
+  failureDomain: host
+  replicated:
+    size: 2
+    requireSafeReplicaSize: true
+  deviceClass: nvme
+  parameters:
+    compression_mode: none
+    pg_num: "128"

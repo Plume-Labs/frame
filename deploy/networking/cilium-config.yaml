@@ -1,0 +1,197 @@
+---
+# Cilium CNI — eBPF-accelerated networking with XDP, BandwidthManager, and Hubble observability
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cilium
+  labels:
+    name: cilium
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cilium-config
+  namespace: cilium
+data:
+  # Core mode
+  debug: "false"
+  enable-ipv4: "true"
+  enable-ipv6: "false"
+  # eBPF host routing (bypass iptables for maximum throughput)
+  routing-mode: "native"
+  bpf-lb-sock: "true"
+  bpf-map-dynamic-size-ratio: "0.0025"
+  enable-bpf-masquerade: "true"
+  enable-bpf-clock-probe: "true"
+  # XDP acceleration (requires NIC driver support)
+  enable-xdp-prefilter: "true"
+  # Bandwidth Manager (EDT-based egress rate limiting)
+  enable-bandwidth-manager: "true"
+  # Hubble observability
+  enable-hubble: "true"
+  hubble-listen-address: ":4244"
+  hubble-disable-tls: "false"
+  hubble-metrics-server: ":9965"
+  hubble-metrics: >-
+    dns,drop,tcp,flow,port-distribution,icmp,http
+  # K8s integration
+  k8s-require-ipv4-pod-cidr: "true"
+  ipam: "cluster-pool"
+  cluster-pool-ipv4-cidr: "10.0.0.0/8"
+  cluster-pool-ipv4-mask-size: "24"
+  # Policy
+  enable-policy: "default"
+  policy-audit-mode: "false"
+  # WireGuard encryption between nodes (optional, enable for zero-trust)
+  enable-wireguard: "false"
+  # Node port
+  enable-node-port: "true"
+  node-port-mode: "hybrid"
+  # Session affinity
+  enable-session-affinity: "true"
+  # Socket load balancing
+  enable-socket-lb: "true"
+  # Kube-proxy replacement
+  kube-proxy-replacement: "strict"
+  kube-proxy-replacement-healthz-bind-address: "0.0.0.0:10256"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cilium
+  namespace: cilium
+  labels:
+    app.kubernetes.io/name: cilium-agent
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cilium-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cilium-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9962"
+    spec:
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      serviceAccountName: cilium
+      terminationGracePeriodSeconds: 1
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: mount-cgroup
+          image: quay.io/cilium/cilium:v1.15.3
+          command: ["sh", "-ec", "cp /usr/bin/cilium-mount-cgroup /hostbin/cilium-mount-cgroup; nsenter --cgroup=/hostproc/1/ns/cgroup --mount=/hostproc/1/ns/mnt -- sh -c '/hostbin/cilium-mount-cgroup'"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: hostproc
+              mountPath: /hostproc
+            - name: cni-path
+              mountPath: /hostbin
+        - name: apply-sysctl-overwrites
+          image: quay.io/cilium/cilium:v1.15.3
+          command: ["sh", "-c", "sysctl -w kernel.unprivileged_bpf_disabled=1 || true"]
+          securityContext:
+            privileged: true
+      containers:
+        - name: cilium-agent
+          image: quay.io/cilium/cilium:v1.15.3
+          imagePullPolicy: IfNotPresent
+          command: [cilium-agent]
+          args:
+            - --config-dir=/tmp/cilium/config-map
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: CILIUM_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+          ports:
+            - name: prometheus
+              containerPort: 9962
+              protocol: TCP
+            - name: hubble-metrics
+              containerPort: 9965
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: 9879
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: config
+              mountPath: /tmp/cilium/config-map
+              readOnly: true
+            - name: bpf-maps
+              mountPath: /sys/fs/bpf
+              mountPropagation: Bidirectional
+            - name: cilium-cgroup
+              mountPath: /run/cilium/cgroupv2
+              mountPropagation: HostToContainer
+            - name: cni-path
+              mountPath: /host/opt/cni/bin
+            - name: etc-cni-netd
+              mountPath: /host/etc/cni/net.d
+            - name: lib-modules
+              mountPath: /lib/modules
+              readOnly: true
+            - name: xtables-lock
+              mountPath: /run/xtables.lock
+      volumes:
+        - name: config
+          configMap:
+            name: cilium-config
+        - name: bpf-maps
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        - name: cilium-cgroup
+          hostPath:
+            path: /run/cilium/cgroupv2
+            type: DirectoryOrCreate
+        - name: cni-path
+          hostPath:
+            path: /opt/cni/bin
+            type: DirectoryOrCreate
+        - name: etc-cni-netd
+          hostPath:
+            path: /etc/cni/net.d
+            type: DirectoryOrCreate
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: xtables-lock
+          hostPath:
+            path: /run/xtables.lock
+            type: FileOrCreate
+        - name: hostproc
+          hostPath:
+            path: /proc
+        - name: hostbin
+          hostPath:
+            path: /opt/cni/bin

@@ -1,0 +1,79 @@
+---
+# CPU Manager static policy ConfigMap — enables CPU pinning for guaranteed-class pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubelet-cpu-manager-config
+  namespace: kube-system
+data:
+  # Applied via kubelet --config flag or KubeletConfiguration
+  # These settings must be synced with each node's kubelet config
+  cpu-manager-policy: "static"
+  cpu-manager-reconcile-period: "10s"
+  # Reserved CPUs — kept free for OS and kubelet overhead (cores 0-3 on each NUMA node)
+  reserved-cpus: "0,1,2,3,48,49,50,51"
+  # Topology Manager policy — binds CPU + memory + device resources to same NUMA node
+  topology-manager-policy: "single-numa-node"
+  topology-manager-scope: "pod"
+---
+# KubeletConfiguration DaemonSet — applies CPU pinning and topology manager settings
+# This is typically applied via MachineConfig or Ansible; the ConfigMap above documents intent
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kubelet-config-sync
+  namespace: kube-system
+  labels:
+    app: kubelet-config-sync
+spec:
+  selector:
+    matchLabels:
+      app: kubelet-config-sync
+  template:
+    metadata:
+      labels:
+        app: kubelet-config-sync
+    spec:
+      hostPID: true
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: apply-kubelet-config
+          image: bitnami/kubectl:1.29
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              NODE=$(cat /etc/hostname)
+              # Patch node with topology-aware labels
+              kubectl label node "$NODE" \
+                topology.kubernetes.io/numa-node="$(numactl --hardware 2>/dev/null | awk '/available/ {print $2}' || echo '2')" \
+                cpu-manager=static \
+                topology-manager=single-numa-node \
+                --overwrite || true
+              echo "Node $NODE labelled for CPU pinning + topology management"
+          env:
+            - name: KUBERNETES_SERVICE_HOST
+              value: kubernetes.default.svc
+          volumeMounts:
+            - name: hostname
+              mountPath: /etc/hostname
+              readOnly: true
+          securityContext:
+            privileged: false
+      containers:
+        - name: pause
+          image: gcr.io/google_containers/pause:3.9
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 10m
+              memory: 8Mi
+      volumes:
+        - name: hostname
+          hostPath:
+            path: /etc/hostname
