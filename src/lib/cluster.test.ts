@@ -180,10 +180,18 @@ describe('updateNodeMetrics', () => {
   })
 
   it('keeps GPU utilization in [0, 100] across many updates', () => {
-    // find a node with GPU metrics (most nodes have them); try up to 50
-    const nodes = generateClusterNodes(50)
-    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
-    if (!gpuNode) return // no GPU node generated this run — skip
+    // Build a deterministic online node with a fixed GPU so the assertion always runs
+    const [base] = generateClusterNodes(1)
+    const gpuNode = {
+      ...base,
+      status: 'online' as const,
+      gpuMetrics: [{
+        gpuIndex: 0, model: 'NVIDIA A100 80GB',
+        utilizationPercent: 50, memoryUsedGB: 40, memoryTotalGB: 80,
+        temperatureC: 60, powerWatts: 250, nvlinkBandwidthGBps: 200,
+        smOccupancyPercent: 55, eccErrors: 0, migEnabled: false, migInstances: 0,
+      }],
+    }
     for (let i = 0; i < 20; i++) {
       const updated = updateNodeMetrics(gpuNode)
       for (const gpu of updated.gpuMetrics ?? []) {
@@ -194,9 +202,17 @@ describe('updateNodeMetrics', () => {
   })
 
   it('keeps GPU memoryUsedGB within [0, memoryTotalGB] across many updates', () => {
-    const nodes = generateClusterNodes(50)
-    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
-    if (!gpuNode) return
+    const [base] = generateClusterNodes(1)
+    const gpuNode = {
+      ...base,
+      status: 'online' as const,
+      gpuMetrics: [{
+        gpuIndex: 0, model: 'NVIDIA A100 80GB',
+        utilizationPercent: 50, memoryUsedGB: 40, memoryTotalGB: 80,
+        temperatureC: 60, powerWatts: 250, nvlinkBandwidthGBps: 200,
+        smOccupancyPercent: 55, eccErrors: 0, migEnabled: false, migInstances: 0,
+      }],
+    }
     for (let i = 0; i < 20; i++) {
       const updated = updateNodeMetrics(gpuNode)
       for (const gpu of updated.gpuMetrics ?? []) {
@@ -207,9 +223,17 @@ describe('updateNodeMetrics', () => {
   })
 
   it('keeps GPU temperatureC within [30, 95] across many updates', () => {
-    const nodes = generateClusterNodes(50)
-    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
-    if (!gpuNode) return
+    const [base] = generateClusterNodes(1)
+    const gpuNode = {
+      ...base,
+      status: 'online' as const,
+      gpuMetrics: [{
+        gpuIndex: 0, model: 'NVIDIA A100 80GB',
+        utilizationPercent: 50, memoryUsedGB: 40, memoryTotalGB: 80,
+        temperatureC: 60, powerWatts: 250, nvlinkBandwidthGBps: 200,
+        smOccupancyPercent: 55, eccErrors: 0, migEnabled: false, migInstances: 0,
+      }],
+    }
     for (let i = 0; i < 20; i++) {
       const updated = updateNodeMetrics(gpuNode)
       for (const gpu of updated.gpuMetrics ?? []) {
@@ -220,9 +244,17 @@ describe('updateNodeMetrics', () => {
   })
 
   it('keeps GPU powerWatts within [50, 500] across many updates', () => {
-    const nodes = generateClusterNodes(50)
-    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
-    if (!gpuNode) return
+    const [base] = generateClusterNodes(1)
+    const gpuNode = {
+      ...base,
+      status: 'online' as const,
+      gpuMetrics: [{
+        gpuIndex: 0, model: 'NVIDIA A100 80GB',
+        utilizationPercent: 50, memoryUsedGB: 40, memoryTotalGB: 80,
+        temperatureC: 60, powerWatts: 250, nvlinkBandwidthGBps: 200,
+        smOccupancyPercent: 55, eccErrors: 0, migEnabled: false, migInstances: 0,
+      }],
+    }
     for (let i = 0; i < 20; i++) {
       const updated = updateNodeMetrics(gpuNode)
       for (const gpu of updated.gpuMetrics ?? []) {
@@ -233,9 +265,17 @@ describe('updateNodeMetrics', () => {
   })
 
   it('keeps GPU NVLink bandwidth non-negative across many updates', () => {
-    const nodes = generateClusterNodes(50)
-    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
-    if (!gpuNode) return
+    const [base] = generateClusterNodes(1)
+    const gpuNode = {
+      ...base,
+      status: 'online' as const,
+      gpuMetrics: [{
+        gpuIndex: 0, model: 'NVIDIA A100 80GB',
+        utilizationPercent: 50, memoryUsedGB: 40, memoryTotalGB: 80,
+        temperatureC: 60, powerWatts: 250, nvlinkBandwidthGBps: 200,
+        smOccupancyPercent: 55, eccErrors: 0, migEnabled: false, migInstances: 0,
+      }],
+    }
     for (let i = 0; i < 20; i++) {
       const updated = updateNodeMetrics(gpuNode)
       for (const gpu of updated.gpuMetrics ?? []) {
@@ -245,9 +285,17 @@ describe('updateNodeMetrics', () => {
   })
 
   it('keeps GPU smOccupancyPercent in [0, 100] across many updates', () => {
-    const nodes = generateClusterNodes(50)
-    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
-    if (!gpuNode) return
+    const [base] = generateClusterNodes(1)
+    const gpuNode = {
+      ...base,
+      status: 'online' as const,
+      gpuMetrics: [{
+        gpuIndex: 0, model: 'NVIDIA A100 80GB',
+        utilizationPercent: 50, memoryUsedGB: 40, memoryTotalGB: 80,
+        temperatureC: 60, powerWatts: 250, nvlinkBandwidthGBps: 200,
+        smOccupancyPercent: 55, eccErrors: 0, migEnabled: false, migInstances: 0,
+      }],
+    }
     for (let i = 0; i < 20; i++) {
       const updated = updateNodeMetrics(gpuNode)
       for (const gpu of updated.gpuMetrics ?? []) {
