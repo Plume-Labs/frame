@@ -235,7 +235,6 @@ export function calculateRackPowerCooling(rack: RackData): RackPowerCooling {
   const thermalLoad = power.currentDraw * 3.412
   
   const rackSpaceUsed = rack.nodes.length
-  const rackSpaceTotal = 42
   const powerDensity = rackSpaceUsed > 0 ? power.currentDraw / rackSpaceUsed : 0
   
   return {

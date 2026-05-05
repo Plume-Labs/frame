@@ -34,7 +34,7 @@ describe('validatePowerConstraints', () => {
   it('returns no errors for a lightly loaded rack', () => {
     // Build a single-node rack well within limits
     const rack = makeRack(1)
-    const { errors, warnings } = validatePowerConstraints(rack, DEFAULT_RACK_CONSTRAINTS)
+    const { errors } = validatePowerConstraints(rack, DEFAULT_RACK_CONSTRAINTS)
     // The single-node rack should be well within the 12 kW limit
     expect(errors).toHaveLength(0)
   })
