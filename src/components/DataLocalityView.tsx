@@ -15,14 +15,13 @@ const TIER_COLORS: Record<string, { bg: string; text: string; label: string }> =
 const TIER_ORDER = ['ram', 'nvme', 'object'] as const
 
 function CacheHeatCell({ value }: { value: number }) {
-  const alpha = Math.round(value * 100)
   let color = 'bg-accent'
   if (value < 0.5) color = 'bg-[oklch(0.75_0.18_75)]'
   if (value < 0.3) color = 'bg-destructive'
   return (
     <div
       title={`Cache hit rate: ${(value * 100).toFixed(1)}%`}
-      className={`w-full h-6 rounded ${color} opacity-${Math.max(20, alpha)} transition-opacity`}
+      className={`w-full h-6 rounded ${color} transition-opacity`}
       style={{ opacity: Math.max(0.15, value) }}
     />
   )

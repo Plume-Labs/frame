@@ -167,8 +167,7 @@ spec:
                 - name: checkpoint-interval
                   value: "{{inputs.parameters.checkpoint-interval}}"
             withSequence:
-              start: "0"
-              end: "{{inputs.parameters.num-gpus}}"
+              count: "{{inputs.parameters.num-gpus}}"
 
     - name: training-worker
       inputs:

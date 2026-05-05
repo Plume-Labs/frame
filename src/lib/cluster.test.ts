@@ -35,6 +35,20 @@ describe('generateClusterNodes', () => {
     }
   })
 
+  it('GPU migInstances is 0 when migEnabled is false, and >0 when true', () => {
+    // Generate enough nodes to have a good sample of GPU metrics
+    const nodes = generateClusterNodes(200)
+    for (const node of nodes) {
+      for (const gpu of node.gpuMetrics ?? []) {
+        if (!gpu.migEnabled) {
+          expect(gpu.migInstances).toBe(0)
+        } else {
+          expect(gpu.migInstances).toBeGreaterThan(0)
+        }
+      }
+    }
+  })
+
   it('generates hardware with a valid deviceType', () => {
     const validTypes = new Set(['server', 'storage', 'network', 'pdu', 'ups', 'blank'])
     // Run multiple times so we can detect if 'network' is ever generated
@@ -160,6 +174,84 @@ describe('updateNodeMetrics', () => {
     const originalCpu = node.metrics.cpu
     updateNodeMetrics(node)
     expect(node.metrics.cpu).toBe(originalCpu)
+  })
+
+  it('keeps GPU utilization in [0, 100] across many updates', () => {
+    // find a node with GPU metrics (most nodes have them); try up to 50
+    const nodes = generateClusterNodes(50)
+    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
+    if (!gpuNode) return // no GPU node generated this run — skip
+    for (let i = 0; i < 20; i++) {
+      const updated = updateNodeMetrics(gpuNode)
+      for (const gpu of updated.gpuMetrics ?? []) {
+        expect(gpu.utilizationPercent).toBeGreaterThanOrEqual(0)
+        expect(gpu.utilizationPercent).toBeLessThanOrEqual(100)
+      }
+    }
+  })
+
+  it('keeps GPU memoryUsedGB within [0, memoryTotalGB] across many updates', () => {
+    const nodes = generateClusterNodes(50)
+    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
+    if (!gpuNode) return
+    for (let i = 0; i < 20; i++) {
+      const updated = updateNodeMetrics(gpuNode)
+      for (const gpu of updated.gpuMetrics ?? []) {
+        expect(gpu.memoryUsedGB).toBeGreaterThanOrEqual(0)
+        expect(gpu.memoryUsedGB).toBeLessThanOrEqual(gpu.memoryTotalGB)
+      }
+    }
+  })
+
+  it('keeps GPU temperatureC within [30, 95] across many updates', () => {
+    const nodes = generateClusterNodes(50)
+    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
+    if (!gpuNode) return
+    for (let i = 0; i < 20; i++) {
+      const updated = updateNodeMetrics(gpuNode)
+      for (const gpu of updated.gpuMetrics ?? []) {
+        expect(gpu.temperatureC).toBeGreaterThanOrEqual(30)
+        expect(gpu.temperatureC).toBeLessThanOrEqual(95)
+      }
+    }
+  })
+
+  it('keeps GPU powerWatts within [50, 500] across many updates', () => {
+    const nodes = generateClusterNodes(50)
+    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
+    if (!gpuNode) return
+    for (let i = 0; i < 20; i++) {
+      const updated = updateNodeMetrics(gpuNode)
+      for (const gpu of updated.gpuMetrics ?? []) {
+        expect(gpu.powerWatts).toBeGreaterThanOrEqual(50)
+        expect(gpu.powerWatts).toBeLessThanOrEqual(500)
+      }
+    }
+  })
+
+  it('keeps GPU NVLink bandwidth non-negative across many updates', () => {
+    const nodes = generateClusterNodes(50)
+    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
+    if (!gpuNode) return
+    for (let i = 0; i < 20; i++) {
+      const updated = updateNodeMetrics(gpuNode)
+      for (const gpu of updated.gpuMetrics ?? []) {
+        expect(gpu.nvlinkBandwidthGBps).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+
+  it('keeps GPU smOccupancyPercent in [0, 100] across many updates', () => {
+    const nodes = generateClusterNodes(50)
+    const gpuNode = nodes.find(n => n.gpuMetrics && n.gpuMetrics.length > 0 && n.status !== 'offline')
+    if (!gpuNode) return
+    for (let i = 0; i < 20; i++) {
+      const updated = updateNodeMetrics(gpuNode)
+      for (const gpu of updated.gpuMetrics ?? []) {
+        expect(gpu.smOccupancyPercent).toBeGreaterThanOrEqual(0)
+        expect(gpu.smOccupancyPercent).toBeLessThanOrEqual(100)
+      }
+    }
   })
 })
 

@@ -56,7 +56,10 @@ data:
       evaluation_interval: 15s
       external_labels:
         cluster: 'bare-metal-cluster'
-    
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
     scrape_configs:
       - job_name: 'kubernetes-apiservers'
         kubernetes_sd_configs:
@@ -122,23 +125,29 @@ data:
 
       - job_name: 'argo-workflows'
         kubernetes_sd_configs:
-          - role: endpoints
+          - role: pod
             namespaces:
               names: [argo]
         relabel_configs:
-          - source_labels: [__meta_kubernetes_service_name]
+          - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
             regex: workflow-controller
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:9090
 
       - job_name: 'volcano-scheduler'
         kubernetes_sd_configs:
-          - role: endpoints
+          - role: pod
             namespaces:
               names: [volcano-system]
         relabel_configs:
-          - source_labels: [__meta_kubernetes_service_name]
+          - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
             regex: volcano-scheduler
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:8080
 
       - job_name: 'alluxio'
         kubernetes_sd_configs:
@@ -251,12 +260,17 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
             - name: storage
               mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-recording-rules
         - name: storage
           persistentVolumeClaim:
             claimName: prometheus-storage

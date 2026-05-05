@@ -173,8 +173,8 @@ spec:
           args:
             - server
             - --namespaced=false
-            - --auth-mode=server
-            - --secure=false
+            - --auth-mode=sso
+            - --secure=true
           ports:
             - name: web
               containerPort: 2746
@@ -182,7 +182,7 @@ spec:
             httpGet:
               path: /
               port: 2746
-              scheme: HTTP
+              scheme: HTTPS
             initialDelaySeconds: 10
             periodSeconds: 20
           resources:
