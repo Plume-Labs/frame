@@ -104,20 +104,6 @@ export function ZoneHeatmap({ nodes, onZoneClick }: ZoneHeatmapProps) {
     return { zoneMetrics, rackMetrics, globalMetrics }
   }, [nodes])
 
-  const getHeatColor = (value: number, metric: 'cpu' | 'memory' | 'storage' | 'network' | 'temperature') => {
-    let normalizedValue = value
-
-    if (metric === 'temperature') {
-      normalizedValue = Math.max(0, Math.min(100, ((value - 40) / 45) * 100))
-    }
-
-    if (normalizedValue < 20) return 'bg-accent/20 text-accent border-accent/30'
-    if (normalizedValue < 40) return 'bg-primary/30 text-primary border-primary/40'
-    if (normalizedValue < 60) return 'bg-primary/50 text-primary border-primary/60'
-    if (normalizedValue < 80) return 'bg-warning/50 text-warning-foreground border-warning/60'
-    return 'bg-destructive/60 text-destructive-foreground border-destructive/70'
-  }
-
   const getHeatBgStyle = (value: number, metric: 'cpu' | 'memory' | 'storage' | 'network' | 'temperature') => {
     let normalizedValue = value
 

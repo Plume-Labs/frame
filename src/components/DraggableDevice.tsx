@@ -1,5 +1,4 @@
 import { ClusterNode, DeviceType } from '@/lib/types'
-import { Badge } from '@/components/ui/badge'
 import { DraggedDevice } from './DragDropRackManager'
 import { 
   Desktop, 

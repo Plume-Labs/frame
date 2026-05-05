@@ -62,17 +62,6 @@ export function RackConfigDialog({ onAddDevice }: RackConfigDialogProps) {
     })
   }
 
-  const getDeviceIcon = (type: DeviceType) => {
-    switch (type) {
-      case 'storage':
-        return <Database className="w-5 h-5" weight="duotone" />
-      case 'network':
-        return <WifiHigh className="w-5 h-5" weight="duotone" />
-      default:
-        return <Cpu className="w-5 h-5" weight="duotone" />
-    }
-  }
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>

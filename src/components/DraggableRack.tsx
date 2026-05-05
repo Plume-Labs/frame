@@ -21,7 +21,7 @@ interface DraggableRackProps {
 
 export function DraggableRack({
   rack,
-  draggedDevice,
+  draggedDevice: _draggedDevice,
   dropTarget,
   onDragStart,
   onDragEnd,
