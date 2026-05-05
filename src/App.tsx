@@ -29,6 +29,9 @@ import { DataFabricDashboard } from '@/components/DataFabricDashboard'
 import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
 import { DataLineageView } from '@/components/DataLineageView'
 import { ResiliencePanel } from '@/components/ResiliencePanel'
+import { KVCacheDashboard } from '@/components/KVCacheDashboard'
+import { ElasticPoolDashboard } from '@/components/ElasticPoolDashboard'
+import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
@@ -75,6 +78,10 @@ function App() {
             <TabsTrigger value="storage">Storage</TabsTrigger>
             <TabsTrigger value="gpu">GPU</TabsTrigger>
             <TabsTrigger value="resilience">Resilience</TabsTrigger>
+            {/* AI Inference optimizations */}
+            <TabsTrigger value="kv-cache">KV-Cache</TabsTrigger>
+            <TabsTrigger value="elastic-pools">Elastic Pools</TabsTrigger>
+            <TabsTrigger value="speculative">Speculative</TabsTrigger>
             {/* Cluster management */}
             <TabsTrigger value="nodes">Nodes</TabsTrigger>
             <TabsTrigger value="racks">Racks</TabsTrigger>
@@ -118,6 +125,21 @@ function App() {
           {/* ── Resilience & reliability controls ──────────────────────────── */}
           <TabsContent value="resilience" className="space-y-6">
             <ResiliencePanel nodes={nodes} />
+          </TabsContent>
+
+          {/* ── Distributed KV-Cache RDMA ────────────────────────────────────── */}
+          <TabsContent value="kv-cache" className="space-y-6">
+            <KVCacheDashboard />
+          </TabsContent>
+
+          {/* ── Elastic LPAR Pools ───────────────────────────────────────────── */}
+          <TabsContent value="elastic-pools" className="space-y-6">
+            <ElasticPoolDashboard />
+          </TabsContent>
+
+          {/* ── Speculative Decoding ─────────────────────────────────────────── */}
+          <TabsContent value="speculative" className="space-y-6">
+            <SpeculativeDecodingDashboard />
           </TabsContent>
 
           {/* ── Node topology (cluster management) ──────────────────────────── */}

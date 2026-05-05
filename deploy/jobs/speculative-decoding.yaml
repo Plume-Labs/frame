@@ -1,0 +1,202 @@
+---
+# Speculative Decoding — Draft Model + Frame Routing
+# Apply with: kubectl apply -f deploy/jobs/speculative-decoding.yaml
+#
+# Architecture:
+#   A small draft model (1B params, 1 GPU, low latency) proposes N token
+#   continuations.  The target model (70B params) verifies them in a single
+#   forward pass, accepting on average ~72 % of draft tokens (EAGLE strategy).
+#   The Frame routing annotation directs eligible inference requests to the
+#   speculative path automatically.
+#
+# Requirements:
+#   - vLLM >= 0.9.0
+#   - Target + draft models available on the same node (or shared PVC)
+#   - Hugging Face token in secret hf-token (key: HF_TOKEN)
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-inference
+  labels:
+    frame.plume-labs.io/managed: "true"
+---
+# ── ConfigMap — shared vLLM speculative decoding args ────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-speculative-config
+  namespace: neura-inference
+  labels:
+    frame.plume-labs.io/optimization: speculative-decoding
+data:
+  TARGET_MODEL: "meta-llama/Llama-3.1-70B-Instruct"
+  DRAFT_MODEL:  "meta-llama/Llama-3.2-1B"
+  NUM_SPECULATIVE_TOKENS: "5"
+  # EAGLE uses the target model's hidden states for draft; no extra GPU needed
+  SPECULATIVE_DRAFT_TP: "1"
+  GPU_MEMORY_UTILIZATION: "0.90"
+---
+# ── Deployment — speculative decode engine ────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-speculative
+  namespace: neura-inference
+  labels:
+    app: vllm-speculative
+    frame.plume-labs.io/optimization: speculative-decoding
+  annotations:
+    frame.plume-labs.io/speculative-decoding: "enabled"
+    frame.plume-labs.io/speculative-strategy: "eagle"
+    # Comma-separated paths that Frame routes to this speculative engine
+    frame.plume-labs.io/speculative-routes: "/v1/chat/completions,/v1/completions"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm-speculative
+  template:
+    metadata:
+      labels:
+        app: vllm-speculative
+    spec:
+      priorityClassName: frame-high
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.present
+                    operator: In
+                    values: ["true"]
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.9.0
+          command:
+            - python
+            - -m
+            - vllm.entrypoints.openai.api_server
+          args:
+            - --host=0.0.0.0
+            - --port=8000
+            - --model=$(TARGET_MODEL)
+            - --speculative-model=$(DRAFT_MODEL)
+            - --num-speculative-tokens=$(NUM_SPECULATIVE_TOKENS)
+            - --speculative-draft-tensor-parallel-size=$(SPECULATIVE_DRAFT_TP)
+            - --gpu-memory-utilization=$(GPU_MEMORY_UTILIZATION)
+            - --use-v2-block-manager
+            - --enable-chunked-prefill
+            - --served-model-name=llama-70b-speculative
+          envFrom:
+            - configMapRef:
+                name: vllm-speculative-config
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: HF_TOKEN
+            - name: VLLM_LOGGING_LEVEL
+              value: WARNING
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            limits:
+              cpu: "32"
+              memory: 96Gi
+              nvidia.com/gpu: "2"   # 1 for target (TP=1) + 1 for draft
+            requests:
+              cpu: "16"
+              memory: 80Gi
+              nvidia.com/gpu: "2"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache-pvc
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-speculative
+  namespace: neura-inference
+  labels:
+    app: vllm-speculative
+    frame.plume-labs.io/optimization: speculative-decoding
+spec:
+  selector:
+    app: vllm-speculative
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
+---
+# ── Frame InferenceRoute — routes eligible paths to speculative engine ────────
+# Requires the Frame routing controller (frame.plume-labs.io/v1alpha1 CRD).
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: InferenceRoute
+metadata:
+  name: speculative-route
+  namespace: neura-inference
+spec:
+  # Requests matching these paths are routed to the speculative engine when
+  # the service-class is HIGH or MEDIUM.
+  routes:
+    - path: /v1/chat/completions
+      backend: vllm-speculative
+      serviceClasses: [HIGH, MEDIUM]
+      weight: 100
+    - path: /v1/completions
+      backend: vllm-speculative
+      serviceClasses: [HIGH, MEDIUM]
+      weight: 100
+  # Fall back to baseline engine for LOW service-class or /v1/embeddings
+  fallbackBackend: vllm-baseline
+---
+# ── HPA — scale speculative replicas on token throughput ─────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-speculative-hpa
+  namespace: neura-inference
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-speculative
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: vllm:generation_tokens_total
+        target:
+          type: AverageValue
+          averageValue: "5000"   # tokens/s per replica before scale-out

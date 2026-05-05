@@ -1,0 +1,110 @@
+---
+# Distributed KV-Cache RDMA for vLLM
+# Requires vLLM >= 0.9.0 with KV Transfer (NIXL/NixlConnector) support.
+# Apply with: kubectl apply -f deploy/caching/vllm-rdma-kvcache.yaml
+#
+# Architecture:
+#   Each GPU node runs a vLLM engine configured as both KV-cache producer and
+#   consumer. Prefill nodes push KV blocks over RDMA (RoCE v2 or InfiniBand)
+#   to decode nodes, eliminating redundant KV recompute across the cluster.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-kvcache-rdma-config
+  namespace: neura-inference
+  labels:
+    app.kubernetes.io/component: kv-transfer
+    frame.plume-labs.io/optimization: distributed-kv-cache
+data:
+  # ── vLLM engine extra args ────────────────────────────────────────────────
+  # These are passed to `vllm serve` via the InferenceService pod spec.
+  VLLM_KV_CONNECTOR: "NixlConnector"
+  VLLM_KV_ROLE: "kv_both"           # producer + consumer on every node
+  VLLM_KV_BUFFER_DEVICE: "cuda"     # keep KV blocks in VRAM
+  VLLM_KV_BUFFER_SIZE_GB: "80"      # H100 80 GB: dedicate full VRAM tier
+  VLLM_KV_PARALLEL_SIZE: "6"        # must match replica count
+  VLLM_KV_RDMA_BACKEND: "roce_v2"   # use roce_v2 or infiniband
+  VLLM_KV_RDMA_PORT: "18515"
+  VLLM_KV_RDMA_DEVICE: "mlx5_0"
+---
+# ── InferenceService — distributed KV-cache pool ──────────────────────────────
+# Requires the Kserve/InferenceService CRD from kserve.io
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-70b-kvcache
+  namespace: neura-inference
+  labels:
+    frame.plume-labs.io/optimization: distributed-kv-cache
+  annotations:
+    frame.plume-labs.io/kv-transfer-backend: "nixl"
+    frame.plume-labs.io/rdma-enabled: "true"
+spec:
+  predictor:
+    minReplicas: 6
+    maxReplicas: 6
+    model:
+      modelFormat:
+        name: vllm
+      resources:
+        limits:
+          cpu: "32"
+          memory: 96Gi
+          nvidia.com/gpu: "1"
+        requests:
+          cpu: "16"
+          memory: 80Gi
+          nvidia.com/gpu: "1"
+      args:
+        - --model=meta-llama/Llama-3.1-70B-Instruct
+        - --tensor-parallel-size=1
+        - --gpu-memory-utilization=0.92
+        - --kv-transfer-config
+        - '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_rank":$(KV_RANK),"kv_parallel_size":6,"kv_buffer_device":"cuda","kv_buffer_size":80}'
+      envFrom:
+        - configMapRef:
+            name: vllm-kvcache-rdma-config
+      env:
+        - name: KV_RANK
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name-index']
+    podSpec:
+      # Ensure all replicas land on RDMA-capable nodes in the same rack/zone
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: rdma
+                    operator: In
+                    values: ["true"]
+      # Use SR-IOV / Multus RDMA NIC for KV transfer traffic
+      annotations:
+        k8s.v1.cni.cncf.io/networks: rdma-sriov-net
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+      containers: []   # merged by KServe — listed for documentation only
+---
+# ── RDMA NetworkAttachmentDefinition for KV-transfer traffic ─────────────────
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: rdma-sriov-net
+  namespace: neura-inference
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "rdma-sriov-net",
+      "type": "sriov",
+      "ipam": {
+        "type": "static"
+      },
+      "link_state": "enable",
+      "vlan": 100
+    }
