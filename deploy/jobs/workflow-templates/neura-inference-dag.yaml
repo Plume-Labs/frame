@@ -37,7 +37,7 @@ spec:
             dependencies: [validate-input]
           - name: preprocess
             template: preprocess
-            dependencies: [validate-input]
+            dependencies: [validate-input, cache-lookup]
             when: "{{tasks.cache-lookup.outputs.result}} == 'miss'"
           - name: model-inference
             template: model-inference

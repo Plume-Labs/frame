@@ -11,9 +11,9 @@ interface NodeCardProps {
 }
 
 const SERVICE_CLASS_ACCENT: Record<string, string> = {
-  HIGH:   'before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-destructive',
-  MEDIUM: 'before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-[oklch(0.75_0.18_75)]',
-  LOW:    'before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-accent',
+  HIGH:   "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-destructive",
+  MEDIUM: "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-[oklch(0.75_0.18_75)]",
+  LOW:    "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-accent",
 }
 
 export function NodeCard({ node, onClick, isSelected }: NodeCardProps) {

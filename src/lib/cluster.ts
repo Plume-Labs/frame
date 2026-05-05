@@ -115,20 +115,23 @@ function generateHardwareInfo(index: number): HardwareInfo {
 const GPU_MODELS = ['NVIDIA A100 80GB', 'NVIDIA H100 80GB', 'NVIDIA A30', 'NVIDIA RTX A6000']
 
 function generateGPUMetrics(count: number): GPUMetrics[] {
-  return Array.from({ length: count }, (_, i) => ({
-    gpuIndex: i,
-    model: GPU_MODELS[i % GPU_MODELS.length],
-    utilizationPercent: randomInRange(10, 99),
-    memoryUsedGB: randomInRange(5, 75),
-    memoryTotalGB: 80,
-    temperatureC: randomInRange(40, 85),
-    powerWatts: randomInRange(100, 400),
-    nvlinkBandwidthGBps: randomInRange(50, 600),
-    smOccupancyPercent: randomInRange(20, 95),
-    eccErrors: Math.random() > 0.95 ? Math.floor(randomInRange(1, 5)) : 0,
-    migEnabled: Math.random() > 0.5,
-    migInstances: Math.random() > 0.5 ? Math.floor(randomInRange(1, 7)) : 1
-  }))
+  return Array.from({ length: count }, (_, i) => {
+    const migEnabled = Math.random() > 0.5
+    return {
+      gpuIndex: i,
+      model: GPU_MODELS[i % GPU_MODELS.length],
+      utilizationPercent: randomInRange(10, 99),
+      memoryUsedGB: randomInRange(5, 75),
+      memoryTotalGB: 80,
+      temperatureC: randomInRange(40, 85),
+      powerWatts: randomInRange(100, 400),
+      nvlinkBandwidthGBps: randomInRange(50, 600),
+      smOccupancyPercent: randomInRange(20, 95),
+      eccErrors: Math.random() > 0.95 ? Math.floor(randomInRange(1, 5)) : 0,
+      migEnabled,
+      migInstances: migEnabled ? Math.floor(randomInRange(1, 7)) : 0
+    }
+  })
 }
 
 const SERVICE_CLASSES: ServiceClass[] = ['HIGH', 'MEDIUM', 'LOW']

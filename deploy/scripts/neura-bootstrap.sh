@@ -27,6 +27,12 @@ wait_for_ds() {
   kubectl rollout status daemonset/"$name" -n "$ns" --timeout="$DEPLOY_TIMEOUT" || warn "Timeout waiting for $ns/$name"
 }
 
+wait_for_sts() {
+  local ns="$1" name="$2"
+  info "Waiting for statefulset $ns/$name …"
+  kubectl rollout status statefulset/"$name" -n "$ns" --timeout="$DEPLOY_TIMEOUT" || warn "Timeout waiting for $ns/$name"
+}
+
 check_prereqs() {
   info "Checking prerequisites …"
   for cmd in kubectl helm; do
@@ -121,8 +127,8 @@ step5_storage() {
   kubectl apply -f "$DEPLOY_DIR/storage/data-fabric.yaml"
   kubectl apply -f "$DEPLOY_DIR/storage/metacat.yaml"
 
-  # Wait for MinIO to be ready before configuring Alluxio underfs
-  wait_for_deploy data-fabric minio || wait_for_ds data-fabric minio || true
+  # Wait for MinIO StatefulSet to be ready before configuring Alluxio underfs
+  wait_for_sts data-fabric minio
   ok "Storage layer deployed"
 }
 

@@ -16,6 +16,35 @@ data:
   topology-manager-policy: "single-numa-node"
   topology-manager-scope: "pod"
 ---
+# RBAC for the kubelet-config-sync DaemonSet so it can label nodes in-cluster
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubelet-config-sync
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubelet-config-sync-node-labeler
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubelet-config-sync-node-labeler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubelet-config-sync-node-labeler
+subjects:
+  - kind: ServiceAccount
+    name: kubelet-config-sync
+    namespace: kube-system
+---
 # KubeletConfiguration DaemonSet — applies CPU pinning and topology manager settings
 # This is typically applied via MachineConfig or Ansible; the ConfigMap above documents intent
 apiVersion: apps/v1
@@ -36,6 +65,7 @@ spec:
     spec:
       hostPID: true
       priorityClassName: system-node-critical
+      serviceAccountName: kubelet-config-sync
       tolerations:
         - operator: Exists
       initContainers:
