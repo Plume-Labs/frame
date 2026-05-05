@@ -10,11 +10,13 @@ Traditional mainframes are monolithic, expensive, and proprietary. Frame takes t
 
 **Core ideas:**
 - **Framework, not just a dashboard** — Frame exposes a REST API and TypeScript SDK so operators, workloads, and CI pipelines can interact with the platform programmatically: submit jobs, tune policies, adjust quotas, and inspect state without touching the UI.
-- **Any cluster → mainframe** — plug in bare-metal nodes and Frame provisions, connects, and manages them automatically via PXE + Ansible + GitOps.
+- **Any local cluster → mainframe** — plug in bare-metal nodes in a single location (one or more racks) and Frame provisions, connects, and manages them automatically via PXE + Ansible + GitOps.
 - **No single point of failure** — workloads, storage, and networking are distributed across all nodes with self-healing built in (Velero snapshots, checkpoint controller, IPMI watchdog).
 - **GitOps-first** — the entire cluster state is declared in Git; changes are applied automatically and auditably via Flux CD / ArgoCD.
-- **High-performance fabric** — RDMA networking (InfiniBand or RoCE) with Cilium eBPF, SR-IOV, and DPDK delivers sub-microsecond latency between nodes, rivalling proprietary interconnects.
+- **High-performance local fabric** — RDMA networking (InfiniBand or RoCE) with Cilium eBPF, SR-IOV, and DPDK delivers sub-microsecond latency between nodes within the same physical location. RDMA is a **local, intra-datacenter interconnect** — it is not stretched over the internet or across sites.
 - **Framework-first UI** — the control plane UI leads with job submission, scheduling policy management, resource provisioning, and resilience controls; observability dashboards are a secondary concern.
+
+> **Scope:** Frame manages a **single local cluster** — one physical location, one or more racks. Multi-site / multi-region federation is intentionally **out of scope** for this version and will require a separate mechanism (WAN overlay, API aggregation, etc.) when it is added later.
 
 ---
 
@@ -151,8 +153,8 @@ Frame exposes a REST API so that any tooling can interact with the framework wit
   | Ceph OSD     |  |  Ceph OSD     |  |  Ceph OSD    |
   +--------------+  +---------------+  +--------------+
           |                  |                  |
-          +------------- RDMA Fabric -----------+
-                    (InfiniBand / RoCE + Cilium eBPF)
+          +------------- RDMA Fabric (local — same datacenter) -----------+
+                    (InfiniBand / RoCE + Cilium eBPF, intra-rack/inter-rack)
 ```
 
 ---
@@ -249,7 +251,7 @@ The control-plane UI leads with operator actions and puts observability dashboar
 
 | Component | Details |
 |---|---|
-| InfiniBand / RoCE | RDMA transport for < 1 μs inter-node latency |
+| InfiniBand / RoCE | RDMA transport for < 1 μs intra-datacenter latency (local fabric only — not for WAN/internet) |
 | Cilium eBPF | High-performance pod networking and network policy |
 | SR-IOV | Hardware-level NIC virtualisation for GPU workloads |
 | DPDK | Kernel-bypass packet processing |
@@ -275,6 +277,17 @@ The control-plane UI leads with operator actions and puts observability dashboar
 | `neura-bootstrap.sh` | HPC / Neura stack (GPU, Argo, MinIO, Jaeger, …) |
 | `hot-add-node.sh` | Add a new node to a running cluster without downtime |
 | `health-check.sh` | Verify cluster health (nodes, storage, networking, GitOps) |
+
+---
+
+## Cluster Topology Constraints
+
+Frame is designed for a **single physical location**:
+
+- One or more racks in the same room / building (same Layer-2 network segment for RDMA)
+- RDMA fabric (InfiniBand or RoCE) is a **local interconnect** — it does not traverse the internet or WAN links
+- `zones` and `racks` in Frame are **failure-domain labels within the same site**, not geographic regions
+- **Multi-site / multi-region federation** is explicitly out of scope for the current version; connecting two Frame clusters across locations will require a separate mechanism (WAN gateway, API aggregation layer, or a dedicated federation controller) to be defined in a future release
 
 ---
 

@@ -67,7 +67,7 @@ spec:
     bucket: neura-velero-backups
     prefix: cluster
   config:
-    region: us-east-1
+    region: us-east-1        # MinIO requires a region string; ignored for local-only deployments — Frame runs single-site
     s3ForcePathStyle: "true"
     s3Url: http://minio-lb.data-fabric.svc.cluster.local:9000
   credential:
