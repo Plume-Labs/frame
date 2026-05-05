@@ -363,3 +363,99 @@ export interface PowerCoolingAlert {
   threshold: number
 }
 
+// ── Distributed KV-Cache RDMA ─────────────────────────────────────────────────
+
+export interface KVCacheNodeStats {
+  nodeId: string
+  nodeName: string
+  /** Fraction of token lookups satisfied from local VRAM KV cache (0–1) */
+  localHitRate: number
+  /** Fraction of token lookups satisfied via RDMA from a remote node (0–1) */
+  rdmaHitRate: number
+  /** RDMA read bandwidth currently consumed (GB/s) */
+  rdmaBandwidthGBps: number
+  /** KV cache capacity used (GB) */
+  usedCapacityGB: number
+  /** Total KV cache capacity (GB) */
+  totalCapacityGB: number
+  /** Number of active RDMA queue pairs to peer nodes */
+  activeQueuePairs: number
+  /** Latency of RDMA KV-cache reads (µs) */
+  rdmaLatencyUs: number
+}
+
+export type VLLMKVTransferBackend = 'mooncake' | 'lmcache' | 'nixl'
+
+export interface KVCacheClusterStats {
+  backend: VLLMKVTransferBackend
+  nodes: KVCacheNodeStats[]
+  /** Total tokens evicted cluster-wide in the last minute */
+  evictionsPerMinute: number
+  /** Overall prefill time reduction vs. no KV transfer (%) */
+  prefillSavingsPct: number
+}
+
+// ── Elastic LPAR Pools ────────────────────────────────────────────────────────
+
+export type ElasticPoolState = 'stable' | 'expanding' | 'contracting' | 'draining'
+
+export interface ElasticPoolQuota {
+  cpuMin: number
+  cpuMax: number
+  memoryMinGi: number
+  memoryMaxGi: number
+  gpuMin: number
+  gpuMax: number
+}
+
+export interface ElasticPool {
+  name: string
+  /** Volcano Queue name backing this pool */
+  volcanoQueue: string
+  serviceClass: ServiceClass
+  state: ElasticPoolState
+  quota: ElasticPoolQuota
+  /** Current allocations */
+  allocatedCPU: number
+  allocatedMemoryGi: number
+  allocatedGPU: number
+  /** Number of workload pods in this pool */
+  podCount: number
+  /** Queue weight for DRF scheduling */
+  weight: number
+  /** Whether idle resources can be reclaimed by other pools */
+  reclaimable: boolean
+}
+
+// ── Speculative Decoding ──────────────────────────────────────────────────────
+
+export type SpecDecodeStrategy = 'draft-model' | 'medusa' | 'eagle'
+
+export interface SpecDecodeRouteStats {
+  /** Endpoint path */
+  path: string
+  /** Fraction of requests routed to speculative path (0–1) */
+  speculativeFraction: number
+  /** Mean latency on speculative path (ms) */
+  speculativeLatencyMs: number
+  /** Mean latency on baseline path (ms) */
+  baselineLatencyMs: number
+}
+
+export interface SpecDecodeMetrics {
+  strategy: SpecDecodeStrategy
+  draftModel: string
+  targetModel: string
+  /** Mean number of speculative tokens proposed per step */
+  meanDraftTokens: number
+  /** Fraction of draft tokens accepted by the target model (0–1) */
+  tokenAcceptanceRate: number
+  /** Effective throughput speedup vs. no speculation */
+  throughputSpeedup: number
+  /** Total speculative decode requests served */
+  totalRequests: number
+  /** Requests using speculative path right now */
+  activeSpecRequests: number
+  routes: SpecDecodeRouteStats[]
+}
+
