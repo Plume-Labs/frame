@@ -2,6 +2,8 @@
 
 Frame is a **mainframe framework for Kubernetes** — not merely a monitoring dashboard. It provides a complete operator control plane (REST API, TypeScript SDK, and UI) that lets operators, workloads, and CI pipelines manage jobs, scheduling policies, resource quotas, storage, networking, and resilience programmatically or through the interface.
 
+> **Cluster scope:** Frame manages a **single local cluster** — one physical location, with one or more racks. The RDMA fabric (InfiniBand or RoCE) is a local, intra-datacenter interconnect and does **not** traverse the internet or WAN. `zones` and `racks` are failure-domain labels within the same site. Multi-site / multi-region federation is **out of scope** for this version.
+
 **Experience Qualities**:
 1. **Control-first** - The interface leads with operator actions: job submission, policy management, resource provisioning, and resilience controls. Observability is present but secondary.
 2. **Programmable** - Every framework action available in the UI is also exposed through the REST API and TypeScript SDK so workloads and automation can interact without a human in the loop.
@@ -71,6 +73,7 @@ Frame is a full-stack mainframe framework: a React control-plane UI, an Express 
 - **Empty State**: Show "Initializing cluster..." skeleton loaders during first render
 - **Hot Node Addition**: Support dynamic node provisioning via IPMI/PXE without cluster disruption
 - **Storage Failures**: Gracefully handle Ceph OSD failures with visible cluster health degradation
+- **Multi-site Request**: Out of scope — Frame manages a single local cluster. If a user requests multi-region federation, surface a clear message that it is not yet supported.
 
 ## Design Direction
 
