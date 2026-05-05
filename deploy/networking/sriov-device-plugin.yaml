@@ -1,0 +1,168 @@
+---
+# SR-IOV Network Device Plugin — exposes VFs to Kubernetes pods for near-bare-metal networking
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sriov-device-plugin
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sriov-device-plugin
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sriov-device-plugin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sriov-device-plugin
+subjects:
+  - kind: ServiceAccount
+    name: sriov-device-plugin
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sriovdp-config
+  namespace: kube-system
+data:
+  config.json: |
+    {
+      "resourceList": [
+        {
+          "resourceName": "intel_sriov_netdevice",
+          "resourcePrefix": "intel.com",
+          "selectors": {
+            "vendors": ["8086"],
+            "devices": ["154c", "10ed", "1889"],
+            "drivers": ["iavf", "i40evf", "ixgbevf"],
+            "pfNames": ["enp1s0f0#0-15", "enp1s0f1#0-15"]
+          }
+        },
+        {
+          "resourceName": "mlnx_sriov_rdma",
+          "resourcePrefix": "mellanox.com",
+          "selectors": {
+            "vendors": ["15b3"],
+            "devices": ["1018", "101b", "1021"],
+            "drivers": ["mlx5_core"],
+            "pfNames": ["ens2f0#0-31", "ens2f1#0-31"],
+            "isRdma": true
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-sriov-device-plugin-amd64
+  namespace: kube-system
+  labels:
+    tier: node
+    app: sriovdp
+spec:
+  selector:
+    matchLabels:
+      app: sriovdp
+  template:
+    metadata:
+      labels:
+        tier: node
+        app: sriovdp
+    spec:
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      nodeSelector:
+        sriov: "true"
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      serviceAccountName: sriov-device-plugin
+      containers:
+        - name: kube-sriovdp
+          image: ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin:v3.6.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - --log-level=10
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 40Mi
+            limits:
+              cpu: 1
+              memory: 200Mi
+          volumeMounts:
+            - name: devicesock
+              mountPath: /var/lib/kubelet/
+            - name: log
+              mountPath: /var/log
+            - name: config-volume
+              mountPath: /etc/pcidp/
+            - name: device-info
+              mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
+      volumes:
+        - name: devicesock
+          hostPath:
+            path: /var/lib/kubelet/
+        - name: log
+          hostPath:
+            path: /var/log
+        - name: device-info
+          hostPath:
+            path: /var/run/k8s.cni.cncf.io/devinfo/dp
+            type: DirectoryOrCreate
+        - name: config-volume
+          configMap:
+            name: sriovdp-config
+            items:
+              - key: config.json
+                path: config.json
+---
+# SriovNetworkNodePolicy — configure VF count per physical function
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: policy-mlnx-rdma
+  namespace: sriov-network-operator
+spec:
+  resourceName: mlnx_sriov_rdma
+  nodeSelector:
+    rdma: "true"
+  numVfs: 32
+  nicSelector:
+    vendor: "15b3"
+    pfNames:
+      - ens2f0
+      - ens2f1
+  deviceType: netdevice
+  isRdma: true
+  linkType: ETH
+---
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: policy-intel-sriov
+  namespace: sriov-network-operator
+spec:
+  resourceName: intel_sriov_netdevice
+  nodeSelector:
+    sriov: "true"
+  numVfs: 16
+  nicSelector:
+    vendor: "8086"
+    pfNames:
+      - enp1s0f0
+      - enp1s0f1
+  deviceType: vfio-pci

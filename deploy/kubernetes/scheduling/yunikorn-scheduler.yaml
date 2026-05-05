@@ -1,0 +1,169 @@
+---
+# YuniKorn — alternative lightweight scheduler with gang scheduling & queue hierarchy
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: yunikorn
+  labels:
+    name: yunikorn
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: yunikorn-admin
+  namespace: yunikorn
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: yunikorn-rbac
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, namespaces, events, configmaps, persistentvolumes, persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch, create, delete, update, patch]
+  - apiGroups: [apps]
+    resources: [replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, csinodes]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: yunikorn-rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: yunikorn-rbac
+subjects:
+  - kind: ServiceAccount
+    name: yunikorn-admin
+    namespace: yunikorn
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yunikorn-configs
+  namespace: yunikorn
+data:
+  queues.yaml: |
+    partitions:
+      - name: default
+        queues:
+          - name: root
+            submitacl: "*"
+            queues:
+              - name: high
+                resources:
+                  guaranteed:
+                    vcore: 200000
+                    memory: 400G
+                  max:
+                    vcore: 400000
+                    memory: 800G
+                properties:
+                  preemption.policy: fence
+                  preemption.delay: 5s
+                  application.sort.policy: stateaware
+              - name: medium
+                resources:
+                  guaranteed:
+                    vcore: 100000
+                    memory: 200G
+                  max:
+                    vcore: 200000
+                    memory: 400G
+                properties:
+                  preemption.policy: default
+                  application.sort.policy: fair
+              - name: low
+                resources:
+                  guaranteed:
+                    vcore: 50000
+                    memory: 100G
+                  max:
+                    vcore: 400000
+                    memory: 800G
+                properties:
+                  preemption.policy: default
+                  application.sort.policy: fair
+        placementrules:
+          - name: tag
+            value: namespace
+            create: true
+        limits:
+          - limit: cluster-wide admin
+            users:
+              - "*"
+            groups:
+              - "*"
+            maxresources:
+              vcore: 1000000
+              memory: 2000G
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yunikorn-scheduler
+  namespace: yunikorn
+  labels:
+    app: yunikorn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: yunikorn
+  template:
+    metadata:
+      labels:
+        app: yunikorn
+    spec:
+      serviceAccountName: yunikorn-admin
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: yunikorn-scheduler
+          image: apache/yunikorn:scheduler-1.5.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9080
+              name: http1
+            - containerPort: 2381
+              name: http2
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /ws/v1/health/liveness
+              port: http2
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ws/v1/health/readiness
+              port: http2
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/yunikorn/
+      volumes:
+        - name: config-volume
+          configMap:
+            name: yunikorn-configs

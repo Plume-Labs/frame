@@ -63,3 +63,106 @@
     - prometheus-operator
     - grafana
     - cluster-control-ui
+
+- name: Configure NUMA Topology and CPU Pinning
+  hosts: workers
+  become: true
+
+  tasks:
+    - name: Label node with NUMA topology information
+      shell: |
+        NUMA_NODES=$(numactl --hardware | awk '/available/ {print $2}')
+        kubectl label node "{{ ansible_hostname }}" \
+          topology.kubernetes.io/numa-node-count="${NUMA_NODES}" \
+          cpu-manager=static \
+          topology-manager=single-numa-node \
+          --overwrite
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Configure kernel for NUMA-aware scheduling
+      sysctl:
+        name: kernel.numa_balancing
+        value: "0"
+        state: present
+        reload: true
+
+    - name: Disable transparent hugepages for NUMA performance
+      shell: |
+        echo never > /sys/kernel/mm/transparent_hugepage/enabled
+        echo never > /sys/kernel/mm/transparent_hugepage/defrag
+      args:
+        executable: /bin/bash
+
+    - name: Set NUMA memory interleaving off (prefer local)
+      shell: numactl --hardware | grep "available:" || true
+      register: numa_info
+      changed_when: false
+
+    - name: Configure IRQ affinity for RDMA NICs
+      shell: |
+        for irq in $(cat /proc/interrupts | grep mlx5 | awk '{print $1}' | tr -d ':'); do
+          echo 1 > /proc/irq/${irq}/smp_affinity 2>/dev/null || true
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Label RDMA nodes
+      shell: |
+        kubectl label node "{{ ansible_hostname }}" rdma=true --overwrite
+      when: ansible_hostname in groups['rdma_nodes'] | default([])
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Label NVMe nodes
+      shell: |
+        kubectl label node "{{ ansible_hostname }}" nvme=true --overwrite
+      when: ansible_hostname in groups['nvme_nodes'] | default([])
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Label DPDK nodes
+      shell: |
+        kubectl label node "{{ ansible_hostname }}" dpdk=true --overwrite
+      when: ansible_hostname in groups['dpdk_nodes'] | default([])
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Label SR-IOV nodes
+      shell: |
+        kubectl label node "{{ ansible_hostname }}" sriov=true --overwrite
+      when: ansible_hostname in groups['sriov_nodes'] | default([])
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Label GPU nodes
+      shell: |
+        kubectl label node "{{ ansible_hostname }}" \
+          nvidia.com/gpu.present=true \
+          --overwrite
+      when: ansible_hostname in groups['gpu_nodes'] | default([])
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Configure IPMI watchdog for automatic node recovery
+      shell: |
+        # Load watchdog driver
+        modprobe ipmi_watchdog
+        # Set watchdog timeout to 120s — kubelet must heartbeat within this window
+        if [ -f /dev/watchdog ]; then
+          echo 'WATCHDOG_TIMEOUT=120' >> /etc/default/watchdog
+          echo 'watchdog_module=ipmi_watchdog' >> /etc/default/watchdog
+          systemctl enable --now watchdog || true
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Configure kubelet auto-restart on failure
+      copy:
+        dest: /etc/systemd/system/kubelet.service.d/50-restart.conf
+        content: |
+          [Service]
+          Restart=always
+          RestartSec=5s
+          StartLimitIntervalSec=0
+      notify: reload systemd and restart kubelet
+
+  handlers:
+    - name: reload systemd and restart kubelet
+      shell: systemctl daemon-reload && systemctl restart kubelet
+      args:
+        executable: /bin/bash
