@@ -1,6 +1,4 @@
-import { ClusterNode, DeviceType } from '@/lib/types'
-import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { ClusterNode } from '@/lib/types'
 import { Cpu, HardDrive, ChartBar, Thermometer, Database, WifiHigh } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 

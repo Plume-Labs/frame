@@ -1,19 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
-import { ClusterNode, SystemEvent, ResourceDataPoint, ResourceForecast, CapacityAlert, CapacityPlan, Anomaly } from '@/lib/types'
-import {
-  generateClusterNodes,
-  updateNodeMetrics,
-  simulateStatusChange,
-  calculateClusterStats,
-  generateSystemEvent
-} from '@/lib/cluster'
-import {
-  generateForecast,
-  generateCapacityAlerts,
-  generateCapacityPlan,
-  collectHistoricalData
-} from '@/lib/forecasting'
-import { buildAnomalyPatterns, detectAnomalies } from '@/lib/anomaly'
+import { useMemo, useState } from 'react'
+import { ClusterNode } from '@/lib/types'
+import { calculateClusterStats } from '@/lib/cluster'
+import { useClusterSimulation } from '@/hooks/useClusterSimulation'
+import { useCapacityAnalytics } from '@/hooks/useCapacityAnalytics'
 import { NodeGrid } from '@/components/NodeGrid'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
@@ -31,88 +20,25 @@ import { ZoneHeatmap } from '@/components/ZoneHeatmap'
 import { NodesSummaryCard } from '@/components/NodesSummaryCard'
 import { DragDropRackManager } from '@/components/DragDropRackManager'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useKV } from '@github/spark/hooks'
 
 function App() {
-  const [nodes, setNodes] = useState<ClusterNode[]>(() => generateClusterNodes(32))
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
-  const [events, setEvents] = useState<SystemEvent[]>([])
   const [activeTab, setActiveTab] = useState('overview')
   const [selectedZoneFromHeatmap, setSelectedZoneFromHeatmap] = useState<string | null>(null)
-  const previousNodesRef = useRef<ClusterNode[]>(nodes)
 
-  const [historicalData, setHistoricalData] = useKV<ResourceDataPoint[]>('capacity-historical-data', [])
-  const [forecast, setForecast] = useState<ResourceForecast>({ cpu: [], memory: [], storage: [], network: [] })
-  const [alerts, setAlerts] = useState<CapacityAlert[]>([])
-  const [capacityPlan, setCapacityPlan] = useState<CapacityPlan | null>(null)
-  const [anomalies, setAnomalies] = useState<Anomaly[]>([])
+  const { nodes, setNodes, events, nodesRef } = useClusterSimulation(32)
+  const { historicalData, forecast, alerts, capacityPlan, anomalies } = useCapacityAnalytics(nodesRef)
 
-  useEffect(() => {
-    const metricsInterval = setInterval(() => {
-      setNodes((currentNodes) => {
-        const updated = currentNodes.map((node) => {
-          let updatedNode = updateNodeMetrics(node)
-          updatedNode = simulateStatusChange(updatedNode)
-          return updatedNode
-        })
+  // Derive the selected node from the authoritative nodes array so the detail
+  // panel always shows up-to-date metrics without an extra state update cycle.
+  const syncedSelectedNode = useMemo(
+    () => (selectedNode ? (nodes.find((n) => n.id === selectedNode.id) ?? null) : null),
+    [nodes, selectedNode]
+  )
 
-        const newEvent = generateSystemEvent(updated, previousNodesRef.current)
-        if (newEvent) {
-          setEvents((currentEvents) => [newEvent, ...currentEvents].slice(0, 100))
-        }
-
-        previousNodesRef.current = updated
-        return updated
-      })
-    }, 2000)
-
-    return () => clearInterval(metricsInterval)
-  }, [])
-
-  useEffect(() => {
-    if (selectedNode) {
-      const updatedNode = nodes.find((n) => n.id === selectedNode.id)
-      if (updatedNode) {
-        setSelectedNode(updatedNode)
-      }
-    }
-  }, [nodes, selectedNode])
-
-  useEffect(() => {
-    const dataCollectionInterval = setInterval(() => {
-      const stats = calculateClusterStats(nodes)
-      const dataPoint = collectHistoricalData(stats)
-      
-      setHistoricalData((currentData) => {
-        const newData = [...(currentData || []), dataPoint]
-        return newData.slice(-50)
-      })
-    }, 10000)
-
-    return () => clearInterval(dataCollectionInterval)
-  }, [nodes, setHistoricalData])
-
-  useEffect(() => {
-    if (historicalData && historicalData.length >= 5) {
-      const newForecast = generateForecast(historicalData, 12)
-      setForecast(newForecast)
-
-      const stats = calculateClusterStats(nodes)
-      const newAlerts = generateCapacityAlerts(newForecast, stats)
-      setAlerts(newAlerts)
-
-      const plan = generateCapacityPlan(newForecast, stats, nodes, 6)
-      setCapacityPlan(plan)
-
-      const patterns = buildAnomalyPatterns(historicalData)
-      const currentData = collectHistoricalData(stats)
-      const detectedAnomalies = detectAnomalies(currentData, historicalData, patterns, nodes)
-      setAnomalies(detectedAnomalies)
-    }
-  }, [historicalData, nodes])
-
-  const stats = calculateClusterStats(nodes)
+  // Memoize cluster-wide stats so they aren't recomputed on every render
+  const stats = useMemo(() => calculateClusterStats(nodes), [nodes])
 
   return (
     <div className="min-h-screen bg-background">
@@ -149,11 +75,11 @@ function App() {
                 <StorageDashboard nodes={nodes} />
               </div>
             </div>
-            
+
             {anomalies.length > 0 && (
               <AnomalyAlerts anomalies={anomalies} />
             )}
-            
+
             {alerts.length > 0 && (
               <CapacityPlanningDashboard alerts={alerts} />
             )}
@@ -162,7 +88,7 @@ function App() {
           <TabsContent value="racks" className="space-y-6">
             <RackVisualization
               nodes={nodes}
-              selectedNode={selectedNode}
+              selectedNode={syncedSelectedNode}
               onSelectNode={setSelectedNode}
               selectedRack={selectedRack}
               onSelectRack={setSelectedRack}
@@ -173,7 +99,7 @@ function App() {
             <DragDropRackManager
               nodes={nodes}
               onNodesUpdate={setNodes}
-              selectedNode={selectedNode}
+              selectedNode={syncedSelectedNode}
               onSelectNode={setSelectedNode}
             />
           </TabsContent>
@@ -191,15 +117,17 @@ function App() {
           <TabsContent value="zones" className="space-y-6">
             <ZoneView
               nodes={nodes}
-              selectedNode={selectedNode}
+              selectedNode={syncedSelectedNode}
               onSelectNode={setSelectedNode}
+              initialZone={selectedZoneFromHeatmap}
+              onZoneConsumed={() => setSelectedZoneFromHeatmap(null)}
             />
           </TabsContent>
 
           <TabsContent value="topology" className="space-y-6">
             <NodeGrid
               nodes={nodes}
-              selectedNode={selectedNode}
+              selectedNode={syncedSelectedNode}
               onSelectNode={setSelectedNode}
             />
           </TabsContent>
@@ -208,7 +136,7 @@ function App() {
             {historicalData && historicalData.length > 0 && (
               <HistoricalTrendsAnalysis historicalData={historicalData} />
             )}
-            
+
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               {historicalData && historicalData.length >= 5 && (
                 <ForecastChart forecast={forecast} />
@@ -225,8 +153,8 @@ function App() {
         </Tabs>
 
         <NodeDetailPanel
-          node={selectedNode}
-          open={!!selectedNode}
+          node={syncedSelectedNode}
+          open={!!syncedSelectedNode}
           onClose={() => setSelectedNode(null)}
         />
       </div>

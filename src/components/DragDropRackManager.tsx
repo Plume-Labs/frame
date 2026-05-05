@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { ClusterNode } from '@/lib/types'
-import { organizeNodesByRack, organizeRacksByZone, RackData } from '@/lib/rack'
+import { organizeNodesByRack, organizeRacksByZone } from '@/lib/rack'
 import { 
   validateRackPlacement, 
   validateDeviceMove, 
@@ -55,7 +55,7 @@ export function DragDropRackManager({
   const [savedLayouts, setSavedLayouts] = useKV<{ name: string; nodes: ClusterNode[]; timestamp: number }[]>('rack-layouts', [])
   const [constraints, setConstraints] = useKV<RackConstraints>('rack-constraints', DEFAULT_RACK_CONSTRAINTS)
   const [showConstraintsDialog, setShowConstraintsDialog] = useState(false)
-  const [showValidation, setShowValidation] = useState(true)
+  const [showValidation] = useState(true)
   const [selectedRackForValidation, setSelectedRackForValidation] = useState<string | null>(null)
 
   useEffect(() => {
@@ -296,7 +296,7 @@ export function DragDropRackManager({
                 Critical Validation Errors Detected
               </p>
               <p className="text-xs text-muted-foreground font-mono mt-1">
-                {totalErrors} error(s) across {Array.from(rackValidations.entries()).filter(([_, v]) => !v.valid).length} rack(s) must be resolved before applying changes
+                {totalErrors} error(s) across {Array.from(rackValidations.entries()).filter(([_id, v]) => !v.valid).length} rack(s) must be resolved before applying changes
               </p>
             </div>
           </CardContent>
@@ -374,7 +374,7 @@ export function DragDropRackManager({
               </CardHeader>
               <CardContent className="space-y-4">
                 {Array.from(rackValidations.entries())
-                  .filter(([_, validation]) => !validation.valid || validation.warnings.length > 0)
+                  .filter(([_id, validation]) => !validation.valid || validation.warnings.length > 0)
                   .map(([rackId, validation]) => (
                     <div key={rackId} className="space-y-2">
                       <div className="flex items-center justify-between">

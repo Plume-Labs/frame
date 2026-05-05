@@ -66,19 +66,25 @@ export function generateForecast(
   const createForecastPoints = (
     regression: { slope: number; intercept: number },
     stdDev: number,
-    currentLength: number
+    currentLength: number,
+    clampToPercent = true
   ): ForecastPoint[] => {
     return Array.from({ length: periodsAhead }, (_, i) => {
       const index = currentLength + i
-      const predicted = Math.max(0, Math.min(100, regression.slope * index + regression.intercept))
+      const rawPredicted = regression.slope * index + regression.intercept
+      const predicted = clampToPercent
+        ? Math.max(0, Math.min(100, rawPredicted))
+        : Math.max(0, rawPredicted)
       const confidenceMargin = stdDev * 1.96 * Math.sqrt(1 + 1 / currentLength)
-      
+
       return {
         timestamp: lastTimestamp + (i + 1) * timeInterval,
         predicted,
         confidence: {
           lower: Math.max(0, predicted - confidenceMargin),
-          upper: Math.min(100, predicted + confidenceMargin)
+          upper: clampToPercent
+            ? Math.min(100, predicted + confidenceMargin)
+            : predicted + confidenceMargin
         }
       }
     })
@@ -88,7 +94,8 @@ export function generateForecast(
     cpu: createForecastPoints(cpuRegression, cpuStdDev, cpuData.length),
     memory: createForecastPoints(memoryRegression, memoryStdDev, memoryData.length),
     storage: createForecastPoints(storageRegression, storageStdDev, storageData.length),
-    network: createForecastPoints(networkRegression, networkStdDev, networkData.length)
+    // Network is in Mbps, not a percentage — do not clamp to [0, 100]
+    network: createForecastPoints(networkRegression, networkStdDev, networkData.length, false)
   }
 }
 

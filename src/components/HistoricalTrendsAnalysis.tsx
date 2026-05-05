@@ -6,7 +6,6 @@ import { ResourceDataPoint, TimeframeOption, TrendStatistics } from '@/lib/types
 import {
   analyzeHistoricalTrends,
   getTimeframeLabel,
-  filterDataByTimeframe
 } from '@/lib/trends'
 import {
   LineChart,
