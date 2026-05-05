@@ -1,0 +1,114 @@
+---
+# Hugepages configuration playbook — allocates 1G and 2M hugepages on all nodes
+- name: Configure Hugepages for DPDK and ML Workloads
+  hosts: workers
+  become: true
+  gather_facts: true
+
+  vars:
+    hugepages_1g_count: 64      # 64 GB of 1G hugepages per node (DPDK, Alluxio)
+    hugepages_2m_count: 4096    # 8 GB of 2M hugepages per node (general ML)
+
+  tasks:
+    - name: Check available RAM
+      shell: free -g | awk '/^Mem/ {print $2}'
+      register: total_ram_gb
+      changed_when: false
+
+    - name: Compute safe 1G hugepage count (leave 32GB for OS)
+      set_fact:
+        safe_1g_count: "{{ [[hugepages_1g_count, (total_ram_gb.stdout | int) - 32] | min, 0] | max }}"
+
+    - name: Configure 1G hugepages in GRUB
+      block:
+        - name: Set GRUB hugepages — Intel systems
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G iommu=pt intel_iommu=on"'
+            backup: true
+          when: ansible_processor[0] is defined and 'Intel' in ansible_processor[0]
+
+        - name: Set GRUB hugepages — AMD systems
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G iommu=pt amd_iommu=on"'
+            backup: true
+          when: ansible_processor[0] is defined and 'AMD' in ansible_processor[0]
+
+        - name: Set GRUB hugepages — generic (no CPU-specific IOMMU)
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G"'
+            backup: true
+          when: ansible_processor[0] is not defined or ('Intel' not in ansible_processor[0] and 'AMD' not in ansible_processor[0])
+
+    - name: Update GRUB (Debian/Ubuntu)
+      command: update-grub
+      when: ansible_os_family == "Debian"
+
+    - name: Update GRUB (RHEL/CentOS)
+      command: grub2-mkconfig -o /boot/grub2/grub.cfg
+      when: ansible_os_family == "RedHat"
+
+    - name: Set hugepages at runtime without reboot (best-effort)
+      shell: |
+        echo {{ safe_1g_count }} > /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages || true
+        echo {{ hugepages_2m_count }} > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages || true
+      args:
+        executable: /bin/bash
+
+    - name: Mount hugetlbfs (1G)
+      mount:
+        path: /dev/hugepages
+        src: nodev
+        fstype: hugetlbfs
+        opts: pagesize=1GB
+        state: mounted
+
+    - name: Mount hugetlbfs (2M)
+      mount:
+        path: /dev/hugepages2M
+        src: nodev
+        fstype: hugetlbfs
+        opts: pagesize=2MB
+        state: mounted
+
+    - name: Configure kubelet to report hugepage resources
+      copy:
+        dest: /etc/kubernetes/kubelet-hugepages.conf
+        content: |
+          # Hugepage resource configuration for kubelet
+          # These settings are appended to kubelet config
+          kubeReserved:
+            hugepages-1Gi: "2Gi"
+            hugepages-2Mi: "512Mi"
+      notify: restart kubelet
+
+    - name: Verify hugepage allocation
+      shell: |
+        echo "=== 1G Hugepages ==="
+        cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+        echo "=== 2M Hugepages ==="
+        cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+      register: hugepage_status
+      changed_when: false
+
+    - name: Print hugepage allocation status
+      debug:
+        msg: "{{ hugepage_status.stdout }}"
+
+    - name: Label node with hugepage capability
+      shell: |
+        kubectl label node "{{ ansible_hostname }}" hugepages=true \
+          hugepages-1G-count={{ safe_1g_count }} \
+          --overwrite
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+  handlers:
+    - name: restart kubelet
+      service:
+        name: kubelet
+        state: restarted

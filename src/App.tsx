@@ -20,11 +20,20 @@ import { ZoneHeatmap } from '@/components/ZoneHeatmap'
 import { NodesSummaryCard } from '@/components/NodesSummaryCard'
 import { DragDropRackManager } from '@/components/DragDropRackManager'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+// Framework components
+import { SchedulerDashboard } from '@/components/SchedulerDashboard'
+import { ServiceClassPanel } from '@/components/ServiceClassPanel'
+import { DataLocalityView } from '@/components/DataLocalityView'
+import { JobOrchestrationView } from '@/components/JobOrchestrationView'
+import { DataFabricDashboard } from '@/components/DataFabricDashboard'
+import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
+import { DataLineageView } from '@/components/DataLineageView'
+import { ResiliencePanel } from '@/components/ResiliencePanel'
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState('jobs')
   const [selectedZoneFromHeatmap, setSelectedZoneFromHeatmap] = useState<string | null>(null)
 
   const { nodes, setNodes, events, nodesRef } = useClusterSimulation(32)
@@ -46,28 +55,118 @@ function App() {
         <header className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-3xl font-mono font-bold text-primary tracking-tight">
-              CLUSTER CONTROL
+              FRAME
             </h1>
             <p className="text-sm text-muted-foreground">
-              Distributed Systems Monitor
+              Mainframe Framework for Kubernetes
             </p>
           </div>
           <ClusterStatsDashboard stats={stats} compact />
         </header>
 
+        {/* ── Framework-control surfaces first; observability grouped last ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="font-mono mb-6">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsList className="font-mono mb-6 flex-wrap h-auto">
+            {/* Framework control surfaces */}
+            <TabsTrigger value="jobs">Jobs</TabsTrigger>
+            <TabsTrigger value="scheduler">Scheduler</TabsTrigger>
+            <TabsTrigger value="service-classes">Service Classes</TabsTrigger>
+            <TabsTrigger value="data-locality">Data Locality</TabsTrigger>
+            <TabsTrigger value="storage">Storage</TabsTrigger>
+            <TabsTrigger value="gpu">GPU</TabsTrigger>
+            <TabsTrigger value="resilience">Resilience</TabsTrigger>
+            {/* Cluster management */}
+            <TabsTrigger value="nodes">Nodes</TabsTrigger>
             <TabsTrigger value="racks">Racks</TabsTrigger>
-            <TabsTrigger value="organize">Organize</TabsTrigger>
-            <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             <TabsTrigger value="zones">Zones</TabsTrigger>
-            <TabsTrigger value="topology">Topology</TabsTrigger>
-            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            {/* Observability (secondary) */}
+            <TabsTrigger value="observe">Observe</TabsTrigger>
+            <TabsTrigger value="lineage">Lineage</TabsTrigger>
             <TabsTrigger value="events">Events</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-6">
+          {/* ── Job orchestration & submission ──────────────────────────────── */}
+          <TabsContent value="jobs" className="space-y-6">
+            <JobOrchestrationView />
+          </TabsContent>
+
+          {/* ── Scheduling policy management ────────────────────────────────── */}
+          <TabsContent value="scheduler" className="space-y-6">
+            <SchedulerDashboard nodes={nodes} />
+          </TabsContent>
+
+          {/* ── Service-class resource provisioning ─────────────────────────── */}
+          <TabsContent value="service-classes" className="space-y-6">
+            <ServiceClassPanel nodes={nodes} />
+          </TabsContent>
+
+          {/* ── Data locality & memory tier management ──────────────────────── */}
+          <TabsContent value="data-locality" className="space-y-6">
+            <DataLocalityView nodes={nodes} />
+          </TabsContent>
+
+          {/* ── Unified storage fabric ──────────────────────────────────────── */}
+          <TabsContent value="storage" className="space-y-6">
+            <DataFabricDashboard nodes={nodes} />
+          </TabsContent>
+
+          {/* ── GPU monitoring & MIG management ────────────────────────────── */}
+          <TabsContent value="gpu" className="space-y-6">
+            <GPUMonitoringDashboard nodes={nodes} />
+          </TabsContent>
+
+          {/* ── Resilience & reliability controls ──────────────────────────── */}
+          <TabsContent value="resilience" className="space-y-6">
+            <ResiliencePanel nodes={nodes} />
+          </TabsContent>
+
+          {/* ── Node topology (cluster management) ──────────────────────────── */}
+          <TabsContent value="nodes" className="space-y-6">
+            <NodeGrid
+              nodes={nodes}
+              selectedNode={syncedSelectedNode}
+              onSelectNode={setSelectedNode}
+            />
+          </TabsContent>
+
+          {/* ── Rack management ─────────────────────────────────────────────── */}
+          <TabsContent value="racks" className="space-y-6">
+            <div className="space-y-6">
+              <RackVisualization
+                nodes={nodes}
+                selectedNode={syncedSelectedNode}
+                onSelectNode={setSelectedNode}
+                selectedRack={selectedRack}
+                onSelectRack={setSelectedRack}
+              />
+              <DragDropRackManager
+                nodes={nodes}
+                onNodesUpdate={setNodes}
+                selectedNode={syncedSelectedNode}
+                onSelectNode={setSelectedNode}
+              />
+            </div>
+          </TabsContent>
+
+          {/* ── Zone management ─────────────────────────────────────────────── */}
+          <TabsContent value="zones" className="space-y-6">
+            <ZoneHeatmap
+              nodes={nodes}
+              onZoneClick={(zoneName) => {
+                setSelectedZoneFromHeatmap(zoneName)
+              }}
+            />
+            <ZoneView
+              nodes={nodes}
+              selectedNode={syncedSelectedNode}
+              onSelectNode={setSelectedNode}
+              initialZone={selectedZoneFromHeatmap}
+              onZoneConsumed={() => setSelectedZoneFromHeatmap(null)}
+            />
+          </TabsContent>
+
+          {/* ── Observability (monitoring — secondary) ──────────────────────── */}
+          <TabsContent value="observe" className="space-y-6">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <NodesSummaryCard nodes={nodes} />
               <div className="space-y-6">
@@ -83,56 +182,7 @@ function App() {
             {alerts.length > 0 && (
               <CapacityPlanningDashboard alerts={alerts} />
             )}
-          </TabsContent>
 
-          <TabsContent value="racks" className="space-y-6">
-            <RackVisualization
-              nodes={nodes}
-              selectedNode={syncedSelectedNode}
-              onSelectNode={setSelectedNode}
-              selectedRack={selectedRack}
-              onSelectRack={setSelectedRack}
-            />
-          </TabsContent>
-
-          <TabsContent value="organize" className="space-y-6">
-            <DragDropRackManager
-              nodes={nodes}
-              onNodesUpdate={setNodes}
-              selectedNode={syncedSelectedNode}
-              onSelectNode={setSelectedNode}
-            />
-          </TabsContent>
-
-          <TabsContent value="heatmap" className="space-y-6">
-            <ZoneHeatmap
-              nodes={nodes}
-              onZoneClick={(zoneName) => {
-                setSelectedZoneFromHeatmap(zoneName)
-                setActiveTab('zones')
-              }}
-            />
-          </TabsContent>
-
-          <TabsContent value="zones" className="space-y-6">
-            <ZoneView
-              nodes={nodes}
-              selectedNode={syncedSelectedNode}
-              onSelectNode={setSelectedNode}
-              initialZone={selectedZoneFromHeatmap}
-              onZoneConsumed={() => setSelectedZoneFromHeatmap(null)}
-            />
-          </TabsContent>
-
-          <TabsContent value="topology" className="space-y-6">
-            <NodeGrid
-              nodes={nodes}
-              selectedNode={syncedSelectedNode}
-              onSelectNode={setSelectedNode}
-            />
-          </TabsContent>
-
-          <TabsContent value="analytics" className="space-y-6">
             {historicalData && historicalData.length > 0 && (
               <HistoricalTrendsAnalysis historicalData={historicalData} />
             )}
@@ -147,6 +197,12 @@ function App() {
             </div>
           </TabsContent>
 
+          {/* ── Data lineage view ───────────────────────────────────────────── */}
+          <TabsContent value="lineage" className="space-y-6">
+            <DataLineageView />
+          </TabsContent>
+
+          {/* ── Event log ───────────────────────────────────────────────────── */}
           <TabsContent value="events" className="space-y-6">
             <EventLog events={events} />
           </TabsContent>

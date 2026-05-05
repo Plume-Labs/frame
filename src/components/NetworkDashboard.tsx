@@ -123,6 +123,41 @@ export function NetworkDashboard({ nodes }: NetworkDashboardProps) {
             </div>
           </div>
         )}
+
+        {/* HPC networking — SR-IOV, eBPF, DPDK */}
+        <div className="space-y-3">
+          <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">HPC Networking</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3 rounded-lg bg-secondary/30 border border-border space-y-1">
+              <div className="text-xs text-muted-foreground">SR-IOV VFs</div>
+              <div className="font-mono text-lg font-bold text-primary">
+                {activeNodes.reduce((s, n) => s + (n.network?.sriovVFs ?? 0), 0)}
+              </div>
+              <div className="text-[10px] text-muted-foreground">across {activeNodes.length} nodes</div>
+            </div>
+            <div className="p-3 rounded-lg bg-secondary/30 border border-border space-y-1">
+              <div className="text-xs text-muted-foreground">DPDK Enabled</div>
+              <div className="font-mono text-lg font-bold text-accent">
+                {activeNodes.filter(n => n.network?.dpdkEnabled).length}
+              </div>
+              <div className="text-[10px] text-muted-foreground">nodes</div>
+            </div>
+            <div className="p-3 rounded-lg bg-secondary/30 border border-border space-y-1">
+              <div className="text-xs text-muted-foreground">eBPF Bypass</div>
+              <div className="font-mono text-lg font-bold text-accent">
+                {activeNodes.filter(n => n.network?.ebpfBypassActive).length}
+              </div>
+              <div className="text-[10px] text-muted-foreground">Cilium {activeNodes[0]?.network?.ciliumVersion ?? 'n/a'}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-secondary/30 border border-border space-y-1">
+              <div className="text-xs text-muted-foreground">Inter-pod P99</div>
+              <div className={`font-mono text-lg font-bold ${avgLatency > 3 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>
+                {avgLatency.toFixed(2)} ms
+              </div>
+              <div className="text-[10px] text-muted-foreground">avg latency</div>
+            </div>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

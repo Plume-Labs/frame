@@ -1,0 +1,449 @@
+openapi: "3.1.0"
+info:
+  title: Frame Operator API
+  version: "1.0.0"
+  description: |
+    Frame is a mainframe framework for Kubernetes. This API lets operators,
+    workloads, and CI pipelines interact with the platform programmatically
+    — submitting jobs, managing scheduling policies, setting resource quotas,
+    and inspecting cluster state — without going through the UI.
+
+    **Base URL (development):** `http://localhost:4000`
+
+    **TypeScript SDK:**
+    ```ts
+    // Inside this repo:
+    import { FrameClient } from './src/lib/frame-sdk'
+    // Or copy src/lib/frame-sdk.ts into your project and adjust the import path.
+    ```
+
+servers:
+  - url: http://localhost:4000
+    description: Local development server
+  - url: http://frame-api.cluster.local:4000
+    description: In-cluster service
+
+tags:
+  - name: health
+    description: API health and version
+  - name: nodes
+    description: Cluster node inventory and status
+  - name: jobs
+    description: Job submission and lifecycle management
+  - name: scheduler
+    description: Scheduling policy management (Volcano / YuniKorn / default)
+  - name: resources
+    description: Resource quotas and service-class inventory
+
+paths:
+
+  # ── Health ────────────────────────────────────────────────────────────────
+
+  /api/health:
+    get:
+      tags: [health]
+      summary: API health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Nodes ─────────────────────────────────────────────────────────────────
+
+  /api/nodes:
+    get:
+      tags: [nodes]
+      summary: List all cluster nodes
+      operationId: listNodes
+      responses:
+        "200":
+          description: Node list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+
+  /api/nodes/{id}:
+    get:
+      tags: [nodes]
+      summary: Get a single node by ID
+      operationId: getNode
+      parameters:
+        - $ref: "#/components/parameters/NodeId"
+      responses:
+        "200":
+          description: Node details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FrameNode"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Jobs ──────────────────────────────────────────────────────────────────
+
+  /api/jobs:
+    get:
+      tags: [jobs]
+      summary: List all jobs
+      operationId: listJobs
+      responses:
+        "200":
+          description: Job list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobList"
+    post:
+      tags: [jobs]
+      summary: Submit a new job
+      operationId: submitJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobSpec"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/jobs/{id}:
+    delete:
+      tags: [jobs]
+      summary: Cancel a job
+      operationId: cancelJob
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cancelled: { type: boolean }
+                  job:       { $ref: "#/components/schemas/Job" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Scheduler policies ────────────────────────────────────────────────────
+
+  /api/scheduler/policies:
+    get:
+      tags: [scheduler]
+      summary: List scheduling policies
+      operationId: listPolicies
+      responses:
+        "200":
+          description: Policy list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyList"
+    post:
+      tags: [scheduler]
+      summary: Create or update a scheduling policy
+      operationId: applyPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchedulingPolicy"
+      responses:
+        "200":
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulingPolicy"
+        "201":
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchedulingPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/scheduler/policies/{name}:
+    delete:
+      tags: [scheduler]
+      summary: Delete a scheduling policy
+      operationId: deletePolicy
+      parameters:
+        - $ref: "#/components/parameters/PolicyName"
+      responses:
+        "200":
+          description: Policy deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean }
+                  policy:  { $ref: "#/components/schemas/SchedulingPolicy" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Resource quotas ───────────────────────────────────────────────────────
+
+  /api/resources/quotas:
+    get:
+      tags: [resources]
+      summary: List resource quotas for all namespaces
+      operationId: listQuotas
+      responses:
+        "200":
+          description: Quota list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotaList"
+
+  /api/resources/quotas/{namespace}:
+    put:
+      tags: [resources]
+      summary: Create or update the resource quota for a namespace
+      operationId: setQuota
+      parameters:
+        - $ref: "#/components/parameters/Namespace"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResourceQuotaUpdate"
+      responses:
+        "200":
+          description: Quota updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceQuota"
+        "201":
+          description: Quota created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceQuota"
+
+  # ── Service classes ───────────────────────────────────────────────────────
+
+  /api/resources/service-classes:
+    get:
+      tags: [resources]
+      summary: Summarise nodes by service class
+      operationId: listServiceClasses
+      responses:
+        "200":
+          description: Service-class summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ServiceClassSummary"
+
+# ── Reusable components ───────────────────────────────────────────────────────
+
+components:
+
+  parameters:
+    NodeId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    JobId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PolicyName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+    Namespace:
+      name: namespace
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid request body
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    HealthStatus:
+      type: object
+      required: [status, version, uptime]
+      properties:
+        status:  { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        uptime:  { type: number, description: Process uptime in seconds }
+
+    NodeStatus:
+      type: string
+      enum: [online, degraded, offline, provisioning]
+
+    ServiceClass:
+      type: string
+      enum: [HIGH, MEDIUM, LOW]
+
+    FrameNode:
+      type: object
+      required: [id, name, status, serviceClass, zone, rackId, cpu, memory, storage, gpuCount, gpuModel]
+      properties:
+        id:           { type: string }
+        name:         { type: string }
+        status:       { $ref: "#/components/schemas/NodeStatus" }
+        serviceClass: { $ref: "#/components/schemas/ServiceClass" }
+        zone:         { type: string }
+        rackId:       { type: string }
+        cpu:          { type: number, description: CPU utilisation 0-100 }
+        memory:       { type: number, description: Memory utilisation 0-100 }
+        storage:      { type: number, description: Storage utilisation 0-100 }
+        gpuCount:     { type: integer }
+        gpuModel:     { type: string }
+
+    NodeList:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FrameNode" } }
+        total: { type: integer }
+
+    JobStatus:
+      type: string
+      enum: [queued, running, completed, failed]
+
+    Priority:
+      type: string
+      enum: [critical, high, medium, low]
+
+    Job:
+      type: object
+      required: [id, name, pipeline, status, serviceClass, priority, namespace, gpuCount, createdAt]
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        pipeline:     { type: string }
+        status:       { $ref: "#/components/schemas/JobStatus" }
+        serviceClass: { $ref: "#/components/schemas/ServiceClass" }
+        priority:     { $ref: "#/components/schemas/Priority" }
+        namespace:    { type: string }
+        gpuCount:     { type: integer }
+        createdAt:    { type: string, format: date-time }
+        startedAt:    { type: string, format: date-time }
+        completedAt:  { type: string, format: date-time }
+
+    JobSpec:
+      type: object
+      required: [name, pipeline]
+      properties:
+        name:         { type: string }
+        pipeline:     { type: string }
+        serviceClass: { $ref: "#/components/schemas/ServiceClass" }
+        priority:     { $ref: "#/components/schemas/Priority" }
+        namespace:    { type: string, default: default }
+        gpuCount:     { type: integer, default: 0 }
+
+    JobList:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Job" } }
+        total: { type: integer }
+
+    SchedulerType:
+      type: string
+      enum: [volcano, yunikorn, default]
+
+    SchedulingPolicy:
+      type: object
+      required: [name, scheduler, queue, priority, preemption, maxGPUs, maxCPUs]
+      properties:
+        name:       { type: string }
+        scheduler:  { $ref: "#/components/schemas/SchedulerType" }
+        queue:      { type: string }
+        priority:   { type: integer, minimum: 0, maximum: 1000 }
+        preemption: { type: boolean }
+        maxGPUs:    { type: integer }
+        maxCPUs:    { type: integer }
+
+    PolicyList:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SchedulingPolicy" } }
+        total: { type: integer }
+
+    ResourceQuota:
+      type: object
+      required: [namespace, maxCPU, maxMemory, maxGPUs, usedCPU, usedMemory, usedGPUs]
+      properties:
+        namespace:  { type: string }
+        maxCPU:     { type: string, description: "CPU limit e.g. '512'" }
+        maxMemory:  { type: string, description: "Memory limit e.g. '2048Gi'" }
+        maxGPUs:    { type: integer }
+        usedCPU:    { type: string }
+        usedMemory: { type: string }
+        usedGPUs:   { type: integer }
+
+    ResourceQuotaUpdate:
+      description: Partial resource quota — only supplied fields are updated; unset fields retain their current values.
+      type: object
+      properties:
+        maxCPU:     { type: string, description: "CPU limit e.g. '512'" }
+        maxMemory:  { type: string, description: "Memory limit e.g. '2048Gi'" }
+        maxGPUs:    { type: integer }
+        usedCPU:    { type: string }
+        usedMemory: { type: string }
+        usedGPUs:   { type: integer }
+
+    QuotaList:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ResourceQuota" } }
+        total: { type: integer }
+
+    ServiceClassSummary:
+      type: object
+      required: [serviceClass, nodeCount, totalGPUs]
+      properties:
+        serviceClass: { $ref: "#/components/schemas/ServiceClass" }
+        nodeCount:    { type: integer }
+        totalGPUs:    { type: integer }
