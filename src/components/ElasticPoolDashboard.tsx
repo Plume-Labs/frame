@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { ElasticPool, ElasticPoolState } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -47,7 +48,7 @@ const MOCK_POOLS: ElasticPool[] = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const STATE_CONFIG: Record<ElasticPoolState, { label: string; badge: string; icon: React.ReactNode }> = {
+const STATE_CONFIG: Record<ElasticPoolState, { label: string; badge: string; icon: ReactNode }> = {
   stable:      { label: 'Stable',      badge: 'bg-accent/20 text-accent border-accent/30',                                                   icon: <MinusCircle size={12} /> },
   expanding:   { label: 'Expanding',   badge: 'bg-primary/20 text-primary border-primary/30',                                               icon: <ArrowUp size={12} /> },
   contracting: { label: 'Contracting', badge: 'bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30',   icon: <ArrowDown size={12} /> },

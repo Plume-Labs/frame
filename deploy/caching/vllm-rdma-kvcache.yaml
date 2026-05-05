@@ -61,15 +61,14 @@ spec:
         - --tensor-parallel-size=1
         - --gpu-memory-utilization=0.92
         - --kv-transfer-config
-        - '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_rank":$(KV_RANK),"kv_parallel_size":6,"kv_buffer_device":"cuda","kv_buffer_size":80}'
+        - '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_parallel_size":6,"kv_buffer_device":"cuda","kv_buffer_size":80}'
       envFrom:
         - configMapRef:
             name: vllm-kvcache-rdma-config
-      env:
-        - name: KV_RANK
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.annotations['statefulset.kubernetes.io/pod-name-index']
+      # KV_RANK note: NIXL auto-discovers peers via its rendezvous protocol
+      # (kv_rank is optional when using NixlConnector with kv_parallel_size).
+      # If an explicit rank is required by your vLLM version, add a StatefulSet
+      # headless-service overlay or a rank-assignment init container.
     podSpec:
       # Ensure all replicas land on RDMA-capable nodes in the same rack/zone
       affinity:

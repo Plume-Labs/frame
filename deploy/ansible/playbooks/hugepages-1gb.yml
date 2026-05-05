@@ -26,15 +26,23 @@
   tasks:
 
     # ── Kernel command-line (requires reboot to take effect) ─────────────────
+    - name: Check if hugepages params already present in GRUB
+      command: grep -qE "hugepagesz=1G" {{ grub_file }}
+      register: grub_has_hugepages
+      changed_when: false
+      failed_when: false
+      tags: [configure]
+
     - name: Add hugepages=1G to GRUB kernel command line
-      lineinfile:
+      # Append to the existing GRUB_CMDLINE_LINUX value only when the params
+      # are not already present (idempotent).  ansible_cmdline is a dict and
+      # cannot be used as a string; we match the quoted value and append in-place.
+      replace:
         path: "{{ grub_file }}"
-        regexp: '^GRUB_CMDLINE_LINUX='
-        line: >
-          GRUB_CMDLINE_LINUX="{{ ansible_cmdline | default('') }}
-          default_hugepagesz=1G hugepagesz=1G hugepages={{ hugepages_1gb_count }}
-          iommu=pt intel_iommu=on"
+        regexp: '^(GRUB_CMDLINE_LINUX="[^"]*)"$'
+        replace: '\1 default_hugepagesz=1G hugepagesz=1G hugepages={{ hugepages_1gb_count }} iommu=pt intel_iommu=on"'
         backup: yes
+      when: grub_has_hugepages.rc != 0
       notify: update grub
       tags: [configure]
 

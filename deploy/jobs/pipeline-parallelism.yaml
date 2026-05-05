@@ -50,7 +50,7 @@ spec:
       labels:
         app: vllm-pipeline-pp
     spec:
-      priorityClassName: frame-high
+      priorityClassName: neura-high
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

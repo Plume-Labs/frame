@@ -5,7 +5,25 @@
 # Each pool maps to one Volcano Queue and one ResourceQuota.  The Ansible
 # playbook (deploy/ansible/playbooks/elastic-lpar-pools.yml) can patch the
 # Queue capability at runtime to grow/shrink pools without a restart.
+#
+# PriorityClass mapping (see deploy/kubernetes/scheduling/priority-classes.yaml):
+#   neura-critical  →  HIGH service class (real-time inference)
+#   neura-high      →  MEDIUM service class (interactive / database)
+#   neura-low       →  LOW service class (batch / training)
 
+# ── Namespaces ────────────────────────────────────────────────────────────────
+# neura-inference already created by priority-classes.yaml; neura-training too.
+# neura-batch is created here for the lpar-batch-medium pool.
+# Note: this pool carries MEDIUM service class despite the "batch" name —
+# it maps to neura-high PriorityClass (interactive/database tier).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-batch
+  labels:
+    frame.plume-labs.io/service-class: MEDIUM   # lpar-batch-medium = MEDIUM tier
+    frame.plume-labs.io/managed: "true"
+---
 # ── Pool: lpar-inference-high (maps to neura-high, non-reclaimable) ──────────
 apiVersion: scheduling.volcano.sh/v1beta1
 kind: Queue
@@ -44,7 +62,7 @@ spec:
     matchExpressions:
       - operator: In
         scopeName: PriorityClass
-        values: [frame-high]
+        values: [neura-critical]
 
 ---
 # ── Pool: lpar-training-low (maps to neura-low, reclaimable) ─────────────────
@@ -84,7 +102,7 @@ spec:
     matchExpressions:
       - operator: In
         scopeName: PriorityClass
-        values: [frame-low]
+        values: [neura-low]
 
 ---
 # ── Pool: lpar-batch-medium (maps to neura-medium, reclaimable) ──────────────
@@ -124,7 +142,7 @@ spec:
     matchExpressions:
       - operator: In
         scopeName: PriorityClass
-        values: [frame-medium]
+        values: [neura-high]
 
 ---
 # ── Pool: lpar-eval (ephemeral evaluation pool, reclaimable) ─────────────────
