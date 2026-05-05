@@ -115,7 +115,7 @@ function PipelineDiagram({ metrics }: { metrics: PipelinePPMetrics }) {
 
 export function PipelinePPDashboard() {
   const m = MOCK_METRICS
-  const totalTPS = m.stages[0]?.tokensPerSec ?? 0   // bottleneck = first stage throughput
+  const totalTPS = Math.min(...m.stages.map(s => s.tokensPerSec))   // bottleneck = slowest stage
 
   return (
     <div className="space-y-6">
