@@ -98,7 +98,7 @@ export function GPUMonitoringDashboard({ nodes }: GPUMonitoringDashboardProps) {
   const totalPower = allGPUs.reduce((s, { gpu }) => s + gpu.powerWatts, 0)
   const avgTemp = allGPUs.reduce((s, { gpu }) => s + gpu.temperatureC, 0) / allGPUs.length
   const totalECC = allGPUs.reduce((s, { gpu }) => s + gpu.eccErrors, 0)
-  const migNodes = allGPUs.filter(({ gpu }) => gpu.migEnabled).length
+  const migEnabledGPUs = allGPUs.filter(({ gpu }) => gpu.migEnabled).length
 
   return (
     <div className="space-y-6">
@@ -132,8 +132,8 @@ export function GPUMonitoringDashboard({ nodes }: GPUMonitoringDashboardProps) {
               <div className={`font-mono text-2xl font-bold ${totalECC > 0 ? 'text-destructive' : 'text-foreground'}`}>{totalECC}</div>
             </div>
             <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">MIG Instances</div>
-              <div className="font-mono text-2xl font-bold text-accent">{migNodes}</div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">MIG-enabled GPUs</div>
+              <div className="font-mono text-2xl font-bold text-accent">{migEnabledGPUs}</div>
             </div>
           </div>
 

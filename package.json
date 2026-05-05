@@ -7,6 +7,7 @@
         "dev": "vite",
         "server": "node --import tsx/esm server/index.ts",
         "server:dev": "tsx watch server/index.ts",
+        "typecheck": "tsc -b && tsc -p tsconfig.server.json --noEmit",
         "kill": "fuser -k 5000/tcp",
         "build": "tsc -b && vite build",
         "test": "vitest run",

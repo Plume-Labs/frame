@@ -33,7 +33,7 @@ const phaseBadge: Record<PodGroupStatus['phase'], string> = {
   Unknown: 'bg-secondary text-muted-foreground border-border',
 }
 
-function getPriorityClassDistribution(nodes: ClusterNode[]) {
+function getServiceClassDistribution(nodes: ClusterNode[]) {
   const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 }
   nodes.forEach(n => { if (n.serviceClass) counts[n.serviceClass]++ })
   return counts
@@ -41,7 +41,7 @@ function getPriorityClassDistribution(nodes: ClusterNode[]) {
 
 export function SchedulerDashboard({ nodes }: SchedulerDashboardProps) {
   const activeNodes = nodes.filter(n => n.status !== 'offline')
-  const dist = getPriorityClassDistribution(nodes)
+  const dist = getServiceClassDistribution(nodes)
   const total = nodes.length || 1
   const runningGroups = MOCK_POD_GROUPS.filter(g => g.phase === 'Running').length
   const pendingGroups = MOCK_POD_GROUPS.filter(g => g.phase === 'Pending').length
@@ -87,7 +87,7 @@ export function SchedulerDashboard({ nodes }: SchedulerDashboardProps) {
         <CardHeader>
           <CardTitle className="font-mono text-lg flex items-center gap-2">
             <Cpu className="text-primary" />
-            PriorityClass Distribution
+            Service Class Distribution
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">

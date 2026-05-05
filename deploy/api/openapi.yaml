@@ -10,7 +10,12 @@ info:
 
     **Base URL (development):** `http://localhost:4000`
 
-    **TypeScript SDK:** `import { FrameClient } from '@/lib/frame-sdk'`
+    **TypeScript SDK:**
+    ```ts
+    // Inside this repo:
+    import { FrameClient } from './src/lib/frame-sdk'
+    // Or copy src/lib/frame-sdk.ts into your project and adjust the import path.
+    ```
 
 servers:
   - url: http://localhost:4000
@@ -220,7 +225,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ResourceQuota"
+              $ref: "#/components/schemas/ResourceQuotaUpdate"
       responses:
         "200":
           description: Quota updated
@@ -410,6 +415,17 @@ components:
       required: [namespace, maxCPU, maxMemory, maxGPUs, usedCPU, usedMemory, usedGPUs]
       properties:
         namespace:  { type: string }
+        maxCPU:     { type: string, description: "CPU limit e.g. '512'" }
+        maxMemory:  { type: string, description: "Memory limit e.g. '2048Gi'" }
+        maxGPUs:    { type: integer }
+        usedCPU:    { type: string }
+        usedMemory: { type: string }
+        usedGPUs:   { type: integer }
+
+    ResourceQuotaUpdate:
+      description: Partial resource quota — only supplied fields are updated; unset fields retain their current values.
+      type: object
+      properties:
         maxCPU:     { type: string, description: "CPU limit e.g. '512'" }
         maxMemory:  { type: string, description: "Memory limit e.g. '2048Gi'" }
         maxGPUs:    { type: integer }

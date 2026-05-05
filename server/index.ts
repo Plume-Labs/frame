@@ -6,7 +6,7 @@
  * instead of only through the UI.
  *
  * Run:  npm run server
- * Docs: http://localhost:4000/api-docs  (or see deploy/api/openapi.yaml)
+ * Spec: deploy/api/openapi.yaml
  */
 
 import express, { Request, Response, NextFunction } from 'express'
@@ -31,6 +31,23 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.method === 'OPTIONS') { res.sendStatus(204); return }
   next()
 })
+
+// ── Bearer-token auth (mutating routes) ──────────────────────────────────────
+// Set FRAME_API_TOKEN in env to enable auth; if unset, auth is bypassed (dev).
+const API_TOKEN = process.env.FRAME_API_TOKEN
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!API_TOKEN) { next(); return }           // auth disabled in dev
+  const header = req.headers.authorization
+  if (!header || !header.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Unauthorized: Bearer token required' }); return
+  }
+  const token = header.slice(7)
+  if (token !== API_TOKEN) {
+    res.status(403).json({ error: 'Forbidden: invalid token' }); return
+  }
+  next()
+}
 
 // ── In-memory state (replace with real cluster client in production) ─────────
 
@@ -137,10 +154,25 @@ interface JobSubmitBody {
   namespace?: string; gpuCount?: number
 }
 
-app.post('/api/jobs', (req: Request<object, object, JobSubmitBody>, res: Response) => {
+app.post('/api/jobs', requireAuth, (req: Request<object, object, JobSubmitBody>, res: Response) => {
   const { name, pipeline, serviceClass = 'MEDIUM', priority = 'medium', namespace = 'default', gpuCount = 0 } = req.body
+  const VALID_SERVICE_CLASSES: ServiceClass[] = ['HIGH', 'MEDIUM', 'LOW']
+  const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low']
+
   if (!name || !pipeline) {
     res.status(400).json({ error: "'name' and 'pipeline' are required" })
+    return
+  }
+  if (serviceClass !== undefined && !VALID_SERVICE_CLASSES.includes(serviceClass)) {
+    res.status(400).json({ error: `'serviceClass' must be one of: ${VALID_SERVICE_CLASSES.join(', ')}` })
+    return
+  }
+  if (priority !== undefined && !VALID_PRIORITIES.includes(priority)) {
+    res.status(400).json({ error: `'priority' must be one of: ${VALID_PRIORITIES.join(', ')}` })
+    return
+  }
+  if (gpuCount !== undefined && (typeof gpuCount !== 'number' || gpuCount < 0 || !Number.isInteger(gpuCount))) {
+    res.status(400).json({ error: "'gpuCount' must be a non-negative integer" })
     return
   }
   const job: JobRecord = {
@@ -152,7 +184,7 @@ app.post('/api/jobs', (req: Request<object, object, JobSubmitBody>, res: Respons
   res.status(201).json(job)
 })
 
-app.delete('/api/jobs/:id', (req: Request, res: Response) => {
+app.delete('/api/jobs/:id', requireAuth, (req: Request, res: Response) => {
   const idx = jobs.findIndex((j) => j.id === req.params.id)
   if (idx === -1) { res.status(404).json({ error: 'Job not found' }); return }
   const [job] = jobs.splice(idx, 1)
@@ -167,7 +199,7 @@ app.get('/api/scheduler/policies', (_req: Request, res: Response) => {
 
 interface PolicyBody extends Partial<Policy> { name?: string }
 
-app.post('/api/scheduler/policies', (req: Request<object, object, PolicyBody>, res: Response) => {
+app.post('/api/scheduler/policies', requireAuth, (req: Request<object, object, PolicyBody>, res: Response) => {
   const body = req.body as Policy
   if (!body.name) { res.status(400).json({ error: '`name` is required' }); return }
   const existing = policies.findIndex((p) => p.name === body.name)
@@ -175,13 +207,13 @@ app.post('/api/scheduler/policies', (req: Request<object, object, PolicyBody>, r
     policies[existing] = { ...policies[existing], ...body }
     res.json(policies[existing])
   } else {
-    const policy: Policy = { scheduler: 'default', queue: 'default', priority: 50, preemption: false, maxGPUs: 8, maxCPUs: 64, ...body }
+    const policy: Policy = { ...{ scheduler: 'default' as const, queue: 'default', priority: 50, preemption: false, maxGPUs: 8, maxCPUs: 64 }, ...body }
     policies.push(policy)
     res.status(201).json(policy)
   }
 })
 
-app.delete('/api/scheduler/policies/:name', (req: Request, res: Response) => {
+app.delete('/api/scheduler/policies/:name', requireAuth, (req: Request, res: Response) => {
   const idx = policies.findIndex((p) => p.name === req.params.name)
   if (idx === -1) { res.status(404).json({ error: 'Policy not found' }); return }
   const [policy] = policies.splice(idx, 1)
@@ -196,12 +228,13 @@ app.get('/api/resources/quotas', (_req: Request, res: Response) => {
 
 interface QuotaBody extends Partial<ResourceQuota> { namespace?: string }
 
-app.put('/api/resources/quotas/:namespace', (req: Request, res: Response) => {
-  const idx = quotas.findIndex((q) => q.namespace === req.params.namespace)
+app.put('/api/resources/quotas/:namespace', requireAuth, (req: Request, res: Response) => {
+  const ns = String(req.params.namespace)
+  const idx = quotas.findIndex((q) => q.namespace === ns)
   const body = req.body as QuotaBody
   if (idx === -1) {
     const quota: ResourceQuota = {
-      namespace: req.params.namespace,
+      namespace: ns,
       maxCPU: '64', maxMemory: '256Gi', maxGPUs: 4,
       usedCPU: '0', usedMemory: '0Gi', usedGPUs: 0,
       ...body,
@@ -209,7 +242,7 @@ app.put('/api/resources/quotas/:namespace', (req: Request, res: Response) => {
     quotas.push(quota)
     res.status(201).json(quota)
   } else {
-    quotas[idx] = { ...quotas[idx], ...body, namespace: req.params.namespace }
+    quotas[idx] = { ...quotas[idx], ...body, namespace: ns }
     res.json(quotas[idx])
   }
 })
