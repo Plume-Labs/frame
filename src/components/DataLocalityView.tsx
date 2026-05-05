@@ -1,6 +1,6 @@
 import { ClusterNode } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { HardDrives, Database, Cpu } from '@phosphor-icons/react'
+import { HardDrives, Database, Cpu, Lightning } from '@phosphor-icons/react'
 
 interface DataLocalityViewProps {
   nodes: ClusterNode[]
@@ -185,6 +185,76 @@ export function DataLocalityView({ nodes }: DataLocalityViewProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── NUMA-aware placement + 1 GB Huge Pages ───────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-lg flex items-center gap-2">
+            <Lightning className="text-primary" />
+            NUMA-aware Placement + 1 GB Huge Pages
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">Hugepages Policy</div>
+              <div className="font-mono text-sm font-bold text-primary">1 GB (static)</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">Total Hugepages</div>
+              <div className="font-mono text-sm font-bold text-accent">
+                {activeNodes.reduce((s, n) => s + n.hardware.hugepagesGB, 0).toFixed(0)} GB
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">CPU-pinned Cores</div>
+              <div className="font-mono text-sm font-bold text-foreground">
+                {activeNodes.reduce((s, n) => s + n.hardware.cpuPinnedCores, 0)}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">Topology Policy</div>
+              <div className="font-mono text-sm font-bold text-foreground">single-numa-node</div>
+            </div>
+          </div>
+
+          {/* Per-NUMA hugepages */}
+          <div className="space-y-2">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">1 GB Hugepages by NUMA Node</div>
+            {Object.entries(numaCounts).map(([numa, cnt]) => {
+              const numaNodes = activeNodes.filter(n => n.hardware.numaNode === Number(numa))
+              const numaHP    = numaNodes.reduce((s, n) => s + n.hardware.hugepagesGB, 0)
+              const numaPinned = numaNodes.reduce((s, n) => s + n.hardware.cpuPinnedCores, 0)
+              return (
+                <div key={numa} className="p-3 rounded-lg bg-secondary/30 border border-border">
+                  <div className="flex items-center justify-between mb-1 text-sm">
+                    <span className="font-mono font-bold">NUMA {numa}</span>
+                    <div className="flex gap-4 text-xs font-mono">
+                      <span className="text-primary">{numaHP.toFixed(0)} GB hugepages</span>
+                      <span className="text-muted-foreground">{numaPinned} pinned cores</span>
+                      <span className="text-muted-foreground">{cnt} nodes</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {numaNodes.slice(0, 8).map(n => (
+                      <div key={n.id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-secondary border border-border">
+                        {n.name} · {n.hardware.hugepagesGB}GB HP · {n.hardware.cpuPinnedCores}c
+                      </div>
+                    ))}
+                    {numaNodes.length > 8 && (
+                      <div className="text-[10px] text-muted-foreground px-1.5 py-0.5">+{numaNodes.length - 8} more</div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="text-xs text-muted-foreground">
+            1 GB huge pages pre-allocated at boot for model weight tensors in CPU RAM. Combined with CPU pinning and single-numa-node topology manager to guarantee zero-NUMA-crossing latency for GPU↔CPU transfers.
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

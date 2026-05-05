@@ -1,8 +1,8 @@
-import { ClusterNode, PodGroupStatus, SchedulerType } from '@/lib/types'
+import { ClusterNode, PodGroupStatus, SchedulerType, BackfillSlot, BackfillJob } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Cpu, Lightning, Queue, ArrowsClockwise } from '@phosphor-icons/react'
+import { Cpu, Lightning, Queue, ArrowsClockwise, Shuffle } from '@phosphor-icons/react'
 
 interface SchedulerDashboardProps {
   nodes: ClusterNode[]
@@ -13,6 +13,18 @@ const MOCK_POD_GROUPS: PodGroupStatus[] = [
   { name: 'neura-inference-batch', queue: 'neura-high', minMember: 4, running: 4, pending: 0, phase: 'Running', gpusRequested: 4 },
   { name: 'neura-training-gang-2', queue: 'neura-low', minMember: 16, running: 7, pending: 9, phase: 'Pending', gpusRequested: 16 },
   { name: 'neura-eval-job', queue: 'neura-medium', minMember: 2, running: 2, pending: 0, phase: 'Completed', gpusRequested: 2 },
+]
+
+const MOCK_BACKFILL_SLOTS: BackfillSlot[] = [
+  { queue: 'neura-low',    startAt: Date.now() + 180000,  durationMin: 25, cpuAvailable: 64,  memAvailableGi: 128, gpuAvailable: 4  },
+  { queue: 'neura-medium', startAt: Date.now() + 420000,  durationMin: 12, cpuAvailable: 32,  memAvailableGi: 64,  gpuAvailable: 2  },
+  { queue: 'neura-low',    startAt: Date.now() + 900000,  durationMin: 60, cpuAvailable: 128, memAvailableGi: 256, gpuAvailable: 8  },
+]
+
+const MOCK_BACKFILL_JOBS: BackfillJob[] = [
+  { name: 'eval-small-batch', queue: 'neura-low',    requestedCPU: 16,  requestedMemGi: 32,  requestedGPU: 2, estimatedDurationMin: 20, placed: true,  slotStartAt: Date.now() + 180000 },
+  { name: 'hp-search-0',      queue: 'neura-medium', requestedCPU: 8,   requestedMemGi: 16,  requestedGPU: 1, estimatedDurationMin: 10, placed: true,  slotStartAt: Date.now() + 420000 },
+  { name: 'finetune-tiny',    queue: 'neura-low',    requestedCPU: 32,  requestedMemGi: 64,  requestedGPU: 4, estimatedDurationMin: 55, placed: false              },
 ]
 
 const ACTIVE_SCHEDULER: SchedulerType = 'volcano'
@@ -164,6 +176,69 @@ export function SchedulerDashboard({ nodes }: SchedulerDashboardProps) {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      {/* ── Backfill scheduling ────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-lg flex items-center gap-2">
+            <Shuffle className="text-primary" />
+            Backfill Scheduling
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="text-xs text-muted-foreground">
+            Small jobs fill idle reservation gaps between large GPU allocations. Volcano backfill admits jobs that fit within an available time window without delaying the primary reservation.
+          </div>
+
+          {/* Open slots */}
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Open Backfill Slots</div>
+            <div className="space-y-2">
+              {MOCK_BACKFILL_SLOTS.map((slot, i) => {
+                const startsIn = Math.round((slot.startAt - Date.now()) / 60000)
+                return (
+                  <div key={i} className="p-2 rounded-lg bg-secondary/30 border border-border flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-bold text-foreground">{slot.queue}</span>
+                      <span className="text-muted-foreground">in {startsIn}m · {slot.durationMin}m window</span>
+                    </div>
+                    <div className="flex gap-3 text-muted-foreground font-mono">
+                      <span>{slot.cpuAvailable} CPU</span>
+                      <span>{slot.gpuAvailable} GPU</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Backfill jobs */}
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Backfill Job Queue</div>
+            <div className="space-y-2">
+              {MOCK_BACKFILL_JOBS.map(job => (
+                <div key={job.name} className="p-2 rounded-lg bg-secondary/30 border border-border flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    {job.placed
+                      ? <Badge className="text-[10px] border bg-accent/20 text-accent border-accent/30">Placed</Badge>
+                      : <Badge className="text-[10px] border bg-secondary text-muted-foreground border-border">Waiting</Badge>
+                    }
+                    <span className="font-mono font-bold">{job.name}</span>
+                    <span className="text-muted-foreground">{job.estimatedDurationMin}m</span>
+                  </div>
+                  <div className="flex gap-3 text-muted-foreground font-mono">
+                    <span>{job.requestedCPU} CPU</span>
+                    <span>{job.requestedGPU} GPU</span>
+                    {job.placed && job.slotStartAt && (
+                      <span className="text-accent">+{Math.round((job.slotStartAt - Date.now()) / 60000)}m</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

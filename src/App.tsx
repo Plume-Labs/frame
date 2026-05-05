@@ -32,6 +32,11 @@ import { ResiliencePanel } from '@/components/ResiliencePanel'
 import { KVCacheDashboard } from '@/components/KVCacheDashboard'
 import { ElasticPoolDashboard } from '@/components/ElasticPoolDashboard'
 import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
+import { PTPSyncDashboard } from '@/components/PTPSyncDashboard'
+import { MPSDashboard } from '@/components/MPSDashboard'
+import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
+import { KSMDashboard } from '@/components/KSMDashboard'
+import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
@@ -82,6 +87,12 @@ function App() {
             <TabsTrigger value="kv-cache">KV-Cache</TabsTrigger>
             <TabsTrigger value="elastic-pools">Elastic Pools</TabsTrigger>
             <TabsTrigger value="speculative">Speculative</TabsTrigger>
+            <TabsTrigger value="pipeline-pp">Pipeline PP</TabsTrigger>
+            <TabsTrigger value="mps">MPS</TabsTrigger>
+            {/* System optimizations */}
+            <TabsTrigger value="ptp">PTP Sync</TabsTrigger>
+            <TabsTrigger value="burst-buffer">Burst Buffer</TabsTrigger>
+            <TabsTrigger value="ksm">KSM</TabsTrigger>
             {/* Cluster management */}
             <TabsTrigger value="nodes">Nodes</TabsTrigger>
             <TabsTrigger value="racks">Racks</TabsTrigger>
@@ -140,6 +151,31 @@ function App() {
           {/* ── Speculative Decoding ─────────────────────────────────────────── */}
           <TabsContent value="speculative" className="space-y-6">
             <SpeculativeDecodingDashboard />
+          </TabsContent>
+
+          {/* ── Pipeline Parallelism prefill/decode ──────────────────────────── */}
+          <TabsContent value="pipeline-pp" className="space-y-6">
+            <PipelinePPDashboard />
+          </TabsContent>
+
+          {/* ── NVIDIA MPS ───────────────────────────────────────────────────── */}
+          <TabsContent value="mps" className="space-y-6">
+            <MPSDashboard />
+          </TabsContent>
+
+          {/* ── PTP / IEEE 1588 clock sync ───────────────────────────────────── */}
+          <TabsContent value="ptp" className="space-y-6">
+            <PTPSyncDashboard />
+          </TabsContent>
+
+          {/* ── Burst Buffer NVMe ────────────────────────────────────────────── */}
+          <TabsContent value="burst-buffer" className="space-y-6">
+            <BurstBufferDashboard />
+          </TabsContent>
+
+          {/* ── KSM — Kernel Same-Page Merging ───────────────────────────────── */}
+          <TabsContent value="ksm" className="space-y-6">
+            <KSMDashboard />
           </TabsContent>
 
           {/* ── Node topology (cluster management) ──────────────────────────── */}
