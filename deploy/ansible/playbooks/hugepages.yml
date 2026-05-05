@@ -20,11 +20,30 @@
         safe_1g_count: "{{ [[hugepages_1g_count, (total_ram_gb.stdout | int) - 32] | min, 0] | max }}"
 
     - name: Configure 1G hugepages in GRUB
-      lineinfile:
-        path: /etc/default/grub
-        regexp: '^GRUB_CMDLINE_LINUX='
-        line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G iommu=pt intel_iommu=on"'
-        backup: true
+      block:
+        - name: Set GRUB hugepages — Intel systems
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G iommu=pt intel_iommu=on"'
+            backup: true
+          when: ansible_processor[0] is defined and 'Intel' in ansible_processor[0]
+
+        - name: Set GRUB hugepages — AMD systems
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G iommu=pt amd_iommu=on"'
+            backup: true
+          when: ansible_processor[0] is defined and 'AMD' in ansible_processor[0]
+
+        - name: Set GRUB hugepages — generic (no CPU-specific IOMMU)
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="hugepagesz=1G hugepages={{ safe_1g_count }} hugepagesz=2M hugepages={{ hugepages_2m_count }} default_hugepagesz=1G"'
+            backup: true
+          when: ansible_processor[0] is not defined or ('Intel' not in ansible_processor[0] and 'AMD' not in ansible_processor[0])
 
     - name: Update GRUB (Debian/Ubuntu)
       command: update-grub

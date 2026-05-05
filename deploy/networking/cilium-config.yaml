@@ -192,6 +192,3 @@ spec:
         - name: hostproc
           hostPath:
             path: /proc
-        - name: hostbin
-          hostPath:
-            path: /opt/cni/bin

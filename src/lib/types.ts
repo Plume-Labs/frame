@@ -363,10 +363,3 @@ export interface PowerCoolingAlert {
   threshold: number
 }
 
-export interface NodeMetrics {
-  cpu: number
-  memory: number
-  storage: number
-  network: number
-}
-
