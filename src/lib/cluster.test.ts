@@ -145,7 +145,10 @@ describe('calculateClusterStats', () => {
 
 describe('updateNodeMetrics', () => {
   it('returns a node with updated lastSeen timestamp', () => {
-    const [node] = generateClusterNodes(1)
+    // Force the node to be online so updateNodeMetrics actually updates lastSeen
+    // (offline nodes are intentionally returned unchanged by design).
+    const [rawNode] = generateClusterNodes(1)
+    const node = { ...rawNode, status: 'online' as const }
     const before = Date.now()
     const updated = updateNodeMetrics(node)
     expect(updated.lastSeen).toBeGreaterThanOrEqual(before)

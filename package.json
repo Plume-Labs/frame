@@ -5,6 +5,8 @@
     "type": "module",
     "scripts": {
         "dev": "vite",
+        "server": "node --import tsx/esm server/index.ts",
+        "server:dev": "tsx watch server/index.ts",
         "kill": "fuser -k 5000/tcp",
         "build": "tsc -b && vite build",
         "test": "vitest run",
@@ -54,6 +56,7 @@
         "clsx": "^2.1.1",
         "d3": "^7.9.0",
         "date-fns": "^3.6.0",
+        "express": "^5.1.0",
         "framer-motion": "^12.6.2",
         "lucide-react": "^0.484.0",
         "marked": "^15.0.7",
@@ -75,6 +78,7 @@
     "devDependencies": {
         "@eslint/js": "^9.21.0",
         "@tailwindcss/postcss": "^4.1.8",
+        "@types/express": "^5.0.6",
         "@types/react": "^19.0.10",
         "@types/react-dom": "^19.0.4",
         "@vitejs/plugin-react-swc": "^4.2.2",
@@ -84,6 +88,7 @@
         "eslint-plugin-react-refresh": "^0.4.19",
         "globals": "^16.0.0",
         "tailwindcss": "^4.1.11",
+        "tsx": "^4.21.0",
         "typescript": "~5.7.2",
         "typescript-eslint": "^8.38.0",
         "vite": "^7.3.2",
