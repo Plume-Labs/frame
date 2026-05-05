@@ -1,6 +1,5 @@
 import { ClusterNode } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Network, ArrowUp, ArrowDown, Clock, Warning } from '@phosphor-icons/react'
 
 interface NetworkDashboardProps {

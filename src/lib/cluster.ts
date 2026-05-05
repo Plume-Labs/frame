@@ -1,4 +1,4 @@
-import { ClusterNode, NodeStatus, NodeMetrics, SystemEvent, EventSeverity, ClusterStats, NetworkInfo, StorageInfo, HardwareInfo } from './types'
+import { ClusterNode, NodeStatus, NodeMetrics, SystemEvent, EventSeverity, ClusterStats, NetworkInfo, StorageInfo, HardwareInfo, DeviceType } from './types'
 
 const NODE_NAMES = [
   'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta',
@@ -72,8 +72,15 @@ function generateStorageInfo(): StorageInfo {
 
 function generateHardwareInfo(index: number): HardwareInfo {
   const rand = Math.random()
-  const deviceType = rand > 0.8 ? 'storage' : rand > 0.95 ? 'network' : 'server'
-  const rackUnits = deviceType === 'storage' ? 2 : deviceType === 'network' ? 1 : 1
+  let deviceType: DeviceType
+  if (rand > 0.95) {
+    deviceType = 'network'
+  } else if (rand > 0.8) {
+    deviceType = 'storage'
+  } else {
+    deviceType = 'server'
+  }
+  const rackUnits = deviceType === 'storage' ? 2 : 1
   
   return {
     cpuModel: CPU_MODELS[index % CPU_MODELS.length],
@@ -192,15 +199,15 @@ export function calculateClusterStats(nodes: ClusterNode[]): ClusterStats {
   const offlineNodes = nodes.filter(n => n.status === 'offline').length
 
   const activeNodes = nodes.filter(n => n.status !== 'offline')
-  
-  const totalCpu = nodes.length * 100
-  const usedCpu = activeNodes.reduce((sum, n) => sum + n.metrics.cpu, 0)
-  
-  const totalMemory = nodes.length * 256
-  const usedMemory = activeNodes.reduce((sum, n) => sum + (n.metrics.memory / 100 * 256), 0)
-  
-  const totalStorage = nodes.length * 2048
-  const usedStorage = activeNodes.reduce((sum, n) => sum + (n.metrics.storage / 100 * 2048), 0)
+
+  const totalCpu = nodes.reduce((sum, n) => sum + n.hardware.cpuCores, 0)
+  const usedCpu = activeNodes.reduce((sum, n) => sum + (n.metrics.cpu / 100 * n.hardware.cpuCores), 0)
+
+  const totalMemory = nodes.reduce((sum, n) => sum + n.hardware.memoryGB, 0)
+  const usedMemory = activeNodes.reduce((sum, n) => sum + (n.metrics.memory / 100 * n.hardware.memoryGB), 0)
+
+  const totalStorage = nodes.reduce((sum, n) => sum + n.hardware.storageGB, 0)
+  const usedStorage = activeNodes.reduce((sum, n) => sum + (n.metrics.storage / 100 * n.hardware.storageGB), 0)
   
   const networkThroughput = activeNodes.reduce((sum, n) => sum + n.metrics.network, 0)
 
@@ -233,8 +240,6 @@ function getRandomTemplate(templates: string[]): string {
   return templates[Math.floor(Math.random() * templates.length)]
 }
 
-let eventIdCounter = 0
-
 export function generateSystemEvent(
   nodes: ClusterNode[],
   previousNodes?: ClusterNode[]
@@ -254,7 +259,7 @@ export function generateSystemEvent(
         else if (node.status === 'online') severity = 'success'
         
         return {
-          id: `event-${eventIdCounter++}`,
+          id: crypto.randomUUID(),
           timestamp: Date.now(),
           severity,
           message,
@@ -280,7 +285,7 @@ export function generateSystemEvent(
   }
 
   return {
-    id: `event-${eventIdCounter++}`,
+    id: crypto.randomUUID(),
     timestamp: Date.now(),
     severity,
     message: getRandomTemplate(templates)
