@@ -1,0 +1,117 @@
+---
+# 1 GB Huge Pages — NUMA-aware allocation for model weight tensors
+# Pre-allocates 1 GB huge pages at boot for CPU RAM model weights.
+# Combined with single-numa-node topology manager and CPU pinning.
+#
+# Run: ansible-playbook -i inventory/hosts.ini hugepages-1gb.yml
+#      -e hugepages_1gb_count=64  (default: 64 × 1 GB = 64 GB per node)
+#
+# Tags:
+#   configure  — write grub / sysctl / kubelet config
+#   status     — show current hugepages allocation
+
+- name: 1 GB Huge Pages — NUMA-aware allocation for Frame GPU nodes
+  hosts: gpu_nodes
+  become: true
+  gather_facts: true
+
+  vars:
+    # Number of 1 GB huge pages per node (tune to available RAM - OS overhead)
+    hugepages_1gb_count: 64
+    # Kubelet extra args file path (adjust for your distro)
+    kubelet_extra_args_file: /etc/default/kubelet
+    # GRUB config file
+    grub_file: /etc/default/grub
+
+  tasks:
+
+    # ── Kernel command-line (requires reboot to take effect) ─────────────────
+    - name: Check if hugepages params already present in GRUB
+      command: grep -qE "hugepagesz=1G" {{ grub_file }}
+      register: grub_has_hugepages
+      changed_when: false
+      failed_when: false
+      tags: [configure]
+
+    - name: Add hugepages=1G to GRUB kernel command line
+      # Append to the existing GRUB_CMDLINE_LINUX value only when the params
+      # are not already present (idempotent).  ansible_cmdline is a dict and
+      # cannot be used as a string; we match the quoted value and append in-place.
+      replace:
+        path: "{{ grub_file }}"
+        regexp: '^(GRUB_CMDLINE_LINUX="[^"]*)"$'
+        replace: '\1 default_hugepagesz=1G hugepagesz=1G hugepages={{ hugepages_1gb_count }} iommu=pt intel_iommu=on"'
+        backup: yes
+      when: grub_has_hugepages.rc != 0
+      notify: update grub
+      tags: [configure]
+
+    # ── Runtime allocation (no reboot — may fail if RAM is fragmented) ────────
+    - name: Attempt runtime hugepage allocation on each NUMA node
+      shell: |
+        NUMA_NODES=$(numactl --hardware | awk '/available/ {print $2}')
+        PER_NUMA=$(( {{ hugepages_1gb_count }} / NUMA_NODES ))
+        for i in $(seq 0 $(( NUMA_NODES - 1 ))); do
+          echo $PER_NUMA > /sys/devices/system/node/node${i}/hugepages/hugepages-1048576kB/nr_hugepages
+        done
+      args:
+        executable: /bin/bash
+      register: hp_alloc
+      changed_when: hp_alloc.rc == 0
+      failed_when: false    # runtime alloc may fail on fragmented mem — grub handles it
+      tags: [configure]
+
+    # ── Kubelet config — advertise hugepages resource ─────────────────────────
+    - name: Configure kubelet to advertise hugepages-1Gi resource
+      lineinfile:
+        path: "{{ kubelet_extra_args_file }}"
+        regexp: 'KUBELET_EXTRA_ARGS'
+        line: >
+          KUBELET_EXTRA_ARGS="--cpu-manager-policy=static
+          --topology-manager-policy=single-numa-node
+          --kube-reserved=hugepages-1Gi=4Gi"
+        create: yes
+      notify: restart kubelet
+      tags: [configure]
+
+    # ── Node label ────────────────────────────────────────────────────────────
+    - name: Label node with hugepages capacity
+      command: >
+        kubectl label node {{ ansible_hostname }}
+        frame.plume-labs.io/hugepages-1gi={{ hugepages_1gb_count }}
+        --overwrite
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      changed_when: true
+      tags: [configure]
+
+    # ── Status ────────────────────────────────────────────────────────────────
+    - name: Show hugepage allocation per NUMA node
+      shell: |
+        echo "=== Hugepages on {{ inventory_hostname }} ==="
+        for node_dir in /sys/devices/system/node/node*/hugepages/hugepages-1048576kB; do
+          numa=$(echo $node_dir | grep -o 'node[0-9]*')
+          free=$(cat $node_dir/free_hugepages)
+          total=$(cat $node_dir/nr_hugepages)
+          echo "  $numa: ${total} total, ${free} free (1 GB each)"
+        done
+        echo "  Total reserved: $(cat /proc/meminfo | grep HugePages_Total) pages"
+      register: hp_status
+      changed_when: false
+      tags: [status]
+
+    - name: Print hugepage status
+      debug:
+        msg: "{{ hp_status.stdout_lines }}"
+      tags: [status]
+
+  handlers:
+    - name: update grub
+      command: update-grub
+      args:
+        executable: /bin/bash
+
+    - name: restart kubelet
+      systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: yes
