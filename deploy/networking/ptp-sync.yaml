@@ -1,0 +1,177 @@
+---
+# PTP / IEEE 1588 — Nanosecond Clock Synchronization for GPU Cluster
+# Reduces NCCL clock skew in distributed training, enabling tighter
+# all-reduce barrier synchronization across GPU nodes.
+#
+# Apply with: kubectl apply -f deploy/networking/ptp-sync.yaml
+#
+# Requirements:
+#   - Hardware timestamping NIC (Mellanox CX-5/CX-6 Dx or Intel E810)
+#   - linuxptp package (ptp4l + phc2sys) installed via the k8s-cluster playbook
+#   - Boundary clock (BC) or ordinary clock (OC) NIC in each node
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ptp
+  labels:
+    frame.plume-labs.io/managed: "true"
+---
+# ── PTP operator CRD instance (OpenShift PTP operator / upstream linuxptp) ────
+# If using the upstream linuxptp DaemonSet approach, the ConfigMap below
+# provides the ptp4l and phc2sys configuration files.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ptp4l-config
+  namespace: ptp
+  labels:
+    frame.plume-labs.io/optimization: ptp-sync
+data:
+  ptp4l.conf: |
+    [global]
+    dataset_comparison         G.8275.x
+    G.8275.defaultDS.localPriority 128
+    clockClass                 135
+    clockAccuracy              0x31
+    offsetScaledLogVariance    0x4E5D
+    time_stamping              hardware
+    tx_timestamp_timeout       50
+    uds_address                /var/run/ptp4l
+    summary_interval           0         # log every 1 s
+
+    [eth0]
+    serverOnly                 0
+    delay_mechanism            E2E
+    network_transport          L2
+    logSyncInterval            -7        # 128 sync messages/s
+    logMinDelayReqInterval     -7
+    logAnnounceInterval        1
+
+  phc2sys.conf: |
+    # Sync CLOCK_REALTIME to the PTP hardware clock (PHC)
+    # -s eth0   : source clock (PHC on eth0)
+    # -c CLOCK_REALTIME : sink
+    # -O 0      : UTC offset 0 (already applied by ptp4l)
+    # -m        : print messages to stdout
+    # -f 256    : servo filter coefficient
+    cmdline: >
+      phc2sys -s eth0 -c CLOCK_REALTIME -O 0 -m
+      -f 256 -R 256 -u 60
+---
+# ── DaemonSet — ptp4l + phc2sys on every GPU node ────────────────────────────
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: linuxptp
+  namespace: ptp
+  labels:
+    app: linuxptp
+    frame.plume-labs.io/optimization: ptp-sync
+spec:
+  selector:
+    matchLabels:
+      app: linuxptp
+  template:
+    metadata:
+      labels:
+        app: linuxptp
+    spec:
+      hostNetwork: true
+      hostPID: true
+      priorityClassName: system-node-critical
+      nodeSelector:
+        rdma: "true"     # only GPU nodes with hw-timestamp NICs
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        # ptp4l — IEEE 1588 synchronization daemon
+        - name: ptp4l
+          image: ghcr.io/openshift/origin-ptp:4.14
+          command: [ptp4l]
+          args:
+            - -f
+            - /etc/ptp/ptp4l.conf
+            - -i
+            - eth0
+            - -m
+          ports:
+            - name: metrics
+              containerPort: 9017
+              protocol: TCP
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: ptp-config
+              mountPath: /etc/ptp
+            - name: run
+              mountPath: /var/run
+
+        # phc2sys — keep CLOCK_REALTIME in sync with PHC
+        - name: phc2sys
+          image: ghcr.io/openshift/origin-ptp:4.14
+          command: [phc2sys]
+          args:
+            - -s
+            - eth0
+            - -c
+            - CLOCK_REALTIME
+            - -O
+            - "0"
+            - -m
+            - -f
+            - "256"
+            - -R
+            - "256"
+            - -u
+            - "60"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: run
+              mountPath: /var/run
+
+      volumes:
+        - name: ptp-config
+          configMap:
+            name: ptp4l-config
+        - name: run
+          hostPath:
+            path: /var/run
+---
+# ── Service — expose ptp4l metrics port for Prometheus discovery ──────────────
+# This headless Service selects all linuxptp DaemonSet pods and advertises
+# the prometheus-exporter port so the ServiceMonitor below can find them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: linuxptp-metrics
+  namespace: ptp
+  labels:
+    app: linuxptp
+spec:
+  clusterIP: None   # headless — one Endpoint per DaemonSet pod
+  selector:
+    app: linuxptp
+  ports:
+    - name: metrics
+      port: 9017
+      targetPort: metrics
+      protocol: TCP
+---
+# ── ServiceMonitor — expose ptp4l metrics to Prometheus ──────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ptp-metrics
+  namespace: ptp
+spec:
+  selector:
+    matchLabels:
+      app: linuxptp
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics

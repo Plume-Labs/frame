@@ -84,6 +84,15 @@ data:
           nodeAffinityWeight: 1
           podAffinityWeight: 2
           taintTolerationWeight: 3
+    # ── Backfill scheduling ────────────────────────────────────────────────────
+    # Backfill fills idle reservation gaps with small jobs.
+    # Jobs eligible for backfill must set:
+    #   volcano.sh/backfill-eligible: "true"
+    # and provide an estimated max runtime via:
+    #   volcano.sh/max-duration: "30m"
+    # Volcano will admit them only if they finish before the next reservation.
+    - plugins:
+      - name: backfill
 ---
 apiVersion: apps/v1
 kind: Deployment

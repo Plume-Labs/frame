@@ -1,0 +1,167 @@
+---
+# Elastic LPAR Pools — Volcano Queues with elastic resource bounds
+# Apply with: kubectl apply -f deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
+#
+# Each pool maps to one Volcano Queue and one ResourceQuota.  The Ansible
+# playbook (deploy/ansible/playbooks/elastic-lpar-pools.yml) can patch the
+# Queue capability at runtime to grow/shrink pools without a restart.
+#
+# PriorityClass mapping (see deploy/kubernetes/scheduling/priority-classes.yaml):
+#   neura-critical  →  HIGH service class (real-time inference)
+#   neura-high      →  MEDIUM service class (interactive / database)
+#   neura-low       →  LOW service class (batch / training)
+
+# ── Namespaces ────────────────────────────────────────────────────────────────
+# neura-inference already created by priority-classes.yaml; neura-training too.
+# neura-batch is created here for the lpar-batch-medium pool.
+# Note: this pool carries MEDIUM service class despite the "batch" name —
+# it maps to neura-high PriorityClass (interactive/database tier).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-batch
+  labels:
+    frame.plume-labs.io/service-class: MEDIUM   # lpar-batch-medium = MEDIUM tier
+    frame.plume-labs.io/managed: "true"
+---
+# ── Pool: lpar-inference-high (maps to neura-high, non-reclaimable) ──────────
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: lpar-inference-high
+  labels:
+    frame.plume-labs.io/service-class: HIGH
+    frame.plume-labs.io/pool-type: elastic-lpar
+spec:
+  weight: 100
+  # Elastic bounds — min guaranteed; max hard cap
+  capability:
+    cpu: "256"         # cpuMax
+    memory: 512Gi
+    nvidia.com/gpu: "32"
+  guarantee:
+    resource:
+      cpu: "64"        # cpuMin — always reserved
+      memory: 128Gi
+      nvidia.com/gpu: "4"
+  reclaimable: false
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lpar-inference-high-quota
+  namespace: neura-inference
+  labels:
+    frame.plume-labs.io/pool: lpar-inference-high
+spec:
+  hard:
+    requests.cpu: "256"
+    requests.memory: 512Gi
+    requests.nvidia.com/gpu: "32"
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values: [neura-critical]
+
+---
+# ── Pool: lpar-training-low (maps to neura-low, reclaimable) ─────────────────
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: lpar-training-low
+  labels:
+    frame.plume-labs.io/service-class: LOW
+    frame.plume-labs.io/pool-type: elastic-lpar
+spec:
+  weight: 10
+  capability:
+    cpu: "512"
+    memory: 1024Gi
+    nvidia.com/gpu: "64"
+  guarantee:
+    resource:
+      cpu: "32"
+      memory: 64Gi
+      nvidia.com/gpu: "0"
+  reclaimable: true
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lpar-training-low-quota
+  namespace: neura-training
+  labels:
+    frame.plume-labs.io/pool: lpar-training-low
+spec:
+  hard:
+    requests.cpu: "512"
+    requests.memory: 1024Gi
+    requests.nvidia.com/gpu: "64"
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values: [neura-low]
+
+---
+# ── Pool: lpar-batch-medium (maps to neura-medium, reclaimable) ──────────────
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: lpar-batch-medium
+  labels:
+    frame.plume-labs.io/service-class: MEDIUM
+    frame.plume-labs.io/pool-type: elastic-lpar
+spec:
+  weight: 50
+  capability:
+    cpu: "128"
+    memory: 256Gi
+    nvidia.com/gpu: "16"
+  guarantee:
+    resource:
+      cpu: "16"
+      memory: 32Gi
+      nvidia.com/gpu: "0"
+  reclaimable: true
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lpar-batch-medium-quota
+  namespace: neura-batch
+  labels:
+    frame.plume-labs.io/pool: lpar-batch-medium
+spec:
+  hard:
+    requests.cpu: "128"
+    requests.memory: 256Gi
+    requests.nvidia.com/gpu: "16"
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values: [neura-high]
+
+---
+# ── Pool: lpar-eval (ephemeral evaluation pool, reclaimable) ─────────────────
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata:
+  name: lpar-eval
+  labels:
+    frame.plume-labs.io/service-class: LOW
+    frame.plume-labs.io/pool-type: elastic-lpar
+spec:
+  weight: 5
+  capability:
+    cpu: "64"
+    memory: 128Gi
+    nvidia.com/gpu: "8"
+  guarantee:
+    resource:
+      cpu: "0"
+      memory: 0Gi
+      nvidia.com/gpu: "0"
+  reclaimable: true

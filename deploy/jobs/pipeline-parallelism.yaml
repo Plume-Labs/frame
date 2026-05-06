@@ -1,0 +1,175 @@
+---
+# Pipeline Parallelism — Disaggregated Prefill/Decode
+# Deploys vLLM with pipeline-parallel degree 4 (PP=4) and tensor-parallel
+# degree 2 (TP=2), using 8 GPUs total. Stages 0–1 handle prefill, stages 2–3
+# handle decode (disaggregated via NIXL KV transfer).
+#
+# Apply with: kubectl apply -f deploy/jobs/pipeline-parallelism.yaml
+#
+# Requirements:
+#   - vLLM >= 0.9.0
+#   - 8 GPUs per replica group (4 stages × TP=2)
+#   - NIXL RDMA for KV transfer between prefill and decode stages
+
+# ── ConfigMap — pipeline parallel engine args ─────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-pipeline-pp-config
+  namespace: neura-inference
+  labels:
+    frame.plume-labs.io/optimization: pipeline-parallelism
+data:
+  TARGET_MODEL: "meta-llama/Llama-3.1-70B-Instruct"
+  PP_DEGREE: "4"
+  TP_DEGREE: "2"
+  NUM_SCHEDULER_STEPS: "8"     # micro-batches in flight
+  GPU_MEMORY_UTILIZATION: "0.90"
+---
+# ── StatefulSet — pipeline parallel vLLM (requires stable pod names for PP) ──
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vllm-pipeline-pp
+  namespace: neura-inference
+  labels:
+    app: vllm-pipeline-pp
+    frame.plume-labs.io/optimization: pipeline-parallelism
+  annotations:
+    frame.plume-labs.io/pipeline-pp-degree: "4"
+    frame.plume-labs.io/tensor-parallel-degree: "2"
+    frame.plume-labs.io/stage-roles: "0:prefill,1:prefill,2:decode,3:decode"
+spec:
+  serviceName: vllm-pipeline-pp-headless
+  replicas: 1           # 1 replica = 1 pipeline group (PP=4 × TP=2 = 8 GPUs)
+  selector:
+    matchLabels:
+      app: vllm-pipeline-pp
+  template:
+    metadata:
+      labels:
+        app: vllm-pipeline-pp
+    spec:
+      priorityClassName: neura-high
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.present
+                    operator: In
+                    values: ["true"]
+                  - key: rdma
+                    operator: In
+                    values: ["true"]
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.9.0
+          command:
+            - python
+            - -m
+            - vllm.entrypoints.openai.api_server
+          args:
+            - --host=0.0.0.0
+            - --port=8000
+            - --model=$(TARGET_MODEL)
+            - --pipeline-parallel-size=$(PP_DEGREE)
+            - --tensor-parallel-size=$(TP_DEGREE)
+            - --num-scheduler-steps=$(NUM_SCHEDULER_STEPS)
+            - --gpu-memory-utilization=$(GPU_MEMORY_UTILIZATION)
+            - --disable-async-output-proc   # required for PP > 1
+            - --enable-chunked-prefill
+            # Disaggregated prefill: stages 0,1 produce KV; stages 2,3 consume
+            - --kv-transfer-config
+            - '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_parallel_size":4,"kv_buffer_device":"cuda","kv_buffer_size":40}'
+          envFrom:
+            - configMapRef:
+                name: vllm-pipeline-pp-config
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: HF_TOKEN
+          ports:
+            - name: http
+              containerPort: 8000
+          resources:
+            limits:
+              cpu: "64"
+              memory: 192Gi
+              nvidia.com/gpu: "8"    # PP=4 × TP=2
+            requests:
+              cpu: "32"
+              memory: 160Gi
+              nvidia.com/gpu: "8"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            failureThreshold: 8
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Gi
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache-pvc
+---
+# ── Headless service — required for StatefulSet pod DNS ───────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-pipeline-pp-headless
+  namespace: neura-inference
+spec:
+  clusterIP: None
+  selector:
+    app: vllm-pipeline-pp
+  ports:
+    - name: http
+      port: 8000
+---
+# ── ClusterIP service — load-balanced entry point ─────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-pipeline-pp
+  namespace: neura-inference
+  labels:
+    app: vllm-pipeline-pp
+    frame.plume-labs.io/optimization: pipeline-parallelism
+spec:
+  selector:
+    app: vllm-pipeline-pp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: ClusterIP
+---
+# ── Frame InferenceRoute — route HIGH service-class to pipeline PP engine ─────
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: InferenceRoute
+metadata:
+  name: pipeline-pp-route
+  namespace: neura-inference
+spec:
+  routes:
+    - path: /v1/chat/completions
+      backend: vllm-pipeline-pp
+      serviceClasses: [HIGH]
+      weight: 100
+    - path: /v1/completions
+      backend: vllm-pipeline-pp
+      serviceClasses: [HIGH]
+      weight: 100
+  fallbackBackend: vllm-baseline

@@ -1,0 +1,145 @@
+---
+# NVIDIA MPS — Multi-Process Service DaemonSet
+# Enables time-sharing of a single GPU across multiple small inference
+# processes (Ollama, small vLLM instances) without CUDA context contention.
+# Each client gets a guaranteed SM slice; no exclusive GPU lock is taken.
+#
+# Apply with: kubectl apply -f deploy/kubernetes/base/nvidia-mps.yaml
+#
+# Requirements:
+#   - NVIDIA driver >= 450, CUDA >= 11.0
+#   - nvidia-container-toolkit installed on every GPU node
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-mps
+  namespace: kube-system
+  labels:
+    app: nvidia-mps
+    frame.plume-labs.io/optimization: nvidia-mps
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-mps
+  template:
+    metadata:
+      labels:
+        app: nvidia-mps
+    spec:
+      priorityClassName: system-node-critical
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      hostIPC: true
+      hostPID: true
+      initContainers:
+        # Start the MPS control daemon
+        - name: mps-init
+          image: nvidia/cuda:12.4-base-ubuntu22.04
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              # Kill any stale MPS server
+              echo quit | nvidia-cuda-mps-control 2>/dev/null || true
+              sleep 1
+              # Start daemon
+              nvidia-cuda-mps-control -d
+              echo "MPS daemon started"
+          env:
+            - name: CUDA_MPS_PIPE_DIRECTORY
+              value: /tmp/nvidia-mps
+            - name: CUDA_MPS_LOG_DIRECTORY
+              value: /tmp/nvidia-log
+            # Each MPS client is limited to 25% of SMs by default —
+            # prevents a single runaway process from monopolising the GPU.
+            - name: CUDA_MPS_ACTIVE_THREAD_PERCENTAGE
+              value: "25"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: mps-pipe
+              mountPath: /tmp/nvidia-mps
+            - name: mps-log
+              mountPath: /tmp/nvidia-log
+            - name: dev
+              mountPath: /dev
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 64Mi
+            limits:
+              cpu: "500m"
+              memory: 128Mi
+
+      containers:
+        # Sidecar that keeps MPS alive and exposes a /healthz endpoint
+        - name: mps-monitor
+          image: nvidia/cuda:12.4-base-ubuntu22.04
+          command: [sh, -c]
+          args:
+            - |
+              while true; do
+                STATUS=$(echo get_default_active_thread_percentage | nvidia-cuda-mps-control 2>&1 || echo "error")
+                if echo "$STATUS" | grep -q "error"; then
+                  echo "MPS daemon lost — restarting"
+                  nvidia-cuda-mps-control -d || true
+                fi
+                sleep 30
+              done
+          env:
+            - name: CUDA_MPS_PIPE_DIRECTORY
+              value: /tmp/nvidia-mps
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: mps-pipe
+              mountPath: /tmp/nvidia-mps
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 32Mi
+            limits:
+              cpu: "200m"
+              memory: 64Mi
+
+      volumes:
+        - name: mps-pipe
+          hostPath:
+            path: /tmp/nvidia-mps
+            type: DirectoryOrCreate
+        - name: mps-log
+          hostPath:
+            path: /tmp/nvidia-log
+            type: DirectoryOrCreate
+        - name: dev
+          hostPath:
+            path: /dev
+---
+# ── LimitRange: enforce per-pod SM percentage via env injection ───────────────
+# Admission webhook (or pod mutating webhook) should inject
+# CUDA_MPS_ACTIVE_THREAD_PERCENTAGE into every inference pod.
+# The annotation below serves as the Frame convention.
+#
+# Per-pod annotation:
+#   frame.plume-labs.io/mps-thread-pct: "25"
+#
+# Pods without the annotation get the DaemonSet default (25%).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-mps-defaults
+  namespace: kube-system
+  labels:
+    frame.plume-labs.io/optimization: nvidia-mps
+data:
+  # Default SM percentage per client (tune per service class)
+  HIGH_SERVICE_CLASS_THREAD_PCT: "50"
+  MEDIUM_SERVICE_CLASS_THREAD_PCT: "25"
+  LOW_SERVICE_CLASS_THREAD_PCT: "10"
+  PIPE_DIRECTORY: "/tmp/nvidia-mps"
+  LOG_DIRECTORY: "/tmp/nvidia-log"
