@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
+import { isIP } from 'net'
 import os from 'os'
 import path from 'path'
 import { execFile } from 'child_process'
@@ -66,6 +67,8 @@ interface ProvisionPayload {
 interface ProvisionStatus {
   status: NodeRecord['status']
   logs: string[]
+  updatedAt: number
+  expiresAt: number
 }
 
 interface DiscoverResponse {
@@ -77,6 +80,9 @@ interface DiscoverResponse {
 
 const provisionStatuses = new Map<string, ProvisionStatus>()
 const provisionRouter = express.Router()
+const PROVISION_STATUS_TTL_MS = 30 * 60 * 1000
+const PROVISION_STATUS_MAX_ENTRIES = 256
+const PROVISION_STATUS_MAX_LOG_LINES = 200
 
 const API_TOKEN = process.env.FRAME_API_TOKEN
 const TALOS_MOCK = process.env.FRAME_TALOS_MOCK === 'true'
@@ -119,44 +125,117 @@ async function hasTalosctl(): Promise<boolean> {
 }
 
 function generateTalosMachineConfig(body: ProvisionPayload): string {
-  const dnsServers = body.network.dns.map((dns) => `      - ${dns}`).join('\n')
-  const vlanBlock = typeof body.network.vlan === 'number'
-    ? `\n      vlans:\n        - vlanId: ${body.network.vlan}\n          addresses:\n            - ${body.network.address}\n          routes:\n            - network: 0.0.0.0/0\n              gateway: ${body.network.gateway}`
-    : ''
-  const bondBlock = body.network.bond
-    ? `\n      bond:\n        interfaces:\n          - ${body.network.bond}`
-    : ''
-  const rdmaComment = body.rdmaInterface ? `\n    # RDMA interface selected: ${body.rdmaInterface}` : ''
-  const hostnameLine = body.hostname ? `  hostname: ${body.hostname}` : ''
+  const lines = [
+    'version: v1alpha1',
+    'machine:',
+    `  type: ${body.role}`,
+  ]
 
-  return `version: v1alpha1
-machine:
-  type: ${body.role}
-${hostnameLine}
-  install:
-    disk: ${body.disk}
-  network:
-    interfaces:
-      - interface: eth0
-        addresses:
-          - ${body.network.address}
-        routes:
-          - network: 0.0.0.0/0
-            gateway: ${body.network.gateway}
-        mtu: 1500${vlanBlock}${bondBlock}
-    nameservers:
-${dnsServers}
-cluster:
-  allowSchedulingOnControlPlanes: true
-  discovery:
-    enabled: true
-  network:
-    dnsDomain: cluster.local
-  etcd:
-    advertisedSubnets:
-      - ${body.network.address}
-${rdmaComment}
-`
+  if (body.hostname) lines.push(`  hostname: ${body.hostname}`)
+
+  lines.push(
+    '  install:',
+    `    disk: ${body.disk}`,
+    '  network:',
+    '    interfaces:',
+    '      - interface: eth0',
+    '        addresses:',
+    `          - ${body.network.address}`,
+    '        routes:',
+    '          - network: 0.0.0.0/0',
+    `            gateway: ${body.network.gateway}`,
+    '        mtu: 1500',
+  )
+
+  if (typeof body.network.vlan === 'number') {
+    lines.push(
+      '        vlans:',
+      `          - vlanId: ${body.network.vlan}`,
+      '            addresses:',
+      `              - ${body.network.address}`,
+      '            routes:',
+      '              - network: 0.0.0.0/0',
+      `                gateway: ${body.network.gateway}`,
+    )
+  }
+
+  if (body.network.bond) {
+    lines.push(
+      '        bond:',
+      '          interfaces:',
+      `            - ${body.network.bond}`,
+    )
+  }
+
+  lines.push(
+    '    nameservers:',
+    ...body.network.dns.map((dns) => `      - ${dns}`),
+    'cluster:',
+    '  allowSchedulingOnControlPlanes: true',
+    '  discovery:',
+    '    enabled: true',
+    '  network:',
+    '    dnsDomain: cluster.local',
+    '  etcd:',
+    '    advertisedSubnets:',
+    `      - ${body.network.address}`,
+  )
+
+  if (body.rdmaInterface) {
+    lines.push(`# RDMA interface selected: ${body.rdmaInterface}`)
+  }
+
+  return `${lines.join('\n')}\n`
+}
+
+function pruneProvisionStatuses(now = Date.now()): void {
+  for (const [key, value] of provisionStatuses.entries()) {
+    if (value.expiresAt <= now) provisionStatuses.delete(key)
+  }
+
+  if (provisionStatuses.size <= PROVISION_STATUS_MAX_ENTRIES) return
+
+  const sorted = [...provisionStatuses.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+  for (const [key] of sorted.slice(0, provisionStatuses.size - PROVISION_STATUS_MAX_ENTRIES)) {
+    provisionStatuses.delete(key)
+  }
+}
+
+function setProvisionStatus(nodeId: string, status: NodeRecord['status'], logs: string[]): void {
+  const now = Date.now()
+  provisionStatuses.set(nodeId, {
+    status,
+    logs: logs.slice(-PROVISION_STATUS_MAX_LOG_LINES),
+    updatedAt: now,
+    expiresAt: now + PROVISION_STATUS_TTL_MS,
+  })
+  pruneProvisionStatuses(now)
+}
+
+function appendProvisionLog(nodeId: string, message: string): void {
+  const current = provisionStatuses.get(nodeId)
+  if (!current) return
+  const now = Date.now()
+  current.logs.push(`[${new Date(now).toISOString()}] ${message}`)
+  current.logs = current.logs.slice(-PROVISION_STATUS_MAX_LOG_LINES)
+  current.updatedAt = now
+  current.expiresAt = now + PROVISION_STATUS_TTL_MS
+  provisionStatuses.set(nodeId, current)
+  pruneProvisionStatuses(now)
+}
+
+function isValidIp(value: string | undefined): boolean {
+  return Boolean(value && isIP(value.trim()))
+}
+
+function isValidAddressWithCidr(value: string | undefined): boolean {
+  if (!value) return false
+  const [ip, cidr] = value.trim().split('/')
+  if (!isIP(ip)) return false
+  const cidrNum = Number(cidr)
+  if (!Number.isInteger(cidrNum)) return false
+  const maxCidr = isIP(ip) === 4 ? 32 : 128
+  return cidrNum >= 0 && cidrNum <= maxCidr
 }
 
 function getNodesFromApp(req: Request): NodeRecord[] {
@@ -184,8 +263,8 @@ function mockDiscovery(ip: string): DiscoverResponse {
 provisionRouter.post('/discover', requireAuth, provisionRateLimit, async (req: Request, res: Response) => {
   const body = req.body as DiscoverBody
   const ip = body?.ip?.trim()
-  if (!ip) {
-    res.status(400).json({ error: "'ip' is required" })
+  if (!ip || !isValidIp(ip)) {
+    res.status(400).json({ error: "'ip' is required and must be a valid IPv4/IPv6 address" })
     return
   }
 
@@ -236,6 +315,21 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
     return
   }
 
+  if (!isValidIp(body.ip)) {
+    res.status(400).json({ error: "'ip' must be a valid IPv4/IPv6 address" })
+    return
+  }
+
+  if (!isValidAddressWithCidr(body.network.address)) {
+    res.status(400).json({ error: "'network.address' must be a valid CIDR address (for example 192.168.1.10/24)" })
+    return
+  }
+
+  if (!isValidIp(body.network.gateway)) {
+    res.status(400).json({ error: "'network.gateway' must be a valid IPv4/IPv6 address" })
+    return
+  }
+
   const { ip, role, disk, rack, zone, serviceClass } = body
   const { address, gateway, dns, vlan, bond } = body.network
   const normalizedBody: ProvisionPayload = {
@@ -258,26 +352,23 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
 
   const nodeId = `node-${randomUUID().slice(0, 8)}`
   const nodeName = body.hostname || `frame-${body.role}-${nodeId.slice(-4)}`
-  provisionStatuses.set(nodeId, {
-    status: 'provisioning',
-    logs: [`[${new Date().toISOString()}] Starting provisioning for ${body.ip}`],
-  })
+  setProvisionStatus(nodeId, 'provisioning', [`[${new Date().toISOString()}] Starting provisioning for ${body.ip}`])
 
   const machineConfig = generateTalosMachineConfig(normalizedBody)
   const talosctlAvailable = await hasTalosctl()
+  let tempFile: string | null = null
 
   try {
     if (!talosctlAvailable) {
-      provisionStatuses.get(nodeId)?.logs.push(`[${new Date().toISOString()}] talosctl unavailable or mock mode enabled, simulating apply-config`)
+      appendProvisionLog(nodeId, 'talosctl unavailable or mock mode enabled, simulating apply-config')
       await sleep(3000)
-      provisionStatuses.get(nodeId)?.logs.push(`[${new Date().toISOString()}] Mock apply-config completed successfully`)
+      appendProvisionLog(nodeId, 'Mock apply-config completed successfully')
     } else {
-      const tempFile = path.join(os.tmpdir(), `frame-${nodeId}.yaml`)
+      tempFile = path.join(os.tmpdir(), `frame-${nodeId}.yaml`)
       await fs.writeFile(tempFile, machineConfig, 'utf8')
-      provisionStatuses.get(nodeId)?.logs.push(`[${new Date().toISOString()}] Applying machineConfig to ${body.ip}`)
+      appendProvisionLog(nodeId, `Applying machineConfig to ${body.ip}`)
       await execFileAsync('talosctl', ['apply-config', '--insecure', '--nodes', body.ip, '--file', tempFile], { timeout: 10000 })
-      provisionStatuses.get(nodeId)?.logs.push(`[${new Date().toISOString()}] talosctl apply-config completed`)
-      await fs.unlink(tempFile).catch(() => undefined)
+      appendProvisionLog(nodeId, 'talosctl apply-config completed')
     }
 
     const nodes = getNodesFromApp(req)
@@ -295,17 +386,21 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
       gpuModel: 'Unknown',
     })
 
-    res.json({ nodeId, status: 'provisioning', message: 'Config applied' })
+    appendProvisionLog(nodeId, 'Configuration applied successfully; waiting for node reboot/join')
+    setProvisionStatus(nodeId, 'online', provisionStatuses.get(nodeId)?.logs ?? [])
+    res.json({ nodeId, status: 'online', message: 'Config applied' })
   } catch {
-    provisionStatuses.set(nodeId, {
-      status: 'offline',
-      logs: [...(provisionStatuses.get(nodeId)?.logs ?? []), `[${new Date().toISOString()}] Provisioning failed`],
-    })
+    setProvisionStatus(nodeId, 'offline', [...(provisionStatuses.get(nodeId)?.logs ?? []), `[${new Date().toISOString()}] Provisioning failed`])
     res.status(500).json({ error: 'Failed to apply configuration' })
+  } finally {
+    if (tempFile) {
+      await fs.unlink(tempFile).catch(() => undefined)
+    }
   }
 })
 
-provisionRouter.get('/:id/provision-status', (req: Request, res: Response) => {
+provisionRouter.get('/:id/provision-status', requireAuth, provisionRateLimit, (req: Request, res: Response) => {
+  pruneProvisionStatuses()
   const nodeId = String(req.params.id)
   const status = provisionStatuses.get(nodeId)
 
