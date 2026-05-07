@@ -14,8 +14,8 @@ env:
 
 jobs:
   # ── 1. Quality gate: lint + typecheck + unit tests ────────────────────────
-  test:
-    name: Test
+  quality:
+    name: Quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +33,10 @@ jobs:
         run: npm run lint
 
       - name: Type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
+
+      - name: Build app
+        run: npm run build
 
       - name: Unit tests
         run: npm test
@@ -42,7 +45,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: quality
     permissions:
       contents: read
       packages: write
@@ -87,9 +90,7 @@ jobs:
   integration:
     name: Integration (kind)
     runs-on: ubuntu-latest
-    needs: test
-    # Run on pushes to main/develop and on tags; skip for PRs to save time
-    if: github.event_name != 'pull_request'
+    needs: quality
     steps:
       - uses: actions/checkout@v4
 
@@ -104,22 +105,14 @@ jobs:
       - name: Load image into cluster
         run: kind load docker-image cluster-control:ci --name cluster-control-ci
 
-      - name: Create CI kustomize overlay
+      - name: Deploy manifests
         run: |
-          mkdir -p /tmp/ci-overlay
-          cat > /tmp/ci-overlay/kustomization.yaml << EOF
-          apiVersion: kustomize.config.k8s.io/v1beta1
-          kind: Kustomization
-          bases:
-            - $GITHUB_WORKSPACE/deploy/kubernetes/overlays/development
-          images:
-            - name: cluster-control
-              newName: cluster-control
-              newTag: ci
-          EOF
-
-      - name: Deploy to virtual cluster
-        run: kubectl apply -k /tmp/ci-overlay/
+          kubectl apply -f deploy/kubernetes/base/namespace.yaml
+          kubectl apply -f deploy/kubernetes/base/rbac.yaml
+          kubectl apply -f deploy/kubernetes/base/service.yaml
+          kubectl apply -f deploy/kubernetes/base/deployment.yaml
+          kubectl -n cluster-control set image deployment/cluster-control-ui ui=cluster-control:ci
+          kubectl -n cluster-control scale deployment/cluster-control-ui --replicas=1
 
       - name: Wait for rollout
         run: kubectl -n cluster-control rollout status deployment/cluster-control-ui --timeout=120s
@@ -127,7 +120,7 @@ jobs:
       - name: Smoke test
         run: |
           kubectl -n cluster-control port-forward svc/cluster-control-ui 8080:80 &
-          sleep 5
+          sleep 10
           curl -fsS http://localhost:8080/
 
   # ── 4. Create a versioned release package on tags ─────────────────────────
