@@ -37,12 +37,15 @@ import { MPSDashboard } from '@/components/MPSDashboard'
 import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
 import { KSMDashboard } from '@/components/KSMDashboard'
 import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
+import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
+import { Button } from '@/components/ui/button'
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('jobs')
   const [selectedZoneFromHeatmap, setSelectedZoneFromHeatmap] = useState<string | null>(null)
+  const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
 
   const { nodes, setNodes, events, nodesRef } = useClusterSimulation(32)
   const { historicalData, forecast, alerts, capacityPlan, anomalies } = useCapacityAnalytics(nodesRef)
@@ -56,6 +59,12 @@ function App() {
 
   // Memoize cluster-wide stats so they aren't recomputed on every render
   const stats = useMemo(() => calculateClusterStats(nodes), [nodes])
+  const racks = useMemo(() => Array.from(new Set(nodes.map((node) => node.rackId))).sort(), [nodes])
+  const zones = useMemo(() => Array.from(new Set(nodes.map((node) => node.zone))).sort(), [nodes])
+  const controlPlaneCount = useMemo(
+    () => nodes.filter((node) => /control|master/i.test(node.name)).length,
+    [nodes],
+  )
 
   return (
     <div className="min-h-screen bg-background">
@@ -180,6 +189,11 @@ function App() {
 
           {/* ── Node topology (cluster management) ──────────────────────────── */}
           <TabsContent value="nodes" className="space-y-6">
+            <div className="flex justify-end">
+              <Button className="font-mono" onClick={() => setProvisionWizardOpen(true)}>
+                Provision Node
+              </Button>
+            </div>
             <NodeGrid
               nodes={nodes}
               selectedNode={syncedSelectedNode}
@@ -270,6 +284,17 @@ function App() {
           node={syncedSelectedNode}
           open={!!syncedSelectedNode}
           onClose={() => setSelectedNode(null)}
+        />
+        <NodeProvisionWizard
+          open={provisionWizardOpen}
+          onOpenChange={setProvisionWizardOpen}
+          racks={racks}
+          zones={zones}
+          controlPlaneCount={controlPlaneCount}
+          onNodeProvisioned={(node) => {
+            setNodes((current) => [node, ...current])
+            setSelectedNode(node)
+          }}
         />
       </div>
     </div>

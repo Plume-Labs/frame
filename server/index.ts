@@ -11,6 +11,7 @@
 
 import express, { Request, Response, NextFunction } from 'express'
 import { randomUUID } from 'crypto'
+import provisionRouter from './routes/provision.js'
 
 const app = express()
 app.use(express.json())
@@ -96,6 +97,7 @@ const nodes: NodeRecord[] = Array.from({ length: 8 }, (_, i) => ({
   gpuCount:     [0, 0, 2, 4, 8][i % 5],
   gpuModel:     ['None', 'A100-80GB', 'H100-SXM5'][i % 3],
 }))
+app.locals.nodes = nodes
 
 const jobs: JobRecord[] = [
   {
@@ -131,6 +133,8 @@ app.get('/api/health', (_req: Request, res: Response) => {
 })
 
 // ── Nodes ────────────────────────────────────────────────────────────────────
+
+app.use('/api/nodes', provisionRouter)
 
 app.get('/api/nodes', (_req: Request, res: Response) => {
   res.json({ items: nodes, total: nodes.length })
