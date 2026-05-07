@@ -5,6 +5,7 @@ import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import express, { NextFunction, Request, Response } from 'express'
+import { rateLimit } from 'express-rate-limit'
 
 const execFileAsync = promisify(execFile)
 
@@ -79,6 +80,14 @@ const provisionRouter = express.Router()
 
 const API_TOKEN = process.env.FRAME_API_TOKEN
 const TALOS_MOCK = process.env.FRAME_TALOS_MOCK === 'true'
+const TALOS_DEFAULT_VERSION = 'v1.9.0'
+const provisionRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many provisioning requests, please retry shortly' },
+})
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!API_TOKEN) { next(); return }
@@ -127,7 +136,6 @@ ${hostnameLine}
   install:
     disk: ${body.disk}
   network:
-    hostname: ${body.hostname ?? 'frame-node'}
     interfaces:
       - interface: eth0
         addresses:
@@ -137,8 +145,8 @@ ${hostnameLine}
             gateway: ${body.network.gateway}
         mtu: 1500${vlanBlock}${bondBlock}
     nameservers:
-      - ${body.network.gateway}
-${dnsServers ? `${dnsServers}\n` : ''}cluster:
+${dnsServers}
+cluster:
   allowSchedulingOnControlPlanes: true
   discovery:
     enabled: true
@@ -169,11 +177,11 @@ function mockDiscovery(ip: string): DiscoverResponse {
       { name: 'eno1', mac: `52:54:00:00:10:${suffix.padStart(2, '0')}`, speed: '25G' },
       { name: 'ib0', mac: `52:54:00:00:20:${suffix.padStart(2, '0')}`, speed: '100G' },
     ],
-    talosVersion: 'v1.9.0',
+    talosVersion: TALOS_DEFAULT_VERSION,
   }
 }
 
-provisionRouter.post('/discover', requireAuth, async (req: Request, res: Response) => {
+provisionRouter.post('/discover', requireAuth, provisionRateLimit, async (req: Request, res: Response) => {
   const body = req.body as DiscoverBody
   const ip = body?.ip?.trim()
   if (!ip) {
@@ -206,9 +214,24 @@ provisionRouter.post('/discover', requireAuth, async (req: Request, res: Respons
   }
 })
 
-provisionRouter.post('/provision', requireAuth, async (req: Request, res: Response) => {
+function isValidProvisionBody(body: ProvisionBody): body is ProvisionPayload {
+  return Boolean(
+    body.ip &&
+    body.role &&
+    body.network?.address &&
+    body.network.gateway &&
+    Array.isArray(body.network.dns) &&
+    body.network.dns.length > 0 &&
+    body.disk &&
+    body.rack &&
+    body.zone &&
+    body.serviceClass,
+  )
+}
+
+provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: Request, res: Response) => {
   const body = req.body as ProvisionBody
-  if (!body.ip || !body.role || !body.network?.address || !body.network.gateway || !Array.isArray(body.network.dns) || !body.disk || !body.rack || !body.zone || !body.serviceClass) {
+  if (!isValidProvisionBody(body)) {
     res.status(400).json({ error: 'Missing required provisioning fields' })
     return
   }
