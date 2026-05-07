@@ -1,6 +1,6 @@
 # Frame — Mainframe Framework for Kubernetes
 
-**Frame** is an open-source framework that turns a collection of bare-metal or cloud servers into a unified, mainframe-grade computing platform. It provides the full control-plane stack — scheduling, job orchestration, resource management, resilience, and observability — through both a rich operator UI and a REST API that workloads and CI pipelines can call directly.
+**Frame** is an open-source framework that turns a collection of bare-metal servers into a unified, mainframe-grade computing platform. It provides the full control-plane stack — scheduling, job orchestration, resource management, resilience, and observability — through both a rich operator UI and a REST API that workloads and CI pipelines can call directly.
 
 ---
 
