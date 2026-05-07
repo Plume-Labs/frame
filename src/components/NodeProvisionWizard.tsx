@@ -339,7 +339,7 @@ export function NodeProvisionWizard({
               </div>
               {role === 'controlplane' && controlPlaneCount === 1 && (
                 <div className="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs font-mono text-warning">
-                  Warning: this would create a 2-control-plane cluster. Odd control-plane counts are recommended.
+                  Warning: this would result in 2 control-plane nodes (even count). Odd control-plane counts are recommended.
                 </div>
               )}
             </div>
