@@ -53,20 +53,30 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xzC /tmp kubeconform
+          sudo install /tmp/kubeconform /usr/local/bin/kubeconform
+
       - name: Validate Kubernetes manifests (base + overlays)
         run: |
           kubectl kustomize deploy/kubernetes/base > /tmp/k8s-base.yaml
           kubectl kustomize deploy/kubernetes/overlays/development > /tmp/k8s-development.yaml
           kubectl kustomize deploy/kubernetes/overlays/production > /tmp/k8s-production.yaml
-          grep -q 'kind: Deployment' /tmp/k8s-base.yaml
-          grep -q 'kind: Service' /tmp/k8s-development.yaml
-          grep -q 'kind: Ingress' /tmp/k8s-production.yaml
+          for manifest in /tmp/k8s-base.yaml /tmp/k8s-development.yaml /tmp/k8s-production.yaml; do
+            kubeconform -summary -strict -ignore-missing-schemas "${manifest}"
+          done
 
       - name: Validate deploy script syntax
         run: |
-          while IFS= read -r -d '' script; do
-            bash -n "${script}"
-          done < <(find deploy/scripts deploy/gitops -type f -name '*.sh' -print0)
+          for dir in deploy/scripts deploy/gitops; do
+            [ -d "${dir}" ] || continue
+            while IFS= read -r -d '' script; do
+              echo "Checking ${script}"
+              bash -n "${script}"
+            done < <(find "${dir}" -type f -name '*.sh' -print0)
+          done
 
   # ── 3. Build and push container image ────────────────────────────────────
   build:
