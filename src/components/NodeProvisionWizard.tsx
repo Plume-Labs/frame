@@ -39,6 +39,7 @@ const STEPS = [
   'Placement',
   'Review & Apply',
 ] as const
+const MAX_STATUS_POLL_FAILURES = 5
 
 export function NodeProvisionWizard({
   open,
@@ -94,10 +95,21 @@ export function NodeProvisionWizard({
   useEffect(() => {
     if (!provisionNodeId || !applying) return
 
+    let failureCount = 0
     const interval = setInterval(async () => {
       try {
         const response = await fetch(`/api/nodes/${provisionNodeId}/provision-status`)
-        if (!response.ok) return
+        if (!response.ok) {
+          failureCount += 1
+          if (failureCount >= MAX_STATUS_POLL_FAILURES) {
+            setApplying(false)
+            setProvisionError(`Unable to fetch provisioning status (HTTP ${response.status}). Please retry status check.`)
+            clearInterval(interval)
+          }
+          return
+        }
+
+        failureCount = 0
         const payload = await response.json() as { status: 'provisioning' | 'online' | 'offline'; lastLogLines: string[] }
         setProvisionStatus(payload.status)
         setProvisionLogs(payload.lastLogLines)
@@ -106,7 +118,12 @@ export function NodeProvisionWizard({
           clearInterval(interval)
         }
       } catch {
-        // keep polling quietly during provisioning
+        failureCount += 1
+        if (failureCount >= MAX_STATUS_POLL_FAILURES) {
+          setApplying(false)
+          setProvisionError('Provisioning status polling failed repeatedly. Please retry status check.')
+          clearInterval(interval)
+        }
       }
     }, 1200)
 
@@ -177,7 +194,7 @@ export function NodeProvisionWizard({
         }),
       })
 
-      const payload = await response.json() as { nodeId?: string; error?: string }
+      const payload = await response.json() as { nodeId?: string; status?: 'provisioning' | 'online' | 'offline'; error?: string }
       if (!response.ok || !payload.nodeId) {
         setApplying(false)
         setProvisionError(payload.error ?? 'Failed to apply configuration')
@@ -185,13 +202,13 @@ export function NodeProvisionWizard({
       }
 
       setProvisionNodeId(payload.nodeId)
-      setProvisionStatus('provisioning')
-      setProvisionLogs((current) => [...current, `Node ${payload.nodeId} entered provisioning state`])
+      setProvisionStatus(payload.status ?? 'provisioning')
+      setProvisionLogs((current) => [...current, `Node ${payload.nodeId} entered ${payload.status ?? 'provisioning'} state`])
 
       onNodeProvisioned({
         id: payload.nodeId,
         name: hostnameOverride || discoverData?.hostname || payload.nodeId,
-        status: 'provisioning',
+        status: payload.status === 'online' ? 'online' : 'provisioning',
         metrics: { cpu: 0, memory: 0, storage: 0, network: 0 },
         uptime: 0,
         lastSeen: Date.now(),
