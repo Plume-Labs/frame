@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cluster-control-ui
+  namespace: cluster-control
 spec:
   template:
     spec:
