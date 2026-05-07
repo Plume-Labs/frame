@@ -11,6 +11,8 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   NODE_VERSION: '20'
+  SMOKE_RETRIES: '15'
+  SMOKE_RETRY_DELAY_SECONDS: '2'
 
 jobs:
   # ── 1. Quality gate: lint + typecheck + unit tests ────────────────────────
@@ -110,8 +112,9 @@ jobs:
           kubectl apply -f deploy/kubernetes/base/namespace.yaml
           kubectl apply -f deploy/kubernetes/base/rbac.yaml
           kubectl apply -f deploy/kubernetes/base/service.yaml
-          kubectl apply -f deploy/kubernetes/base/deployment.yaml
-          kubectl -n cluster-control set image deployment/cluster-control-ui ui=cluster-control:ci
+          kubectl create --dry-run=client -f deploy/kubernetes/base/deployment.yaml -o yaml \
+            | kubectl set image --local -f - ui=cluster-control:ci -o yaml \
+            | kubectl apply -f -
           kubectl -n cluster-control scale deployment/cluster-control-ui --replicas=1
 
       - name: Wait for rollout
@@ -120,8 +123,20 @@ jobs:
       - name: Smoke test
         run: |
           kubectl -n cluster-control port-forward svc/cluster-control-ui 8080:80 &
-          sleep 10
-          curl -fsS http://localhost:8080/
+          for attempt in $(seq 1 "${SMOKE_RETRIES}"); do
+            echo "Smoke check attempt ${attempt}/${SMOKE_RETRIES}"
+            status_code="$(curl -sS -o /tmp/cluster-control-smoke.html -w '%{http_code}' http://localhost:8080/ || true)"
+            if [ "${status_code}" = "200" ]; then
+              exit 0
+            fi
+            echo "Smoke check failed with HTTP ${status_code}"
+            head -n 5 /tmp/cluster-control-smoke.html || true
+            if [ "${attempt}" -lt "${SMOKE_RETRIES}" ]; then
+              sleep "${SMOKE_RETRY_DELAY_SECONDS}"
+            fi
+          done
+          echo "Smoke test failed: service did not become reachable" >&2
+          exit 1
 
   # ── 4. Create a versioned release package on tags ─────────────────────────
   release:
