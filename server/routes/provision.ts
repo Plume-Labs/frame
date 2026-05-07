@@ -357,6 +357,7 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
   const machineConfig = generateTalosMachineConfig(normalizedBody)
   const talosctlAvailable = await hasTalosctl()
   let tempFile: string | null = null
+  let tempDir: string | null = null
 
   try {
     if (!talosctlAvailable) {
@@ -364,8 +365,9 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
       await sleep(3000)
       appendProvisionLog(nodeId, 'Mock apply-config completed successfully')
     } else {
-      tempFile = path.join(os.tmpdir(), `frame-${nodeId}.yaml`)
-      await fs.writeFile(tempFile, machineConfig, 'utf8')
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'frame-'))
+      tempFile = path.join(tempDir, `${nodeId}.yaml`)
+      await fs.writeFile(tempFile, machineConfig, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
       appendProvisionLog(nodeId, `Applying machineConfig to ${body.ip}`)
       await execFileAsync('talosctl', ['apply-config', '--insecure', '--nodes', body.ip, '--file', tempFile], { timeout: 10000 })
       appendProvisionLog(nodeId, 'talosctl apply-config completed')
@@ -386,7 +388,7 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
       gpuModel: 'Unknown',
     })
 
-    appendProvisionLog(nodeId, 'Configuration applied successfully; waiting for node reboot/join')
+    appendProvisionLog(nodeId, 'Configuration applied successfully; marking status online')
     setProvisionStatus(nodeId, 'online', provisionStatuses.get(nodeId)?.logs ?? [])
     res.json({ nodeId, status: 'online', message: 'Config applied' })
   } catch {
@@ -395,6 +397,9 @@ provisionRouter.post('/provision', requireAuth, provisionRateLimit, async (req: 
   } finally {
     if (tempFile) {
       await fs.unlink(tempFile).catch(() => undefined)
+    }
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 })

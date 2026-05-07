@@ -96,7 +96,12 @@ export function NodeProvisionWizard({
     if (!provisionNodeId || !applying) return
 
     let failureCount = 0
-    const interval = setInterval(async () => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let cancelled = false
+    let stopPolling = false
+
+    const pollStatus = async () => {
+      if (cancelled || stopPolling) return
       try {
         const response = await fetch(`/api/nodes/${provisionNodeId}/provision-status`)
         if (!response.ok) {
@@ -104,30 +109,41 @@ export function NodeProvisionWizard({
           if (failureCount >= MAX_STATUS_POLL_FAILURES) {
             setApplying(false)
             setProvisionError(`Unable to fetch provisioning status (HTTP ${response.status}). Please retry status check.`)
-            clearInterval(interval)
+            stopPolling = true
+            return
           }
-          return
-        }
-
-        failureCount = 0
-        const payload = await response.json() as { status: 'provisioning' | 'online' | 'offline'; lastLogLines: string[] }
-        setProvisionStatus(payload.status)
-        setProvisionLogs(payload.lastLogLines)
-        if (payload.status !== 'provisioning') {
-          setApplying(false)
-          clearInterval(interval)
+        } else {
+          failureCount = 0
+          const payload = await response.json() as { status: 'provisioning' | 'online' | 'offline'; lastLogLines: string[] }
+          setProvisionStatus(payload.status)
+          setProvisionLogs(payload.lastLogLines)
+          if (payload.status !== 'provisioning') {
+            setApplying(false)
+            stopPolling = true
+            return
+          }
         }
       } catch {
         failureCount += 1
         if (failureCount >= MAX_STATUS_POLL_FAILURES) {
           setApplying(false)
           setProvisionError('Provisioning status polling failed repeatedly. Please retry status check.')
-          clearInterval(interval)
+          stopPolling = true
+          return
+        }
+      } finally {
+        if (!cancelled && !stopPolling) {
+          timeoutId = setTimeout(pollStatus, 1200)
         }
       }
-    }, 1200)
+    }
 
-    return () => clearInterval(interval)
+    void pollStatus()
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
   }, [applying, provisionNodeId])
 
   async function runDiscovery() {
