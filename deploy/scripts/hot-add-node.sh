@@ -3,11 +3,11 @@
 set -euo pipefail
 
 NODE_NAME="${1:-}"
-NODE_TYPE="${3:-worker}"
+NODE_TYPE="${2:-worker}"
 
 if [ -z "$NODE_NAME" ]; then
-  echo "Usage: $0 <node-name> [node-ip] [node-type]"
-  echo "Example: $0 worker-05 192.168.1.25 worker"
+  echo "Usage: $0 <node-name> [node-type]"
+  echo "Example: $0 worker-05 worker"
   exit 1
 fi
 
@@ -16,7 +16,7 @@ cat <<EOF
 
 Use the Talos + Sidero flow instead:
 1. Register the server in your Sidero inventory (BMC + PXE environment).
-2. Assign an appropriate ServerClass in /home/runner/work/frame/frame/deploy/sidero/serverclasses/.
+2. Assign an appropriate ServerClass in deploy/sidero/serverclasses/.
 3. Reconcile via Flux and verify:
    kubectl get machines -A
    kubectl get nodes
