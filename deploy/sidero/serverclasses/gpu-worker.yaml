@@ -1,0 +1,21 @@
+apiVersion: metal.sidero.dev/v1alpha2
+kind: ServerClass
+metadata:
+  name: frame-gpu-worker
+  namespace: sidero-system
+spec:
+  qualifiers:
+    pciAddresses:
+      - "10de:"
+  configPatches:
+    - op: add
+      path: /machine/nodeLabels/nvidia.com~1gpu.present
+      value: "true"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1service-class
+      value: "HIGH"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1server-class
+      value: "gpu-worker"
+  environmentRef:
+    name: frame-default

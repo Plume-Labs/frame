@@ -46,7 +46,7 @@ subjects:
     namespace: kube-system
 ---
 # KubeletConfiguration DaemonSet — applies CPU pinning and topology manager settings
-# This is typically applied via MachineConfig or Ansible; the ConfigMap above documents intent
+# This is typically applied via Talos MachineConfig; the ConfigMap above documents intent
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

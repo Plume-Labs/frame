@@ -1,6 +1,6 @@
 # GitOps Deployment Infrastructure
 
-This directory contains all Infrastructure as Code (IaC) for deploying the bare-metal Kubernetes cluster with RDMA networking, PXE provisioning, Ceph distributed storage, and the Cluster Control monitoring interface.
+This directory contains all Infrastructure as Code (IaC) for deploying the bare-metal Kubernetes cluster with Talos/Sidero provisioning, RDMA networking, Ceph distributed storage, and the Cluster Control monitoring interface.
 
 ## Directory Structure
 
@@ -8,7 +8,8 @@ This directory contains all Infrastructure as Code (IaC) for deploying the bare-
 deploy/
 ├── kubernetes/           # K8s manifests for the monitoring app
 ├── gitops/              # Flux/ArgoCD configurations
-├── ansible/             # Bare metal provisioning playbooks
+├── talos/               # Talos MachineConfigs and schematics
+├── sidero/              # Sidero Metal resources (Environment/ServerClass)
 ├── pxe/                 # PXE boot configurations
 ├── ceph/                # Ceph cluster configurations
 ├── networking/          # RDMA and network fabric configs
@@ -23,40 +24,33 @@ deploy/
   - PXE boot support
   - IPMI/BMC access
 - Control plane with:
-  - Ansible 2.15+
+  - talosctl 1.9+
   - kubectl 1.28+
   - Flux CLI 2.2+ or ArgoCD CLI 2.9+
-  - Python 3.11+
 
 ## Quick Start
 
 ### 1. Bootstrap Bare Metal Provisioning
 
 ```bash
-cd deploy/ansible
-./scripts/bootstrap-cluster.sh
+cd deploy
+./scripts/bootstrap-talos.sh <controlplane-ip> <worker-ips-comma-separated>
 ```
 
-### 2. Deploy Kubernetes with RDMA
-
-```bash
-ansible-playbook -i inventory/production.yml playbooks/k8s-cluster.yml
-```
-
-### 3. Initialize GitOps
+### 2. Initialize GitOps
 
 ```bash
 cd deploy/gitops
 ./bootstrap-flux.sh
 ```
 
-### 4. Deploy Ceph Storage
+### 3. Deploy Ceph Storage
 
 ```bash
 kubectl apply -k deploy/ceph/
 ```
 
-### 5. Deploy Monitoring UI
+### 4. Deploy Monitoring UI
 
 ```bash
 kubectl apply -k deploy/kubernetes/overlays/production/
@@ -94,7 +88,8 @@ kubectl apply -k deploy/kubernetes/overlays/production/
 See individual subdirectories for detailed configuration options:
 - [Kubernetes manifests](./kubernetes/README.md)
 - [GitOps setup](./gitops/README.md)
-- [Ansible playbooks](./ansible/README.md)
+- [Talos provisioning](./talos/README.md)
+- [Sidero Metal resources](./sidero/README.md)
 - [PXE configuration](./pxe/README.md)
 - [Ceph storage](./ceph/README.md)
 - [RDMA networking](./networking/README.md)

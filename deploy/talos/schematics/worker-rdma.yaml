@@ -1,0 +1,8 @@
+# Talos Image Factory schematic for RDMA workers.
+# NOTE: Mellanox OFED extensions are not official Talos extensions today.
+# Keep deploy/kubernetes/base/kmod-rdma-loader enabled until a custom Talos extension is available.
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/iscsi-tools
+      - siderolabs/util-linux-tools

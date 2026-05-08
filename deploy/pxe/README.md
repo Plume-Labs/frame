@@ -24,7 +24,7 @@ pxe/
 
 ## Configuration
 
-The Ansible playbook `ansible/playbooks/pxe-bootstrap.yml` automatically configures:
+The Talos/Sidero provisioning stack configures:
 
 1. **TFTP Server** - Serves boot files to PXE clients
 2. **DHCP Server** - Provides network configuration and boot filename
@@ -80,7 +80,7 @@ ipmitool -I lanplus -H <BMC_IP> -U <USER> -P <PASS> \
   power cycle
 ```
 
-This is integrated into the hot-add-node playbook for zero-touch provisioning.
+This can be integrated into Sidero workflows for zero-touch provisioning.
 
 ## Network Requirements
 

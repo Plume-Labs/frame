@@ -10,7 +10,7 @@ Traditional mainframes are monolithic, expensive, and proprietary. Frame takes t
 
 **Core ideas:**
 - **Framework, not just a dashboard** — Frame exposes a REST API and TypeScript SDK so operators, workloads, and CI pipelines can interact with the platform programmatically: submit jobs, tune policies, adjust quotas, and inspect state without touching the UI.
-- **Any local cluster → mainframe** — plug in bare-metal nodes in a single location (one or more racks) and Frame provisions, connects, and manages them automatically via PXE + Ansible + GitOps.
+- **Any local cluster → mainframe** — plug in bare-metal nodes in a single location (one or more racks) and Frame provisions, connects, and manages them automatically via Talos + Sidero Metal + GitOps.
 - **No single point of failure** — workloads, storage, and networking are distributed across all nodes with self-healing built in (Velero snapshots, checkpoint controller, IPMI watchdog).
 - **GitOps-first** — the entire cluster state is declared in Git; changes are applied automatically and auditably via Flux CD / ArgoCD.
 - **High-performance local fabric** — RDMA networking (InfiniBand or RoCE) with Cilium eBPF, SR-IOV, and DPDK delivers sub-microsecond latency between nodes within the same physical location. RDMA is a **local, intra-datacenter interconnect** — it is not stretched over the internet or across sites.
@@ -85,18 +85,23 @@ const { items: nodes } = await frame.nodes.list()
 
 ```bash
 cd deploy
-./scripts/bootstrap-cluster.sh    # production cluster
+./scripts/bootstrap-talos.sh <controlplane-ip> <worker-ips-comma-separated>
 ./scripts/neura-bootstrap.sh      # HPC / Neura stack
 ```
 
-The bootstrap scripts will:
-1. Configure the PXE boot server for network-based OS installation
-2. Run Ansible playbooks to provision Kubernetes with RDMA support
-3. Initialise the Ceph distributed storage cluster
-4. Bootstrap GitOps (Flux CD) from this repository
-5. Deploy the Frame control plane and API server into the cluster
+See [deploy/README.md](deploy/README.md) for deployment details and [deploy/talos/README.md](deploy/talos/README.md) for Talos bootstrap specifics.
 
-See [deploy/README.md](deploy/README.md) for detailed step-by-step deployment instructions.
+### Provisioning (Talos-native)
+
+The provisioning flow is now:
+
+1. Build Talos artifacts with Image Factory schematics in `deploy/talos/schematics/`
+2. Generate and patch MachineConfigs from `deploy/talos/`
+3. Provision and classify bare-metal servers with Sidero Metal (`deploy/sidero/`)
+4. Reconcile platform services and tuning components through Flux GitOps
+
+Ansible provisioning assets have been removed from the active deployment path.
+Use the assets under `deploy/talos/` and `deploy/sidero/` for provisioning workflows.
 
 ---
 
@@ -197,7 +202,8 @@ The control-plane UI leads with operator actions and puts observability dashboar
 |   |   +-- openapi.yaml  # OpenAPI 3.1 spec for the Frame operator API
 |   +-- kubernetes/       # Kustomize manifests for all workloads
 |   +-- gitops/           # Flux CD / ArgoCD bootstrap configs
-|   +-- ansible/          # Ansible playbooks for bare-metal provisioning
+|   +-- talos/            # Talos MachineConfigs and schematics
+|   +-- sidero/           # Sidero Metal resources for server lifecycle
 |   +-- pxe/              # PXE / DHCP / TFTP boot configuration
 |   +-- ceph/             # Rook-Ceph operator and cluster CRs
 |   +-- networking/       # Cilium, SR-IOV, DPDK, RDMA device plugin
@@ -238,10 +244,12 @@ The control-plane UI leads with operator actions and puts observability dashboar
 | Kubernetes | 1.28+, HA control plane (3+ etcd replicas) |
 | Containerd | CRI runtime |
 | Cilium + Multus | eBPF networking, SR-IOV secondary interfaces |
+| Talos Linux | v1.9+ — immutable OS, API-driven |
+| Sidero Metal | v0.6+ — bare-metal provisioner Kubernetes-native |
+| Node Feature Discovery | v0.16+ — auto-labelling hardware |
 | Rook Ceph | 1.13+, RBD block storage and CephFS |
 | MinIO | S3-compatible object storage |
 | Flux CD / ArgoCD | GitOps continuous delivery |
-| Ansible | 2.15+, idempotent bare-metal provisioning |
 | Prometheus + Grafana | Cluster and workload observability |
 | Jaeger | Distributed tracing |
 | DCGM Exporter | GPU metrics |
@@ -263,7 +271,8 @@ The control-plane UI leads with operator actions and puts observability dashboar
 - [Full Deployment Overview](deploy/README.md)
 - [Kubernetes Manifests](deploy/kubernetes/README.md)
 - [GitOps Setup (Flux / ArgoCD)](deploy/gitops/README.md)
-- [Ansible Bare-Metal Playbooks](deploy/ansible/README.md)
+- [Talos MachineConfigs and Schematics](deploy/talos/README.md)
+- [Sidero Metal Resources](deploy/sidero/README.md)
 - [PXE Boot Configuration](deploy/pxe/README.md)
 - [Ceph Distributed Storage](deploy/ceph/README.md)
 - [RDMA Networking](deploy/networking/README.md)
@@ -274,6 +283,7 @@ The control-plane UI leads with operator actions and puts observability dashboar
 | Script | Purpose |
 |---|---|
 | `bootstrap-cluster.sh` | End-to-end cluster bootstrap from bare metal |
+| `bootstrap-talos.sh` | Talos-native cluster bootstrap (MachineConfig + Flux) |
 | `neura-bootstrap.sh` | HPC / Neura stack (GPU, Argo, MinIO, Jaeger, …) |
 | `hot-add-node.sh` | Add a new node to a running cluster without downtime |
 | `health-check.sh` | Verify cluster health (nodes, storage, networking, GitOps) |
@@ -299,10 +309,9 @@ Frame is designed for a **single physical location**:
 - IPMI / BMC for remote power management
 
 **Operator workstation:**
-- Ansible 2.15+
+- talosctl 1.9+
 - kubectl 1.28+
 - Flux CLI 2.2+ or ArgoCD CLI 2.9+
-- Python 3.11+
 - Node.js 20+ (to run the Frame API server and UI)
 
 ---
