@@ -135,8 +135,8 @@ export function KSMDashboard() {
           <CardTitle className="font-mono text-lg">Kernel Config Reference</CardTitle>
         </CardHeader>
         <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/ansible/playbooks/ksm.yml  (excerpt)
-# Enable KSM and tune scan parameters for model-weight de-dup
+          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# Talos / kernel KSM settings (reference)
+# Configure via Talos MachineConfig patches and reconcile through GitOps.
 
 - name: Enable KSM
   shell: echo 1 > /sys/kernel/mm/ksm/run

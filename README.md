@@ -100,8 +100,8 @@ The provisioning flow is now:
 3. Provision and classify bare-metal servers with Sidero Metal (`deploy/sidero/`)
 4. Reconcile platform services and tuning components through Flux GitOps
 
-`deploy/ansible/` is now deprecated and kept temporarily for migration only. It will be removed in a future release.
-Use the assets under `deploy/talos/` and `deploy/sidero/` for all new provisioning workflows.
+Ansible provisioning assets have been removed from the active deployment path.
+Use the assets under `deploy/talos/` and `deploy/sidero/` for provisioning workflows.
 
 ---
 
@@ -202,7 +202,8 @@ The control-plane UI leads with operator actions and puts observability dashboar
 |   |   +-- openapi.yaml  # OpenAPI 3.1 spec for the Frame operator API
 |   +-- kubernetes/       # Kustomize manifests for all workloads
 |   +-- gitops/           # Flux CD / ArgoCD bootstrap configs
-|   +-- ansible/          # Ansible playbooks for bare-metal provisioning
+|   +-- talos/            # Talos MachineConfigs and schematics
+|   +-- sidero/           # Sidero Metal resources for server lifecycle
 |   +-- pxe/              # PXE / DHCP / TFTP boot configuration
 |   +-- ceph/             # Rook-Ceph operator and cluster CRs
 |   +-- networking/       # Cilium, SR-IOV, DPDK, RDMA device plugin
@@ -272,7 +273,6 @@ The control-plane UI leads with operator actions and puts observability dashboar
 - [GitOps Setup (Flux / ArgoCD)](deploy/gitops/README.md)
 - [Talos MachineConfigs and Schematics](deploy/talos/README.md)
 - [Sidero Metal Resources](deploy/sidero/README.md)
-- [Ansible Bare-Metal Playbooks](deploy/ansible/README.md)
 - [PXE Boot Configuration](deploy/pxe/README.md)
 - [Ceph Distributed Storage](deploy/ceph/README.md)
 - [RDMA Networking](deploy/networking/README.md)

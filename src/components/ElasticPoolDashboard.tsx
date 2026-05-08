@@ -206,28 +206,22 @@ export function ElasticPoolDashboard() {
         </CardContent>
       </Card>
 
-      {/* Playbook reference */}
+      {/* GitOps reference */}
       <Card>
         <CardHeader>
-          <CardTitle className="font-mono text-lg">Ansible Playbook Reference</CardTitle>
+          <CardTitle className="font-mono text-lg">GitOps Queue Patch Reference</CardTitle>
         </CardHeader>
         <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/ansible/playbooks/elastic-lpar-pools.yml
-# Run: ansible-playbook -i inventory/hosts.ini elastic-lpar-pools.yml \\
-#        -e pool_name=lpar-training-low -e action=expand
-
-- name: Apply Elastic LPAR Pool Config
-  hosts: control_plane[0]
-  become: false
-  tasks:
-    - name: Apply Volcano Queue manifests
-      command: kubectl apply -f deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
-
-    - name: Scale pool (expand / contract)
-      command: >
-        kubectl patch queue {{ pool_name }}
-        --type=merge -p '{"spec":{"capability":{"cpu":"{{ new_cpu_max }}"}}}'
-      when: action in ['expand', 'contract']`}</pre>
+          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# Source of truth:
+# deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
+#
+# Apply/reconcile:
+kubectl apply -f deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
+#
+# Runtime expand/contract patch example:
+kubectl patch queue lpar-training-low \\
+  --type=merge \\
+  -p '{"spec":{"capability":{"cpu":"384"}}}'`}</pre>
         </CardContent>
       </Card>
     </div>
