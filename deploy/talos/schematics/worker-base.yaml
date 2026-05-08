@@ -1,0 +1,6 @@
+# Talos Image Factory schematic for baseline worker images.
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/iscsi-tools
+      - siderolabs/util-linux-tools

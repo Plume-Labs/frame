@@ -1,0 +1,21 @@
+# Strategic merge patch: worker kubelet CPU/NUMA policies and system reservations.
+machine:
+  kubelet:
+    extraConfig:
+      cpuManagerPolicy: static
+      topologyManagerPolicy: single-numa-node
+      topologyManagerScope: container
+      kubeReserved:
+        cpu: "1000m"
+        memory: "2Gi"
+        ephemeral-storage: "2Gi"
+        hugepages-1Gi: "2Gi"
+        hugepages-2Mi: "512Mi"
+      systemReserved:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "1Gi"
+      evictionHard:
+        memory.available: "500Mi"
+        nodefs.available: "10%"
+        imagefs.available: "15%"

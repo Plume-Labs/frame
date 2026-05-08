@@ -56,7 +56,7 @@ spec:
               cpu: "500m"
           livenessProbe:
             httpGet:
-              path: /
+              path: /health
               port: http
             initialDelaySeconds: 30
             periodSeconds: 10
@@ -64,11 +64,11 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /
+              path: /health
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
@@ -83,8 +83,16 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /.cache
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
       volumes:
         - name: tmp
           emptyDir: {}
         - name: cache
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
           emptyDir: {}
