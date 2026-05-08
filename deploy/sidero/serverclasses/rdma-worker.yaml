@@ -9,10 +9,13 @@ spec:
       - "15b3:" # Mellanox/NVIDIA networking
   configPatches:
     - op: add
-      path: /machine/nodeLabels
-      value:
-        rdma: "true"
-        frame.plume-labs.io/service-class: "HIGH"
-        frame.plume-labs.io/server-class: "rdma-worker"
+      path: /machine/nodeLabels/rdma
+      value: "true"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1service-class
+      value: "HIGH"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1server-class
+      value: "rdma-worker"
   environmentRef:
     name: frame-default
