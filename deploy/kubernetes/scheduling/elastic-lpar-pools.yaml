@@ -2,8 +2,8 @@
 # Elastic LPAR Pools — Volcano Queues with elastic resource bounds
 # Apply with: kubectl apply -f deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
 #
-# Each pool maps to one Volcano Queue and one ResourceQuota.  The Ansible
-# playbook (deploy/ansible/playbooks/elastic-lpar-pools.yml) can patch the
+# Each pool maps to one Volcano Queue and one ResourceQuota. A GitOps/Talos
+# workflow can patch the
 # Queue capability at runtime to grow/shrink pools without a restart.
 #
 # PriorityClass mapping (see deploy/kubernetes/scheduling/priority-classes.yaml):
