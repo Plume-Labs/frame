@@ -5,6 +5,9 @@
 # Prerequisites: talosctl, kubectl, flux CLI installed
 #
 # Usage: ./bootstrap-talos.sh <controlplane-ip> <worker-ips-comma-separated>
+# Flux bootstrap env vars:
+#   Preferred: GITHUB_OWNER + GITHUB_REPOSITORY
+#   Backward-compatible aliases: GITHUB_USER + GITHUB_REPO
 
 set -euo pipefail
 
@@ -16,7 +19,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CP_IP="$1"
-WORKER_IPS="$2"
+WORKER_IPS="${2// /,}"
 CLUSTER_NAME="${CLUSTER_NAME:-frame-cluster}"
 CONFIG_DIR="${TALOS_CONFIG_DIR:-${REPO_ROOT}/deploy/talos/generated}"
 GITHUB_OWNER="${GITHUB_OWNER:-${GITHUB_USER:-}}"
@@ -46,7 +49,16 @@ echo "🛠️ Applying worker config to ${WORKER_IPS}"
 talosctl apply-config --insecure --nodes "${WORKER_IPS}" --file "${CONFIG_DIR}/worker.yaml"
 
 echo "🚀 Bootstrapping Talos control plane"
-talosctl bootstrap --nodes "${CP_IP}" || true
+if bootstrap_output="$(talosctl bootstrap --nodes "${CP_IP}" 2>&1)"; then
+  echo "${bootstrap_output}"
+else
+  if printf '%s' "${bootstrap_output}" | grep -qi "already bootstrapped"; then
+    echo "ℹ️ Control plane already bootstrapped, continuing safely."
+  else
+    echo "${bootstrap_output}" >&2
+    exit 1
+  fi
+fi
 
 echo "🔐 Fetching kubeconfig"
 (

@@ -30,6 +30,8 @@ spec:
             - /bin/sh
             - -c
             - |
+              # Enable KSM and tune scan cadence for a balance between dedup gains and CPU overhead.
+              # merge_across_nodes=0 keeps dedup NUMA-local to reduce cross-node memory penalties.
               echo 1    > /sys/kernel/mm/ksm/run
               echo 4000 > /sys/kernel/mm/ksm/pages_to_scan
               echo 200  > /sys/kernel/mm/ksm/sleep_millisecs

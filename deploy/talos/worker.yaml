@@ -17,5 +17,6 @@ machine:
         cpu: "1000m"
         memory: "2Gi"
         ephemeral-storage: "2Gi"
+        # Reserve hugepages for kubelet/system pods so workload allocations do not starve node services.
         hugepages-1Gi: "2Gi"
         hugepages-2Mi: "512Mi"
