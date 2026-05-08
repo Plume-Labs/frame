@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ksm-tuner
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: ksm-tuner
+    app.kubernetes.io/component: node-tuning
+spec:
+  selector:
+    matchLabels:
+      app: ksm-tuner
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: ksm-tuner
+    spec:
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      hostPID: true
+      initContainers:
+        - name: ksm-tune
+          image: busybox:stable
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo 1    > /sys/kernel/mm/ksm/run
+              echo 4000 > /sys/kernel/mm/ksm/pages_to_scan
+              echo 200  > /sys/kernel/mm/ksm/sleep_millisecs
+              echo 0    > /sys/kernel/mm/ksm/merge_across_nodes
+              echo "KSM configured:"
+              grep -r '' /sys/kernel/mm/ksm/ 2>/dev/null || true
+          volumeMounts:
+            - name: sys
+              mountPath: /sys
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1m
+              memory: 8Mi
+            limits:
+              cpu: 1m
+              memory: 8Mi
+      volumes:
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory

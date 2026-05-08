@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kmod-rdma-loader
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kmod-rdma-loader
+    app.kubernetes.io/component: node-tuning
+spec:
+  selector:
+    matchLabels:
+      app: kmod-rdma-loader
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: kmod-rdma-loader
+    spec:
+      # Temporary bridge until a custom Talos OFED extension is available.
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      nodeSelector:
+        rdma: "true"
+      initContainers:
+        - name: modprobe-rdma
+          image: busybox:stable
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              modprobe mlx5_ib || true
+              modprobe rdma_rxe || true
+              modprobe ib_uverbs || true
+          volumeMounts:
+            - name: lib-modules
+              mountPath: /lib/modules
+              readOnly: true
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: 1m
+              memory: 8Mi
+            limits:
+              cpu: 1m
+              memory: 8Mi
+      volumes:
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+            type: Directory

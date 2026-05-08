@@ -1,0 +1,6 @@
+# Strategic merge patch: default labels for all worker nodes.
+machine:
+  nodeLabels:
+    frame.plume-labs.io/node-role: "worker"
+    frame.plume-labs.io/provisioning: "talos"
+    frame.plume-labs.io/service-class: "MEDIUM"

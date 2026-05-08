@@ -1,0 +1,6 @@
+# Strategic merge patch: labels for GPU-capable worker nodes.
+machine:
+  nodeLabels:
+    nvidia.com/gpu.present: "true"
+    rdma: "true"
+    frame.plume-labs.io/service-class: "HIGH"

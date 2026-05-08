@@ -1,0 +1,54 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: node-feature-discovery
+  namespace: node-feature-discovery
+spec:
+  interval: 1h
+  url: https://kubernetes-sigs.github.io/node-feature-discovery/charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: node-feature-discovery
+  namespace: node-feature-discovery
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: node-feature-discovery
+      version: 0.16.x
+      sourceRef:
+        kind: HelmRepository
+        name: node-feature-discovery
+        namespace: node-feature-discovery
+  values:
+    master:
+      enable: true
+    gc:
+      enable: true
+    extraLabelNs:
+      - frame.plume-labs.io
+    worker:
+      enable: true
+      config:
+        sources:
+          custom:
+            - name: frame-rdma
+              labels:
+                rdma: "true"
+              matchOn:
+                - pciId:
+                    class: "0207"
+            - name: frame-nvme
+              labels:
+                frame.plume-labs.io/nvme: "true"
+              matchOn:
+                - pciId:
+                    class: "0108"
+            - name: frame-hugepages
+              labels:
+                frame.plume-labs.io/hugepages: "true"
+              matchOn:
+                - loadedKMod:
+                    - hugetlbfs

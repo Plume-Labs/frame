@@ -1,0 +1,21 @@
+# Talos MachineConfig base for Frame worker nodes.
+# This baseline is designed for performance-oriented workloads.
+machine:
+  # Worker node role (no etcd/control-plane services).
+  type: worker
+  # Baseline tuning for NUMA and memory-heavy workloads.
+  sysctls:
+    kernel.numa_balancing: "0"
+    vm.nr_hugepages: "4096"
+    vm.max_map_count: "262144"
+  kubelet:
+    # Extra kubelet config to align scheduling with NUMA and dedicated CPU pinning.
+    extraConfig:
+      cpuManagerPolicy: static
+      topologyManagerPolicy: single-numa-node
+      kubeReserved:
+        cpu: "1000m"
+        memory: "2Gi"
+        ephemeral-storage: "2Gi"
+        hugepages-1Gi: "2Gi"
+        hugepages-2Mi: "512Mi"

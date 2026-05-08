@@ -1,0 +1,18 @@
+apiVersion: metal.sidero.dev/v1alpha2
+kind: ServerClass
+metadata:
+  name: frame-rdma-worker
+  namespace: sidero-system
+spec:
+  qualifiers:
+    pciAddresses:
+      - "15b3:" # Mellanox/NVIDIA networking
+  configPatches:
+    - op: add
+      path: /machine/nodeLabels
+      value:
+        rdma: "true"
+        frame.plume-labs.io/service-class: "HIGH"
+        frame.plume-labs.io/server-class: "rdma-worker"
+  environmentRef:
+    name: frame-default

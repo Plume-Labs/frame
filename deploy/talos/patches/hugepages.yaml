@@ -1,0 +1,9 @@
+# Strategic merge patch: hugepages kernel command line + kubelet reservations.
+machine:
+  kernel:
+    cmdline: "hugepagesz=1G hugepages=64 hugepagesz=2M hugepages=4096 default_hugepagesz=1G iommu=pt intel_iommu=on transparent_hugepage=never"
+  kubelet:
+    extraConfig:
+      kubeReserved:
+        hugepages-1Gi: "2Gi"
+        hugepages-2Mi: "512Mi"

@@ -1,0 +1,7 @@
+# Strategic merge patch: NUMA and IRQ affinity tuning.
+machine:
+  sysctls:
+    kernel.numa_balancing: "0"
+    kernel.perf_cpu_time_max_percent: "40"
+  kernel:
+    cmdline: "irqaffinity=0-3 numa_balancing=disable"

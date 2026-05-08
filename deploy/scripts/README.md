@@ -29,6 +29,30 @@ Complete cluster bootstrap from bare metal to running applications.
 
 ---
 
+### bootstrap-talos.sh
+Talos-native cluster bootstrap from bare metal to GitOps reconciliation.
+
+**Usage:**
+```bash
+./bootstrap-talos.sh <controlplane-ip> <worker-ips-comma-separated>
+```
+
+**Environment Variables:**
+- `CLUSTER_NAME` - Talos cluster name (default: `frame-cluster`)
+- `GITHUB_OWNER` - GitHub org/user for Flux bootstrap (**required**)
+- `GITHUB_REPOSITORY` - GitHub repository for Flux bootstrap (**required**)
+- `GITHUB_BRANCH` - Git branch for Flux bootstrap (default: `main`)
+- `GITOPS_PATH` - Flux path inside repository (default: `clusters/<cluster-name>`)
+
+**What it does:**
+1. Generates Talos configs with config patches
+2. Applies control plane and worker configs with `talosctl apply-config`
+3. Bootstraps Talos control plane
+4. Fetches kubeconfig with `talosctl kubeconfig`
+5. Bootstraps Flux with `flux bootstrap github`
+
+---
+
 ### hot-add-node.sh
 Dynamically add a new node to the cluster without downtime.
 
@@ -89,6 +113,9 @@ pip install ansible>=2.15
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 chmod +x kubectl
 sudo mv kubectl /usr/local/bin/
+
+# talosctl
+curl -sL https://talos.dev/install | sh
 
 # Flux CLI
 curl -s https://fluxcd.io/install.sh | sudo bash
