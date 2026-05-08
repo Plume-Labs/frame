@@ -1,0 +1,11 @@
+apiVersion: metal.sidero.dev/v1alpha2
+kind: Environment
+metadata:
+  name: frame-default
+  namespace: sidero-system
+spec:
+  initrd:
+    url: https://factory.talos.dev/image/<SCHEMATIC_ID>/v1.9.0/amd64/initramfs.xz
+  kernel:
+    url: https://factory.talos.dev/image/<SCHEMATIC_ID>/v1.9.0/amd64/vmlinuz
+  talosVersion: v1.9.0
