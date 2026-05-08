@@ -39,8 +39,8 @@ Talos-native cluster bootstrap from bare metal to GitOps reconciliation.
 
 **Environment Variables:**
 - `CLUSTER_NAME` - Talos cluster name (default: `frame-cluster`)
-- `GITHUB_OWNER` - GitHub org/user for Flux bootstrap (**required**)
-- `GITHUB_REPOSITORY` - GitHub repository for Flux bootstrap (**required**)
+- `GITHUB_OWNER` - GitHub org/user for Flux bootstrap (**required**, alias: `GITHUB_USER`)
+- `GITHUB_REPOSITORY` - GitHub repository for Flux bootstrap (**required**, alias: `GITHUB_REPO`)
 - `GITHUB_BRANCH` - Git branch for Flux bootstrap (default: `main`)
 - `GITOPS_PATH` - Flux path inside repository (default: `clusters/<cluster-name>`)
 

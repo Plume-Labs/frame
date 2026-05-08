@@ -35,7 +35,14 @@ curl -sS -X POST https://factory.talos.dev/schematics \
   --data-binary @./deploy/talos/schematics/worker-gpu.yaml
 ```
 
-3. Use the returned schematic ID to build/download ISO, PXE, kernel, and initramfs artifacts.
+3. Capture the returned schematic ID and use it to build/download ISO, PXE, kernel, and initramfs artifacts.
+
+```bash
+SCHEMATIC_ID="$(curl -sS -X POST https://factory.talos.dev/schematics \
+  -H 'Content-Type: application/yaml' \
+  --data-binary @./deploy/talos/schematics/worker-gpu.yaml | jq -r '.id')"
+echo "${SCHEMATIC_ID}"
+```
 
 ## 4) New node bootstrap flow (Talos-native)
 

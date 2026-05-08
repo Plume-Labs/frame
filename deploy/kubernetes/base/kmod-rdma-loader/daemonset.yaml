@@ -32,9 +32,14 @@ spec:
             - /bin/sh
             - -c
             - |
-              modprobe mlx5_ib || true
-              modprobe rdma_rxe || true
-              modprobe ib_uverbs || true
+              for module in mlx5_ib rdma_rxe ib_uverbs; do
+                echo "Loading kernel module: ${module}"
+                modprobe_error="$(modprobe "${module}" 2>&1)" || {
+                  echo "Failed to load kernel module: ${module}" >&2
+                  echo "${modprobe_error}" >&2
+                  exit 1
+                }
+              done
           volumeMounts:
             - name: lib-modules
               mountPath: /lib/modules

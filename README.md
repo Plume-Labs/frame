@@ -101,6 +101,7 @@ The provisioning flow is now:
 4. Reconcile platform services and tuning components through Flux GitOps
 
 `deploy/ansible/` is now deprecated and kept temporarily for migration only. It will be removed in a future release.
+Use the assets under `deploy/talos/` and `deploy/sidero/` for all new provisioning workflows.
 
 ---
 
@@ -242,8 +243,8 @@ The control-plane UI leads with operator actions and puts observability dashboar
 | Kubernetes | 1.28+, HA control plane (3+ etcd replicas) |
 | Containerd | CRI runtime |
 | Cilium + Multus | eBPF networking, SR-IOV secondary interfaces |
-| Talos Linux | v1.9+ — OS immutable, API-driven |
-| Sidero Metal | v0.6+ — bare-metal provisioner Kubernetes-natif |
+| Talos Linux | v1.9+ — immutable OS, API-driven |
+| Sidero Metal | v0.6+ — bare-metal provisioner Kubernetes-native |
 | Node Feature Discovery | v0.16+ — auto-labelling hardware |
 | Rook Ceph | 1.13+, RBD block storage and CephFS |
 | MinIO | S3-compatible object storage |

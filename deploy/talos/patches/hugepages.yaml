@@ -1,6 +1,9 @@
 # Strategic merge patch: hugepages kernel command line + kubelet reservations.
 machine:
   kernel:
+    # 1Gi + 2Mi hugepages are preallocated at boot.
+    # IOMMU settings are required for consistent PCI passthrough and RDMA/DPDK workloads.
+    # transparent_hugepage=never avoids runtime THP compaction jitter for latency-sensitive jobs.
     cmdline: "hugepagesz=1G hugepages=64 hugepagesz=2M hugepages=4096 default_hugepagesz=1G iommu=pt intel_iommu=on transparent_hugepage=never"
   kubelet:
     extraConfig:

@@ -4,6 +4,9 @@ metadata:
   name: frame-default
   namespace: sidero-system
 spec:
+  # Replace <SCHEMATIC_ID> with the ID returned by:
+  #   curl -X POST https://factory.talos.dev/schematics --data-binary @deploy/talos/schematics/worker-base.yaml
+  # Use the same schematic ID in both initrd and kernel URLs.
   initrd:
     url: https://factory.talos.dev/image/<SCHEMATIC_ID>/v1.9.0/amd64/initramfs.xz
   kernel:
