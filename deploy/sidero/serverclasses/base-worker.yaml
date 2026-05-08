@@ -10,9 +10,10 @@ spec:
       - manufacturer: AMD
   configPatches:
     - op: add
-      path: /machine/nodeLabels
-      value:
-        frame.plume-labs.io/service-class: "MEDIUM"
-        frame.plume-labs.io/server-class: "base-worker"
+      path: /machine/nodeLabels/frame.plume-labs.io~1service-class
+      value: "MEDIUM"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1server-class
+      value: "base-worker"
   environmentRef:
     name: frame-default

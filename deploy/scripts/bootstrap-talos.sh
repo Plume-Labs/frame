@@ -19,7 +19,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CP_IP="$1"
-WORKER_IPS="${2// /,}"
+WORKER_IPS="$(printf '%s' "$2" | tr -d '[:space:]' | sed -E 's/,+/,/g; s/^,|,$//g')"
+if [ -z "${WORKER_IPS}" ]; then
+  echo "❌ Worker IP list is empty after normalization"
+  exit 1
+fi
 CLUSTER_NAME="${CLUSTER_NAME:-frame-cluster}"
 CONFIG_DIR="${TALOS_CONFIG_DIR:-${REPO_ROOT}/deploy/talos/generated}"
 GITHUB_OWNER="${GITHUB_OWNER:-${GITHUB_USER:-}}"
@@ -37,7 +41,9 @@ mkdir -p "${CONFIG_DIR}"
 echo "📦 Generating Talos configs into ${CONFIG_DIR}"
 talosctl gen config "${CLUSTER_NAME}" "https://${CP_IP}:6443" \
   --output-dir "${CONFIG_DIR}" \
+  --config-patch-control-plane @"${REPO_ROOT}/deploy/talos/controlplane.yaml" \
   --config-patch-control-plane @"${REPO_ROOT}/deploy/talos/patches/numa-irq.yaml" \
+  --config-patch-worker @"${REPO_ROOT}/deploy/talos/worker.yaml" \
   --config-patch-worker @"${REPO_ROOT}/deploy/talos/patches/kubelet-config.yaml" \
   --config-patch-worker @"${REPO_ROOT}/deploy/talos/patches/hugepages.yaml" \
   --config-patch-worker @"${REPO_ROOT}/deploy/talos/patches/numa-irq.yaml"

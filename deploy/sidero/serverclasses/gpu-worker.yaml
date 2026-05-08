@@ -9,10 +9,13 @@ spec:
       - "10de:"
   configPatches:
     - op: add
-      path: /machine/nodeLabels
-      value:
-        nvidia.com/gpu.present: "true"
-        frame.plume-labs.io/service-class: "HIGH"
-        frame.plume-labs.io/server-class: "gpu-worker"
+      path: /machine/nodeLabels/nvidia.com~1gpu.present
+      value: "true"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1service-class
+      value: "HIGH"
+    - op: add
+      path: /machine/nodeLabels/frame.plume-labs.io~1server-class
+      value: "gpu-worker"
   environmentRef:
     name: frame-default
