@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -27,7 +28,6 @@ import (
 )
 
 // nolint:unused
-// log is for logging in this package.
 var frameresourcequotalog = logf.Log.WithName("frameresourcequota-resource")
 
 // SetupFrameResourceQuotaWebhookWithManager registers the webhook for FrameResourceQuota in the manager.
@@ -37,44 +37,25 @@ func SetupFrameResourceQuotaWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-// NOTE: If you want to customise the 'path', use the flags '--defaulting-path' or '--validation-path'.
 // +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1alpha1-frameresourcequota,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=frameresourcequotas,verbs=create;update,versions=v1alpha1,name=vframeresourcequota-v1alpha1.kb.io,admissionReviewVersions=v1
 
-// FrameResourceQuotaCustomValidator struct is responsible for validating the FrameResourceQuota resource
-// when it is created, updated, or deleted.
-//
-// NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
-// as this struct is used only for temporary operations and does not need to be deeply copied.
-type FrameResourceQuotaCustomValidator struct {
-	// TODO(user): Add more fields as needed for validation
-}
+type FrameResourceQuotaCustomValidator struct{}
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type FrameResourceQuota.
 func (v *FrameResourceQuotaCustomValidator) ValidateCreate(_ context.Context, obj *framev1alpha1.FrameResourceQuota) (admission.Warnings, error) {
-	frameresourcequotalog.Info("Validation for FrameResourceQuota upon creation", "name", obj.GetName())
+	return validateFrameResourceQuota(obj)
+}
 
-	// TODO(user): fill in your validation logic upon object creation.
+func (v *FrameResourceQuotaCustomValidator) ValidateUpdate(_ context.Context, _, newObj *framev1alpha1.FrameResourceQuota) (admission.Warnings, error) {
+	return validateFrameResourceQuota(newObj)
+}
 
+func (v *FrameResourceQuotaCustomValidator) ValidateDelete(_ context.Context, _ *framev1alpha1.FrameResourceQuota) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type FrameResourceQuota.
-func (v *FrameResourceQuotaCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *framev1alpha1.FrameResourceQuota) (admission.Warnings, error) {
-	frameresourcequotalog.Info("Validation for FrameResourceQuota upon update", "name", newObj.GetName())
-
-	// TODO(user): fill in your validation logic upon object update.
-
-	return nil, nil
-}
-
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type FrameResourceQuota.
-func (v *FrameResourceQuotaCustomValidator) ValidateDelete(_ context.Context, obj *framev1alpha1.FrameResourceQuota) (admission.Warnings, error) {
-	frameresourcequotalog.Info("Validation for FrameResourceQuota upon deletion", "name", obj.GetName())
-
-	// TODO(user): fill in your validation logic upon object deletion.
-
+func validateFrameResourceQuota(frq *framev1alpha1.FrameResourceQuota) (admission.Warnings, error) {
+	if frq.Spec.MaxGPUs == 0 && frq.Spec.MaxCPU == nil && frq.Spec.MaxMemory == nil && frq.Spec.MaxJobs == 0 {
+		return nil, fmt.Errorf("at least one limit (maxGPUs, maxCPU, maxMemory, maxJobs) must be set")
+	}
 	return nil, nil
 }

@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -27,7 +28,6 @@ import (
 )
 
 // nolint:unused
-// log is for logging in this package.
 var schedulingpolicylog = logf.Log.WithName("schedulingpolicy-resource")
 
 // SetupSchedulingPolicyWebhookWithManager registers the webhook for SchedulingPolicy in the manager.
@@ -37,44 +37,28 @@ func SetupSchedulingPolicyWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-// NOTE: If you want to customise the 'path', use the flags '--defaulting-path' or '--validation-path'.
 // +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1alpha1-schedulingpolicy,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=schedulingpolicies,verbs=create;update,versions=v1alpha1,name=vschedulingpolicy-v1alpha1.kb.io,admissionReviewVersions=v1
 
-// SchedulingPolicyCustomValidator struct is responsible for validating the SchedulingPolicy resource
-// when it is created, updated, or deleted.
-//
-// NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
-// as this struct is used only for temporary operations and does not need to be deeply copied.
-type SchedulingPolicyCustomValidator struct {
-	// TODO(user): Add more fields as needed for validation
-}
+type SchedulingPolicyCustomValidator struct{}
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type SchedulingPolicy.
 func (v *SchedulingPolicyCustomValidator) ValidateCreate(_ context.Context, obj *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
-	schedulingpolicylog.Info("Validation for SchedulingPolicy upon creation", "name", obj.GetName())
+	return validateSchedulingPolicy(obj)
+}
 
-	// TODO(user): fill in your validation logic upon object creation.
+func (v *SchedulingPolicyCustomValidator) ValidateUpdate(_ context.Context, _, newObj *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
+	return validateSchedulingPolicy(newObj)
+}
 
+func (v *SchedulingPolicyCustomValidator) ValidateDelete(_ context.Context, _ *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type SchedulingPolicy.
-func (v *SchedulingPolicyCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
-	schedulingpolicylog.Info("Validation for SchedulingPolicy upon update", "name", newObj.GetName())
-
-	// TODO(user): fill in your validation logic upon object update.
-
-	return nil, nil
-}
-
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type SchedulingPolicy.
-func (v *SchedulingPolicyCustomValidator) ValidateDelete(_ context.Context, obj *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
-	schedulingpolicylog.Info("Validation for SchedulingPolicy upon deletion", "name", obj.GetName())
-
-	// TODO(user): fill in your validation logic upon object deletion.
-
+func validateSchedulingPolicy(sp *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
+	if sp.Spec.GangScheduling && sp.Spec.QueueName == "" {
+		return nil, fmt.Errorf("spec.queueName is required when gangScheduling is true")
+	}
+	if sp.Spec.Preemption && sp.Spec.PriorityClass == "" {
+		return nil, fmt.Errorf("spec.priorityClass is required when preemption is true")
+	}
 	return nil, nil
 }
