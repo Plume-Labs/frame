@@ -1,0 +1,172 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-frame-plume-labs-io-v1alpha1-framejob
+  failurePolicy: Fail
+  name: mframejob-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framejobs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-frame-plume-labs-io-v1alpha1-framenode
+  failurePolicy: Fail
+  name: mframenode-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framenodes
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-framejob
+  failurePolicy: Fail
+  name: vframejob-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framejobs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-framenode
+  failurePolicy: Fail
+  name: vframenode-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framenodes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-frameresourcequota
+  failurePolicy: Fail
+  name: vframeresourcequota-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - frameresourcequotas
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-schedulingpolicy
+  failurePolicy: Fail
+  name: vschedulingpolicy-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - schedulingpolicies
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-talosmachineconfig
+  failurePolicy: Fail
+  name: vtalosmachineconfig-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - talosmachineconfigs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-talosupgrade
+  failurePolicy: Fail
+  name: vtalosupgrade-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - talosupgrades
+  sideEffects: None

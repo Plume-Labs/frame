@@ -1,0 +1,91 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - resourcequotas
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - argoproj.io
+  resources:
+  - workflows
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framejobs
+  - framenodes
+  - frameresourcequotas
+  - schedulingpolicies
+  - talosmachineconfigs
+  - talosupgrades
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framejobs/finalizers
+  - framenodes/finalizers
+  - frameresourcequotas/finalizers
+  - schedulingpolicies/finalizers
+  - talosmachineconfigs/finalizers
+  - talosupgrades/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framejobs/status
+  - framenodes/status
+  - frameresourcequotas/status
+  - schedulingpolicies/status
+  - talosmachineconfigs/status
+  - talosupgrades/status
+  verbs:
+  - get
+  - patch
+  - update

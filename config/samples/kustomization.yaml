@@ -1,0 +1,9 @@
+## Append samples of your project ##
+resources:
+- frame_v1alpha1_framenode.yaml
+- frame_v1alpha1_framejob.yaml
+- frame_v1alpha1_schedulingpolicy.yaml
+- frame_v1alpha1_frameresourcequota.yaml
+- frame_v1alpha1_talosmachineconfig.yaml
+- frame_v1alpha1_talosupgrade.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
