@@ -26,10 +26,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
@@ -125,6 +128,28 @@ func buildResourceList(frq *framev1alpha1.FrameResourceQuota) corev1.ResourceLis
 func (r *FrameResourceQuotaReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&framev1alpha1.FrameResourceQuota{}).
+		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.namespaceToFRQ)).
 		Named("frameresourcequota").
 		Complete(r)
+}
+
+// namespaceToFRQ enqueues all FrameResourceQuotas whose ServiceClass matches the Namespace's label.
+func (r *FrameResourceQuotaReconciler) namespaceToFRQ(ctx context.Context, obj client.Object) []reconcile.Request {
+	sc := obj.GetLabels()["frame.plume-labs.io/service-class"]
+	if sc == "" {
+		return nil
+	}
+	var list framev1alpha1.FrameResourceQuotaList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, frq := range list.Items {
+		if frq.Spec.ServiceClass == sc {
+			reqs = append(reqs, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: frq.Name, Namespace: frq.Namespace},
+			})
+		}
+	}
+	return reqs
 }

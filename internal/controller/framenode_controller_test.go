@@ -21,64 +21,86 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
 
 var _ = Describe("FrameNode Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+	const name = "test-framenode"
+	const ns = "default"
+	key := types.NamespacedName{Name: name, Namespace: ns}
+	ctx := context.Background()
 
-		ctx := context.Background()
+	fn := &framev1alpha1.FrameNode{}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+	BeforeEach(func() {
+		*fn = framev1alpha1.FrameNode{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: framev1alpha1.FrameNodeSpec{
+				IP: "10.0.0.1", Role: "worker", Disk: "/dev/nvme0n1",
+				Rack: "rack1", Zone: "zone-a", ServiceClass: "HIGH",
+				Network: framev1alpha1.NetworkSpec{
+					Address: "10.0.0.1/24",
+					Gateway: "10.0.0.1",
+					DNS:     []string{"1.1.1.1"},
+				},
+			},
 		}
-		framenode := &framev1alpha1.FrameNode{}
+		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+	})
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind FrameNode")
-			err := k8sClient.Get(ctx, typeNamespacedName, framenode)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &framev1alpha1.FrameNode{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+	AfterEach(func() {
+		fresh := &framev1alpha1.FrameNode{}
+		if err := k8sClient.Get(ctx, key, fresh); err == nil {
+			fresh.Finalizers = nil
+			_ = k8sClient.Update(ctx, fresh)
+			_ = k8sClient.Delete(ctx, fresh)
+		}
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameNode{}))
+		}, "5s").Should(BeTrue())
+	})
+
+	r := func() *FrameNodeReconciler {
+		return &FrameNodeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	}
+	req := reconcile.Request{NamespacedName: key}
+
+	It("adds finalizer on first reconcile", func() {
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, fn)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(fn, frameNodeFinalizer)).To(BeTrue())
+	})
+
+	It("sets phase=Provisioning when k8s Node does not exist", func() {
+		_, _ = r().Reconcile(ctx, req) // add finalizer
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, fn)).To(Succeed())
+		Expect(fn.Status.Phase).To(Equal("Provisioning"))
+	})
+
+	It("sets Ready=False condition when Provisioning", func() {
+		_, _ = r().Reconcile(ctx, req)
+		_, _ = r().Reconcile(ctx, req)
+
+		Expect(k8sClient.Get(ctx, key, fn)).To(Succeed())
+		var readyCond *metav1.Condition
+		for i := range fn.Status.Conditions {
+			if fn.Status.Conditions[i].Type == "Ready" {
+				readyCond = &fn.Status.Conditions[i]
 			}
-		})
-
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &framev1alpha1.FrameNode{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance FrameNode")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &FrameNodeReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		}
+		Expect(readyCond).NotTo(BeNil())
+		Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(readyCond.Reason).To(Equal("Provisioning"))
 	})
 })

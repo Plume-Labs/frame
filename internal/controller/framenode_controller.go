@@ -29,7 +29,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
@@ -170,6 +172,28 @@ func nodePhase(node *corev1.Node) string {
 func (r *FrameNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&framev1alpha1.FrameNode{}).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.nodeToFrameNode)).
 		Named("framenode").
 		Complete(r)
+}
+
+// nodeToFrameNode maps a Node event to the FrameNode(s) that reference it.
+func (r *FrameNodeReconciler) nodeToFrameNode(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list framev1alpha1.FrameNodeList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, fn := range list.Items {
+		name := fn.Spec.Hostname
+		if name == "" {
+			name = fn.Name
+		}
+		if name == obj.GetName() {
+			reqs = append(reqs, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: fn.Name, Namespace: fn.Namespace},
+			})
+		}
+	}
+	return reqs
 }

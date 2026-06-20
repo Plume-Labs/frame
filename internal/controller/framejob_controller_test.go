@@ -21,64 +21,70 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
 
 var _ = Describe("FrameJob Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+	const name = "test-job"
+	const ns = "default"
+	key := types.NamespacedName{Name: name, Namespace: ns}
+	ctx := context.Background()
 
-		ctx := context.Background()
+	job := &framev1alpha1.FrameJob{}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+	BeforeEach(func() {
+		*job = framev1alpha1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: framev1alpha1.FrameJobSpec{
+				Name:         name,
+				Pipeline:     "neura-training-dag",
+				ServiceClass: "HIGH",
+				Priority:     "high",
+				Namespace:    "default",
+				GPUCount:     8,
+			},
 		}
-		framejob := &framev1alpha1.FrameJob{}
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+	})
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind FrameJob")
-			err := k8sClient.Get(ctx, typeNamespacedName, framejob)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &framev1alpha1.FrameJob{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
-		})
+	AfterEach(func() {
+		fresh := &framev1alpha1.FrameJob{}
+		if err := k8sClient.Get(ctx, key, fresh); err == nil {
+			fresh.Finalizers = nil
+			_ = k8sClient.Update(ctx, fresh)
+			_ = k8sClient.Delete(ctx, fresh)
+		}
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameJob{}))
+		}, "5s").Should(BeTrue())
+	})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &framev1alpha1.FrameJob{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+	r := func() *FrameJobReconciler {
+		return &FrameJobReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	}
+	req := reconcile.Request{NamespacedName: key}
 
-			By("Cleanup the specific resource instance FrameJob")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &FrameJobReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
+	It("adds finalizer on first reconcile", func() {
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(job, frameJobFinalizer)).To(BeTrue())
+	})
+
+	It("attempts ArgoWorkflow creation on second reconcile", func() {
+		_, _ = r().Reconcile(ctx, req) // add finalizer
+		// Argo CRD not installed in envtest — expect Create error, not panic.
+		_, _ = r().Reconcile(ctx, req)
+
+		// Object still exists and retains finalizer.
+		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(job, frameJobFinalizer)).To(BeTrue())
 	})
 })

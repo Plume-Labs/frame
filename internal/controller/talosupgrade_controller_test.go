@@ -21,64 +21,105 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
 
 var _ = Describe("TalosUpgrade Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+	const name = "test-upgrade"
+	const ns = "default"
+	key := types.NamespacedName{Name: name, Namespace: ns}
+	ctx := context.Background()
 
-		ctx := context.Background()
+	tu := &framev1alpha1.TalosUpgrade{}
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+	BeforeEach(func() {
+		*tu = framev1alpha1.TalosUpgrade{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: framev1alpha1.TalosUpgradeSpec{
+				NodeName:      "worker-1",
+				TalosEndpoint: "10.0.0.1:50000",
+				TalosSecretRef: corev1.SecretReference{
+					Name:      "talos-creds",
+					Namespace: ns,
+				},
+				Image:        "ghcr.io/siderolabs/installer:v1.8.0",
+				PreserveData: true,
+			},
 		}
-		talosupgrade := &framev1alpha1.TalosUpgrade{}
+		Expect(k8sClient.Create(ctx, tu)).To(Succeed())
+	})
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind TalosUpgrade")
-			err := k8sClient.Get(ctx, typeNamespacedName, talosupgrade)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &framev1alpha1.TalosUpgrade{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+	AfterEach(func() {
+		fresh := &framev1alpha1.TalosUpgrade{}
+		if err := k8sClient.Get(ctx, key, fresh); err == nil {
+			fresh.Finalizers = nil
+			_ = k8sClient.Update(ctx, fresh)
+			_ = k8sClient.Delete(ctx, fresh)
+		}
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.TalosUpgrade{}))
+		}, "5s").Should(BeTrue())
+	})
+
+	r := func() *TalosUpgradeReconciler {
+		return &TalosUpgradeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	}
+	req := reconcile.Request{NamespacedName: key}
+
+	It("adds finalizer on first reconcile", func() {
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
+		Expect(controllerutil.ContainsFinalizer(tu, talosUpgradeFinalizer)).To(BeTrue())
+	})
+
+	It("sets SecretMissing condition when secret does not exist", func() {
+		_, _ = r().Reconcile(ctx, req)
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
+		var cond *metav1.Condition
+		for i := range tu.Status.Conditions {
+			if tu.Status.Conditions[i].Type == "Ready" {
+				cond = &tu.Status.Conditions[i]
 			}
-		})
+		}
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal("SecretMissing"))
+	})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &framev1alpha1.TalosUpgrade{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+	It("sets UpgradeQueued condition when secret exists", func() {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "talos-creds", Namespace: ns},
+			Data: map[string][]byte{
+				"ca.crt": []byte("fake"), "client.crt": []byte("fake"), "client.key": []byte("fake"),
+			},
+		}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, secret) })
 
-			By("Cleanup the specific resource instance TalosUpgrade")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &TalosUpgradeReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+		_, _ = r().Reconcile(ctx, req)
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
+		var cond *metav1.Condition
+		for i := range tu.Status.Conditions {
+			if tu.Status.Conditions[i].Type == "Ready" {
+				cond = &tu.Status.Conditions[i]
 			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
-		})
+		}
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal("UpgradeQueued"))
 	})
 })

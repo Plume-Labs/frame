@@ -18,6 +18,8 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -27,7 +29,6 @@ import (
 )
 
 // nolint:unused
-// log is for logging in this package.
 var talosupgradelog = logf.Log.WithName("talosupgrade-resource")
 
 // SetupTalosUpgradeWebhookWithManager registers the webhook for TalosUpgrade in the manager.
@@ -37,44 +38,35 @@ func SetupTalosUpgradeWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-// NOTE: If you want to customise the 'path', use the flags '--defaulting-path' or '--validation-path'.
 // +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1alpha1-talosupgrade,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=talosupgrades,verbs=create;update,versions=v1alpha1,name=vtalosupgrade-v1alpha1.kb.io,admissionReviewVersions=v1
 
-// TalosUpgradeCustomValidator struct is responsible for validating the TalosUpgrade resource
-// when it is created, updated, or deleted.
-//
-// NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
-// as this struct is used only for temporary operations and does not need to be deeply copied.
-type TalosUpgradeCustomValidator struct {
-	// TODO(user): Add more fields as needed for validation
-}
+type TalosUpgradeCustomValidator struct{}
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type TalosUpgrade.
 func (v *TalosUpgradeCustomValidator) ValidateCreate(_ context.Context, obj *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
-	talosupgradelog.Info("Validation for TalosUpgrade upon creation", "name", obj.GetName())
+	return validateTalosUpgrade(obj)
+}
 
-	// TODO(user): fill in your validation logic upon object creation.
+func (v *TalosUpgradeCustomValidator) ValidateUpdate(_ context.Context, _, newObj *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
+	return validateTalosUpgrade(newObj)
+}
 
+func (v *TalosUpgradeCustomValidator) ValidateDelete(_ context.Context, _ *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type TalosUpgrade.
-func (v *TalosUpgradeCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
-	talosupgradelog.Info("Validation for TalosUpgrade upon update", "name", newObj.GetName())
-
-	// TODO(user): fill in your validation logic upon object update.
-
-	return nil, nil
-}
-
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type TalosUpgrade.
-func (v *TalosUpgradeCustomValidator) ValidateDelete(_ context.Context, obj *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
-	talosupgradelog.Info("Validation for TalosUpgrade upon deletion", "name", obj.GetName())
-
-	// TODO(user): fill in your validation logic upon object deletion.
-
+func validateTalosUpgrade(tu *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
+	if err := validateTalosEndpoint(tu.Spec.TalosEndpoint); err != nil {
+		return nil, err
+	}
+	// Image must contain a tag (colon present after the last slash)
+	img := tu.Spec.Image
+	lastSlash := strings.LastIndex(img, "/")
+	ref := img
+	if lastSlash >= 0 {
+		ref = img[lastSlash+1:]
+	}
+	if !strings.Contains(ref, ":") {
+		return nil, fmt.Errorf("spec.image %q must include a tag (e.g. installer:v1.8.0)", img)
+	}
 	return nil, nil
 }
