@@ -1,0 +1,9 @@
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: SchedulingPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: schedulingpolicy-sample
+spec:
+  # TODO(user): Add fields here
