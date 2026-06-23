@@ -26,11 +26,30 @@ import (
 
 // NetworkSpec defines network configuration for a node
 type NetworkSpec struct {
-	Address string   `json:"address"`
-	Gateway string   `json:"gateway"`
-	DNS     []string `json:"dns"`
-	VLAN    *int32   `json:"vlan,omitempty"`
-	Bond    *string  `json:"bond,omitempty"`
+	// +optional
+	Address string `json:"address,omitempty"`
+	// +optional
+	Gateway string `json:"gateway,omitempty"`
+	// +optional
+	DNS []string `json:"dns,omitempty"`
+	// +optional
+	VLAN *int32 `json:"vlan,omitempty"`
+	// +optional
+	Bond *string `json:"bond,omitempty"`
+}
+
+// DiskInfo describes a disk discovered on a node in maintenance mode
+type DiskInfo struct {
+	Name string `json:"name"`
+	Size string `json:"size"`
+	Type string `json:"type"`
+}
+
+// NICInfo describes a network interface discovered on a node in maintenance mode
+type NICInfo struct {
+	Name  string `json:"name"`
+	MAC   string `json:"mac"`
+	Speed string `json:"speed"`
 }
 
 // FrameNodeSpec defines the desired state of FrameNode
@@ -40,19 +59,18 @@ type FrameNodeSpec struct {
 	// +kubebuilder:validation:Format=ip
 	IP string `json:"ip"`
 
-	// Role of the node in the cluster
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=controlplane;worker
-	Role string `json:"role"`
+	// Role of the node in the cluster. Empty during initial discovery phase.
+	// +kubebuilder:validation:Enum=controlplane;worker;""
+	// +optional
+	Role string `json:"role,omitempty"`
 
-	// Network configuration
-	// +kubebuilder:validation:Required
-	Network NetworkSpec `json:"network"`
+	// Network configuration. Set after discovery to trigger provisioning.
+	// +optional
+	Network NetworkSpec `json:"network,omitempty"`
 
-	// Disk device for Talos installation (e.g., /dev/nvme0n1)
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern="^/dev/"
-	Disk string `json:"disk"`
+	// Disk device for Talos installation (e.g., /dev/nvme0n1). Set after discovery.
+	// +optional
+	Disk string `json:"disk,omitempty"`
 
 	// RDMA interface name (e.g., ib0, mlx5_0)
 	// +optional
@@ -65,17 +83,17 @@ type FrameNodeSpec struct {
 	Hostname string `json:"hostname,omitempty"`
 
 	// Rack identifier for topology
-	// +kubebuilder:validation:Required
-	Rack string `json:"rack"`
+	// +optional
+	Rack string `json:"rack,omitempty"`
 
 	// Zone identifier for topology
-	// +kubebuilder:validation:Required
-	Zone string `json:"zone"`
+	// +optional
+	Zone string `json:"zone,omitempty"`
 
 	// Service class for workload placement
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=HIGH;MEDIUM;LOW
-	ServiceClass string `json:"serviceClass"`
+	// +kubebuilder:validation:Enum=HIGH;MEDIUM;LOW;""
+	// +optional
+	ServiceClass string `json:"serviceClass,omitempty"`
 
 	// Reference to Sidero ServerClass for provisioning
 	// +optional
@@ -85,8 +103,24 @@ type FrameNodeSpec struct {
 // FrameNodeStatus defines the observed state of FrameNode.
 type FrameNodeStatus struct {
 	// Current phase of the node
-	// +kubebuilder:validation:Enum=Provisioning;Online;Degraded;Offline;Failed
+	// +kubebuilder:validation:Enum=Discovering;Discovered;Provisioning;Online;Degraded;Offline;Failed
 	Phase string `json:"phase,omitempty"`
+
+	// DiscoveredHostname is the hostname reported by the node in maintenance mode
+	// +optional
+	DiscoveredHostname string `json:"discoveredHostname,omitempty"`
+
+	// DiscoveredTalosVersion is the Talos version reported during maintenance mode discovery
+	// +optional
+	DiscoveredTalosVersion string `json:"discoveredTalosVersion,omitempty"`
+
+	// DiscoveredDisks contains disk information from maintenance mode discovery
+	// +optional
+	DiscoveredDisks []DiskInfo `json:"discoveredDisks,omitempty"`
+
+	// DiscoveredNICs contains network interface information from maintenance mode discovery
+	// +optional
+	DiscoveredNICs []NICInfo `json:"discoveredNICs,omitempty"`
 
 	// Conditions represent the current state of the FrameNode resource.
 	// +listType=map

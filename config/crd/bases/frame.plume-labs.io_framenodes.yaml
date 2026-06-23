@@ -58,8 +58,8 @@ spec:
             description: spec defines the desired state of FrameNode
             properties:
               disk:
-                description: Disk device for Talos installation (e.g., /dev/nvme0n1)
-                pattern: ^/dev/
+                description: Disk device for Talos installation (e.g., /dev/nvme0n1).
+                  Set after discovery.
                 type: string
               hostname:
                 description: Hostname for the node
@@ -71,7 +71,8 @@ spec:
                 format: ip
                 type: string
               network:
-                description: Network configuration
+                description: Network configuration. Set after discovery to trigger
+                  provisioning.
                 properties:
                   address:
                     type: string
@@ -86,10 +87,6 @@ spec:
                   vlan:
                     format: int32
                     type: integer
-                required:
-                - address
-                - dns
-                - gateway
                 type: object
               rack:
                 description: Rack identifier for topology
@@ -98,10 +95,12 @@ spec:
                 description: RDMA interface name (e.g., ib0, mlx5_0)
                 type: string
               role:
-                description: Role of the node in the cluster
+                description: Role of the node in the cluster. Empty during initial
+                  discovery phase.
                 enum:
                 - controlplane
                 - worker
+                - ""
                 type: string
               serverClassRef:
                 description: Reference to Sidero ServerClass for provisioning
@@ -152,18 +151,13 @@ spec:
                 - HIGH
                 - MEDIUM
                 - LOW
+                - ""
                 type: string
               zone:
                 description: Zone identifier for topology
                 type: string
             required:
-            - disk
             - ip
-            - network
-            - rack
-            - role
-            - serviceClass
-            - zone
             type: object
           status:
             description: status defines the observed state of FrameNode
@@ -247,6 +241,52 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              discoveredDisks:
+                description: DiscoveredDisks contains disk information from maintenance
+                  mode discovery
+                items:
+                  description: DiskInfo describes a disk discovered on a node in maintenance
+                    mode
+                  properties:
+                    name:
+                      type: string
+                    size:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - name
+                  - size
+                  - type
+                  type: object
+                type: array
+              discoveredHostname:
+                description: DiscoveredHostname is the hostname reported by the node
+                  in maintenance mode
+                type: string
+              discoveredNICs:
+                description: DiscoveredNICs contains network interface information
+                  from maintenance mode discovery
+                items:
+                  description: NICInfo describes a network interface discovered on
+                    a node in maintenance mode
+                  properties:
+                    mac:
+                      type: string
+                    name:
+                      type: string
+                    speed:
+                      type: string
+                  required:
+                  - mac
+                  - name
+                  - speed
+                  type: object
+                type: array
+              discoveredTalosVersion:
+                description: DiscoveredTalosVersion is the Talos version reported
+                  during maintenance mode discovery
+                type: string
               kubeletVersion:
                 description: Kubelet version running on the node
                 type: string
@@ -260,6 +300,8 @@ spec:
               phase:
                 description: Current phase of the node
                 enum:
+                - Discovering
+                - Discovered
                 - Provisioning
                 - Online
                 - Degraded

@@ -10,6 +10,9 @@ import { Label } from '@/components/ui/label'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { parseDnsList } from '@/lib/nodeProvisioning'
+import { createFrameClient, FrameNodeStatus } from '@/lib/frame-sdk'
+
+const frame = createFrameClient()
 
 interface NodeProvisionWizardProps {
   open: boolean
@@ -89,9 +92,67 @@ export function NodeProvisionWizard({
       setProvisionLogs([])
       setProvisionStatus(null)
       setApplying(false)
+      setDiscovering(false)
     }
   }, [open])
 
+  // Poll FrameNode status until phase=Discovered (controller contacted maintenance API).
+  useEffect(() => {
+    if (!provisionNodeId || !discovering) return
+
+    let cancelled = false
+    let failureCount = 0
+
+    const poll = async () => {
+      if (cancelled) return
+      try {
+        const status: FrameNodeStatus = await frame.nodes.getStatus(provisionNodeId)
+        failureCount = 0
+
+        if (status.phase === 'Discovered') {
+          const disks = status.discoveredDisks ?? []
+          const nics  = status.discoveredNICs ?? []
+          const discovered: DiscoverData = {
+            hostname:     status.discoveredHostname ?? provisionNodeId,
+            talosVersion: status.discoveredTalosVersion ?? 'unknown',
+            disks,
+            nics,
+          }
+          setDiscoverData(discovered)
+          setDisk(disks[0]?.name ?? '')
+          setRdmaInterface(nics.find((n) => n.name.startsWith('ib'))?.name ?? '')
+          setHostnameOverride(discovered.hostname)
+          if (!networkAddress) setNetworkAddress(`${ip}/24`)
+          if (!networkGateway) {
+            const octets = ip.split('.')
+            if (octets.length === 4) setNetworkGateway(`${octets[0]}.${octets[1]}.${octets[2]}.1`)
+          }
+          setDiscovering(false)
+          setStep(1)
+          return
+        }
+        if (status.phase === 'Failed') {
+          setDiscoverError('Discovery failed — node not reachable in maintenance mode')
+          setDiscovering(false)
+          return
+        }
+      } catch {
+        failureCount += 1
+        if (failureCount >= MAX_STATUS_POLL_FAILURES) {
+          setDiscoverError('Cannot reach node status — check kubectl proxy is running')
+          setDiscovering(false)
+          return
+        }
+      }
+
+      if (!cancelled) setTimeout(poll, 2000)
+    }
+
+    setTimeout(poll, 1000)
+    return () => { cancelled = true }
+  }, [provisionNodeId, discovering, ip, networkAddress, networkGateway])
+
+  // Poll FrameNode phase after provisioning spec is applied.
   useEffect(() => {
     if (!provisionNodeId || !applying) return
 
@@ -103,37 +164,30 @@ export function NodeProvisionWizard({
     const pollStatus = async () => {
       if (cancelled || stopPolling) return
       try {
-        const response = await fetch(`/api/nodes/${provisionNodeId}/provision-status`)
-        if (!response.ok) {
-          failureCount += 1
-          if (failureCount >= MAX_STATUS_POLL_FAILURES) {
-            setApplying(false)
-            setProvisionError(`Unable to fetch provisioning status (HTTP ${response.status}). Please retry status check.`)
-            stopPolling = true
-            return
-          }
-        } else {
-          failureCount = 0
-          const payload = await response.json() as { status: 'provisioning' | 'online' | 'offline'; lastLogLines: string[] }
-          setProvisionStatus(payload.status)
-          setProvisionLogs(payload.lastLogLines)
-          if (payload.status !== 'provisioning') {
-            setApplying(false)
-            stopPolling = true
-            return
-          }
+        const status: FrameNodeStatus = await frame.nodes.getStatus(provisionNodeId)
+        failureCount = 0
+        const mapped =
+          status.phase === 'Online'   ? 'online'  :
+          status.phase === 'Failed' || status.phase === 'Offline' ? 'offline' :
+          'provisioning'
+        setProvisionStatus(mapped)
+        setProvisionLogs([`Phase: ${status.phase}`])
+        if (mapped !== 'provisioning') {
+          setApplying(false)
+          stopPolling = true
+          return
         }
       } catch {
         failureCount += 1
         if (failureCount >= MAX_STATUS_POLL_FAILURES) {
           setApplying(false)
-          setProvisionError('Provisioning status polling failed repeatedly. Please retry status check.')
+          setProvisionError('Provisioning status polling failed repeatedly')
           stopPolling = true
           return
         }
       } finally {
         if (!cancelled && !stopPolling) {
-          timeoutId = setTimeout(pollStatus, 1200)
+          timeoutId = setTimeout(pollStatus, 2000)
         }
       }
     }
@@ -149,136 +203,79 @@ export function NodeProvisionWizard({
   async function runDiscovery() {
     setDiscovering(true)
     setDiscoverError(null)
+    setDiscoverData(null)
 
     try {
-      const response = await fetch('/api/nodes/discover', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip }),
-      })
-      const payload = await response.json()
-      if (!response.ok) {
-        setDiscoverError(payload.error ?? 'Discovery failed')
-        return
-      }
-
-      const discovered = payload as DiscoverData
-      setDiscoverData(discovered)
-      setDisk(discovered.disks[0]?.name ?? '')
-      setRdmaInterface(discovered.nics.find((nic) => nic.name.startsWith('ib'))?.name ?? '')
-      setHostnameOverride(discovered.hostname)
-      if (!networkAddress) setNetworkAddress(`${ip}/24`)
-      if (!networkGateway) {
-        const octets = ip.split('.')
-        if (octets.length === 4) {
-          setNetworkGateway(`${octets[0]}.${octets[1]}.${octets[2]}.1`)
-        }
-      }
-      setStep(1)
-    } catch {
-      setDiscoverError('Node not reachable in maintenance mode')
-    } finally {
+      const { crName } = await frame.nodes.discover(ip)
+      setProvisionNodeId(crName)
+      // Discovery polling effect picks up once provisionNodeId + discovering are both set.
+    } catch (e) {
+      setDiscoverError(e instanceof Error ? e.message : 'Discovery failed — check kubectl proxy')
       setDiscovering(false)
     }
   }
 
   async function applyConfiguration() {
+    if (!provisionNodeId) return
     setApplying(true)
     setProvisionError(null)
-    setProvisionLogs(['Applying Talos machineConfig...'])
+    setProvisionLogs(['Patching FrameNode spec — controller will apply Talos machineConfig...'])
 
     try {
-      const response = await fetch('/api/nodes/provision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ip,
-          role,
-          network: {
-            address: networkAddress,
-            gateway: networkGateway,
-            dns,
-            vlan: vlan ? Number(vlan) : undefined,
-            bond: bond || undefined,
-          },
-          disk,
-          rdmaInterface: rdmaInterface || undefined,
-          hostname: hostnameOverride || undefined,
-          rack,
-          zone,
-          serviceClass,
-        }),
+      await frame.nodes.patchSpec(provisionNodeId, {
+        ip,
+        role,
+        disk,
+        hostname:      hostnameOverride || undefined,
+        rack,
+        zone,
+        serviceClass,
+        rdmaInterface: rdmaInterface || undefined,
+        network: {
+          address: networkAddress,
+          gateway: networkGateway,
+          dns,
+          vlan:  vlan ? Number(vlan) : undefined,
+          bond:  bond || undefined,
+        },
       })
 
-      const payload = await response.json() as { nodeId?: string; status?: 'provisioning' | 'online' | 'offline'; error?: string }
-      if (!response.ok || !payload.nodeId) {
-        setApplying(false)
-        setProvisionError(payload.error ?? 'Failed to apply configuration')
-        return
-      }
-
-      setProvisionNodeId(payload.nodeId)
-      setProvisionStatus(payload.status ?? 'provisioning')
-      setProvisionLogs((current) => [...current, `Node ${payload.nodeId} entered ${payload.status ?? 'provisioning'} state`])
+      setProvisionStatus('provisioning')
+      setProvisionLogs((current) => [...current, `FrameNode ${provisionNodeId} updated — waiting for node to join cluster`])
 
       onNodeProvisioned({
-        id: payload.nodeId,
-        name: hostnameOverride || discoverData?.hostname || payload.nodeId,
-        status: payload.status === 'online' ? 'online' : 'provisioning',
-        metrics: { cpu: 0, memory: 0, storage: 0, network: 0 },
-        uptime: 0,
+        id:       provisionNodeId,
+        name:     hostnameOverride || discoverData?.hostname || provisionNodeId,
+        status:   'provisioning',
+        metrics:  { cpu: 0, memory: 0, storage: 0, network: 0 },
+        uptime:   0,
         lastSeen: Date.now(),
         network: {
-          rxBytes: 0,
-          txBytes: 0,
-          latency: 0,
-          rdmaActive: Boolean(rdmaInterface),
-          rdmaQueuePairs: 0,
-          bandwidth: 0,
-          packetLoss: 0,
-          sriovVFs: 0,
-          dpdkEnabled: false,
-          ciliumVersion: 'unknown',
-          ebpfBypassActive: false,
+          rxBytes: 0, txBytes: 0, latency: 0,
+          rdmaActive: Boolean(rdmaInterface), rdmaQueuePairs: 0,
+          bandwidth: 0, packetLoss: 0, sriovVFs: 0, dpdkEnabled: false,
+          ciliumVersion: 'unknown', ebpfBypassActive: false,
         },
         storage: {
-          cephOSDs: 0,
-          cephPGs: 0,
-          totalCapacity: 0,
-          usedCapacity: 0,
-          readIOPS: 0,
-          writeIOPS: 0,
-          replicationFactor: 3,
-          dataFabricEnabled: false,
-          metadataEntries: 0,
-          activeDatasets: 0,
+          cephOSDs: 0, cephPGs: 0, totalCapacity: 0, usedCapacity: 0,
+          readIOPS: 0, writeIOPS: 0, replicationFactor: 3,
+          dataFabricEnabled: false, metadataEntries: 0, activeDatasets: 0,
         },
         hardware: {
-          cpuModel: 'pending',
-          cpuCores: 0,
-          memoryGB: 0,
-          storageGB: 0,
-          networkAdapters: discoverData?.nics.length ?? 1,
-          pxeBooted: false,
-          temperature: 0,
-          deviceType: 'server',
-          rackUnits: 1,
-          numaNode: 0,
-          cacheHitRate: 0,
-          storageTier: 'nvme',
-          gpuMIGInstances: 0,
-          hugepagesGB: 0,
-          cpuPinnedCores: 0,
-          topologyManagerPolicy: 'none',
+          cpuModel: 'pending', cpuCores: 0, memoryGB: 0, storageGB: 0,
+          networkAdapters: discoverData?.nics.length ?? 1, pxeBooted: false,
+          temperature: 0, deviceType: 'server', rackUnits: 1, numaNode: 0,
+          cacheHitRate: 0, storageTier: 'nvme', gpuMIGInstances: 0,
+          hugepagesGB: 0, cpuPinnedCores: 0, topologyManagerPolicy: 'none',
         },
         zone,
         rackId: rack,
         rackPosition: 1,
         serviceClass,
       })
-    } catch {
+    } catch (e) {
       setApplying(false)
-      setProvisionError('Failed to apply configuration')
+      setProvisionError(e instanceof Error ? e.message : 'Failed to patch FrameNode spec')
     }
   }
 
@@ -324,6 +321,12 @@ export function NodeProvisionWizard({
                 </div>
               </div>
 
+              {discovering && !discoverData && (
+                <div className="font-mono text-xs text-muted-foreground">
+                  Creating FrameNode CR — waiting for controller to contact {ip}:50000...
+                </div>
+              )}
+
               {discoverError && <div className="font-mono text-xs text-warning">{discoverError}</div>}
 
               {discoverData && (
@@ -334,15 +337,19 @@ export function NodeProvisionWizard({
                   <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                     <div>
                       <div className="mb-1 text-muted-foreground">Disks</div>
-                      {discoverData.disks.map((entry) => (
-                        <div key={entry.name}>{entry.name} • {entry.size} • {entry.type}</div>
-                      ))}
+                      {discoverData.disks.length === 0
+                        ? <div className="text-muted-foreground">Enter disk manually below</div>
+                        : discoverData.disks.map((entry) => (
+                            <div key={entry.name}>{entry.name} • {entry.size} • {entry.type}</div>
+                          ))}
                     </div>
                     <div>
                       <div className="mb-1 text-muted-foreground">NICs</div>
-                      {discoverData.nics.map((entry) => (
-                        <div key={entry.name}>{entry.name} • {entry.speed}</div>
-                      ))}
+                      {discoverData.nics.length === 0
+                        ? <div className="text-muted-foreground">Enter NIC manually below</div>
+                        : discoverData.nics.map((entry) => (
+                            <div key={entry.name}>{entry.name} • {entry.speed}</div>
+                          ))}
                     </div>
                   </div>
                 </div>
@@ -392,18 +399,22 @@ export function NodeProvisionWizard({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label className="font-mono text-xs">Install Disk</Label>
-                <Select value={disk} onValueChange={setDisk}>
-                  <SelectTrigger className="w-full font-mono">
-                    <SelectValue placeholder="Select disk" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(discoverData?.disks ?? []).map((entry) => (
-                      <SelectItem key={entry.name} value={entry.name} className="font-mono">
-                        {entry.name} ({entry.size})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {(discoverData?.disks ?? []).length > 0 ? (
+                  <Select value={disk} onValueChange={setDisk}>
+                    <SelectTrigger className="w-full font-mono">
+                      <SelectValue placeholder="Select disk" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(discoverData?.disks ?? []).map((entry) => (
+                        <SelectItem key={entry.name} value={entry.name} className="font-mono">
+                          {entry.name} ({entry.size})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Field label="Disk path (e.g. /dev/nvme0n1)" value={disk} onChange={setDisk} />
+                )}
               </div>
               <Field label="RDMA / InfiniBand interface (optional)" value={rdmaInterface} onChange={setRdmaInterface} />
               <Field label="Hostname override (optional)" value={hostnameOverride} onChange={setHostnameOverride} />
@@ -461,6 +472,7 @@ export function NodeProvisionWizard({
                   <SummaryLine label="Hostname" value={hostnameOverride || discoverData?.hostname || 'auto'} />
                   <SummaryLine label="Rack / Zone" value={`${rack} / ${zone}`} />
                   <SummaryLine label="Service Class" value={serviceClass} />
+                  <SummaryLine label="FrameNode CR" value={provisionNodeId ?? '—'} />
                 </div>
               </ScrollArea>
 
@@ -470,7 +482,7 @@ export function NodeProvisionWizard({
 
               {provisionNodeId && (
                 <div className="rounded-md border border-accent/40 bg-accent/10 p-2 font-mono text-xs text-accent">
-                  Node {provisionNodeId} status: {provisionStatus ?? 'provisioning'}
+                  FrameNode {provisionNodeId} — status: {provisionStatus ?? 'provisioning'}
                 </div>
               )}
 
@@ -481,7 +493,7 @@ export function NodeProvisionWizard({
               )}
 
               {provisionLogs.length > 0 && (
-                <ScrollArea className="h-[160px] rounded-md border border-primary/20 p-2">
+                <ScrollArea className="h-[120px] rounded-md border border-primary/20 p-2">
                   <div className="space-y-1 font-mono text-xs">
                     {provisionLogs.map((line, index) => (
                       <div key={`${line}-${index}`}>{line}</div>
