@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -39,7 +40,8 @@ const talosMachineConfigFinalizer = "frame.plume-labs.io/talosmachineconfig"
 // TalosMachineConfigReconciler reconciles a TalosMachineConfig object
 type TalosMachineConfigReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosmachineconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -68,12 +70,14 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	patch, err := r.resolvePatch(ctx, &tmc)
 	if err != nil {
+		r.Recorder.Event(&tmc, corev1.EventTypeWarning, "PatchResolveFailed", err.Error())
 		return ctrl.Result{}, r.setCondition(ctx, &tmc, metav1.ConditionFalse, "PatchResolveFailed",
 			fmt.Sprintf("could not resolve config patch: %v", err))
 	}
 
 	c, err := buildTalosClient(ctx, r.Client, tmc.Namespace, tmc.Spec.TalosEndpoint, tmc.Spec.TalosSecretRef)
 	if err != nil {
+		r.Recorder.Event(&tmc, corev1.EventTypeWarning, "ClientBuildFailed", err.Error())
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tmc,
 			metav1.ConditionFalse, "ClientBuildFailed", err.Error())
 	}
@@ -83,15 +87,17 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 		Data: []byte(patch),
 		Mode: machineapi.ApplyConfigurationRequest_AUTO,
 	}); err != nil {
+		r.Recorder.Event(&tmc, corev1.EventTypeWarning, "ApplyFailed", fmt.Sprintf("ApplyConfiguration: %v", err))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tmc,
 			metav1.ConditionFalse, "ApplyFailed", fmt.Sprintf("ApplyConfiguration: %v", err))
 	}
 
+	msg := fmt.Sprintf("Config patch applied to %s via %s", tmc.Spec.NodeName, tmc.Spec.TalosEndpoint)
+	r.Recorder.Event(&tmc, corev1.EventTypeNormal, "Applied", msg)
 	log.Info("Applied Talos config patch", "node", tmc.Spec.NodeName,
 		"endpoint", tmc.Spec.TalosEndpoint, "patchLen", len(patch))
 
-	return ctrl.Result{}, r.setCondition(ctx, &tmc, metav1.ConditionTrue, "Applied",
-		fmt.Sprintf("Config patch applied to %s via %s", tmc.Spec.NodeName, tmc.Spec.TalosEndpoint))
+	return ctrl.Result{}, r.setCondition(ctx, &tmc, metav1.ConditionTrue, "Applied", msg)
 }
 
 func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig) (string, error) {

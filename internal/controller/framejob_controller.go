@@ -22,12 +22,14 @@ import (
 	"strconv"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -49,7 +51,8 @@ var argoWorkflowGVK = schema.GroupVersionKind{
 // FrameJobReconciler reconciles a FrameJob object
 type FrameJobReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framejobs,verbs=get;list;watch;create;update;patch;delete
@@ -88,6 +91,7 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if err := r.Create(ctx, wf); err != nil {
 			return ctrl.Result{}, fmt.Errorf("creating ArgoWorkflow: %w", err)
 		}
+		r.Recorder.Event(&job, corev1.EventTypeNormal, "WorkflowCreated", fmt.Sprintf("ArgoWorkflow %s/%s created", ns, job.Name))
 		log.Info("Created ArgoWorkflow", "name", job.Name, "namespace", ns)
 
 		patch := client.MergeFrom(job.DeepCopy())
@@ -122,6 +126,11 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if err := r.Status().Patch(ctx, &job, patch); err != nil {
 			return ctrl.Result{}, err
 		}
+		eventType := corev1.EventTypeNormal
+		if phase == "Failed" {
+			eventType = corev1.EventTypeWarning
+		}
+		r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
 	}
 
 	if phase == "Completed" || phase == "Failed" {

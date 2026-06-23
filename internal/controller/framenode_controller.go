@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -41,7 +42,8 @@ const frameNodeFinalizer = "frame.plume-labs.io/framenode"
 // FrameNodeReconciler reconciles a FrameNode object
 type FrameNodeReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framenodes,verbs=get;list;watch;create;update;patch;delete
@@ -75,6 +77,7 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.Get(ctx, types.NamespacedName{Name: nodeName}, &node); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("Node not yet joined", "nodeName", nodeName)
+			r.Recorder.Event(&fn, corev1.EventTypeWarning, "NodeNotFound", "Waiting for node "+nodeName+" to join the cluster")
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setPhase(ctx, &fn, "Provisioning", "Waiting for node to join the cluster")
 		}
 		return ctrl.Result{}, err
@@ -114,6 +117,11 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	eventType := corev1.EventTypeNormal
+	if phase != "Online" {
+		eventType = corev1.EventTypeWarning
+	}
+	r.Recorder.Event(&fn, eventType, phase, fmt.Sprintf("Node %s is %s", nodeName, phase))
 	log.Info("Reconciled FrameNode", "phase", phase, "nodeName", nodeName)
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
