@@ -96,6 +96,11 @@ spec:
                 - MEDIUM
                 - LOW
                 type: string
+              suspended:
+                default: false
+                description: Suspended pauses the underlying Argo Workflow when true.
+                  Set to false to resume.
+                type: boolean
             required:
             - name
             - pipeline
@@ -181,6 +186,7 @@ spec:
                 - Pending
                 - Submitted
                 - Running
+                - Suspended
                 - Completed
                 - Failed
                 type: string

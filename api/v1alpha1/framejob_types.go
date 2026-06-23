@@ -60,12 +60,17 @@ type FrameJobSpec struct {
 	// Template parameters for the pipeline
 	// +optional
 	Parameters map[string]string `json:"parameters,omitempty"`
+
+	// Suspended pauses the underlying Argo Workflow when true. Set to false to resume.
+	// +optional
+	// +kubebuilder:default=false
+	Suspended bool `json:"suspended,omitempty"`
 }
 
 // FrameJobStatus defines the observed state of FrameJob.
 type FrameJobStatus struct {
 	// Current phase of the job
-	// +kubebuilder:validation:Enum=Pending;Submitted;Running;Completed;Failed
+	// +kubebuilder:validation:Enum=Pending;Submitted;Running;Suspended;Completed;Failed
 	Phase string `json:"phase,omitempty"`
 
 	// Conditions represent the current state of the FrameJob resource.

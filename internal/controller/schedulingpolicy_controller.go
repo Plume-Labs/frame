@@ -19,11 +19,13 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -43,7 +45,9 @@ type SchedulingPolicyReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=schedulingpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=schedulingpolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=schedulingpolicies/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=scheduling.volcano.sh,resources=queues,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=yunikorn.apache.org,resources=queues,verbs=get;list;watch;create;update;patch;delete
 
 func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -62,63 +66,162 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, r.Update(ctx, &sp)
 	}
 
-	schedulerNS := schedulerNamespace(sp.Spec.Scheduler)
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "frame-policy-" + sp.Name,
-			Namespace: schedulerNS,
-		},
+	var errs []string
+
+	if sp.Spec.PriorityClass != "" {
+		if err := r.reconcilePriorityClass(ctx, &sp); err != nil {
+			// PriorityClass is a core K8s type — failure is always notable.
+			return ctrl.Result{}, fmt.Errorf("reconciling PriorityClass: %w", err)
+		}
 	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
-		cm.Labels = map[string]string{
-			"frame.plume-labs.io/policy":    sp.Name,
-			"frame.plume-labs.io/scheduler": sp.Spec.Scheduler,
+
+	if sp.Spec.QueueName != "" && sp.Spec.Scheduler != "default" {
+		if err := r.reconcileQueue(ctx, &sp); err != nil {
+			// Queue CRD may not be installed — degrade rather than hard-fail.
+			log.Info("Queue reconcile failed (scheduler CRD may not be installed)",
+				"scheduler", sp.Spec.Scheduler, "queue", sp.Spec.QueueName, "err", err)
+			errs = append(errs, fmt.Sprintf("Queue: %v", err))
 		}
-		cm.Data = map[string]string{
-			"scheduler":      sp.Spec.Scheduler,
-			"queue":          sp.Spec.QueueName,
-			"priorityClass":  sp.Spec.PriorityClass,
-			"gangScheduling": strconv.FormatBool(sp.Spec.GangScheduling),
-			"preemption":     strconv.FormatBool(sp.Spec.Preemption),
-		}
-		return nil
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("syncing policy ConfigMap: %w", err)
 	}
 
 	patch := client.MergeFrom(sp.DeepCopy())
-	setCondition(&sp.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
-		Status:             metav1.ConditionTrue,
-		Reason:             "Applied",
-		Message:            fmt.Sprintf("Policy synced to %s/%s", schedulerNS, cm.Name),
-		ObservedGeneration: sp.Generation,
-	})
-	log.Info("Reconciled SchedulingPolicy", "scheduler", sp.Spec.Scheduler, "queue", sp.Spec.QueueName)
+	if len(errs) > 0 {
+		setCondition(&sp.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconcileError",
+			Message:            fmt.Sprintf("%v", errs),
+			ObservedGeneration: sp.Generation,
+		})
+	} else {
+		setCondition(&sp.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "Applied",
+			Message:            appliedMsg(&sp),
+			ObservedGeneration: sp.Generation,
+		})
+	}
+	log.Info("Reconciled SchedulingPolicy", "scheduler", sp.Spec.Scheduler,
+		"priorityClass", sp.Spec.PriorityClass, "queue", sp.Spec.QueueName)
 	return ctrl.Result{}, r.Status().Patch(ctx, &sp, patch)
 }
 
-func (r *SchedulingPolicyReconciler) reconcileDelete(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) (ctrl.Result, error) {
-	ns := schedulerNamespace(sp.Spec.Scheduler)
-	cm := &corev1.ConfigMap{}
-	cm.Name = "frame-policy-" + sp.Name
-	cm.Namespace = ns
-	if err := r.Delete(ctx, cm); client.IgnoreNotFound(err) != nil {
-		return ctrl.Result{}, err
+func (r *SchedulingPolicyReconciler) reconcilePriorityClass(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) error {
+	val := int32(0)
+	if sp.Spec.PriorityValue != nil {
+		val = *sp.Spec.PriorityValue
 	}
+	pc := &schedulingv1.PriorityClass{
+		ObjectMeta: metav1.ObjectMeta{Name: sp.Spec.PriorityClass},
+	}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pc, func() error {
+		pc.Value = val
+		pc.GlobalDefault = false
+		pc.Description = fmt.Sprintf("Managed by SchedulingPolicy %s/%s", sp.Namespace, sp.Name)
+		if pc.Labels == nil {
+			pc.Labels = map[string]string{}
+		}
+		pc.Labels["frame.plume-labs.io/policy-namespace"] = sp.Namespace
+		pc.Labels["frame.plume-labs.io/policy-name"] = sp.Name
+		pc.Labels["frame.plume-labs.io/scheduler"] = sp.Spec.Scheduler
+		pp := corev1.PreemptNever
+		if sp.Spec.Preemption {
+			pp = corev1.PreemptLowerPriority
+		}
+		pc.PreemptionPolicy = &pp
+		return nil
+	})
+	return err
+}
+
+func (r *SchedulingPolicyReconciler) reconcileQueue(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) error {
+	gvk, spec := queueGVKAndSpec(sp)
+	q := &unstructured.Unstructured{}
+	q.SetGroupVersionKind(gvk)
+	q.SetName(sp.Spec.QueueName)
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, q, func() error {
+		existing, _ := q.Object["spec"].(map[string]interface{})
+		if existing == nil {
+			existing = map[string]interface{}{}
+		}
+		for k, v := range spec {
+			existing[k] = v
+		}
+		q.Object["spec"] = existing
+		labels := q.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels["frame.plume-labs.io/policy-namespace"] = sp.Namespace
+		labels["frame.plume-labs.io/policy-name"] = sp.Name
+		q.SetLabels(labels)
+		return nil
+	})
+	return err
+}
+
+// queueGVKAndSpec returns GVK + spec fields for the scheduler-native queue type.
+func queueGVKAndSpec(sp *framev1alpha1.SchedulingPolicy) (schema.GroupVersionKind, map[string]interface{}) {
+	weight := int64(1)
+	if sp.Spec.QueueWeight != nil {
+		weight = int64(*sp.Spec.QueueWeight)
+	}
+	switch sp.Spec.Scheduler {
+	case "volcano":
+		return schema.GroupVersionKind{
+				Group: "scheduling.volcano.sh", Version: "v1beta1", Kind: "Queue",
+			}, map[string]interface{}{
+				"weight":      weight,
+				"reclaimable": sp.Spec.Preemption,
+			}
+	case "yunikorn":
+		return schema.GroupVersionKind{
+				Group: "yunikorn.apache.org", Version: "v1alpha1", Kind: "Queue",
+			}, map[string]interface{}{
+				"weight": weight,
+				"preemption": map[string]interface{}{
+					"allowPreemptSelf": sp.Spec.Preemption,
+				},
+			}
+	default:
+		// caller guards on scheduler != "default"
+		return schema.GroupVersionKind{}, nil
+	}
+}
+
+func (r *SchedulingPolicyReconciler) reconcileDelete(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) (ctrl.Result, error) {
+	if sp.Spec.PriorityClass != "" {
+		pc := &schedulingv1.PriorityClass{}
+		pc.Name = sp.Spec.PriorityClass
+		if err := r.Delete(ctx, pc); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	if sp.Spec.QueueName != "" && sp.Spec.Scheduler != "default" {
+		gvk, _ := queueGVKAndSpec(sp)
+		q := &unstructured.Unstructured{}
+		q.SetGroupVersionKind(gvk)
+		q.SetName(sp.Spec.QueueName)
+		if err := r.Delete(ctx, q); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	controllerutil.RemoveFinalizer(sp, schedulingPolicyFinalizer)
 	return ctrl.Result{}, r.Update(ctx, sp)
 }
 
-func schedulerNamespace(scheduler string) string {
-	switch scheduler {
-	case "volcano":
-		return "volcano-system"
-	case "yunikorn":
-		return "yunikorn"
-	default:
-		return "kube-system"
+func appliedMsg(sp *framev1alpha1.SchedulingPolicy) string {
+	msg := fmt.Sprintf("scheduler=%s", sp.Spec.Scheduler)
+	if sp.Spec.PriorityClass != "" {
+		msg += fmt.Sprintf(" priorityClass=%s", sp.Spec.PriorityClass)
 	}
+	if sp.Spec.QueueName != "" {
+		msg += fmt.Sprintf(" queue=%s", sp.Spec.QueueName)
+	}
+	return msg
 }
 
 // SetupWithManager sets up the controller with the Manager.

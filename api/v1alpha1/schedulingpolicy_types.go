@@ -47,6 +47,18 @@ type SchedulingPolicySpec struct {
 	// +optional
 	// +kubebuilder:default=false
 	Preemption bool `json:"preemption,omitempty"`
+
+	// PriorityValue is the integer value for the Kubernetes PriorityClass. Ignored when PriorityClass is empty.
+	// Higher values = higher priority. System pods use 2000000000.
+	// +optional
+	// +kubebuilder:validation:Minimum=-2147483648
+	// +kubebuilder:validation:Maximum=1000000000
+	PriorityValue *int32 `json:"priorityValue,omitempty"`
+
+	// QueueWeight is the relative weight of the Volcano/YuniKorn queue (default 1).
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	QueueWeight *int32 `json:"queueWeight,omitempty"`
 }
 
 // SchedulingPolicyStatus defines the observed state of SchedulingPolicy.

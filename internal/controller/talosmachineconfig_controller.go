@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
+	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -66,32 +68,32 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	patch, err := r.resolvePatch(ctx, &tmc)
 	if err != nil {
-		return ctrl.Result{}, r.setErrorCondition(ctx, &tmc, fmt.Sprintf("Could not resolve patch: %v", err))
+		return ctrl.Result{}, r.setCondition(ctx, &tmc, metav1.ConditionFalse, "PatchResolveFailed",
+			fmt.Sprintf("could not resolve config patch: %v", err))
 	}
 
-	// TODO: call Talos gRPC API once github.com/siderolabs/talos/pkg/machinery is added.
-	// Example:
-	//   creds, err := loadTalosCredentials(ctx, r.Client, tmc.Namespace, tmc.Spec.TalosSecretRef)
-	//   c, err := talos.New(ctx, talos.WithEndpoints(tmc.Spec.TalosEndpoint), talos.WithCredentials(creds))
-	//   _, err = c.ApplyConfiguration(ctx, &machineapi.ApplyConfigurationRequest{Data: []byte(patch)})
-	log.Info("Resolved config patch (Talos apply pending SDK integration)",
-		"node", tmc.Spec.NodeName,
-		"endpoint", tmc.Spec.TalosEndpoint,
-		"patchLen", len(patch),
-	)
+	c, err := buildTalosClient(ctx, r.Client, tmc.Namespace, tmc.Spec.TalosEndpoint, tmc.Spec.TalosSecretRef)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tmc,
+			metav1.ConditionFalse, "ClientBuildFailed", err.Error())
+	}
+	defer c.Close() //nolint:errcheck
 
-	statusPatch := client.MergeFrom(tmc.DeepCopy())
-	setCondition(&tmc.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
-		Status:             metav1.ConditionTrue,
-		Reason:             "PatchResolved",
-		Message:            "Config patch resolved; apply requires Talos SDK integration",
-		ObservedGeneration: tmc.Generation,
-	})
-	return ctrl.Result{}, r.Status().Patch(ctx, &tmc, statusPatch)
+	if _, err = c.ApplyConfiguration(ctx, &machineapi.ApplyConfigurationRequest{
+		Data: []byte(patch),
+		Mode: machineapi.ApplyConfigurationRequest_AUTO,
+	}); err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tmc,
+			metav1.ConditionFalse, "ApplyFailed", fmt.Sprintf("ApplyConfiguration: %v", err))
+	}
+
+	log.Info("Applied Talos config patch", "node", tmc.Spec.NodeName,
+		"endpoint", tmc.Spec.TalosEndpoint, "patchLen", len(patch))
+
+	return ctrl.Result{}, r.setCondition(ctx, &tmc, metav1.ConditionTrue, "Applied",
+		fmt.Sprintf("Config patch applied to %s via %s", tmc.Spec.NodeName, tmc.Spec.TalosEndpoint))
 }
 
-// resolvePatch returns the config patch string from inline or ConfigMapRef.
 func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig) (string, error) {
 	if tmc.Spec.ConfigPatch != "" {
 		return tmc.Spec.ConfigPatch, nil
@@ -117,16 +119,16 @@ func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *fr
 	return val, nil
 }
 
-func (r *TalosMachineConfigReconciler) setErrorCondition(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig, msg string) error {
-	patch := client.MergeFrom(tmc.DeepCopy())
+func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig, status metav1.ConditionStatus, reason, msg string) error {
+	p := client.MergeFrom(tmc.DeepCopy())
 	setCondition(&tmc.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
-		Status:             metav1.ConditionFalse,
-		Reason:             "Error",
+		Status:             status,
+		Reason:             reason,
 		Message:            msg,
 		ObservedGeneration: tmc.Generation,
 	})
-	return r.Status().Patch(ctx, tmc, patch)
+	return r.Status().Patch(ctx, tmc, p)
 }
 
 // SetupWithManager sets up the controller with the Manager.

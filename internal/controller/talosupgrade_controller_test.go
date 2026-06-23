@@ -25,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -46,7 +47,7 @@ var _ = Describe("TalosUpgrade Controller", func() {
 				NodeName:      "worker-1",
 				TalosEndpoint: "10.0.0.1:50000",
 				TalosSecretRef: corev1.SecretReference{
-					Name:      "talos-creds",
+					Name:      "talos-upgrade-creds",
 					Namespace: ns,
 				},
 				Image:        "ghcr.io/siderolabs/installer:v1.8.0",
@@ -81,45 +82,79 @@ var _ = Describe("TalosUpgrade Controller", func() {
 		Expect(controllerutil.ContainsFinalizer(tu, talosUpgradeFinalizer)).To(BeTrue())
 	})
 
-	It("sets SecretMissing condition when secret does not exist", func() {
-		_, _ = r().Reconcile(ctx, req)
+	It("sets ClientBuildFailed condition when talos-creds secret does not exist", func() {
+		_, _ = r().Reconcile(ctx, req) // add finalizer
 		_, err := r().Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
-		var cond *metav1.Condition
-		for i := range tu.Status.Conditions {
-			if tu.Status.Conditions[i].Type == "Ready" {
-				cond = &tu.Status.Conditions[i]
-			}
-		}
+		cond := findCondition(tu.Status.Conditions, "Ready")
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-		Expect(cond.Reason).To(Equal("SecretMissing"))
+		Expect(cond.Reason).To(Equal("ClientBuildFailed"))
 	})
 
-	It("sets UpgradeQueued condition when secret exists", func() {
+	It("sets failure condition and does not return error when Talos unreachable", func() {
+		// Secret exists with correct key names but fake (non-PEM) data.
+		// buildTalosClient will fail parsing the TLS credentials → ClientBuildFailed.
 		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "talos-creds", Namespace: ns},
+			ObjectMeta: metav1.ObjectMeta{Name: "talos-upgrade-creds", Namespace: ns},
 			Data: map[string][]byte{
-				"ca.crt": []byte("fake"), "client.crt": []byte("fake"), "client.key": []byte("fake"),
+				"ca":  []byte("fake-ca"),
+				"crt": []byte("fake-crt"),
+				"key": []byte("fake-key"),
+			},
+		}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, secret) })
+
+		_, _ = r().Reconcile(ctx, req) // add finalizer
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred()) // must not propagate Talos errors
+
+		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
+		cond := findCondition(tu.Status.Conditions, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		// Either ClientBuildFailed (TLS parse error) or UpgradeFailed (dial error).
+		Expect(cond.Reason).To(BeElementOf("ClientBuildFailed", "UpgradeFailed"))
+	})
+
+	It("does not re-submit upgrade after condition is already recorded for same generation", func() {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "talos-upgrade-creds", Namespace: ns},
+			Data: map[string][]byte{
+				"ca":  []byte("fake-ca"),
+				"crt": []byte("fake-crt"),
+				"key": []byte("fake-key"),
 			},
 		}
 		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, secret) })
 
 		_, _ = r().Reconcile(ctx, req)
-		_, err := r().Reconcile(ctx, req)
-		Expect(err).NotTo(HaveOccurred())
+		_, _ = r().Reconcile(ctx, req) // sets failure condition for gen 1
 
+		// Manually set condition to "UpgradeRequested" to simulate success.
 		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
-		var cond *metav1.Condition
-		for i := range tu.Status.Conditions {
-			if tu.Status.Conditions[i].Type == "Ready" {
-				cond = &tu.Status.Conditions[i]
-			}
-		}
+		p := client.MergeFrom(tu.DeepCopy())
+		setCondition(&tu.Status.Conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "UpgradeRequested",
+			ObservedGeneration: tu.Generation,
+		})
+		Expect(k8sClient.Status().Patch(ctx, tu, p)).To(Succeed())
+
+		// Third reconcile should be a no-op (generation unchanged).
+		result, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeZero())
+
+		// Condition must still reflect the manually-set value.
+		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
+		cond := findCondition(tu.Status.Conditions, "Ready")
 		Expect(cond).NotTo(BeNil())
-		Expect(cond.Reason).To(Equal("UpgradeQueued"))
+		Expect(cond.Reason).To(Equal("UpgradeRequested"))
 	})
 })
