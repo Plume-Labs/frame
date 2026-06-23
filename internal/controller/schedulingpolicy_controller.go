@@ -106,6 +106,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			ObservedGeneration: sp.Generation,
 		})
 		r.Recorder.Event(&sp, corev1.EventTypeNormal, "Applied", appliedMsg(&sp))
+		schedulingPolicyApplied.Inc()
 	}
 	log.Info("Reconciled SchedulingPolicy", "scheduler", sp.Spec.Scheduler,
 		"priorityClass", sp.Spec.PriorityClass, "queue", sp.Spec.QueueName)

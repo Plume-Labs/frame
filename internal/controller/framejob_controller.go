@@ -131,6 +131,12 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			eventType = corev1.EventTypeWarning
 		}
 		r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
+		switch phase {
+		case "Completed":
+			frameJobCompleted.Inc()
+		case "Failed":
+			frameJobFailed.Inc()
+		}
 	}
 
 	if phase == "Completed" || phase == "Failed" {

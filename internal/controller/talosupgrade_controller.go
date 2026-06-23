@@ -91,16 +91,19 @@ func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if isAlreadyAtVersion(err) {
 			msg := fmt.Sprintf("Node %s already at %s", tu.Spec.NodeName, tu.Spec.Image)
 			r.Recorder.Event(&tu, corev1.EventTypeNormal, "AlreadyAtVersion", msg)
+			talosUpgradeAlreadyAtVersion.Inc()
 			log.Info("Node already at target version", "node", tu.Spec.NodeName, "image", tu.Spec.Image)
 			return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "AlreadyAtVersion", msg)
 		}
 		r.Recorder.Event(&tu, corev1.EventTypeWarning, "UpgradeFailed", fmt.Sprintf("Upgrade: %v", err))
+		talosUpgradeFailed.Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tu,
 			metav1.ConditionFalse, "UpgradeFailed", fmt.Sprintf("Upgrade: %v", err))
 	}
 
 	msg := fmt.Sprintf("Upgrade to %s requested on %s", tu.Spec.Image, tu.Spec.NodeName)
 	r.Recorder.Event(&tu, corev1.EventTypeNormal, "UpgradeRequested", msg)
+	talosUpgradeRequested.Inc()
 	log.Info("Talos upgrade requested", "node", tu.Spec.NodeName,
 		"endpoint", tu.Spec.TalosEndpoint, "image", tu.Spec.Image)
 
