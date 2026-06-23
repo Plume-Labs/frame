@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -39,7 +40,8 @@ const schedulingPolicyFinalizer = "frame.plume-labs.io/schedulingpolicy"
 // SchedulingPolicyReconciler reconciles a SchedulingPolicy object
 type SchedulingPolicyReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=schedulingpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -81,6 +83,8 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			log.Info("Queue reconcile failed (scheduler CRD may not be installed)",
 				"scheduler", sp.Spec.Scheduler, "queue", sp.Spec.QueueName, "err", err)
 			errs = append(errs, fmt.Sprintf("Queue: %v", err))
+			r.Recorder.Event(&sp, corev1.EventTypeWarning, "QueueCRDMissing",
+				fmt.Sprintf("%s queue CRD not installed: %v", sp.Spec.Scheduler, err))
 		}
 	}
 
@@ -101,6 +105,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			Message:            appliedMsg(&sp),
 			ObservedGeneration: sp.Generation,
 		})
+		r.Recorder.Event(&sp, corev1.EventTypeNormal, "Applied", appliedMsg(&sp))
 	}
 	log.Info("Reconciled SchedulingPolicy", "scheduler", sp.Spec.Scheduler,
 		"priorityClass", sp.Spec.PriorityClass, "queue", sp.Spec.QueueName)

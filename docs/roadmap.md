@@ -44,8 +44,8 @@ Close the gap between CRDs that *validate* and controllers that *act*.
 - ✅ TalosUpgrade: real `Upgrade` gRPC with generation-based idempotency guard
 - ✅ SchedulingPolicy: real `PriorityClass` + Volcano/YuniKorn queue reconciliation
 - [ ] FrameResourceQuota: project into namespace `ResourceQuota` + scheduler queue limits
-- [ ] Kubernetes Events from every controller (audit trail, `kubectl describe`)
-- [ ] Prometheus metrics per controller (reconcile latency, error rate, object count)
+- ✅ Kubernetes Events from every controller (audit trail, `kubectl describe`)
+- [ ] Prometheus custom metrics per controller (object counts, phase histograms)
 - [ ] Envtest coverage threshold tracked in CI
 
 **Exit:** every CRD has an end-to-end envtest proving spec → real cluster effect →

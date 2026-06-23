@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -42,7 +43,8 @@ const frameResourceQuotaFinalizer = "frame.plume-labs.io/frameresourcequota"
 // FrameResourceQuotaReconciler reconciles a FrameResourceQuota object
 type FrameResourceQuotaReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameresourcequotas,verbs=get;list;watch;create;update;patch;delete
@@ -103,6 +105,8 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 		Message:            fmt.Sprintf("Applied to %d namespaces", len(nsList.Items)),
 		ObservedGeneration: frq.Generation,
 	})
+	r.Recorder.Event(&frq, corev1.EventTypeNormal, "QuotaApplied",
+		fmt.Sprintf("ResourceQuota applied to %d namespaces for serviceClass=%s", len(nsList.Items), frq.Spec.ServiceClass))
 	log.Info("Reconciled FrameResourceQuota", "serviceClass", frq.Spec.ServiceClass, "namespaces", len(nsList.Items))
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, r.Status().Patch(ctx, &frq, patch)
 }

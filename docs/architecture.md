@@ -34,8 +34,8 @@ config/                           Generated CRDs, RBAC, webhook + kustomize base
 
 Each CRD has a controller and a webhook; full field-level detail lives in
 [crd-reference.md](crd-reference.md). Reconcilers follow the standard pattern:
-add a finalizer, reconcile desired state, sync `.status` + conditions, clean up
-on delete.
+add a finalizer, reconcile desired state, sync `.status` + conditions, emit a
+Kubernetes Event (`kubectl describe`), clean up on delete.
 
 Notable behaviours:
 

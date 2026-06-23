@@ -22,8 +22,10 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -37,7 +39,8 @@ const talosUpgradeFinalizer = "frame.plume-labs.io/talosupgrade"
 // TalosUpgradeReconciler reconciles a TalosUpgrade object
 type TalosUpgradeReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosupgrades,verbs=get;list;watch;create;update;patch;delete
@@ -75,6 +78,7 @@ func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	c, err := buildTalosClient(ctx, r.Client, tu.Namespace, tu.Spec.TalosEndpoint, tu.Spec.TalosSecretRef)
 	if err != nil {
+		r.Recorder.Event(&tu, corev1.EventTypeWarning, "ClientBuildFailed", err.Error())
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tu,
 			metav1.ConditionFalse, "ClientBuildFailed", err.Error())
 	}
@@ -85,19 +89,22 @@ func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		// Talos returns a "no upgrade required" error when already at the target version.
 		if isAlreadyAtVersion(err) {
+			msg := fmt.Sprintf("Node %s already at %s", tu.Spec.NodeName, tu.Spec.Image)
+			r.Recorder.Event(&tu, corev1.EventTypeNormal, "AlreadyAtVersion", msg)
 			log.Info("Node already at target version", "node", tu.Spec.NodeName, "image", tu.Spec.Image)
-			return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "AlreadyAtVersion",
-				fmt.Sprintf("Node %s already at %s", tu.Spec.NodeName, tu.Spec.Image))
+			return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "AlreadyAtVersion", msg)
 		}
+		r.Recorder.Event(&tu, corev1.EventTypeWarning, "UpgradeFailed", fmt.Sprintf("Upgrade: %v", err))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tu,
 			metav1.ConditionFalse, "UpgradeFailed", fmt.Sprintf("Upgrade: %v", err))
 	}
 
+	msg := fmt.Sprintf("Upgrade to %s requested on %s", tu.Spec.Image, tu.Spec.NodeName)
+	r.Recorder.Event(&tu, corev1.EventTypeNormal, "UpgradeRequested", msg)
 	log.Info("Talos upgrade requested", "node", tu.Spec.NodeName,
 		"endpoint", tu.Spec.TalosEndpoint, "image", tu.Spec.Image)
 
-	return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "UpgradeRequested",
-		fmt.Sprintf("Upgrade to %s requested on %s", tu.Spec.Image, tu.Spec.NodeName))
+	return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "UpgradeRequested", msg)
 }
 
 // isAlreadyAtVersion returns true when the Talos API indicates the node is
