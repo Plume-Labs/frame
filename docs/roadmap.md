@@ -45,8 +45,11 @@ Close the gap between CRDs that *validate* and controllers that *act*.
 - ✅ SchedulingPolicy: real `PriorityClass` + Volcano/YuniKorn queue reconciliation
 - [ ] FrameResourceQuota: project into namespace `ResourceQuota` + scheduler queue limits
 - ✅ Kubernetes Events from every controller (audit trail, `kubectl describe`)
-- [ ] Prometheus custom metrics per controller (object counts, phase histograms)
-- [ ] Envtest coverage threshold tracked in CI
+- ✅ Prometheus custom metrics: `frame_framejob_{completed,failed}_total`,
+  `frame_talosupgrade_{requested,alreadyatversion,failed}_total`,
+  `frame_talosmachineconfig_{applied,failed}_total`,
+  `frame_schedulingpolicy_applied_total`
+- ✅ Envtest coverage threshold ≥ 45% on `internal/controller` tracked in CI
 
 **Exit:** every CRD has an end-to-end envtest proving spec → real cluster effect →
 status, green in CI.

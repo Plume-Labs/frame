@@ -88,12 +88,14 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 		Mode: machineapi.ApplyConfigurationRequest_AUTO,
 	}); err != nil {
 		r.Recorder.Event(&tmc, corev1.EventTypeWarning, "ApplyFailed", fmt.Sprintf("ApplyConfiguration: %v", err))
+		talosConfigFailed.Inc()
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tmc,
 			metav1.ConditionFalse, "ApplyFailed", fmt.Sprintf("ApplyConfiguration: %v", err))
 	}
 
 	msg := fmt.Sprintf("Config patch applied to %s via %s", tmc.Spec.NodeName, tmc.Spec.TalosEndpoint)
 	r.Recorder.Event(&tmc, corev1.EventTypeNormal, "Applied", msg)
+	talosConfigApplied.Inc()
 	log.Info("Applied Talos config patch", "node", tmc.Spec.NodeName,
 		"endpoint", tmc.Spec.TalosEndpoint, "patchLen", len(patch))
 
