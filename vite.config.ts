@@ -10,6 +10,12 @@ const projectRoot = process.env.PROJECT_ROOT || import.meta.dirname
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    // In dev, run `kubectl proxy --port=8001` and Vite forwards /apis to it.
+    proxy: {
+      '/apis': { target: 'http://localhost:8001', changeOrigin: true },
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

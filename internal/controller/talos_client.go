@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	siderosX509 "github.com/siderolabs/crypto/x509"
@@ -59,6 +60,21 @@ func buildTalosClient(ctx context.Context, kube client.Client, namespace, endpoi
 	})
 
 	return talosclient.New(ctx, talosclient.WithConfig(cfg))
+}
+
+// buildTalosInsecureClient creates a Talos gRPC client for maintenance mode (port 50000).
+//
+// Talos maintenance mode intentionally uses a per-boot ephemeral self-signed certificate
+// whose CA cannot be known ahead of time — this mirrors what `talosctl --insecure` does.
+// Connections are only made to nodes on the private provisioning network before they join
+// the cluster; once provisioned the node requires mutual TLS via buildTalosClient.
+//
+//nolint:gosec // InsecureSkipVerify required for Talos maintenance mode (see above)
+func buildTalosInsecureClient(ctx context.Context, ip string) (*talosclient.Client, error) {
+	return talosclient.New(ctx,
+		talosclient.WithTLSConfig(&tls.Config{InsecureSkipVerify: true}),
+		talosclient.WithEndpoints(ip+":50000"),
+	)
 }
 
 func firstNonEmpty(vals ...[]byte) []byte {

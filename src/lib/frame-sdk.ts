@@ -1,35 +1,21 @@
 /**
- * Frame SDK — TypeScript client for the Frame operator API.
+ * Frame SDK — TypeScript client for the Frame operator CRDs.
  *
- * Operators, CI pipelines, and workload launchers can use this SDK to
- * interact with a running Frame API server programmatically.
+ * Talks directly to the Kubernetes API. In dev, run `kubectl proxy --port=8001`
+ * so that Vite can proxy /apis/* to the cluster. In production, inject the
+ * ServiceAccount token via `window.__FRAME_TOKEN__`.
  *
  * @example
  * ```ts
- * import { FrameClient } from '@/lib/frame-sdk'
- *
- * const frame = new FrameClient('http://frame-api.cluster.local:4000')
+ * const frame = new FrameClient()
  *
  * // Submit a GPU training job
- * const job = await frame.jobs.submit({
- *   name: 'llm-finetune-v4',
- *   pipeline: 'training',
- *   serviceClass: 'HIGH',
- *   priority: 'critical',
- *   namespace: 'neura-prod',
- *   gpuCount: 8,
- * })
+ * const job = await frame.jobs.submit({ name: 'llm-run-4', pipeline: 'training', gpuCount: 8 })
  *
- * // Apply a scheduling policy
- * await frame.scheduler.applyPolicy({
- *   name: 'hpc-critical',
- *   scheduler: 'volcano',
- *   queue: 'hpc',
- *   priority: 100,
- *   preemption: true,
- *   maxGPUs: 64,
- *   maxCPUs: 512,
- * })
+ * // Provision a new node (creates a FrameNode CR, controller applies machineConfig)
+ * const { crName } = await frame.nodes.discover('192.168.10.25')
+ * // poll frame.nodes.getStatus(crName) until phase === 'Discovered', then:
+ * await frame.nodes.patchSpec(crName, { ip: '192.168.10.25', role: 'worker', disk: '/dev/nvme0n1' })
  * ```
  */
 
@@ -53,6 +39,32 @@ export interface FrameNode {
   storage: number
   gpuCount: number
   gpuModel: string
+}
+
+export interface FrameNodeStatus {
+  phase: string
+  discoveredHostname?: string
+  discoveredTalosVersion?: string
+  discoveredDisks?: Array<{ name: string; size: string; type: string }>
+  discoveredNICs?: Array<{ name: string; mac: string; speed: string }>
+}
+
+export interface FrameNodeSpec {
+  ip: string
+  role?: string
+  disk?: string
+  hostname?: string
+  rack?: string
+  zone?: string
+  serviceClass?: string
+  rdmaInterface?: string
+  network?: {
+    address?: string
+    gateway?: string
+    dns?: string[]
+    vlan?: number
+    bond?: string
+  }
 }
 
 export interface Job {
@@ -122,114 +134,350 @@ export class FrameAPIError extends Error {
   }
 }
 
-// ── HTTP helper ───────────────────────────────────────────────────────────────
+// ── K8s API config ────────────────────────────────────────────────────────────
 
-async function request<T>(
-  baseUrl: string,
+const GROUP   = 'frame.plume-labs.io'
+const VERSION = 'v1alpha1'
+
+function frameNs(override?: string): string {
+  return override
+    ?? (window as unknown as Record<string, string>).__FRAME_NAMESPACE__
+    ?? 'default'
+}
+
+function bearerToken(): string | undefined {
+  return (window as unknown as Record<string, string>).__FRAME_TOKEN__
+}
+
+function apiBase(plural: string, ns?: string): string {
+  return `/apis/${GROUP}/${VERSION}/namespaces/${frameNs(ns)}/${plural}`
+}
+
+function toK8sName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
+}
+
+async function k8sFetch<T>(
   path: string,
-  method: string,
-  apiKey: string | undefined,
-  body?: unknown,
+  opts: { method?: string; body?: unknown; contentType?: string } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-
-  const res = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-
-  const contentType = res.headers.get('content-type') ?? ''
-  let data: T | { error: string }
-  if (contentType.includes('application/json')) {
-    try {
-      data = await res.json() as T | { error: string }
-    } catch {
-      throw new FrameAPIError(res.status, `Non-JSON response from ${path}: ${res.statusText}`)
-    }
-  } else {
-    const text = await res.text()
-    throw new FrameAPIError(res.status, text || res.statusText)
+  const headers: Record<string, string> = {}
+  const tok = bearerToken()
+  if (tok) headers['Authorization'] = `Bearer ${tok}`
+  if (opts.body !== undefined) {
+    headers['Content-Type'] = opts.contentType ?? 'application/json'
   }
-  if (!res.ok) throw new FrameAPIError(res.status, (data as { error: string }).error ?? res.statusText)
-  return data as T
+  const res = await fetch(path, {
+    method: opts.method ?? 'GET',
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  })
+  if (res.status === 204) return undefined as T
+  const data = await res.json() as T & { message?: string }
+  if (!res.ok) throw new FrameAPIError(res.status, (data as { message?: string }).message ?? res.statusText)
+  return data
+}
+
+// ── CR type shims ─────────────────────────────────────────────────────────────
+
+interface FrameJobCR {
+  metadata: { name: string; namespace?: string; creationTimestamp?: string }
+  spec: {
+    pipeline: string; serviceClass?: string; priority?: string
+    namespace?: string; gpuCount?: number; suspended?: boolean
+  }
+  status?: { phase?: string; startTime?: string; completionTime?: string }
+}
+
+interface FrameNodeCR {
+  metadata: { name: string; namespace?: string }
+  spec: { ip: string; serviceClass?: string; zone?: string; rack?: string; gpuCount?: number; rdmaInterface?: string; hostname?: string }
+  status?: {
+    phase?: string; capacity?: Record<string, string>; allocatable?: Record<string, string>
+    discoveredHostname?: string; discoveredTalosVersion?: string
+    discoveredDisks?: Array<{ name: string; size: string; type: string }>
+    discoveredNICs?: Array<{ name: string; mac: string; speed: string }>
+  }
+}
+
+interface SchedulingPolicyCR {
+  metadata: { name: string; namespace?: string }
+  spec: { scheduler?: string; queueName?: string; priorityValue?: number; preemption?: boolean }
+}
+
+interface FrameResourceQuotaCR {
+  metadata: { name: string; namespace?: string }
+  spec: { serviceClass: string; maxGPUs?: number; maxCPU?: string; maxMemory?: string }
+}
+
+interface ListResponse<T> { items: T[] }
+
+// ── CR → domain mappers ───────────────────────────────────────────────────────
+
+function mapJobPhase(phase?: string): JobStatus {
+  switch (phase) {
+    case 'Running':   return 'running'
+    case 'Completed': return 'completed'
+    case 'Failed':    return 'failed'
+    default:          return 'queued'
+  }
+}
+
+function crToJob(cr: FrameJobCR): Job {
+  return {
+    id:           cr.metadata.name,
+    name:         cr.metadata.name,
+    pipeline:     cr.spec.pipeline,
+    status:       mapJobPhase(cr.status?.phase),
+    serviceClass: (cr.spec.serviceClass ?? 'MEDIUM') as ServiceClass,
+    priority:     (cr.spec.priority ?? 'medium') as Priority,
+    namespace:    cr.spec.namespace ?? cr.metadata.namespace ?? frameNs(),
+    gpuCount:     cr.spec.gpuCount ?? 0,
+    createdAt:    cr.metadata.creationTimestamp ?? new Date().toISOString(),
+    startedAt:    cr.status?.startTime,
+    completedAt:  cr.status?.completionTime,
+  }
+}
+
+function mapNodePhase(phase?: string): NodeStatus {
+  switch (phase) {
+    case 'Online':       return 'online'
+    case 'Degraded':     return 'degraded'
+    case 'Provisioning':
+    case 'Discovering':
+    case 'Discovered':   return 'provisioning'
+    default:             return 'offline'
+  }
+}
+
+function quantityToNum(q?: string): number {
+  if (!q) return 0
+  const n = parseFloat(q)
+  return Number.isFinite(n) ? Math.round(n) : 0
+}
+
+function crToNode(cr: FrameNodeCR): FrameNode {
+  const alloc = cr.status?.allocatable ?? {}
+  return {
+    id:           cr.metadata.name,
+    name:         cr.spec.hostname ?? cr.metadata.name,
+    status:       mapNodePhase(cr.status?.phase),
+    serviceClass: (cr.spec.serviceClass ?? 'LOW') as ServiceClass,
+    zone:         cr.spec.zone ?? '',
+    rackId:       cr.spec.rack ?? '',
+    cpu:          quantityToNum(alloc['cpu']),
+    memory:       quantityToNum(alloc['memory']),
+    storage:      0,
+    gpuCount:     cr.spec.gpuCount ?? 0,
+    gpuModel:     cr.spec.rdmaInterface ? 'RDMA' : 'Unknown',
+  }
+}
+
+function crToPolicy(cr: SchedulingPolicyCR): SchedulingPolicy {
+  return {
+    name:       cr.metadata.name,
+    scheduler:  (cr.spec.scheduler ?? 'default') as SchedulerType,
+    queue:      cr.spec.queueName ?? '',
+    priority:   cr.spec.priorityValue ?? 0,
+    preemption: cr.spec.preemption ?? false,
+    maxGPUs:    0,
+    maxCPUs:    0,
+  }
+}
+
+function crToQuota(cr: FrameResourceQuotaCR): ResourceQuota {
+  return {
+    namespace:  cr.metadata.namespace ?? frameNs(),
+    maxCPU:     cr.spec.maxCPU ?? '0',
+    maxMemory:  cr.spec.maxMemory ?? '0Gi',
+    maxGPUs:    cr.spec.maxGPUs ?? 0,
+    usedCPU:    '0',
+    usedMemory: '0Gi',
+    usedGPUs:   0,
+  }
 }
 
 // ── Sub-clients ───────────────────────────────────────────────────────────────
 
 class NodeClient {
-  constructor(private readonly base: string, private readonly apiKey?: string) {}
+  constructor(private readonly ns?: string) {}
 
-  list(): Promise<{ items: FrameNode[]; total: number }> {
-    return request(this.base, '/api/nodes', 'GET', this.apiKey)
+  async list(): Promise<{ items: FrameNode[]; total: number }> {
+    const res = await k8sFetch<ListResponse<FrameNodeCR>>(apiBase('framenodes', this.ns))
+    const items = (res.items ?? []).map(crToNode)
+    return { items, total: items.length }
   }
 
-  get(id: string): Promise<FrameNode> {
-    return request(this.base, `/api/nodes/${id}`, 'GET', this.apiKey)
+  async get(id: string): Promise<FrameNode> {
+    const cr = await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${id}`)
+    return crToNode(cr)
+  }
+
+  async discover(ip: string): Promise<{ crName: string }> {
+    const crName = toK8sName('frame-node-' + ip.replace(/\./g, '-'))
+    await k8sFetch<FrameNodeCR>(apiBase('framenodes', this.ns), {
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'FrameNode',
+        metadata: { name: crName, namespace: frameNs(this.ns) },
+        spec: { ip },
+      },
+    })
+    return { crName }
+  }
+
+  async getStatus(name: string): Promise<FrameNodeStatus> {
+    const cr = await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${name}`)
+    return {
+      phase:                  cr.status?.phase ?? '',
+      discoveredHostname:     cr.status?.discoveredHostname,
+      discoveredTalosVersion: cr.status?.discoveredTalosVersion,
+      discoveredDisks:        cr.status?.discoveredDisks,
+      discoveredNICs:         cr.status?.discoveredNICs,
+    }
+  }
+
+  async patchSpec(name: string, spec: FrameNodeSpec): Promise<void> {
+    await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${name}`, {
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec },
+    })
+  }
+
+  async delete(name: string): Promise<void> {
+    await k8sFetch<undefined>(`${apiBase('framenodes', this.ns)}/${name}`, { method: 'DELETE' })
   }
 }
 
 class JobClient {
-  constructor(private readonly base: string, private readonly apiKey?: string) {}
+  constructor(private readonly ns?: string) {}
 
-  list(): Promise<{ items: Job[]; total: number }> {
-    return request(this.base, '/api/jobs', 'GET', this.apiKey)
+  async list(): Promise<{ items: Job[]; total: number }> {
+    const res = await k8sFetch<ListResponse<FrameJobCR>>(apiBase('framejobs', this.ns))
+    const items = (res.items ?? []).map(crToJob)
+    return { items, total: items.length }
   }
 
-  submit(spec: JobSpec): Promise<Job> {
-    return request(this.base, '/api/jobs', 'POST', this.apiKey, spec)
+  async submit(spec: JobSpec): Promise<Job> {
+    const crName = toK8sName(spec.name)
+    const cr = await k8sFetch<FrameJobCR>(apiBase('framejobs', this.ns), {
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'FrameJob',
+        metadata: { name: crName, namespace: frameNs(this.ns) },
+        spec: {
+          pipeline:     spec.pipeline,
+          serviceClass: spec.serviceClass ?? 'MEDIUM',
+          priority:     spec.priority ?? 'medium',
+          namespace:    spec.namespace ?? frameNs(this.ns),
+          gpuCount:     spec.gpuCount ?? 0,
+        },
+      },
+    })
+    return crToJob(cr)
   }
 
-  cancel(id: string): Promise<{ cancelled: boolean; job: Job }> {
-    return request(this.base, `/api/jobs/${id}`, 'DELETE', this.apiKey)
+  async cancel(id: string): Promise<{ cancelled: boolean; job: Job }> {
+    const cr = await k8sFetch<FrameJobCR>(`${apiBase('framejobs', this.ns)}/${id}`)
+    const job = crToJob(cr)
+    await k8sFetch<undefined>(`${apiBase('framejobs', this.ns)}/${id}`, { method: 'DELETE' })
+    return { cancelled: true, job }
   }
 }
 
 class SchedulerClient {
-  constructor(private readonly base: string, private readonly apiKey?: string) {}
+  constructor(private readonly ns?: string) {}
 
-  listPolicies(): Promise<{ items: SchedulingPolicy[]; total: number }> {
-    return request(this.base, '/api/scheduler/policies', 'GET', this.apiKey)
+  async listPolicies(): Promise<{ items: SchedulingPolicy[]; total: number }> {
+    const res = await k8sFetch<ListResponse<SchedulingPolicyCR>>(apiBase('schedulingpolicies', this.ns))
+    const items = (res.items ?? []).map(crToPolicy)
+    return { items, total: items.length }
   }
 
-  applyPolicy(policy: SchedulingPolicy): Promise<SchedulingPolicy> {
-    return request(this.base, '/api/scheduler/policies', 'POST', this.apiKey, policy)
+  async applyPolicy(policy: SchedulingPolicy): Promise<SchedulingPolicy> {
+    const crName = toK8sName(policy.name)
+    const specBody = { scheduler: policy.scheduler, queueName: policy.queue, priorityValue: policy.priority, preemption: policy.preemption }
+    try {
+      const res = await k8sFetch<SchedulingPolicyCR>(apiBase('schedulingpolicies', this.ns), {
+        method: 'POST',
+        body: { apiVersion: `${GROUP}/${VERSION}`, kind: 'SchedulingPolicy', metadata: { name: crName, namespace: frameNs(this.ns) }, spec: specBody },
+      })
+      return crToPolicy(res)
+    } catch (e) {
+      if (e instanceof FrameAPIError && e.statusCode === 409) {
+        const res = await k8sFetch<SchedulingPolicyCR>(`${apiBase('schedulingpolicies', this.ns)}/${crName}`, {
+          method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: specBody },
+        })
+        return crToPolicy(res)
+      }
+      throw e
+    }
   }
 
-  deletePolicy(name: string): Promise<{ deleted: boolean; policy: SchedulingPolicy }> {
-    return request(this.base, `/api/scheduler/policies/${name}`, 'DELETE', this.apiKey)
+  async deletePolicy(name: string): Promise<{ deleted: boolean; policy: SchedulingPolicy }> {
+    const cr = await k8sFetch<SchedulingPolicyCR>(`${apiBase('schedulingpolicies', this.ns)}/${name}`)
+    const policy = crToPolicy(cr)
+    await k8sFetch<undefined>(`${apiBase('schedulingpolicies', this.ns)}/${name}`, { method: 'DELETE' })
+    return { deleted: true, policy }
   }
 }
 
 class ResourceClient {
-  constructor(private readonly base: string, private readonly apiKey?: string) {}
+  constructor(private readonly ns?: string) {}
 
-  listQuotas(): Promise<{ items: ResourceQuota[]; total: number }> {
-    return request(this.base, '/api/resources/quotas', 'GET', this.apiKey)
+  async listQuotas(): Promise<{ items: ResourceQuota[]; total: number }> {
+    const res = await k8sFetch<ListResponse<FrameResourceQuotaCR>>(apiBase('frameresourcequotas', this.ns))
+    const items = (res.items ?? []).map(crToQuota)
+    return { items, total: items.length }
   }
 
-  setQuota(namespace: string, quota: Partial<ResourceQuota>): Promise<ResourceQuota> {
-    return request(this.base, `/api/resources/quotas/${namespace}`, 'PUT', this.apiKey, quota)
+  async setQuota(namespace: string, quota: Partial<ResourceQuota> & { serviceClass?: ServiceClass }): Promise<ResourceQuota> {
+    const sc = quota.serviceClass ?? 'MEDIUM'
+    const crName = toK8sName(`frame-quota-${sc.toLowerCase()}`)
+    const specBody = { serviceClass: sc, maxCPU: quota.maxCPU, maxMemory: quota.maxMemory, maxGPUs: quota.maxGPUs }
+    try {
+      const res = await k8sFetch<FrameResourceQuotaCR>(apiBase('frameresourcequotas', namespace), {
+        method: 'POST',
+        body: { apiVersion: `${GROUP}/${VERSION}`, kind: 'FrameResourceQuota', metadata: { name: crName, namespace: frameNs(namespace) }, spec: specBody },
+      })
+      return crToQuota(res)
+    } catch (e) {
+      if (e instanceof FrameAPIError && e.statusCode === 409) {
+        const res = await k8sFetch<FrameResourceQuotaCR>(`${apiBase('frameresourcequotas', namespace)}/${crName}`, {
+          method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: specBody },
+        })
+        return crToQuota(res)
+      }
+      throw e
+    }
   }
 
-  listServiceClasses(): Promise<{ items: ServiceClassSummary[] }> {
-    return request(this.base, '/api/resources/service-classes', 'GET', this.apiKey)
+  async listServiceClasses(): Promise<{ items: ServiceClassSummary[] }> {
+    const res = await k8sFetch<ListResponse<FrameNodeCR>>(apiBase('framenodes', this.ns))
+    const nodes = res.items ?? []
+    const items = (['HIGH', 'MEDIUM', 'LOW'] as ServiceClass[]).map((sc) => ({
+      serviceClass: sc,
+      nodeCount:   nodes.filter((n) => n.spec.serviceClass === sc).length,
+      totalGPUs:   nodes.filter((n) => n.spec.serviceClass === sc).reduce((s, n) => s + (n.spec.gpuCount ?? 0), 0),
+    }))
+    return { items }
   }
 }
 
 // ── Main client ───────────────────────────────────────────────────────────────
 
 export interface FrameClientOptions {
-  /** Bearer token for authenticating against the Frame API server. */
-  apiKey?: string
+  namespace?: string
 }
 
 /**
- * Top-level Frame SDK client.
+ * Top-level Frame SDK client. Communicates directly with the Kubernetes API.
  *
- * @param baseUrl - Base URL of the Frame API server, e.g. `http://localhost:4000`
- * @param opts    - Optional configuration (API key, etc.)
+ * Dev: run `kubectl proxy --port=8001` so Vite proxies /apis to the cluster.
+ * Prod: set `window.__FRAME_TOKEN__` to a ServiceAccount Bearer token before mounting the app.
  */
 export class FrameClient {
   public readonly nodes: NodeClient
@@ -237,31 +485,23 @@ export class FrameClient {
   public readonly scheduler: SchedulerClient
   public readonly resources: ResourceClient
 
-  private readonly base: string
-  private readonly apiKey?: string
-
-  constructor(baseUrl: string, opts: FrameClientOptions = {}) {
-    this.base      = baseUrl.replace(/\/$/, '')
-    this.apiKey    = opts.apiKey
-    this.nodes     = new NodeClient(this.base, this.apiKey)
-    this.jobs      = new JobClient(this.base, this.apiKey)
-    this.scheduler = new SchedulerClient(this.base, this.apiKey)
-    this.resources = new ResourceClient(this.base, this.apiKey)
+  constructor(opts: FrameClientOptions = {}) {
+    this.nodes     = new NodeClient(opts.namespace)
+    this.jobs      = new JobClient(opts.namespace)
+    this.scheduler = new SchedulerClient(opts.namespace)
+    this.resources = new ResourceClient(opts.namespace)
   }
 
-  health(): Promise<HealthStatus> {
-    return request(this.base, '/api/health', 'GET', this.apiKey)
+  async health(): Promise<HealthStatus> {
+    try {
+      await k8sFetch<unknown>(`/apis/${GROUP}/${VERSION}/`)
+      return { status: 'ok', version: VERSION, uptime: 0 }
+    } catch {
+      return { status: 'degraded', version: VERSION, uptime: 0 }
+    }
   }
 }
 
-// ── Convenience factory ───────────────────────────────────────────────────────
-
-/**
- * Create a Frame SDK client pointing at the default local API server.
- */
-export function createFrameClient(
-  baseUrl = 'http://localhost:4000',
-  opts: FrameClientOptions = {},
-): FrameClient {
-  return new FrameClient(baseUrl, opts)
+export function createFrameClient(opts: FrameClientOptions = {}): FrameClient {
+  return new FrameClient(opts)
 }
