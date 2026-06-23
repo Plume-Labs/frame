@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -61,43 +63,55 @@ func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, r.Update(ctx, &tu)
 	}
 
-	// Validate secret exists before attempting upgrade
-	if err := r.validateSecret(ctx, &tu); err != nil {
-		return ctrl.Result{}, r.setUpgradeCondition(ctx, &tu, metav1.ConditionFalse, "SecretMissing",
-			fmt.Sprintf("Talos secret not found: %v", err))
+	// Upgrade is not idempotent-safe to call on every reconcile: triggering it
+	// again while the node is rebooting would cause a second upgrade. Guard by
+	// ObservedGeneration — only call Upgrade when spec.generation changes.
+	for _, cond := range tu.Status.Conditions {
+		if cond.Type == "Ready" && cond.ObservedGeneration == tu.Generation &&
+			(cond.Reason == "UpgradeRequested" || cond.Reason == "AlreadyAtVersion") {
+			return ctrl.Result{}, nil
+		}
 	}
 
-	// TODO: call Talos gRPC API once github.com/siderolabs/talos/pkg/machinery is added.
-	// Example:
-	//   creds, err := loadTalosCredentials(ctx, r.Client, tu.Namespace, tu.Spec.TalosSecretRef)
-	//   c, err := talos.New(ctx, talos.WithEndpoints(tu.Spec.TalosEndpoint), talos.WithCredentials(creds))
-	//   _, err = c.Upgrade(ctx, &machineapi.UpgradeRequest{
-	//       Image:        tu.Spec.Image,
-	//       PreserveData: tu.Spec.PreserveData,
-	//   })
-	log.Info("Upgrade queued (Talos apply pending SDK integration)",
-		"node", tu.Spec.NodeName,
-		"endpoint", tu.Spec.TalosEndpoint,
-		"image", tu.Spec.Image,
-	)
-
-	return ctrl.Result{}, r.setUpgradeCondition(ctx, &tu, metav1.ConditionTrue, "UpgradeQueued",
-		"Secret validated; upgrade requires Talos SDK integration")
-}
-
-func (r *TalosUpgradeReconciler) validateSecret(ctx context.Context, tu *framev1alpha1.TalosUpgrade) error {
-	ref := tu.Spec.TalosSecretRef
-	ns := ref.Namespace
-	if ns == "" {
-		ns = tu.Namespace
+	c, err := buildTalosClient(ctx, r.Client, tu.Namespace, tu.Spec.TalosEndpoint, tu.Spec.TalosSecretRef)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tu,
+			metav1.ConditionFalse, "ClientBuildFailed", err.Error())
 	}
-	obj := &metav1.PartialObjectMetadata{}
-	obj.SetGroupVersionKind(corev1GVK("v1", "Secret"))
-	return r.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: ns}, obj)
+	defer c.Close() //nolint:errcheck
+
+	// stage=false: upgrade without staging; force=false: honour version guards.
+	_, err = c.Upgrade(ctx, tu.Spec.Image, false, false)
+	if err != nil {
+		// Talos returns a "no upgrade required" error when already at the target version.
+		if isAlreadyAtVersion(err) {
+			log.Info("Node already at target version", "node", tu.Spec.NodeName, "image", tu.Spec.Image)
+			return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "AlreadyAtVersion",
+				fmt.Sprintf("Node %s already at %s", tu.Spec.NodeName, tu.Spec.Image))
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tu,
+			metav1.ConditionFalse, "UpgradeFailed", fmt.Sprintf("Upgrade: %v", err))
+	}
+
+	log.Info("Talos upgrade requested", "node", tu.Spec.NodeName,
+		"endpoint", tu.Spec.TalosEndpoint, "image", tu.Spec.Image)
+
+	return ctrl.Result{}, r.setCondition(ctx, &tu, metav1.ConditionTrue, "UpgradeRequested",
+		fmt.Sprintf("Upgrade to %s requested on %s", tu.Spec.Image, tu.Spec.NodeName))
 }
 
-func (r *TalosUpgradeReconciler) setUpgradeCondition(ctx context.Context, tu *framev1alpha1.TalosUpgrade, status metav1.ConditionStatus, reason, msg string) error {
-	patch := client.MergeFrom(tu.DeepCopy())
+// isAlreadyAtVersion returns true when the Talos API indicates the node is
+// already running the requested image and no upgrade is needed.
+func isAlreadyAtVersion(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "already at target version") || strings.Contains(msg, "no upgrade required")
+}
+
+func (r *TalosUpgradeReconciler) setCondition(ctx context.Context, tu *framev1alpha1.TalosUpgrade, status metav1.ConditionStatus, reason, msg string) error {
+	p := client.MergeFrom(tu.DeepCopy())
 	setCondition(&tu.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             status,
@@ -105,7 +119,7 @@ func (r *TalosUpgradeReconciler) setUpgradeCondition(ctx context.Context, tu *fr
 		Message:            msg,
 		ObservedGeneration: tu.Generation,
 	})
-	return r.Status().Patch(ctx, tu, patch)
+	return r.Status().Patch(ctx, tu, p)
 }
 
 // SetupWithManager sets up the controller with the Manager.

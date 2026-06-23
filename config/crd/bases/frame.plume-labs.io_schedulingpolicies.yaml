@@ -53,10 +53,24 @@ spec:
                 description: PriorityClass is the default Kubernetes PriorityClass
                   for jobs under this policy.
                 type: string
+              priorityValue:
+                description: |-
+                  PriorityValue is the integer value for the Kubernetes PriorityClass. Ignored when PriorityClass is empty.
+                  Higher values = higher priority. System pods use 2000000000.
+                format: int32
+                maximum: 1000000000
+                minimum: -2147483648
+                type: integer
               queueName:
                 description: QueueName is the Volcano/YuniKorn queue to submit jobs
                   to.
                 type: string
+              queueWeight:
+                description: QueueWeight is the relative weight of the Volcano/YuniKorn
+                  queue (default 1).
+                format: int32
+                minimum: 1
+                type: integer
               scheduler:
                 description: Scheduler selects the scheduler implementation.
                 enum:

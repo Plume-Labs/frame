@@ -80,20 +80,51 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 		Expect(controllerutil.ContainsFinalizer(tmc, talosMachineConfigFinalizer)).To(BeTrue())
 	})
 
-	It("sets PatchResolved condition when patch is inline", func() {
-		_, _ = r().Reconcile(ctx, req)
+	It("sets ClientBuildFailed condition when talos-creds secret is absent", func() {
+		_, _ = r().Reconcile(ctx, req) // add finalizer
 		_, err := r().Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, tmc)).To(Succeed())
-		var cond *metav1.Condition
-		for i := range tmc.Status.Conditions {
-			if tmc.Status.Conditions[i].Type == "Ready" {
-				cond = &tmc.Status.Conditions[i]
-			}
-		}
+		cond := findCondition(tmc.Status.Conditions, "Ready")
 		Expect(cond).NotTo(BeNil())
-		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
-		Expect(cond.Reason).To(Equal("PatchResolved"))
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal("ClientBuildFailed"))
+	})
+
+	It("sets PatchResolveFailed condition when configPatchRef ConfigMap is missing", func() {
+		tmcCM := &framev1alpha1.TalosMachineConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "tmc-cm", Namespace: ns},
+			Spec: framev1alpha1.TalosMachineConfigSpec{
+				NodeName:       "worker-2",
+				TalosEndpoint:  "10.0.0.2:50000",
+				TalosSecretRef: corev1.SecretReference{Name: "talos-creds", Namespace: ns},
+				ConfigPatchRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "nonexistent-cm"},
+					Key:                  "patch.yaml",
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, tmcCM)).To(Succeed())
+		cmKey := types.NamespacedName{Name: "tmc-cm", Namespace: ns}
+		cmReq := reconcile.Request{NamespacedName: cmKey}
+		defer func() {
+			fresh := &framev1alpha1.TalosMachineConfig{}
+			if err := k8sClient.Get(ctx, cmKey, fresh); err == nil {
+				fresh.Finalizers = nil
+				_ = k8sClient.Update(ctx, fresh)
+				_ = k8sClient.Delete(ctx, fresh)
+			}
+		}()
+
+		_, _ = r().Reconcile(ctx, cmReq) // add finalizer
+		_, err := r().Reconcile(ctx, cmReq)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, cmKey, tmcCM)).To(Succeed())
+		cond := findCondition(tmcCM.Status.Conditions, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal("PatchResolveFailed"))
 	})
 })

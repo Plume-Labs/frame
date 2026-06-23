@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -86,5 +87,132 @@ var _ = Describe("FrameJob Controller", func() {
 		// Object still exists and retains finalizer.
 		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
 		Expect(controllerutil.ContainsFinalizer(job, frameJobFinalizer)).To(BeTrue())
+	})
+})
+
+var _ = Describe("buildWorkflow", func() {
+	makeJob := func(priority string, gpus int32, suspended bool, params map[string]string) *framev1alpha1.FrameJob {
+		return &framev1alpha1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{Name: "myjob", Namespace: "ctrl-ns"},
+			Spec: framev1alpha1.FrameJobSpec{
+				Pipeline:     "train-dag",
+				ServiceClass: "HIGH",
+				Priority:     priority,
+				Namespace:    "compute-ns",
+				GPUCount:     gpus,
+				Suspended:    suspended,
+				Parameters:   params,
+			},
+		}
+	}
+
+	It("sets gpu-count and service-class parameters", func() {
+		wf := buildWorkflow(makeJob("high", 4, false, nil))
+		params, _, _ := unstructured.NestedSlice(wf.Object, "spec", "arguments", "parameters")
+		Expect(params).To(ContainElement(map[string]interface{}{"name": "gpu-count", "value": "4"}))
+		Expect(params).To(ContainElement(map[string]interface{}{"name": "service-class", "value": "HIGH"}))
+	})
+
+	It("wires priorityClassName for known priorities", func() {
+		cases := map[string]string{
+			"critical": "frame-critical",
+			"high":     "frame-high",
+			"medium":   "frame-medium",
+			"low":      "frame-low",
+		}
+		for prio, want := range cases {
+			wf := buildWorkflow(makeJob(prio, 0, false, nil))
+			got, _, _ := unstructured.NestedString(wf.Object, "spec", "priorityClassName")
+			Expect(got).To(Equal(want), "priority=%s", prio)
+		}
+	})
+
+	It("omits priorityClassName when priority is empty", func() {
+		wf := buildWorkflow(makeJob("", 0, false, nil))
+		_, exists, _ := unstructured.NestedString(wf.Object, "spec", "priorityClassName")
+		Expect(exists).To(BeFalse())
+	})
+
+	It("sets spec.suspend=true when Suspended=true", func() {
+		wf := buildWorkflow(makeJob("high", 2, true, nil))
+		suspended, _, _ := unstructured.NestedBool(wf.Object, "spec", "suspend")
+		Expect(suspended).To(BeTrue())
+	})
+
+	It("sets spec.suspend=false when Suspended=false", func() {
+		wf := buildWorkflow(makeJob("high", 2, false, nil))
+		suspended, _, _ := unstructured.NestedBool(wf.Object, "spec", "suspend")
+		Expect(suspended).To(BeFalse())
+	})
+
+	It("stores job-namespace label for reverse mapping", func() {
+		wf := buildWorkflow(makeJob("high", 2, false, nil))
+		labels := wf.GetLabels()
+		Expect(labels["frame.plume-labs.io/job-namespace"]).To(Equal("ctrl-ns"))
+		Expect(labels["frame.plume-labs.io/job"]).To(Equal("myjob"))
+	})
+
+	It("appends extra parameters from spec.parameters", func() {
+		wf := buildWorkflow(makeJob("high", 2, false, map[string]string{"dataset": "s3://bucket/ds"}))
+		params, _, _ := unstructured.NestedSlice(wf.Object, "spec", "arguments", "parameters")
+		Expect(params).To(ContainElement(map[string]interface{}{"name": "dataset", "value": "s3://bucket/ds"}))
+	})
+})
+
+var _ = Describe("workflowPhase", func() {
+	makeWF := func(phase string) *unstructured.Unstructured {
+		wf := &unstructured.Unstructured{Object: map[string]interface{}{}}
+		if phase != "" {
+			_ = unstructured.SetNestedField(wf.Object, phase, "status", "phase")
+		}
+		return wf
+	}
+
+	It("returns Suspended when suspended=true and workflow not yet terminal", func() {
+		Expect(workflowPhase(makeWF("Running"), true)).To(Equal("Suspended"))
+		Expect(workflowPhase(makeWF(""), true)).To(Equal("Suspended"))
+	})
+
+	It("does not override terminal phases when suspended=true", func() {
+		Expect(workflowPhase(makeWF("Succeeded"), true)).To(Equal("Completed"))
+		Expect(workflowPhase(makeWF("Failed"), true)).To(Equal("Failed"))
+	})
+
+	It("maps Succeeded to Completed", func() {
+		Expect(workflowPhase(makeWF("Succeeded"), false)).To(Equal("Completed"))
+	})
+
+	It("maps Failed/Error to Failed", func() {
+		Expect(workflowPhase(makeWF("Failed"), false)).To(Equal("Failed"))
+		Expect(workflowPhase(makeWF("Error"), false)).To(Equal("Failed"))
+	})
+
+	It("maps Running to Running", func() {
+		Expect(workflowPhase(makeWF("Running"), false)).To(Equal("Running"))
+	})
+
+	It("returns Submitted for unknown/empty phase", func() {
+		Expect(workflowPhase(makeWF(""), false)).To(Equal("Submitted"))
+	})
+})
+
+var _ = Describe("workflowToFrameJob", func() {
+	It("returns empty when labels missing", func() {
+		r := &FrameJobReconciler{}
+		wf := &unstructured.Unstructured{}
+		wf.SetLabels(map[string]string{})
+		Expect(r.workflowToFrameJob(context.Background(), wf)).To(BeEmpty())
+	})
+
+	It("maps labels to FrameJob NamespacedName", func() {
+		r := &FrameJobReconciler{}
+		wf := &unstructured.Unstructured{}
+		wf.SetLabels(map[string]string{
+			"frame.plume-labs.io/job":           "myjob",
+			"frame.plume-labs.io/job-namespace": "ctrl-ns",
+		})
+		reqs := r.workflowToFrameJob(context.Background(), wf)
+		Expect(reqs).To(HaveLen(1))
+		Expect(reqs[0].NamespacedName).To(Equal(types.NamespacedName{Name: "myjob", Namespace: "ctrl-ns"}))
 	})
 })
