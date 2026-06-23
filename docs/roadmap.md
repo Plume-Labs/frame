@@ -58,11 +58,18 @@ status, green in CI.
 
 ## Phase 2 — Wire the control plane to the cluster
 
-- [ ] Replace the in-memory API backend with a Kubernetes client that CRUDs the
-      Frame CRDs (jobs, policies, quotas, nodes)
-- [ ] Define and enforce authn/authz on the REST API (map to operator RBAC tiers)
-- [ ] Keep the simulation strictly as an offline/dev fallback behind a flag
-- [ ] Regenerate the SDK + OpenAPI from the live API; contract tests against the operator
+- ✅ Replace in-memory backend: `server/k8s.ts` wraps `@kubernetes/client-node`
+  (`CustomObjectsApi`) for all 4 resource types. `loadFromDefault()` handles
+  both kubeconfig (dev) and in-cluster SA (production). In-memory simulation
+  remains as automatic fallback when no cluster config is found.
+- ✅ Routes wired: `GET/POST/DELETE /api/jobs` → FrameJob CRs;
+  `GET /api/nodes` + `GET /api/nodes/:id` → FrameNode CRs;
+  `GET/POST/DELETE /api/scheduler/policies` → SchedulingPolicy CRs;
+  `GET/PUT /api/resources/quotas` → FrameResourceQuota CRs.
+- [ ] Authn/authz: map Bearer token to K8s ServiceAccount + RBAC tiers
+  (currently single static `FRAME_API_TOKEN`, no per-user impersonation)
+- [ ] SDK + OpenAPI regeneration from live API; contract tests
+- [ ] SSE/Watch endpoint for real-time job phase updates to the UI
 
 **Exit:** submitting a job in the UI creates a real `FrameJob` CR and the UI
 reflects live status; `deploy/api/openapi.yaml` matches the running server.

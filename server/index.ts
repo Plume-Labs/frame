@@ -12,6 +12,7 @@
 import express, { Request, Response, NextFunction } from 'express'
 import { randomUUID } from 'crypto'
 import provisionRouter from './routes/provision.js'
+import * as K8s from './k8s.js'
 
 const app = express()
 app.use(express.json())
@@ -136,11 +137,24 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 app.use('/api/nodes', provisionRouter)
 
-app.get('/api/nodes', (_req: Request, res: Response) => {
+app.get('/api/nodes', async (_req: Request, res: Response) => {
+  if (K8s.k8sAvailable()) {
+    try {
+      const items = await K8s.listNodes()
+      res.json({ items, total: items.length }); return
+    } catch (e) { console.error('[k8s] listNodes:', e) }
+  }
   res.json({ items: nodes, total: nodes.length })
 })
 
-app.get('/api/nodes/:id', (req: Request, res: Response) => {
+app.get('/api/nodes/:id', async (req: Request, res: Response) => {
+  if (K8s.k8sAvailable()) {
+    try {
+      const node = await K8s.getNodeByName(String(req.params.id))
+      if (node) { res.json(node); return }
+      res.status(404).json({ error: 'Node not found' }); return
+    } catch (e) { console.error('[k8s] getNode:', e) }
+  }
   const node = nodes.find((n) => n.id === req.params.id)
   if (!node) { res.status(404).json({ error: 'Node not found' }); return }
   res.json(node)
@@ -148,7 +162,13 @@ app.get('/api/nodes/:id', (req: Request, res: Response) => {
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
-app.get('/api/jobs', (_req: Request, res: Response) => {
+app.get('/api/jobs', async (_req: Request, res: Response) => {
+  if (K8s.k8sAvailable()) {
+    try {
+      const items = await K8s.listJobs()
+      res.json({ items, total: items.length }); return
+    } catch (e) { console.error('[k8s] listJobs:', e) }
+  }
   res.json({ items: jobs, total: jobs.length })
 })
 
@@ -158,27 +178,31 @@ interface JobSubmitBody {
   namespace?: string; gpuCount?: number
 }
 
-app.post('/api/jobs', requireAuth, (req: Request<object, object, JobSubmitBody>, res: Response) => {
+app.post('/api/jobs', requireAuth, async (req: Request<object, object, JobSubmitBody>, res: Response) => {
   const { name, pipeline, serviceClass = 'MEDIUM', priority = 'medium', namespace = 'default', gpuCount = 0 } = req.body
   const VALID_SERVICE_CLASSES: ServiceClass[] = ['HIGH', 'MEDIUM', 'LOW']
   const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low']
 
   if (!name || !pipeline) {
-    res.status(400).json({ error: "'name' and 'pipeline' are required" })
-    return
+    res.status(400).json({ error: "'name' and 'pipeline' are required" }); return
   }
-  if (serviceClass !== undefined && !VALID_SERVICE_CLASSES.includes(serviceClass)) {
-    res.status(400).json({ error: `'serviceClass' must be one of: ${VALID_SERVICE_CLASSES.join(', ')}` })
-    return
+  if (!VALID_SERVICE_CLASSES.includes(serviceClass)) {
+    res.status(400).json({ error: `'serviceClass' must be one of: ${VALID_SERVICE_CLASSES.join(', ')}` }); return
   }
-  if (priority !== undefined && !VALID_PRIORITIES.includes(priority)) {
-    res.status(400).json({ error: `'priority' must be one of: ${VALID_PRIORITIES.join(', ')}` })
-    return
+  if (!VALID_PRIORITIES.includes(priority)) {
+    res.status(400).json({ error: `'priority' must be one of: ${VALID_PRIORITIES.join(', ')}` }); return
   }
-  if (gpuCount !== undefined && (typeof gpuCount !== 'number' || gpuCount < 0 || !Number.isInteger(gpuCount))) {
-    res.status(400).json({ error: "'gpuCount' must be a non-negative integer" })
-    return
+  if (typeof gpuCount !== 'number' || gpuCount < 0 || !Number.isInteger(gpuCount)) {
+    res.status(400).json({ error: "'gpuCount' must be a non-negative integer" }); return
   }
+
+  if (K8s.k8sAvailable()) {
+    try {
+      const job = await K8s.createJob({ name, pipeline, serviceClass, priority, namespace, gpuCount })
+      res.status(201).json(job); return
+    } catch (e) { console.error('[k8s] createJob:', e) }
+  }
+
   const job: JobRecord = {
     id: randomUUID(), name, pipeline, status: 'queued',
     serviceClass, priority, namespace, gpuCount,
@@ -188,8 +212,21 @@ app.post('/api/jobs', requireAuth, (req: Request<object, object, JobSubmitBody>,
   res.status(201).json(job)
 })
 
-app.delete('/api/jobs/:id', requireAuth, (req: Request, res: Response) => {
-  const idx = jobs.findIndex((j) => j.id === req.params.id)
+app.delete('/api/jobs/:id', requireAuth, async (req: Request, res: Response) => {
+  const id = String(req.params.id)
+
+  if (K8s.k8sAvailable()) {
+    try {
+      await K8s.deleteJob(id)
+      res.json({ cancelled: true, id }); return
+    } catch (e: unknown) {
+      const status = (e as { response?: { statusCode?: number } })?.response?.statusCode
+      if (status === 404) { res.status(404).json({ error: 'Job not found' }); return }
+      console.error('[k8s] deleteJob:', e)
+    }
+  }
+
+  const idx = jobs.findIndex((j) => j.id === id)
   if (idx === -1) { res.status(404).json({ error: 'Job not found' }); return }
   const [job] = jobs.splice(idx, 1)
   res.json({ cancelled: true, job })
@@ -197,15 +234,29 @@ app.delete('/api/jobs/:id', requireAuth, (req: Request, res: Response) => {
 
 // ── Scheduler policies ───────────────────────────────────────────────────────
 
-app.get('/api/scheduler/policies', (_req: Request, res: Response) => {
+app.get('/api/scheduler/policies', async (_req: Request, res: Response) => {
+  if (K8s.k8sAvailable()) {
+    try {
+      const items = await K8s.listPolicies()
+      res.json({ items, total: items.length }); return
+    } catch (e) { console.error('[k8s] listPolicies:', e) }
+  }
   res.json({ items: policies, total: policies.length })
 })
 
 interface PolicyBody extends Partial<Policy> { name?: string }
 
-app.post('/api/scheduler/policies', requireAuth, (req: Request<object, object, PolicyBody>, res: Response) => {
+app.post('/api/scheduler/policies', requireAuth, async (req: Request<object, object, PolicyBody>, res: Response) => {
   const body = req.body as Policy
   if (!body.name) { res.status(400).json({ error: '`name` is required' }); return }
+
+  if (K8s.k8sAvailable()) {
+    try {
+      const policy = await K8s.upsertPolicy(K8s.FRAME_NS, body)
+      res.json(policy); return
+    } catch (e) { console.error('[k8s] upsertPolicy:', e) }
+  }
+
   const existing = policies.findIndex((p) => p.name === body.name)
   if (existing >= 0) {
     policies[existing] = { ...policies[existing], ...body }
@@ -217,8 +268,21 @@ app.post('/api/scheduler/policies', requireAuth, (req: Request<object, object, P
   }
 })
 
-app.delete('/api/scheduler/policies/:name', requireAuth, (req: Request, res: Response) => {
-  const idx = policies.findIndex((p) => p.name === req.params.name)
+app.delete('/api/scheduler/policies/:name', requireAuth, async (req: Request, res: Response) => {
+  const name = String(req.params.name)
+
+  if (K8s.k8sAvailable()) {
+    try {
+      await K8s.deletePolicy(name)
+      res.json({ deleted: true, name }); return
+    } catch (e: unknown) {
+      const status = (e as { response?: { statusCode?: number } })?.response?.statusCode
+      if (status === 404) { res.status(404).json({ error: 'Policy not found' }); return }
+      console.error('[k8s] deletePolicy:', e)
+    }
+  }
+
+  const idx = policies.findIndex((p) => p.name === name)
   if (idx === -1) { res.status(404).json({ error: 'Policy not found' }); return }
   const [policy] = policies.splice(idx, 1)
   res.json({ deleted: true, policy })
@@ -226,16 +290,31 @@ app.delete('/api/scheduler/policies/:name', requireAuth, (req: Request, res: Res
 
 // ── Resource quotas ──────────────────────────────────────────────────────────
 
-app.get('/api/resources/quotas', (_req: Request, res: Response) => {
+app.get('/api/resources/quotas', async (_req: Request, res: Response) => {
+  if (K8s.k8sAvailable()) {
+    try {
+      const items = await K8s.listQuotas()
+      res.json({ items, total: items.length }); return
+    } catch (e) { console.error('[k8s] listQuotas:', e) }
+  }
   res.json({ items: quotas, total: quotas.length })
 })
 
-interface QuotaBody extends Partial<ResourceQuota> { namespace?: string }
+interface QuotaBody extends Partial<ResourceQuota> { namespace?: string; serviceClass?: ServiceClass }
 
-app.put('/api/resources/quotas/:namespace', requireAuth, (req: Request, res: Response) => {
+app.put('/api/resources/quotas/:namespace', requireAuth, async (req: Request, res: Response) => {
   const ns = String(req.params.namespace)
-  const idx = quotas.findIndex((q) => q.namespace === ns)
   const body = req.body as QuotaBody
+
+  if (K8s.k8sAvailable()) {
+    try {
+      const sc = (body.serviceClass ?? 'MEDIUM') as K8s.ServiceClass
+      const quota = await K8s.upsertQuota(ns, sc, body)
+      res.json(quota); return
+    } catch (e) { console.error('[k8s] upsertQuota:', e) }
+  }
+
+  const idx = quotas.findIndex((q) => q.namespace === ns)
   if (idx === -1) {
     const quota: ResourceQuota = {
       namespace: ns,

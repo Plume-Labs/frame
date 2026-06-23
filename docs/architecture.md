@@ -13,10 +13,12 @@ scheduling policies, set quotas, inspect nodes.
 - API: `server/index.ts` (Express), `server/routes/`.
 - API spec: [`deploy/api/openapi.yaml`](../deploy/api/openapi.yaml) (OpenAPI 3.1).
 
-> **Current state:** the API server backs requests with an in-memory cluster
-> simulation, and the UI falls back to simulated data when the API is offline.
-> It does **not** yet read/write the operator CRDs. Closing that gap is the
-> headline V1 work item — see [roadmap.md](roadmap.md).
+> **Current state:** `server/k8s.ts` uses `@kubernetes/client-node` to read
+> and write the Frame CRDs directly. `loadFromDefault()` picks up kubeconfig
+> (dev) or the in-cluster service account (production) automatically.
+> The in-memory simulation is retained as a fallback when no cluster config
+> is available. See [roadmap.md](roadmap.md) for remaining Phase 2 items
+> (authn/RBAC mapping, SSE watch endpoint).
 
 ## 2. Operator — `api/`, `internal/`, `cmd/`
 
