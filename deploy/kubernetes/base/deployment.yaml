@@ -34,20 +34,6 @@ spec:
                       values:
                         - cluster-control
                 topologyKey: kubernetes.io/hostname
-      initContainers:
-        - name: inject-token
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - |
-              TOKEN=$(cat /var/run/secrets/sa/token)
-              echo "window.__FRAME_TOKEN__='${TOKEN}';" > /config/config.js
-          volumeMounts:
-            - name: sa-token
-              mountPath: /var/run/secrets/sa
-            - name: config-js
-              mountPath: /config
       containers:
         - name: ui
           image: cluster-control:latest
@@ -101,9 +87,6 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
-            - name: config-js
-              mountPath: /usr/share/nginx/html/config.js
-              subPath: config.js
       volumes:
         - name: tmp
           emptyDir: {}
@@ -112,13 +95,4 @@ spec:
         - name: nginx-cache
           emptyDir: {}
         - name: nginx-run
-          emptyDir: {}
-        - name: sa-token
-          projected:
-            sources:
-              - serviceAccountToken:
-                  path: token
-                  expirationSeconds: 3600
-                  audience: kubernetes
-        - name: config-js
           emptyDir: {}
