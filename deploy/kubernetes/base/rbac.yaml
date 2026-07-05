@@ -9,24 +9,32 @@ kind: ClusterRole
 metadata:
   name: cluster-control-viewer
 rules:
+  # Core K8s resources
   - apiGroups: [""]
+    resources: [nodes, pods, services, namespaces, resourcequotas, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+  # Frame CRDs — full read + write for operator actions
+  - apiGroups: [frame.plume-labs.io]
     resources:
-      - nodes
-      - pods
-      - services
-      - namespaces
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["apps"]
-    resources:
-      - deployments
-      - daemonsets
-      - statefulsets
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["metrics.k8s.io"]
-    resources:
-      - nodes
-      - pods
-    verbs: ["get", "list"]
+      - framejobs
+      - framejobs/status
+      - framenodes
+      - framenodes/status
+      - schedulingpolicies
+      - schedulingpolicies/status
+      - frameresourcequotas
+      - frameresourcequotas/status
+      - talosmachineconfigs
+      - talosmachineconfigs/status
+      - talosupgrades
+      - talosupgrades/status
+    verbs: [get, list, watch, create, update, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
