@@ -4,6 +4,12 @@ metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
-  name: talosupgrade-sample
+  name: worker-01-upgrade
+  namespace: frame-system
 spec:
-  # TODO(user): Add fields here
+  nodeName: worker-01
+  talosEndpoint: "192.168.10.10:50000"
+  talosSecretRef:
+    name: talos-client-certs
+    namespace: frame-system
+  image: ghcr.io/siderolabs/talos:v1.9.0

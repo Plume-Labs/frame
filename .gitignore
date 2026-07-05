@@ -32,3 +32,6 @@ pids
 .devcontainer/
 
 .spark-workbench-id
+
+deploy/kubernetes/samples/*-filled.yaml
+deploy/talos/generated/
