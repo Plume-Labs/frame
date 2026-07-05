@@ -4,7 +4,8 @@ metadata:
   name: cluster-control
   namespace: flux-system
 spec:
-  image: ghcr.io/your-org/cluster-control
+  # Edit newName to match your actual registry before committing to your GitOps repo.
+  image: ghcr.io/REPLACE_WITH_YOUR_ORG/cluster-control
   interval: 1m
 ---
 apiVersion: image.toolkit.fluxcd.io/v1beta2

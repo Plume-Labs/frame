@@ -1,5 +1,7 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+# Image for the React UI (Dockerfile at repo root)
+IMG_UI ?= frame-ui:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -126,6 +128,22 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-build-ui
+docker-build-ui: ## Build the Frame UI Docker image
+	$(CONTAINER_TOOL) build -t $(IMG_UI) .
+
+.PHONY: docker-push-ui
+docker-push-ui: ## Push the Frame UI Docker image
+	$(CONTAINER_TOOL) push $(IMG_UI)
+
+.PHONY: set-image-ui
+set-image-ui: ## Set UI image in development overlay (requires IMG_UI)
+	cd deploy/kubernetes/overlays/development && kustomize edit set image cluster-control=$(IMG_UI)
+
+.PHONY: set-image-ui-prod
+set-image-ui-prod: ## Set UI image in production overlay (requires IMG_UI)
+	cd deploy/kubernetes/overlays/production && kustomize edit set image cluster-control=$(IMG_UI)
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
