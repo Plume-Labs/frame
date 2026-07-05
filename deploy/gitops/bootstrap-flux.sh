@@ -4,8 +4,8 @@ set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-bare-metal-cluster}"
 NAMESPACE="${NAMESPACE:-flux-system}"
-GITHUB_USER="${GITHUB_USER:-your-org}"
-GITHUB_REPO="${GITHUB_REPO:-cluster-gitops}"
+GITHUB_OWNER="${GITHUB_OWNER:?Set GITHUB_OWNER}"
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY:?Set GITHUB_REPOSITORY}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 
 echo "🚀 Bootstrapping Flux for cluster: ${CLUSTER_NAME}"
@@ -13,8 +13,8 @@ echo "🚀 Bootstrapping Flux for cluster: ${CLUSTER_NAME}"
 flux check --pre
 
 flux bootstrap github \
-  --owner="${GITHUB_USER}" \
-  --repository="${GITHUB_REPO}" \
+  --owner="${GITHUB_OWNER}" \
+  --repository="${GITHUB_REPOSITORY}" \
   --branch="${GITHUB_BRANCH}" \
   --path="clusters/${CLUSTER_NAME}" \
   --personal
