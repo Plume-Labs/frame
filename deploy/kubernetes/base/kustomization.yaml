@@ -16,7 +16,7 @@ commonLabels:
   app.kubernetes.io/name: cluster-control
   app.kubernetes.io/part-of: monitoring-platform
 
+# Image name and tag are set per-overlay via `kustomize edit set image`.
+# Run: kustomize edit set image cluster-control=<registry>/<image>:<tag>
 images:
   - name: cluster-control
-    newName: ghcr.io/your-org/cluster-control
-    newTag: latest

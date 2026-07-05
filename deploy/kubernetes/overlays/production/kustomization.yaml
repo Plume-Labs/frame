@@ -14,10 +14,11 @@ replicas:
   - name: cluster-control-ui
     count: 5
 
+# Set before deploying:
+#   cd deploy/kubernetes/overlays/production
+#   kustomize edit set image cluster-control=<registry>/frame-ui:latest
 images:
   - name: cluster-control
-    newName: ghcr.io/your-org/cluster-control
-    newTag: v1.0.0
 
 configMapGenerator:
   - name: cluster-control-config
