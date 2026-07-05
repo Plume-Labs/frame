@@ -4,12 +4,12 @@ metadata:
   name: cluster-control-ui
   namespace: cluster-control
 ---
+# Role 1: read-only — for operators who want to grant a viewer token
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-control-viewer
 rules:
-  # Core K8s resources
   - apiGroups: [""]
     resources: [nodes, pods, services, namespaces, resourcequotas, events]
     verbs: [get, list, watch]
@@ -19,22 +19,31 @@ rules:
   - apiGroups: [metrics.k8s.io]
     resources: [nodes, pods]
     verbs: [get, list]
-  # Frame CRDs — full read + write for operator actions
   - apiGroups: [frame.plume-labs.io]
-    resources:
-      - framejobs
-      - framejobs/status
-      - framenodes
-      - framenodes/status
-      - schedulingpolicies
-      - schedulingpolicies/status
-      - frameresourcequotas
-      - frameresourcequotas/status
-      - talosmachineconfigs
-      - talosmachineconfigs/status
-      - talosupgrades
-      - talosupgrades/status
+    resources: [framejobs, framenodes, schedulingpolicies, frameresourcequotas, talosmachineconfigs, talosupgrades]
+    verbs: [get, list, watch]
+---
+# Role 2: operator — write on safe Frame CRDs only (not Talos, not /status)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-control-operator
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, services, namespaces, resourcequotas, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framejobs, schedulingpolicies, frameresourcequotas]
     verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framenodes, talosmachineconfigs, talosupgrades]
+    verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
