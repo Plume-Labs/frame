@@ -15,19 +15,20 @@ for bin in kubectl helm; do
 done
 
 echo "▶ cert-manager"
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.17.0/cert-manager.yaml
 kubectl -n cert-manager wait --for=condition=Available deployment --all --timeout=120s
 
 echo "▶ ingress-nginx"
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
-  --set controller.service.type=LoadBalancer \
+  --set controller.service.type=NodePort \
   --wait --timeout 120s
+  # Note: use LoadBalancer if MetalLB or kube-vip is installed.
 
 echo "▶ Argo Workflows"
 kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/latest/download/install.yaml
+kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/download/v3.6.7/install.yaml
 kubectl -n argo wait --for=condition=Available deployment --all --timeout=120s
 
 if [[ "$SKIP_VOLCANO" == "false" ]]; then

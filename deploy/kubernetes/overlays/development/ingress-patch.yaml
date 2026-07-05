@@ -13,3 +13,12 @@ spec:
       secretName: cluster-control-tls-dev
   rules:
     - host: frame-dev.REPLACE_YOUR_DOMAIN
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cluster-control-ui
+                port:
+                  name: http
