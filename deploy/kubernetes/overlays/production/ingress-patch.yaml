@@ -6,10 +6,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - cluster.production.example.com
+        - frame.REPLACE_YOUR_DOMAIN
       secretName: cluster-control-prod-tls
   rules:
-    - host: cluster.production.example.com
+    - host: frame.REPLACE_YOUR_DOMAIN
       http:
         paths:
           - path: /
