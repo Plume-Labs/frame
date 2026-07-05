@@ -8,7 +8,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/your-org/cluster-gitops
+    # Replace REPLACE_GITHUB_OWNER and REPLACE_GITHUB_REPOSITORY with your GitOps repo before applying.
+    repoURL: https://github.com/REPLACE_GITHUB_OWNER/REPLACE_GITHUB_REPOSITORY
     targetRevision: main
     path: deploy/kubernetes/overlays/production
   destination:
