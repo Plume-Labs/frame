@@ -10,5 +10,7 @@ spec:
   url: https://github.com/REPLACE_GITHUB_OWNER/REPLACE_GITHUB_REPOSITORY
   ref:
     branch: main
-  secretRef:
-    name: github-token
+  # Auth is managed by `flux bootstrap github`. If applying manually,
+  # create a secret: kubectl create secret generic flux-git-auth -n flux-system
+  #   --from-literal=username=<user> --from-literal=password=<PAT>
+  # Then set: spec.secretRef.name: flux-git-auth

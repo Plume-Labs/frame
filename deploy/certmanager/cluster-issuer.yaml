@@ -1,4 +1,5 @@
-# Replace YOUR_EMAIL with your ACME registration email before applying.
+# IMPORTANT: Replace REPLACE_YOUR_EMAIL with a real email before applying.
+# cert-manager will attempt ACME registration with this address.
 # Apply: kubectl apply -f deploy/certmanager/cluster-issuer.yaml
 ---
 apiVersion: cert-manager.io/v1
@@ -8,7 +9,7 @@ metadata:
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-    email: YOUR_EMAIL
+    email: REPLACE_YOUR_EMAIL
     privateKeySecretRef:
       name: letsencrypt-staging-key
     solvers:
@@ -23,7 +24,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: YOUR_EMAIL
+    email: REPLACE_YOUR_EMAIL
     privateKeySecretRef:
       name: letsencrypt-prod-key
     solvers:
