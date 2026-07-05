@@ -8,6 +8,7 @@ bases:
 
 patchesStrategicMerge:
   - deployment-patch.yaml
+  - ingress-patch.yaml
 
 replicas:
   - name: cluster-control-ui

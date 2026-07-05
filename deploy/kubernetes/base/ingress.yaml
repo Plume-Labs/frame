@@ -11,10 +11,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - cluster-control.example.com
+        - REPLACE_HOSTNAME
       secretName: cluster-control-tls
   rules:
-    - host: cluster-control.example.com
+    - host: REPLACE_HOSTNAME
       http:
         paths:
           - path: /
