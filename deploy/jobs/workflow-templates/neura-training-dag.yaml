@@ -1,5 +1,8 @@
 ---
 # Neura Training Pipeline — DAG workflow with gang scheduling, checkpointing, and retry
+# EXAMPLE workflow: image refs are placeholders (REPLACE_REGISTRY/REPLACE_TAG).
+# Build/push your own data-utils/trainer/evaluator/exporter images and fill
+# these in before applying.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -87,7 +90,7 @@ spec:
         parameters:
           - name: dataset-path
       container:
-        image: neura/data-utils:latest
+        image: REPLACE_REGISTRY/neura/data-utils:REPLACE_TAG
         command: [python, /app/validate_dataset.py]
         args: ["--path", "{{inputs.parameters.dataset-path}}"]
         resources:
@@ -103,7 +106,7 @@ spec:
         parameters:
           - name: dataset-path
       container:
-        image: neura/data-utils:latest
+        image: REPLACE_REGISTRY/neura/data-utils:REPLACE_TAG
         command: [python, /app/preprocess_dataset.py]
         args:
           - --input-path
@@ -125,7 +128,7 @@ spec:
         parameters:
           - name: model-version
       container:
-        image: neura/checkpoint-utils:latest
+        image: REPLACE_REGISTRY/neura/checkpoint-utils:REPLACE_TAG
         command: [python, /app/restore_checkpoint.py]
         args: ["--model-version", "{{inputs.parameters.model-version}}"]
         env:
@@ -176,7 +179,7 @@ spec:
           - name: world-size
           - name: checkpoint-interval
       container:
-        image: neura/trainer:latest
+        image: REPLACE_REGISTRY/neura/trainer:REPLACE_TAG
         command: [torchrun]
         args:
           - --nproc_per_node=1
@@ -208,7 +211,7 @@ spec:
 
     - name: model-evaluation
       container:
-        image: neura/evaluator:latest
+        image: REPLACE_REGISTRY/neura/evaluator:REPLACE_TAG
         command: [python, /app/evaluate.py]
         resources:
           requests:
@@ -225,7 +228,7 @@ spec:
         parameters:
           - name: model-version
       container:
-        image: neura/exporter:latest
+        image: REPLACE_REGISTRY/neura/exporter:REPLACE_TAG
         command: [python, /app/export_model.py]
         args: ["--version", "{{inputs.parameters.model-version}}"]
         resources:
@@ -238,7 +241,7 @@ spec:
 
     - name: update-model-registry
       container:
-        image: neura/registry-utils:latest
+        image: REPLACE_REGISTRY/neura/registry-utils:REPLACE_TAG
         command: [python, /app/update_registry.py]
         resources:
           requests:

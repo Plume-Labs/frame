@@ -1,5 +1,8 @@
 ---
 # Neura Inference Pipeline — DAG workflow for real-time model serving
+# EXAMPLE workflow: image refs are placeholders (REPLACE_REGISTRY/REPLACE_TAG).
+# Build/push your own pipeline-utils/preprocessor/inference-server/postprocessor
+# images and fill these in before applying.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -57,7 +60,7 @@ spec:
 
     - name: validate-input
       container:
-        image: neura/pipeline-utils:latest
+        image: REPLACE_REGISTRY/neura/pipeline-utils:REPLACE_TAG
         command: [python, /app/validate_input.py]
         resources:
           requests:
@@ -69,7 +72,7 @@ spec:
 
     - name: cache-lookup
       container:
-        image: neura/pipeline-utils:latest
+        image: REPLACE_REGISTRY/neura/pipeline-utils:REPLACE_TAG
         command: [python, /app/cache_lookup.py]
         env:
           - name: REDIS_CLUSTER_ADDR
@@ -89,7 +92,7 @@ spec:
 
     - name: preprocess
       container:
-        image: neura/preprocessor:latest
+        image: REPLACE_REGISTRY/neura/preprocessor:REPLACE_TAG
         command: [python, /app/preprocess.py]
         resources:
           requests:
@@ -101,7 +104,7 @@ spec:
 
     - name: model-inference
       container:
-        image: neura/inference-server:latest
+        image: REPLACE_REGISTRY/neura/inference-server:REPLACE_TAG
         command: [python, /app/run_inference.py]
         resources:
           requests:
@@ -120,7 +123,7 @@ spec:
 
     - name: postprocess
       container:
-        image: neura/postprocessor:latest
+        image: REPLACE_REGISTRY/neura/postprocessor:REPLACE_TAG
         command: [python, /app/postprocess.py]
         resources:
           requests:
@@ -132,7 +135,7 @@ spec:
 
     - name: cache-store
       container:
-        image: neura/pipeline-utils:latest
+        image: REPLACE_REGISTRY/neura/pipeline-utils:REPLACE_TAG
         command: [python, /app/cache_store.py]
         env:
           - name: REDIS_CLUSTER_ADDR
@@ -149,7 +152,7 @@ spec:
 
     - name: emit-result
       container:
-        image: neura/pipeline-utils:latest
+        image: REPLACE_REGISTRY/neura/pipeline-utils:REPLACE_TAG
         command: [python, /app/emit_result.py]
         resources:
           requests:

@@ -1,18 +1,4 @@
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ceph-config
-  namespace: rook-ceph
-data:
-  config: |
-    [global]
-    mon_host = 192.168.2.11:6789,192.168.2.12:6789,192.168.2.13:6789
-    
-    [client.libvirt]
-    admin socket = /var/run/ceph/$cluster-$type.$id.$pid.$cctid.asok
-    log file = /var/log/ceph/qemu-guest-$pid.log
----
 apiVersion: ceph.rook.io/v1
 kind: CephCluster
 metadata:
@@ -50,6 +36,10 @@ spec:
   network:
     provider: host
     connections:
+      # ponytail: encryption off — assumes the storage network (192.168.2.0/24
+      # in the README diagram) is a physically isolated/trusted fabric. Flip
+      # to true if the Ceph replication traffic shares a network segment
+      # with anything untrusted; costs OSD throughput.
       encryption:
         enabled: false
       compression:
@@ -94,23 +84,29 @@ spec:
         cpu: "1"
         memory: "2Gi"
         
+  # storage.nodes below is an EXAMPLE for a 4-node, dual-NVMe layout.
+  # Replace node names with `kubectl get nodes -o name` output and device
+  # paths with each node's actual free disks (`lsblk` on the node, or use
+  # Rook's device discovery: kubectl -n rook-ceph get cephcluster -o yaml
+  # after a `useAllDevices: true` dry run). Devices must be raw, unpartitioned,
+  # unformatted, and not the OS disk.
   storage:
     useAllNodes: false
     useAllDevices: false
     nodes:
-      - name: "worker-01"
+      - name: "REPLACE_NODE_1"
         devices:
-          - name: "/dev/nvme0n1"
-          - name: "/dev/nvme1n1"
-      - name: "worker-02"
+          - name: "REPLACE_DEVICE_1a" # e.g. /dev/nvme0n1
+          - name: "REPLACE_DEVICE_1b" # e.g. /dev/nvme1n1
+      - name: "REPLACE_NODE_2"
         devices:
-          - name: "/dev/nvme0n1"
-          - name: "/dev/nvme1n1"
-      - name: "worker-03"
+          - name: "REPLACE_DEVICE_2a"
+          - name: "REPLACE_DEVICE_2b"
+      - name: "REPLACE_NODE_3"
         devices:
-          - name: "/dev/nvme0n1"
-          - name: "/dev/nvme1n1"
-      - name: "worker-04"
+          - name: "REPLACE_DEVICE_3a"
+          - name: "REPLACE_DEVICE_3b"
+      - name: "REPLACE_NODE_4"
         devices:
-          - name: "/dev/nvme0n1"
-          - name: "/dev/nvme1n1"
+          - name: "REPLACE_DEVICE_4a"
+          - name: "REPLACE_DEVICE_4b"
