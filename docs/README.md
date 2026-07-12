@@ -1,45 +1,41 @@
 # Frame Documentation
 
-Frame turns a rack of bare-metal servers into a single, self-healing,
-mainframe-grade Kubernetes platform. This folder is the engineering
-documentation; the top-level [`README.md`](../README.md) is the product
-overview and quick start.
+Engineering documentation for the Frame operator and control plane. For the product overview and quick start, see the top-level [README](../README.md).
 
 ## Contents
 
 | Doc | What it covers |
 |---|---|
-| [architecture.md](architecture.md) | The three layers (control plane, operator, IaC) and how they fit together |
-| [crd-reference.md](crd-reference.md) | The six `frame.plume-labs.io/v1alpha1` CRDs — fields, controllers, webhooks |
-| [development.md](development.md) | Build, test, run, and deploy the Go operator locally |
-| [roadmap.md](roadmap.md) | Path from the current `v1alpha1` preview to a stable **V1** release |
+| [getting-started.md](getting-started.md) | Prerequisites, local dev loop, first deploy — start here |
+| [architecture.md](architecture.md) | Three layers (control plane, operator, IaC) and how they fit together |
+| [api.md](api.md) | CRD API, TypeScript SDK (`FrameClient`), authentication |
+| [crd-reference.md](crd-reference.md) | All six `frame.plume-labs.io/v1alpha1` CRDs — fields, controllers, webhooks |
+| [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
+| [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager |
+| [roadmap.md](roadmap.md) | Path from `v1alpha1` preview to stable V1 |
 
-## The 30-second model
+## 30-second model
 
 ```
-operator / CI / UI
-        │  REST + TypeScript SDK
+Operator / CI / UI (TypeScript SDK)
+        │  reads/writes Kubernetes CRs directly
         ▼
-Frame control plane (React UI + Express API)     ← src/, server/
-        │  Kubernetes CRs
+Frame CRDs (frame.plume-labs.io/v1alpha1)
+        │
         ▼
-Frame operator (controllers + webhooks)          ← api/, internal/
+Frame operator (controllers + webhooks)   ← api/, internal/, cmd/
         │  reconciles into
         ▼
-Cluster primitives (ArgoWorkflows, core Nodes,   ← deploy/
-ResourceQuotas, Talos machines, …)
+Cluster primitives (ArgoWorkflows, PriorityClasses, Talos gRPC, …)
+        │
+        ▼
+Bare-metal IaC (deploy/)
 ```
 
-- **Control plane** — what humans and pipelines talk to. Today it serves an
-  in-memory simulation with a REST API + SDK; wiring it to the live operator
-  CRDs is a V1 goal (see [roadmap](roadmap.md)).
-- **Operator** — Kubernetes-native reconcilers for the six Frame CRDs. This is
-  the part that actually changes cluster state.
-- **IaC** (`deploy/`) — Talos + Sidero provisioning, Ceph/MinIO storage, Cilium
-  RDMA networking, GitOps, and Argo Workflows manifests.
+- **Control plane** (`src/`) — React UI + TypeScript SDK. Both talk **directly to the Kubernetes API** — no intermediate server. Dev: `kubectl proxy`. Prod: ServiceAccount Bearer token.
+- **Operator** (`internal/`) — Kubebuilder v4 controllers for six CRDs. This is the layer that actually mutates cluster state.
+- **IaC** (`deploy/`) — Talos + Sidero provisioning, Ceph/MinIO storage, Cilium RDMA networking, GitOps, and Argo Workflows manifests.
 
 ## Scope
 
-Frame manages a **single local cluster** — one physical location, one or more
-racks sharing an L2 segment for RDMA. Multi-site / multi-region federation is
-intentionally out of scope for this version.
+Frame manages a **single local cluster** — one physical location, one or more racks sharing an L2 segment for RDMA. Multi-site / multi-region federation is out of scope for this version.

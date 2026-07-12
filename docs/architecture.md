@@ -2,89 +2,163 @@
 
 Frame is three cooperating layers in one repo.
 
-## 1. Control plane — `src/`, `server/`
+---
 
-A React 19 + Tailwind/shadcn UI plus an Express 5 REST API and a TypeScript SDK
-(`FrameClient`). This is the operator-facing surface: submit jobs, edit
-scheduling policies, set quotas, inspect nodes.
-
-- UI: `src/components/` (control surfaces + dashboards), `src/hooks/`
-  (real-time updates), `src/lib/frame-sdk.ts` (SDK).
-- API: `server/index.ts` (Express), `server/routes/`.
-- API spec: [`deploy/api/openapi.yaml`](../deploy/api/openapi.yaml) (OpenAPI 3.1).
-
-> **Current state:** `server/k8s.ts` uses `@kubernetes/client-node` to read
-> and write the Frame CRDs directly. `loadFromDefault()` picks up kubeconfig
-> (dev) or the in-cluster service account (production) automatically.
-> The in-memory simulation is retained as a fallback when no cluster config
-> is available. See [roadmap.md](roadmap.md) for remaining Phase 2 items
-> (authn/RBAC mapping, SSE watch endpoint).
-
-## 2. Operator — `api/`, `internal/`, `cmd/`
-
-A Kubebuilder (`go.kubebuilder.io/v4`) operator, group `frame.plume-labs.io`,
-version `v1alpha1`, that reconciles six CRDs. This layer is what actually
-mutates cluster state.
+## Overview
 
 ```
-cmd/main.go                       Manager entry — registers controllers + webhooks
-api/v1alpha1/*_types.go           CRD schemas (+kubebuilder markers)
-internal/controller/*             Reconcilers
-internal/webhook/v1alpha1/*       Validating / defaulting webhooks
-config/                           Generated CRDs, RBAC, webhook + kustomize bases
+┌──────────────────────────────────────────────────────────┐
+│                     Frame Control Plane                  │
+│                                                          │
+│   React UI (src/)          TypeScript SDK (frame-sdk.ts) │
+│        │                          │                      │
+│        └──────────┬───────────────┘                      │
+│                   │  fetch /apis/frame.plume-labs.io/…   │
+│                   ▼                                      │
+│         kubectl proxy (dev)  /  ServiceAccount (prod)    │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────────┐
+│                  Kubernetes API Server                   │
+│                                                          │
+│  frame.plume-labs.io/v1alpha1 CRDs                      │
+│  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
+│  │  FrameJob    │ │  FrameNode    │ │SchedulingPolicy │ │
+│  └──────────────┘ └───────────────┘ └─────────────────┘ │
+│  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
+│  │FrameResource │ │TalosMachine   │ │  TalosUpgrade   │ │
+│  │    Quota     │ │    Config     │ │                 │ │
+│  └──────────────┘ └───────────────┘ └─────────────────┘ │
+└──────────────────────┬───────────────────────────────────┘
+                       │  controller-runtime watches
+┌──────────────────────▼───────────────────────────────────┐
+│              Frame Operator (internal/)                  │
+│                                                          │
+│  FrameJob controller  → Argo Workflow                    │
+│  FrameNode controller → core v1.Node watch               │
+│  SchedulingPolicy     → PriorityClass + Volcano/YuniKorn │
+│  TalosMachineConfig   → Talos gRPC ApplyConfiguration    │
+│  TalosUpgrade         → Talos gRPC Upgrade               │
+│  FrameResourceQuota   → namespace ResourceQuota (WIP)    │
+│                                                          │
+│  Webhooks: validating + defaulting for all six kinds     │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+┌──────────────────────▼───────────────────────────────────┐
+│           Cluster Primitives (deploy/)                   │
+│                                                          │
+│  Argo Workflows · PriorityClasses · ResourceQuotas       │
+│  Talos MachineConfigs · Sidero Metal · PXE boot          │
+│  Ceph (Rook) · MinIO · Cilium · SR-IOV · RDMA            │
+│  Prometheus · Grafana · Jaeger · DCGM · OpenLineage      │
+└──────────────────────────────────────────────────────────┘
 ```
 
-Each CRD has a controller and a webhook; full field-level detail lives in
-[crd-reference.md](crd-reference.md). Reconcilers follow the standard pattern:
-add a finalizer, reconcile desired state, sync `.status` + conditions, emit a
-Kubernetes Event (`kubectl describe`), clean up on delete.
+---
 
-Notable behaviours:
+## Layer 1 — Control plane (`src/`)
 
-- **FrameJob** → renders an Argo `Workflow` with `priorityClassName`, `gpu-count`
-  param, and `spec.suspend`. Secondary-watches Argo `Workflow` objects (label
-  mapping) so phase updates are event-driven, not just 30 s polling.
-  Suspend/resume lifecycle fully supported. Removes the workflow on delete via finalizer.
-- **FrameNode** → secondary-watches core `v1.Node` objects (`nodeToFrameNode`
-  mapping) to reflect readiness/versions into status.
-- **SchedulingPolicy** → reconciles a `PriorityClass` and, when a Volcano or
-  YuniKorn CRD is present, the scheduler-native queue. Gracefully degrades when
-  the scheduler CRD is missing.
-- **TalosMachineConfig / TalosUpgrade** → drive real Talos gRPC calls
-  (`ApplyConfiguration` / `Upgrade`) using a TLS client built from a referenced
-  Secret. TalosUpgrade uses a generation-based guard to prevent duplicate triggers.
+**What it is:** the operator-facing surface. Humans and CI pipelines use it to submit jobs, manage scheduling policies, set quotas, and inspect cluster state.
 
-## 3. Infrastructure as code — `deploy/`
+**How it works:**
 
-Everything needed to stand up the bare-metal cluster the operator runs on:
+- The React 19 UI (`src/components/`) and the TypeScript SDK (`src/lib/frame-sdk.ts`) both call the Kubernetes API directly at `/apis/frame.plume-labs.io/v1alpha1/…`.
+- **Dev:** `kubectl proxy --port=8001` exposes the K8s API locally; Vite proxies `/apis/*` to it (see `vite.config.ts`).
+- **Prod:** `window.__FRAME_TOKEN__` is set to a ServiceAccount Bearer token before the app mounts. The SDK picks it up via `Authorization: Bearer <token>`.
+- There is **no intermediate API server**. The UI is fully K8s-native.
+
+**Key files:**
 
 | Path | Role |
 |---|---|
-| `deploy/talos/` | Talos MachineConfigs + Image Factory schematics |
-| `deploy/sidero/` | Sidero Metal server lifecycle / classification |
-| `deploy/pxe/` | PXE / DHCP / TFTP network boot |
-| `deploy/ceph/` | Rook-Ceph block + file storage |
-| `deploy/storage/` | MinIO, DataHub data fabric |
-| `deploy/networking/` | Cilium eBPF, SR-IOV, DPDK, RDMA device plugin |
-| `deploy/caching/` | Alluxio, Redis, NVMe burst buffer, vLLM KV cache |
-| `deploy/jobs/` | Argo Workflows manifests + DAG templates |
-| `deploy/monitoring/` | Prometheus, Grafana, Jaeger, DCGM |
-| `deploy/gitops/` | Flux CD / ArgoCD bootstrap |
-| `deploy/terraform/` | Terraform definitions |
-| `deploy/scripts/` | bootstrap, hot-add-node, health-check |
+| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over all six CRD kinds |
+| `src/components/` | React control surfaces (Jobs, Scheduler, Nodes, …) |
+| `src/hooks/` | Real-time update hooks |
+| `vite.config.ts` | Dev proxy: `/apis` → `localhost:8001` |
 
-## Data flow, end to end
+---
 
-1. An operator (or CI via the SDK) submits a `FrameJob` — today through the
-   REST API's simulation; at V1, persisted as a CR.
-2. The operator's FrameJob controller renders an Argo `Workflow` and tracks it.
-3. The Volcano/YuniKorn scheduler places the workload across GPU/RDMA nodes
-   provisioned by Talos + Sidero.
-4. Status flows back up: Workflow → FrameJob `.status` → API → UI.
+## Layer 2 — Operator (`api/`, `internal/`, `cmd/`)
 
-## Why a single L2 site
+**What it is:** a Kubebuilder v4 operator (group `frame.plume-labs.io`, version `v1alpha1`) that reconciles six CRDs into real cluster effects.
 
-The RDMA fabric (InfiniBand / RoCE) is a local interconnect; it does not
-traverse WAN. `zones` and `racks` are failure-domain labels **within one
-site**, not geographic regions. Federation across sites is a future,
-separately-designed mechanism.
+**Entry point:** `cmd/main.go` — starts the controller-runtime manager, registers all controllers and webhooks, wires Prometheus metrics.
+
+**Controllers:**
+
+| Controller | Real effect |
+|---|---|
+| `FrameJob` | Creates/updates/deletes an Argo `Workflow`; syncs `spec.suspend` → `Workflow.spec.suspend`; secondary-watches Argo Workflows for event-driven phase updates |
+| `FrameNode` | Secondary-watches core `v1.Node` (label mapping `nodeToFrameNode`) to reflect readiness and versions into status |
+| `SchedulingPolicy` | Reconciles a `PriorityClass`; when Volcano/YuniKorn CRD is present, also reconciles the scheduler-native queue. Gracefully degrades when CRD is absent |
+| `TalosMachineConfig` | Builds a Talos gRPC client from a referenced Secret; calls `ApplyConfiguration` with inline patch or ConfigMap ref |
+| `TalosUpgrade` | Calls Talos gRPC `Upgrade`; generation-based idempotency guard prevents re-trigger on unchanged spec |
+| `FrameResourceQuota` | Validates namespace quotas (webhooks); projection into `ResourceQuota` + scheduler limits in progress |
+
+All controllers follow the same pattern: add finalizer on create, reconcile desired → actual, sync `.status` + conditions, emit a Kubernetes Event, clean up on delete.
+
+**Webhooks** (`internal/webhook/v1alpha1/`): validating + defaulting for all six kinds. Cert-manager manages TLS; see `config/certmanager/`.
+
+---
+
+## Layer 3 — Infrastructure as code (`deploy/`)
+
+Everything needed to stand up the bare-metal cluster the operator runs on.
+
+| Directory | What it provisions |
+|---|---|
+| `deploy/talos/` | Talos MachineConfigs, Image Factory schematics |
+| `deploy/sidero/` | Sidero Metal bare-metal server lifecycle |
+| `deploy/pxe/` | PXE / DHCP / TFTP boot configuration |
+| `deploy/ceph/` | Rook-Ceph operator + cluster CRs (block + file storage) |
+| `deploy/networking/` | Cilium, SR-IOV device plugin, DPDK, RDMA device plugin |
+| `deploy/monitoring/` | Prometheus + Grafana + Jaeger + DCGM Exporter |
+| `deploy/jobs/` | Argo Workflows templates and DAG manifests |
+| `deploy/storage/` | MinIO, DataHub, Ceph data fabric |
+| `deploy/gitops/` | Flux CD / ArgoCD bootstrap configs |
+| `deploy/kubernetes/` | Kustomize base + overlays (development, production) for the UI |
+| `deploy/scripts/` | Bootstrap, health-check, hot-add scripts |
+
+---
+
+## Cluster topology constraints
+
+Frame is designed for a **single physical location**:
+
+- One or more racks in the same building (same L2 network segment for RDMA)
+- RDMA fabric (InfiniBand or RoCE) is a **local interconnect** — it does not traverse WAN or internet links
+- `zones` and `racks` in Frame are **failure-domain labels within the same site**, not geographic regions
+- Multi-site / multi-region federation is explicitly **out of scope** for this version
+
+---
+
+## Data flow — job submission
+
+```
+User clicks "Submit" in UI
+        │
+        ▼
+FrameClient.jobs.submit() — POST /apis/frame.plume-labs.io/v1alpha1/namespaces/<ns>/framejobs
+        │
+        ▼
+K8s API server validates (webhook: FrameJob defaulting + validation)
+        │
+        ▼
+FrameJob CR stored in etcd
+        │
+        ▼
+FrameJob controller reconciles — creates Argo Workflow CR with:
+  - spec.suspend from job.spec.suspended
+  - priorityClassName from job.spec.priority
+  - gpu-count parameter from job.spec.gpuCount
+        │
+        ▼
+Argo Workflow controller runs the DAG on the cluster
+        │
+        ▼
+FrameJob controller secondary-watch detects Workflow phase change
+  → updates FrameJob.status.phase + emits K8s Event
+        │
+        ▼
+UI polls FrameJob CR → reflects live status
+```
