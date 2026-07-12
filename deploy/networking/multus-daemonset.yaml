@@ -29,7 +29,7 @@ spec:
       serviceAccountName: multus
       containers:
         - name: kube-multus
-          image: ghcr.io/k8snetworkplumbingwg/multus-cni:stable
+          image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.1.0
           command: ["/thin_entrypoint"]
           args:
             - "--multus-conf-file=auto"

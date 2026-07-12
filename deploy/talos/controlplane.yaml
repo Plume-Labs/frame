@@ -3,6 +3,26 @@
 machine:
   # Control plane node role (runs etcd and Kubernetes control-plane services).
   type: controlplane
+  install:
+    # REPLACE with the real install target for this hardware profile.
+    # Either a fixed path (works only if identical across all controlplane
+    # nodes): disk: /dev/nvme0n1
+    # or, safer for mixed hardware, a selector that matches on properties
+    # instead of a device name that can change across reboots/nodes:
+    diskSelector:
+      size: ">= 100GB"
+      # busPath: "REPLACE_PCI_BUS_PATH"   # narrow further if multiple disks match
+  # Uncomment and fill in if this node needs a static IP instead of DHCP
+  # (Sidero-driven provisioning normally handles addressing, so DHCP is the
+  # default here):
+  # network:
+  #   interfaces:
+  #     - interface: REPLACE_NIC_NAME   # e.g. eno1, from `talosctl get links`
+  #       addresses:
+  #         - REPLACE_STATIC_IP/24
+  #       routes:
+  #         - network: 0.0.0.0/0
+  #           gateway: REPLACE_GATEWAY_IP
   # Baseline kernel sysctls for control-plane stability.
   sysctls:
     net.core.somaxconn: "4096"

@@ -3,6 +3,23 @@
 machine:
   # Worker node role (no etcd/control-plane services).
   type: worker
+  install:
+    # REPLACE with the real install target for this hardware profile — see
+    # controlplane.yaml for the fixed-disk vs diskSelector tradeoff. Worker
+    # nodes are more likely to have multiple NVMe/SSD/HDD disks, so prefer
+    # diskSelector + a busPath/model constraint over a bare disk name.
+    diskSelector:
+      size: ">= 100GB"
+      # busPath: "REPLACE_PCI_BUS_PATH"
+  # Uncomment for static addressing instead of DHCP (see controlplane.yaml):
+  # network:
+  #   interfaces:
+  #     - interface: REPLACE_NIC_NAME
+  #       addresses:
+  #         - REPLACE_STATIC_IP/24
+  #       routes:
+  #         - network: 0.0.0.0/0
+  #           gateway: REPLACE_GATEWAY_IP
   # Baseline tuning for NUMA and memory-heavy workloads.
   sysctls:
     kernel.numa_balancing: "0"

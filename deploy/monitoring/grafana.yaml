@@ -106,6 +106,10 @@ spec:
     - port: 3000
       targetPort: 3000
 ---
+# DO NOT apply this Secret as-is. Generate a real password and apply out-of-band, e.g.:
+#   kubectl create secret generic grafana-admin -n monitoring \
+#     --from-literal=password="$(openssl rand -base64 24)"
+# or manage it via your secrets tooling (Sealed Secrets, External Secrets, SOPS, etc).
 apiVersion: v1
 kind: Secret
 metadata:
@@ -113,4 +117,4 @@ metadata:
   namespace: monitoring
 type: Opaque
 stringData:
-  password: "changeme"
+  password: "REPLACE_GRAFANA_ADMIN_PASSWORD"

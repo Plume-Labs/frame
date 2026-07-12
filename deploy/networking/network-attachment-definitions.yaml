@@ -1,3 +1,8 @@
+# "master" interface names below (ib0, enp1s0f0) and the whereabouts IP
+# ranges are EXAMPLES for a common InfiniBand + 25/100GbE RoCE layout.
+# Confirm real interface names with `ip link show` (or `talosctl get links`)
+# on each node — PCI enumeration order varies by board/BIOS — and pick
+# ranges that don't collide with any other subnet in use.
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
@@ -9,7 +14,7 @@ spec:
       "cniVersion": "0.3.1",
       "name": "rdma-network",
       "type": "macvlan",
-      "master": "ib0",
+      "master": "REPLACE_IB_INTERFACE",
       "mode": "bridge",
       "ipam": {
         "type": "whereabouts",
@@ -30,7 +35,7 @@ spec:
       "cniVersion": "0.3.1",
       "name": "roce-network",
       "type": "ipvlan",
-      "master": "enp1s0f0",
+      "master": "REPLACE_ROCE_INTERFACE",
       "mode": "l2",
       "ipam": {
         "type": "whereabouts",

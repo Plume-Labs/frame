@@ -1,143 +1,50 @@
-# PXE Boot Configuration
+# PXE Boot
 
-This directory contains configurations for PXE (Preboot Execution Environment) network booting.
+Frame nodes PXE-boot into **Talos Linux**, an immutable, API-managed OS with
+no package manager, shell, or SSH. There is no Kickstart/preseed/kernel-image
+step to configure here — that flow applies to traditional distros (Ubuntu,
+Rocky, Debian), not Talos.
 
-## Overview
+## What actually serves PXE boot
 
-PXE boot enables bare metal servers to boot from the network and automatically provision operating systems. This is essential for:
-- Rapid cluster expansion
-- Hot hardware updates
-- Consistent OS deployment
-- Automated infrastructure provisioning
+**Sidero Metal** (`deploy/sidero/`) runs in-cluster and provides its own
+PXE/iPXE, TFTP, and DHCP-proxy services. It:
 
-## Directory Structure
+1. Discovers bare-metal servers that PXE-boot against it.
+2. Serves them a Talos maintenance-mode image built from an Image Factory
+   schematic (`deploy/sidero/environments/`).
+3. Registers each as a `Server` CRD, maps it to a `ServerClass`
+   (`deploy/sidero/serverclasses/`) by hardware profile (GPU/RDMA/base
+   worker).
+4. Applies the matching `TalosMachineConfig` from `deploy/talos/` to install
+   Talos to disk and join the cluster — no manual OS install step.
 
-```
-pxe/
-├── tftp/                  # TFTP boot files
-│   ├── pxelinux.cfg/     # PXE boot menu configurations
-│   └── images/           # Kernel images and initrd
-├── dhcp/                  # DHCP server configuration
-├── kickstart/            # Kickstart files for automated installation
-└── preseed/              # Preseed files (for Debian/Ubuntu)
-```
+See `deploy/sidero/README.md` for the full flow and `deploy/talos/README.md`
+for the MachineConfig side.
 
-## Configuration
+## Network requirements
 
-The Talos/Sidero provisioning stack configures:
+- Dedicated provisioning network/VLAN reachable by both Sidero and the nodes'
+  PXE NICs (Sidero's DHCP-proxy coexists with an existing DHCP server — it
+  does not replace it).
+- BMC/IPMI network for out-of-band power control:
 
-1. **TFTP Server** - Serves boot files to PXE clients
-2. **DHCP Server** - Provides network configuration and boot filename
-3. **NFS/HTTP Server** - Hosts installation media
-4. **Boot Menu** - Presents OS installation options
+  ```bash
+  ipmitool -I lanplus -H <BMC_IP> -U <USER> -P <PASS> \
+    chassis bootdev pxe options=persistent
+  ipmitool -I lanplus -H <BMC_IP> -U <USER> -P <PASS> \
+    power cycle
+  ```
 
-## Boot Flow
-
-```
-┌──────────────┐
-│ Bare Metal   │
-│   Server     │
-└──────┬───────┘
-       │ 1. Power on / PXE boot
-       ▼
-┌──────────────┐
-│ DHCP Server  │  2. Assigns IP, provides boot filename
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ TFTP Server  │  3. Downloads pxelinux.0 and boot menu
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Boot Menu    │  4. User selects OS or auto-provision
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ HTTP/NFS     │  5. Downloads kernel, initrd, packages
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Kickstart/   │  6. Automated installation
-│  Preseed     │
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Installed OS │  7. System reboots, joins cluster
-└──────────────┘
-```
-
-## IPMI Integration
-
-For completely automated provisioning:
-
-```bash
-# Set next boot to PXE
-ipmitool -I lanplus -H <BMC_IP> -U <USER> -P <PASS> \
-  chassis bootdev pxe options=persistent
-
-# Power on/cycle the server
-ipmitool -I lanplus -H <BMC_IP> -U <USER> -P <PASS> \
-  power cycle
-```
-
-This can be integrated into Sidero workflows for zero-touch provisioning.
-
-## Network Requirements
-
-- Dedicated provisioning network (e.g., 192.168.1.0/24)
-- DHCP range for new nodes
-- PXE server accessible on port 69 (TFTP), 80 (HTTP), 2049 (NFS)
-- BMC/IPMI network for out-of-band management
-
-## Supported OS
-
-The PXE configuration supports:
-- Ubuntu 22.04 LTS (recommended)
-- Ubuntu 20.04 LTS
-- Rocky Linux 9
-- Debian 12
-
-## Customization
-
-### Add Custom Boot Entry
-
-Edit `pxelinux.cfg/default`:
-
-```
-LABEL custom-ubuntu
-  MENU LABEL Ubuntu 22.04 Custom Kernel
-  KERNEL images/ubuntu-22.04/vmlinuz
-  APPEND initrd=images/ubuntu-22.04/initrd.img ...
-```
-
-### Kickstart/Preseed
-
-Customize `kickstart/k8s-node.ks` or `preseed/k8s-node.cfg` to:
-- Set hostname patterns
-- Configure disk partitioning
-- Install additional packages
-- Run post-installation scripts
-
-## Security
-
-PXE boot can be secured with:
-- VLAN isolation for provisioning network
-- MAC address filtering in DHCP
-- HTTPS for installation media
-- Signed kernels and initrd
+  Sidero can drive this itself via a `Server`'s configured BMC credentials
+  for zero-touch provisioning — see `deploy/sidero/README.md`.
 
 ## Troubleshooting
 
-### Node not booting PXE
-
-1. Check BIOS/UEFI boot order
-2. Verify network cable and switch port
-3. Check DHCP server logs: `journalctl -u dnsmasq -f`
-4. Verify TFTP files: `ls -la /var/lib/tftpboot/`
-
-### Boot hangs after PXE
-
-1. Check kernel/initrd paths in boot menu
-2. Verify NFS/HTTP server is accessible
-3. Check kickstart/preseed syntax
-4. Review installation logs on the node console
+- Node not PXE-booting: check BIOS/UEFI boot order, cabling/switch port, and
+  that the provisioning VLAN reaches the node.
+- Stuck in maintenance mode / not registering: `kubectl get servers -A` and
+  check the `sidero-controller-manager` logs.
+- Wrong `ServerClass` match: check the qualifiers in
+  `deploy/sidero/serverclasses/` against the node's actual hardware
+  (CPU/GPU/PCI addresses).
