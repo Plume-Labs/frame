@@ -11,7 +11,7 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
 - ✅ 6 CRDs in `frame.plume-labs.io/v1alpha1` with generated manifests + RBAC tiers
 - ✅ Controllers with finalizers; FrameJob → ArgoWorkflow; FrameNode secondary watch on core `v1.Node`
 - ✅ Validating/defaulting webhooks + envtest tests; e2e scaffold; CI workflows
-- ✅ `deploy/` IaC: Talos, Sidero, PXE, Ceph, MinIO, Cilium/RDMA, Argo, monitoring, GitOps
+- ✅ `deploy/` IaC: Talos, Sidero, PXE, Ceph (RGW), Cilium/RDMA, Argo, monitoring, GitOps
 - ✅ UI talks directly to the Kubernetes CRD API (no Express server — `kubectl proxy` in dev, ServiceAccount token in prod)
 
 ---
