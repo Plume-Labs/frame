@@ -49,7 +49,7 @@ Frame is three cooperating layers in one repo.
 │                                                          │
 │  Argo Workflows · PriorityClasses · ResourceQuotas       │
 │  Talos MachineConfigs · Sidero Metal · PXE boot          │
-│  Ceph (Rook) · MinIO · Cilium · SR-IOV · RDMA            │
+│  Ceph (Rook, RGW) · Cilium · SR-IOV · RDMA               │
 │  Prometheus · Grafana · Jaeger · DCGM · OpenLineage      │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -114,7 +114,7 @@ Everything needed to stand up the bare-metal cluster the operator runs on.
 | `deploy/networking/` | Cilium, SR-IOV device plugin, DPDK, RDMA device plugin |
 | `deploy/monitoring/` | Prometheus + Grafana + Jaeger + DCGM Exporter |
 | `deploy/jobs/` | Argo Workflows templates and DAG manifests |
-| `deploy/storage/` | MinIO, DataHub, Ceph data fabric |
+| `deploy/storage/` | Ceph RGW (S3), DataHub, data fabric namespace |
 | `deploy/gitops/` | Flux CD / ArgoCD bootstrap configs |
 | `deploy/kubernetes/` | Kustomize base + overlays (development, production) for the UI |
 | `deploy/scripts/` | Bootstrap, health-check, hot-add scripts |

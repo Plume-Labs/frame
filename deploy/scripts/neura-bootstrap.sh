@@ -127,8 +127,8 @@ step5_storage() {
   kubectl apply -f "$DEPLOY_DIR/storage/data-fabric.yaml"
   kubectl apply -f "$DEPLOY_DIR/storage/metacat.yaml"
 
-  # Wait for MinIO StatefulSet to be ready before configuring Alluxio underfs
-  wait_for_sts data-fabric minio
+  # Wait for the Ceph RGW gateway to be ready before configuring Alluxio underfs
+  wait_for_deploy rook-ceph rook-ceph-rgw-neura-store-a
   ok "Storage layer deployed"
 }
 
@@ -156,7 +156,7 @@ step7_velero() {
     --set-json 'configuration.backupStorageLocation[0].name=default' \
     --set-json 'configuration.backupStorageLocation[0].provider=aws' \
     --set-json 'configuration.backupStorageLocation[0].bucket=neura-velero-backups' \
-    --set-json 'configuration.backupStorageLocation[0].config.s3Url=http://minio-lb.data-fabric.svc.cluster.local:9000' \
+    --set-json 'configuration.backupStorageLocation[0].config.s3Url=http://rook-ceph-rgw-neura-store.rook-ceph.svc.cluster.local:80' \
     --set-json 'configuration.backupStorageLocation[0].config.s3ForcePathStyle=true' \
     --set features=EnableCSI \
     --timeout "$DEPLOY_TIMEOUT" \
@@ -224,7 +224,8 @@ main() {
   info "  Cluster Control UI : kubectl port-forward svc/cluster-control-ui 8080:80 -n cluster-control"
   info "  Argo Workflows UI   : kubectl port-forward svc/argo-server 2746:2746 -n argo"
   info "  Jaeger UI           : kubectl port-forward svc/jaeger 16686:16686 -n monitoring"
-  info "  MinIO Console       : kubectl port-forward svc/minio-lb 9001:9001 -n data-fabric"
+  info "  Ceph RGW (S3)       : kubectl port-forward svc/rook-ceph-rgw-neura-store 8000:80 -n rook-ceph"
+  info "  Ceph Dashboard      : kubectl port-forward svc/rook-ceph-mgr-dashboard 8443:8443 -n rook-ceph"
   info "  DataHub UI          : kubectl port-forward svc/datahub-frontend 9002:9002 -n data-fabric"
   info "  Marquez (Lineage)   : kubectl port-forward svc/marquez-web 3000:3000 -n monitoring"
   info "  Grafana             : kubectl port-forward svc/grafana 3001:3000 -n monitoring"

@@ -10,7 +10,7 @@ Frame is a **mainframe framework for Kubernetes** — not merely a monitoring da
 3. **Authoritative** - Design conveys ownership and control over complex distributed infrastructure, not just passive visibility into it.
 
 **Complexity Level**: Complex Application (advanced functionality, multiple views, client/server split)
-Frame is a full-stack mainframe framework: a React control-plane UI, an Express REST API server, a TypeScript operator SDK, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph/MinIO storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
+Frame is a full-stack mainframe framework: a React control-plane UI, an Express REST API server, a TypeScript operator SDK, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph (RGW) storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
 
 ## Essential Features
 
@@ -55,11 +55,11 @@ Frame is a full-stack mainframe framework: a React control-plane UI, an Express 
 ## Essential Features (Continued)
 
 **GitOps Deployment Infrastructure**
-- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, PXE boot, Ceph/MinIO storage, HPC scheduling (Volcano/YuniKorn), Argo Workflows, and GitOps workflows
+- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, PXE boot, Ceph (RGW) storage, HPC scheduling (Volcano/YuniKorn), Argo Workflows, and GitOps workflows
 - Purpose: Production-ready deployment scripts for mainframe-like clustering with automated provisioning and continuous delivery
 - Trigger: Operations team uses deployment scripts plus Talos/Sidero resources to provision infrastructure
 - Progression: Run Talos bootstrap script → PXE/Sidero provisions bare metal → Talos configures K8s nodes → Flux/ArgoCD syncs from Git → Frame API + UI deployed
-- Success criteria: Full cluster deployed with RDMA networking, Ceph/MinIO storage, automated GitOps, hot-add node capability, HPC scheduler, and Frame API server running
+- Success criteria: Full cluster deployed with RDMA networking, Ceph (RGW) storage, automated GitOps, hot-add node capability, HPC scheduler, and Frame API server running
 
 ## Edge Case Handling
 

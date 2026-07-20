@@ -82,7 +82,7 @@ subjects:
     name: velero
     namespace: velero
 ---
-# BackupStorageLocation — MinIO S3-compatible backend
+# BackupStorageLocation — Ceph RGW S3-compatible backend
 apiVersion: velero.io/v1
 kind: BackupStorageLocation
 metadata:
@@ -94,11 +94,11 @@ spec:
     bucket: neura-velero-backups
     prefix: cluster
   config:
-    region: us-east-1        # MinIO requires a region string; ignored for local-only deployments — Frame runs single-site
+    region: us-east-1        # RGW requires a region string; ignored for local-only deployments — Frame runs single-site
     s3ForcePathStyle: "true"
-    s3Url: http://minio-lb.data-fabric.svc.cluster.local:9000
+    s3Url: http://rook-ceph-rgw-neura-store.rook-ceph.svc.cluster.local:80
   credential:
-    name: velero-minio-credentials
+    name: velero-s3-credentials
     key: cloud
 ---
 # VolumeSnapshotLocation — Ceph CSI snapshots
@@ -192,7 +192,7 @@ spec:
           emptyDir: {}
         - name: credentials
           secret:
-            secretName: velero-minio-credentials
+            secretName: velero-s3-credentials
 ---
 # Scheduled backups — daily full backup of stateful namespaces
 apiVersion: velero.io/v1

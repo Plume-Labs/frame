@@ -142,7 +142,7 @@ spec:
           args:
             - --leader-elect=true
             - --checkpoint-storage=s3://neura-checkpoints
-            - --minio-endpoint=http://minio-lb.data-fabric.svc.cluster.local:9000
+            - --s3-endpoint=http://rook-ceph-rgw-neura-store.rook-ceph.svc.cluster.local:80
             - --loglevel=info
           env:
             - name: AWS_ACCESS_KEY_ID
