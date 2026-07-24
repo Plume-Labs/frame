@@ -1,12 +1,78 @@
-import { NodePlacement, createFrameClient } from '@/lib/frame-sdk'
+import {
+  CacheStats,
+  NodePlacement,
+  StorageTiers,
+  createFrameClient,
+} from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { HardDrives, ArrowClockwise } from '@phosphor-icons/react'
+import { HardDrives, ArrowClockwise, Lightning, Stack } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
+
+function MemoryAndCache() {
+  const { state } = useLiveResource<{ tiers: StorageTiers; cache: CacheStats | null }>(
+    async () => {
+      const tiers = await frame.cluster.tiers()
+      let cache: CacheStats | null = null
+      try {
+        cache = await frame.cluster.cache()
+      } catch {
+        cache = null
+      }
+      return { tiers, cache }
+    },
+  )
+  if (state.phase !== 'ready') return null
+  const { tiers, cache } = state.data
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="font-mono text-lg flex items-center gap-2">
+          <Stack className="text-primary" />
+          Memory Tiers &amp; Cache
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Tile label="RAM tier" value={`${tiers.ramGiB.toFixed(0)} GiB`} />
+        <Tile label="NVMe tier (local)" value={`${tiers.nvmeGiB.toFixed(0)} GiB`} />
+        <Tile label="Object tier (Ceph)" value={`${tiers.objectGiB.toFixed(0)} GiB`} />
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+            <Lightning size={12} /> Cache hit-rate
+          </div>
+          {cache && cache.up ? (
+            <>
+              <div className="font-mono text-2xl font-bold text-accent">
+                {cache.hitRate.toFixed(0)}%
+              </div>
+              <Progress value={cache.hitRate} className="h-1" />
+              <div className="text-[10px] text-muted-foreground font-mono">
+                {cache.hits.toLocaleString()} hits / {cache.misses.toLocaleString()} miss
+              </div>
+            </>
+          ) : (
+            <div className="font-mono text-sm text-muted-foreground">no exporter</div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function Tile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
+      <div className="font-mono text-2xl font-bold text-foreground">{value}</div>
+    </div>
+  )
+}
 
 const phaseTone = (p: string) =>
   p === 'Running' ? 'text-accent' : p === 'Pending' ? 'text-warning' : 'text-destructive'
@@ -18,6 +84,8 @@ export function WorkloadPlacementView() {
 
   return (
     <div className="space-y-6">
+      <MemoryAndCache />
+
       <Card>
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
