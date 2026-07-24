@@ -5,6 +5,12 @@
 # Prereqs: kubectl + helm reachable at the cluster; per-node node-prep.sh already
 # run (cpu=host, Ceph disk, ssd burst disk, ptp_kvm/ksm/burst). See docs/test-cluster.md.
 #
+# Images must exist on every node's containerd BEFORE this runs:
+#   docker build -t cluster-control:latest .                     # Frame UI
+#   docker build -t ghcr.io/rmocq/neura-api:dev    -f ../../apps/api/Dockerfile ../..
+#   docker build -t ghcr.io/rmocq/neura-client:dev -f ../../apps/client/Dockerfile ../..
+#   for each: docker save <img> | ssh <node> 'sudo k3s ctr images import -'
+#
 # Usage:  ./deploy/scripts/test-cluster-up.sh
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."   # repo root (.externals/frame)
