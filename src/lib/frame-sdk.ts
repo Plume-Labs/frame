@@ -155,6 +155,30 @@ export interface AlluxioStats {
   usedBytes: number
 }
 
+/** Live KSM (Kernel Same-page Merging) per node, from node-exporter's ksmd collector. */
+export interface KsmNode {
+  node: string
+  run: boolean
+  pagesShared: number
+  pagesSharing: number
+  savedMiB: number
+  fullScans: number
+}
+export interface KsmStats {
+  nodes: KsmNode[]
+  enabledNodes: number
+  totalSavedMiB: number
+  totalPagesSharing: number
+}
+
+/** Live per-node network throughput (physical NIC), from node-exporter netdev. */
+export interface NetNode {
+  node: string
+  device: string
+  rxBytes: number
+  txBytes: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -641,6 +665,71 @@ class ClusterClient {
       totalBytes: v('Cluster.CapacityTotal'),
       usedBytes: v('Cluster.CapacityUsed'),
     }
+  }
+
+  /** Fetch node-exporter metrics text per node (pod-proxy), keyed by node name. */
+  private async nodeExporterMetrics(): Promise<Array<{ node: string; text: string }>> {
+    const pods = await k8sFetch<
+      ListResponse<{ metadata: { name: string }; spec?: { nodeName?: string } }>
+    >('/api/v1/namespaces/monitoring/pods?labelSelector=app%3Dnode-exporter')
+    const results = await Promise.all(
+      (pods.items ?? []).map(async (p) => {
+        try {
+          const res = await fetch(
+            `/api/v1/namespaces/monitoring/pods/${p.metadata.name}:9100/proxy/metrics`,
+          )
+          return { node: p.spec?.nodeName ?? p.metadata.name, text: res.ok ? await res.text() : '' }
+        } catch {
+          return { node: p.spec?.nodeName ?? p.metadata.name, text: '' }
+        }
+      }),
+    )
+    return results.filter((r) => r.text)
+  }
+
+  /** Live KSM stats aggregated across nodes (node-exporter ksmd collector). */
+  async ksm(): Promise<KsmStats> {
+    const metrics = await this.nodeExporterMetrics()
+    if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
+    const g = (text: string, key: string) => {
+      const m = text.match(new RegExp(`^${key}\\s+([0-9.e+-]+)`, 'm'))
+      return m ? Number(m[1]) : 0
+    }
+    const nodes: KsmNode[] = metrics.map(({ node, text }) => {
+      const sharing = g(text, 'node_ksmd_pages_sharing')
+      return {
+        node,
+        run: g(text, 'node_ksmd_run') === 1,
+        pagesShared: g(text, 'node_ksmd_pages_shared'),
+        pagesSharing: sharing,
+        savedMiB: (sharing * 4096) / 1024 ** 2,
+        fullScans: g(text, 'node_ksmd_full_scans_total'),
+      }
+    })
+    return {
+      nodes: nodes.sort((a, b) => a.node.localeCompare(b.node)),
+      enabledNodes: nodes.filter((n) => n.run).length,
+      totalSavedMiB: nodes.reduce((s, n) => s + n.savedMiB, 0),
+      totalPagesSharing: nodes.reduce((s, n) => s + n.pagesSharing, 0),
+    }
+  }
+
+  /** Live per-node network throughput on the primary NIC (eth0). */
+  async network(device = 'eth0'): Promise<NetNode[]> {
+    const metrics = await this.nodeExporterMetrics()
+    if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
+    const g = (text: string, key: string) => {
+      const m = text.match(new RegExp(`^${key}\\{device="${device}"\\}\\s+([0-9.e+-]+)`, 'm'))
+      return m ? Number(m[1]) : 0
+    }
+    return metrics
+      .map(({ node, text }) => ({
+        node,
+        device,
+        rxBytes: g(text, 'node_network_receive_bytes_total'),
+        txBytes: g(text, 'node_network_transmit_bytes_total'),
+      }))
+      .sort((a, b) => a.node.localeCompare(b.node))
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */

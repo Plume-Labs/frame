@@ -26,7 +26,7 @@ import { DataLineageView } from '@/components/DataLineageView'
 
 import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
 import { ClusterStorageView } from '@/components/ClusterStorageView'
-import { NetworkDashboard } from '@/components/NetworkDashboard'
+import { NetworkView } from '@/components/NetworkView'
 import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
 
 import { KVCacheDashboard } from '@/components/KVCacheDashboard'
@@ -36,7 +36,7 @@ import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
 import { MPSDashboard } from '@/components/MPSDashboard'
 import { PTPSyncDashboard } from '@/components/PTPSyncDashboard'
 import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
-import { KSMDashboard } from '@/components/KSMDashboard'
+import { KsmView } from '@/components/KsmView'
 
 import { CapacityPlanningDashboard } from '@/components/CapacityPlanningDashboard'
 import { ForecastChart } from '@/components/ForecastChart'
@@ -132,7 +132,7 @@ const NAV: NavGroup[] = [
     items: [
       { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Utilisation, MIG partitioning, power and thermals' },
       { id: 'storage', label: 'Storage', icon: <Database />, description: 'Live Ceph health, OSDs, capacity and pools' },
-      { id: 'network', label: 'Network', icon: <Network />, description: 'Bandwidth, RDMA, SR-IOV and packet loss' },
+      { id: 'network', label: 'Network', icon: <Network />, description: 'Live per-node NIC throughput' },
       { id: 'data-locality', label: 'Placement', icon: <HardDrives />, description: 'Live pod-to-node workload placement' },
     ],
   },
@@ -146,7 +146,7 @@ const NAV: NavGroup[] = [
       { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'NVIDIA Multi-Process Service sharing' },
       { id: 'ptp', label: 'PTP Sync', icon: <Clock />, description: 'IEEE 1588 clock synchronisation' },
       { id: 'burst-buffer', label: 'Burst Buffer', icon: <HardDrive />, description: 'NVMe write-behind checkpoint staging' },
-      { id: 'ksm', label: 'KSM', icon: <Archive />, description: 'Kernel same-page merging across model replicas' },
+      { id: 'ksm', label: 'KSM', icon: <Archive />, description: 'Live kernel same-page merging (node-exporter)' },
     ],
   },
   {
@@ -251,7 +251,7 @@ function App() {
       case 'storage':
         return <ClusterStorageView />
       case 'network':
-        return <NetworkDashboard nodes={nodes} />
+        return <NetworkView />
       case 'data-locality':
         return <WorkloadPlacementView />
 
@@ -271,7 +271,7 @@ function App() {
       case 'burst-buffer':
         return <BurstBufferDashboard />
       case 'ksm':
-        return <KSMDashboard />
+        return <KsmView />
 
       // ── Operations ──────────────────────────────────────────────────────
       case 'capacity':
