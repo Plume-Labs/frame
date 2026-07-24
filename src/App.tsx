@@ -31,7 +31,7 @@ import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
 import { KsmView } from '@/components/KsmView'
 
 import { CapacityView } from '@/components/CapacityView'
-import { ResiliencePanel } from '@/components/ResiliencePanel'
+import { ResilienceView } from '@/components/ResilienceView'
 import { ClusterEventsView } from '@/components/ClusterEventsView'
 
 import { Button } from '@/components/ui/button'
@@ -141,7 +141,7 @@ const NAV: NavGroup[] = [
     label: 'Operations',
     items: [
       { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Live allocatable vs used vs reserved' },
-      { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'MTBF/MTTR, checkpoints and snapshots' },
+      { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'Live durability, disruption budgets, restart hotspots' },
       { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
     ],
   },
@@ -264,7 +264,7 @@ function App() {
       case 'capacity':
         return <CapacityView />
       case 'resilience':
-        return <ResiliencePanel nodes={nodes} />
+        return <ResilienceView />
       case 'events':
         return <ClusterEventsView />
 
