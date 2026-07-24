@@ -31,8 +31,16 @@ export function DraggableRack({
   onSelectNode
 }: DraggableRackProps) {
   const [hoveredPosition, setHoveredPosition] = useState<number | null>(null)
-  
-  const RACK_HEIGHT = 42
+
+  // A full 42U elevation renders ~840px tall while local racks hold only a
+  // handful of devices, leaving the card mostly empty drop zones. Size the rack
+  // to its tallest occupied slot plus a few free U for drop targets, with a
+  // sensible minimum, so every rack stays compact and consistent.
+  const maxOccupied = rack.nodes.reduce(
+    (max, n) => Math.max(max, n.rackPosition + n.hardware.rackUnits - 1),
+    0,
+  )
+  const RACK_HEIGHT = Math.max(maxOccupied + 4, 12)
   const positions = Array.from({ length: RACK_HEIGHT }, (_, i) => RACK_HEIGHT - i)
   
   const getNodeAtPosition = (position: number): ClusterNode | null => {
@@ -88,10 +96,17 @@ export function DraggableRack({
       </CardHeader>
       <CardContent className="space-y-0">
         <div className="relative border border-border rounded-md bg-card/50 overflow-hidden">
-          <div className="absolute left-0 top-0 bottom-0 w-8 bg-muted/30 border-r border-border flex flex-col justify-between py-2 text-[8px] font-mono text-muted-foreground">
-            {positions.filter((_, i) => i % 2 === 0).map((pos) => (
-              <div key={pos} className="text-center leading-none">
-                {pos}
+          {/* One 20px ruler row per U, matching the slot column exactly, so a
+              device that occupies U4 lines up with the "4" label instead of the
+              ruler drifting against the slots. */}
+          <div className="absolute left-0 top-0 bottom-0 w-8 bg-muted/30 border-r border-border text-[8px] font-mono text-muted-foreground">
+            {positions.map((pos, i) => (
+              <div
+                key={pos}
+                className="flex items-center justify-center leading-none"
+                style={{ height: '20px' }}
+              >
+                {i % 2 === 0 ? pos : ''}
               </div>
             ))}
           </div>

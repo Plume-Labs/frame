@@ -27,11 +27,32 @@ describe('generateClusterNodes', () => {
     }
   })
 
-  it('assigns each node to one of the three zones', () => {
-    const validZones = new Set(['zone-a', 'zone-b', 'zone-c'])
+  it('places every node in the single local zone (local clusters have no AZs)', () => {
+    const nodes = generateClusterNodes(32)
+    const zones = new Set(nodes.map((n) => n.zone))
+    expect(zones.size).toBe(1)
+    expect(zones.has('local')).toBe(true)
+  })
+
+  it('assigns flat, zone-free rack ids', () => {
     const nodes = generateClusterNodes(32)
     for (const node of nodes) {
-      expect(validZones.has(node.zone)).toBe(true)
+      expect(node.rackId).toMatch(/^rack-\d{2}$/)
+    }
+  })
+
+  it('packs devices without overlapping U within a rack', () => {
+    const nodes = generateClusterNodes(200)
+    const byRack = new Map<string, { start: number; end: number }[]>()
+    for (const node of nodes) {
+      const start = node.rackPosition
+      const end = node.rackPosition + node.hardware.rackUnits - 1
+      const list = byRack.get(node.rackId) ?? []
+      for (const span of list) {
+        expect(start > span.end || end < span.start).toBe(true)
+      }
+      list.push({ start, end })
+      byRack.set(node.rackId, list)
     }
   })
 
