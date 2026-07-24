@@ -42,7 +42,7 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
 
   const statusVariants = {
     online: 'bg-accent text-accent-foreground',
-    degraded: 'bg-[oklch(0.75_0.18_75)] text-[oklch(0.15_0.02_240)]',
+    degraded: 'bg-warning text-[oklch(0.15_0.02_240)]',
     offline: 'bg-destructive text-destructive-foreground',
     provisioning: 'bg-primary text-primary-foreground'
   }
@@ -72,8 +72,8 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
               <div className="font-mono text-sm">{node.id}</div>
             </div>
             <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase">Zone</div>
-              <div className="font-mono text-sm">{node.zone}</div>
+              <div className="text-xs text-muted-foreground uppercase">Rack</div>
+              <div className="font-mono text-sm">{node.rackId}</div>
             </div>
             <div className="space-y-1">
               <div className="text-xs text-muted-foreground uppercase">Uptime</div>
@@ -157,7 +157,7 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                     <Thermometer className="text-primary" />
                     <span className="text-sm font-medium">Temperature</span>
                   </div>
-                  <div className={`font-mono text-sm font-semibold ${node.hardware.temperature > 75 ? 'text-[oklch(0.75_0.18_75)]' : ''}`}>
+                  <div className={`font-mono text-sm font-semibold ${node.hardware.temperature > 75 ? 'text-warning' : ''}`}>
                     {node.hardware.temperature.toFixed(1)}°C
                   </div>
                 </div>
@@ -226,14 +226,14 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                       <Clock className="text-xs" />
                       <div className="text-xs text-muted-foreground uppercase">Latency</div>
                     </div>
-                    <div className={`font-mono text-sm font-bold ${node.network.latency > 3 ? 'text-[oklch(0.75_0.18_75)]' : ''}`}>
+                    <div className={`font-mono text-sm font-bold ${node.network.latency > 3 ? 'text-warning' : ''}`}>
                       {node.network.latency.toFixed(2)} ms
                     </div>
                   </div>
 
                   <div className="p-3 rounded-lg bg-secondary/30">
                     <div className="text-xs text-muted-foreground uppercase mb-1">Packet Loss</div>
-                    <div className={`font-mono text-sm font-bold ${node.network.packetLoss > 0.3 ? 'text-[oklch(0.75_0.18_75)]' : ''}`}>
+                    <div className={`font-mono text-sm font-bold ${node.network.packetLoss > 0.3 ? 'text-warning' : ''}`}>
                       {node.network.packetLoss.toFixed(3)}%
                     </div>
                   </div>
@@ -345,7 +345,7 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 rounded-lg bg-secondary/30">
                     <div className="text-xs text-muted-foreground uppercase mb-1">Cache Hit Rate</div>
-                    <div className={`font-mono text-lg font-bold ${node.hardware.cacheHitRate > 0.7 ? 'text-accent' : 'text-[oklch(0.75_0.18_75)]'}`}>
+                    <div className={`font-mono text-lg font-bold ${node.hardware.cacheHitRate > 0.7 ? 'text-accent' : 'text-warning'}`}>
                       {(node.hardware.cacheHitRate * 100).toFixed(1)}%
                     </div>
                     <div className="text-xs text-muted-foreground">Alluxio / Redis</div>
@@ -355,7 +355,7 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                     <div className={`font-mono text-lg font-bold ${
                       node.hardware.storageTier === 'ram' ? 'text-accent' :
                       node.hardware.storageTier === 'nvme' ? 'text-primary' :
-                      'text-[oklch(0.75_0.18_75)]'
+                      'text-warning'
                     }`}>{node.hardware.storageTier.toUpperCase()}</div>
                   </div>
                 </div>

@@ -18,7 +18,6 @@ interface NodeProvisionWizardProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   racks: string[]
-  zones: string[]
   controlPlaneCount: number
   onNodeProvisioned: (node: ClusterNode) => void
 }
@@ -48,7 +47,6 @@ export function NodeProvisionWizard({
   open,
   onOpenChange,
   racks,
-  zones,
   controlPlaneCount,
   onNodeProvisioned,
 }: NodeProvisionWizardProps) {
@@ -69,8 +67,10 @@ export function NodeProvisionWizard({
   const [rdmaInterface, setRdmaInterface] = useState('')
   const [hostnameOverride, setHostnameOverride] = useState('')
 
-  const [rack, setRack] = useState(racks[0] ?? 'zone-a-rack-01')
-  const [zone, setZone] = useState(zones[0] ?? 'zone-a')
+  const [rack, setRack] = useState(racks[0] ?? 'rack-01')
+  // Local clusters are single-zone; the FrameNode CRD still carries an optional
+  // spec.zone, so we send a stable 'local' rather than a user-picked value.
+  const zone = 'local'
   const [serviceClass, setServiceClass] = useState<ServiceClass>('MEDIUM')
 
   const [applying, setApplying] = useState(false)
@@ -283,7 +283,7 @@ export function NodeProvisionWizard({
     if (step === 0) return Boolean(discoverData)
     if (step === 2) return Boolean(networkAddress && networkGateway && dns.length > 0)
     if (step === 3) return Boolean(disk)
-    if (step === 4) return Boolean(rack && zone)
+    if (step === 4) return Boolean(rack)
     return true
   }
 
@@ -422,24 +422,13 @@ export function NodeProvisionWizard({
           )}
 
           {step === 4 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label className="font-mono text-xs">Rack</Label>
                 <Select value={rack} onValueChange={setRack}>
                   <SelectTrigger className="w-full font-mono"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {racks.map((entry) => (
-                      <SelectItem key={entry} value={entry} className="font-mono">{entry}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="font-mono text-xs">Zone</Label>
-                <Select value={zone} onValueChange={setZone}>
-                  <SelectTrigger className="w-full font-mono"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {zones.map((entry) => (
                       <SelectItem key={entry} value={entry} className="font-mono">{entry}</SelectItem>
                     ))}
                   </SelectContent>
@@ -470,7 +459,7 @@ export function NodeProvisionWizard({
                   <SummaryLine label="Disk" value={disk} />
                   <SummaryLine label="RDMA" value={rdmaInterface || 'none'} />
                   <SummaryLine label="Hostname" value={hostnameOverride || discoverData?.hostname || 'auto'} />
-                  <SummaryLine label="Rack / Zone" value={`${rack} / ${zone}`} />
+                  <SummaryLine label="Rack" value={rack} />
                   <SummaryLine label="Service Class" value={serviceClass} />
                   <SummaryLine label="FrameNode CR" value={provisionNodeId ?? '—'} />
                 </div>

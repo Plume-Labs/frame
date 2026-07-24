@@ -19,10 +19,7 @@ export function CapacityPlanCard({ plan }: CapacityPlanCardProps) {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <HardDrives className="text-primary" size={20} weight="duotone" />
-          <CardTitle className="font-mono">Capacity Expansion Plan</CardTitle>
-        </div>
+        <CardTitle className="font-mono text-xl flex items-center gap-2"><HardDrives className="text-primary" /> Capacity Expansion Plan</CardTitle>
         <CardDescription>Recommended infrastructure scaling for {plan.timeframe}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

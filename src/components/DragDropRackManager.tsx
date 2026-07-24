@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { ClusterNode } from '@/lib/types'
-import { organizeNodesByRack, organizeRacksByZone } from '@/lib/rack'
+import { organizeNodesByRack, organizeRacksFlat } from '@/lib/rack'
 import { 
   validateRackPlacement, 
   validateDeviceMove, 
@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Buildings, ArrowCounterClockwise, CheckCircle, Database, Gear, ShieldWarning } from '@phosphor-icons/react'
+import { Stack, ArrowCounterClockwise, CheckCircle, Database, Gear, ShieldWarning } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useKV } from '@github/spark/hooks'
 
@@ -62,11 +62,17 @@ export function DragDropRackManager({
     setPendingChanges(nodes)
   }, [nodes])
 
-  const { racksMap, zoneMap } = useMemo(() => {
+  const { racksMap, racks } = useMemo(() => {
     const racksMap = organizeNodesByRack(pendingChanges)
-    const zoneMap = organizeRacksByZone(racksMap)
-    return { racksMap, zoneMap }
+    const racks = organizeRacksFlat(racksMap)
+    return { racksMap, racks }
   }, [pendingChanges])
+
+  const rackTotalNodes = racks.reduce((sum, rack) => sum + rack.nodes.length, 0)
+  const rackOnlineNodes = racks.reduce(
+    (sum, rack) => sum + rack.nodes.filter((n) => n.status === 'online').length,
+    0,
+  )
 
   const rackValidations = useMemo(() => {
     const validations = new Map<string, ValidationResult>()
@@ -546,53 +552,42 @@ export function DragDropRackManager({
         </DialogContent>
       </Dialog>
 
-      <div className="space-y-6">
-        {Array.from(zoneMap.entries()).map(([zoneName, racks]) => {
-          const totalNodes = racks.reduce((sum, rack) => sum + rack.nodes.length, 0)
-          const onlineNodes = racks.reduce((sum, rack) => 
-            sum + rack.nodes.filter(n => n.status === 'online').length, 0
-          )
-
-          return (
-            <Card key={zoneName} className="border-2">
-              <CardHeader>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <Buildings className="w-6 h-6 text-primary" weight="duotone" />
-                    <div>
-                      <CardTitle className="text-xl font-mono uppercase">{zoneName}</CardTitle>
-                      <p className="text-sm text-muted-foreground font-mono mt-1">
-                        {racks.length} racks · {totalNodes} nodes · {onlineNodes} online
-                      </p>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="bg-primary/20 text-primary border-primary font-mono">
-                    {Math.round((onlineNodes / totalNodes) * 100)}% Online
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-                  {racks.map((rack) => (
-                    <DraggableRack
-                      key={rack.id}
-                      rack={rack}
-                      draggedDevice={draggedDevice}
-                      dropTarget={dropTarget}
-                      onDragStart={handleDragStart}
-                      onDragEnd={handleDragEnd}
-                      onDragOver={handleDragOver}
-                      onDrop={handleDrop}
-                      selectedNode={selectedNode}
-                      onSelectNode={onSelectNode}
-                    />
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      <Card className="border-2">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Stack className="w-6 h-6 text-primary" weight="duotone" />
+              <div>
+                <CardTitle className="text-xl font-mono">Racks</CardTitle>
+                <p className="text-sm text-muted-foreground font-mono mt-1">
+                  {racks.length} racks · {rackTotalNodes} nodes · {rackOnlineNodes} online
+                </p>
+              </div>
+            </div>
+            <Badge variant="outline" className="bg-primary/20 text-primary border-primary font-mono">
+              {rackTotalNodes ? Math.round((rackOnlineNodes / rackTotalNodes) * 100) : 0}% Online
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
+            {racks.map((rack) => (
+              <DraggableRack
+                key={rack.id}
+                rack={rack}
+                draggedDevice={draggedDevice}
+                dropTarget={dropTarget}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                selectedNode={selectedNode}
+                onSelectNode={onSelectNode}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {draggedDevice && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">

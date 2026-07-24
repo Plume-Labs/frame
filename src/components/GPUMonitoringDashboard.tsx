@@ -9,13 +9,13 @@ interface GPUMonitoringDashboardProps {
 
 function getUtilColor(pct: number) {
   if (pct >= 90) return 'text-destructive'
-  if (pct >= 70) return 'text-[oklch(0.75_0.18_75)]'
+  if (pct >= 70) return 'text-warning'
   return 'text-foreground'
 }
 
 function getTempColor(c: number) {
   if (c >= 85) return 'text-destructive'
-  if (c >= 70) return 'text-[oklch(0.75_0.18_75)]'
+  if (c >= 70) return 'text-warning'
   return 'text-foreground'
 }
 

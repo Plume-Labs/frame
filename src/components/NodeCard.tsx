@@ -12,14 +12,14 @@ interface NodeCardProps {
 
 const SERVICE_CLASS_ACCENT: Record<string, string> = {
   HIGH:   "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-destructive",
-  MEDIUM: "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-[oklch(0.75_0.18_75)]",
+  MEDIUM: "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-warning",
   LOW:    "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:rounded-t before:bg-accent",
 }
 
 export function NodeCard({ node, onClick, isSelected }: NodeCardProps) {
   const statusColors = {
     online: 'text-accent border-accent/50',
-    degraded: 'text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/50',
+    degraded: 'text-warning border-warning/50',
     offline: 'text-destructive border-destructive/50',
     provisioning: 'text-primary border-primary/50'
   }

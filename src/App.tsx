@@ -1,50 +1,170 @@
-import { useMemo, useState } from 'react'
-import { ClusterNode } from '@/lib/types'
+import { ReactNode, useMemo, useState } from 'react'
+import {
+  Anomaly,
+  CapacityAlert,
+  CapacityPlan,
+  ClusterNode,
+  ResourceDataPoint,
+  ResourceForecast,
+} from '@/lib/types'
 import { calculateClusterStats } from '@/lib/cluster'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 import { useCapacityAnalytics } from '@/hooks/useCapacityAnalytics'
+
 import { NodeGrid } from '@/components/NodeGrid'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
+import { NodesSummaryCard } from '@/components/NodesSummaryCard'
+import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
 import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
+import { RackVisualization } from '@/components/RackVisualization'
+import { DragDropRackManager } from '@/components/DragDropRackManager'
+
+import { JobOrchestrationView } from '@/components/JobOrchestrationView'
+import { SchedulerDashboard } from '@/components/SchedulerDashboard'
+import { ServiceClassPanel } from '@/components/ServiceClassPanel'
+import { DataLineageView } from '@/components/DataLineageView'
+
+import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
+import { DataFabricDashboard } from '@/components/DataFabricDashboard'
 import { NetworkDashboard } from '@/components/NetworkDashboard'
-import { StorageDashboard } from '@/components/StorageDashboard'
-import { EventLog } from '@/components/EventLog'
+import { DataLocalityView } from '@/components/DataLocalityView'
+
+import { KVCacheDashboard } from '@/components/KVCacheDashboard'
+import { ElasticPoolDashboard } from '@/components/ElasticPoolDashboard'
+import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
+import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
+import { MPSDashboard } from '@/components/MPSDashboard'
+import { PTPSyncDashboard } from '@/components/PTPSyncDashboard'
+import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
+import { KSMDashboard } from '@/components/KSMDashboard'
+
 import { CapacityPlanningDashboard } from '@/components/CapacityPlanningDashboard'
 import { ForecastChart } from '@/components/ForecastChart'
 import { CapacityPlanCard } from '@/components/CapacityPlanCard'
 import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { AnomalyAlerts } from '@/components/AnomalyAlerts'
-import { RackVisualization } from '@/components/RackVisualization'
-import { ZoneView } from '@/components/ZoneView'
-import { ZoneHeatmap } from '@/components/ZoneHeatmap'
-import { NodesSummaryCard } from '@/components/NodesSummaryCard'
-import { DragDropRackManager } from '@/components/DragDropRackManager'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-// Framework components
-import { SchedulerDashboard } from '@/components/SchedulerDashboard'
-import { ServiceClassPanel } from '@/components/ServiceClassPanel'
-import { DataLocalityView } from '@/components/DataLocalityView'
-import { JobOrchestrationView } from '@/components/JobOrchestrationView'
-import { DataFabricDashboard } from '@/components/DataFabricDashboard'
-import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
-import { DataLineageView } from '@/components/DataLineageView'
 import { ResiliencePanel } from '@/components/ResiliencePanel'
-import { KVCacheDashboard } from '@/components/KVCacheDashboard'
-import { ElasticPoolDashboard } from '@/components/ElasticPoolDashboard'
-import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
-import { PTPSyncDashboard } from '@/components/PTPSyncDashboard'
-import { MPSDashboard } from '@/components/MPSDashboard'
-import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
-import { KSMDashboard } from '@/components/KSMDashboard'
-import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
-import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
+import { EventLog } from '@/components/EventLog'
+
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from '@/components/ui/sidebar'
+import {
+  Archive,
+  ArrowsLeftRight,
+  Calendar,
+  ChartLine,
+  Clock,
+  Cpu,
+  Database,
+  Gauge,
+  GitBranch,
+  HardDrive,
+  HardDrives,
+  Info,
+  Lightning,
+  Network,
+  Queue,
+  ShieldCheck,
+  ShieldWarning,
+  Shuffle,
+  Speedometer,
+  Stack,
+  Waveform,
+} from '@phosphor-icons/react'
+
+/**
+ * Navigation model.
+ *
+ * The app used to expose all 21 surfaces as one flat tab strip that wrapped
+ * onto three rows. They are grouped here by the question each answers —
+ * what runs (Workloads), what it runs on (Compute), what it consumes
+ * (Resources), how it is tuned (Tuning), and how it is behaving (Operations).
+ */
+interface NavItem {
+  id: string
+  label: string
+  icon: ReactNode
+  /** Shown under the page title; explains what the screen is for. */
+  description: string
+}
+
+interface NavGroup {
+  label: string
+  items: NavItem[]
+}
+
+const NAV: NavGroup[] = [
+  {
+    label: 'Workloads',
+    items: [
+      { id: 'jobs', label: 'Jobs', icon: <Queue />, description: 'Workflow DAGs, queue depth and checkpoint state' },
+      { id: 'scheduler', label: 'Scheduler', icon: <Calendar />, description: 'Gang scheduling, queue quotas and backfill' },
+      { id: 'service-classes', label: 'Service Classes', icon: <ShieldCheck />, description: 'HIGH / MEDIUM / LOW tiers against their SLA targets' },
+      { id: 'lineage', label: 'Lineage', icon: <GitBranch />, description: 'Span timelines and dataset provenance per pipeline' },
+    ],
+  },
+  {
+    label: 'Compute',
+    items: [
+      { id: 'nodes', label: 'Nodes', icon: <Cpu />, description: 'Fleet health and per-node status' },
+      { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Rack elevations, power and cooling, layout editing' },
+    ],
+  },
+  {
+    label: 'Resources',
+    items: [
+      { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Utilisation, MIG partitioning, power and thermals' },
+      { id: 'storage', label: 'Storage', icon: <Database />, description: 'Ceph capacity, IOPS, dataset catalog and tiers' },
+      { id: 'network', label: 'Network', icon: <Network />, description: 'Bandwidth, RDMA, SR-IOV and packet loss' },
+      { id: 'data-locality', label: 'Data Locality', icon: <HardDrives />, description: 'Cache hit rates, memory tiers and NUMA placement' },
+    ],
+  },
+  {
+    label: 'Tuning',
+    items: [
+      { id: 'kv-cache', label: 'KV-Cache', icon: <Lightning />, description: 'Distributed KV-cache over RDMA' },
+      { id: 'elastic-pools', label: 'Elastic Pools', icon: <ArrowsLeftRight />, description: 'LPAR pool expansion and contraction' },
+      { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding' },
+      { id: 'pipeline-pp', label: 'Pipeline PP', icon: <Waveform />, description: 'Prefill/decode pipeline parallelism' },
+      { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'NVIDIA Multi-Process Service sharing' },
+      { id: 'ptp', label: 'PTP Sync', icon: <Clock />, description: 'IEEE 1588 clock synchronisation' },
+      { id: 'burst-buffer', label: 'Burst Buffer', icon: <HardDrive />, description: 'NVMe write-behind checkpoint staging' },
+      { id: 'ksm', label: 'KSM', icon: <Archive />, description: 'Kernel same-page merging across model replicas' },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Forecasts, anomalies and growth planning' },
+      { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'MTBF/MTTR, checkpoints and snapshots' },
+      { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
+    ],
+  },
+]
+
+const NAV_INDEX: Record<string, NavItem> = Object.fromEntries(
+  NAV.flatMap((group) => group.items).map((item) => [item.id, item]),
+)
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [selectedRack, setSelectedRack] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState('jobs')
-  const [selectedZoneFromHeatmap, setSelectedZoneFromHeatmap] = useState<string | null>(null)
+  const [screen, setScreen] = useState('jobs')
   const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
 
   const { nodes, setNodes, events, nodesRef } = useClusterSimulation(32)
@@ -54,141 +174,38 @@ function App() {
   // panel always shows up-to-date metrics without an extra state update cycle.
   const syncedSelectedNode = useMemo(
     () => (selectedNode ? (nodes.find((n) => n.id === selectedNode.id) ?? null) : null),
-    [nodes, selectedNode]
+    [nodes, selectedNode],
   )
 
   // Memoize cluster-wide stats so they aren't recomputed on every render
   const stats = useMemo(() => calculateClusterStats(nodes), [nodes])
   const racks = useMemo(() => Array.from(new Set(nodes.map((node) => node.rackId))).sort(), [nodes])
-  const zones = useMemo(() => Array.from(new Set(nodes.map((node) => node.zone))).sort(), [nodes])
   const controlPlaneCount = useMemo(
     () => nodes.filter((node) => /control|master/i.test(node.name)).length,
     [nodes],
   )
 
-  return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto p-4 sm:p-6">
-        <header className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-mono font-bold text-primary tracking-tight">
-              FRAME
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Mainframe Framework for Kubernetes
-            </p>
-          </div>
-          <ClusterStatsDashboard stats={stats} compact />
-        </header>
+  const active = NAV_INDEX[screen] ?? NAV_INDEX['jobs']
 
-        {/* ── Framework-control surfaces first; observability grouped last ── */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="font-mono mb-6 flex-wrap h-auto">
-            {/* Framework control surfaces */}
-            <TabsTrigger value="jobs">Jobs</TabsTrigger>
-            <TabsTrigger value="scheduler">Scheduler</TabsTrigger>
-            <TabsTrigger value="service-classes">Service Classes</TabsTrigger>
-            <TabsTrigger value="data-locality">Data Locality</TabsTrigger>
-            <TabsTrigger value="storage">Storage</TabsTrigger>
-            <TabsTrigger value="gpu">GPU</TabsTrigger>
-            <TabsTrigger value="resilience">Resilience</TabsTrigger>
-            {/* AI Inference optimizations */}
-            <TabsTrigger value="kv-cache">KV-Cache</TabsTrigger>
-            <TabsTrigger value="elastic-pools">Elastic Pools</TabsTrigger>
-            <TabsTrigger value="speculative">Speculative</TabsTrigger>
-            <TabsTrigger value="pipeline-pp">Pipeline PP</TabsTrigger>
-            <TabsTrigger value="mps">MPS</TabsTrigger>
-            {/* System optimizations */}
-            <TabsTrigger value="ptp">PTP Sync</TabsTrigger>
-            <TabsTrigger value="burst-buffer">Burst Buffer</TabsTrigger>
-            <TabsTrigger value="ksm">KSM</TabsTrigger>
-            {/* Cluster management */}
-            <TabsTrigger value="nodes">Nodes</TabsTrigger>
-            <TabsTrigger value="racks">Racks</TabsTrigger>
-            <TabsTrigger value="zones">Zones</TabsTrigger>
-            {/* Observability (secondary) */}
-            <TabsTrigger value="observe">Observe</TabsTrigger>
-            <TabsTrigger value="lineage">Lineage</TabsTrigger>
-            <TabsTrigger value="events">Events</TabsTrigger>
-          </TabsList>
+  // Only the active screen is mounted — the previous flat-tab layout kept all
+  // 21 panels in the tree at once.
+  function renderScreen(): ReactNode {
+    switch (screen) {
+      // ── Workloads ───────────────────────────────────────────────────────
+      case 'jobs':
+        return <JobOrchestrationView />
+      case 'scheduler':
+        return <SchedulerDashboard nodes={nodes} />
+      case 'service-classes':
+        return <ServiceClassPanel nodes={nodes} />
+      case 'lineage':
+        return <DataLineageView />
 
-          {/* ── Job orchestration & submission ──────────────────────────────── */}
-          <TabsContent value="jobs" className="space-y-6">
-            <JobOrchestrationView />
-          </TabsContent>
-
-          {/* ── Scheduling policy management ────────────────────────────────── */}
-          <TabsContent value="scheduler" className="space-y-6">
-            <SchedulerDashboard nodes={nodes} />
-          </TabsContent>
-
-          {/* ── Service-class resource provisioning ─────────────────────────── */}
-          <TabsContent value="service-classes" className="space-y-6">
-            <ServiceClassPanel nodes={nodes} />
-          </TabsContent>
-
-          {/* ── Data locality & memory tier management ──────────────────────── */}
-          <TabsContent value="data-locality" className="space-y-6">
-            <DataLocalityView nodes={nodes} />
-          </TabsContent>
-
-          {/* ── Unified storage fabric ──────────────────────────────────────── */}
-          <TabsContent value="storage" className="space-y-6">
-            <DataFabricDashboard nodes={nodes} />
-          </TabsContent>
-
-          {/* ── GPU monitoring & MIG management ────────────────────────────── */}
-          <TabsContent value="gpu" className="space-y-6">
-            <GPUMonitoringDashboard nodes={nodes} />
-          </TabsContent>
-
-          {/* ── Resilience & reliability controls ──────────────────────────── */}
-          <TabsContent value="resilience" className="space-y-6">
-            <ResiliencePanel nodes={nodes} />
-          </TabsContent>
-
-          {/* ── Distributed KV-Cache RDMA ────────────────────────────────────── */}
-          <TabsContent value="kv-cache" className="space-y-6">
-            <KVCacheDashboard />
-          </TabsContent>
-
-          {/* ── Elastic LPAR Pools ───────────────────────────────────────────── */}
-          <TabsContent value="elastic-pools" className="space-y-6">
-            <ElasticPoolDashboard />
-          </TabsContent>
-
-          {/* ── Speculative Decoding ─────────────────────────────────────────── */}
-          <TabsContent value="speculative" className="space-y-6">
-            <SpeculativeDecodingDashboard />
-          </TabsContent>
-
-          {/* ── Pipeline Parallelism prefill/decode ──────────────────────────── */}
-          <TabsContent value="pipeline-pp" className="space-y-6">
-            <PipelinePPDashboard />
-          </TabsContent>
-
-          {/* ── NVIDIA MPS ───────────────────────────────────────────────────── */}
-          <TabsContent value="mps" className="space-y-6">
-            <MPSDashboard />
-          </TabsContent>
-
-          {/* ── PTP / IEEE 1588 clock sync ───────────────────────────────────── */}
-          <TabsContent value="ptp" className="space-y-6">
-            <PTPSyncDashboard />
-          </TabsContent>
-
-          {/* ── Burst Buffer NVMe ────────────────────────────────────────────── */}
-          <TabsContent value="burst-buffer" className="space-y-6">
-            <BurstBufferDashboard />
-          </TabsContent>
-
-          {/* ── KSM — Kernel Same-Page Merging ───────────────────────────────── */}
-          <TabsContent value="ksm" className="space-y-6">
-            <KSMDashboard />
-          </TabsContent>
-
-          {/* ── Node topology (cluster management) ──────────────────────────── */}
-          <TabsContent value="nodes" className="space-y-6">
+      // ── Compute ─────────────────────────────────────────────────────────
+      case 'nodes':
+        return (
+          <div className="space-y-6">
+            <NodesSummaryCard nodes={nodes} />
             <div className="flex justify-end">
               <Button className="font-mono" onClick={() => setProvisionWizardOpen(true)}>
                 Provision Node
@@ -199,11 +216,18 @@ function App() {
               selectedNode={syncedSelectedNode}
               onSelectNode={setSelectedNode}
             />
-          </TabsContent>
-
-          {/* ── Rack management ─────────────────────────────────────────────── */}
-          <TabsContent value="racks" className="space-y-6">
-            <div className="space-y-6">
+          </div>
+        )
+      case 'racks':
+        // Overview and editor both render the same zone→rack grid, so they are
+        // sub-views rather than stacked one above the other.
+        return (
+          <Tabs defaultValue="overview" className="w-full">
+            <TabsList className="font-mono mb-6">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="layout">Layout Editor</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview">
               <RackVisualization
                 nodes={nodes}
                 selectedNode={syncedSelectedNode}
@@ -211,91 +235,194 @@ function App() {
                 selectedRack={selectedRack}
                 onSelectRack={setSelectedRack}
               />
+            </TabsContent>
+            <TabsContent value="layout">
               <DragDropRackManager
                 nodes={nodes}
                 onNodesUpdate={setNodes}
                 selectedNode={syncedSelectedNode}
                 onSelectNode={setSelectedNode}
               />
-            </div>
-          </TabsContent>
+            </TabsContent>
+          </Tabs>
+        )
+      // ── Resources ───────────────────────────────────────────────────────
+      case 'gpu':
+        return <GPUMonitoringDashboard nodes={nodes} />
+      case 'storage':
+        return <DataFabricDashboard nodes={nodes} />
+      case 'network':
+        return <NetworkDashboard nodes={nodes} />
+      case 'data-locality':
+        return <DataLocalityView nodes={nodes} />
 
-          {/* ── Zone management ─────────────────────────────────────────────── */}
-          <TabsContent value="zones" className="space-y-6">
-            <ZoneHeatmap
-              nodes={nodes}
-              onZoneClick={(zoneName) => {
-                setSelectedZoneFromHeatmap(zoneName)
-              }}
-            />
-            <ZoneView
-              nodes={nodes}
-              selectedNode={syncedSelectedNode}
-              onSelectNode={setSelectedNode}
-              initialZone={selectedZoneFromHeatmap}
-              onZoneConsumed={() => setSelectedZoneFromHeatmap(null)}
-            />
-          </TabsContent>
+      // ── Tuning ──────────────────────────────────────────────────────────
+      case 'kv-cache':
+        return <KVCacheDashboard />
+      case 'elastic-pools':
+        return <ElasticPoolDashboard />
+      case 'speculative':
+        return <SpeculativeDecodingDashboard />
+      case 'pipeline-pp':
+        return <PipelinePPDashboard />
+      case 'mps':
+        return <MPSDashboard />
+      case 'ptp':
+        return <PTPSyncDashboard />
+      case 'burst-buffer':
+        return <BurstBufferDashboard />
+      case 'ksm':
+        return <KSMDashboard />
 
-          {/* ── Observability (monitoring — secondary) ──────────────────────── */}
-          <TabsContent value="observe" className="space-y-6">
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <NodesSummaryCard nodes={nodes} />
-              <div className="space-y-6">
-                <NetworkDashboard nodes={nodes} />
-                <StorageDashboard nodes={nodes} />
+      // ── Operations ──────────────────────────────────────────────────────
+      case 'capacity':
+        return <CapacityScreen
+          anomalies={anomalies}
+          alerts={alerts}
+          historicalData={historicalData}
+          forecast={forecast}
+          capacityPlan={capacityPlan}
+        />
+      case 'resilience':
+        return <ResiliencePanel nodes={nodes} />
+      case 'events':
+        return <EventLog events={events} />
+
+      default:
+        return null
+    }
+  }
+
+  return (
+    <SidebarProvider>
+      <Sidebar collapsible="icon">
+        <SidebarHeader className="border-b border-sidebar-border">
+          <div className="flex items-center gap-2 px-2 py-1.5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
+            <Cpu size={22} className="text-primary shrink-0" weight="bold" />
+            <div className="group-data-[collapsible=icon]:hidden min-w-0">
+              <div className="font-mono font-bold text-primary leading-tight tracking-tight">FRAME</div>
+              <div className="text-[10px] text-muted-foreground leading-tight truncate">
+                Mainframe Framework for Kubernetes
               </div>
             </div>
+          </div>
+        </SidebarHeader>
 
-            {anomalies.length > 0 && (
-              <AnomalyAlerts anomalies={anomalies} />
-            )}
+        <SidebarContent>
+          {NAV.map((group) => (
+            <SidebarGroup key={group.label}>
+              <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-widest">
+                {group.label}
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {group.items.map((item) => (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton
+                        isActive={screen === item.id}
+                        tooltip={item.label}
+                        onClick={() => setScreen(item.id)}
+                        className="font-mono text-xs"
+                      >
+                        {item.icon}
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
+        </SidebarContent>
 
-            {alerts.length > 0 && (
-              <CapacityPlanningDashboard alerts={alerts} />
-            )}
+        <SidebarRail />
+      </Sidebar>
 
-            {historicalData && historicalData.length > 0 && (
-              <HistoricalTrendsAnalysis historicalData={historicalData} />
-            )}
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              {historicalData && historicalData.length >= 5 && (
-                <ForecastChart forecast={forecast} />
-              )}
-              {capacityPlan && (
-                <CapacityPlanCard plan={capacityPlan} />
-              )}
+      <SidebarInset className="min-w-0 bg-background">
+        {/* Page header — cluster stats live here on every screen, so no screen
+            repeats them in its own body. */}
+        <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex items-center gap-3 px-4 sm:px-6 py-3">
+            <SidebarTrigger className="shrink-0" />
+            <div className="min-w-0 flex-1">
+              <h1 className="font-mono text-lg font-bold text-primary leading-tight truncate">
+                {active.label}
+              </h1>
+              <p className="text-xs text-muted-foreground leading-tight truncate">
+                {active.description}
+              </p>
             </div>
-          </TabsContent>
+            <div className="hidden lg:block shrink-0">
+              <ClusterStatsDashboard stats={stats} compact />
+            </div>
+          </div>
+          {/* Stats wrap below the title on narrow viewports instead of vanishing */}
+          <div className="lg:hidden px-4 sm:px-6 pb-3">
+            <ClusterStatsDashboard stats={stats} compact />
+          </div>
+        </header>
 
-          {/* ── Data lineage view ───────────────────────────────────────────── */}
-          <TabsContent value="lineage" className="space-y-6">
-            <DataLineageView />
-          </TabsContent>
+        <div className="p-4 sm:p-6 min-w-0">{renderScreen()}</div>
+      </SidebarInset>
 
-          {/* ── Event log ───────────────────────────────────────────────────── */}
-          <TabsContent value="events" className="space-y-6">
-            <EventLog events={events} />
-          </TabsContent>
-        </Tabs>
+      <NodeDetailPanel
+        node={syncedSelectedNode}
+        open={!!syncedSelectedNode}
+        onClose={() => setSelectedNode(null)}
+      />
+      <NodeProvisionWizard
+        open={provisionWizardOpen}
+        onOpenChange={setProvisionWizardOpen}
+        racks={racks}
+        controlPlaneCount={controlPlaneCount}
+        onNodeProvisioned={(node) => {
+          setNodes((current) => [node, ...current])
+          setSelectedNode(node)
+        }}
+      />
+    </SidebarProvider>
+  )
+}
 
-        <NodeDetailPanel
-          node={syncedSelectedNode}
-          open={!!syncedSelectedNode}
-          onClose={() => setSelectedNode(null)}
-        />
-        <NodeProvisionWizard
-          open={provisionWizardOpen}
-          onOpenChange={setProvisionWizardOpen}
-          racks={racks}
-          zones={zones}
-          controlPlaneCount={controlPlaneCount}
-          onNodeProvisioned={(node) => {
-            setNodes((current) => [node, ...current])
-            setSelectedNode(node)
-          }}
-        />
+/**
+ * Capacity planning. Every card here needs enough sampled history to be
+ * meaningful, so the screen states that plainly instead of rendering nothing
+ * for the first ~50 seconds of uptime.
+ */
+function CapacityScreen({
+  anomalies,
+  alerts,
+  historicalData,
+  forecast,
+  capacityPlan,
+}: {
+  anomalies: Anomaly[]
+  alerts: CapacityAlert[]
+  historicalData: ResourceDataPoint[] | undefined
+  forecast: ResourceForecast
+  capacityPlan: CapacityPlan | null | undefined
+}) {
+  const samples = historicalData?.length ?? 0
+
+  if (samples < 5) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-8 text-center space-y-2">
+        <div className="font-mono text-sm text-foreground">Collecting baseline…</div>
+        <div className="text-xs text-muted-foreground">
+          Forecasts and anomaly detection need at least 5 samples. {samples} collected so far.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {anomalies.length > 0 && <AnomalyAlerts anomalies={anomalies} />}
+      {alerts.length > 0 && <CapacityPlanningDashboard alerts={alerts} />}
+      {historicalData && <HistoricalTrendsAnalysis historicalData={historicalData} />}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <ForecastChart forecast={forecast} />
+        {capacityPlan && <CapacityPlanCard plan={capacityPlan} />}
       </div>
     </div>
   )

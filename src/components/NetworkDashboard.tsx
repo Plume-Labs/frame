@@ -79,14 +79,14 @@ export function NetworkDashboard({ nodes }: NetworkDashboardProps) {
               <Clock className="text-sm text-muted-foreground" />
               <div className="text-xs text-muted-foreground uppercase tracking-wide">Avg Latency</div>
             </div>
-            <div className={`text-xl font-mono font-bold ${avgLatency > 3 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>
+            <div className={`text-xl font-mono font-bold ${avgLatency > 3 ? 'text-warning' : 'text-foreground'}`}>
               {avgLatency.toFixed(2)} ms
             </div>
           </div>
           
           <div className="space-y-1">
             <div className="text-xs text-muted-foreground uppercase tracking-wide">Packet Loss</div>
-            <div className={`text-xl font-mono font-bold ${avgPacketLoss > 0.3 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>
+            <div className={`text-xl font-mono font-bold ${avgPacketLoss > 0.3 ? 'text-warning' : 'text-foreground'}`}>
               {avgPacketLoss.toFixed(3)}%
             </div>
           </div>
@@ -100,11 +100,11 @@ export function NetworkDashboard({ nodes }: NetworkDashboardProps) {
         </div>
 
         {(highLatencyNodes.length > 0 || highPacketLossNodes.length > 0) && (
-          <div className="p-4 rounded-lg bg-[oklch(0.75_0.18_75)]/10 border border-[oklch(0.75_0.18_75)]/30">
+          <div className="p-4 rounded-lg bg-warning/10 border border-warning/30">
             <div className="flex items-start gap-2">
-              <Warning className="text-[oklch(0.75_0.18_75)] mt-0.5" />
+              <Warning className="text-warning mt-0.5" />
               <div className="space-y-2 flex-1">
-                <div className="text-sm font-semibold text-[oklch(0.75_0.18_75)]">Network Issues Detected</div>
+                <div className="text-sm font-semibold text-warning">Network Issues Detected</div>
                 {highLatencyNodes.length > 0 && (
                   <div className="text-xs text-muted-foreground">
                     {highLatencyNodes.length} node{highLatencyNodes.length > 1 ? 's' : ''} with high latency: {' '}
@@ -151,7 +151,7 @@ export function NetworkDashboard({ nodes }: NetworkDashboardProps) {
             </div>
             <div className="p-3 rounded-lg bg-secondary/30 border border-border space-y-1">
               <div className="text-xs text-muted-foreground">Inter-pod P99</div>
-              <div className={`font-mono text-lg font-bold ${avgLatency > 3 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>
+              <div className={`font-mono text-lg font-bold ${avgLatency > 3 ? 'text-warning' : 'text-foreground'}`}>
                 {avgLatency.toFixed(2)} ms
               </div>
               <div className="text-[10px] text-muted-foreground">avg latency</div>

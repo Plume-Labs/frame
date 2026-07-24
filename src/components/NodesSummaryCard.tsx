@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ClusterNode } from '@/lib/types'
-import { CheckCircle, XCircle, Warning, Circle } from '@phosphor-icons/react'
+import { CheckCircle, XCircle, Warning, Circle, Cpu } from '@phosphor-icons/react'
 import { Progress } from '@/components/ui/progress'
 
 interface NodesSummaryCardProps {
@@ -21,7 +21,6 @@ export function NodesSummaryCard({ nodes }: NodesSummaryCardProps) {
   const avgMemory = nodes.reduce((sum, node) => sum + node.metrics.memory, 0) / totalNodes
   const avgStorage = nodes.reduce((sum, node) => sum + node.metrics.storage, 0) / totalNodes
 
-  const zones = [...new Set(nodes.map(n => n.zone))]
   const racks = [...new Set(nodes.map(n => n.rackId))]
 
   const getStatusColor = (status: string) => {
@@ -47,7 +46,7 @@ export function NodesSummaryCard({ nodes }: NodesSummaryCardProps) {
   return (
     <Card className="border-border/50 bg-card/50 backdrop-blur">
       <CardHeader>
-        <CardTitle className="font-mono text-lg">Node Fleet Summary</CardTitle>
+        <CardTitle className="font-mono text-xl flex items-center gap-2"><Cpu className="text-primary" /> Node Fleet Summary</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid grid-cols-2 gap-4">
@@ -107,11 +106,7 @@ export function NodesSummaryCard({ nodes }: NodesSummaryCardProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 pt-2">
-          <div className="space-y-1 rounded-lg border border-border/50 bg-muted/20 p-3">
-            <div className="text-xs text-muted-foreground">Zones</div>
-            <div className="text-2xl font-mono font-bold text-primary">{zones.length}</div>
-          </div>
+        <div className="grid grid-cols-1 gap-4 pt-2">
           <div className="space-y-1 rounded-lg border border-border/50 bg-muted/20 p-3">
             <div className="text-xs text-muted-foreground">Racks</div>
             <div className="text-2xl font-mono font-bold text-primary">{racks.length}</div>

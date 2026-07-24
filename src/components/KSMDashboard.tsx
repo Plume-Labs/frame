@@ -1,8 +1,7 @@
 import { KSMClusterStats, KSMNodeStats } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Stack, Speedometer } from '@phosphor-icons/react'
+import { EntityTile, MicroStats, TileMeter, TuningDashboard } from '@/components/TuningDashboard'
 
 // ── Simulated KSM state ───────────────────────────────────────────────────────
 
@@ -34,42 +33,27 @@ function KSMNodeRow({ node }: { node: KSMNodeStats }) {
   const ratio = mergeRatio(node)
 
   return (
-    <div className="p-3 rounded-lg border border-border bg-secondary/30 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-xs font-bold">{node.nodeName}</span>
-        {node.enabled
-          ? <Badge className="text-[10px] border bg-accent/20 text-accent border-accent/30">KSM ON</Badge>
-          : <Badge className="text-[10px] border bg-secondary text-muted-foreground border-border">KSM OFF</Badge>
-        }
-      </div>
-
+    <EntityTile
+      name={node.nodeName}
+      badge={node.enabled
+        ? <Badge className="text-[10px] border bg-accent/20 text-accent border-accent/30">KSM ON</Badge>
+        : <Badge className="text-[10px] border bg-secondary text-muted-foreground border-border">KSM OFF</Badge>
+      }
+    >
       {node.enabled && (
         <>
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Merge ratio</span>
-              <span className="font-mono font-bold text-accent">{(ratio * 100).toFixed(0)}%</span>
-            </div>
-            <Progress value={ratio * 100} className="h-1" />
-          </div>
+          <TileMeter label="Merge ratio" value={ratio * 100} />
 
-          <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
-            <div>
-              <span className="font-mono font-bold text-foreground">{node.pagesMerged.toLocaleString()}</span>
-              <div>Pages merged</div>
-            </div>
-            <div>
-              <span className="font-mono font-bold text-accent">{node.memorySavedMB} MB</span>
-              <div>Saved</div>
-            </div>
-            <div>
-              <span className="font-mono font-bold text-foreground">{node.scanIntervalMs} ms</span>
-              <div>Interval</div>
-            </div>
-          </div>
+          <MicroStats
+            items={[
+              { value: node.pagesMerged.toLocaleString(), label: 'Pages merged' },
+              { value: `${node.memorySavedMB} MB`, label: 'Saved', tone: 'accent' },
+              { value: `${node.scanIntervalMs} ms`, label: 'Interval' },
+            ]}
+          />
         </>
       )}
-    </div>
+    </EntityTile>
   )
 }
 
@@ -79,63 +63,35 @@ export function KSMDashboard() {
   const s = CLUSTER_STATS
 
   return (
-    <div className="space-y-6">
-      {/* Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <Stack className="text-primary" />
-            KSM — Kernel Same-Page Merging
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Enabled Nodes</div>
-              <div className="font-mono text-2xl font-bold text-accent">{s.enabledNodes} / {s.nodes.length}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Memory Saved</div>
-              <div className="font-mono text-2xl font-bold text-primary">
-                <Speedometer size={18} className="inline" /> {s.totalSavedGB.toFixed(1)} GB
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Pages Merged</div>
-              <div className="font-mono text-2xl font-bold text-foreground">{(s.totalPagesMerged / 1000).toFixed(0)}k</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Target Workloads</div>
-              <div className="font-mono text-sm font-bold text-muted-foreground">Ollama / vLLM</div>
-            </div>
-          </div>
-
-          <div className="rounded-lg bg-secondary/40 p-3 text-xs text-muted-foreground space-y-1">
-            <div className="font-mono font-bold text-foreground mb-1">How it works</div>
-            <div>Multiple Ollama/vLLM instances loading the same model weights into RAM produce identical pages. KSM scans, de-duplicates, and maps them to a single physical page — saving several GB per node at the cost of ~1% CPU for scanning.</div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Per-node */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Per-Node KSM Stats</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {s.nodes.map(n => <KSMNodeRow key={n.nodeId} node={n} />)}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Config reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Kernel Config Reference</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# Talos / kernel KSM settings (reference)
+    <TuningDashboard<KSMNodeStats>
+      title="KSM — Kernel Same-Page Merging"
+      icon={<Stack className="text-primary" />}
+      stats={[
+        { label: 'Enabled Nodes', value: `${s.enabledNodes} / ${s.nodes.length}`, tone: 'accent' },
+        {
+          label: 'Memory Saved',
+          value: <><Speedometer size={18} className="inline" /> {s.totalSavedGB.toFixed(1)} GB</>,
+          tone: 'primary',
+        },
+        {
+          label: 'Pages Merged',
+          value: `${(s.totalPagesMerged / 1000).toFixed(0)}k`,
+          tone: 'foreground',
+        },
+        { label: 'Target Workloads', value: 'Ollama / vLLM', tone: 'muted', size: 'sm' },
+      ]}
+      note={
+        <div className="rounded-lg bg-secondary/40 p-3 text-xs text-muted-foreground space-y-1">
+          <div className="font-mono font-bold text-foreground mb-1">How it works</div>
+          <div>Multiple Ollama/vLLM instances loading the same model weights into RAM produce identical pages. KSM scans, de-duplicates, and maps them to a single physical page — saving several GB per node at the cost of ~1% CPU for scanning.</div>
+        </div>
+      }
+      entitiesTitle="Per-Node KSM Stats"
+      entities={s.nodes}
+      entityKey={n => n.nodeId}
+      renderEntity={n => <KSMNodeRow node={n} />}
+      configTitle="Kernel Config Reference"
+      config={`# Talos / kernel KSM settings (reference)
 # Configure via Talos MachineConfig patches and reconcile through GitOps.
 
 - name: Enable KSM
@@ -149,9 +105,7 @@ export function KSMDashboard() {
 
 # Annotate pods to opt in to KSM (kernel 6.4+ MADV_MERGEABLE hint)
 # spec.containers[].resources.limits: memory: ...
-# Enable via: prctl(PR_SET_MEMORY_MERGE, 1) inside the container entrypoint`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+# Enable via: prctl(PR_SET_MEMORY_MERGE, 1) inside the container entrypoint`}
+    />
   )
 }

@@ -1,8 +1,8 @@
 import { MPSNodeStatus, MPSClientInfo } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Cpu, User } from '@phosphor-icons/react'
+import { EntityTile, TileMeter, TuningDashboard } from '@/components/TuningDashboard'
+import { formatAge, inverseScoreClass, inverseScoreTone } from '@/lib/thresholds'
 
 // ── Simulated MPS state ───────────────────────────────────────────────────────
 
@@ -34,22 +34,9 @@ const MOCK_NODES: MPSNodeStatus[] = [
   },
 ]
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function utilColor(pct: number) {
-  if (pct >= 90) return 'text-destructive'
-  if (pct >= 70) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-foreground'
-}
-
-function formatAge(ms: number): string {
-  const s = Math.floor((Date.now() - ms) / 1000)
-  const m = Math.floor(s / 60)
-  const h = Math.floor(m / 60)
-  if (h > 0) return `${h}h`
-  if (m > 0) return `${m}m`
-  return `${s}s`
-}
+/** SM utilisation: <=70% healthy, <=90% warning, above that the GPU is saturated. */
+const UTIL_GOOD = 70
+const UTIL_OK = 90
 
 function ClientRow({ client }: { client: MPSClientInfo }) {
   return (
@@ -60,7 +47,7 @@ function ClientRow({ client }: { client: MPSClientInfo }) {
         <span className="text-muted-foreground">pid {client.pid}</span>
       </div>
       <div className="flex items-center gap-3">
-        <span className={`font-mono ${utilColor(client.smUtilPct)}`}>{client.smUtilPct}% SM</span>
+        <span className={`font-mono ${inverseScoreClass(client.smUtilPct, UTIL_GOOD, UTIL_OK)}`}>{client.smUtilPct}% SM</span>
         <span className="font-mono text-muted-foreground">{(client.memUsedMB / 1024).toFixed(1)} GB</span>
         <span className="font-mono text-muted-foreground">{formatAge(client.startedAt)}</span>
       </div>
@@ -72,29 +59,23 @@ function ClientRow({ client }: { client: MPSClientInfo }) {
 
 function MPSNodeCard({ node }: { node: MPSNodeStatus }) {
   return (
-    <div className={`p-4 rounded-lg border ${node.enabled ? 'border-border bg-secondary/30' : 'border-border/40 bg-secondary/10'} space-y-3`}>
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="font-mono text-sm font-bold">{node.nodeName}</div>
-          <div className="font-mono text-[10px] text-muted-foreground">GPU {node.gpuIndex} · pipe: {node.pipeDir}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          {node.enabled
-            ? <Badge className="text-[10px] border bg-accent/20 text-accent border-accent/30">MPS ON</Badge>
-            : <Badge className="text-[10px] border bg-secondary text-muted-foreground border-border">MPS OFF</Badge>
-          }
-        </div>
-      </div>
+    <EntityTile
+      name={node.nodeName}
+      badge={node.enabled
+        ? <Badge className="text-[10px] border bg-accent/20 text-accent border-accent/30">MPS ON</Badge>
+        : <Badge className="text-[10px] border bg-secondary text-muted-foreground border-border">MPS OFF</Badge>
+      }
+      className={node.enabled ? undefined : 'border-border/40 bg-secondary/10'}
+    >
+      <div className="font-mono text-[10px] text-muted-foreground">GPU {node.gpuIndex} · pipe: {node.pipeDir}</div>
 
       {node.enabled && (
         <>
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs">
-              <span className="text-muted-foreground">Total SM Util ({node.activeClients.length} clients)</span>
-              <span className={`font-mono font-bold ${utilColor(node.totalSMUtil)}`}>{node.totalSMUtil}%</span>
-            </div>
-            <Progress value={node.totalSMUtil} className="h-1.5" />
-          </div>
+          <TileMeter
+            label={`Total SM Util (${node.activeClients.length} clients)`}
+            value={node.totalSMUtil}
+            tone={inverseScoreTone(node.totalSMUtil, UTIL_GOOD, UTIL_OK)}
+          />
 
           <div className="space-y-1">
             {node.activeClients.map(c => <ClientRow key={c.pid} client={c} />)}
@@ -108,7 +89,7 @@ function MPSNodeCard({ node }: { node: MPSNodeStatus }) {
           </div>
         </>
       )}
-    </div>
+    </EntityTile>
   )
 }
 
@@ -123,62 +104,31 @@ export function MPSDashboard() {
     : 0
 
   return (
-    <div className="space-y-6">
-      {/* Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <Cpu className="text-primary" />
-            NVIDIA MPS — Multi-Process Service
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">MPS Nodes</div>
-              <div className="font-mono text-2xl font-bold text-accent">{enabledNodes.length} / {nodes.length}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Active Clients</div>
-              <div className="font-mono text-2xl font-bold text-primary">{totalClients}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Avg SM Util</div>
-              <div className={`font-mono text-2xl font-bold ${utilColor(avgSMUtil)}`}>{avgSMUtil.toFixed(0)}%</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">GPU Contention</div>
-              <div className="font-mono text-2xl font-bold text-accent">None</div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span className="uppercase tracking-wide">Avg GPU SM Utilization</span>
-              <span className="font-mono">{avgSMUtil.toFixed(0)}%</span>
-            </div>
-            <Progress value={avgSMUtil} className="h-3" />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Per-node */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Per-Node MPS Status</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {nodes.map(n => <MPSNodeCard key={n.nodeId} node={n} />)}
-        </CardContent>
-      </Card>
-
-      {/* Config reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">MPS Setup Reference</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/kubernetes/base/nvidia-mps.yaml  (excerpt)
+    <TuningDashboard<MPSNodeStatus>
+      title="NVIDIA MPS — Multi-Process Service"
+      icon={<Cpu className="text-primary" />}
+      stats={[
+        { label: 'MPS Nodes', value: `${enabledNodes.length} / ${nodes.length}`, tone: 'accent' },
+        { label: 'Active Clients', value: totalClients, tone: 'primary' },
+        {
+          label: 'Avg SM Util',
+          value: `${avgSMUtil.toFixed(0)}%`,
+          tone: inverseScoreTone(avgSMUtil, UTIL_GOOD, UTIL_OK),
+        },
+        { label: 'GPU Contention', value: 'None', tone: 'accent' },
+      ]}
+      progress={{
+        value: avgSMUtil,
+        captionLeft: <span className="uppercase tracking-wide">Avg GPU SM Utilization</span>,
+        captionRight: <span className="font-mono">{avgSMUtil.toFixed(0)}%</span>,
+      }}
+      entitiesTitle="Per-Node MPS Status"
+      entities={nodes}
+      entityKey={n => n.nodeId}
+      entityLayout="stack"
+      renderEntity={n => <MPSNodeCard node={n} />}
+      configTitle="MPS Setup Reference"
+      config={`# deploy/kubernetes/base/nvidia-mps.yaml  (excerpt)
 # DaemonSet enabling MPS on every GPU node
 initContainers:
   - name: mps-init
@@ -195,9 +145,7 @@ initContainers:
         value: /tmp/nvidia-log
       # Limit each client to 25% of SMs to prevent starvation
       - name: CUDA_MPS_ACTIVE_THREAD_PERCENTAGE
-        value: "25"`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+        value: "25"`}
+    />
   )
 }

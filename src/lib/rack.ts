@@ -45,21 +45,9 @@ export function organizeNodesByRack(nodes: ClusterNode[]): Map<string, RackData>
   return racksMap
 }
 
-export function organizeRacksByZone(racks: Map<string, RackData>): Map<string, RackData[]> {
-  const zoneMap = new Map<string, RackData[]>()
-
-  racks.forEach((rack) => {
-    if (!zoneMap.has(rack.zone)) {
-      zoneMap.set(rack.zone, [])
-    }
-    zoneMap.get(rack.zone)!.push(rack)
-  })
-
-  zoneMap.forEach((rackList) => {
-    rackList.sort((a, b) => a.id.localeCompare(b.id))
-  })
-
-  return zoneMap
+/** Racks as a flat, id-sorted list. Local clusters have no zone layer to group by. */
+export function organizeRacksFlat(racks: Map<string, RackData>): RackData[] {
+  return Array.from(racks.values()).sort((a, b) => a.id.localeCompare(b.id))
 }
 
 export function generateRackPowerMetrics(rack: RackData): PowerMetrics {

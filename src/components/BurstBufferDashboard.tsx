@@ -1,8 +1,8 @@
 import { BurstBufferClusterStats, BurstBufferNodeStats, BurstBufferState } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { HardDrives, ArrowDown, ArrowUp } from '@phosphor-icons/react'
+import { EntityTile, MicroStats, TileMeter, TuningDashboard } from '@/components/TuningDashboard'
+import { inverseScoreTone } from '@/lib/thresholds'
 
 // ── Simulated state ───────────────────────────────────────────────────────────
 
@@ -32,11 +32,9 @@ const STATE_CONFIG: Record<BurstBufferState, { label: string; badge: string }> =
   full:      { label: 'Full',      badge: 'bg-destructive/20 text-destructive border-destructive/30' },
 }
 
-function capColor(pct: number) {
-  if (pct >= 90) return 'text-destructive'
-  if (pct >= 70) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-foreground'
-}
+/** Capacity used: <=70% healthy, <=90% warning, above that the buffer is about to stall. */
+const CAP_GOOD_PCT = 70
+const CAP_OK_PCT = 90
 
 // ── Node tile ─────────────────────────────────────────────────────────────────
 
@@ -45,40 +43,46 @@ function BBNodeTile({ node }: { node: BurstBufferNodeStats }) {
   const cfg     = STATE_CONFIG[node.state]
 
   return (
-    <div className="p-3 rounded-lg border border-border bg-secondary/30 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-xs font-bold">{node.nodeName}</span>
-        <Badge className={`text-[10px] border ${cfg.badge}`}>{cfg.label}</Badge>
-      </div>
+    <EntityTile
+      name={node.nodeName}
+      badge={<Badge className={`text-[10px] border ${cfg.badge}`}>{cfg.label}</Badge>}
+    >
+      <TileMeter
+        label="NVMe used"
+        value={capPct}
+        display={`${node.usedGB}/${node.totalGB} GB`}
+        tone={inverseScoreTone(capPct, CAP_GOOD_PCT, CAP_OK_PCT)}
+      />
 
-      <div className="space-y-1">
-        <div className="flex justify-between text-xs">
-          <span className="text-muted-foreground">NVMe used</span>
-          <span className={`font-mono font-bold ${capColor(capPct)}`}>{node.usedGB}/{node.totalGB} GB</span>
-        </div>
-        <Progress value={capPct} className="h-1.5" />
-      </div>
+      <MicroStats
+        items={[
+          {
+            value: (
+              <span className="inline-flex items-center gap-0.5">
+                <ArrowDown size={9} />
+                {node.writeRateMBps.toLocaleString()} MB/s
+              </span>
+            ),
+            label: 'Absorb',
+            tone: 'primary',
+          },
+          {
+            value: (
+              <span className="inline-flex items-center gap-0.5">
+                <ArrowUp size={9} />
+                {node.drainRateMBps.toLocaleString()} MB/s
+              </span>
+            ),
+            label: '→ Ceph',
+            tone: 'accent',
+          },
+        ]}
+      />
 
-      <div className="grid grid-cols-2 gap-1 text-[10px] text-muted-foreground">
-        <div>
-          <div className="flex items-center gap-0.5">
-            <ArrowDown size={9} className="text-primary" />
-            <span className="font-mono font-bold text-primary">{node.writeRateMBps.toLocaleString()} MB/s</span>
-          </div>
-          <div>Absorb</div>
-        </div>
-        <div>
-          <div className="flex items-center gap-0.5">
-            <ArrowUp size={9} className="text-accent" />
-            <span className="font-mono font-bold text-accent">{node.drainRateMBps.toLocaleString()} MB/s</span>
-          </div>
-          <div>→ Ceph</div>
-        </div>
-        <div className="col-span-2">
-          <span className="font-mono font-bold text-foreground">{node.stagedCheckpoints}</span> checkpoints staged
-        </div>
+      <div className="text-[10px] text-muted-foreground">
+        <span className="font-mono font-bold text-foreground">{node.stagedCheckpoints}</span> checkpoints staged
       </div>
-    </div>
+    </EntityTile>
   )
 }
 
@@ -91,74 +95,43 @@ export function BurstBufferDashboard() {
   const totalCheckpoints = s.nodes.reduce((sum, n) => sum + n.stagedCheckpoints, 0)
 
   return (
-    <div className="space-y-6">
-      {/* Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <HardDrives className="text-primary" />
-            Burst Buffer NVMe — Alluxio Write-Behind
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Absorb Rate</div>
-              <div className="font-mono text-2xl font-bold text-primary">
-                <ArrowDown size={18} className="inline" /> {(s.totalWriteRateMBps / 1024).toFixed(1)} GB/s
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Drain → Ceph</div>
-              <div className="font-mono text-2xl font-bold text-accent">
-                <ArrowUp size={18} className="inline" /> {(s.totalDrainRateMBps / 1024).toFixed(1)} GB/s
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Used Capacity</div>
-              <div className={`font-mono text-2xl font-bold ${capColor(capPct)}`}>
-                {s.totalUsedGB} <span className="text-sm text-muted-foreground">/ {s.totalCapacityGB} GB</span>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Full Nodes</div>
-              <div className={`font-mono text-2xl font-bold ${fullNodes > 0 ? 'text-destructive' : 'text-foreground'}`}>{fullNodes}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Staged Checkpoints</div>
-              <div className="font-mono text-2xl font-bold text-foreground">{totalCheckpoints}</div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span className="uppercase tracking-wide">Cluster NVMe Burst Buffer</span>
-              <span className="font-mono">{s.totalUsedGB} / {s.totalCapacityGB} GB ({capPct.toFixed(0)}%)</span>
-            </div>
-            <Progress value={capPct} className="h-3" />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Per-node grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Per-Node Burst Buffer</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {s.nodes.map(n => <BBNodeTile key={n.nodeId} node={n} />)}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Config reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Alluxio Write-Behind Config</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/caching/burst-buffer-nvme.yaml  (excerpt)
+    <TuningDashboard<BurstBufferNodeStats>
+      title="Burst Buffer NVMe — Alluxio Write-Behind"
+      icon={<HardDrives className="text-primary" />}
+      stats={[
+        {
+          label: 'Absorb Rate',
+          value: <><ArrowDown size={18} className="inline" /> {(s.totalWriteRateMBps / 1024).toFixed(1)} GB/s</>,
+          tone: 'primary',
+        },
+        {
+          label: 'Drain → Ceph',
+          value: <><ArrowUp size={18} className="inline" /> {(s.totalDrainRateMBps / 1024).toFixed(1)} GB/s</>,
+          tone: 'accent',
+        },
+        {
+          label: 'Used Capacity',
+          value: <>{s.totalUsedGB} <span className="text-sm text-muted-foreground">/ {s.totalCapacityGB} GB</span></>,
+          tone: inverseScoreTone(capPct, CAP_GOOD_PCT, CAP_OK_PCT),
+        },
+        {
+          label: 'Full Nodes',
+          value: fullNodes,
+          tone: fullNodes > 0 ? 'destructive' : 'foreground',
+        },
+        { label: 'Staged Checkpoints', value: totalCheckpoints, tone: 'foreground' },
+      ]}
+      progress={{
+        value: capPct,
+        captionLeft: <span className="uppercase tracking-wide">Cluster NVMe Burst Buffer</span>,
+        captionRight: <span className="font-mono">{s.totalUsedGB} / {s.totalCapacityGB} GB ({capPct.toFixed(0)}%)</span>,
+      }}
+      entitiesTitle="Per-Node Burst Buffer"
+      entities={s.nodes}
+      entityKey={n => n.nodeId}
+      renderEntity={n => <BBNodeTile node={n} />}
+      configTitle="Alluxio Write-Behind Config"
+      config={`# deploy/caching/burst-buffer-nvme.yaml  (excerpt)
 # Alluxio worker: write-behind tiered store
 alluxio.worker.ramdisk.size: 0
 alluxio.worker.tieredstore.levels: 2
@@ -171,9 +144,7 @@ alluxio.worker.tieredstore.level1.alias: HDD   # maps to Ceph RBD via CSI
 alluxio.worker.tieredstore.level1.dirs.path: /mnt/ceph
 alluxio.worker.tieredstore.reserver.interval: 1s
 # Write-behind: data lands on NVMe first, drained async to Ceph
-alluxio.user.file.writetype.default: ASYNC_THROUGH`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+alluxio.user.file.writetype.default: ASYNC_THROUGH`}
+    />
   )
 }

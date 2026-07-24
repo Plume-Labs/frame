@@ -1,8 +1,8 @@
 import { PTPClusterStats, PTPNodeStatus, PTPPortState } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Radio, Clock, Warning } from '@phosphor-icons/react'
+import { EntityTile, MicroStats, TuningDashboard } from '@/components/TuningDashboard'
+import { Tone, TONE_TEXT, inverseScoreTone } from '@/lib/thresholds'
 
 // ── Simulated PTP state ───────────────────────────────────────────────────────
 
@@ -20,15 +20,6 @@ const MOCK_NODES: PTPNodeStatus[] = [
   { nodeId: 'cpu-1', nodeName: 'cpu-node-01', portState: 'FAULTY',  offsetNs: 4200, pathDelayNs: 0,   freqAdjPpb: 0,     grandmasterClockId: GM_ID, syncRateHz: 0,   servoState: 's0' },
 ]
 
-const MOCK_STATS: PTPClusterStats = {
-  grandmasterNode: 'gpu-node-00',
-  totalNodes: MOCK_NODES.length,
-  lockedNodes: MOCK_NODES.filter(n => n.servoState === 's2').length,
-  maxOffsetNs: Math.max(...MOCK_NODES.map(n => Math.abs(n.offsetNs))),
-  meanOffsetNs: MOCK_NODES.filter(n => n.portState === 'SLAVE').reduce((s, n) => s + Math.abs(n.offsetNs), 0) / MOCK_NODES.filter(n => n.portState === 'SLAVE').length,
-  nodes: MOCK_NODES,
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const STATE_BADGE: Record<PTPPortState, string> = {
@@ -40,13 +31,14 @@ const STATE_BADGE: Record<PTPPortState, string> = {
 }
 
 const SERVO_LABEL: Record<string, string> = { s0: 'Unlocked', s1: 'Freq-adj', s2: 'Locked' }
-const SERVO_COLOR: Record<string, string> = { s0: 'text-destructive', s1: 'text-[oklch(0.75_0.18_75)]', s2: 'text-accent' }
+const SERVO_TONE: Record<string, Tone> = { s0: 'destructive', s1: 'warning', s2: 'accent' }
 
-function offsetColor(ns: number) {
-  const abs = Math.abs(ns)
-  if (abs <= 10)  return 'text-accent'
-  if (abs <= 100) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-destructive'
+/** Clock offset: <=10 ns locked, <=100 ns tolerable, beyond that the servo is lost. */
+const OFFSET_GOOD_NS = 10
+const OFFSET_OK_NS = 100
+
+function offsetTone(ns: number): Tone {
+  return inverseScoreTone(Math.abs(ns), OFFSET_GOOD_NS, OFFSET_OK_NS)
 }
 
 // ── Node row ──────────────────────────────────────────────────────────────────
@@ -57,33 +49,33 @@ function PTPNodeRow({ node }: { node: PTPNodeStatus }) {
   const isPassive = node.portState === 'PASSIVE'
 
   return (
-    <div className={`p-3 rounded-lg border ${isFaulty ? 'border-destructive/40 bg-destructive/5' : 'border-border bg-secondary/30'}`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
+    <EntityTile
+      className={isFaulty ? 'border-destructive/40 bg-destructive/5' : undefined}
+      name={
+        <span className="flex items-center gap-2">
           {isFaulty && <Warning size={12} className="text-destructive" />}
-          <span className="font-mono text-xs font-bold">{node.nodeName}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`font-mono text-[10px] ${SERVO_COLOR[node.servoState]}`}>{SERVO_LABEL[node.servoState]}</span>
+          {node.nodeName}
+        </span>
+      }
+      badge={
+        <span className="flex items-center gap-2">
+          <span className={`font-mono text-[10px] ${TONE_TEXT[SERVO_TONE[node.servoState]]}`}>{SERVO_LABEL[node.servoState]}</span>
           <Badge className={`text-[10px] border ${STATE_BADGE[node.portState]}`}>{node.portState}</Badge>
-        </div>
-      </div>
-
+        </span>
+      }
+    >
       {!isMaster && !isPassive && !isFaulty && (
-        <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
-          <div>
-            <span className={`font-mono font-bold ${offsetColor(node.offsetNs)}`}>{node.offsetNs > 0 ? '+' : ''}{node.offsetNs} ns</span>
-            <div>Offset</div>
-          </div>
-          <div>
-            <span className="font-mono font-bold text-foreground">{node.pathDelayNs} ns</span>
-            <div>Path delay</div>
-          </div>
-          <div>
-            <span className="font-mono font-bold text-foreground">{node.freqAdjPpb > 0 ? '+' : ''}{node.freqAdjPpb} ppb</span>
-            <div>Freq adj</div>
-          </div>
-        </div>
+        <MicroStats
+          items={[
+            {
+              value: `${node.offsetNs > 0 ? '+' : ''}${node.offsetNs} ns`,
+              label: 'Offset',
+              tone: offsetTone(node.offsetNs),
+            },
+            { value: `${node.pathDelayNs} ns`, label: 'Path delay' },
+            { value: `${node.freqAdjPpb > 0 ? '+' : ''}${node.freqAdjPpb} ppb`, label: 'Freq adj' },
+          ]}
+        />
       )}
 
       {isMaster && (
@@ -95,88 +87,66 @@ function PTPNodeRow({ node }: { node: PTPNodeStatus }) {
       {isFaulty && (
         <div className="text-[10px] text-destructive font-mono">Sync lost — offset {node.offsetNs.toLocaleString()} ns</div>
       )}
-    </div>
+    </EntityTile>
   )
 }
 
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
 export function PTPSyncDashboard() {
-  const s = MOCK_STATS
+  // Derived per render — this used to be a module-level constant, frozen before
+  // React ever mounted the component.
+  const slaves = MOCK_NODES.filter(n => n.portState === 'SLAVE')
+  const s: PTPClusterStats = {
+    grandmasterNode: 'gpu-node-00',
+    totalNodes: MOCK_NODES.length,
+    lockedNodes: MOCK_NODES.filter(n => n.servoState === 's2').length,
+    maxOffsetNs: Math.max(...MOCK_NODES.map(n => Math.abs(n.offsetNs))),
+    meanOffsetNs: slaves.reduce((acc, n) => acc + Math.abs(n.offsetNs), 0) / slaves.length,
+    nodes: MOCK_NODES,
+  }
+
   const lockPct = (s.lockedNodes / s.totalNodes) * 100
   const faultyNodes = s.nodes.filter(n => n.portState === 'FAULTY')
 
   return (
-    <div className="space-y-6">
-      {/* Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <Radio className="text-primary" />
-            PTP / IEEE 1588 — Nanosecond Clock Sync
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Locked Nodes</div>
-              <div className={`font-mono text-2xl font-bold ${s.lockedNodes === s.totalNodes ? 'text-accent' : 'text-[oklch(0.75_0.18_75)]'}`}>
-                {s.lockedNodes}/{s.totalNodes}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Max Offset</div>
-              <div className={`font-mono text-2xl font-bold ${offsetColor(s.maxOffsetNs)}`}>
-                <Clock size={18} className="inline" /> {s.maxOffsetNs} ns
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Mean Offset</div>
-              <div className={`font-mono text-2xl font-bold ${offsetColor(s.meanOffsetNs)}`}>
-                {s.meanOffsetNs.toFixed(1)} ns
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Grandmaster</div>
-              <div className="font-mono text-sm font-bold text-primary">{s.grandmasterNode}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Faulty</div>
-              <div className={`font-mono text-2xl font-bold ${faultyNodes.length > 0 ? 'text-destructive' : 'text-foreground'}`}>
-                {faultyNodes.length}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span className="uppercase tracking-wide">Sync Lock Rate</span>
-              <span className="font-mono">{lockPct.toFixed(0)}%</span>
-            </div>
-            <Progress value={lockPct} className="h-3" />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Per-node grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Per-Node PTP Status</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {s.nodes.map(n => <PTPNodeRow key={n.nodeId} node={n} />)}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Config reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">ptp4l / phc2sys Config</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/networking/ptp-sync.yaml  (excerpt)
+    <TuningDashboard<PTPNodeStatus>
+      title="PTP / IEEE 1588 — Nanosecond Clock Sync"
+      icon={<Radio className="text-primary" />}
+      stats={[
+        {
+          label: 'Locked Nodes',
+          value: `${s.lockedNodes}/${s.totalNodes}`,
+          tone: s.lockedNodes === s.totalNodes ? 'accent' : 'warning',
+        },
+        {
+          label: 'Max Offset',
+          value: <><Clock size={18} className="inline" /> {s.maxOffsetNs} ns</>,
+          tone: offsetTone(s.maxOffsetNs),
+        },
+        {
+          label: 'Mean Offset',
+          value: `${s.meanOffsetNs.toFixed(1)} ns`,
+          tone: offsetTone(s.meanOffsetNs),
+        },
+        { label: 'Grandmaster', value: s.grandmasterNode, tone: 'primary', size: 'sm' },
+        {
+          label: 'Faulty',
+          value: faultyNodes.length,
+          tone: faultyNodes.length > 0 ? 'destructive' : 'foreground',
+        },
+      ]}
+      progress={{
+        value: lockPct,
+        captionLeft: <span className="uppercase tracking-wide">Sync Lock Rate</span>,
+        captionRight: <span className="font-mono">{lockPct.toFixed(0)}%</span>,
+      }}
+      entitiesTitle="Per-Node PTP Status"
+      entities={s.nodes}
+      entityKey={n => n.nodeId}
+      renderEntity={n => <PTPNodeRow node={n} />}
+      configTitle="ptp4l / phc2sys Config"
+      config={`# deploy/networking/ptp-sync.yaml  (excerpt)
 # PTP grandmaster on gpu-node-00 (BC-capable NIC: Mellanox CX-6 Dx)
 [global]
 dataset_comparison         G.8275.x
@@ -191,9 +161,7 @@ delay_mechanism            E2E
 network_transport          L2
 
 # Bind phc2sys to NCCL CUDA stream so GPU kernel launches share the same clock
-# Reference: NVIDIA Collective Communications Library tuning guide`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+# Reference: NVIDIA Collective Communications Library tuning guide`}
+    />
   )
 }
