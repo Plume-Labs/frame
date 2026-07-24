@@ -84,4 +84,13 @@ else
   say "No schedulable GPU — skipping inference server (KV-Cache screen will show empty)"
 fi
 
+# Stamp real physical topology (hypervisor host) onto the nodes for the Racks
+# screen. Needs Proxmox creds; skipped otherwise (Racks falls back to spec.rack).
+if [ -n "${PVE_URL:-}" ] && [ -n "${PVE_PASS:-}" ]; then
+  say "Rack labels from Proxmox host mapping"
+  bash deploy/scripts/label-racks.sh || echo "  (rack labeling failed — non-fatal)"
+else
+  say "PVE_URL/PVE_PASS unset — skipping physical rack labels (Racks uses spec.rack)"
+fi
+
 say "Done. Frame UI: http://<any-node-ip>:30880  ·  Neura: :30881"

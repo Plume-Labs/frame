@@ -286,7 +286,13 @@ export interface RackNodeInfo {
   memGiB: number
   pods: number
 }
-/** A rack: real nodes grouped by their FrameNode `spec.rack`. */
+/**
+ * A rack: real nodes grouped by physical topology. When nodes carry
+ * `topology.frame.io/rack` (the Proxmox host they run on, stamped by
+ * label-racks.sh) the rack IS that hypervisor host and `physical` is set —
+ * exposing real host capacity and VM oversubscription. Falls back to the
+ * FrameNode `spec.rack` label otherwise.
+ */
 export interface Rack {
   name: string
   nodes: RackNodeInfo[]
@@ -294,6 +300,7 @@ export interface Rack {
   totalCpu: number
   totalMem: number
   totalPods: number
+  physical?: { hypervisor: string; pcpu: number; pmemGiB: number }
 }
 
 /** Live GPU telemetry per device, from DCGM-exporter. */
@@ -1133,19 +1140,35 @@ class ClusterClient {
 
   /** Real nodes grouped into racks by their FrameNode `spec.rack` label. */
   async racks(): Promise<Rack[]> {
-    const [fnRes, nodes, placement] = await Promise.all([
+    const [fnRes, k8sNodes, nodes, placement] = await Promise.all([
       k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string } }>>(
         `/apis/${GROUP}/${VERSION}/namespaces/default/framenodes`,
+      ),
+      k8sFetch<ListResponse<{ metadata: { name: string; labels?: Record<string, string> } }>>(
+        '/api/v1/nodes',
       ),
       this.nodes(),
       this.placement(),
     ])
-    const rackOf = new Map((fnRes.items ?? []).map((f) => [f.metadata.name, f.spec?.rack ?? 'unracked']))
+    const fnRackOf = new Map((fnRes.items ?? []).map((f) => [f.metadata.name, f.spec?.rack]))
+    // Real physical topology from node labels, falling back to the FrameNode tag.
+    const labelsOf = new Map((k8sNodes.items ?? []).map((n) => [n.metadata.name, n.metadata.labels ?? {}]))
+    const rackOf = (name: string) =>
+      labelsOf.get(name)?.['topology.frame.io/rack'] ?? fnRackOf.get(name) ?? 'unracked'
+    const physicalOf = (name: string): Rack['physical'] => {
+      const l = labelsOf.get(name)
+      if (!l?.['topology.frame.io/hypervisor']) return undefined
+      return {
+        hypervisor: l['topology.frame.io/hypervisor'],
+        pcpu: Number(l['topology.frame.io/host-pcpu'] ?? 0),
+        pmemGiB: Number(l['topology.frame.io/host-pmem-gib'] ?? 0),
+      }
+    }
     const podsOf = new Map(placement.map((p) => [p.node, p.total]))
 
     const byRack = new Map<string, Rack>()
     for (const n of nodes) {
-      const rack = rackOf.get(n.name) ?? 'unracked'
+      const rack = rackOf(n.name)
       const entry = byRack.get(rack) ?? {
         name: rack,
         nodes: [],
@@ -1153,6 +1176,7 @@ class ClusterClient {
         totalCpu: 0,
         totalMem: 0,
         totalPods: 0,
+        physical: physicalOf(n.name),
       }
       entry.nodes.push({
         name: n.name,
