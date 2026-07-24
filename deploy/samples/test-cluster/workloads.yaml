@@ -118,10 +118,12 @@ metadata: { name: argo-executor, namespace: argo }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: argo-executor }
 subjects: [{ kind: ServiceAccount, name: argo, namespace: argo }]
 ---
-# ── Argo DAG workflow (feeds the Lineage screen) ────────────────────────────
+# ── Argo DAG that actually exercises the live Neura deployment (Lineage) ─────
+# Steps curl real Neura services, so the run's success/latency reflect Neura's
+# real state — not a synthetic sleep pipeline.
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
-metadata: { name: neura-training-v3, namespace: argo }
+metadata: { name: neura-api-pipeline, namespace: argo }
 spec:
   entrypoint: main
   serviceAccountName: argo
@@ -129,9 +131,13 @@ spec:
     - name: main
       dag:
         tasks:
-          - { name: data-validation, template: step }
-          - { name: cache-load, template: step, dependencies: [data-validation] }
-          - { name: distributed-training, template: step, dependencies: [cache-load] }
-          - { name: model-inference, template: step, dependencies: [distributed-training] }
-    - name: step
-      container: { image: busybox:1.36, command: [sh, -c], args: ["sleep 4"] }
+          - { name: api-health, template: curl, arguments: { parameters: [{ name: path, value: "/api/health" }] } }
+          - { name: db-ready, template: curl, dependencies: [api-health], arguments: { parameters: [{ name: path, value: "/api/health" }] } }
+          - { name: client-reachable, template: curlsvc, dependencies: [api-health], arguments: { parameters: [{ name: url, value: "http://neura-neura-client.neura.svc.cluster.local:80/" }] } }
+          - { name: done, template: curl, dependencies: [db-ready, client-reachable], arguments: { parameters: [{ name: path, value: "/api/health" }] } }
+    - name: curl
+      inputs: { parameters: [{ name: path }] }
+      container: { image: curlimages/curl:8.10.1, args: ["-fsS", "--retry", "3", "--max-time", "10", "http://neura-neura-api.neura.svc.cluster.local:3000{{inputs.parameters.path}}"] }
+    - name: curlsvc
+      inputs: { parameters: [{ name: url }] }
+      container: { image: curlimages/curl:8.10.1, args: ["-fsS", "--retry", "3", "--max-time", "10", "{{inputs.parameters.url}}"] }
