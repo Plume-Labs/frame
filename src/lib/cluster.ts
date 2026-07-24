@@ -15,7 +15,21 @@ const CPU_MODELS = [
   'Intel Xeon Gold 6330'
 ]
 
-const ZONES = ['zone-a', 'zone-b', 'zone-c']
+/** Local clusters are single-zone; the field is kept for CRD compatibility. */
+const LOCAL_ZONE = 'local'
+
+// crypto.randomUUID requires a secure context (HTTPS or localhost) — fall back
+// to a manual UUID v4 when served over plain HTTP on a LAN IP.
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
 
 function randomInRange(min: number, max: number): number {
   return Math.random() * (max - min) + min
@@ -136,19 +150,30 @@ function generateGPUMetrics(count: number): GPUMetrics[] {
 
 const SERVICE_CLASSES: ServiceClass[] = ['HIGH', 'MEDIUM', 'LOW']
 
+/** U of rack elevation each simulated rack offers before spilling to the next. */
+const RACK_U_CAPACITY = 12
+
 export function generateClusterNodes(count: number = 32): ClusterNode[] {
   const nodes: ClusterNode[] = []
   const now = Date.now()
-  const nodesPerRack = 8
-  const racksPerZone = Math.ceil(count / ZONES.length / nodesPerRack)
+
+  // Pack devices bottom-up by cumulative U so a 2U device never overlaps the
+  // next one. When a device won't fit the current rack, start a new rack.
+  let rackIndex = 0
+  let uCursor = 1
 
   for (let i = 0; i < count; i++) {
     const status = generateRandomStatus()
-    const zoneIndex = i % ZONES.length
-    const rackIndexInZone = Math.floor((i / ZONES.length) % racksPerZone)
-    const rackId = `${ZONES[zoneIndex]}-rack-${String(rackIndexInZone + 1).padStart(2, '0')}`
-    const rackPosition = Math.floor(i / ZONES.length / racksPerZone) % nodesPerRack + 1
-    
+    const hardware = generateHardwareInfo(i)
+    const units = hardware.rackUnits
+
+    if (uCursor + units - 1 > RACK_U_CAPACITY) {
+      rackIndex += 1
+      uCursor = 1
+    }
+    const rackPosition = uCursor
+    uCursor += units
+
     nodes.push({
       id: generateNodeId(i),
       name: generateNodeName(i),
@@ -158,9 +183,12 @@ export function generateClusterNodes(count: number = 32): ClusterNode[] {
       lastSeen: status === 'offline' ? now - randomInRange(60000, 600000) : now,
       network: generateNetworkInfo(),
       storage: generateStorageInfo(),
-      hardware: generateHardwareInfo(i),
-      zone: ZONES[zoneIndex],
-      rackId,
+      hardware,
+      // Local clusters have no availability zones — every node sits in the one
+      // local topology. `zone` stays on the model because the FrameNode CRD
+      // carries an optional `spec.zone`; racks are a flat list.
+      zone: LOCAL_ZONE,
+      rackId: `rack-${String(rackIndex + 1).padStart(2, '0')}`,
       rackPosition,
       serviceClass: SERVICE_CLASSES[i % SERVICE_CLASSES.length],
       gpuMetrics: Math.random() > 0.4 ? generateGPUMetrics(Math.floor(randomInRange(1, 4))) : undefined
@@ -312,7 +340,7 @@ export function generateSystemEvent(
         else if (node.status === 'online') severity = 'success'
         
         return {
-          id: crypto.randomUUID(),
+          id: generateId(),
           timestamp: Date.now(),
           severity,
           message,
@@ -338,7 +366,7 @@ export function generateSystemEvent(
   }
 
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     timestamp: Date.now(),
     severity,
     message: getRandomTemplate(templates)
