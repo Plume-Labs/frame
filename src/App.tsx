@@ -20,7 +20,7 @@ import { DragDropRackManager } from '@/components/DragDropRackManager'
 
 import { ApplicationsView } from '@/components/ApplicationsView'
 import { FrameJobsView } from '@/components/FrameJobsView'
-import { SchedulerDashboard } from '@/components/SchedulerDashboard'
+import { FrameSchedulerView } from '@/components/FrameSchedulerView'
 import { ServiceClassesView } from '@/components/ServiceClassesView'
 import { DataLineageView } from '@/components/DataLineageView'
 
@@ -115,7 +115,7 @@ const NAV: NavGroup[] = [
     items: [
       { id: 'applications', label: 'Applications', icon: <Package />, description: 'Deployed apps read live from the cluster' },
       { id: 'jobs', label: 'Jobs', icon: <Queue />, description: 'Workflow DAGs, queue depth and checkpoint state' },
-      { id: 'scheduler', label: 'Scheduler', icon: <Calendar />, description: 'Gang scheduling, queue quotas and backfill' },
+      { id: 'scheduler', label: 'Scheduler', icon: <Calendar />, description: 'Live SchedulingPolicy resources from the operator' },
       { id: 'service-classes', label: 'Service Classes', icon: <ShieldCheck />, description: 'HIGH / MEDIUM / LOW tiers against their SLA targets' },
       { id: 'lineage', label: 'Lineage', icon: <GitBranch />, description: 'Span timelines and dataset provenance per pipeline' },
     ],
@@ -199,7 +199,7 @@ function App() {
       case 'jobs':
         return <FrameJobsView />
       case 'scheduler':
-        return <SchedulerDashboard nodes={nodes} />
+        return <FrameSchedulerView />
       case 'service-classes':
         return <ServiceClassesView />
       case 'lineage':
