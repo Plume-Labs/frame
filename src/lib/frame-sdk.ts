@@ -262,6 +262,21 @@ export interface Resilience {
   hotspots: RestartHotspot[]
 }
 
+/** Burst-buffer SSD tier per node (a fast local scratch mount). */
+export interface BurstNode {
+  node: string
+  totalBytes: number
+  usedBytes: number
+}
+/** Clock synchronisation per node (kernel adjtimex / ptp_kvm PHC). */
+export interface PtpNode {
+  node: string
+  offsetSeconds: number
+  synced: boolean
+  freqPpm: number
+  maxErrorSeconds: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -1028,6 +1043,43 @@ class ClusterClient {
       totalRestarts: hotspots.reduce((s, h) => s + h.restarts, 0),
       hotspots: hotspots.slice(0, 8),
     }
+  }
+
+  /** Burst-buffer SSD tier: capacity/used of the /burst-buffer mount per node. */
+  async burstBuffer(mount = '/burst-buffer'): Promise<BurstNode[]> {
+    const metrics = await this.nodeExporterMetrics()
+    if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
+    const g = (text: string, key: string) => {
+      const m = text.match(new RegExp(`^${key}\\{[^}]*mountpoint="${mount}"[^}]*\\}\\s+([0-9.e+-]+)`, 'm'))
+      return m ? Number(m[1]) : 0
+    }
+    return metrics
+      .map(({ node, text }) => {
+        const size = g(text, 'node_filesystem_size_bytes')
+        const avail = g(text, 'node_filesystem_avail_bytes')
+        return { node, totalBytes: size, usedBytes: Math.max(0, size - avail) }
+      })
+      .filter((b) => b.totalBytes > 0)
+      .sort((a, b) => a.node.localeCompare(b.node))
+  }
+
+  /** Per-node clock sync (kernel timex; a ptp_kvm PHC disciplines it to the host). */
+  async ptp(): Promise<PtpNode[]> {
+    const metrics = await this.nodeExporterMetrics()
+    if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
+    const g = (text: string, key: string) => {
+      const m = text.match(new RegExp(`^${key}\\s+([0-9.e+-]+)`, 'm'))
+      return m ? Number(m[1]) : 0
+    }
+    return metrics
+      .map(({ node, text }) => ({
+        node,
+        offsetSeconds: g(text, 'node_timex_offset_seconds'),
+        synced: g(text, 'node_timex_sync_status') === 1,
+        freqPpm: (g(text, 'node_timex_frequency_adjustment_ratio') - 1) * 1e6,
+        maxErrorSeconds: g(text, 'node_timex_maxerror_seconds'),
+      }))
+      .sort((a, b) => a.node.localeCompare(b.node))
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
