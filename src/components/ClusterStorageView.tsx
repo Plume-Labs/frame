@@ -1,20 +1,67 @@
-import { CephStatus, createFrameClient } from '@/lib/frame-sdk'
+import { AlluxioStats, CephStatus, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Database, ArrowClockwise, HardDrives, Cube } from '@phosphor-icons/react'
+import { Database, ArrowClockwise, HardDrives, Cube, Stack, Lightning } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 const GiB = 1024 ** 3
 
+const TIER_DETAIL: Record<string, string> = {
+  MEM: 'in-memory (fastest)',
+  SSD: 'local NVMe/SSD',
+  HDD: 'under-store (object/HDD)',
+}
+
 function healthTone(h: string): string {
   if (h === 'HEALTH_OK') return 'text-accent'
   if (h === 'HEALTH_WARN') return 'text-warning'
   return 'text-destructive'
+}
+
+/** Alluxio stacked cache tiers (MEM -> SSD -> HDD) + cache hit-rate. Silent if absent. */
+function AlluxioTiersCard() {
+  const { state } = useLiveResource<AlluxioStats>(() => frame.cluster.alluxio())
+  if (state.phase !== 'ready') return null
+  const a = state.data
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="font-mono text-lg flex items-center gap-2">
+          <Stack className="text-primary" />
+          Alluxio Cache Tiers
+          <Badge variant="outline" className="ml-auto font-mono text-accent border-current gap-1">
+            <Lightning size={12} />
+            {a.cacheHitRate.toFixed(0)}% cache hit
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {a.tiers.map((t) => {
+          const pct = t.totalBytes ? (t.usedBytes / t.totalBytes) * 100 : 0
+          return (
+            <div key={t.name} className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">
+                {t.name} tier
+              </div>
+              <div className="font-mono text-2xl font-bold text-foreground">
+                {(t.totalBytes / GiB).toFixed(1)} GiB
+              </div>
+              <Progress value={pct} className="h-1" />
+              <div className="text-[10px] text-muted-foreground font-mono">
+                {(t.usedBytes / GiB).toFixed(1)} GiB used · {TIER_DETAIL[t.name] ?? ''}
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
 }
 
 export function ClusterStorageView() {
@@ -110,6 +157,8 @@ export function ClusterStorageView() {
           </CardContent>
         </Card>
       )}
+
+      <AlluxioTiersCard />
     </div>
   )
 }
