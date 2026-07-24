@@ -75,22 +75,29 @@ export function LineageView() {
                     </span>
                   ))}
                 </div>
-                {/* span timeline */}
+                {/* span Gantt — bars offset by real start time, so sequential
+                    steps cascade instead of all starting at the left. */}
                 <div className="space-y-1">
-                  {t.spans.map((s) => (
-                    <div key={s.name} className="flex items-center gap-2">
-                      <span className="font-mono text-[10px] w-40 truncate text-muted-foreground">{s.name}</span>
-                      <div className="flex-1 h-3 bg-secondary/40 rounded overflow-hidden">
-                        <div
-                          className={`h-full rounded ${
-                            s.phase === 'Succeeded' ? 'bg-accent' : s.phase === 'Running' ? 'bg-primary' : 'bg-destructive'
-                          }`}
-                          style={{ width: `${Math.max(4, (s.durationMs / maxDur) * 100)}%` }}
-                        />
+                  {t.spans.map((s) => {
+                    const span0 = t.startedAt ? new Date(t.startedAt).getTime() : 0
+                    const total = t.totalDurationMs || maxDur
+                    const offset = s.startedAt && span0 ? ((new Date(s.startedAt).getTime() - span0) / total) * 100 : 0
+                    const width = (s.durationMs / total) * 100
+                    return (
+                      <div key={s.name} className="flex items-center gap-2">
+                        <span className="font-mono text-[10px] w-40 truncate text-muted-foreground">{s.name}</span>
+                        <div className="flex-1 h-3 bg-secondary/40 rounded overflow-hidden relative">
+                          <div
+                            className={`h-full rounded absolute ${
+                              s.phase === 'Succeeded' ? 'bg-accent' : s.phase === 'Running' ? 'bg-primary' : 'bg-destructive'
+                            }`}
+                            style={{ left: `${Math.min(98, Math.max(0, offset))}%`, width: `${Math.max(2, Math.min(100 - offset, width))}%` }}
+                          />
+                        </div>
+                        <span className="font-mono text-[10px] w-14 text-right text-muted-foreground">{dur(s.durationMs)}</span>
                       </div>
-                      <span className="font-mono text-[10px] w-14 text-right text-muted-foreground">{dur(s.durationMs)}</span>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </CardContent>
             </Card>
