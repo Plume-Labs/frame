@@ -19,9 +19,9 @@ import { RackVisualization } from '@/components/RackVisualization'
 import { DragDropRackManager } from '@/components/DragDropRackManager'
 
 import { ApplicationsView } from '@/components/ApplicationsView'
-import { JobOrchestrationView } from '@/components/JobOrchestrationView'
+import { FrameJobsView } from '@/components/FrameJobsView'
 import { SchedulerDashboard } from '@/components/SchedulerDashboard'
-import { ServiceClassPanel } from '@/components/ServiceClassPanel'
+import { ServiceClassesView } from '@/components/ServiceClassesView'
 import { DataLineageView } from '@/components/DataLineageView'
 
 import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
@@ -197,11 +197,11 @@ function App() {
       case 'applications':
         return <ApplicationsView />
       case 'jobs':
-        return <JobOrchestrationView />
+        return <FrameJobsView />
       case 'scheduler':
         return <SchedulerDashboard nodes={nodes} />
       case 'service-classes':
-        return <ServiceClassPanel nodes={nodes} />
+        return <ServiceClassesView />
       case 'lineage':
         return <DataLineageView />
 
