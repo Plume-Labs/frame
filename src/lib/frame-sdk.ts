@@ -147,14 +147,6 @@ export interface StorageTiers {
   objectGiB: number
 }
 
-/** Live cache hit-rate from Neura's Redis (via a redis-exporter). */
-export interface CacheStats {
-  hits: number
-  misses: number
-  hitRate: number
-  up: boolean
-}
-
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -627,34 +619,6 @@ class ClusterClient {
       // no Ceph — object tier stays 0
     }
     return { ramGiB, nvmeGiB, objectGiB }
-  }
-
-  /** Live Redis cache hit-rate via the redis-exporter pod (Prometheus text over pod-proxy). */
-  async cache(namespace = 'neura'): Promise<CacheStats> {
-    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      `/api/v1/namespaces/${namespace}/pods?labelSelector=app%3Dredis-exporter`,
-    )
-    const name = pods.items?.[0]?.metadata.name
-    if (!name) throw new FrameAPIError(404, 'redis-exporter not deployed')
-
-    const res = await fetch(
-      `/api/v1/namespaces/${namespace}/pods/${name}:9121/proxy/metrics`,
-    )
-    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read redis-exporter metrics')
-    const text = await res.text()
-    const metric = (key: string) => {
-      const m = text.match(new RegExp(`^${key}\\s+([0-9.e+]+)`, 'm'))
-      return m ? Number(m[1]) : 0
-    }
-    const hits = metric('redis_keyspace_hits_total')
-    const misses = metric('redis_keyspace_misses_total')
-    const total = hits + misses
-    return {
-      hits,
-      misses,
-      hitRate: total > 0 ? (hits / total) * 100 : 0,
-      up: metric('redis_up') === 1,
-    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
