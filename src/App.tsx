@@ -14,7 +14,7 @@ import { ApplicationsView } from '@/components/ApplicationsView'
 import { FrameJobsView } from '@/components/FrameJobsView'
 import { FrameSchedulerView } from '@/components/FrameSchedulerView'
 import { ServiceClassesView } from '@/components/ServiceClassesView'
-import { DataLineageView } from '@/components/DataLineageView'
+import { LineageView } from '@/components/LineageView'
 
 import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
 import { ClusterStorageView } from '@/components/ClusterStorageView'
@@ -105,7 +105,7 @@ const NAV: NavGroup[] = [
       { id: 'jobs', label: 'Jobs', icon: <Queue />, description: 'Workflow DAGs, queue depth and checkpoint state' },
       { id: 'scheduler', label: 'Scheduler', icon: <Calendar />, description: 'Live SchedulingPolicy resources from the operator' },
       { id: 'service-classes', label: 'Service Classes', icon: <ShieldCheck />, description: 'HIGH / MEDIUM / LOW tiers against their SLA targets' },
-      { id: 'lineage', label: 'Lineage', icon: <GitBranch />, description: 'Span timelines and dataset provenance per pipeline' },
+      { id: 'lineage', label: 'Lineage', icon: <GitBranch />, description: 'Live Argo Workflow runs as timed span traces' },
     ],
   },
   {
@@ -190,7 +190,7 @@ function App() {
       case 'service-classes':
         return <ServiceClassesView />
       case 'lineage':
-        return <DataLineageView />
+        return <LineageView />
 
       // ── Compute ─────────────────────────────────────────────────────────
       case 'nodes':

@@ -222,6 +222,23 @@ export interface VolcanoStats {
   podGroups: VolcanoPodGroup[]
 }
 
+/** One step (Argo Workflow node) within a pipeline trace. */
+export interface WorkflowSpan {
+  name: string
+  phase: string
+  startedAt?: string
+  finishedAt?: string
+  durationMs: number
+}
+/** A pipeline run (Argo Workflow) as a lineage trace. */
+export interface WorkflowTrace {
+  name: string
+  phase: string
+  startedAt?: string
+  totalDurationMs: number
+  spans: WorkflowSpan[]
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -887,6 +904,49 @@ class ClusterClient {
         minMember: p.spec?.minMember ?? 0,
       })),
     }
+  }
+
+  /** Live pipeline lineage from Argo Workflows: each run's DAG steps as timed spans. */
+  async workflows(namespace = 'argo'): Promise<WorkflowTrace[]> {
+    const res = await k8sFetch<
+      ListResponse<{
+        metadata: { name: string }
+        status?: {
+          phase?: string
+          startedAt?: string
+          finishedAt?: string
+          nodes?: Record<
+            string,
+            { displayName?: string; type?: string; phase?: string; startedAt?: string; finishedAt?: string }
+          >
+        }
+      }>
+    >(`/apis/argoproj.io/v1alpha1/namespaces/${namespace}/workflows`)
+
+    const ms = (a?: string, b?: string) =>
+      a && b ? Math.max(0, new Date(b).getTime() - new Date(a).getTime()) : 0
+
+    return (res.items ?? [])
+      .map((w) => {
+        const spans: WorkflowSpan[] = Object.values(w.status?.nodes ?? {})
+          .filter((n) => n.type === 'Pod')
+          .map((n) => ({
+            name: n.displayName ?? '',
+            phase: n.phase ?? 'Unknown',
+            startedAt: n.startedAt,
+            finishedAt: n.finishedAt,
+            durationMs: ms(n.startedAt, n.finishedAt),
+          }))
+          .sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''))
+        return {
+          name: w.metadata.name,
+          phase: w.status?.phase ?? 'Unknown',
+          startedAt: w.status?.startedAt,
+          totalDurationMs: ms(w.status?.startedAt, w.status?.finishedAt),
+          spans,
+        }
+      })
+      .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
