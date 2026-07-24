@@ -4,18 +4,30 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Network, ArrowClockwise } from '@phosphor-icons/react'
+import { Network, ArrowClockwise, WarningCircle } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 const GiB = 1024 ** 3
-const fmt = (b: number) => (b >= GiB ? `${(b / GiB).toFixed(2)} GiB` : `${(b / 1024 ** 2).toFixed(0)} MiB`)
+const MiB = 1024 ** 2
+const fmt = (b: number) => (b >= GiB ? `${(b / GiB).toFixed(2)} GiB` : `${(b / MiB).toFixed(0)} MiB`)
+const pkts = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : `${n}`)
+
+const IFACE_ROLE: Record<string, string> = {
+  eth0: 'physical NIC',
+  'flannel.1': 'VXLAN overlay',
+  cni0: 'pod bridge',
+}
 
 export function NetworkView() {
   const { state, reload } = useLiveResource<NetNode[]>(() => frame.cluster.network())
   const nodes = state.phase === 'ready' ? state.data : []
-  const rx = nodes.reduce((s, n) => s + n.rxBytes, 0)
-  const tx = nodes.reduce((s, n) => s + n.txBytes, 0)
+
+  const flat = nodes.flatMap((n) => n.ifaces)
+  const rx = flat.filter((i) => i.device === 'eth0').reduce((s, i) => s + i.rxBytes, 0)
+  const tx = flat.filter((i) => i.device === 'eth0').reduce((s, i) => s + i.txBytes, 0)
+  const errs = flat.reduce((s, i) => s + i.rxErrs + i.txErrs, 0)
+  const drops = flat.reduce((s, i) => s + i.rxDrop + i.txDrop, 0)
 
   return (
     <div className="space-y-6">
@@ -37,53 +49,81 @@ export function NetworkView() {
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && (
-          <CardContent className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <Stat label="Primary NIC" value={nodes[0]?.device ?? 'eth0'} small />
-            <Stat label="Total received" value={fmt(rx)} />
-            <Stat label="Total transmitted" value={fmt(tx)} />
+          <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <Stat label="NIC received" value={fmt(rx)} />
+            <Stat label="NIC transmitted" value={fmt(tx)} />
+            <Stat label="RX+TX errors" value={`${errs}`} tone={errs ? 'warning' : 'accent'} />
+            <Stat label="RX+TX drops" value={`${drops}`} tone={drops ? 'warning' : 'accent'} />
           </CardContent>
         )}
       </Card>
 
       <LiveStates state={state} emptyLabel="node-exporter (netdev) not deployed." />
 
-      {state.phase === 'ready' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-mono text-lg">Per-node ({nodes[0]?.device})</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {nodes.map((n) => (
-              <div key={n.node} className="p-3 rounded-lg border border-border bg-secondary/30 space-y-2">
-                <span className="font-mono text-xs font-bold truncate block">{n.node}</span>
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground font-mono">
-                  <div>
-                    <div className="text-accent font-bold">{fmt(n.rxBytes)}</div>
-                    received
+      {state.phase === 'ready' &&
+        nodes.map((n) => (
+          <Card key={n.node}>
+            <CardHeader>
+              <CardTitle className="font-mono text-lg">{n.node}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {n.ifaces.map((i) => {
+                const bad = i.rxErrs + i.txErrs + i.rxDrop + i.txDrop
+                return (
+                  <div
+                    key={i.device}
+                    className="p-3 rounded-lg border border-border bg-secondary/30 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs font-bold">
+                        {i.device}
+                        <span className="text-muted-foreground font-normal ml-2">
+                          {IFACE_ROLE[i.device] ?? ''}
+                        </span>
+                      </span>
+                      {bad > 0 && (
+                        <Badge variant="outline" className="text-[10px] font-mono text-warning border-warning/40 gap-1">
+                          <WarningCircle size={11} />
+                          {bad} err/drop
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-muted-foreground font-mono">
+                      <Micro v={fmt(i.rxBytes)} l="rx bytes" tone="accent" />
+                      <Micro v={fmt(i.txBytes)} l="tx bytes" tone="primary" />
+                      <Micro v={pkts(i.rxPackets)} l="rx pkts" />
+                      <Micro v={pkts(i.txPackets)} l="tx pkts" />
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-primary font-bold">{fmt(n.txBytes)}</div>
-                    transmitted
-                  </div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+                )
+              })}
+            </CardContent>
+          </Card>
+        ))}
 
       <Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">
-        cumulative counters since boot · RDMA/SR-IOV/DPDK require dedicated NICs (not present)
+        cumulative counters since boot · RDMA/SR-IOV/DPDK need dedicated NICs (not present)
       </Badge>
     </div>
   )
 }
 
-function Stat({ label, value, small }: { label: string; value: string; small?: boolean }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'warning' }) {
+  const c = tone === 'warning' ? 'text-warning' : tone === 'accent' ? 'text-accent' : 'text-foreground'
   return (
     <div className="space-y-1">
       <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`font-mono font-bold text-foreground ${small ? 'text-sm' : 'text-2xl'}`}>{value}</div>
+      <div className={`font-mono text-2xl font-bold ${c}`}>{value}</div>
+    </div>
+  )
+}
+
+function Micro({ v, l, tone }: { v: string; l: string; tone?: 'accent' | 'primary' }) {
+  const c = tone === 'accent' ? 'text-accent' : tone === 'primary' ? 'text-primary' : 'text-foreground'
+  return (
+    <div>
+      <div className={`font-bold ${c}`}>{v}</div>
+      {l}
     </div>
   )
 }
