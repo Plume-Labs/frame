@@ -310,6 +310,22 @@ export interface GpuInfo {
   decUtil: number
 }
 
+export interface InferenceStatus {
+  model: string
+  node: string
+  nCtx: number
+  slots: number
+  kvTokens: number
+  kvUsePct: number
+  requestsProcessing: number
+  requestsDeferred: number
+  promptTokensPerSec: number
+  predictedTokensPerSec: number
+  promptTokensTotal: number
+  tokensPredictedTotal: number
+  busySlotsPerDecode: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -1203,6 +1219,55 @@ class ClusterClient {
         decUtil: g.decUtil ?? 0,
       }))
       .sort((a, b) => a.index.localeCompare(b.index))
+  }
+
+  /**
+   * Live inference telemetry from the on-GPU llama.cpp server (Prometheus
+   * /metrics + /props). Real KV-cache depth, throughput and request queue.
+   */
+  async inference(): Promise<InferenceStatus | null> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string }; spec: { nodeName?: string } }>>(
+      '/api/v1/namespaces/inference/pods?labelSelector=app%3Dllamacpp',
+    )
+    const pod = pods.items?.find((p) => p.metadata.name)
+    if (!pod) return null
+    const name = pod.metadata.name
+    const base = `/api/v1/namespaces/inference/pods/${name}:8080/proxy`
+
+    const mRes = await fetch(`${base}/metrics`)
+    if (!mRes.ok) throw new FrameAPIError(mRes.status, 'cannot read inference metrics')
+    const text = await mRes.text()
+    const num = (k: string) => Number(text.match(new RegExp(`^${k}\\s+([0-9.e+-]+)`, 'm'))?.[1] ?? 0)
+
+    // /props → context window, slot count, model. Best-effort (never fatal).
+    let nCtx = 0
+    let slots = 0
+    let model = ''
+    try {
+      const p = await (await fetch(`${base}/props`)).json()
+      nCtx = p.default_generation_settings?.n_ctx ?? p.n_ctx ?? 0
+      slots = p.total_slots ?? 0
+      model = p.model_alias ?? ''
+    } catch {
+      /* props optional */
+    }
+
+    const kvTokens = num('llamacpp:n_tokens_max')
+    return {
+      model: model || 'llama.cpp',
+      node: pod.spec.nodeName ?? '',
+      nCtx,
+      slots,
+      kvTokens,
+      kvUsePct: nCtx ? (kvTokens / nCtx) * 100 : 0,
+      requestsProcessing: num('llamacpp:requests_processing'),
+      requestsDeferred: num('llamacpp:requests_deferred'),
+      promptTokensPerSec: num('llamacpp:prompt_tokens_seconds'),
+      predictedTokensPerSec: num('llamacpp:predicted_tokens_seconds'),
+      promptTokensTotal: num('llamacpp:prompt_tokens_total'),
+      tokensPredictedTotal: num('llamacpp:tokens_predicted_total'),
+      busySlotsPerDecode: num('llamacpp:n_busy_slots_per_decode'),
+    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */

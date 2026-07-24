@@ -75,4 +75,13 @@ kubectl -n argo rollout status deploy/workflow-controller --timeout=180s
 say "Sample workloads (Frame CRs, Volcano queues+job, Argo DAG)"
 kubectl apply -f deploy/samples/test-cluster/workloads.yaml
 
+# On-GPU inference server (llama.cpp on the Tesla P4) — feeds the KV-Cache /
+# Inference screen. Requires the NVIDIA GPU operator (nvidia.com/gpu schedulable).
+if kubectl get nodes -o jsonpath='{.items[*].status.allocatable}' | grep -q 'nvidia.com/gpu'; then
+  say "Inference server (llama.cpp on GPU)"
+  kubectl apply -f deploy/samples/test-cluster/inference.yaml
+else
+  say "No schedulable GPU — skipping inference server (KV-Cache screen will show empty)"
+fi
+
 say "Done. Frame UI: http://<any-node-ip>:30880  ·  Neura: :30881"

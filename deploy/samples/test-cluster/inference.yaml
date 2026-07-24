@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Namespace
+metadata: { name: inference }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: llamacpp, namespace: inference, labels: { app: llamacpp } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: llamacpp } }
+  template:
+    metadata: { labels: { app: llamacpp } }
+    spec:
+      runtimeClassName: nvidia
+      containers:
+        - name: server
+          image: ghcr.io/ggml-org/llama.cpp:server-cuda
+          args:
+            - "-hf"
+            - "Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "-ngl"
+            - "99"
+            - "--metrics"
+            - "-c"
+            - "4096"
+          ports: [{ containerPort: 8080, name: http }]
+          env:
+            - { name: LLAMA_CACHE, value: /models }
+          resources:
+            limits: { nvidia.com/gpu: 1 }
+          volumeMounts: [{ name: models, mountPath: /models }]
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 60
+      volumes:
+        - name: models
+          emptyDir: { sizeLimit: 4Gi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: llamacpp, namespace: inference }
+spec:
+  selector: { app: llamacpp }
+  ports: [{ port: 8080, targetPort: 8080, name: http }]

@@ -19,11 +19,10 @@ import { ClusterStorageView } from '@/components/ClusterStorageView'
 import { NetworkView } from '@/components/NetworkView'
 import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
 
-import { KVCacheDashboard } from '@/components/KVCacheDashboard'
+import { InferenceView } from '@/components/InferenceView'
 import { VolcanoPoolsView } from '@/components/VolcanoPoolsView'
-import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
-import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
-import { MPSDashboard } from '@/components/MPSDashboard'
+import { MpsView } from '@/components/MpsView'
+import { NotEnabledView } from '@/components/NotEnabledView'
 import { PtpView } from '@/components/PtpView'
 import { BurstBufferView } from '@/components/BurstBufferView'
 import { KsmView } from '@/components/KsmView'
@@ -124,11 +123,11 @@ const NAV: NavGroup[] = [
   {
     label: 'Tuning',
     items: [
-      { id: 'kv-cache', label: 'KV-Cache', icon: <Lightning />, description: 'Distributed KV-cache over RDMA' },
+      { id: 'kv-cache', label: 'KV-Cache', icon: <Lightning />, description: 'Live KV-cache depth and inference throughput (llama.cpp)' },
       { id: 'elastic-pools', label: 'Elastic Pools', icon: <ArrowsLeftRight />, description: 'Live Volcano queues and gang-scheduled PodGroups' },
-      { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding' },
-      { id: 'pipeline-pp', label: 'Pipeline PP', icon: <Waveform />, description: 'Prefill/decode pipeline parallelism' },
-      { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'NVIDIA Multi-Process Service sharing' },
+      { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding (not enabled)' },
+      { id: 'pipeline-pp', label: 'Pipeline PP', icon: <Waveform />, description: 'Pipeline parallelism (N/A — single GPU)' },
+      { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'Live GPU sharing status (MPS off — exclusive)' },
       { id: 'ptp', label: 'PTP Sync', icon: <Clock />, description: 'Live clock sync (ptp_kvm + adjtimex)' },
       { id: 'burst-buffer', label: 'Burst Buffer', icon: <HardDrive />, description: 'Live SSD scratch tier per node (node-exporter fs)' },
       { id: 'ksm', label: 'KSM', icon: <Archive />, description: 'Live kernel same-page merging (node-exporter)' },
@@ -213,15 +212,27 @@ function App() {
 
       // ── Tuning ──────────────────────────────────────────────────────────
       case 'kv-cache':
-        return <KVCacheDashboard />
+        return <InferenceView />
       case 'elastic-pools':
         return <VolcanoPoolsView />
       case 'speculative':
-        return <SpeculativeDecodingDashboard />
+        return (
+          <NotEnabledView
+            title="Speculative decoding"
+            reason="Draft-model speculative decoding is available in the llama.cpp server but no draft model is loaded on this deployment, so no accept-rate telemetry is produced."
+            enable="llama-server --model <target> --model-draft <small-draft> --draft-max 16"
+          />
+        )
       case 'pipeline-pp':
-        return <PipelinePPDashboard />
+        return (
+          <NotEnabledView
+            title="Pipeline parallelism"
+            reason="Pipeline parallelism splits a model across multiple GPUs. This cluster has a single GPU (Tesla P4 on neura-k3s-w2), so PP is not applicable — the model runs fully on one device."
+            enable="Add GPUs across nodes, then serve with tensor/pipeline-parallel size > 1."
+          />
+        )
       case 'mps':
-        return <MPSDashboard />
+        return <MpsView />
       case 'ptp':
         return <PtpView />
       case 'burst-buffer':
