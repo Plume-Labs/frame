@@ -122,6 +122,35 @@ export interface HealthStatus {
   uptime: number
 }
 
+export type AppHealth = 'healthy' | 'degraded' | 'down'
+
+/** One workload (Deployment or StatefulSet) making up an application. */
+export interface AppComponent {
+  name: string
+  kind: 'Deployment' | 'StatefulSet'
+  namespace: string
+  /** `app.kubernetes.io/component` label, if set (e.g. api / client / worker). */
+  role?: string
+  readyReplicas: number
+  desiredReplicas: number
+  image: string
+}
+
+/**
+ * A deployed application — the workloads sharing an
+ * `app.kubernetes.io/instance` label (a Helm release), or failing that, a
+ * namespace. This is how Neura (api + client + worker + postgres + redis)
+ * shows up as a single entry.
+ */
+export interface Application {
+  name: string
+  namespace: string
+  components: AppComponent[]
+  readyReplicas: number
+  desiredReplicas: number
+  health: AppHealth
+}
+
 // ── Error type ───────────────────────────────────────────────────────────────
 
 export class FrameAPIError extends Error {
@@ -297,7 +326,96 @@ function crToQuota(cr: FrameResourceQuotaCR): ResourceQuota {
   }
 }
 
+// ── Workload (core apps/v1) shims + mappers ───────────────────────────────────
+
+interface WorkloadCR {
+  metadata: { name: string; namespace: string; labels?: Record<string, string> }
+  spec?: {
+    replicas?: number
+    template?: { spec?: { containers?: Array<{ image?: string }> } }
+  }
+  status?: { readyReplicas?: number; replicas?: number }
+}
+
+const SYSTEM_NAMESPACES = new Set([
+  'kube-system',
+  'kube-public',
+  'kube-node-lease',
+])
+
+function crToComponent(cr: WorkloadCR, kind: AppComponent['kind']): AppComponent {
+  return {
+    name:            cr.metadata.name,
+    kind,
+    namespace:       cr.metadata.namespace,
+    role:            cr.metadata.labels?.['app.kubernetes.io/component'],
+    readyReplicas:   cr.status?.readyReplicas ?? 0,
+    desiredReplicas: cr.spec?.replicas ?? cr.status?.replicas ?? 0,
+    image:           cr.spec?.template?.spec?.containers?.[0]?.image ?? 'unknown',
+  }
+}
+
+/** Group key: the Helm release (instance label), else the namespace. */
+function appKey(cr: WorkloadCR): string {
+  return (
+    cr.metadata.labels?.['app.kubernetes.io/instance'] ??
+    cr.metadata.labels?.['app.kubernetes.io/part-of'] ??
+    cr.metadata.namespace
+  )
+}
+
+function healthOf(ready: number, desired: number): AppHealth {
+  if (desired === 0) return 'down'
+  if (ready >= desired) return 'healthy'
+  if (ready === 0) return 'down'
+  return 'degraded'
+}
+
 // ── Sub-clients ───────────────────────────────────────────────────────────────
+
+class ApplicationClient {
+  /**
+   * List deployed applications across all non-system namespaces by reading
+   * Deployments and StatefulSets and grouping them by Helm release.
+   */
+  async list(): Promise<Application[]> {
+    const [deps, sts] = await Promise.all([
+      k8sFetch<ListResponse<WorkloadCR>>('/apis/apps/v1/deployments'),
+      k8sFetch<ListResponse<WorkloadCR>>('/apis/apps/v1/statefulsets'),
+    ])
+
+    const workloads: Array<{ cr: WorkloadCR; kind: AppComponent['kind'] }> = [
+      ...(deps.items ?? []).map((cr) => ({ cr, kind: 'Deployment' as const })),
+      ...(sts.items ?? []).map((cr) => ({ cr, kind: 'StatefulSet' as const })),
+    ].filter(({ cr }) => !SYSTEM_NAMESPACES.has(cr.metadata.namespace))
+
+    const groups = new Map<string, Application>()
+    for (const { cr, kind } of workloads) {
+      const key = appKey(cr)
+      const component = crToComponent(cr, kind)
+      const app = groups.get(key) ?? {
+        name: key,
+        namespace: cr.metadata.namespace,
+        components: [],
+        readyReplicas: 0,
+        desiredReplicas: 0,
+        health: 'down' as AppHealth,
+      }
+      app.components.push(component)
+      app.readyReplicas += component.readyReplicas
+      app.desiredReplicas += component.desiredReplicas
+      groups.set(key, app)
+    }
+
+    return Array.from(groups.values())
+      .map((app) => ({
+        ...app,
+        components: app.components.sort((a, b) => a.name.localeCompare(b.name)),
+        health: healthOf(app.readyReplicas, app.desiredReplicas),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+}
 
 class NodeClient {
   constructor(private readonly ns?: string) {}
@@ -484,12 +602,14 @@ export class FrameClient {
   public readonly jobs: JobClient
   public readonly scheduler: SchedulerClient
   public readonly resources: ResourceClient
+  public readonly apps: ApplicationClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
     this.jobs      = new JobClient(opts.namespace)
     this.scheduler = new SchedulerClient(opts.namespace)
     this.resources = new ResourceClient(opts.namespace)
+    this.apps      = new ApplicationClient()
   }
 
   async health(): Promise<HealthStatus> {

@@ -19,6 +19,7 @@ import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
 import { RackVisualization } from '@/components/RackVisualization'
 import { DragDropRackManager } from '@/components/DragDropRackManager'
 
+import { ApplicationsView } from '@/components/ApplicationsView'
 import { JobOrchestrationView } from '@/components/JobOrchestrationView'
 import { SchedulerDashboard } from '@/components/SchedulerDashboard'
 import { ServiceClassPanel } from '@/components/ServiceClassPanel'
@@ -78,6 +79,7 @@ import {
   Info,
   Lightning,
   Network,
+  Package,
   Queue,
   ShieldCheck,
   ShieldWarning,
@@ -112,6 +114,7 @@ const NAV: NavGroup[] = [
   {
     label: 'Workloads',
     items: [
+      { id: 'applications', label: 'Applications', icon: <Package />, description: 'Deployed apps read live from the cluster' },
       { id: 'jobs', label: 'Jobs', icon: <Queue />, description: 'Workflow DAGs, queue depth and checkpoint state' },
       { id: 'scheduler', label: 'Scheduler', icon: <Calendar />, description: 'Gang scheduling, queue quotas and backfill' },
       { id: 'service-classes', label: 'Service Classes', icon: <ShieldCheck />, description: 'HIGH / MEDIUM / LOW tiers against their SLA targets' },
@@ -192,6 +195,8 @@ function App() {
   function renderScreen(): ReactNode {
     switch (screen) {
       // ── Workloads ───────────────────────────────────────────────────────
+      case 'applications':
+        return <ApplicationsView />
       case 'jobs':
         return <JobOrchestrationView />
       case 'scheduler':
