@@ -122,6 +122,32 @@ export interface HealthStatus {
   uptime: number
 }
 
+/** A real Kubernetes node, with live usage from metrics-server when available. */
+export interface ClusterNodeInfo {
+  name: string
+  ready: boolean
+  roles: string[]
+  kubeletVersion: string
+  os: string
+  /** Allocatable/used, in whole units. */
+  cpuCores: number
+  cpuUsedCores?: number
+  memGiB: number
+  memUsedGiB?: number
+  createdAt?: string
+}
+
+/** A real Kubernetes event. */
+export interface ClusterEvent {
+  reason: string
+  message: string
+  type: string
+  involvedObject: string
+  namespace?: string
+  count: number
+  lastTimestamp?: string
+}
+
 export type AppHealth = 'healthy' | 'degraded' | 'down'
 
 /** One workload (Deployment or StatefulSet) making up an application. */
@@ -371,7 +397,113 @@ function healthOf(ready: number, desired: number): AppHealth {
   return 'degraded'
 }
 
+// ── Core K8s shims for the live cluster views ─────────────────────────────────
+
+interface NodeItemCR {
+  metadata: { name: string; labels?: Record<string, string>; creationTimestamp?: string }
+  status?: {
+    conditions?: Array<{ type: string; status: string }>
+    capacity?: Record<string, string>
+    allocatable?: Record<string, string>
+    nodeInfo?: { kubeletVersion?: string; osImage?: string }
+  }
+}
+
+interface NodeMetricsCR {
+  metadata: { name: string }
+  usage?: { cpu?: string; memory?: string }
+}
+
+interface EventCR {
+  reason?: string
+  message?: string
+  type?: string
+  count?: number
+  lastTimestamp?: string
+  eventTime?: string
+  involvedObject?: { kind?: string; name?: string; namespace?: string }
+}
+
+/** Kubernetes CPU quantity → cores. `321055765n` → 0.32, `500m` → 0.5, `2` → 2. */
+function cpuToCores(q?: string): number {
+  if (!q) return 0
+  if (q.endsWith('n')) return parseInt(q, 10) / 1e9
+  if (q.endsWith('u')) return parseInt(q, 10) / 1e6
+  if (q.endsWith('m')) return parseInt(q, 10) / 1e3
+  return parseFloat(q)
+}
+
+/** Kubernetes memory quantity → GiB. Handles Ki/Mi/Gi and bare bytes. */
+function memToGiB(q?: string): number {
+  if (!q) return 0
+  const units: Record<string, number> = { Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4 }
+  const m = q.match(/^(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti)?$/)
+  if (!m) return 0
+  const bytes = parseFloat(m[1]) * (m[2] ? units[m[2]] : 1)
+  return bytes / 1024 ** 3
+}
+
 // ── Sub-clients ───────────────────────────────────────────────────────────────
+
+class ClusterClient {
+  /** Real Kubernetes nodes, joined with metrics-server usage when present. */
+  async nodes(): Promise<ClusterNodeInfo[]> {
+    const nodes = await k8sFetch<ListResponse<NodeItemCR>>('/api/v1/nodes')
+
+    let metricsByName = new Map<string, NodeMetricsCR>()
+    try {
+      const metrics = await k8sFetch<ListResponse<NodeMetricsCR>>(
+        '/apis/metrics.k8s.io/v1beta1/nodes',
+      )
+      metricsByName = new Map((metrics.items ?? []).map((m) => [m.metadata.name, m]))
+    } catch {
+      // metrics-server absent — usage stays undefined, capacity still shows.
+    }
+
+    return (nodes.items ?? [])
+      .map((n) => {
+        const ready =
+          n.status?.conditions?.find((c) => c.type === 'Ready')?.status === 'True'
+        const roles = Object.keys(n.metadata.labels ?? {})
+          .filter((k) => k.startsWith('node-role.kubernetes.io/'))
+          .map((k) => k.split('/')[1])
+          .filter(Boolean)
+        const usage = metricsByName.get(n.metadata.name)?.usage
+        return {
+          name: n.metadata.name,
+          ready,
+          roles: roles.length ? roles : ['worker'],
+          kubeletVersion: n.status?.nodeInfo?.kubeletVersion ?? 'unknown',
+          os: n.status?.nodeInfo?.osImage ?? 'unknown',
+          cpuCores: cpuToCores(n.status?.capacity?.cpu),
+          cpuUsedCores: usage ? cpuToCores(usage.cpu) : undefined,
+          memGiB: memToGiB(n.status?.capacity?.memory),
+          memUsedGiB: usage ? memToGiB(usage.memory) : undefined,
+          createdAt: n.metadata.creationTimestamp,
+        }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** Recent Kubernetes events across all namespaces, newest first. */
+  async events(limit = 100): Promise<ClusterEvent[]> {
+    const res = await k8sFetch<ListResponse<EventCR>>('/api/v1/events')
+    return (res.items ?? [])
+      .map((e) => ({
+        reason: e.reason ?? '',
+        message: e.message ?? '',
+        type: e.type ?? 'Normal',
+        involvedObject: [e.involvedObject?.kind, e.involvedObject?.name]
+          .filter(Boolean)
+          .join('/'),
+        namespace: e.involvedObject?.namespace,
+        count: e.count ?? 1,
+        lastTimestamp: e.lastTimestamp ?? e.eventTime,
+      }))
+      .sort((a, b) => (b.lastTimestamp ?? '').localeCompare(a.lastTimestamp ?? ''))
+      .slice(0, limit)
+  }
+}
 
 class ApplicationClient {
   /**
@@ -603,6 +735,7 @@ export class FrameClient {
   public readonly scheduler: SchedulerClient
   public readonly resources: ResourceClient
   public readonly apps: ApplicationClient
+  public readonly cluster: ClusterClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -610,6 +743,7 @@ export class FrameClient {
     this.scheduler = new SchedulerClient(opts.namespace)
     this.resources = new ResourceClient(opts.namespace)
     this.apps      = new ApplicationClient()
+    this.cluster   = new ClusterClient()
   }
 
   async health(): Promise<HealthStatus> {
