@@ -140,11 +140,19 @@ export interface ClusterNodeInfo {
   createdAt?: string
 }
 
-/** Memory/storage tiers, in GiB: RAM (node memory), NVMe (local disk), Object (Ceph). */
-export interface StorageTiers {
-  ramGiB: number
-  nvmeGiB: number
-  objectGiB: number
+/** One Alluxio tiered-storage layer (MEM/SSD/HDD). Bytes. */
+export interface AlluxioTier {
+  name: string
+  totalBytes: number
+  usedBytes: number
+}
+
+/** Live Alluxio tiered cache: stacked storage layers + cluster cache hit-rate. */
+export interface AlluxioStats {
+  tiers: AlluxioTier[]
+  cacheHitRate: number
+  totalBytes: number
+  usedBytes: number
 }
 
 /** Where workloads actually run — pods grouped by the node scheduling them. */
@@ -600,25 +608,39 @@ class ClusterClient {
       .sort((a, b) => a.node.localeCompare(b.node))
   }
 
-  /** Memory/storage tiers: RAM (node memory) + NVMe (node ephemeral-storage) + Object (Ceph). */
-  async tiers(): Promise<StorageTiers> {
-    const nodes = await k8sFetch<
-      ListResponse<{ status?: { capacity?: Record<string, string> } }>
-    >('/api/v1/nodes')
-    let ramGiB = 0
-    let nvmeGiB = 0
-    for (const n of nodes.items ?? []) {
-      ramGiB += memToGiB(n.status?.capacity?.memory)
-      nvmeGiB += memToGiB(n.status?.capacity?.['ephemeral-storage'])
+  /**
+   * Live Alluxio tiered storage — MEM/SSD/HDD capacity + used and the cluster
+   * cache hit-rate, read from the Alluxio master metrics over the pod-proxy.
+   */
+  async alluxio(namespace = 'alluxio'): Promise<AlluxioStats> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      `/api/v1/namespaces/${namespace}/pods?labelSelector=app%3Dalluxio`,
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) throw new FrameAPIError(404, 'Alluxio not deployed')
+
+    const res = await fetch(
+      `/api/v1/namespaces/${namespace}/pods/${name}:19999/proxy/metrics/json/`,
+    )
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alluxio metrics')
+    const g = ((await res.json()) as { gauges: Record<string, { value: number }> }).gauges
+    const v = (k: string) => g[k]?.value ?? 0
+
+    const tiers: AlluxioTier[] = ['MEM', 'SSD', 'HDD']
+      .map((t) => ({
+        name: t,
+        totalBytes: v(`Cluster.CapacityTotalTier${t}`),
+        usedBytes: v(`Cluster.CapacityUsedTier${t}`),
+      }))
+      .filter((t) => t.totalBytes > 0)
+
+    const rate = v('Cluster.CacheHitRate')
+    return {
+      tiers,
+      cacheHitRate: rate <= 1 ? rate * 100 : rate,
+      totalBytes: v('Cluster.CapacityTotal'),
+      usedBytes: v('Cluster.CapacityUsed'),
     }
-    let objectGiB = 0
-    try {
-      const c = await this.ceph()
-      objectGiB = c.bytesTotal / 1024 ** 3
-    } catch {
-      // no Ceph — object tier stays 0
-    }
-    return { ramGiB, nvmeGiB, objectGiB }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
