@@ -1,0 +1,137 @@
+# Test-cluster sample workloads: Frame CRs, Volcano queues + a vcjob, and an
+# Argo DAG workflow. These give the live Frame UI screens real data to read
+# (Jobs, Service Classes, Scheduler, Elastic Pools, Lineage).
+#
+# Apply after the operators (Frame, Volcano, Argo) are up:
+#   kubectl apply -f deploy/samples/test-cluster/workloads.yaml
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameNode
+metadata: { name: neura-k3s-cp, namespace: default }
+spec:
+  ip: 192.168.2.201
+  role: controlplane
+  serviceClass: HIGH
+  rack: rack-01
+  zone: local
+  network: { address: 192.168.2.201/24, gateway: 192.168.2.254, dns: [192.168.2.254] }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameNode
+metadata: { name: neura-k3s-w1, namespace: default }
+spec:
+  ip: 192.168.2.202
+  role: worker
+  serviceClass: MEDIUM
+  rack: rack-01
+  zone: local
+  network: { address: 192.168.2.202/24, gateway: 192.168.2.254, dns: [192.168.2.254] }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameNode
+metadata: { name: neura-k3s-w2, namespace: default }
+spec:
+  ip: 192.168.2.203
+  role: worker
+  serviceClass: LOW
+  rack: rack-01
+  zone: local
+  network: { address: 192.168.2.203/24, gateway: 192.168.2.254, dns: [192.168.2.254] }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: SchedulingPolicy
+metadata: { name: neura-default, namespace: default }
+spec: { scheduler: volcano, queueName: neura-high, queueWeight: 100, gangScheduling: true, preemption: true, priorityClass: neura-high, priorityValue: 100 }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameResourceQuota
+metadata: { name: quota-high, namespace: default }
+spec: { serviceClass: HIGH, maxGPUs: 0, maxCPU: "8", maxMemory: 16Gi, maxJobs: 20 }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameResourceQuota
+metadata: { name: quota-medium, namespace: default }
+spec: { serviceClass: MEDIUM, maxGPUs: 0, maxCPU: "4", maxMemory: 8Gi, maxJobs: 10 }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameResourceQuota
+metadata: { name: quota-low, namespace: default }
+spec: { serviceClass: LOW, maxGPUs: 0, maxCPU: "2", maxMemory: 4Gi, maxJobs: 5 }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameJob
+metadata: { name: neura-embed-refresh, namespace: default }
+spec: { name: neura-embed-refresh, pipeline: neura-inference-dag, serviceClass: HIGH, priority: high, gpuCount: 0 }
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameJob
+metadata: { name: nightly-consolidation, namespace: default }
+spec: { name: nightly-consolidation, pipeline: neura-training-dag, serviceClass: LOW, priority: low, gpuCount: 0 }
+---
+# ── Volcano queues (elastic pools) ──────────────────────────────────────────
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata: { name: neura-high }
+spec: { weight: 100, reclaimable: false, capability: { cpu: "8", memory: 16Gi } }
+---
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata: { name: neura-medium }
+spec: { weight: 50, reclaimable: true, capability: { cpu: "4", memory: 8Gi } }
+---
+apiVersion: scheduling.volcano.sh/v1beta1
+kind: Queue
+metadata: { name: neura-low }
+spec: { weight: 10, reclaimable: true, capability: { cpu: "2", memory: 4Gi } }
+---
+apiVersion: batch.volcano.sh/v1alpha1
+kind: Job
+metadata: { name: neura-embed-batch, namespace: default }
+spec:
+  minAvailable: 2
+  schedulerName: volcano
+  queue: neura-high
+  tasks:
+    - replicas: 2
+      name: worker
+      template:
+        spec:
+          containers:
+            - name: worker
+              image: busybox:1.36
+              command: ["sh", "-c", "sleep 3600"]
+              resources: { requests: { cpu: 200m, memory: 128Mi } }
+          restartPolicy: Never
+---
+# ── Argo executor RBAC (Argo 3.4+ needs workflowtaskresults) ─────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: argo-executor, namespace: argo }
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflowtaskresults]
+    verbs: [create, patch, get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: argo-executor, namespace: argo }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: argo-executor }
+subjects: [{ kind: ServiceAccount, name: argo, namespace: argo }]
+---
+# ── Argo DAG workflow (feeds the Lineage screen) ────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata: { name: neura-training-v3, namespace: argo }
+spec:
+  entrypoint: main
+  serviceAccountName: argo
+  templates:
+    - name: main
+      dag:
+        tasks:
+          - { name: data-validation, template: step }
+          - { name: cache-load, template: step, dependencies: [data-validation] }
+          - { name: distributed-training, template: step, dependencies: [cache-load] }
+          - { name: model-inference, template: step, dependencies: [distributed-training] }
+    - name: step
+      container: { image: busybox:1.36, command: [sh, -c], args: ["sleep 4"] }
