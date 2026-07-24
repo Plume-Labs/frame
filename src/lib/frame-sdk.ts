@@ -140,6 +140,14 @@ export interface ClusterNodeInfo {
   createdAt?: string
 }
 
+/** Where workloads actually run — pods grouped by the node scheduling them. */
+export interface NodePlacement {
+  node: string
+  pods: Array<{ namespace: string; name: string; phase: string; app?: string }>
+  running: number
+  total: number
+}
+
 /** Live Ceph storage state, read from the Rook CephCluster CR + pods. */
 export interface CephStatus {
   health: string
@@ -548,6 +556,41 @@ class ClusterClient {
         replication: p.spec?.replicated?.size ?? 0,
       })),
     }
+  }
+
+  /**
+   * Workload placement: every non-system pod grouped by the node running it —
+   * the real "data locality" of the cluster (where compute actually sits).
+   */
+  async placement(): Promise<NodePlacement[]> {
+    const res = await k8sFetch<
+      ListResponse<{
+        metadata: { name: string; namespace: string; labels?: Record<string, string> }
+        spec?: { nodeName?: string }
+        status?: { phase?: string }
+      }>
+    >('/api/v1/pods')
+
+    const byNode = new Map<string, NodePlacement>()
+    for (const p of res.items ?? []) {
+      if (SYSTEM_NAMESPACES.has(p.metadata.namespace)) continue
+      const node = p.spec?.nodeName
+      if (!node) continue
+      const phase = p.status?.phase ?? 'Unknown'
+      const entry = byNode.get(node) ?? { node, pods: [], running: 0, total: 0 }
+      entry.pods.push({
+        namespace: p.metadata.namespace,
+        name: p.metadata.name,
+        phase,
+        app: p.metadata.labels?.['app.kubernetes.io/instance'],
+      })
+      entry.total += 1
+      if (phase === 'Running') entry.running += 1
+      byNode.set(node, entry)
+    }
+    return Array.from(byNode.values())
+      .map((n) => ({ ...n, pods: n.pods.sort((a, b) => a.namespace.localeCompare(b.namespace)) }))
+      .sort((a, b) => a.node.localeCompare(b.node))
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */

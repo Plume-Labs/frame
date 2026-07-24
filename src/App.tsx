@@ -27,7 +27,7 @@ import { DataLineageView } from '@/components/DataLineageView'
 import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
 import { ClusterStorageView } from '@/components/ClusterStorageView'
 import { NetworkDashboard } from '@/components/NetworkDashboard'
-import { DataLocalityView } from '@/components/DataLocalityView'
+import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
 
 import { KVCacheDashboard } from '@/components/KVCacheDashboard'
 import { ElasticPoolDashboard } from '@/components/ElasticPoolDashboard'
@@ -133,7 +133,7 @@ const NAV: NavGroup[] = [
       { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Utilisation, MIG partitioning, power and thermals' },
       { id: 'storage', label: 'Storage', icon: <Database />, description: 'Live Ceph health, OSDs, capacity and pools' },
       { id: 'network', label: 'Network', icon: <Network />, description: 'Bandwidth, RDMA, SR-IOV and packet loss' },
-      { id: 'data-locality', label: 'Data Locality', icon: <HardDrives />, description: 'Cache hit rates, memory tiers and NUMA placement' },
+      { id: 'data-locality', label: 'Placement', icon: <HardDrives />, description: 'Live pod-to-node workload placement' },
     ],
   },
   {
@@ -253,7 +253,7 @@ function App() {
       case 'network':
         return <NetworkDashboard nodes={nodes} />
       case 'data-locality':
-        return <DataLocalityView nodes={nodes} />
+        return <WorkloadPlacementView />
 
       // ── Tuning ──────────────────────────────────────────────────────────
       case 'kv-cache':
