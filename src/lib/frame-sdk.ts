@@ -102,6 +102,7 @@ export interface SchedulingPolicy {
 
 export interface ResourceQuota {
   namespace: string
+  serviceClass: ServiceClass
   maxCPU: string
   maxMemory: string
   maxGPUs: number
@@ -354,7 +355,8 @@ function crToPolicy(cr: SchedulingPolicyCR): SchedulingPolicy {
 
 function crToQuota(cr: FrameResourceQuotaCR): ResourceQuota {
   return {
-    namespace:  cr.metadata.namespace ?? frameNs(),
+    namespace:    cr.metadata.namespace ?? frameNs(),
+    serviceClass: (cr.spec.serviceClass ?? 'MEDIUM') as ServiceClass,
     maxCPU:     cr.spec.maxCPU ?? '0',
     maxMemory:  cr.spec.maxMemory ?? '0Gi',
     maxGPUs:    cr.spec.maxGPUs ?? 0,
