@@ -79,13 +79,22 @@ Ceph provides distributed block, object, and file storage for the Kubernetes clu
 
 ### Prerequisites
 
-1. Install Rook operator:
+1. Install Rook operator (pinned to a release, not `master`):
 ```bash
+ROOK=https://raw.githubusercontent.com/rook/rook/release-1.20/deploy/examples
 kubectl create namespace rook-ceph
-kubectl apply -f https://raw.githubusercontent.com/rook/rook/master/deploy/examples/crds.yaml
-kubectl apply -f https://raw.githubusercontent.com/rook/rook/master/deploy/examples/common.yaml
-kubectl apply -f https://raw.githubusercontent.com/rook/rook/master/deploy/examples/operator.yaml
+kubectl apply -f $ROOK/crds.yaml --server-side
+kubectl apply -f $ROOK/common.yaml
+# Rook 1.20 uses the ceph-csi-operator, whose csi.ceph.io CRDs (CephConnection)
+# are NOT in crds.yaml — without them the CephCluster reconcile fails at
+# "no matches for kind CephConnection". Install them too:
+kubectl apply --server-side -f $ROOK/csi-operator.yaml
+kubectl apply -f $ROOK/operator.yaml
 ```
+
+> After a Ceph major upgrade, finalize with
+> `kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd require-osd-release tentacle`
+> or the cluster stays HEALTH_WARN with OSD_UPGRADE_FINISHED.
 
 2. Verify operator is running:
 ```bash
@@ -298,7 +307,7 @@ Update ceph version in `cluster.yaml`:
 
 ```yaml
 cephVersion:
-  image: quay.io/ceph/ceph:v18.2.1
+  image: quay.io/ceph/ceph:v20.2.2
 ```
 
 Apply and Rook will perform rolling upgrade.
