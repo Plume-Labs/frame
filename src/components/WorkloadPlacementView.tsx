@@ -1,42 +1,60 @@
-import { NodePlacement, StorageTiers, createFrameClient } from '@/lib/frame-sdk'
+import { AlluxioStats, NodePlacement, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { HardDrives, ArrowClockwise, Stack } from '@phosphor-icons/react'
+import { HardDrives, ArrowClockwise, Stack, Lightning } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
+const GiB = 1024 ** 3
+const TIER_DETAIL: Record<string, string> = {
+  MEM: 'in-memory (fastest)',
+  SSD: 'local NVMe/SSD',
+  HDD: 'under-store (object/HDD)',
+}
+
+/** Alluxio stacked storage tiers + cache hit-rate — the caching layer in front
+ *  of the DBs/object store. Renders nothing (silent) if Alluxio isn't deployed. */
 function StorageTiersBand() {
-  const { state } = useLiveResource<StorageTiers>(() => frame.cluster.tiers())
+  const { state } = useLiveResource<AlluxioStats>(() => frame.cluster.alluxio())
   if (state.phase !== 'ready') return null
-  const t = state.data
+  const a = state.data
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-lg flex items-center gap-2">
           <Stack className="text-primary" />
-          Storage Tiers
+          Alluxio Storage Tiers
+          <Badge variant="outline" className="ml-auto font-mono text-accent border-current gap-1">
+            <Lightning size={12} />
+            {a.cacheHitRate.toFixed(0)}% cache hit
+          </Badge>
         </CardTitle>
       </CardHeader>
-      <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Tile label="RAM tier" value={`${t.ramGiB.toFixed(0)} GiB`} detail="node memory" />
-        <Tile label="NVMe tier" value={`${t.nvmeGiB.toFixed(0)} GiB`} detail="local ephemeral storage" />
-        <Tile label="Object tier" value={`${t.objectGiB.toFixed(0)} GiB`} detail="Ceph raw capacity" />
+      <CardContent className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4`}>
+        {a.tiers.map((t) => {
+          const pct = t.totalBytes ? (t.usedBytes / t.totalBytes) * 100 : 0
+          return (
+            <div key={t.name} className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">
+                {t.name} tier
+              </div>
+              <div className="font-mono text-2xl font-bold text-foreground">
+                {(t.totalBytes / GiB).toFixed(1)} GiB
+              </div>
+              <Progress value={pct} className="h-1" />
+              <div className="text-[10px] text-muted-foreground font-mono">
+                {(t.usedBytes / GiB).toFixed(1)} GiB used · {TIER_DETAIL[t.name] ?? ''}
+              </div>
+            </div>
+          )
+        })}
       </CardContent>
     </Card>
-  )
-}
-
-function Tile({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className="font-mono text-2xl font-bold text-foreground">{value}</div>
-      <div className="text-[10px] text-muted-foreground font-mono">{detail}</div>
-    </div>
   )
 }
 
