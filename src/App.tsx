@@ -22,7 +22,7 @@ import { NetworkView } from '@/components/NetworkView'
 import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
 
 import { KVCacheDashboard } from '@/components/KVCacheDashboard'
-import { ElasticPoolDashboard } from '@/components/ElasticPoolDashboard'
+import { VolcanoPoolsView } from '@/components/VolcanoPoolsView'
 import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
 import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
 import { MPSDashboard } from '@/components/MPSDashboard'
@@ -128,7 +128,7 @@ const NAV: NavGroup[] = [
     label: 'Tuning',
     items: [
       { id: 'kv-cache', label: 'KV-Cache', icon: <Lightning />, description: 'Distributed KV-cache over RDMA' },
-      { id: 'elastic-pools', label: 'Elastic Pools', icon: <ArrowsLeftRight />, description: 'LPAR pool expansion and contraction' },
+      { id: 'elastic-pools', label: 'Elastic Pools', icon: <ArrowsLeftRight />, description: 'Live Volcano queues and gang-scheduled PodGroups' },
       { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding' },
       { id: 'pipeline-pp', label: 'Pipeline PP', icon: <Waveform />, description: 'Prefill/decode pipeline parallelism' },
       { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'NVIDIA Multi-Process Service sharing' },
@@ -246,7 +246,7 @@ function App() {
       case 'kv-cache':
         return <KVCacheDashboard />
       case 'elastic-pools':
-        return <ElasticPoolDashboard />
+        return <VolcanoPoolsView />
       case 'speculative':
         return <SpeculativeDecodingDashboard />
       case 'pipeline-pp':

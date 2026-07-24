@@ -199,6 +199,29 @@ export interface CapacityResource {
   requested: number
 }
 
+/** A Volcano scheduling queue (an elastic resource pool). */
+export interface VolcanoQueue {
+  name: string
+  state: string
+  weight: number
+  reclaimable: boolean
+  cpuCapability: string
+  memCapability: string
+  running: number
+}
+/** A Volcano PodGroup (gang-scheduled unit). */
+export interface VolcanoPodGroup {
+  name: string
+  namespace: string
+  queue: string
+  phase: string
+  minMember: number
+}
+export interface VolcanoStats {
+  queues: VolcanoQueue[]
+  podGroups: VolcanoPodGroup[]
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -822,6 +845,48 @@ class ClusterClient {
       { name: 'CPU', unit: 'cores', allocatable: allocCpu, used: usedCpu, requested: reqCpu },
       { name: 'Memory', unit: 'GiB', allocatable: allocMem, used: usedMem, requested: reqMem },
     ]
+  }
+
+  /** Live Volcano queues (elastic pools) + gang-scheduled PodGroups. */
+  async volcano(): Promise<VolcanoStats> {
+    const [queues, pgs] = await Promise.all([
+      k8sFetch<
+        ListResponse<{
+          metadata: { name: string }
+          spec?: { weight?: number; reclaimable?: boolean; capability?: Record<string, string> }
+          status?: { state?: string; running?: number }
+        }>
+      >('/apis/scheduling.volcano.sh/v1beta1/queues'),
+      k8sFetch<
+        ListResponse<{
+          metadata: { name: string; namespace: string }
+          spec?: { queue?: string; minMember?: number }
+          status?: { phase?: string }
+        }>
+      >('/apis/scheduling.volcano.sh/v1beta1/podgroups'),
+    ])
+
+    return {
+      queues: (queues.items ?? [])
+        .filter((q) => !['root', 'default'].includes(q.metadata.name))
+        .map((q) => ({
+          name: q.metadata.name,
+          state: q.status?.state ?? 'Unknown',
+          weight: q.spec?.weight ?? 0,
+          reclaimable: q.spec?.reclaimable ?? false,
+          cpuCapability: q.spec?.capability?.cpu ?? '—',
+          memCapability: q.spec?.capability?.memory ?? '—',
+          running: q.status?.running ?? 0,
+        }))
+        .sort((a, b) => b.weight - a.weight),
+      podGroups: (pgs.items ?? []).map((p) => ({
+        name: p.metadata.name,
+        namespace: p.metadata.namespace,
+        queue: p.spec?.queue ?? '',
+        phase: p.status?.phase ?? 'Unknown',
+        minMember: p.spec?.minMember ?? 0,
+      })),
+    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
