@@ -26,8 +26,8 @@ import { VolcanoPoolsView } from '@/components/VolcanoPoolsView'
 import { SpeculativeDecodingDashboard } from '@/components/SpeculativeDecodingDashboard'
 import { PipelinePPDashboard } from '@/components/PipelinePPDashboard'
 import { MPSDashboard } from '@/components/MPSDashboard'
-import { PTPSyncDashboard } from '@/components/PTPSyncDashboard'
-import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
+import { PtpView } from '@/components/PtpView'
+import { BurstBufferView } from '@/components/BurstBufferView'
 import { KsmView } from '@/components/KsmView'
 
 import { CapacityView } from '@/components/CapacityView'
@@ -132,8 +132,8 @@ const NAV: NavGroup[] = [
       { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding' },
       { id: 'pipeline-pp', label: 'Pipeline PP', icon: <Waveform />, description: 'Prefill/decode pipeline parallelism' },
       { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'NVIDIA Multi-Process Service sharing' },
-      { id: 'ptp', label: 'PTP Sync', icon: <Clock />, description: 'IEEE 1588 clock synchronisation' },
-      { id: 'burst-buffer', label: 'Burst Buffer', icon: <HardDrive />, description: 'NVMe write-behind checkpoint staging' },
+      { id: 'ptp', label: 'PTP Sync', icon: <Clock />, description: 'Live clock sync (ptp_kvm + adjtimex)' },
+      { id: 'burst-buffer', label: 'Burst Buffer', icon: <HardDrive />, description: 'Live SSD scratch tier per node (node-exporter fs)' },
       { id: 'ksm', label: 'KSM', icon: <Archive />, description: 'Live kernel same-page merging (node-exporter)' },
     ],
   },
@@ -254,9 +254,9 @@ function App() {
       case 'mps':
         return <MPSDashboard />
       case 'ptp':
-        return <PTPSyncDashboard />
+        return <PtpView />
       case 'burst-buffer':
-        return <BurstBufferDashboard />
+        return <BurstBufferView />
       case 'ksm':
         return <KsmView />
 
