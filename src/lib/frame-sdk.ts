@@ -179,6 +179,15 @@ export interface NetNode {
   txBytes: number
 }
 
+/** Live cluster capacity for one resource: allocatable vs live-used vs reserved (requests). */
+export interface CapacityResource {
+  name: 'CPU' | 'Memory'
+  unit: string
+  allocatable: number
+  used: number
+  requested: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -730,6 +739,60 @@ class ClusterClient {
         txBytes: g(text, 'node_network_transmit_bytes_total'),
       }))
       .sort((a, b) => a.node.localeCompare(b.node))
+  }
+
+  /**
+   * Live cluster capacity: allocatable (sum node allocatable), used (metrics-server),
+   * and requested (sum of pod container requests) for CPU and memory.
+   */
+  async capacity(): Promise<CapacityResource[]> {
+    const [nodes, pods] = await Promise.all([
+      k8sFetch<ListResponse<{ status?: { allocatable?: Record<string, string> } }>>(
+        '/api/v1/nodes',
+      ),
+      k8sFetch<
+        ListResponse<{
+          status?: { phase?: string }
+          spec?: { containers?: Array<{ resources?: { requests?: Record<string, string> } }> }
+        }>
+      >('/api/v1/pods'),
+    ])
+
+    let allocCpu = 0
+    let allocMem = 0
+    for (const n of nodes.items ?? []) {
+      allocCpu += cpuToCores(n.status?.allocatable?.cpu)
+      allocMem += memToGiB(n.status?.allocatable?.memory)
+    }
+
+    let reqCpu = 0
+    let reqMem = 0
+    for (const p of pods.items ?? []) {
+      if (p.status?.phase === 'Succeeded' || p.status?.phase === 'Failed') continue
+      for (const c of p.spec?.containers ?? []) {
+        reqCpu += cpuToCores(c.resources?.requests?.cpu)
+        reqMem += memToGiB(c.resources?.requests?.memory)
+      }
+    }
+
+    let usedCpu = 0
+    let usedMem = 0
+    try {
+      const m = await k8sFetch<ListResponse<NodeMetricsCR>>(
+        '/apis/metrics.k8s.io/v1beta1/nodes',
+      )
+      for (const n of m.items ?? []) {
+        usedCpu += cpuToCores(n.usage?.cpu)
+        usedMem += memToGiB(n.usage?.memory)
+      }
+    } catch {
+      // metrics-server absent — used stays 0
+    }
+
+    return [
+      { name: 'CPU', unit: 'cores', allocatable: allocCpu, used: usedCpu, requested: reqCpu },
+      { name: 'Memory', unit: 'GiB', allocatable: allocMem, used: usedMem, requested: reqMem },
+    ]
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
