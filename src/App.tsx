@@ -1,15 +1,7 @@
 import { ReactNode, useMemo, useState } from 'react'
-import {
-  Anomaly,
-  CapacityAlert,
-  CapacityPlan,
-  ClusterNode,
-  ResourceDataPoint,
-  ResourceForecast,
-} from '@/lib/types'
+import { ClusterNode } from '@/lib/types'
 import { calculateClusterStats } from '@/lib/cluster'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
-import { useCapacityAnalytics } from '@/hooks/useCapacityAnalytics'
 
 import { ClusterNodesView } from '@/components/ClusterNodesView'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
@@ -38,11 +30,7 @@ import { PTPSyncDashboard } from '@/components/PTPSyncDashboard'
 import { BurstBufferDashboard } from '@/components/BurstBufferDashboard'
 import { KsmView } from '@/components/KsmView'
 
-import { CapacityPlanningDashboard } from '@/components/CapacityPlanningDashboard'
-import { ForecastChart } from '@/components/ForecastChart'
-import { CapacityPlanCard } from '@/components/CapacityPlanCard'
-import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
-import { AnomalyAlerts } from '@/components/AnomalyAlerts'
+import { CapacityView } from '@/components/CapacityView'
 import { ResiliencePanel } from '@/components/ResiliencePanel'
 import { ClusterEventsView } from '@/components/ClusterEventsView'
 
@@ -152,7 +140,7 @@ const NAV: NavGroup[] = [
   {
     label: 'Operations',
     items: [
-      { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Forecasts, anomalies and growth planning' },
+      { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Live allocatable vs used vs reserved' },
       { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'MTBF/MTTR, checkpoints and snapshots' },
       { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
     ],
@@ -169,8 +157,7 @@ function App() {
   const [screen, setScreen] = useState('jobs')
   const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
 
-  const { nodes, setNodes, nodesRef } = useClusterSimulation(32)
-  const { historicalData, forecast, alerts, capacityPlan, anomalies } = useCapacityAnalytics(nodesRef)
+  const { nodes, setNodes } = useClusterSimulation(32)
 
   // Derive the selected node from the authoritative nodes array so the detail
   // panel always shows up-to-date metrics without an extra state update cycle.
@@ -275,13 +262,7 @@ function App() {
 
       // ── Operations ──────────────────────────────────────────────────────
       case 'capacity':
-        return <CapacityScreen
-          anomalies={anomalies}
-          alerts={alerts}
-          historicalData={historicalData}
-          forecast={forecast}
-          capacityPlan={capacityPlan}
-        />
+        return <CapacityView />
       case 'resilience':
         return <ResiliencePanel nodes={nodes} />
       case 'events':
@@ -383,48 +364,5 @@ function App() {
   )
 }
 
-/**
- * Capacity planning. Every card here needs enough sampled history to be
- * meaningful, so the screen states that plainly instead of rendering nothing
- * for the first ~50 seconds of uptime.
- */
-function CapacityScreen({
-  anomalies,
-  alerts,
-  historicalData,
-  forecast,
-  capacityPlan,
-}: {
-  anomalies: Anomaly[]
-  alerts: CapacityAlert[]
-  historicalData: ResourceDataPoint[] | undefined
-  forecast: ResourceForecast
-  capacityPlan: CapacityPlan | null | undefined
-}) {
-  const samples = historicalData?.length ?? 0
-
-  if (samples < 5) {
-    return (
-      <div className="rounded-lg border border-border bg-card p-8 text-center space-y-2">
-        <div className="font-mono text-sm text-foreground">Collecting baseline…</div>
-        <div className="text-xs text-muted-foreground">
-          Forecasts and anomaly detection need at least 5 samples. {samples} collected so far.
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      {anomalies.length > 0 && <AnomalyAlerts anomalies={anomalies} />}
-      {alerts.length > 0 && <CapacityPlanningDashboard alerts={alerts} />}
-      {historicalData && <HistoricalTrendsAnalysis historicalData={historicalData} />}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <ForecastChart forecast={forecast} />
-        {capacityPlan && <CapacityPlanCard plan={capacityPlan} />}
-      </div>
-    </div>
-  )
-}
 
 export default App
