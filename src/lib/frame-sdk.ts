@@ -277,6 +277,25 @@ export interface PtpNode {
   maxErrorSeconds: number
 }
 
+/** A node as seen within its rack. */
+export interface RackNodeInfo {
+  name: string
+  ready: boolean
+  role: string
+  cpuCores: number
+  memGiB: number
+  pods: number
+}
+/** A rack: real nodes grouped by their FrameNode `spec.rack`. */
+export interface Rack {
+  name: string
+  nodes: RackNodeInfo[]
+  readyNodes: number
+  totalCpu: number
+  totalMem: number
+  totalPods: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -1080,6 +1099,46 @@ class ClusterClient {
         maxErrorSeconds: g(text, 'node_timex_maxerror_seconds'),
       }))
       .sort((a, b) => a.node.localeCompare(b.node))
+  }
+
+  /** Real nodes grouped into racks by their FrameNode `spec.rack` label. */
+  async racks(): Promise<Rack[]> {
+    const [fnRes, nodes, placement] = await Promise.all([
+      k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string } }>>(
+        `/apis/${GROUP}/${VERSION}/namespaces/default/framenodes`,
+      ),
+      this.nodes(),
+      this.placement(),
+    ])
+    const rackOf = new Map((fnRes.items ?? []).map((f) => [f.metadata.name, f.spec?.rack ?? 'unracked']))
+    const podsOf = new Map(placement.map((p) => [p.node, p.total]))
+
+    const byRack = new Map<string, Rack>()
+    for (const n of nodes) {
+      const rack = rackOf.get(n.name) ?? 'unracked'
+      const entry = byRack.get(rack) ?? {
+        name: rack,
+        nodes: [],
+        readyNodes: 0,
+        totalCpu: 0,
+        totalMem: 0,
+        totalPods: 0,
+      }
+      entry.nodes.push({
+        name: n.name,
+        ready: n.ready,
+        role: n.roles.join(','),
+        cpuCores: n.cpuCores,
+        memGiB: n.memGiB,
+        pods: podsOf.get(n.name) ?? 0,
+      })
+      if (n.ready) entry.readyNodes += 1
+      entry.totalCpu += n.cpuCores
+      entry.totalMem += n.memGiB
+      entry.totalPods += podsOf.get(n.name) ?? 0
+      byRack.set(rack, entry)
+    }
+    return Array.from(byRack.values()).sort((a, b) => a.name.localeCompare(b.name))
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
