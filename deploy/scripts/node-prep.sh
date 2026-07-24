@@ -47,3 +47,26 @@ if [ -n "$BURST_DEV" ] && [ -b "$BURST_DEV" ]; then
 else
   echo "burst: skipped (pass the ssd device as arg 1, e.g. /dev/sdc)"
 fi
+
+# ── NVIDIA GPU driver (only on a node with a passed-through NVIDIA GPU) ────────
+# Requires the Proxmox host to have done PCI passthrough (see docs/test-cluster.md
+# "GPU passthrough"): vfio-pci bound at boot + Secure Boot OFF, else the DKMS
+# module fails to load ("Key was rejected by service"). We install the driver on
+# the node; the GPU operator (bring-up, GPU=1) runs with driver.enabled=false.
+if lspci 2>/dev/null | grep -qi 'NVIDIA'; then
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+    echo "gpu: driver already working — $(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | head -1)"
+  else
+    echo "gpu: NVIDIA device present, installing driver…"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq nvidia-driver-580-server >/dev/null 2>&1 \
+      || apt-get install -y -qq nvidia-driver-server >/dev/null 2>&1 \
+      || echo "gpu: driver package install failed — install the vendor driver manually"
+    nvidia-smi >/dev/null 2>&1 \
+      && echo "gpu: OK — $(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | head -1)" \
+      || echo "gpu: module not loaded — check Secure Boot is OFF (dmesg | grep -i 'key was rejected')"
+  fi
+else
+  echo "gpu: no NVIDIA device on this node — skipping driver"
+fi

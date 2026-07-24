@@ -12,6 +12,9 @@
 #   for each: docker save <img> | ssh <node> 'sudo k3s ctr images import -'
 #
 # Usage:  ./deploy/scripts/test-cluster-up.sh
+#   GPU=1                         also install the NVIDIA GPU operator + llama.cpp
+#   PVE_URL/PVE_USER/PVE_PASS     also stamp real rack labels from Proxmox
+#   e.g. GPU=1 PVE_URL=https://192.168.2.1:8006 PVE_PASS=… ./deploy/scripts/test-cluster-up.sh
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."   # repo root (.externals/frame)
 
@@ -71,6 +74,23 @@ say "Argo Workflows ($ARGO_VER)"
 kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n argo apply -f "https://github.com/argoproj/argo-workflows/releases/download/$ARGO_VER/namespace-install.yaml" --server-side --force-conflicts
 kubectl -n argo rollout status deploy/workflow-controller --timeout=180s
+
+# NVIDIA GPU operator — makes nvidia.com/gpu schedulable (device-plugin) and
+# ships DCGM-exporter for the GPU screen. driver.enabled=false: the node driver
+# is installed by node-prep.sh (needs Proxmox passthrough + Secure Boot OFF).
+# Opt-in (GPU=1) so GPU-less clusters skip the heavy operator.
+if [ "${GPU:-}" = "1" ]; then
+  say "NVIDIA GPU operator (driver.enabled=false — uses the host driver)"
+  helm repo add nvidia https://helm.ngc.nvidia.com/nvidia >/dev/null 2>&1 || true
+  helm repo update nvidia >/dev/null 2>&1 || true
+  helm upgrade --install gpu-operator nvidia/gpu-operator -n gpu-operator --create-namespace \
+    --set driver.enabled=false --set toolkit.enabled=true
+  echo "waiting for nvidia.com/gpu to become allocatable…"
+  for i in $(seq 1 40); do
+    kubectl get nodes -o jsonpath='{.items[*].status.allocatable}' | grep -q 'nvidia.com/gpu' && break
+    sleep 15
+  done
+fi
 
 say "Sample workloads (Frame CRs, Volcano queues+job, Argo DAG)"
 kubectl apply -f deploy/samples/test-cluster/workloads.yaml
