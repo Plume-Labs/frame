@@ -239,6 +239,29 @@ export interface WorkflowTrace {
   spans: WorkflowSpan[]
 }
 
+/** Live cluster reliability posture (no simulated MTBF — real signals only). */
+export interface DisruptionBudget {
+  name: string
+  namespace: string
+  currentHealthy: number
+  desiredHealthy: number
+  disruptionsAllowed: number
+}
+export interface RestartHotspot {
+  pod: string
+  namespace: string
+  restarts: number
+}
+export interface Resilience {
+  cephHealth: string
+  cephOsds: number
+  cephReplication: number
+  pdbs: DisruptionBudget[]
+  pdbAtRisk: number
+  totalRestarts: number
+  hotspots: RestartHotspot[]
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -947,6 +970,64 @@ class ClusterClient {
         }
       })
       .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
+  }
+
+  /**
+   * Live reliability posture: data durability (Ceph), PodDisruptionBudgets and
+   * pod restart hotspots — real signals, not a simulated MTBF/checkpoint feed.
+   */
+  async resilience(): Promise<Resilience> {
+    const [pdbRes, podRes] = await Promise.all([
+      k8sFetch<
+        ListResponse<{
+          metadata: { name: string; namespace: string }
+          status?: { currentHealthy?: number; desiredHealthy?: number; disruptionsAllowed?: number }
+        }>
+      >('/apis/policy/v1/poddisruptionbudgets'),
+      k8sFetch<
+        ListResponse<{
+          metadata: { name: string; namespace: string }
+          status?: { containerStatuses?: Array<{ restartCount?: number }> }
+        }>
+      >('/api/v1/pods'),
+    ])
+
+    let ceph: CephStatus | null = null
+    try {
+      ceph = await this.ceph()
+    } catch {
+      ceph = null
+    }
+
+    const pdbs: DisruptionBudget[] = (pdbRes.items ?? [])
+      .filter((p) => !SYSTEM_NAMESPACES.has(p.metadata.namespace))
+      .map((p) => ({
+        name: p.metadata.name,
+        namespace: p.metadata.namespace,
+        currentHealthy: p.status?.currentHealthy ?? 0,
+        desiredHealthy: p.status?.desiredHealthy ?? 0,
+        disruptionsAllowed: p.status?.disruptionsAllowed ?? 0,
+      }))
+
+    const hotspots: RestartHotspot[] = (podRes.items ?? [])
+      .filter((p) => !SYSTEM_NAMESPACES.has(p.metadata.namespace))
+      .map((p) => ({
+        pod: p.metadata.name,
+        namespace: p.metadata.namespace,
+        restarts: (p.status?.containerStatuses ?? []).reduce((s, c) => s + (c.restartCount ?? 0), 0),
+      }))
+      .filter((h) => h.restarts > 0)
+      .sort((a, b) => b.restarts - a.restarts)
+
+    return {
+      cephHealth: ceph?.health ?? 'N/A',
+      cephOsds: ceph?.osds ?? 0,
+      cephReplication: ceph?.pools?.[0]?.replication ?? 0,
+      pdbs,
+      pdbAtRisk: pdbs.filter((p) => p.disruptionsAllowed === 0).length,
+      totalRestarts: hotspots.reduce((s, h) => s + h.restarts, 0),
+      hotspots: hotspots.slice(0, 8),
+    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
