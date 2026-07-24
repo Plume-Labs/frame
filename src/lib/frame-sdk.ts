@@ -140,6 +140,21 @@ export interface ClusterNodeInfo {
   createdAt?: string
 }
 
+/** Memory/storage tiers, in GiB: RAM (node memory), NVMe (local disk), Object (Ceph). */
+export interface StorageTiers {
+  ramGiB: number
+  nvmeGiB: number
+  objectGiB: number
+}
+
+/** Live cache hit-rate from Neura's Redis (via a redis-exporter). */
+export interface CacheStats {
+  hits: number
+  misses: number
+  hitRate: number
+  up: boolean
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -591,6 +606,55 @@ class ClusterClient {
     return Array.from(byNode.values())
       .map((n) => ({ ...n, pods: n.pods.sort((a, b) => a.namespace.localeCompare(b.namespace)) }))
       .sort((a, b) => a.node.localeCompare(b.node))
+  }
+
+  /** Memory/storage tiers: RAM (node memory) + NVMe (node ephemeral-storage) + Object (Ceph). */
+  async tiers(): Promise<StorageTiers> {
+    const nodes = await k8sFetch<
+      ListResponse<{ status?: { capacity?: Record<string, string> } }>
+    >('/api/v1/nodes')
+    let ramGiB = 0
+    let nvmeGiB = 0
+    for (const n of nodes.items ?? []) {
+      ramGiB += memToGiB(n.status?.capacity?.memory)
+      nvmeGiB += memToGiB(n.status?.capacity?.['ephemeral-storage'])
+    }
+    let objectGiB = 0
+    try {
+      const c = await this.ceph()
+      objectGiB = c.bytesTotal / 1024 ** 3
+    } catch {
+      // no Ceph — object tier stays 0
+    }
+    return { ramGiB, nvmeGiB, objectGiB }
+  }
+
+  /** Live Redis cache hit-rate via the redis-exporter pod (Prometheus text over pod-proxy). */
+  async cache(namespace = 'neura'): Promise<CacheStats> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      `/api/v1/namespaces/${namespace}/pods?labelSelector=app%3Dredis-exporter`,
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) throw new FrameAPIError(404, 'redis-exporter not deployed')
+
+    const res = await fetch(
+      `/api/v1/namespaces/${namespace}/pods/${name}:9121/proxy/metrics`,
+    )
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read redis-exporter metrics')
+    const text = await res.text()
+    const metric = (key: string) => {
+      const m = text.match(new RegExp(`^${key}\\s+([0-9.e+]+)`, 'm'))
+      return m ? Number(m[1]) : 0
+    }
+    const hits = metric('redis_keyspace_hits_total')
+    const misses = metric('redis_keyspace_misses_total')
+    const total = hits + misses
+    return {
+      hits,
+      misses,
+      hitRate: total > 0 ? (hits / total) * 100 : 0,
+      up: metric('redis_up') === 1,
+    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
