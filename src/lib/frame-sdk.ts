@@ -171,12 +171,23 @@ export interface KsmStats {
   totalPagesSharing: number
 }
 
-/** Live per-node network throughput (physical NIC), from node-exporter netdev. */
-export interface NetNode {
-  node: string
+/** One network interface's live counters (node-exporter netdev). */
+export interface NetIface {
   device: string
   rxBytes: number
   txBytes: number
+  rxPackets: number
+  txPackets: number
+  rxErrs: number
+  txErrs: number
+  rxDrop: number
+  txDrop: number
+}
+
+/** Per-node network detail across the k3s stack (physical NIC / VXLAN overlay / pod bridge). */
+export interface NetNode {
+  node: string
+  ifaces: NetIface[]
 }
 
 /** Live cluster capacity for one resource: allocatable vs live-used vs reserved (requests). */
@@ -723,20 +734,38 @@ class ClusterClient {
     }
   }
 
-  /** Live per-node network throughput on the primary NIC (eth0). */
-  async network(device = 'eth0'): Promise<NetNode[]> {
+  /**
+   * Per-node network detail across the k3s stack: the physical NIC (eth0),
+   * the flannel VXLAN overlay (flannel.1) and the pod bridge (cni0), with
+   * bytes/packets/errors/drops each.
+   */
+  async network(devices = ['eth0', 'flannel.1', 'cni0']): Promise<NetNode[]> {
     const metrics = await this.nodeExporterMetrics()
     if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
-    const g = (text: string, key: string) => {
-      const m = text.match(new RegExp(`^${key}\\{device="${device}"\\}\\s+([0-9.e+-]+)`, 'm'))
+
+    const g = (text: string, key: string, dev: string) => {
+      const m = text.match(
+        new RegExp(`^${key}\\{device="${dev.replace('.', '\\.')}"\\}\\s+([0-9.e+-]+)`, 'm'),
+      )
       return m ? Number(m[1]) : 0
     }
+
     return metrics
       .map(({ node, text }) => ({
         node,
-        device,
-        rxBytes: g(text, 'node_network_receive_bytes_total'),
-        txBytes: g(text, 'node_network_transmit_bytes_total'),
+        ifaces: devices
+          .map((dev) => ({
+            device: dev,
+            rxBytes: g(text, 'node_network_receive_bytes_total', dev),
+            txBytes: g(text, 'node_network_transmit_bytes_total', dev),
+            rxPackets: g(text, 'node_network_receive_packets_total', dev),
+            txPackets: g(text, 'node_network_transmit_packets_total', dev),
+            rxErrs: g(text, 'node_network_receive_errs_total', dev),
+            txErrs: g(text, 'node_network_transmit_errs_total', dev),
+            rxDrop: g(text, 'node_network_receive_drop_total', dev),
+            txDrop: g(text, 'node_network_transmit_drop_total', dev),
+          }))
+          .filter((i) => i.rxBytes > 0 || i.txBytes > 0),
       }))
       .sort((a, b) => a.node.localeCompare(b.node))
   }
