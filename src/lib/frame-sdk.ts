@@ -296,6 +296,20 @@ export interface Rack {
   totalPods: number
 }
 
+/** Live GPU telemetry per device, from DCGM-exporter. */
+export interface GpuInfo {
+  index: string
+  model: string
+  node: string
+  utilPct: number
+  memUsedMB: number
+  memTotalMB: number
+  tempC: number
+  powerW: number
+  encUtil: number
+  decUtil: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -1139,6 +1153,56 @@ class ClusterClient {
       byRack.set(rack, entry)
     }
     return Array.from(byRack.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** Live GPU telemetry from DCGM-exporter (NVIDIA GPU operator). */
+  async gpus(): Promise<GpuInfo[]> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      '/api/v1/namespaces/gpu-operator/pods?labelSelector=app%3Dnvidia-dcgm-exporter',
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) throw new FrameAPIError(404, 'DCGM exporter not deployed')
+    const res = await fetch(
+      `/api/v1/namespaces/gpu-operator/pods/${name}:9400/proxy/metrics`,
+    )
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read DCGM metrics')
+    const text = await res.text()
+
+    // Group every DCGM_FI_DEV_* sample by its gpu="N" label.
+    const gpus = new Map<string, Partial<GpuInfo> & { fbFree?: number }>()
+    const re = /^(DCGM_FI_DEV_\w+)\{([^}]*)\}\s+([0-9.e+-]+)/gm
+    let m: RegExpExecArray | null
+    const lbl = (labels: string, k: string) => labels.match(new RegExp(`${k}="([^"]*)"`))?.[1] ?? ''
+    while ((m = re.exec(text))) {
+      const [, metric, labels, valStr] = m
+      const idx = lbl(labels, 'gpu')
+      const v = Number(valStr)
+      const g = gpus.get(idx) ?? { index: idx }
+      g.model = lbl(labels, 'modelName')
+      g.node = lbl(labels, 'Hostname')
+      if (metric === 'DCGM_FI_DEV_GPU_UTIL') g.utilPct = v
+      else if (metric === 'DCGM_FI_DEV_FB_USED') g.memUsedMB = v
+      else if (metric === 'DCGM_FI_DEV_FB_FREE') g.fbFree = v
+      else if (metric === 'DCGM_FI_DEV_GPU_TEMP') g.tempC = v
+      else if (metric === 'DCGM_FI_DEV_POWER_USAGE') g.powerW = v
+      else if (metric === 'DCGM_FI_DEV_ENC_UTIL') g.encUtil = v
+      else if (metric === 'DCGM_FI_DEV_DEC_UTIL') g.decUtil = v
+      gpus.set(idx, g)
+    }
+    return Array.from(gpus.values())
+      .map((g) => ({
+        index: g.index ?? '0',
+        model: g.model ?? 'GPU',
+        node: g.node ?? '',
+        utilPct: g.utilPct ?? 0,
+        memUsedMB: g.memUsedMB ?? 0,
+        memTotalMB: (g.memUsedMB ?? 0) + (g.fbFree ?? 0),
+        tempC: g.tempC ?? 0,
+        powerW: g.powerW ?? 0,
+        encUtil: g.encUtil ?? 0,
+        decUtil: g.decUtil ?? 0,
+      }))
+      .sort((a, b) => a.index.localeCompare(b.index))
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */

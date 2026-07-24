@@ -14,7 +14,7 @@ import { FrameSchedulerView } from '@/components/FrameSchedulerView'
 import { ServiceClassesView } from '@/components/ServiceClassesView'
 import { LineageView } from '@/components/LineageView'
 
-import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
+import { GpuView } from '@/components/GpuView'
 import { ClusterStorageView } from '@/components/ClusterStorageView'
 import { NetworkView } from '@/components/NetworkView'
 import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
@@ -115,7 +115,7 @@ const NAV: NavGroup[] = [
   {
     label: 'Resources',
     items: [
-      { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Utilisation, MIG partitioning, power and thermals' },
+      { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Live GPU telemetry (DCGM) — util, memory, temp, power' },
       { id: 'storage', label: 'Storage', icon: <Database />, description: 'Live Ceph health, OSDs, capacity and pools' },
       { id: 'network', label: 'Network', icon: <Network />, description: 'Live per-node NIC throughput' },
       { id: 'data-locality', label: 'Placement', icon: <HardDrives />, description: 'Live pod-to-node workload placement' },
@@ -203,7 +203,7 @@ function App() {
         return <RacksView />
       // ── Resources ───────────────────────────────────────────────────────
       case 'gpu':
-        return <GPUMonitoringDashboard nodes={nodes} />
+        return <GpuView />
       case 'storage':
         return <ClusterStorageView />
       case 'network':
