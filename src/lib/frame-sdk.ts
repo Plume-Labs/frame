@@ -137,6 +137,18 @@ export interface ClusterNodeInfo {
   createdAt?: string
 }
 
+/** Live Ceph storage state, read from the Rook CephCluster CR + pods. */
+export interface CephStatus {
+  health: string
+  version: string
+  osds: number
+  mons: number
+  bytesTotal: number
+  bytesUsed: number
+  bytesAvailable: number
+  pools: Array<{ name: string; replication: number }>
+}
+
 /** A real Kubernetes event. */
 export interface ClusterEvent {
   reason: string
@@ -483,6 +495,53 @@ class ClusterClient {
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /**
+   * Live Ceph state from the Rook CephCluster CR, its CephBlockPools, and the
+   * running OSD/mon pods. Throws if Rook is not installed (no CephCluster).
+   */
+  async ceph(): Promise<CephStatus> {
+    const ns = 'rook-ceph'
+    const [cluster, pools, osdPods, monPods] = await Promise.all([
+      k8sFetch<{
+        status?: {
+          ceph?: {
+            health?: string
+            capacity?: { bytesTotal?: number; bytesUsed?: number; bytesAvailable?: number }
+            versions?: { overall?: Record<string, number> }
+          }
+        }
+      }>(`/apis/ceph.rook.io/v1/namespaces/${ns}/cephclusters/rook-ceph`),
+      k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { replicated?: { size?: number } } }>>(
+        `/apis/ceph.rook.io/v1/namespaces/${ns}/cephblockpools`,
+      ),
+      k8sFetch<ListResponse<{ status?: { phase?: string } }>>(
+        `/api/v1/namespaces/${ns}/pods?labelSelector=app%3Drook-ceph-osd`,
+      ),
+      k8sFetch<ListResponse<{ status?: { phase?: string } }>>(
+        `/api/v1/namespaces/${ns}/pods?labelSelector=app%3Drook-ceph-mon`,
+      ),
+    ])
+
+    const cap = cluster.status?.ceph?.capacity ?? {}
+    const version = Object.keys(cluster.status?.ceph?.versions?.overall ?? {})[0] ?? ''
+    const running = (list: ListResponse<{ status?: { phase?: string } }>) =>
+      (list.items ?? []).filter((p) => p.status?.phase === 'Running').length
+
+    return {
+      health: cluster.status?.ceph?.health ?? 'UNKNOWN',
+      version: version.replace(/^ceph version /, '').split(' ')[0] ?? '',
+      osds: running(osdPods),
+      mons: running(monPods),
+      bytesTotal: cap.bytesTotal ?? 0,
+      bytesUsed: cap.bytesUsed ?? 0,
+      bytesAvailable: cap.bytesAvailable ?? 0,
+      pools: (pools.items ?? []).map((p) => ({
+        name: p.metadata.name,
+        replication: p.spec?.replicated?.size ?? 0,
+      })),
+    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */

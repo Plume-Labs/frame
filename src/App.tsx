@@ -25,7 +25,7 @@ import { ServiceClassPanel } from '@/components/ServiceClassPanel'
 import { DataLineageView } from '@/components/DataLineageView'
 
 import { GPUMonitoringDashboard } from '@/components/GPUMonitoringDashboard'
-import { DataFabricDashboard } from '@/components/DataFabricDashboard'
+import { ClusterStorageView } from '@/components/ClusterStorageView'
 import { NetworkDashboard } from '@/components/NetworkDashboard'
 import { DataLocalityView } from '@/components/DataLocalityView'
 
@@ -131,7 +131,7 @@ const NAV: NavGroup[] = [
     label: 'Resources',
     items: [
       { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Utilisation, MIG partitioning, power and thermals' },
-      { id: 'storage', label: 'Storage', icon: <Database />, description: 'Ceph capacity, IOPS, dataset catalog and tiers' },
+      { id: 'storage', label: 'Storage', icon: <Database />, description: 'Live Ceph health, OSDs, capacity and pools' },
       { id: 'network', label: 'Network', icon: <Network />, description: 'Bandwidth, RDMA, SR-IOV and packet loss' },
       { id: 'data-locality', label: 'Data Locality', icon: <HardDrives />, description: 'Cache hit rates, memory tiers and NUMA placement' },
     ],
@@ -249,7 +249,7 @@ function App() {
       case 'gpu':
         return <GPUMonitoringDashboard nodes={nodes} />
       case 'storage':
-        return <DataFabricDashboard nodes={nodes} />
+        return <ClusterStorageView />
       case 'network':
         return <NetworkDashboard nodes={nodes} />
       case 'data-locality':
