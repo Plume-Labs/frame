@@ -11,9 +11,8 @@ import { calculateClusterStats } from '@/lib/cluster'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 import { useCapacityAnalytics } from '@/hooks/useCapacityAnalytics'
 
-import { NodeGrid } from '@/components/NodeGrid'
+import { ClusterNodesView } from '@/components/ClusterNodesView'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
-import { NodesSummaryCard } from '@/components/NodesSummaryCard'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
 import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
 import { RackVisualization } from '@/components/RackVisualization'
@@ -45,7 +44,7 @@ import { CapacityPlanCard } from '@/components/CapacityPlanCard'
 import { HistoricalTrendsAnalysis } from '@/components/HistoricalTrendsAnalysis'
 import { AnomalyAlerts } from '@/components/AnomalyAlerts'
 import { ResiliencePanel } from '@/components/ResiliencePanel'
-import { EventLog } from '@/components/EventLog'
+import { ClusterEventsView } from '@/components/ClusterEventsView'
 
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -170,7 +169,7 @@ function App() {
   const [screen, setScreen] = useState('jobs')
   const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
 
-  const { nodes, setNodes, events, nodesRef } = useClusterSimulation(32)
+  const { nodes, setNodes, nodesRef } = useClusterSimulation(32)
   const { historicalData, forecast, alerts, capacityPlan, anomalies } = useCapacityAnalytics(nodesRef)
 
   // Derive the selected node from the authoritative nodes array so the detail
@@ -210,17 +209,12 @@ function App() {
       case 'nodes':
         return (
           <div className="space-y-6">
-            <NodesSummaryCard nodes={nodes} />
             <div className="flex justify-end">
               <Button className="font-mono" onClick={() => setProvisionWizardOpen(true)}>
                 Provision Node
               </Button>
             </div>
-            <NodeGrid
-              nodes={nodes}
-              selectedNode={syncedSelectedNode}
-              onSelectNode={setSelectedNode}
-            />
+            <ClusterNodesView />
           </div>
         )
       case 'racks':
@@ -291,7 +285,7 @@ function App() {
       case 'resilience':
         return <ResiliencePanel nodes={nodes} />
       case 'events':
-        return <EventLog events={events} />
+        return <ClusterEventsView />
 
       default:
         return null
