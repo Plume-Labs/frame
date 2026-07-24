@@ -108,7 +108,7 @@ const NAV: NavGroup[] = [
     label: 'Compute',
     items: [
       { id: 'nodes', label: 'Nodes', icon: <Cpu />, description: 'Fleet health and per-node status' },
-      { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Real nodes grouped by rack (health, capacity, pods)' },
+      { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Nodes grouped by real hypervisor host (capacity, oversubscription)' },
     ],
   },
   {

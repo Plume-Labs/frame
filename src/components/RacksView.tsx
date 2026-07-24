@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Stack, ArrowClockwise, Cpu, CheckCircle, XCircle } from '@phosphor-icons/react'
+import { Stack, ArrowClockwise, Cpu, CheckCircle, XCircle, HardDrives } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
@@ -27,8 +27,8 @@ export function RacksView() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Real nodes grouped by their <span className="font-mono">FrameNode.spec.rack</span> —
-            per-rack health, capacity and workload placement.
+            Real nodes grouped by physical topology — the <span className="font-mono">topology.frame.io/rack</span>{' '}
+            label (the hypervisor host each node runs on). Shared host = shared failure domain and oversubscribed cores.
           </p>
         </CardContent>
       </Card>
@@ -53,6 +53,18 @@ export function RacksView() {
                   {r.readyNodes}/{r.nodes.length} ready
                 </Badge>
               </div>
+              {r.physical && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                  <Badge variant="secondary" className="gap-1">
+                    <HardDrives size={12} />{r.physical.hypervisor} host · {r.physical.pcpu} pCPU · {r.physical.pmemGiB} GiB
+                  </Badge>
+                  {r.physical.pcpu > 0 && (
+                    <span className={r.totalCpu > r.physical.pcpu ? 'text-warning' : 'text-muted-foreground'}>
+                      vCPU {r.totalCpu.toFixed(0)}/{r.physical.pcpu} ({(r.totalCpu / r.physical.pcpu).toFixed(1)}× oversubscribed)
+                    </span>
+                  )}
+                </div>
+              )}
             </CardHeader>
             <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {r.nodes.map((n) => (
