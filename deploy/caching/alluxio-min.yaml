@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: alluxio}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: alluxio, namespace: alluxio, labels: {app: alluxio}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: alluxio}}
+  template:
+    metadata: {labels: {app: alluxio}}
+    spec:
+      containers:
+        - name: alluxio
+          image: alluxio/alluxio:2.9.3
+          command: ["/bin/sh","-c"]
+          args:
+            - >
+              /opt/alluxio/bin/alluxio format &&
+              /opt/alluxio/bin/alluxio-start.sh -a master &&
+              /opt/alluxio/bin/alluxio-start.sh -a worker NoMount &&
+              tail -f /opt/alluxio/logs/master.log
+          env:
+            - name: ALLUXIO_JAVA_OPTS
+              value: >-
+                -Dalluxio.master.hostname=localhost
+                -Dalluxio.worker.hostname=localhost
+                -Dalluxio.master.mount.table.root.ufs=/opt/alluxio/underFSStorage
+                -Dalluxio.worker.tieredstore.levels=2
+                -Dalluxio.worker.tieredstore.level0.alias=MEM
+                -Dalluxio.worker.tieredstore.level0.dirs.path=/dev/shm
+                -Dalluxio.worker.tieredstore.level0.dirs.quota=512MB
+                -Dalluxio.worker.tieredstore.level1.alias=SSD
+                -Dalluxio.worker.tieredstore.level1.dirs.path=/ssd-cache
+                -Dalluxio.worker.tieredstore.level1.dirs.quota=2GB
+                -Dalluxio.user.metrics.collection.enabled=true
+          ports:
+            - {containerPort: 19999, name: master-web}
+            - {containerPort: 30000, name: worker-web}
+          resources:
+            requests: {cpu: 200m, memory: 1Gi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: shm, mountPath: /dev/shm}
+            - {name: ssd, mountPath: /ssd-cache}
+            - {name: ufs, mountPath: /opt/alluxio/underFSStorage}
+      volumes:
+        - {name: shm, emptyDir: {medium: Memory, sizeLimit: 640Mi}}
+        - {name: ssd, emptyDir: {sizeLimit: 3Gi}}
+        - {name: ufs, emptyDir: {sizeLimit: 3Gi}}
