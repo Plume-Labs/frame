@@ -6,8 +6,7 @@ import { ClusterNodesView } from '@/components/ClusterNodesView'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
 import { HeaderStats } from '@/components/HeaderStats'
-import { RackVisualization } from '@/components/RackVisualization'
-import { DragDropRackManager } from '@/components/DragDropRackManager'
+import { RacksView } from '@/components/RacksView'
 
 import { ApplicationsView } from '@/components/ApplicationsView'
 import { FrameJobsView } from '@/components/FrameJobsView'
@@ -34,7 +33,6 @@ import { ResilienceView } from '@/components/ResilienceView'
 import { ClusterEventsView } from '@/components/ClusterEventsView'
 
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Sidebar,
   SidebarContent,
@@ -111,7 +109,7 @@ const NAV: NavGroup[] = [
     label: 'Compute',
     items: [
       { id: 'nodes', label: 'Nodes', icon: <Cpu />, description: 'Fleet health and per-node status' },
-      { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Rack elevations, power and cooling, layout editing' },
+      { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Real nodes grouped by rack (health, capacity, pods)' },
     ],
   },
   {
@@ -152,7 +150,6 @@ const NAV_INDEX: Record<string, NavItem> = Object.fromEntries(
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
-  const [selectedRack, setSelectedRack] = useState<string | null>(null)
   const [screen, setScreen] = useState('jobs')
   const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
 
@@ -203,33 +200,7 @@ function App() {
           </div>
         )
       case 'racks':
-        // Overview and editor both render the same zone→rack grid, so they are
-        // sub-views rather than stacked one above the other.
-        return (
-          <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="font-mono mb-6">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="layout">Layout Editor</TabsTrigger>
-            </TabsList>
-            <TabsContent value="overview">
-              <RackVisualization
-                nodes={nodes}
-                selectedNode={syncedSelectedNode}
-                onSelectNode={setSelectedNode}
-                selectedRack={selectedRack}
-                onSelectRack={setSelectedRack}
-              />
-            </TabsContent>
-            <TabsContent value="layout">
-              <DragDropRackManager
-                nodes={nodes}
-                onNodesUpdate={setNodes}
-                selectedNode={syncedSelectedNode}
-                onSelectNode={setSelectedNode}
-              />
-            </TabsContent>
-          </Tabs>
-        )
+        return <RacksView />
       // ── Resources ───────────────────────────────────────────────────────
       case 'gpu':
         return <GPUMonitoringDashboard nodes={nodes} />
