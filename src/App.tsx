@@ -1,12 +1,11 @@
 import { ReactNode, useMemo, useState } from 'react'
 import { ClusterNode } from '@/lib/types'
-import { calculateClusterStats } from '@/lib/cluster'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 
 import { ClusterNodesView } from '@/components/ClusterNodesView'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
-import { ClusterStatsDashboard } from '@/components/ClusterStatsDashboard'
+import { HeaderStats } from '@/components/HeaderStats'
 import { RackVisualization } from '@/components/RackVisualization'
 import { DragDropRackManager } from '@/components/DragDropRackManager'
 
@@ -167,7 +166,6 @@ function App() {
   )
 
   // Memoize cluster-wide stats so they aren't recomputed on every render
-  const stats = useMemo(() => calculateClusterStats(nodes), [nodes])
   const racks = useMemo(() => Array.from(new Set(nodes.map((node) => node.rackId))).sort(), [nodes])
   const controlPlaneCount = useMemo(
     () => nodes.filter((node) => /control|master/i.test(node.name)).length,
@@ -333,12 +331,12 @@ function App() {
               </p>
             </div>
             <div className="hidden lg:block shrink-0">
-              <ClusterStatsDashboard stats={stats} compact />
+              <HeaderStats />
             </div>
           </div>
           {/* Stats wrap below the title on narrow viewports instead of vanishing */}
           <div className="lg:hidden px-4 sm:px-6 pb-3">
-            <ClusterStatsDashboard stats={stats} compact />
+            <HeaderStats />
           </div>
         </header>
 
