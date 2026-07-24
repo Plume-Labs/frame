@@ -13,13 +13,6 @@ export function CapacityPlanningDashboard({ alerts }: CapacityPlanningDashboardP
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Warning className="text-warning" size={24} weight="duotone" />
-        <h2 className="text-2xl font-mono font-semibold text-foreground">
-          Capacity Alerts
-        </h2>
-      </div>
-
       {alerts.length === 0 ? (
         <Card className="border-accent/20">
           <CardContent className="pt-6">
@@ -39,10 +32,7 @@ export function CapacityPlanningDashboard({ alerts }: CapacityPlanningDashboardP
           {criticalAlerts.length > 0 && (
             <Card className="border-destructive/50 bg-destructive/5">
               <CardHeader>
-                <div className="flex items-center gap-2">
-                  <WarningCircle className="text-destructive" size={20} weight="fill" />
-                  <CardTitle className="text-lg">Critical Alerts</CardTitle>
-                </div>
+                <CardTitle className="font-mono text-lg flex items-center gap-2"><WarningCircle className="text-destructive" /> Critical Alerts</CardTitle>
                 <CardDescription>Immediate action required</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -56,10 +46,7 @@ export function CapacityPlanningDashboard({ alerts }: CapacityPlanningDashboardP
           {warningAlerts.length > 0 && (
             <Card className="border-warning/50 bg-warning/5">
               <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Warning className="text-warning" size={20} weight="fill" />
-                  <CardTitle className="text-lg">Warning Alerts</CardTitle>
-                </div>
+                <CardTitle className="font-mono text-lg flex items-center gap-2"><Warning className="text-warning" /> Warning Alerts</CardTitle>
                 <CardDescription>Plan capacity expansion</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">

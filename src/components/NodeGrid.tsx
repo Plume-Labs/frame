@@ -1,6 +1,7 @@
 import { ClusterNode } from '@/lib/types'
 import { NodeCard } from './NodeCard'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { cn } from '@/lib/utils'
 
 interface NodeGridProps {
   nodes: ClusterNode[]
@@ -26,8 +27,4 @@ export function NodeGrid({ nodes, selectedNode, onSelectNode }: NodeGridProps) {
       ))}
     </div>
   )
-}
-
-function cn(...classes: (string | boolean | undefined)[]) {
-  return classes.filter(Boolean).join(' ')
 }

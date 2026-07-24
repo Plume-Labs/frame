@@ -9,14 +9,14 @@ interface DataLocalityViewProps {
 const TIER_COLORS: Record<string, { bg: string; text: string; label: string }> = {
   ram:    { bg: 'bg-accent',                       text: 'text-accent',                       label: 'RAM' },
   nvme:   { bg: 'bg-primary',                      text: 'text-primary',                      label: 'NVMe' },
-  object: { bg: 'bg-[oklch(0.75_0.18_75)]',       text: 'text-[oklch(0.75_0.18_75)]',       label: 'Object' },
+  object: { bg: 'bg-warning',       text: 'text-warning',       label: 'Object' },
 }
 
 const TIER_ORDER = ['ram', 'nvme', 'object'] as const
 
 function CacheHeatCell({ value }: { value: number }) {
   let color = 'bg-accent'
-  if (value < 0.5) color = 'bg-[oklch(0.75_0.18_75)]'
+  if (value < 0.5) color = 'bg-warning'
   if (value < 0.3) color = 'bg-destructive'
   return (
     <div
@@ -62,7 +62,7 @@ export function DataLocalityView({ nodes }: DataLocalityViewProps) {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
             <div className="space-y-1">
               <div className="text-xs text-muted-foreground uppercase tracking-wide">Avg Cache Hit Rate</div>
-              <div className={`font-mono text-2xl font-bold ${avgCacheHit > 0.7 ? 'text-accent' : 'text-[oklch(0.75_0.18_75)]'}`}>
+              <div className={`font-mono text-2xl font-bold ${avgCacheHit > 0.7 ? 'text-accent' : 'text-warning'}`}>
                 {(avgCacheHit * 100).toFixed(1)}%
               </div>
             </div>
@@ -166,7 +166,7 @@ export function DataLocalityView({ nodes }: DataLocalityViewProps) {
                     .map(n => (
                       <div key={n.id} className="flex items-center justify-between p-2 rounded bg-secondary/40 text-xs">
                         <span className="font-mono">{n.name}</span>
-                        <span className={`font-mono ${n.hardware.cacheHitRate > 0.7 ? 'text-accent' : 'text-[oklch(0.75_0.18_75)]'}`}>
+                        <span className={`font-mono ${n.hardware.cacheHitRate > 0.7 ? 'text-accent' : 'text-warning'}`}>
                           {(n.hardware.cacheHitRate * 100).toFixed(0)}% hit
                         </span>
                       </div>

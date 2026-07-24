@@ -1,47 +1,53 @@
 import type { ReactNode } from 'react'
-import { ElasticPool, ElasticPoolState } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ElasticPool, ElasticPoolState, ServiceClass } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
+import { EntityTile, StatTile, TileMeter, TuningDashboard } from '@/components/TuningDashboard'
+import { TONE_TEXT, Tone } from '@/lib/thresholds'
+import { VOLCANO_QUEUES } from '@/lib/tuning-fixtures'
 import { ChartBar, ArrowUp, ArrowDown, MinusCircle, Warning } from '@phosphor-icons/react'
 
 // ── Simulated pool state ──────────────────────────────────────────────────────
+//
+// Queue name + DRF weight come from the shared `VOLCANO_QUEUES` fixture, which
+// SchedulerDashboard's weight table should also be reading from.
 
 const MOCK_POOLS: ElasticPool[] = [
   {
     name: 'lpar-inference-high',
-    volcanoQueue: 'neura-high',
+    volcanoQueue: VOLCANO_QUEUES['neura-high'].name,
     serviceClass: 'HIGH',
     state: 'stable',
     quota: { cpuMin: 64, cpuMax: 256, memoryMinGi: 128, memoryMaxGi: 512, gpuMin: 4, gpuMax: 32 },
     allocatedCPU: 180, allocatedMemoryGi: 360, allocatedGPU: 16,
-    podCount: 24, weight: 100, reclaimable: false,
+    podCount: 24, weight: VOLCANO_QUEUES['neura-high'].weight, reclaimable: false,
   },
   {
     name: 'lpar-training-low',
-    volcanoQueue: 'neura-low',
+    volcanoQueue: VOLCANO_QUEUES['neura-low'].name,
     serviceClass: 'LOW',
     state: 'expanding',
     quota: { cpuMin: 32, cpuMax: 512, memoryMinGi: 64, memoryMaxGi: 1024, gpuMin: 0, gpuMax: 64 },
     allocatedCPU: 290, allocatedMemoryGi: 580, allocatedGPU: 32,
-    podCount: 48, weight: 10, reclaimable: true,
+    podCount: 48, weight: VOLCANO_QUEUES['neura-low'].weight, reclaimable: true,
   },
   {
     name: 'lpar-batch-medium',
-    volcanoQueue: 'neura-medium',
+    volcanoQueue: VOLCANO_QUEUES['neura-medium'].name,
     serviceClass: 'MEDIUM',
     state: 'contracting',
     quota: { cpuMin: 16, cpuMax: 128, memoryMinGi: 32, memoryMaxGi: 256, gpuMin: 0, gpuMax: 16 },
     allocatedCPU: 62, allocatedMemoryGi: 120, allocatedGPU: 4,
-    podCount: 10, weight: 50, reclaimable: true,
+    podCount: 10, weight: VOLCANO_QUEUES['neura-medium'].weight, reclaimable: true,
   },
   {
     name: 'lpar-eval',
-    volcanoQueue: 'neura-low',
+    volcanoQueue: VOLCANO_QUEUES['neura-low'].name,
     serviceClass: 'LOW',
     state: 'draining',
     quota: { cpuMin: 0, cpuMax: 64, memoryMinGi: 0, memoryMaxGi: 128, gpuMin: 0, gpuMax: 8 },
     allocatedCPU: 12, allocatedMemoryGi: 24, allocatedGPU: 2,
+    // Per-pool override — this pool sits below its queue's default weight.
     podCount: 3, weight: 5, reclaimable: true,
   },
 ]
@@ -49,16 +55,16 @@ const MOCK_POOLS: ElasticPool[] = [
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const STATE_CONFIG: Record<ElasticPoolState, { label: string; badge: string; icon: ReactNode }> = {
-  stable:      { label: 'Stable',      badge: 'bg-accent/20 text-accent border-accent/30',                                                   icon: <MinusCircle size={12} /> },
-  expanding:   { label: 'Expanding',   badge: 'bg-primary/20 text-primary border-primary/30',                                               icon: <ArrowUp size={12} /> },
-  contracting: { label: 'Contracting', badge: 'bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30',   icon: <ArrowDown size={12} /> },
-  draining:    { label: 'Draining',    badge: 'bg-destructive/20 text-destructive border-destructive/30',                                    icon: <Warning size={12} /> },
+  stable:      { label: 'Stable',      badge: 'bg-accent/20 text-accent border-accent/30',            icon: <MinusCircle size={12} /> },
+  expanding:   { label: 'Expanding',   badge: 'bg-primary/20 text-primary border-primary/30',         icon: <ArrowUp size={12} /> },
+  contracting: { label: 'Contracting', badge: 'bg-warning/10 text-warning border-warning/30',         icon: <ArrowDown size={12} /> },
+  draining:    { label: 'Draining',    badge: 'bg-destructive/20 text-destructive border-destructive/30', icon: <Warning size={12} /> },
 }
 
-const SC_COLORS: Record<string, string> = {
-  HIGH:   'text-destructive',
-  MEDIUM: 'text-[oklch(0.75_0.18_75)]',
-  LOW:    'text-accent',
+const SC_TONES: Record<ServiceClass, Tone> = {
+  HIGH:   'destructive',
+  MEDIUM: 'warning',
+  LOW:    'accent',
 }
 
 function cpuPct(pool: ElasticPool) {
@@ -77,48 +83,50 @@ function PoolRow({ pool }: { pool: ElasticPool }) {
   const stCfg = STATE_CONFIG[pool.state]
 
   return (
-    <div className="p-4 rounded-lg bg-secondary/30 border border-border space-y-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="font-mono text-sm font-bold">{pool.name}</div>
-          <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
+    <EntityTile
+      name={
+        <span className="block">
+          <span className="block text-sm">{pool.name}</span>
+          <span className="block font-normal text-[10px] text-muted-foreground mt-0.5">
             queue: {pool.volcanoQueue} · weight {pool.weight} · {pool.reclaimable ? 'reclaimable' : 'non-reclaimable'}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`font-mono text-xs font-bold ${SC_COLORS[pool.serviceClass]}`}>{pool.serviceClass}</span>
+          </span>
+        </span>
+      }
+      badge={
+        <span className="flex items-center gap-2 shrink-0">
+          <span className={`font-mono text-xs font-bold ${TONE_TEXT[SC_TONES[pool.serviceClass]]}`}>{pool.serviceClass}</span>
           <Badge className={`text-[10px] border flex items-center gap-1 ${stCfg.badge}`}>
             {stCfg.icon}{stCfg.label}
           </Badge>
-        </div>
-      </div>
-
+        </span>
+      }
+    >
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {/* CPU */}
         <div className="space-y-1">
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">CPU</span>
-            <span className="font-mono">{pool.allocatedCPU} / {pool.quota.cpuMax} cores</span>
-          </div>
-          <Progress value={cpuPct(pool)} className="h-1.5" />
+          <TileMeter
+            label="CPU"
+            value={cpuPct(pool)}
+            display={`${pool.allocatedCPU} / ${pool.quota.cpuMax} cores`}
+            tone="foreground"
+          />
           <div className="text-[10px] text-muted-foreground font-mono">min {pool.quota.cpuMin}</div>
         </div>
-        {/* Memory */}
         <div className="space-y-1">
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Memory</span>
-            <span className="font-mono">{pool.allocatedMemoryGi} / {pool.quota.memoryMaxGi} Gi</span>
-          </div>
-          <Progress value={memPct(pool)} className="h-1.5" />
+          <TileMeter
+            label="Memory"
+            value={memPct(pool)}
+            display={`${pool.allocatedMemoryGi} / ${pool.quota.memoryMaxGi} Gi`}
+            tone="foreground"
+          />
           <div className="text-[10px] text-muted-foreground font-mono">min {pool.quota.memoryMinGi} Gi</div>
         </div>
-        {/* GPU */}
         <div className="space-y-1">
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">GPU</span>
-            <span className="font-mono">{pool.allocatedGPU} / {pool.quota.gpuMax}</span>
-          </div>
-          <Progress value={gpuPct(pool)} className="h-1.5" />
+          <TileMeter
+            label="GPU"
+            value={gpuPct(pool)}
+            display={`${pool.allocatedGPU} / ${pool.quota.gpuMax}`}
+            tone="foreground"
+          />
           <div className="text-[10px] text-muted-foreground font-mono">min {pool.quota.gpuMin}</div>
         </div>
       </div>
@@ -126,7 +134,7 @@ function PoolRow({ pool }: { pool: ElasticPool }) {
       <div className="text-xs text-muted-foreground">
         Pods: <span className="font-mono text-foreground">{pool.podCount}</span>
       </div>
-    </div>
+    </EntityTile>
   )
 }
 
@@ -143,76 +151,41 @@ export function ElasticPoolDashboard() {
   const expanding      = pools.filter(p => p.state === 'expanding').length
   const contracting    = pools.filter(p => p.state === 'contracting').length
 
+  const summary: StatTile[] = [
+    { label: 'Pools', value: pools.length },
+    { label: 'Expanding', value: expanding, tone: expanding > 0 ? 'primary' : 'foreground' },
+    { label: 'Contracting', value: contracting, tone: contracting > 0 ? 'warning' : 'foreground' },
+    { label: 'GPU Allocated', value: `${totalGPU} / ${totalGPUMax}`, tone: 'accent' },
+    { label: 'CPU Allocated', value: `${totalCPU} / ${totalCPUMax}` },
+  ]
+
   return (
-    <div className="space-y-6">
-      {/* Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <ChartBar className="text-primary" />
-            Elastic LPAR Pools — Volcano Queue
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Pools</div>
-              <div className="font-mono text-2xl font-bold text-foreground">{pools.length}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Expanding</div>
-              <div className={`font-mono text-2xl font-bold ${expanding > 0 ? 'text-primary' : 'text-foreground'}`}>{expanding}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Contracting</div>
-              <div className={`font-mono text-2xl font-bold ${contracting > 0 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>{contracting}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">GPU Allocated</div>
-              <div className="font-mono text-2xl font-bold text-accent">{totalGPU} / {totalGPUMax}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">CPU Allocated</div>
-              <div className="font-mono text-2xl font-bold text-foreground">{totalCPU} / {totalCPUMax}</div>
-            </div>
+    <TuningDashboard
+      title="Elastic LPAR Pools — Volcano Queue"
+      icon={<ChartBar className="text-primary" />}
+      stats={summary}
+      progress={{
+        value: totalCPUMax > 0 ? (totalCPU / totalCPUMax) * 100 : 0,
+        captionLeft: <span className="uppercase tracking-wide">Cluster CPU</span>,
+        captionRight: <span className="font-mono">{totalCPU} / {totalCPUMax} cores</span>,
+      }}
+      /* Second full-width bar — the template's `progress` slot only carries one. */
+      note={
+        <div className="space-y-1">
+          <Progress value={totalMemMaxGi > 0 ? (totalMemGi / totalMemMaxGi) * 100 : 0} className="h-3" />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span className="uppercase tracking-wide">Cluster Memory</span>
+            <span className="font-mono">{totalMemGi} / {totalMemMaxGi} Gi</span>
           </div>
-
-          <div className="space-y-2">
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span className="uppercase tracking-wide">Cluster CPU</span>
-                <span className="font-mono">{totalCPU} / {totalCPUMax} cores</span>
-              </div>
-              <Progress value={totalCPUMax > 0 ? (totalCPU / totalCPUMax) * 100 : 0} className="h-2" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span className="uppercase tracking-wide">Cluster Memory</span>
-                <span className="font-mono">{totalMemGi} / {totalMemMaxGi} Gi</span>
-              </div>
-              <Progress value={totalMemMaxGi > 0 ? (totalMemGi / totalMemMaxGi) * 100 : 0} className="h-2" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pool rows */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Pool Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {pools.map(p => <PoolRow key={p.name} pool={p} />)}
-        </CardContent>
-      </Card>
-
-      {/* GitOps reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">GitOps Queue Patch Reference</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# Source of truth:
+        </div>
+      }
+      entitiesTitle="Pool Details"
+      entities={pools}
+      entityKey={(p) => p.name}
+      renderEntity={(p) => <PoolRow pool={p} />}
+      entityLayout="stack"
+      configTitle="GitOps Queue Patch Reference"
+      config={`# Source of truth:
 # deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
 #
 # Apply/reconcile:
@@ -221,9 +194,7 @@ kubectl apply -f deploy/kubernetes/scheduling/elastic-lpar-pools.yaml
 # Runtime expand/contract patch example:
 kubectl patch queue lpar-training-low \\
   --type=merge \\
-  -p '{"spec":{"capability":{"cpu":"384"}}}'`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+  -p '{"spec":{"capability":{"cpu":"384"}}}'`}
+    />
   )
 }

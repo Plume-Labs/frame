@@ -24,7 +24,7 @@ const SAMPLE_DATASETS = [
 const TIER_COLORS: Record<string, string> = {
   ram:    'text-accent',
   nvme:   'text-primary',
-  object: 'text-[oklch(0.75_0.18_75)]',
+  object: 'text-warning',
 }
 
 export function DataFabricDashboard({ nodes }: DataFabricDashboardProps) {
@@ -40,6 +40,14 @@ export function DataFabricDashboard({ nodes }: DataFabricDashboardProps) {
   const totalActiveDatasets = dataFabricNodes.reduce((s, n) => s + n.storage.activeDatasets, 0)
   const totalReadIOPS = activeNodes.reduce((s, n) => s + n.storage.readIOPS, 0)
   const totalWriteIOPS = activeNodes.reduce((s, n) => s + n.storage.writeIOPS, 0)
+
+  // Ceph backing store
+  const totalOSDs = activeNodes.reduce((s, n) => s + n.storage.cephOSDs, 0)
+  const totalPGs = activeNodes.reduce((s, n) => s + n.storage.cephPGs, 0)
+  const avgReplication = activeNodes.length > 0
+    ? activeNodes.reduce((s, n) => s + n.storage.replicationFactor, 0) / activeNodes.length
+    : 0
+  const availableCapacityTB = totalCapacityTB - usedCapacityTB
 
   return (
     <div className="space-y-6">
@@ -73,9 +81,14 @@ export function DataFabricDashboard({ nodes }: DataFabricDashboardProps) {
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Cluster storage usage</span>
-              <span className="font-mono">{usedPct.toFixed(1)}%</span>
+              <span className={`font-mono ${usedPct > 80 ? 'text-warning font-bold' : ''}`}>
+                {usedPct.toFixed(1)}%
+              </span>
             </div>
             <Progress value={usedPct} className="h-2" />
+            <div className="text-right text-xs text-muted-foreground font-mono">
+              {availableCapacityTB.toFixed(1)} TB available
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -88,6 +101,32 @@ export function DataFabricDashboard({ nodes }: DataFabricDashboardProps) {
               <div className="font-mono text-lg font-bold">{totalWriteIOPS.toLocaleString()}</div>
             </div>
           </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">Ceph OSDs</div>
+              <div className="font-mono text-2xl font-bold text-primary">{totalOSDs}</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">Placement Groups</div>
+              <div className="font-mono text-2xl font-bold text-accent">{totalPGs}</div>
+            </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">Replication</div>
+              <div className="font-mono text-2xl font-bold">{avgReplication.toFixed(0)}x</div>
+            </div>
+          </div>
+
+          {usedPct > 80 && (
+            <div className="p-4 rounded-lg bg-warning/10 border border-warning/30">
+              <div className="text-sm font-semibold text-warning">
+                Storage Capacity Warning
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Cluster storage usage is above 80%. Consider adding more capacity or cleaning up data.
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
@@ -139,7 +178,7 @@ export function DataFabricDashboard({ nodes }: DataFabricDashboardProps) {
             {[
               { tier: 'RAM Cache (Alluxio)', desc: 'Hot data — sub-ms access', usedTB: 0.06, totalTB: 2.0, color: 'text-accent', barColor: 'bg-accent' },
               { tier: 'NVMe (Local + Ceph)', desc: 'Warm data — μs access', usedTB: usedCapacityTB * 0.5, totalTB: totalCapacityTB * 0.5, color: 'text-primary', barColor: 'bg-primary' },
-              { tier: 'Object Storage (MinIO)', desc: 'Cold data — ms access', usedTB: usedCapacityTB * 0.5, totalTB: totalCapacityTB * 0.5, color: 'text-[oklch(0.75_0.18_75)]', barColor: 'bg-[oklch(0.75_0.18_75)]' },
+              { tier: 'Object Storage (MinIO)', desc: 'Cold data — ms access', usedTB: usedCapacityTB * 0.5, totalTB: totalCapacityTB * 0.5, color: 'text-warning', barColor: 'bg-warning' },
             ].map(row => (
               <div key={row.tier} className="space-y-1">
                 <div className="flex items-center justify-between text-sm">

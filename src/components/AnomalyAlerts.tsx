@@ -42,7 +42,7 @@ export function AnomalyAlerts({ anomalies }: AnomalyAlertsProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 font-mono text-foreground">
+            <CardTitle className="flex items-center gap-2 font-mono text-xl">
               <Lightning className="text-warning" weight="fill" />
               Anomaly Detection
             </CardTitle>

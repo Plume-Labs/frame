@@ -1,7 +1,7 @@
 import { KVCacheClusterStats, KVCacheNodeStats, VLLMKVTransferBackend } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
+import { EntityTile, MicroStats, StatTile, TileMeter, TuningDashboard } from '@/components/TuningDashboard'
+import { Tone, inverseScoreTone, scoreTone } from '@/lib/thresholds'
 import { Database, Lightning, ArrowsLeftRight } from '@phosphor-icons/react'
 
 // ── Simulated cluster state ───────────────────────────────────────────────────
@@ -26,16 +26,17 @@ const CLUSTER_STATS: KVCacheClusterStats = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function hitColor(rate: number) {
-  if (rate >= 0.8) return 'text-accent'
-  if (rate >= 0.6) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-destructive'
-}
+/** Hit rates: higher is better — accent ≥ 80%, warning ≥ 60%. */
+const hitTone = (rate: number): Tone => scoreTone(rate, 0.8, 0.6)
 
-function bwColor(gbps: number) {
-  if (gbps >= 50) return 'text-destructive'
-  if (gbps >= 30) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-foreground'
+/**
+ * RDMA bandwidth is a saturation signal, not a score: it means cache misses
+ * served from a *peer*, so lower is better. Below the 30 GB/s band there is
+ * nothing to celebrate either, so the good band renders neutral.
+ */
+function bwTone(gbps: number): Tone {
+  const tone = inverseScoreTone(gbps, 30, 50)
+  return tone === 'accent' ? 'foreground' : tone
 }
 
 const BACKEND_LABELS: Record<VLLMKVTransferBackend, string> = {
@@ -51,51 +52,38 @@ function KVNodeTile({ node }: { node: KVCacheNodeStats }) {
   const totalHit = node.localHitRate + node.rdmaHitRate
 
   return (
-    <div className="p-3 rounded-lg border border-border bg-secondary/30 space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-xs font-bold">{node.nodeName}</span>
-        <span className="font-mono text-[10px] text-muted-foreground">{node.activeQueuePairs} QPs</span>
-      </div>
+    <EntityTile
+      name={node.nodeName}
+      badge={
+        <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+          {node.activeQueuePairs} QPs
+        </span>
+      }
+    >
+      <TileMeter label="Local hit" value={node.localHitRate * 100} tone={hitTone(node.localHitRate)} />
+      <TileMeter label="RDMA hit" value={node.rdmaHitRate * 100} tone="primary" />
+      <TileMeter
+        label="KV capacity"
+        value={capPct}
+        display={`${node.usedCapacityGB}/${node.totalCapacityGB} GB`}
+        tone="foreground"
+      />
 
-      <div>
-        <div className="flex justify-between text-xs mb-0.5">
-          <span className="text-muted-foreground">Local hit</span>
-          <span className={`font-mono font-bold ${hitColor(node.localHitRate)}`}>{(node.localHitRate * 100).toFixed(0)}%</span>
-        </div>
-        <Progress value={node.localHitRate * 100} className="h-1" />
-      </div>
-
-      <div>
-        <div className="flex justify-between text-xs mb-0.5">
-          <span className="text-muted-foreground">RDMA hit</span>
-          <span className="font-mono text-primary">{(node.rdmaHitRate * 100).toFixed(0)}%</span>
-        </div>
-        <Progress value={node.rdmaHitRate * 100} className="h-1" />
-      </div>
-
-      <div>
-        <div className="flex justify-between text-xs mb-0.5">
-          <span className="text-muted-foreground">KV capacity</span>
-          <span className="font-mono text-xs">{node.usedCapacityGB}/{node.totalCapacityGB} GB</span>
-        </div>
-        <Progress value={capPct} className="h-1" />
-      </div>
-
-      <div className="grid grid-cols-3 gap-1 text-[10px] text-muted-foreground pt-1">
-        <div>
-          <span className={`font-mono font-bold ${hitColor(totalHit)}`}>{(totalHit * 100).toFixed(0)}%</span>
-          <div>Combined</div>
-        </div>
-        <div>
-          <span className={`font-mono font-bold ${bwColor(node.rdmaBandwidthGBps)}`}>{node.rdmaBandwidthGBps.toFixed(0)}<span className="text-muted-foreground"> GB/s</span></span>
-          <div>RDMA BW</div>
-        </div>
-        <div>
-          <span className="font-mono font-bold text-foreground">{node.rdmaLatencyUs.toFixed(1)}<span className="text-muted-foreground"> µs</span></span>
-          <div>Latency</div>
-        </div>
-      </div>
-    </div>
+      <MicroStats
+        items={[
+          { label: 'Combined', value: `${(totalHit * 100).toFixed(0)}%`, tone: hitTone(totalHit) },
+          {
+            label: 'RDMA BW',
+            value: <>{node.rdmaBandwidthGBps.toFixed(0)}<span className="text-muted-foreground"> GB/s</span></>,
+            tone: bwTone(node.rdmaBandwidthGBps),
+          },
+          {
+            label: 'Latency',
+            value: <>{node.rdmaLatencyUs.toFixed(1)}<span className="text-muted-foreground"> µs</span></>,
+          },
+        ]}
+      />
+    </EntityTile>
   )
 }
 
@@ -112,81 +100,52 @@ export function KVCacheDashboard() {
   const usedCap    = nodes.reduce((s, n) => s + n.usedCapacityGB, 0)
   const totalCap   = nodes.reduce((s, n) => s + n.totalCapacityGB, 0)
 
+  const summary: StatTile[] = [
+    { label: 'Avg Local Hit', value: `${(avgLocal * 100).toFixed(0)}%`, tone: hitTone(avgLocal) },
+    { label: 'Avg RDMA Hit', value: `${(avgRDMA * 100).toFixed(0)}%`, tone: 'primary' },
+    {
+      label: 'Total RDMA BW',
+      value: (
+        <span className="flex items-center gap-1">
+          <ArrowsLeftRight size={18} className="text-primary" />{totalBW.toFixed(0)} <span className="text-sm text-muted-foreground">GB/s</span>
+        </span>
+      ),
+    },
+    { label: 'Active QPs', value: totalQPs, tone: 'accent' },
+    {
+      label: 'Prefill Savings',
+      value: <><Lightning size={18} className="inline text-accent" /> {stats.prefillSavingsPct}%</>,
+      tone: 'accent',
+    },
+  ]
+
   return (
-    <div className="space-y-6">
-      {/* Summary card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <Database className="text-primary" />
-            Distributed KV-Cache — RDMA
-            <Badge className="ml-2 text-xs border bg-primary/20 text-primary border-primary/30">
-              {BACKEND_LABELS[stats.backend]}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Avg Local Hit</div>
-              <div className={`font-mono text-2xl font-bold ${hitColor(avgLocal)}`}>{(avgLocal * 100).toFixed(0)}%</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Avg RDMA Hit</div>
-              <div className="font-mono text-2xl font-bold text-primary">{(avgRDMA * 100).toFixed(0)}%</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Total RDMA BW</div>
-              <div className="font-mono text-2xl font-bold text-foreground flex items-center gap-1">
-                <ArrowsLeftRight size={18} className="text-primary" />{totalBW.toFixed(0)} <span className="text-sm text-muted-foreground">GB/s</span>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Active QPs</div>
-              <div className="font-mono text-2xl font-bold text-accent">{totalQPs}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Prefill Savings</div>
-              <div className="font-mono text-2xl font-bold text-accent">
-                <Lightning size={18} className="inline text-accent" /> {stats.prefillSavingsPct}%
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span className="uppercase tracking-wide">Cluster KV Capacity</span>
-              <span className="font-mono">{usedCap} / {totalCap} GB</span>
-            </div>
-            <Progress value={(usedCap / totalCap) * 100} className="h-3" />
-          </div>
-
-          <div className="flex gap-4 text-xs text-muted-foreground">
-            <span>Evictions/min: <span className="font-mono text-foreground">{stats.evictionsPerMinute}</span></span>
-            <span>Nodes: <span className="font-mono text-foreground">{nodes.length}</span></span>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Per-node heatmap */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Per-Node KV-Cache Stats</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {nodes.map(n => <KVNodeTile key={n.nodeId} node={n} />)}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* vLLM config reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">vLLM KV-Transfer Config</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/caching/vllm-rdma-kvcache.yaml  (excerpt)
+    <TuningDashboard
+      title="Distributed KV-Cache — RDMA"
+      icon={<Database className="text-primary" />}
+      badge={
+        <Badge className="text-xs border bg-primary/20 text-primary border-primary/30">
+          {BACKEND_LABELS[stats.backend]}
+        </Badge>
+      }
+      stats={summary}
+      progress={{
+        value: (usedCap / totalCap) * 100,
+        captionLeft: <span className="uppercase tracking-wide">Cluster KV Capacity</span>,
+        captionRight: <span className="font-mono">{usedCap} / {totalCap} GB</span>,
+      }}
+      note={
+        <div className="flex gap-4 text-xs text-muted-foreground">
+          <span>Evictions/min: <span className="font-mono text-foreground">{stats.evictionsPerMinute}</span></span>
+          <span>Nodes: <span className="font-mono text-foreground">{nodes.length}</span></span>
+        </div>
+      }
+      entitiesTitle="Per-Node KV-Cache Stats"
+      entities={nodes}
+      entityKey={(n) => n.nodeId}
+      renderEntity={(n) => <KVNodeTile node={n} />}
+      configTitle="vLLM KV-Transfer Config"
+      config={`# deploy/caching/vllm-rdma-kvcache.yaml  (excerpt)
 kv_transfer_config:
   kv_connector: NixlConnector
   kv_role: kv_both          # each node is producer + consumer
@@ -196,9 +155,7 @@ kv_transfer_config:
   kv_buffer_size: 80        # GB — full VRAM tier for H100
   rdma_backend: roce_v2     # or infiniband
   rdma_port: 18515
-  rdma_device: mlx5_0`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+  rdma_device: mlx5_0`}
+    />
   )
 }

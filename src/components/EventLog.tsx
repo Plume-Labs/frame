@@ -17,8 +17,8 @@ export function EventLog({ events }: EventLogProps) {
     },
     warning: {
       icon: Warning,
-      color: 'text-[oklch(0.75_0.18_75)]',
-      badge: 'bg-[oklch(0.75_0.18_75)]/20 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30'
+      color: 'text-warning',
+      badge: 'bg-warning/20 text-warning border-warning/30'
     },
     error: {
       icon: XCircle,
@@ -45,7 +45,7 @@ export function EventLog({ events }: EventLogProps) {
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle className="font-mono text-xl">System Events</CardTitle>
+        <CardTitle className="font-mono text-xl flex items-center gap-2"><Info className="text-primary" /> System Events</CardTitle>
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-[400px] pr-4">

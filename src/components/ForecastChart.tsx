@@ -2,6 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ResourceForecast } from '@/lib/types'
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Area, ComposedChart } from 'recharts'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ChartLine } from '@phosphor-icons/react'
 
 interface ForecastChartProps {
   forecast: ResourceForecast
@@ -37,7 +38,7 @@ export function ForecastChart({ forecast }: ForecastChartProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="font-mono">Resource Forecast</CardTitle>
+        <CardTitle className="font-mono text-xl flex items-center gap-2"><ChartLine className="text-primary" /> Resource Forecast</CardTitle>
         <CardDescription>Predicted resource utilization trends</CardDescription>
       </CardHeader>
       <CardContent>

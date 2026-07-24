@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Cpu, Lightning, Queue, ArrowsClockwise, Shuffle } from '@phosphor-icons/react'
+import { VOLCANO_QUEUE_LIST } from '@/lib/tuning-fixtures'
+import { TONE_TEXT } from '@/lib/thresholds'
 
 interface SchedulerDashboardProps {
   nodes: ClusterNode[]
@@ -31,7 +33,7 @@ const ACTIVE_SCHEDULER: SchedulerType = 'volcano'
 
 const phaseColors: Record<PodGroupStatus['phase'], string> = {
   Running: 'text-accent',
-  Pending: 'text-[oklch(0.75_0.18_75)]',
+  Pending: 'text-warning',
   Completed: 'text-muted-foreground',
   Failed: 'text-destructive',
   Unknown: 'text-muted-foreground',
@@ -39,7 +41,7 @@ const phaseColors: Record<PodGroupStatus['phase'], string> = {
 
 const phaseBadge: Record<PodGroupStatus['phase'], string> = {
   Running: 'bg-accent/20 text-accent border-accent/30',
-  Pending: 'bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30',
+  Pending: 'bg-warning/10 text-warning border-warning/30',
   Completed: 'bg-secondary text-muted-foreground border-border',
   Failed: 'bg-destructive/20 text-destructive border-destructive/30',
   Unknown: 'bg-secondary text-muted-foreground border-border',
@@ -84,7 +86,7 @@ export function SchedulerDashboard({ nodes }: SchedulerDashboardProps) {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-muted-foreground uppercase tracking-wide">Pending PodGroups</div>
-              <div className={`font-mono text-lg font-bold ${pendingGroups > 0 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>{pendingGroups}</div>
+              <div className={`font-mono text-lg font-bold ${pendingGroups > 0 ? 'text-warning' : 'text-foreground'}`}>{pendingGroups}</div>
             </div>
           </div>
 
@@ -106,7 +108,7 @@ export function SchedulerDashboard({ nodes }: SchedulerDashboardProps) {
           {(
             [
               { label: 'HIGH', value: dist.HIGH, color: 'bg-destructive', textColor: 'text-destructive', desc: 'Real-time inference' },
-              { label: 'MEDIUM', value: dist.MEDIUM, color: 'bg-[oklch(0.75_0.18_75)]', textColor: 'text-[oklch(0.75_0.18_75)]', desc: 'Database queries' },
+              { label: 'MEDIUM', value: dist.MEDIUM, color: 'bg-warning', textColor: 'text-warning', desc: 'Database queries' },
               { label: 'LOW', value: dist.LOW, color: 'bg-accent', textColor: 'text-accent', desc: 'Batch / Training' },
             ] as const
           ).map(({ label, value, color, textColor, desc }) => (
@@ -160,14 +162,10 @@ export function SchedulerDashboard({ nodes }: SchedulerDashboardProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {[
-            { name: 'neura-high', weight: 100, cpuAlloc: '180/200', memAlloc: '360/400 Gi', color: 'text-destructive' },
-            { name: 'neura-medium', weight: 50, cpuAlloc: '82/100', memAlloc: '155/200 Gi', color: 'text-[oklch(0.75_0.18_75)]' },
-            { name: 'neura-low', weight: 10, cpuAlloc: '290/400', memAlloc: '580/800 Gi', color: 'text-accent' },
-          ].map(q => (
+          {VOLCANO_QUEUE_LIST.map(q => (
             <div key={q.name} className="flex items-center justify-between p-3 rounded-lg bg-secondary/30">
               <div className="flex items-center gap-3">
-                <span className={`font-mono text-sm font-bold ${q.color}`}>{q.name}</span>
+                <span className={`font-mono text-sm font-bold ${TONE_TEXT[q.tone]}`}>{q.name}</span>
                 <span className="text-xs text-muted-foreground">weight {q.weight}</span>
               </div>
               <div className="text-right">

@@ -1,19 +1,12 @@
+import { useMemo } from 'react'
 import { ClusterNode, CheckpointStatus, SnapshotInfo } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ShieldCheck, Clock, Archive, Warning } from '@phosphor-icons/react'
+import { formatAge } from '@/lib/thresholds'
 
 interface ResiliencePanelProps {
   nodes: ClusterNode[]
-}
-
-function formatAge(ms: number): string {
-  const s = Math.floor((Date.now() - ms) / 1000)
-  const m = Math.floor(s / 60)
-  const h = Math.floor(m / 60)
-  if (h > 0) return `${h}h ${m % 60}m ago`
-  if (m > 0) return `${m}m ago`
-  return `${s}s ago`
 }
 
 function formatMs(ms: number): string {
@@ -23,7 +16,13 @@ function formatMs(ms: number): string {
   return `${m}m`
 }
 
-// Simulated checkpoint statuses
+/**
+ * Simulated checkpoint statuses.
+ *
+ * Randomised, so it must only ever be called from a memo keyed on the node set —
+ * calling it during every render made the counts, ages and health flags jitter on
+ * each 2s simulation tick.
+ */
 function generateCheckpointStatuses(nodes: ClusterNode[]): CheckpointStatus[] {
   return nodes
     .filter(n => n.status !== 'offline')
@@ -52,7 +51,15 @@ const STATUS_BADGE: Record<SnapshotInfo['status'], string> = {
 }
 
 export function ResiliencePanel({ nodes }: ResiliencePanelProps) {
-  const checkpoints = generateCheckpointStatuses(nodes)
+  // Regenerate only when the set of checkpointed nodes actually changes.
+  const checkpointNodeKey = nodes
+    .filter(n => n.status !== 'offline')
+    .slice(0, 8)
+    .map(n => n.id)
+    .join(',')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const checkpoints = useMemo(() => generateCheckpointStatuses(nodes), [checkpointNodeKey])
+
   const healthyCheckpoints = checkpoints.filter(c => c.healthy).length
   const totalStorageGB = checkpoints.reduce((s, c) => s + c.storageUsedGB, 0)
   const latestSnapshot = SAMPLE_SNAPSHOTS.reduce((latest, s) => s.timestamp > latest.timestamp ? s : latest, SAMPLE_SNAPSHOTS[0])
@@ -89,8 +96,8 @@ export function ResiliencePanel({ nodes }: ResiliencePanelProps) {
             </div>
             <div className="space-y-1">
               <div className="text-xs text-muted-foreground uppercase tracking-wide">Latest Snapshot</div>
-              <div className={`font-mono text-xl font-bold ${snapshotAgeMs > 7200000 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>
-                {formatAge(latestSnapshot.timestamp)}
+              <div className={`font-mono text-xl font-bold ${snapshotAgeMs > 7200000 ? 'text-warning' : 'text-foreground'}`}>
+                {formatAge(latestSnapshot.timestamp)} ago
               </div>
             </div>
           </div>
@@ -113,15 +120,15 @@ export function ResiliencePanel({ nodes }: ResiliencePanelProps) {
             {checkpoints.map(ckpt => {
               const node = nodes.find(n => n.id === ckpt.nodeId)
               return (
-                <div key={ckpt.nodeId} className={`flex items-center justify-between p-2 rounded border text-xs ${ckpt.healthy ? 'border-border bg-secondary/20' : 'border-[oklch(0.75_0.18_75)]/30 bg-[oklch(0.75_0.18_75)]/5'}`}>
+                <div key={ckpt.nodeId} className={`flex items-center justify-between p-2 rounded border text-xs ${ckpt.healthy ? 'border-border bg-secondary/20' : 'border-warning/30 bg-warning/5'}`}>
                   <div className="flex items-center gap-2">
                     {ckpt.healthy
                       ? <ShieldCheck size={12} className="text-accent" />
-                      : <Warning size={12} className="text-[oklch(0.75_0.18_75)]" />}
+                      : <Warning size={12} className="text-warning" />}
                     <span className="font-mono">{node?.name ?? ckpt.nodeId}</span>
                   </div>
                   <div className="text-right text-muted-foreground">
-                    <div>Last: {formatAge(ckpt.lastCheckpointAt)}</div>
+                    <div>Last: {formatAge(ckpt.lastCheckpointAt)} ago</div>
                     <div>#{ckpt.checkpointCount} · {ckpt.storageUsedGB.toFixed(1)} GB</div>
                   </div>
                 </div>
@@ -148,7 +155,7 @@ export function ResiliencePanel({ nodes }: ResiliencePanelProps) {
                   <span className="font-mono">{snap.namespace}</span>
                   <span>{snap.type}</span>
                   <span>{snap.sizeGB} GB</span>
-                  <span>{formatAge(snap.timestamp)}</span>
+                  <span>{formatAge(snap.timestamp)} ago</span>
                   <span>TTL: {snap.ttlHours}h</span>
                 </div>
               </div>

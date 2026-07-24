@@ -1,7 +1,7 @@
 import { PipelinePPMetrics, PPStageStats, PPStageRole } from '@/lib/types'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
+import { EntityTile, MicroStats, StatTile, TuningDashboard } from '@/components/TuningDashboard'
+import { TONE_TEXT, Tone, inverseScoreTone, scoreTone } from '@/lib/thresholds'
 import { GitBranch, Lightning, Warning } from '@phosphor-icons/react'
 
 // ── Simulated state ───────────────────────────────────────────────────────────
@@ -28,60 +28,51 @@ const ROLE_CONFIG: Record<PPStageRole, { label: string; badge: string; bar: stri
   combined: { label: 'Combined', badge: 'bg-secondary text-muted-foreground border-border', bar: 'bg-foreground' },
 }
 
-function bubbleColor(ratio: number) {
-  if (ratio >= 0.2) return 'text-destructive'
-  if (ratio >= 0.1) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-accent'
-}
+/** Bubble ratio is stall time — lower is better (accent ≤ 0.1, warning ≤ 0.2). */
+const bubbleTone = (ratio: number): Tone => inverseScoreTone(ratio, 0.1, 0.2)
 
-function utilColor(pct: number) {
-  if (pct >= 90) return 'text-accent'
-  if (pct >= 75) return 'text-[oklch(0.75_0.18_75)]'
-  return 'text-destructive'
-}
+/** Stage utilisation: higher is better — accent ≥ 90%, warning ≥ 75%. */
+const utilTone = (pct: number): Tone => scoreTone(pct, 90, 75)
+
+const HIGH_BUBBLE = 0.2
 
 // ── Stage card ────────────────────────────────────────────────────────────────
 
 function StageCard({ stage }: { stage: PPStageStats }) {
   const cfg = ROLE_CONFIG[stage.role]
-  const highBubble = stage.bubbleRatio >= 0.2
+  const highBubble = stage.bubbleRatio >= HIGH_BUBBLE
 
   return (
-    <div className={`p-3 rounded-lg border ${highBubble ? 'border-destructive/40 bg-destructive/5' : 'border-border bg-secondary/30'} space-y-2`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <EntityTile
+      className={highBubble ? 'border-destructive/40 bg-destructive/5' : undefined}
+      name={
+        <span className="flex items-center gap-2">
           {highBubble && <Warning size={12} className="text-destructive" />}
-          <span className="font-mono text-xs font-bold">Stage {stage.stageId}</span>
-          <span className="font-mono text-[10px] text-muted-foreground">GPU {stage.gpuIndices.join(',')}</span>
-        </div>
-        <Badge className={`text-[10px] border ${cfg.badge}`}>{cfg.label}</Badge>
-      </div>
-
+          <span>Stage {stage.stageId}</span>
+          <span className="font-normal text-[10px] text-muted-foreground">GPU {stage.gpuIndices.join(',')}</span>
+        </span>
+      }
+      badge={<Badge className={`text-[10px] border ${cfg.badge}`}>{cfg.label}</Badge>}
+    >
+      {/* Not a TileMeter: the bar is tinted per pipeline role, not per tone. */}
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
           <span className="text-muted-foreground">Utilization</span>
-          <span className={`font-mono font-bold ${utilColor(stage.utilizationPct)}`}>{stage.utilizationPct}%</span>
+          <span className={`font-mono font-bold ${TONE_TEXT[utilTone(stage.utilizationPct)]}`}>{stage.utilizationPct}%</span>
         </div>
         <div className="w-full h-1.5 rounded-full bg-secondary">
           <div className={`h-1.5 rounded-full ${cfg.bar}`} style={{ width: `${stage.utilizationPct}%` }} />
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-1 text-[10px] text-muted-foreground">
-        <div>
-          <span className={`font-mono font-bold ${bubbleColor(stage.bubbleRatio)}`}>{(stage.bubbleRatio * 100).toFixed(0)}%</span>
-          <div>Bubble</div>
-        </div>
-        <div>
-          <span className="font-mono font-bold text-foreground">{stage.microBatchesInFlight}</span>
-          <div>µ-batches</div>
-        </div>
-        <div>
-          <span className="font-mono font-bold text-primary">{(stage.tokensPerSec / 1000).toFixed(1)}k</span>
-          <div>Tok/s</div>
-        </div>
-      </div>
-    </div>
+      <MicroStats
+        items={[
+          { label: 'Bubble', value: `${(stage.bubbleRatio * 100).toFixed(0)}%`, tone: bubbleTone(stage.bubbleRatio) },
+          { label: 'µ-batches', value: stage.microBatchesInFlight },
+          { label: 'Tok/s', value: `${(stage.tokensPerSec / 1000).toFixed(1)}k`, tone: 'primary' },
+        ]}
+      />
+    </EntityTile>
   )
 }
 
@@ -117,75 +108,41 @@ export function PipelinePPDashboard() {
   const m = MOCK_METRICS
   const totalTPS = Math.min(...m.stages.map(s => s.tokensPerSec))   // bottleneck = slowest stage
 
+  const summary: StatTile[] = [
+    { label: 'PP Degree', value: m.pipelineDegree },
+    { label: 'TP Degree', value: m.tensorParallelDegree },
+    {
+      label: 'Efficiency',
+      value: `${(m.efficiency * 100).toFixed(0)}%`,
+      // Two-band ladder: accent ≥ 85%, warning below.
+      tone: scoreTone(m.efficiency, 0.85, 0),
+    },
+    {
+      label: 'E2E Latency',
+      value: <><Lightning size={18} className="inline" /> {m.e2eLatencyMs} ms</>,
+      tone: 'primary',
+    },
+    { label: 'Pipeline Tok/s', value: `${(totalTPS / 1000).toFixed(1)}k`, tone: 'accent' },
+  ]
+
   return (
-    <div className="space-y-6">
-      {/* Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <GitBranch className="text-primary" />
-            Pipeline Parallelism — Prefill / Decode
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">PP Degree</div>
-              <div className="font-mono text-2xl font-bold text-foreground">{m.pipelineDegree}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">TP Degree</div>
-              <div className="font-mono text-2xl font-bold text-foreground">{m.tensorParallelDegree}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Efficiency</div>
-              <div className={`font-mono text-2xl font-bold ${m.efficiency >= 0.85 ? 'text-accent' : 'text-[oklch(0.75_0.18_75)]'}`}>
-                {(m.efficiency * 100).toFixed(0)}%
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">E2E Latency</div>
-              <div className="font-mono text-2xl font-bold text-primary">
-                <Lightning size={18} className="inline" /> {m.e2eLatencyMs} ms
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Pipeline Tok/s</div>
-              <div className="font-mono text-2xl font-bold text-accent">{(totalTPS / 1000).toFixed(1)}k</div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span className="uppercase tracking-wide">Pipeline Efficiency (1 − avg bubble)</span>
-              <span className="font-mono">{(m.efficiency * 100).toFixed(0)}%</span>
-            </div>
-            <Progress value={m.efficiency * 100} className="h-3" />
-          </div>
-
-          <PipelineDiagram metrics={m} />
-        </CardContent>
-      </Card>
-
-      {/* Per-stage cards */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Stage Details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {m.stages.map(s => <StageCard key={s.stageId} stage={s} />)}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Config reference */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">Deployment Config Reference</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">{`# deploy/jobs/pipeline-parallelism.yaml  (excerpt)
+    <TuningDashboard
+      title="Pipeline Parallelism — Prefill / Decode"
+      icon={<GitBranch className="text-primary" />}
+      stats={summary}
+      progress={{
+        value: m.efficiency * 100,
+        captionLeft: <span className="uppercase tracking-wide">Pipeline Efficiency (1 − avg bubble)</span>,
+        captionRight: <span className="font-mono">{(m.efficiency * 100).toFixed(0)}%</span>,
+      }}
+      note={<PipelineDiagram metrics={m} />}
+      entitiesTitle="Stage Details"
+      entities={m.stages}
+      entityKey={(s) => String(s.stageId)}
+      renderEntity={(s) => <StageCard stage={s} />}
+      entityColumns={4}
+      configTitle="Deployment Config Reference"
+      config={`# deploy/jobs/pipeline-parallelism.yaml  (excerpt)
 # vLLM with PP=4, TP=2 — 8 GPUs total (4 stages × 2-way tensor parallel)
 args:
   - --model=meta-llama/Llama-3.1-70B-Instruct
@@ -196,9 +153,7 @@ args:
   # Disaggregated prefill/decode (vLLM >= 0.9 with kv_transfer):
   # Stage 0–1: prefill role; Stage 2–3: decode role
   - --kv-transfer-config
-  - '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_rank":0}'`}</pre>
-        </CardContent>
-      </Card>
-    </div>
+  - '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_rank":0}'`}
+    />
   )
 }

@@ -177,7 +177,7 @@ export function HistoricalTrendsAnalysis({ historicalData }: HistoricalTrendsAna
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
-              <CardTitle className="font-mono flex items-center gap-2">
+              <CardTitle className="font-mono text-xl flex items-center gap-2">
                 <ChartLine weight="bold" className="text-primary" />
                 Historical Trend Analysis
               </CardTitle>

@@ -3,7 +3,8 @@ import { Job, DAGNode, JobStatus } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ArrowClockwise, CheckCircle, XCircle, Clock, Spinner, Database, ArrowCounterClockwise } from '@phosphor-icons/react'
+import { ArrowClockwise, CheckCircle, XCircle, Clock, Spinner, Database } from '@phosphor-icons/react'
+import { jobIdentity } from '@/lib/workflow-fixtures'
 
 interface JobOrchestrationViewProps {
   jobs?: Job[]
@@ -12,7 +13,7 @@ interface JobOrchestrationViewProps {
 const STATUS_COLORS: Record<JobStatus, string> = {
   queued:       'text-muted-foreground',
   running:      'text-primary',
-  checkpointed: 'text-[oklch(0.75_0.18_75)]',
+  checkpointed: 'text-warning',
   completed:    'text-accent',
   failed:       'text-destructive',
 }
@@ -20,7 +21,7 @@ const STATUS_COLORS: Record<JobStatus, string> = {
 const STATUS_BADGE: Record<JobStatus, string> = {
   queued:       'bg-secondary text-muted-foreground border-border',
   running:      'bg-primary/20 text-primary border-primary/30',
-  checkpointed: 'bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30',
+  checkpointed: 'bg-warning/10 text-warning border-warning/30',
   completed:    'bg-accent/20 text-accent border-accent/30',
   failed:       'bg-destructive/20 text-destructive border-destructive/30',
 }
@@ -30,7 +31,7 @@ function StatusIcon({ status }: { status: JobStatus }) {
     case 'completed':    return <CheckCircle size={14} className="text-accent" />
     case 'failed':       return <XCircle size={14} className="text-destructive" />
     case 'running':      return <Spinner size={14} className="text-primary animate-spin" />
-    case 'checkpointed': return <Database size={14} className="text-[oklch(0.75_0.18_75)]" />
+    case 'checkpointed': return <Database size={14} className="text-warning" />
     default:             return <Clock size={14} className="text-muted-foreground" />
   }
 }
@@ -47,19 +48,14 @@ function formatDuration(ms: number): string {
 // Simulated jobs
 const DEMO_JOBS: Job[] = [
   {
-    id: 'wf-001',
-    name: 'neura-training-v3',
+    ...jobIdentity('trace-abc-001'),
     pipeline: 'neura-training-dag',
     status: 'running',
-    serviceClass: 'LOW',
     priority: 'low',
     queue: 'neura-low',
-    createdAt: Date.now() - 7200000,
-    startedAt: Date.now() - 7100000,
     namespace: 'neura-training',
     retryCount: 1,
     maxRetries: 5,
-    traceId: 'trace-abc-001',
     checkpoints: [
       { id: 'ckpt-001', timestamp: Date.now() - 3600000, size: 42, storageLocation: 's3://neura-checkpoints/wf-001/ckpt-001', step: 500 },
       { id: 'ckpt-002', timestamp: Date.now() - 1800000, size: 44, storageLocation: 's3://neura-checkpoints/wf-001/ckpt-002', step: 1000 },
@@ -72,20 +68,15 @@ const DEMO_JOBS: Job[] = [
     ],
   },
   {
-    id: 'wf-002',
-    name: 'neura-inference-batch-001',
+    ...jobIdentity('trace-def-002', 10000),
     pipeline: 'neura-inference-dag',
     status: 'completed',
-    serviceClass: 'HIGH',
     priority: 'critical',
     queue: 'neura-high',
-    createdAt: Date.now() - 3600000,
-    startedAt: Date.now() - 3590000,
     completedAt: Date.now() - 3540000,
     namespace: 'neura-inference',
     retryCount: 0,
     maxRetries: 3,
-    traceId: 'trace-def-002',
     checkpoints: [],
     nodes: [
       { id: 'a1', name: 'validate-input', status: 'completed', template: 'validate-input', dependencies: [], startTime: Date.now() - 3590000, endTime: Date.now() - 3580000, retries: 0, gpuCount: 0 },
@@ -95,20 +86,15 @@ const DEMO_JOBS: Job[] = [
     ],
   },
   {
-    id: 'wf-003',
-    name: 'neura-training-v2-retry',
+    ...jobIdentity('trace-ghi-003', 400000),
     pipeline: 'neura-training-dag',
     status: 'failed',
-    serviceClass: 'LOW',
     priority: 'low',
     queue: 'neura-low',
-    createdAt: Date.now() - 14400000,
-    startedAt: Date.now() - 14000000,
     completedAt: Date.now() - 10000000,
     namespace: 'neura-training',
     retryCount: 5,
     maxRetries: 5,
-    traceId: 'trace-ghi-003',
     checkpoints: [
       { id: 'ckpt-old-001', timestamp: Date.now() - 12000000, size: 38, storageLocation: 's3://neura-checkpoints/wf-003/ckpt-001', step: 300 },
     ],
@@ -167,7 +153,7 @@ function DAGVisualization({ nodes: dagNodes }: { nodes: DAGNode[] }) {
                   <div className="text-primary text-[10px]">{node.gpuCount} GPU{node.gpuCount > 1 ? 's' : ''}</div>
                 )}
                 {node.retries > 0 && (
-                  <div className="text-[oklch(0.75_0.18_75)] text-[10px]">{node.retries} retr{node.retries > 1 ? 'ies' : 'y'}</div>
+                  <div className="text-warning text-[10px]">{node.retries} retr{node.retries > 1 ? 'ies' : 'y'}</div>
                 )}
                 {node.startTime && node.endTime && (
                   <div className="text-muted-foreground text-[10px]">{formatDuration(node.endTime - node.startTime)}</div>
@@ -204,22 +190,11 @@ function JobCard({ job }: { job: Job }) {
             <span>Queue: <span className="font-mono">{job.queue}</span></span>
             <span>Duration: <span className="font-mono">{duration}</span></span>
             {job.retryCount > 0 && (
-              <span className="text-[oklch(0.75_0.18_75)]">Retries: {job.retryCount}/{job.maxRetries}</span>
+              <span className="text-warning">Retries: {job.retryCount}/{job.maxRetries}</span>
             )}
           </div>
         </div>
         <div className="flex gap-2 shrink-0">
-          {job.traceId && (
-            <Button variant="outline" size="sm" className="text-xs h-7 font-mono">
-              Trace
-            </Button>
-          )}
-          {job.status === 'failed' && job.checkpoints.length > 0 && (
-            <Button variant="outline" size="sm" className="text-xs h-7 gap-1">
-              <ArrowCounterClockwise size={12} />
-              Rollback
-            </Button>
-          )}
           <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setExpanded(e => !e)}>
             {expanded ? 'Collapse' : 'DAG'}
           </Button>
@@ -230,7 +205,7 @@ function JobCard({ job }: { job: Job }) {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground">Checkpoints:</span>
           {job.checkpoints.map(ckpt => (
-            <span key={ckpt.id} className="text-[10px] font-mono px-2 py-0.5 rounded bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border border-[oklch(0.75_0.18_75)]/20">
+            <span key={ckpt.id} className="text-[10px] font-mono px-2 py-0.5 rounded bg-warning/10 text-warning border border-warning/20">
               {ckpt.step ? `step ${ckpt.step}` : new Date(ckpt.timestamp).toLocaleTimeString()} · {ckpt.size} GB
             </span>
           ))}

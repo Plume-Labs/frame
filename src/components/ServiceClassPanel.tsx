@@ -22,7 +22,7 @@ const SLA_TARGETS: Record<ServiceClass, SLATarget> = {
 
 const CLASS_COLORS: Record<ServiceClass, { border: string; badge: string; text: string }> = {
   HIGH:   { border: 'border-destructive/40',                   badge: 'bg-destructive/20 text-destructive border-destructive/30',   text: 'text-destructive' },
-  MEDIUM: { border: 'border-[oklch(0.75_0.18_75)]/40',        badge: 'bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30', text: 'text-[oklch(0.75_0.18_75)]' },
+  MEDIUM: { border: 'border-warning/40',        badge: 'bg-warning/10 text-warning border-warning/30', text: 'text-warning' },
   LOW:    { border: 'border-accent/40',                        badge: 'bg-accent/20 text-accent border-accent/30',                  text: 'text-accent' },
 }
 
@@ -36,7 +36,7 @@ const CURRENT_METRICS: Record<ServiceClass, { latencyMs: number; availabilityPct
 function StatusIcon({ ok }: { ok: boolean }) {
   return ok
     ? <CheckCircle className="text-accent" size={16} />
-    : <Warning className="text-[oklch(0.75_0.18_75)]" size={16} />
+    : <Warning className="text-warning" size={16} />
 }
 
 export function ServiceClassPanel({ nodes }: ServiceClassPanelProps) {
@@ -71,7 +71,7 @@ export function ServiceClassPanel({ nodes }: ServiceClassPanelProps) {
                   <div className="flex items-center gap-1">
                     {latencyOk && availOk
                       ? <CheckCircle className="text-accent" size={18} />
-                      : <XCircle className="text-[oklch(0.75_0.18_75)]" size={18} />}
+                      : <XCircle className="text-warning" size={18} />}
                     <span className="text-xs font-mono text-muted-foreground">
                       {latencyOk && availOk ? 'SLA MET' : 'SLA BREACH'}
                     </span>
@@ -83,7 +83,7 @@ export function ServiceClassPanel({ nodes }: ServiceClassPanelProps) {
                     <div className="text-xs text-muted-foreground uppercase">Latency P99</div>
                     <div className="flex items-center gap-1">
                       <StatusIcon ok={latencyOk} />
-                      <span className={`font-mono text-sm font-bold ${latencyOk ? 'text-foreground' : 'text-[oklch(0.75_0.18_75)]'}`}>
+                      <span className={`font-mono text-sm font-bold ${latencyOk ? 'text-foreground' : 'text-warning'}`}>
                         {cur.latencyMs} ms
                       </span>
                     </div>
@@ -94,7 +94,7 @@ export function ServiceClassPanel({ nodes }: ServiceClassPanelProps) {
                     <div className="text-xs text-muted-foreground uppercase">Availability</div>
                     <div className="flex items-center gap-1">
                       <StatusIcon ok={availOk} />
-                      <span className={`font-mono text-sm font-bold ${availOk ? 'text-foreground' : 'text-[oklch(0.75_0.18_75)]'}`}>
+                      <span className={`font-mono text-sm font-bold ${availOk ? 'text-foreground' : 'text-warning'}`}>
                         {cur.availabilityPct.toFixed(2)}%
                       </span>
                     </div>
@@ -103,7 +103,7 @@ export function ServiceClassPanel({ nodes }: ServiceClassPanelProps) {
 
                   <div className="space-y-1">
                     <div className="text-xs text-muted-foreground uppercase">Quota Used</div>
-                    <div className={`font-mono text-sm font-bold ${cur.quotaUsed > 0.9 ? 'text-[oklch(0.75_0.18_75)]' : 'text-foreground'}`}>
+                    <div className={`font-mono text-sm font-bold ${cur.quotaUsed > 0.9 ? 'text-warning' : 'text-foreground'}`}>
                       {(cur.quotaUsed * 100).toFixed(0)}%
                     </div>
                     <Progress value={cur.quotaUsed * 100} className="h-1" />

@@ -2,6 +2,7 @@ import { PipelineTrace } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ArrowRight } from '@phosphor-icons/react'
+import { traceIdentity } from '@/lib/workflow-fixtures'
 
 interface DataLineageViewProps {
   traces?: PipelineTrace[]
@@ -10,11 +11,8 @@ interface DataLineageViewProps {
 // Demo traces
 const DEMO_TRACES: PipelineTrace[] = [
   {
-    traceId: 'trace-abc-001',
-    pipelineName: 'neura-training-v3',
-    startTime: Date.now() - 7100000,
+    ...traceIdentity('trace-abc-001'),
     totalDurationMs: 7100000,
-    serviceClass: 'LOW',
     spans: [
       { spanId: 's1', operationName: 'data-validation', startTime: Date.now() - 7100000, durationMs: 200000, status: 'ok', tags: { dataset: 'neura-training-v3', rows: '12M' } },
       { spanId: 's2', operationName: 'alluxio:cache-load', startTime: Date.now() - 6900000, durationMs: 1500000, status: 'ok', tags: { tier: 'nvme', size: '12.4TB', hit: 'false' } },
@@ -22,11 +20,8 @@ const DEMO_TRACES: PipelineTrace[] = [
     ],
   },
   {
-    traceId: 'trace-def-002',
-    pipelineName: 'neura-inference-batch-001',
-    startTime: Date.now() - 3590000,
+    ...traceIdentity('trace-def-002'),
     totalDurationMs: 50000,
-    serviceClass: 'HIGH',
     spans: [
       { spanId: 'a1', operationName: 'validate-input', startTime: Date.now() - 3590000, durationMs: 10000, status: 'ok', tags: { batch: '64' } },
       { spanId: 'a2', operationName: 'redis:cache-lookup', startTime: Date.now() - 3580000, durationMs: 5000, status: 'ok', tags: { hit: 'true', ttl: '3600s' } },
@@ -35,11 +30,8 @@ const DEMO_TRACES: PipelineTrace[] = [
     ],
   },
   {
-    traceId: 'trace-ghi-003',
-    pipelineName: 'neura-training-v2-retry',
-    startTime: Date.now() - 14000000,
+    ...traceIdentity('trace-ghi-003'),
     totalDurationMs: 4000000,
-    serviceClass: 'LOW',
     spans: [
       { spanId: 'b1', operationName: 'data-validation', startTime: Date.now() - 14000000, durationMs: 200000, status: 'ok', tags: { dataset: 'neura-training-v2' } },
       { spanId: 'b2', operationName: 'distributed-training', startTime: Date.now() - 13800000, durationMs: 3800000, status: 'error', tags: { error: 'NCCL timeout', rank: '3' } },
@@ -49,7 +41,7 @@ const DEMO_TRACES: PipelineTrace[] = [
 
 const CLASS_BADGE: Record<string, string> = {
   HIGH:   'bg-destructive/20 text-destructive border-destructive/30',
-  MEDIUM: 'bg-[oklch(0.75_0.18_75)]/10 text-[oklch(0.75_0.18_75)] border-[oklch(0.75_0.18_75)]/30',
+  MEDIUM: 'bg-warning/10 text-warning border-warning/30',
   LOW:    'bg-accent/20 text-accent border-accent/30',
 }
 

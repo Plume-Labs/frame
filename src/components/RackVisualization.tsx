@@ -1,14 +1,12 @@
 import { useMemo } from 'react'
 import { ClusterNode, RackPowerCooling } from '@/lib/types'
-import { organizeNodesByRack, organizeRacksByZone, calculateRackPowerCooling } from '@/lib/rack'
+import { organizeNodesByRack, organizeRacksFlat, calculateRackPowerCooling } from '@/lib/rack'
 import { RackView } from './RackView'
 import { RackPowerCoolingCard } from './RackPowerCoolingCard'
-import { RackConfigDialog } from './RackConfigDialog'
 import { RackLegend } from './RackLegend'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Buildings } from '@phosphor-icons/react'
-import { toast } from 'sonner'
+import { Stack } from '@phosphor-icons/react'
 
 interface RackVisualizationProps {
   nodes: ClusterNode[]
@@ -25,17 +23,37 @@ export function RackVisualization({
   selectedRack,
   onSelectRack
 }: RackVisualizationProps) {
-  const { racksMap, zoneMap, rackPowerCooling } = useMemo(() => {
+  const { racksMap, racks, rackPowerCooling } = useMemo(() => {
     const racksMap = organizeNodesByRack(nodes)
-    const zoneMap = organizeRacksByZone(racksMap)
-    
+    const racks = organizeRacksFlat(racksMap)
+
     const rackPowerCooling = new Map<string, RackPowerCooling>()
     racksMap.forEach((rack) => {
       rackPowerCooling.set(rack.id, calculateRackPowerCooling(rack))
     })
-    
-    return { racksMap, zoneMap, rackPowerCooling }
+
+    return { racksMap, racks, rackPowerCooling }
   }, [nodes])
+
+  const totalNodes = racks.reduce((sum, rack) => sum + rack.nodes.length, 0)
+  const onlineNodes = racks.reduce(
+    (sum, rack) => sum + rack.nodes.filter((n) => n.status === 'online').length,
+    0,
+  )
+  const avgHealth = racks.length
+    ? racks.reduce((sum, rack) => sum + rack.healthScore, 0) / racks.length
+    : 0
+  const totalPowerDraw = racks.reduce(
+    (sum, rack) => sum + (rackPowerCooling.get(rack.id)?.power.currentDraw ?? 0),
+    0,
+  )
+
+  const healthColor =
+    avgHealth >= 80
+      ? 'bg-primary/20 text-primary border-primary'
+      : avgHealth >= 60
+        ? 'bg-warning/20 text-warning border-warning'
+        : 'bg-destructive/20 text-destructive border-destructive'
 
   const selectedRackData = selectedRack ? racksMap.get(selectedRack) : null
   const selectedRackPowerCooling = selectedRack ? rackPowerCooling.get(selectedRack) : null
@@ -48,20 +66,13 @@ export function RackVisualization({
         </div>
         <div className="flex gap-2">
           <RackLegend />
-          <RackConfigDialog
-            onAddDevice={(config) => {
-              toast.success(`Device ${config.name} configured for provisioning`, {
-                description: `${config.deviceType} (${config.rackUnits}U) → ${config.rackId} @ U${config.rackPosition}`
-              })
-            }}
-          />
         </div>
       </div>
 
       {selectedRackData && selectedRackPowerCooling && onSelectRack && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-xl font-mono font-semibold text-foreground">
+            <h3 className="text-sm font-mono text-muted-foreground">
               {selectedRackData.id} Details
             </h3>
             <button
@@ -75,65 +86,44 @@ export function RackVisualization({
         </div>
       )}
 
-      {Array.from(zoneMap.entries()).map(([zoneName, racks]) => {
-        const totalNodes = racks.reduce((sum, rack) => sum + rack.nodes.length, 0)
-        const onlineNodes = racks.reduce((sum, rack) => 
-          sum + rack.nodes.filter(n => n.status === 'online').length, 0
-        )
-        const avgHealth = racks.reduce((sum, rack) => sum + rack.healthScore, 0) / racks.length
-
-        const totalPowerDraw = racks.reduce((sum, rack) => {
-          const pc = rackPowerCooling.get(rack.id)
-          return sum + (pc?.power.currentDraw || 0)
-        }, 0)
-
-        const getZoneHealthColor = () => {
-          if (avgHealth >= 80) return 'bg-primary/20 text-primary border-primary'
-          if (avgHealth >= 60) return 'bg-warning/20 text-warning border-warning'
-          return 'bg-destructive/20 text-destructive border-destructive'
-        }
-
-        return (
-          <Card key={zoneName} className="border-2">
-            <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <Buildings className="w-6 h-6 text-primary" weight="duotone" />
-                  <div>
-                    <CardTitle className="text-xl font-mono uppercase">{zoneName}</CardTitle>
-                    <p className="text-sm text-muted-foreground font-mono mt-1">
-                      {racks.length} racks · {totalNodes} nodes · {onlineNodes} online · {Math.round(totalPowerDraw / 1000)}kW
-                    </p>
-                  </div>
-                </div>
-                <Badge variant="outline" className={getZoneHealthColor()}>
-                  Health: {Math.round(avgHealth)}%
-                </Badge>
+      <Card className="border-2">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Stack className="w-6 h-6 text-primary" weight="duotone" />
+              <div>
+                <CardTitle className="text-xl font-mono">Racks</CardTitle>
+                <p className="text-sm text-muted-foreground font-mono mt-1">
+                  {racks.length} racks · {totalNodes} nodes · {onlineNodes} online · {Math.round(totalPowerDraw / 1000)}kW
+                </p>
               </div>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {racks.map((rack) => (
-                  <div 
-                    key={rack.id}
-                    onClick={() => onSelectRack?.(rack.id)}
-                    className={`cursor-pointer transition-all ${
-                      selectedRack === rack.id ? 'ring-2 ring-primary rounded-lg' : ''
-                    }`}
-                  >
-                    <RackView
-                      rack={rack}
-                      powerCooling={rackPowerCooling.get(rack.id)}
-                      selectedNode={selectedNode}
-                      onSelectNode={onSelectNode}
-                    />
-                  </div>
-                ))}
+            </div>
+            <Badge variant="outline" className={healthColor}>
+              Health: {Math.round(avgHealth)}%
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {racks.map((rack) => (
+              <div
+                key={rack.id}
+                onClick={() => onSelectRack?.(rack.id)}
+                className={`cursor-pointer transition-all ${
+                  selectedRack === rack.id ? 'ring-2 ring-primary rounded-lg' : ''
+                }`}
+              >
+                <RackView
+                  rack={rack}
+                  powerCooling={rackPowerCooling.get(rack.id)}
+                  selectedNode={selectedNode}
+                  onSelectNode={onSelectNode}
+                />
               </div>
-            </CardContent>
-          </Card>
-        )
-      })}
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
