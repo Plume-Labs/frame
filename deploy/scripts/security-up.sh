@@ -25,7 +25,7 @@ helm upgrade -i falco falcosecurity/falco -n falco --create-namespace \
   --set resources.requests.memory=256Mi \
   --set falcosidekick.config.alertmanager.hostport=http://kps-kube-prometheus-stack-alertmanager.monitoring:9093 \
   --set falcosidekick.config.alertmanager.endpoint=/api/v2/alerts \
-  --set falcosidekick.config.alertmanager.minimumpriority=warning
+  --set falcosidekick.config.alertmanager.minimumpriority=critical
 
 kubectl -n falco rollout status ds/falco --timeout=300s
 kubectl -n falco rollout status deploy/falco-falcosidekick --timeout=180s
