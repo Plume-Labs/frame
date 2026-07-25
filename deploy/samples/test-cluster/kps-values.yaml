@@ -1,4 +1,16 @@
 nodeExporter: { enabled: false }   # reuse existing monitoring/node-exporter
+# k3s embeds controller-manager/scheduler/proxy in one process — they have no
+# separate scrape target, so these default rules fire false "Down" alerts. Off.
+defaultRules:
+  rules:
+    kubeControllerManager: false
+    kubeScheduler: false
+    kubeProxy: false
+    etcd: false
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+kubeEtcd: { enabled: false }
 alertmanager:
   alertmanagerSpec:
     resources: { requests: { cpu: 20m, memory: 64Mi } }
