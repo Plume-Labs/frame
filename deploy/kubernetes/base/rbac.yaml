@@ -41,6 +41,10 @@ rules:
   - apiGroups: [aquasecurity.github.io]
     resources: [vulnerabilityreports, configauditreports, rbacassessmentreports, exposedsecretreports, infraassessmentreports]
     verbs: [get, list, watch]
+  # Velero backups (DR status) for the Resilience screen
+  - apiGroups: [velero.io]
+    resources: [backups, schedules, backupstoragelocations, restores]
+    verbs: [get, list, watch]
 ---
 # cluster-control-operator: bind to human operator accounts who need write access to Frame CRDs.
 # Example: kubectl create clusterrolebinding <user>-operator \

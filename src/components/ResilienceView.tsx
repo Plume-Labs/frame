@@ -1,16 +1,18 @@
-import { Resilience, createFrameClient } from '@/lib/frame-sdk'
+import { BackupStatus, Resilience, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { ShieldWarning, ArrowClockwise, Database, ShieldCheck } from '@phosphor-icons/react'
+import { ShieldWarning, ArrowClockwise, Database, ShieldCheck, Archive } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 export function ResilienceView() {
   const { state, reload } = useLiveResource<Resilience>(() => frame.cluster.resilience())
   const r = state.phase === 'ready' ? state.data : null
+  const { state: bkState } = useLiveResource<BackupStatus | null>(() => frame.cluster.backups())
+  const bk = bkState.phase === 'ready' ? bkState.data : null
 
   return (
     <div className="space-y-6">
@@ -105,6 +107,42 @@ export function ResilienceView() {
           )}
         </>
       )}
+
+      {/* ── Backups / DR (Velero → Ceph RGW) ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-base flex items-center gap-2">
+            <Archive size={16} className="text-primary" /> Backups (Velero → Ceph S3)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <LiveStates state={bkState} emptyLabel="Velero not deployed." />
+          {bk && (
+            <>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                <Badge variant="outline" className={`border-current ${bk.storageReady ? 'text-accent' : 'text-destructive'}`}>
+                  storage {bk.storageReady ? 'available' : 'down'}
+                </Badge>
+                <Badge variant="outline" className="border-current text-foreground">
+                  {bk.schedule ? `schedule ${bk.schedule}` : 'no schedule'}
+                </Badge>
+                {bk.lastSuccess && (
+                  <span className="text-muted-foreground">last success {new Date(bk.lastSuccess).toLocaleString()}</span>
+                )}
+              </div>
+              {bk.recent.map((run) => (
+                <div key={run.name} className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                  <span className="flex-1 truncate">{run.name}</span>
+                  <span className="text-muted-foreground truncate max-w-[10rem]">{run.namespaces.join(',')}</span>
+                  <Badge variant="secondary" className="text-[10px]">{run.items} items</Badge>
+                  {run.errors > 0 && <Badge variant="outline" className="border-current text-destructive text-[10px]">{run.errors} err</Badge>}
+                  <Badge variant="outline" className={`border-current text-[10px] ${run.phase === 'Completed' ? 'text-accent' : run.phase === 'InProgress' ? 'text-warning' : 'text-destructive'}`}>{run.phase}</Badge>
+                </div>
+              ))}
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

@@ -360,6 +360,22 @@ export interface PostureStatus {
   topChecks: MisconfigCheck[]
 }
 
+/** Velero disaster-recovery backup status (backups + schedule + storage). */
+export interface BackupRun {
+  name: string
+  phase: string
+  items: number
+  completed: string
+  errors: number
+  namespaces: string[]
+}
+export interface BackupStatus {
+  storageReady: boolean
+  schedule: string | null
+  lastSuccess: string | null
+  recent: BackupRun[]
+}
+
 /** Tetragon eBPF process + network activity, aggregated from its metrics. */
 export interface TetragonActivity {
   exec: number
@@ -1517,6 +1533,55 @@ class ClusterClient {
       exit,
       topNetwork: Array.from(net.values()).sort((a, b) => b.count - a.count).slice(0, 8),
       topExec: Array.from(ex.values()).sort((a, b) => b.count - a.count).slice(0, 8),
+    }
+  }
+
+  /** Velero backup status (DR): storage location, schedule, recent runs. */
+  async backups(): Promise<BackupStatus | null> {
+    type Backup = {
+      metadata: { name: string; creationTimestamp?: string }
+      spec?: { includedNamespaces?: string[] }
+      status?: {
+        phase?: string
+        completionTimestamp?: string
+        errors?: number
+        progress?: { itemsBackedUp?: number }
+      }
+    }
+    const base = '/apis/velero.io/v1/namespaces/velero'
+    const [bk, bsl, sch] = await Promise.all([
+      k8sFetch<ListResponse<Backup>>(`${base}/backups`).catch(() => null),
+      k8sFetch<ListResponse<{ status?: { phase?: string } }>>(`${base}/backupstoragelocations`).catch(() => null),
+      k8sFetch<ListResponse<{ spec?: { schedule?: string }; status?: { phase?: string } }>>(`${base}/schedules`).catch(() => null),
+    ])
+    if (!bk && !bsl && !sch) return null
+
+    const recent: BackupRun[] = (bk?.items ?? [])
+      .map((b) => ({
+        name: b.metadata.name,
+        phase: b.status?.phase ?? 'Unknown',
+        items: b.status?.progress?.itemsBackedUp ?? 0,
+        completed: b.status?.completionTimestamp ?? '',
+        errors: b.status?.errors ?? 0,
+        namespaces: b.spec?.includedNamespaces ?? [],
+        _ts: b.status?.completionTimestamp ?? b.metadata.creationTimestamp ?? '',
+      }))
+      .sort((a, b) => b._ts.localeCompare(a._ts))
+      .slice(0, 8)
+      .map(({ _ts, ...r }) => r)
+
+    const lastSuccess =
+      (bk?.items ?? [])
+        .filter((b) => b.status?.phase === 'Completed' && b.status?.completionTimestamp)
+        .map((b) => b.status!.completionTimestamp!)
+        .sort()
+        .pop() ?? null
+
+    return {
+      storageReady: (bsl?.items ?? []).some((l) => l.status?.phase === 'Available'),
+      schedule: (sch?.items ?? []).find((s) => s.status?.phase === 'Enabled')?.spec?.schedule ?? null,
+      lastSuccess,
+      recent,
     }
   }
 
