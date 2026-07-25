@@ -1562,6 +1562,31 @@ class ClusterClient {
     }
   }
 
+  /**
+   * Neura cluster jobs = ephemeral sandbox pods (coding-agent / CAD). Ops
+   * summary: counts by phase + recent pods. Detail lives in Neura itself.
+   */
+  async neuraSandboxJobs(): Promise<{ byPhase: Record<string, number>; recent: Array<{ name: string; phase: string; node: string; age: string }> }> {
+    const res = await k8sFetch<ListResponse<{ metadata: { name: string; creationTimestamp?: string }; spec?: { nodeName?: string }; status?: { phase?: string } }>>(
+      '/api/v1/pods?labelSelector=app%3Dneura-sandbox',
+    )
+    const byPhase: Record<string, number> = {}
+    const recent = (res.items ?? [])
+      .map((p) => {
+        const phase = p.status?.phase ?? 'Unknown'
+        byPhase[phase] = (byPhase[phase] ?? 0) + 1
+        return {
+          name: p.metadata.name,
+          phase,
+          node: p.spec?.nodeName ?? '',
+          age: p.metadata.creationTimestamp ?? '',
+        }
+      })
+      .sort((a, b) => b.age.localeCompare(a.age))
+      .slice(0, 8)
+    return { byPhase, recent }
+  }
+
   /** Velero backup status (DR): storage location, schedule, recent runs. */
   async backups(): Promise<BackupStatus | null> {
     type Backup = {

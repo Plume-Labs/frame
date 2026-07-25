@@ -18,9 +18,35 @@ const STATUS: Record<Job['status'], { tone: string; icon: React.ReactNode }> = {
 export function FrameJobsView() {
   const { state, reload } = useLiveResource<{ items: Job[] }>(() => frame.jobs.list())
   const jobs = state.phase === 'ready' ? state.data.items : []
+  const { state: nsState } = useLiveResource(() => frame.cluster.neuraSandboxJobs())
+  const ns = nsState.phase === 'ready' ? nsState.data : null
 
   return (
     <div className="space-y-6">
+      {ns && (ns.recent.length > 0 || Object.keys(ns.byPhase).length > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-base flex items-center gap-2">
+              <Queue className="text-primary" size={18} /> Neura cluster jobs (sandbox pods)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex flex-wrap gap-2 text-[11px] font-mono">
+              {Object.entries(ns.byPhase).map(([p, n]) => (
+                <Badge key={p} variant="outline" className={`border-current ${p === 'Running' ? 'text-primary' : p === 'Failed' ? 'text-destructive' : p === 'Succeeded' ? 'text-accent' : 'text-muted-foreground'}`}>{n} {p}</Badge>
+              ))}
+              {ns.recent.length === 0 && <span className="text-muted-foreground">no active sandbox jobs</span>}
+            </div>
+            {ns.recent.map((r) => (
+              <div key={r.name} className="flex items-center gap-2 text-[11px] font-mono">
+                <span className="flex-1 truncate">{r.name}</span>
+                <span className="text-muted-foreground">{r.node}</span>
+                <Badge variant="secondary" className="text-[10px]">{r.phase}</Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
