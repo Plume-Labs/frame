@@ -26,4 +26,15 @@ helm upgrade -i falco falcosecurity/falco -n falco --create-namespace \
 
 kubectl -n falco rollout status ds/falco --timeout=300s
 kubectl -n falco rollout status deploy/falco-falcosidekick --timeout=180s
-say "Done. Falcosidekick metrics: falco-falcosidekick.falco.svc:2801/metrics (Frame Security screen reads this)."
+
+say "trivy-operator (security posture: image CVEs + workload misconfigs)"
+helm repo add aqua https://aquasecurity.github.io/helm-charts/ >/dev/null 2>&1 || true
+helm repo update aqua >/dev/null 2>&1 || true
+helm upgrade -i trivy-operator aqua/trivy-operator -n trivy-system --create-namespace \
+  --set trivy.ignoreUnfixed=true \
+  --set trivyOperator.scanJobsConcurrentLimit=2
+kubectl -n trivy-system rollout status deploy/trivy-operator --timeout=180s
+# The Frame Security screen reads these CRDs (VulnerabilityReport / ConfigAuditReport)
+# via the pod SA — cluster-control-viewer includes aquasecurity.github.io (rbac.yaml).
+
+say "Done. Falco → Falcosidekick :2801/metrics; trivy-operator → aquasecurity.github.io CRDs. Both feed the Frame Security screen."
