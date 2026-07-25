@@ -29,6 +29,7 @@ import { KsmView } from '@/components/KsmView'
 
 import { CapacityView } from '@/components/CapacityView'
 import { ResilienceView } from '@/components/ResilienceView'
+import { SecurityView } from '@/components/SecurityView'
 import { ClusterEventsView } from '@/components/ClusterEventsView'
 
 import { Button } from '@/components/ui/button'
@@ -55,6 +56,7 @@ import {
   Clock,
   Cpu,
   Database,
+  Detective,
   Gauge,
   GitBranch,
   HardDrive,
@@ -138,6 +140,7 @@ const NAV: NavGroup[] = [
     items: [
       { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Live allocatable vs used vs reserved' },
       { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'Live durability, disruption budgets, restart hotspots' },
+      { id: 'security', label: 'Security', icon: <Detective />, description: 'Live runtime threat detections (Falco)' },
       { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
     ],
   },
@@ -245,6 +248,8 @@ function App() {
         return <CapacityView />
       case 'resilience':
         return <ResilienceView />
+      case 'security':
+        return <SecurityView />
       case 'events':
         return <ClusterEventsView />
 
