@@ -12,6 +12,36 @@ kubeScheduler: { enabled: false }
 kubeProxy: { enabled: false }
 kubeEtcd: { enabled: false }
 alertmanager:
+  config:
+    route:
+      group_by: [alertname, severity]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: default
+      routes:
+        - matchers: [severity = "critical"]
+          receiver: critical
+    receivers:
+      # On-cluster webhook sink (verifiable without external creds). Swap for
+      # Slack/email/PagerDuty for real fan-out — see the commented block below.
+      - name: default
+        webhook_configs:
+          - url: http://alert-sink.monitoring.svc.cluster.local:80/
+            send_resolved: true
+      - name: critical
+        webhook_configs:
+          - url: http://alert-sink.monitoring.svc.cluster.local:80/critical
+            send_resolved: true
+      # - name: critical
+      #   slack_configs:
+      #     - api_url_file: /etc/alertmanager/secrets/slack/url   # from a Secret
+      #       channel: '#alerts'
+      #       send_resolved: true
+    inhibit_rules:
+      - source_matchers: [severity = "critical"]
+        target_matchers: [severity = "warning"]
+        equal: [alertname, namespace]
   alertmanagerSpec:
     resources: { requests: { cpu: 20m, memory: 64Mi } }
     storage:
