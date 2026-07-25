@@ -92,6 +92,9 @@ if [ "${GPU:-}" = "1" ]; then
   done
 fi
 
+say "Runtime security (Falco + Falcosidekick → Frame Security screen)"
+bash deploy/scripts/security-up.sh || echo "  (Falco install failed — non-fatal; Security screen will show empty)"
+
 say "Embeddings server (TEI on CPU — Neura AI_EMBEDDING_BASE_URL)"
 kubectl create namespace inference --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f deploy/samples/test-cluster/tei.yaml

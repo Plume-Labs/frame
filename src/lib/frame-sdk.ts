@@ -317,6 +317,24 @@ export interface GpuInfo {
   decUtil: number
 }
 
+/** A Falco runtime-security detection, aggregated by rule + workload. */
+export interface SecurityEvent {
+  rule: string
+  priority: string // warning | error | critical | notice | …
+  priorityRank: number // Falco numeric (0 = emergency … 7 = debug); lower = worse
+  node: string
+  namespace: string
+  pod: string
+  source: string // syscall | k8s_audit | …
+  count: number
+}
+
+export interface SecurityStatus {
+  events: SecurityEvent[]
+  total: number
+  byPriority: Record<string, number>
+}
+
 export interface InferenceStatus {
   model: string
   node: string
@@ -1292,6 +1310,50 @@ class ClusterClient {
       tokensPredictedTotal: num('llamacpp:tokens_predicted_total'),
       busySlotsPerDecode: num('llamacpp:n_busy_slots_per_decode'),
     }
+  }
+
+  /**
+   * Runtime security detections from Falco (via Falcosidekick Prometheus
+   * metrics). Each series is one (rule, priority, workload) with a firing count.
+   */
+  async security(): Promise<SecurityStatus | null> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      '/api/v1/namespaces/falco/pods?labelSelector=app.kubernetes.io%2Fname%3Dfalcosidekick',
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) return null
+    const res = await fetch(
+      `/api/v1/namespaces/falco/pods/${name}:2801/proxy/metrics`,
+    )
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Falco metrics')
+    const text = await res.text()
+
+    const lbl = (labels: string, k: string) =>
+      labels.match(new RegExp(`${k}="([^"]*)"`))?.[1] ?? ''
+    const re = /^falcosecurity_falcosidekick_falco_events_total\{([^}]*)\}\s+([0-9.e+-]+)/gm
+    const events: SecurityEvent[] = []
+    const byPriority: Record<string, number> = {}
+    let m: RegExpExecArray | null
+    let total = 0
+    while ((m = re.exec(text))) {
+      const [, labels, valStr] = m
+      const count = Number(valStr)
+      const priority = lbl(labels, 'priority_raw') || lbl(labels, 'priority')
+      events.push({
+        rule: lbl(labels, 'rule'),
+        priority,
+        priorityRank: Number(lbl(labels, 'priority') || 7),
+        node: lbl(labels, 'hostname'),
+        namespace: lbl(labels, 'k8s_ns_name'),
+        pod: lbl(labels, 'k8s_pod_name'),
+        source: lbl(labels, 'source'),
+        count,
+      })
+      byPriority[priority] = (byPriority[priority] ?? 0) + count
+      total += count
+    }
+    events.sort((a, b) => a.priorityRank - b.priorityRank || b.count - a.count)
+    return { events, total, byPriority }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
