@@ -27,8 +27,9 @@ export function RacksView() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Real nodes grouped by physical topology — the <span className="font-mono">topology.frame.io/rack</span>{' '}
-            label (the hypervisor host each node runs on). Shared host = shared failure domain and oversubscribed cores.
+            Nodes grouped by physical rack — the <span className="font-mono">topology.frame.io/rack</span> label.
+            On bare metal this is the datacenter rack; on the virtualized test cluster it resolves to the
+            hypervisor host (shown below with core oversubscription).
           </p>
         </CardContent>
       </Card>
