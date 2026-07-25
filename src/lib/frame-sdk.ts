@@ -287,11 +287,11 @@ export interface RackNodeInfo {
   pods: number
 }
 /**
- * A rack: real nodes grouped by physical topology. When nodes carry
- * `topology.frame.io/rack` (the Proxmox host they run on, stamped by
- * label-racks.sh) the rack IS that hypervisor host and `physical` is set —
- * exposing real host capacity and VM oversubscription. Falls back to the
- * FrameNode `spec.rack` label otherwise.
+ * A rack: nodes grouped by physical topology via the `topology.frame.io/rack`
+ * node label (falls back to the FrameNode `spec.rack`). On bare metal — Frame's
+ * primary target — this is the datacenter rack. On the virtualized test cluster
+ * the label resolves to the hypervisor host and `physical` is additionally set
+ * (host capacity + VM oversubscription); it is absent on metal.
  */
 export interface Rack {
   name: string
