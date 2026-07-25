@@ -1,0 +1,29 @@
+# kube-apiserver audit policy — low-noise, security-relevant resources logged at
+# RequestResponse so the Falco k8saudit plugin can inspect request objects
+# (privileged pods, exec/attach, secret/SA access, RBAC changes).
+# Install on the control-plane node at:
+#   /var/lib/rancher/k3s/server/audit-policy.yaml
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]
+rules:
+  - level: None
+    verbs: ["get", "list", "watch"]
+  - level: None
+    users:
+      - "system:kube-scheduler"
+      - "system:kube-controller-manager"
+      - "system:apiserver"
+  - level: None
+    resources:
+      - { group: "", resources: ["events", "endpoints"] }
+      - { group: "coordination.k8s.io", resources: ["leases"] }
+  # Security-relevant — full request + response object.
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "secrets", "serviceaccounts", "pods", "configmaps"]
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+  # Everything else that mutates — metadata only.
+  - level: Metadata
