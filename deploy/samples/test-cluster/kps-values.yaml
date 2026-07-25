@@ -1,0 +1,25 @@
+nodeExporter: { enabled: false }   # reuse existing monitoring/node-exporter
+alertmanager:
+  alertmanagerSpec:
+    resources: { requests: { cpu: 20m, memory: 64Mi } }
+    storage:
+      volumeClaimTemplate:
+        spec: { storageClassName: ceph-rbd, accessModes: [ReadWriteOnce], resources: { requests: { storage: 2Gi } } }
+grafana:
+  adminPassword: neura
+  defaultDashboardsTimezone: browser
+  service: { type: NodePort, nodePort: 30300 }
+  persistence: { enabled: true, storageClassName: ceph-rbd, size: 2Gi }
+  resources: { requests: { cpu: 50m, memory: 128Mi } }
+kube-state-metrics:
+  resources: { requests: { cpu: 20m, memory: 64Mi } }
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    scrapeInterval: 30s
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources: { requests: { cpu: 200m, memory: 512Mi } }
+    storageSpec:
+      volumeClaimTemplate:
+        spec: { storageClassName: ceph-rbd, accessModes: [ReadWriteOnce], resources: { requests: { storage: 8Gi } } }

@@ -92,6 +92,9 @@ if [ "${GPU:-}" = "1" ]; then
   done
 fi
 
+say "Observability (Prometheus + Grafana + Alertmanager)"
+bash deploy/scripts/observability-up.sh || echo "  (observability install failed — non-fatal)"
+
 say "Disaster recovery (Ceph RGW object store + Velero backups)"
 bash deploy/scripts/backup-up.sh || echo "  (backup stack failed — non-fatal)"
 
