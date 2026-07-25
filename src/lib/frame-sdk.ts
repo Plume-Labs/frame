@@ -376,6 +376,20 @@ export interface BackupStatus {
   recent: BackupRun[]
 }
 
+/** An active alert from Alertmanager. */
+export interface ActiveAlert {
+  name: string
+  severity: string
+  state: string
+  summary: string
+  namespace: string
+  startsAt: string
+}
+export interface AlertsStatus {
+  alerts: ActiveAlert[]
+  bySeverity: Record<string, number>
+}
+
 /** A capacity metric's recent history + linear projection (from Prometheus). */
 export interface CapacityTrend {
   metric: string
@@ -1650,6 +1664,44 @@ class ClusterClient {
       series.push({ metric, current, history, projectedFullDays })
     }
     return { series, windowHours }
+  }
+
+  /**
+   * Active alerts from Alertmanager (Prometheus rules + routed Falco security
+   * detections). Meta alerts (Watchdog/InfoInhibitor) are dropped.
+   */
+  async alerts(): Promise<AlertsStatus | null> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      '/api/v1/namespaces/monitoring/pods?labelSelector=app.kubernetes.io%2Fname%3Dalertmanager',
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) return null
+    const res = await fetch(`/api/v1/namespaces/monitoring/pods/${name}:9093/proxy/api/v2/alerts`)
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alertmanager alerts')
+    const raw: Array<{
+      labels?: Record<string, string>
+      annotations?: Record<string, string>
+      status?: { state?: string }
+      startsAt?: string
+    }> = await res.json()
+
+    const rank: Record<string, number> = { critical: 0, warning: 1, info: 2, none: 3 }
+    const bySeverity: Record<string, number> = {}
+    const alerts: ActiveAlert[] = raw
+      .filter((a) => !['Watchdog', 'InfoInhibitor'].includes(a.labels?.alertname ?? ''))
+      .map((a) => ({
+        name: a.labels?.alertname ?? a.labels?.rule ?? 'Unknown',
+        severity: a.labels?.severity ?? 'none',
+        state: a.status?.state ?? '',
+        summary: a.annotations?.summary ?? a.annotations?.description ?? '',
+        namespace: a.labels?.namespace ?? a.labels?.k8s_ns_name ?? '',
+        startsAt: a.startsAt ?? '',
+      }))
+    for (const a of alerts) bySeverity[a.severity] = (bySeverity[a.severity] ?? 0) + 1
+    alerts.sort(
+      (a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9) || b.startsAt.localeCompare(a.startsAt),
+    )
+    return { alerts, bySeverity }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */

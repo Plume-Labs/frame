@@ -30,6 +30,7 @@ import { KsmView } from '@/components/KsmView'
 import { CapacityView } from '@/components/CapacityView'
 import { ResilienceView } from '@/components/ResilienceView'
 import { SecurityView } from '@/components/SecurityView'
+import { AlertsView } from '@/components/AlertsView'
 import { ClusterEventsView } from '@/components/ClusterEventsView'
 
 import { Button } from '@/components/ui/button'
@@ -50,6 +51,7 @@ import {
 } from '@/components/ui/sidebar'
 import {
   Archive,
+  Bell,
   ArrowsLeftRight,
   Calendar,
   ChartLine,
@@ -141,6 +143,7 @@ const NAV: NavGroup[] = [
       { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Live allocatable vs used vs reserved' },
       { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'Durability, disruption budgets, restarts + Velero backups' },
       { id: 'security', label: 'Security', icon: <Detective />, description: 'Runtime (Falco) + posture (trivy) + network (Tetragon)' },
+      { id: 'alerts', label: 'Alerts', icon: <Bell />, description: 'Active Alertmanager alerts (rules + Falco)' },
       { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
     ],
   },
@@ -250,6 +253,8 @@ function App() {
         return <ResilienceView />
       case 'security':
         return <SecurityView />
+      case 'alerts':
+        return <AlertsView />
       case 'events':
         return <ClusterEventsView />
 

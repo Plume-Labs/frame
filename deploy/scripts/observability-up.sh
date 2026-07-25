@@ -18,5 +18,6 @@ kubectl -n monitoring rollout status statefulset/prometheus-kps-kube-prometheus-
 
 say "ServiceMonitors / PodMonitors for the custom exporters"
 kubectl apply -f deploy/samples/test-cluster/servicemonitors.yaml
+kubectl apply -f deploy/samples/test-cluster/neura-alerts.yaml   # custom PrometheusRules
 
 say "Done. Grafana http://<node>:30300 (admin; password in the kps-grafana Secret). Prometheus scrapes node-exporter, DCGM, llama.cpp, Tetragon, Falcosidekick, kube-state-metrics, kubelet."

@@ -1,0 +1,27 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: { name: neura-alerts, namespace: monitoring, labels: { release: kps } }
+spec:
+  groups:
+    - name: neura.rules
+      rules:
+        - alert: NeuraApiUnavailable
+          expr: kube_deployment_status_replicas_unavailable{namespace="neura",deployment="neura-neura-api"} > 0
+          for: 5m
+          labels: { severity: critical }
+          annotations: { summary: "Neura API has unavailable replicas" }
+        - alert: InferenceServerDown
+          expr: kube_deployment_status_replicas_available{namespace="inference",deployment="llamacpp"} < 1
+          for: 5m
+          labels: { severity: warning }
+          annotations: { summary: "llama.cpp inference server is down" }
+        - alert: GpuHot
+          expr: DCGM_FI_DEV_GPU_TEMP > 80
+          for: 5m
+          labels: { severity: warning }
+          annotations: { summary: "GPU temperature over 80C" }
+        - alert: NodeMemoryHigh
+          expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+          for: 10m
+          labels: { severity: warning }
+          annotations: { summary: "Node memory usage over 90%" }
