@@ -139,7 +139,7 @@ const NAV: NavGroup[] = [
     label: 'Operations',
     items: [
       { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Live allocatable vs used vs reserved' },
-      { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'Live durability, disruption budgets, restart hotspots' },
+      { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'Durability, disruption budgets, restarts + Velero backups' },
       { id: 'security', label: 'Security', icon: <Detective />, description: 'Runtime (Falco) + posture (trivy) + network (Tetragon)' },
       { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
     ],

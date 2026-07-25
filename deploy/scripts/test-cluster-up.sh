@@ -92,6 +92,9 @@ if [ "${GPU:-}" = "1" ]; then
   done
 fi
 
+say "Disaster recovery (Ceph RGW object store + Velero backups)"
+bash deploy/scripts/backup-up.sh || echo "  (backup stack failed — non-fatal)"
+
 say "Runtime security (Falco + Falcosidekick → Frame Security screen)"
 bash deploy/scripts/security-up.sh || echo "  (Falco install failed — non-fatal; Security screen will show empty)"
 
