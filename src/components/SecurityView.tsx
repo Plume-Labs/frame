@@ -1,10 +1,10 @@
-import { PostureStatus, SecurityStatus, createFrameClient } from '@/lib/frame-sdk'
+import { PostureStatus, SecurityStatus, TetragonActivity, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { ShieldWarning, ArrowClockwise, Warning, Package, Wrench } from '@phosphor-icons/react'
+import { ShieldWarning, ArrowClockwise, Warning, Package, Wrench, Network } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
@@ -34,6 +34,10 @@ export function SecurityView() {
     frame.cluster.posture(),
   )
   const posture = postureState.phase === 'ready' ? postureState.data : null
+  const { state: tetraState, reload: reloadTetra } = useLiveResource<TetragonActivity | null>(() =>
+    frame.cluster.tetragon(),
+  )
+  const tetra = tetraState.phase === 'ready' ? tetraState.data : null
 
   return (
     <div className="space-y-6">
@@ -49,6 +53,7 @@ export function SecurityView() {
               onClick={() => {
                 reload()
                 reloadPosture()
+                reloadTetra()
               }}
               disabled={state.phase === 'loading'}
             >
@@ -150,6 +155,52 @@ export function SecurityView() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Network & process activity (Tetragon eBPF) ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-base flex items-center gap-2">
+            <Network size={16} className="text-primary" /> Network &amp; process activity (Tetragon)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <LiveStates state={tetraState} emptyLabel="Tetragon not deployed." />
+          {tetra && (
+            <>
+              <div className="flex flex-wrap gap-2 text-[11px] font-mono">
+                <Badge variant="outline" className="border-current text-accent">{tetra.network.toLocaleString()} net connects</Badge>
+                <Badge variant="outline" className="border-current text-foreground">{tetra.exec.toLocaleString()} process exec</Badge>
+                <Badge variant="outline" className="border-current text-muted-foreground">{tetra.exit.toLocaleString()} exit</Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Top network talkers</div>
+                  {tetra.topNetwork.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground font-mono">No network connects captured yet.</p>
+                  ) : (
+                    tetra.topNetwork.map((n) => (
+                      <div key={`${n.workload}-${n.namespace}`} className="flex items-center gap-2 text-[11px] font-mono">
+                        <span className="flex-1 truncate">{n.namespace}/{n.workload}</span>
+                        <Badge variant="secondary" className="text-[10px]">{n.count}</Badge>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Top exec'd binaries</div>
+                  {tetra.topExec.map((e) => (
+                    <div key={`${e.binary}-${e.workload}`} className="flex items-center gap-2 text-[11px] font-mono">
+                      <span className="flex-1 truncate">{e.binary}</span>
+                      <span className="text-muted-foreground truncate max-w-[8rem]">{e.workload}</span>
+                      <Badge variant="secondary" className="text-[10px]">{e.count}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
