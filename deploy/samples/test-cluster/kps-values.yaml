@@ -6,7 +6,10 @@ alertmanager:
       volumeClaimTemplate:
         spec: { storageClassName: ceph-rbd, accessModes: [ReadWriteOnce], resources: { requests: { storage: 2Gi } } }
 grafana:
-  adminPassword: neura
+  # No hardcoded password — the chart generates a random one into the
+  # `kps-grafana` Secret. Retrieve it with:
+  #   kubectl -n monitoring get secret kps-grafana \
+  #     -o jsonpath='{.data.admin-password}' | base64 -d
   defaultDashboardsTimezone: browser
   service: { type: NodePort, nodePort: 30300 }
   persistence: { enabled: true, storageClassName: ceph-rbd, size: 2Gi }
