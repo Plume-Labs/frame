@@ -37,4 +37,22 @@ kubectl -n trivy-system rollout status deploy/trivy-operator --timeout=180s
 # The Frame Security screen reads these CRDs (VulnerabilityReport / ConfigAuditReport)
 # via the pod SA — cluster-control-viewer includes aquasecurity.github.io (rbac.yaml).
 
-say "Done. Falco → Falcosidekick :2801/metrics; trivy-operator → aquasecurity.github.io CRDs. Both feed the Frame Security screen."
+say "Falco k8saudit plugin (API-level attack detection → same falcosidekick)"
+helm upgrade -i falco-k8saudit falcosecurity/falco -n falco \
+  -f deploy/samples/test-cluster/falco-k8saudit-values.yaml
+kubectl -n falco rollout status deploy/falco-k8saudit --timeout=240s
+
+cat <<'NOTE'
+
+  [manual step — control-plane node, needs root]
+  The k8saudit receiver is up (NodePort 32765). To feed it, point the k3s
+  apiserver audit log at it (privileged: restarts k3s, auto-reverts on failure):
+
+      sudo deploy/scripts/enable-k8s-audit.sh     # run ON the cp node
+
+  After that, API-level attacks (privileged pod, exec, RBAC change, secret
+  access) appear on the Frame Security screen with source=k8s_audit.
+
+NOTE
+
+say "Done. Falco (syscall + k8saudit) → Falcosidekick :2801/metrics; trivy-operator → aquasecurity.github.io CRDs. All feed the Frame Security screen."

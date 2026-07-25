@@ -1,0 +1,42 @@
+# Falco k8saudit plugin — ingests kube-apiserver audit events (no kernel driver)
+# and routes detections to the EXISTING falcosidekick, so API-level attacks
+# (privileged pod created, exec into pod, RBAC change, secret access, anonymous
+# access) land in the same metric the Frame Security screen reads (source=k8s_audit).
+#   helm upgrade -i falco-k8saudit falcosecurity/falco -n falco -f falco-k8saudit-values.yaml
+driver: { enabled: false }
+collectors: { enabled: false }
+controller:
+  kind: deployment
+  deployment: { replicas: 1 }
+falcoctl:
+  artifact:
+    install: { enabled: true }
+    follow: { enabled: false }
+  config:
+    artifact:
+      install:
+        refs: [k8saudit-rules:0.11, k8saudit:0.11, json:0.7]
+falco:
+  rules_files:
+    - /etc/falco/k8s_audit_rules.yaml
+  plugins:
+    - name: k8saudit
+      library_path: libk8saudit.so
+      init_config: ""
+      open_params: "http://:9765/k8s-audit"
+    - name: json
+      library_path: libjson.so
+      init_config: ""
+  load_plugins: [k8saudit, json]
+  json_output: true
+  http_output:
+    enabled: true
+    url: "http://falco-falcosidekick.falco.svc.cluster.local:2801/"
+falcosidekick: { enabled: false }
+services:
+  - name: webhook
+    type: NodePort
+    ports:
+      - port: 9765
+        nodePort: 32765
+        protocol: TCP
