@@ -55,4 +55,13 @@ cat <<'NOTE'
 
 NOTE
 
-say "Done. Falco (syscall + k8saudit) → Falcosidekick :2801/metrics; trivy-operator → aquasecurity.github.io CRDs. All feed the Frame Security screen."
+say "Tetragon (eBPF process + network observability — CNI-agnostic, no swap)"
+helm repo add cilium https://helm.cilium.io >/dev/null 2>&1 || true
+helm repo update cilium >/dev/null 2>&1 || true
+helm upgrade -i tetragon cilium/tetragon -n tetragon --create-namespace \
+  --set tetragon.enablePolicyFilter=true
+kubectl -n tetragon rollout status ds/tetragon --timeout=300s
+# TracingPolicy: observe outbound TCP connects → PROCESS_KPROBE network events
+kubectl apply -f deploy/samples/test-cluster/tetragon-netpolicy.yaml
+
+say "Done. Falco (syscall + k8saudit) → Falcosidekick :2801; trivy-operator → aquasecurity.github.io CRDs; Tetragon :2112. All feed the Frame Security screen."

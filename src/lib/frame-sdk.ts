@@ -360,6 +360,15 @@ export interface PostureStatus {
   topChecks: MisconfigCheck[]
 }
 
+/** Tetragon eBPF process + network activity, aggregated from its metrics. */
+export interface TetragonActivity {
+  exec: number
+  network: number // PROCESS_KPROBE (tcp_connect tracing policy)
+  exit: number
+  topNetwork: Array<{ workload: string; namespace: string; count: number }>
+  topExec: Array<{ binary: string; workload: string; count: number }>
+}
+
 export interface InferenceStatus {
   model: string
   node: string
@@ -1453,6 +1462,61 @@ class ClusterClient {
       topImages,
       misconfigs: { ...misconfigs, resources: confRes?.items?.length ?? 0 },
       topChecks,
+    }
+  }
+
+  /**
+   * Tetragon (eBPF) process + network activity, aggregated from its Prometheus
+   * metrics. PROCESS_KPROBE counts come from the tcp_connect TracingPolicy =
+   * outbound network connections per workload.
+   */
+  async tetragon(): Promise<TetragonActivity | null> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      '/api/v1/namespaces/tetragon/pods?labelSelector=app.kubernetes.io%2Fname%3Dtetragon',
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) return null
+    const res = await fetch(`/api/v1/namespaces/tetragon/pods/${name}:2112/proxy/metrics`)
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Tetragon metrics')
+    const text = await res.text()
+
+    const lbl = (labels: string, k: string) => labels.match(new RegExp(`${k}="([^"]*)"`))?.[1] ?? ''
+    const re = /^tetragon_events_total\{([^}]*)\}\s+([0-9.e+-]+)/gm
+    let exec = 0
+    let network = 0
+    let exit = 0
+    const net = new Map<string, { workload: string; namespace: string; count: number }>()
+    const ex = new Map<string, { binary: string; workload: string; count: number }>()
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text))) {
+      const [, labels, valStr] = m
+      const v = Number(valStr)
+      const type = lbl(labels, 'type')
+      const ns = lbl(labels, 'namespace')
+      const workload = lbl(labels, 'workload')
+      if (type === 'PROCESS_EXEC') {
+        exec += v
+        const binary = lbl(labels, 'binary')
+        const key = `${binary} ${workload}`
+        const e = ex.get(key) ?? { binary, workload, count: 0 }
+        e.count += v
+        ex.set(key, e)
+      } else if (type === 'PROCESS_KPROBE') {
+        network += v
+        const key = `${workload} ${ns}`
+        const e = net.get(key) ?? { workload, namespace: ns, count: 0 }
+        e.count += v
+        net.set(key, e)
+      } else if (type === 'PROCESS_EXIT') {
+        exit += v
+      }
+    }
+    return {
+      exec,
+      network,
+      exit,
+      topNetwork: Array.from(net.values()).sort((a, b) => b.count - a.count).slice(0, 8),
+      topExec: Array.from(ex.values()).sort((a, b) => b.count - a.count).slice(0, 8),
     }
   }
 
