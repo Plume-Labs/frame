@@ -100,6 +100,9 @@ kubectl apply -f deploy/samples/test-cluster/workloads.yaml
 if kubectl get nodes -o jsonpath='{.items[*].status.allocatable}' | grep -q 'nvidia.com/gpu'; then
   say "Inference server (llama.cpp on GPU)"
   kubectl apply -f deploy/samples/test-cluster/inference.yaml
+  kubectl -n inference rollout status deploy/llamacpp --timeout=600s || true
+  say "llm-d routing layer (Inference Gateway + EPP → llama.cpp)"
+  bash deploy/scripts/llm-d-up.sh || echo "  (llm-d layer failed — non-fatal; llama.cpp still serves directly)"
 else
   say "No schedulable GPU — skipping inference server (KV-Cache screen will show empty)"
 fi
