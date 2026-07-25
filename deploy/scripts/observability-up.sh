@@ -12,6 +12,8 @@ say() { echo -e "\n\033[1;32m==>\033[0m $*"; }
 say "kube-prometheus-stack (Prometheus + Grafana + Alertmanager)"
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo update prometheus-community >/dev/null 2>&1 || true
+kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f deploy/samples/test-cluster/alert-sink.yaml   # Alertmanager webhook receiver target
 helm upgrade -i kps prometheus-community/kube-prometheus-stack -n monitoring --create-namespace \
   -f deploy/samples/test-cluster/kps-values.yaml
 kubectl -n monitoring rollout status statefulset/prometheus-kps-kube-prometheus-stack-prometheus --timeout=300s || true

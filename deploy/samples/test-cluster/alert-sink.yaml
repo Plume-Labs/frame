@@ -1,0 +1,25 @@
+# Alertmanager webhook sink — a request-logging echo the Alertmanager receiver
+# posts to (verifiable delivery without external creds). Swap the receiver for
+# Slack/email/PagerDuty for real fan-out (see alertmanager.config in kps-values.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: alert-sink, namespace: monitoring, labels: { app: alert-sink } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: alert-sink } }
+  template:
+    metadata: { labels: { app: alert-sink } }
+    spec:
+      containers:
+        - name: echo
+          image: mendhak/http-https-echo:31
+          env: [{ name: HTTP_PORT, value: "8080" }]
+          ports: [{ containerPort: 8080 }]
+          resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 64Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: alert-sink, namespace: monitoring }
+spec:
+  selector: { app: alert-sink }
+  ports: [{ port: 80, targetPort: 8080 }]
