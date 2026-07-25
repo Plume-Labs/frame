@@ -1,0 +1,51 @@
+# Dedicated embeddings server (HuggingFace Text Embeddings Inference) on CPU.
+# Neura's embeddings are a separate service from chat — a generative model does
+# not serve embeddings. gte-multilingual-base: 768 dims (matches Neura's pgvector
+# schema), multilingual (FR), prefix-free (no "query:"/"passage:" needed).
+# CPU-only: no nvidia.com/gpu, so it never contends with llama.cpp on the P4.
+#   Neura points at it via AI_EMBEDDING_BASE_URL=http://tei.inference:80
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: tei, namespace: inference, labels: { app: tei } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: tei } }
+  template:
+    metadata: { labels: { app: tei } }
+    spec:
+      containers:
+        - name: tei
+          image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+          # --max-batch-tokens caps warmup peak memory (gte ctx=8192 would OOM otherwise).
+          args:
+            - "--model-id"
+            - "Alibaba-NLP/gte-multilingual-base"
+            - "--port"
+            - "80"
+            - "--auto-truncate"
+            - "--max-batch-tokens"
+            - "4096"
+            - "--max-client-batch-size"
+            - "8"
+          ports: [{ containerPort: 80, name: http }]
+          env:
+            - { name: HF_HOME, value: /data }
+          resources:
+            requests: { cpu: "1", memory: 3Gi }
+            limits: { memory: 6Gi }
+          volumeMounts: [{ name: cache, mountPath: /data }]
+          readinessProbe:
+            httpGet: { path: /health, port: 80 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 60
+      volumes:
+        - name: cache
+          emptyDir: { sizeLimit: 3Gi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: tei, namespace: inference }
+spec:
+  selector: { app: tei }
+  ports: [{ port: 80, targetPort: 80, name: http }]

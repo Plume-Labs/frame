@@ -92,6 +92,10 @@ if [ "${GPU:-}" = "1" ]; then
   done
 fi
 
+say "Embeddings server (TEI on CPU — Neura AI_EMBEDDING_BASE_URL)"
+kubectl create namespace inference --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f deploy/samples/test-cluster/tei.yaml
+
 say "Sample workloads (Frame CRs, Volcano queues+job, Argo DAG)"
 kubectl apply -f deploy/samples/test-cluster/workloads.yaml
 
