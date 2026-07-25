@@ -335,6 +335,31 @@ export interface SecurityStatus {
   byPriority: Record<string, number>
 }
 
+/** trivy-operator security posture (image vulnerabilities + config misconfigs). */
+export interface PostureSummary {
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+export interface VulnerableImage {
+  image: string
+  critical: number
+  high: number
+}
+export interface MisconfigCheck {
+  id: string
+  title: string
+  severity: string
+  count: number
+}
+export interface PostureStatus {
+  vulns: PostureSummary & { images: number }
+  topImages: VulnerableImage[]
+  misconfigs: PostureSummary & { resources: number }
+  topChecks: MisconfigCheck[]
+}
+
 export interface InferenceStatus {
   model: string
   node: string
@@ -1354,6 +1379,81 @@ class ClusterClient {
     }
     events.sort((a, b) => a.priorityRank - b.priorityRank || b.count - a.count)
     return { events, total, byPriority }
+  }
+
+  /**
+   * Security posture from trivy-operator: image CVEs (VulnerabilityReport) and
+   * workload misconfigs (ConfigAuditReport), aggregated cluster-wide.
+   */
+  async posture(): Promise<PostureStatus | null> {
+    type Report = {
+      report: {
+        summary?: { criticalCount?: number; highCount?: number; mediumCount?: number; lowCount?: number }
+        artifact?: { repository?: string; tag?: string }
+        checks?: Array<{ checkID?: string; title?: string; severity?: string; success?: boolean }>
+      }
+    }
+    const base = '/apis/aquasecurity.github.io/v1alpha1'
+    const [vulnRes, confRes] = await Promise.all([
+      k8sFetch<ListResponse<Report>>(`${base}/vulnerabilityreports`).catch(() => null),
+      k8sFetch<ListResponse<Report>>(`${base}/configauditreports`).catch(() => null),
+    ])
+    if (!vulnRes && !confRes) return null
+
+    const sum = (): PostureSummary => ({ critical: 0, high: 0, medium: 0, low: 0 })
+    const add = (acc: PostureSummary, s?: Report['report']['summary']) => {
+      acc.critical += s?.criticalCount ?? 0
+      acc.high += s?.highCount ?? 0
+      acc.medium += s?.mediumCount ?? 0
+      acc.low += s?.lowCount ?? 0
+    }
+
+    // ── Vulnerabilities: cluster totals + worst images ──
+    const vulns = sum()
+    const perImage = new Map<string, VulnerableImage>()
+    for (const r of vulnRes?.items ?? []) {
+      add(vulns, r.report.summary)
+      const a = r.report.artifact
+      const image = a?.repository ? `${a.repository}${a.tag ? `:${a.tag}` : ''}` : ''
+      if (!image) continue
+      const e = perImage.get(image) ?? { image, critical: 0, high: 0 }
+      e.critical += r.report.summary?.criticalCount ?? 0
+      e.high += r.report.summary?.highCount ?? 0
+      perImage.set(image, e)
+    }
+    const topImages = Array.from(perImage.values())
+      .filter((i) => i.critical + i.high > 0)
+      .sort((a, b) => b.critical - a.critical || b.high - a.high)
+      .slice(0, 8)
+
+    // ── Misconfigs: cluster totals + most common failed checks ──
+    const misconfigs = sum()
+    const perCheck = new Map<string, MisconfigCheck>()
+    const rank: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
+    for (const r of confRes?.items ?? []) {
+      add(misconfigs, r.report.summary)
+      for (const c of r.report.checks ?? []) {
+        if (c.success || !c.checkID) continue
+        const e = perCheck.get(c.checkID) ?? {
+          id: c.checkID,
+          title: c.title ?? c.checkID,
+          severity: c.severity ?? 'UNKNOWN',
+          count: 0,
+        }
+        e.count += 1
+        perCheck.set(c.checkID, e)
+      }
+    }
+    const topChecks = Array.from(perCheck.values())
+      .sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9) || b.count - a.count)
+      .slice(0, 8)
+
+    return {
+      vulns: { ...vulns, images: vulnRes?.items?.length ?? 0 },
+      topImages,
+      misconfigs: { ...misconfigs, resources: confRes?.items?.length ?? 0 },
+      topChecks,
+    }
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
