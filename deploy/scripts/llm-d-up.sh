@@ -35,6 +35,20 @@ helm upgrade -i -n agentgateway-system --version "$AGW_VERSION" \
 kubectl -n agentgateway-system rollout status deploy --timeout=180s
 
 say "Inference Gateway (namespace $NS)"
+# ClusterIP, not the agentgateway default LoadBalancer — this Gateway is only
+# reached internally (http://inference-gateway.$NS.svc.cluster.local:80, see
+# OLLAMA_BASE_URL). LoadBalancer spins up a klipper-lb pod per node on hostPort
+# 80, which collides with Traefik's own ingress svclb on whichever node also
+# runs the backend — permanently Pending there.
+kubectl apply -f - <<EOF
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata: { name: inference-gateway-params, namespace: $NS }
+spec:
+  service:
+    spec:
+      type: ClusterIP
+EOF
 kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -43,6 +57,8 @@ spec:
   gatewayClassName: agentgateway
   listeners:
     - { name: http, port: 80, protocol: HTTP }
+  infrastructure:
+    parametersRef: { group: agentgateway.dev, kind: AgentgatewayParameters, name: inference-gateway-params }
 EOF
 
 say "InferencePool + EPP (routes to app=$BACKEND_LABEL:$BACKEND_PORT)"
