@@ -694,11 +694,19 @@ function crToComponent(cr: WorkloadCR, kind: AppComponent['kind']): AppComponent
   }
 }
 
-/** Group key: the Helm release (instance label), else the namespace. */
+/**
+ * Group key: `part-of` first, since that's the label the Kubernetes common-
+ * labels convention defines for "this resource belongs to a larger logical
+ * application" (e.g. rook-ceph's mon-a/mon-b/osd-0/osd-1 all set part-of:
+ * rook-ceph but a per-daemon instance: a/b/0/1 — grouping on instance first
+ * would fragment them into one card each). Falls back to instance (a
+ * single-release chart like Neura sets only instance, uniformly, across all
+ * its components), then namespace.
+ */
 function appKey(cr: WorkloadCR): string {
   return (
-    cr.metadata.labels?.['app.kubernetes.io/instance'] ??
     cr.metadata.labels?.['app.kubernetes.io/part-of'] ??
+    cr.metadata.labels?.['app.kubernetes.io/instance'] ??
     cr.metadata.namespace
   )
 }
