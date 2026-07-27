@@ -41,8 +41,15 @@ helm repo add aqua https://aquasecurity.github.io/helm-charts/ >/dev/null 2>&1 |
 helm repo update aqua >/dev/null 2>&1 || true
 helm upgrade -i trivy-operator aqua/trivy-operator -n trivy-system --create-namespace \
   --set trivy.ignoreUnfixed=true \
-  --set trivyOperator.scanJobsConcurrentLimit=2
+  --set trivyOperator.scanJobsConcurrentLimit=2 \
+  --set operator.builtInTrivyServer=true
 kubectl -n trivy-system rollout status deploy/trivy-operator --timeout=180s
+kubectl -n trivy-system rollout status statefulset/trivy-server --timeout=180s
+# builtInTrivyServer switches trivy.mode=ClientServer: scan job containers
+# become thin clients talking to one shared trivy-server instead of each
+# opening its own local BoltDB cache — fixes the lock-contention crash that
+# hit any multi-container target pod (they all shared one job-pod emptyDir
+# /tmp, so sibling scan containers raced for the same cache lock).
 # The Frame Security screen reads these CRDs (VulnerabilityReport / ConfigAuditReport)
 # via the pod SA — cluster-control-viewer includes aquasecurity.github.io (rbac.yaml).
 
