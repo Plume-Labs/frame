@@ -29,6 +29,12 @@ helm upgrade -i falco falcosecurity/falco -n falco --create-namespace \
 
 kubectl -n falco rollout status ds/falco --timeout=300s
 kubectl -n falco rollout status deploy/falco-falcosidekick --timeout=180s
+# The chart has no commonLabels knob (only podLabels, which the Applications
+# view doesn't read) — label the objects directly so falco + falco-k8saudit
+# (two separate Helm releases, each with their own instance label) group
+# into one Frame Applications card instead of splitting into three.
+kubectl -n falco label ds/falco deploy/falco-falcosidekick deploy/falco-k8s-metacollector \
+  app.kubernetes.io/part-of=falco --overwrite 2>/dev/null || true
 
 say "trivy-operator (security posture: image CVEs + workload misconfigs)"
 helm repo add aqua https://aquasecurity.github.io/helm-charts/ >/dev/null 2>&1 || true
@@ -44,6 +50,7 @@ say "Falco k8saudit plugin (API-level attack detection → same falcosidekick)"
 helm upgrade -i falco-k8saudit falcosecurity/falco -n falco \
   -f deploy/samples/test-cluster/falco-k8saudit-values.yaml
 kubectl -n falco rollout status deploy/falco-k8saudit --timeout=240s
+kubectl -n falco label deploy/falco-k8saudit app.kubernetes.io/part-of=falco --overwrite
 
 cat <<'NOTE'
 
