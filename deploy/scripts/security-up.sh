@@ -43,6 +43,8 @@ helm upgrade -i trivy-operator aqua/trivy-operator -n trivy-system --create-name
   --set trivy.ignoreUnfixed=true \
   --set trivyOperator.scanJobsConcurrentLimit=2 \
   --set operator.builtInTrivyServer=true \
+  --set operator.builtInServerRegistryInsecure=true \
+  --set trivy.insecureRegistries.local=192.168.2.201:30500 \
   --set trivy.resources.limits.memory=1Gi
 kubectl -n trivy-system rollout status deploy/trivy-operator --timeout=180s
 kubectl -n trivy-system rollout status statefulset/trivy-server --timeout=180s
