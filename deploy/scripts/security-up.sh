@@ -42,7 +42,8 @@ helm repo update aqua >/dev/null 2>&1 || true
 helm upgrade -i trivy-operator aqua/trivy-operator -n trivy-system --create-namespace \
   --set trivy.ignoreUnfixed=true \
   --set trivyOperator.scanJobsConcurrentLimit=2 \
-  --set operator.builtInTrivyServer=true
+  --set operator.builtInTrivyServer=true \
+  --set trivy.resources.limits.memory=1Gi
 kubectl -n trivy-system rollout status deploy/trivy-operator --timeout=180s
 kubectl -n trivy-system rollout status statefulset/trivy-server --timeout=180s
 # builtInTrivyServer switches trivy.mode=ClientServer: scan job containers
