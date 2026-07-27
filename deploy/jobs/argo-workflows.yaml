@@ -108,7 +108,12 @@ metadata:
   name: workflow-controller
   namespace: argo
 spec:
-  replicas: 2
+  # ponytail: 1 replica + leader-election disabled. On this single-control-plane
+  # test cluster 2 replicas give no real HA but do flap the leader lease under
+  # API latency (15s lease / 10s renew), which crash-loops the controller
+  # (os.Exit(0) on failed renew). Restore 2 replicas + drop LEADER_ELECTION_DISABLE
+  # together if the control plane becomes HA.
+  replicas: 1
   selector:
     matchLabels:
       app: workflow-controller
@@ -136,6 +141,9 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: metadata.name
+            # Single replica → no lease needed; stops the renew-timeout crash loop.
+            - name: LEADER_ELECTION_DISABLE
+              value: "true"
           ports:
             - name: metrics
               containerPort: 9090
