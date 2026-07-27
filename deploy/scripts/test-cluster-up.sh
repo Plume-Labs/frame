@@ -5,15 +5,21 @@
 # Prereqs: kubectl + helm reachable at the cluster; per-node node-prep.sh already
 # run (cpu=host, Ceph disk, ssd burst disk, ptp_kvm/ksm/burst). See docs/test-cluster.md.
 #
-# Images must exist on every node's containerd BEFORE this runs:
-#   docker build -t cluster-control:latest .                     # Frame UI
-#   docker build -t ghcr.io/rmocq/neura-api:dev    -f ../../apps/api/Dockerfile ../..
-#   docker build -t ghcr.io/rmocq/neura-client:dev -f ../../apps/client/Dockerfile ../..
-#   for each: docker save <img> | ssh <node> 'sudo k3s ctr images import -'
+# cluster-control-ui still needs manual ctr-import per node (see below) — it's
+# not built from the same values-driven chart Neura uses. Neura's own images
+# go through the in-cluster registry this script sets up (registry-up.sh),
+# no per-node import needed once that's live: podman build, podman push
+# --tls-verify=false <REGISTRY_NODE_IP>:30500/neura-api:<tag>, set
+# image.registry in values.local.yaml.
+#
+# cluster-control-ui image must exist on every node's containerd BEFORE this runs:
+#   docker build -t cluster-control:latest .
+#   docker save cluster-control:latest | ssh <node> 'sudo k3s ctr images import -'
 #
 # Usage:  ./deploy/scripts/test-cluster-up.sh
 #   GPU=1                         also install the NVIDIA GPU operator + llama.cpp
 #   PVE_URL/PVE_USER/PVE_PASS     also stamp real rack labels from Proxmox
+#   REGISTRY_NODE_IP              node IP for the in-cluster registry's NodePort (skip if unset)
 #   e.g. GPU=1 PVE_URL=https://192.168.2.1:8006 PVE_PASS=… ./deploy/scripts/test-cluster-up.sh
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."   # repo root (.externals/frame)
@@ -56,6 +62,14 @@ kustomize build deploy/kubernetes/overlays/development | kubectl apply -f - || \
   kubectl kustomize deploy/kubernetes/overlays/development | kubectl apply -f -
 kubectl -n cluster-control patch svc cluster-control-ui \
   -p '{"spec":{"type":"NodePort","ports":[{"port":80,"targetPort":8080,"nodePort":30880}]}}'
+
+say "In-cluster image registry (for local Neura builds)"
+if [ -n "${REGISTRY_NODE_IP:-}" ]; then
+  REGISTRY_NODE_IP="$REGISTRY_NODE_IP" bash deploy/scripts/registry-up.sh || \
+    echo "  (registry install failed — non-fatal; Neura images fall back to whatever's ctr-imported per node)"
+else
+  echo "  REGISTRY_NODE_IP not set — skipping (see deploy/scripts/registry-up.sh)"
+fi
 
 say "Neura (Helm)"
 helm upgrade --install neura ../../k8s/helm/neura -n neura --create-namespace \
