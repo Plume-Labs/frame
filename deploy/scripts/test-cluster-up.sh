@@ -71,6 +71,12 @@ else
   echo "  REGISTRY_NODE_IP not set — skipping (see deploy/scripts/registry-up.sh)"
 fi
 
+# Must precede the Neura chart: it declares its database as an acid.zalan.do
+# postgresql CR, so helm fails on an unknown kind without the operator's CRDs.
+say "Postgres operator (Zalando) — manages the Neura database cluster"
+bash deploy/scripts/postgres-operator-up.sh || \
+  echo "  (postgres-operator install failed — Neura's postgres.enabled will not render)"
+
 say "Neura (Helm)"
 helm upgrade --install neura ../../k8s/helm/neura -n neura --create-namespace \
   -f ../../k8s/helm/neura/values.local.yaml \
@@ -122,12 +128,15 @@ kubectl apply -f deploy/samples/test-cluster/tei.yaml
 say "Sample workloads (Frame CRs, Volcano queues+job, Argo DAG)"
 kubectl apply -f deploy/samples/test-cluster/workloads.yaml
 
-# On-GPU inference server (llama.cpp on the Tesla P4) — feeds the KV-Cache /
-# Inference screen. Requires the NVIDIA GPU operator (nvidia.com/gpu schedulable).
+# On-GPU inference server — feeds the KV-Cache / Inference screen. Requires the
+# NVIDIA GPU operator (nvidia.com/gpu schedulable). Engine and model are
+# configurable: see deploy/scripts/inference-up.sh for INFER_ENGINE (llamacpp |
+# vllm), INFER_MODEL and the offload knobs.
 if kubectl get nodes -o jsonpath='{.items[*].status.allocatable}' | grep -q 'nvidia.com/gpu'; then
-  say "Inference server (llama.cpp on GPU)"
-  kubectl apply -f deploy/samples/test-cluster/inference.yaml
-  kubectl -n inference rollout status deploy/llamacpp --timeout=600s || true
+  bash deploy/scripts/inference-up.sh
+  # A 30B-class GGUF needs to be pulled (~18.5GB) and loaded before it is ready;
+  # that runs well past the 600s that sufficed for the old 1.5B default.
+  kubectl -n inference rollout status deploy/llamacpp --timeout=900s || true
   say "llm-d routing layer (Inference Gateway + EPP → llama.cpp)"
   bash deploy/scripts/llm-d-up.sh || echo "  (llm-d layer failed — non-fatal; llama.cpp still serves directly)"
 else
