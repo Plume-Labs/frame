@@ -25,6 +25,26 @@ helm repo update falcosecurity >/dev/null 2>&1 || true
 # kubelet every few minutes, losing events in between. Falco 0.44.1 / chart 9.1.0
 # is the latest release as of 2026-07-28 and still has it. Re-check on the next
 # Falco release before reaching for workarounds.
+#
+# The kmod escape hatch was investigated on 2026-07-28 and deliberately dropped.
+# It is reachable but not worth it, and the reasons are non-obvious enough to be
+# worth recording:
+#   1. falcoctl fails to build it even with `compile: true` and kernel headers
+#      present, because the driver-loader image carries gcc 12.2 (Debian) while
+#      this kernel was built with gcc 15.2 (Ubuntu). dkms refuses the mismatch.
+#      Nothing in the loader output says so plainly — it stops at "unable to find
+#      a prebuilt driver" after the 404.
+#   2. Building on the host instead DOES work: install dkms/build-essential/cmake,
+#      fetch falcosecurity/libs at the matching driver tag (10.2.0+driver for
+#      Falco 0.44.1), cmake-configure, make. Produces a clean scap.ko.
+#   3. It then cannot be loaded: cp and w1 run with Secure Boot enabled and the
+#      kernel in lockdown=integrity, so an unsigned module is rejected ("Key was
+#      rejected by service"). Only w2 has Secure Boot off, for the NVIDIA driver.
+#      Fixing that means either disabling Secure Boot fleet-wide or enrolling a
+#      MOK key, which is interactive at the boot console.
+#   4. Even if loaded, the module is tied to the exact kernel build and has to be
+#      recompiled and reloaded on every kernel upgrade.
+# A flapping modern_ebpf is the cheaper failure until upstream fixes the parser.
 helm upgrade -i falco falcosecurity/falco -n falco --create-namespace \
   --set driver.kind=modern_ebpf \
   --set falcosidekick.enabled=true \
