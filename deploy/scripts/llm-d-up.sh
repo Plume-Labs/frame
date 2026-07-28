@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # llm-d-up.sh — deploy the llm-d inference routing layer in front of the
-# llama.cpp model server (deploy/samples/test-cluster/inference.yaml).
+# llama.cpp model server (deploy/scripts/inference-up.sh).
 #
 # Why not the full llm-d stack: llm-d's serving engine is vLLM/SGLang, which
 # require GPU compute capability >= 7.0. The test GPU (Tesla P4) is Pascal
