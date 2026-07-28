@@ -45,14 +45,16 @@ case "$ENGINE" in
     # --jinja enables the model's own chat template — Qwen3 tool calls need it,
     # and tool calling is what the delegating agents depend on.
     #
-    # Tuning note: `-ot exps=CPU` offloads *every* expert, leaving ~6GB of VRAM
-    # idle and costing ~30s of prefill. `-ncmoe <N>` (experts of the first N
-    # layers on CPU) fills that VRAM and should be faster — try it here, as an
-    # isolated change. Do NOT add `--load-mode none`: it segfaults (exit 139)
-    # partway through loading this model.
+    # Offload default is `-ncmoe 34`: keep the experts of the first 34 of 48
+    # layers on the CPU, leaving 14 layers' experts on the GPU. Measured on the
+    # P4 against the previous `-ot exps=CPU` (which offloaded *every* expert and
+    # left ~6GB of VRAM idle): VRAM 1539MiB -> 6493MiB, and a delegation call
+    # 55s -> 36s cold / 23s warm, with prefill 30s -> 2.3s warm.
+    # Raise N if a larger model or context overflows VRAM.
+    # Do NOT add `--load-mode none`: it segfaults (exit 139) loading this model.
     MODEL="${INFER_MODEL:-unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M}"
     NGL="${LLAMACPP_NGL:-99}"
-    OFFLOAD="${LLAMACPP_OFFLOAD:--ot exps=CPU}"
+    OFFLOAD="${LLAMACPP_OFFLOAD:--ncmoe 34}"
     IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
     CACHE_ENV="LLAMA_CACHE"
     # $OFFLOAD is intentionally unquoted: it must word-split into separate args.
