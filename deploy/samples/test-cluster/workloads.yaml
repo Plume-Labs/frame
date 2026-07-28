@@ -58,6 +58,71 @@ kind: FrameResourceQuota
 metadata: { name: quota-low, namespace: default }
 spec: { serviceClass: LOW, maxGPUs: 0, maxCPU: "2", maxMemory: 4Gi, maxJobs: 5 }
 ---
+# Argo >= 3.4 has every workflow pod report back by creating a
+# workflowtaskresult. The cluster-scoped install grants that only in `argo`, so
+# a workflow running anywhere else dies with `workflowtaskresults.argoproj.io is
+# forbidden`. Frame puts the Workflow in FrameJob.spec.namespace, so each such
+# namespace needs this pair bound to the ServiceAccount the pods run as.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: argo-workflow-executor, namespace: default }
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [workflowtaskresults]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: argo-workflow-executor, namespace: default }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: argo-workflow-executor }
+subjects:
+  - { kind: ServiceAccount, name: default, namespace: default }
+---
+# The two FrameJobs below reference these by spec.pipeline. Frame creates the
+# Argo Workflow in FrameJob.spec.namespace and a Workflow only resolves a
+# WorkflowTemplate in its OWN namespace, so these must live in `default` next to
+# the jobs — not in `argo`. Without them the Workflow fails immediately with
+# `workflowtemplates.argoproj.io "..." not found`; that stayed invisible for as
+# long as the controller ran --namespaced and never reconciled them at all.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata: { name: neura-inference-dag, namespace: default }
+spec:
+  entrypoint: dag
+  templates:
+    - name: dag
+      dag:
+        tasks:
+          - { name: fetch-batch, template: step }
+          - { name: embed, template: step, dependencies: [fetch-batch] }
+          - { name: upsert, template: step, dependencies: [embed] }
+    - name: step
+      container:
+        image: busybox:1.37
+        command: [sh, -c, "sleep 5"]
+        resources:
+          requests: { cpu: 10m, memory: 16Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata: { name: neura-training-dag, namespace: default }
+spec:
+  entrypoint: dag
+  templates:
+    - name: dag
+      dag:
+        tasks:
+          - { name: gather, template: step }
+          - { name: consolidate, template: step, dependencies: [gather] }
+    - name: step
+      container:
+        image: busybox:1.37
+        command: [sh, -c, "sleep 5"]
+        resources:
+          requests: { cpu: 10m, memory: 16Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+---
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: FrameJob
 metadata: { name: neura-embed-refresh, namespace: default }

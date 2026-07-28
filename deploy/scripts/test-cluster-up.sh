@@ -92,7 +92,12 @@ kubectl -n volcano-system rollout status deploy/volcano-scheduler --timeout=180s
 
 say "Argo Workflows ($ARGO_VER)"
 kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n argo apply -f "https://github.com/argoproj/argo-workflows/releases/download/$ARGO_VER/namespace-install.yaml" --server-side --force-conflicts
+# install.yaml, NOT namespace-install.yaml: the latter runs the controller with
+# --namespaced, so it only reconciles Workflows in `argo`. Frame creates the
+# agent-slot Workflow in FrameJob.spec.namespace, which is usually not `argo` —
+# those Workflows then sit forever with no status and the FrameJob never leaves
+# Submitted. Matches deploy/jobs/argo-workflows.yaml, the other install path.
+kubectl -n argo apply -f "https://github.com/argoproj/argo-workflows/releases/download/$ARGO_VER/install.yaml" --server-side --force-conflicts
 kubectl -n argo rollout status deploy/workflow-controller --timeout=180s
 
 # NVIDIA GPU operator — makes nvidia.com/gpu schedulable (device-plugin) and
