@@ -8,6 +8,10 @@ metadata: { name: llamacpp, namespace: inference, labels: { app: llamacpp } }
 spec:
   replicas: 1
   selector: { matchLabels: { app: llamacpp } }
+  # Single GPU + replicas:1: RollingUpdate would surge a second pod that blocks
+  # forever waiting for the one GPU the old pod still holds. Recreate kills the
+  # old pod first (brief downtime) so the new one can claim the GPU.
+  strategy: { type: Recreate }
   template:
     metadata: { labels: { app: llamacpp } }
     spec:
@@ -15,21 +19,31 @@ spec:
       containers:
         - name: server
           image: ghcr.io/ggml-org/llama.cpp:server-cuda
+          # Qwen3-30B-A3B (MoE, 3B active): attention on the P4 (-ngl 99), expert
+          # tensors offloaded to CPU RAM (-ot exps=CPU) so the ~18.5GB Q4_K_M fits
+          # the 8GB GPU. --jinja enables the model's chat template for tool-call
+          # parsing (Qwen3 hermes-style tool calls need it).
           args:
             - "-hf"
-            - "Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M"
+            - "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M"
             - "--host"
             - "0.0.0.0"
             - "--port"
             - "8080"
             - "-ngl"
             - "99"
+            - "-ot"
+            - "exps=CPU"
+            - "--jinja"
             - "--metrics"
             - "-c"
             - "4096"
           ports: [{ containerPort: 8080, name: http }]
           env:
             - { name: LLAMA_CACHE, value: /models }
+          # No CPU/memory requests: the cluster nodes are already heavily
+          # request-reserved, and runtime RAM (~23GB free on w2) covers the
+          # CPU-offloaded experts. The GPU limit alone pins scheduling to w2.
           resources:
             limits: { nvidia.com/gpu: 1 }
           volumeMounts: [{ name: models, mountPath: /models }]
@@ -37,10 +51,11 @@ spec:
             httpGet: { path: /health, port: 8080 }
             initialDelaySeconds: 20
             periodSeconds: 10
-            failureThreshold: 60
+            failureThreshold: 120
       volumes:
         - name: models
-          emptyDir: { sizeLimit: 4Gi }
+          # 18.5GB GGUF download cache (node w2 has ~24GB free — tight, monitored).
+          emptyDir: { sizeLimit: 20Gi }
 ---
 apiVersion: v1
 kind: Service
