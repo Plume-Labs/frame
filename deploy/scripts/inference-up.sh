@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# inference-up.sh — deploy the on-GPU model server that feeds the Inference /
+# KV-Cache screens. Renders and applies the `inference` namespace, the model
+# server Deployment and its Service.
+#
+# Engine is selectable:
+#   llamacpp (default) — GGUF via llama.cpp. Runs on any CUDA GPU, including
+#                        Pascal (the test cluster's Tesla P4, sm_6.1).
+#   vllm               — vLLM OpenAI server. REQUIRES compute capability >= 7.0,
+#                        so it does NOT run on the P4 (see llm-d-up.sh). Kept
+#                        selectable for a newer GPU; guarded by a preflight check.
+#
+# Either way the result speaks the OpenAI API on :8080 and is routed by
+# llm-d-up.sh (Inference Gateway + EPP), which selects pods by label app=llamacpp.
+#
+# Config — all optional env vars:
+#   INFER_ENGINE      llamacpp | vllm                 (default: llamacpp)
+#   INFER_MODEL       model reference                 (default: per engine, below)
+#   INFER_CTX         context length                  (default: 4096)
+#   INFER_CACHE_SIZE  node-local weight cache limit   (default: 22Gi)
+#   LLAMACPP_NGL      layers to put on the GPU        (default: 99 = all)
+#   LLAMACPP_OFFLOAD  tensor-offload args             (default: -ot exps=CPU)
+#   VLLM_IMAGE        vLLM image                      (default: vllm/vllm-openai:latest)
+#   VLLM_EXTRA_ARGS   extra vLLM flags                (default: --gpu-memory-utilization 0.9)
+#
+# e.g.  INFER_MODEL=unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M ./inference-up.sh
+#       INFER_ENGINE=vllm INFER_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507 ./inference-up.sh
+set -euo pipefail
+
+NS=inference
+ENGINE="${INFER_ENGINE:-llamacpp}"
+CTX="${INFER_CTX:-4096}"
+CACHE_SIZE="${INFER_CACHE_SIZE:-22Gi}"
+
+say() { echo -e "\n\033[1;35m==>\033[0m $*"; }
+
+# Emits one YAML list item per argument, at the indentation the Deployment needs.
+args_yaml() { for a in "$@"; do printf '            - "%s"\n' "$a"; done; }
+
+case "$ENGINE" in
+  llamacpp)
+    # Qwen3-30B-A3B: MoE with only 3B active params. -ngl 99 puts the attention /
+    # non-expert weights on the GPU and LLAMACPP_OFFLOAD pushes the expert tensors
+    # to CPU RAM, which is what lets an ~18.5GB Q4_K_M serve from a 7.68GB P4.
+    # --jinja enables the model's own chat template — Qwen3 tool calls need it,
+    # and tool calling is what the delegating agents depend on.
+    #
+    # Tuning note: `-ot exps=CPU` offloads *every* expert, leaving ~6GB of VRAM
+    # idle and costing ~30s of prefill. `-ncmoe <N>` (experts of the first N
+    # layers on CPU) fills that VRAM and should be faster — try it here, as an
+    # isolated change. Do NOT add `--load-mode none`: it segfaults (exit 139)
+    # partway through loading this model.
+    MODEL="${INFER_MODEL:-unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M}"
+    NGL="${LLAMACPP_NGL:-99}"
+    OFFLOAD="${LLAMACPP_OFFLOAD:--ot exps=CPU}"
+    IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
+    CACHE_ENV="LLAMA_CACHE"
+    # $OFFLOAD is intentionally unquoted: it must word-split into separate args.
+    # shellcheck disable=SC2086
+    ARGS=$(args_yaml -hf "$MODEL" --host 0.0.0.0 --port 8080 \
+      -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX")
+    ;;
+  vllm)
+    MODEL="${INFER_MODEL:-Qwen/Qwen3-30B-A3B-Instruct-2507}"
+    IMAGE="${VLLM_IMAGE:-vllm/vllm-openai:latest}"
+    CACHE_ENV="HF_HOME"
+    EXTRA="${VLLM_EXTRA_ARGS:---gpu-memory-utilization 0.9}"
+    # Preflight: vLLM needs sm_70+. The GPU operator labels nodes with the
+    # compute capability, so refuse early and loudly rather than CrashLoop.
+    MAJOR=$(kubectl get nodes -o jsonpath='{.items[*].metadata.labels.nvidia\.com/gpu\.compute\.major}' 2>/dev/null | tr ' ' '\n' | sort -rn | head -1)
+    if [ -n "$MAJOR" ] && [ "$MAJOR" -lt 7 ]; then
+      echo "ERROR: INFER_ENGINE=vllm needs GPU compute capability >= 7.0, cluster has ${MAJOR}.x (Pascal)." >&2
+      echo "       Use INFER_ENGINE=llamacpp on this hardware." >&2
+      exit 1
+    fi
+    # shellcheck disable=SC2086
+    ARGS=$(args_yaml --model "$MODEL" --port 8080 --max-model-len "$CTX" $EXTRA)
+    ;;
+  *)
+    echo "ERROR: unknown INFER_ENGINE='$ENGINE' (expected 'llamacpp' or 'vllm')" >&2
+    exit 1
+    ;;
+esac
+
+say "Inference server ($ENGINE, model=$MODEL)"
+
+# The label stays app=llamacpp for both engines on purpose: it is the selector
+# the Service, the InferencePool and llm-d-up.sh's EPP all route on. Renaming it
+# per engine would silently detach the routing layer.
+kubectl apply -f - <<YAML
+apiVersion: v1
+kind: Namespace
+metadata: { name: ${NS} }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: llamacpp, namespace: ${NS}, labels: { app: llamacpp } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: llamacpp } }
+  # Single GPU + replicas:1: RollingUpdate would surge a second pod that waits
+  # forever for the one GPU the old pod still holds. Recreate frees it first.
+  strategy: { type: Recreate }
+  template:
+    metadata: { labels: { app: llamacpp, engine: ${ENGINE} } }
+    spec:
+      runtimeClassName: nvidia
+      containers:
+        - name: server
+          image: ${IMAGE}
+          args:
+${ARGS}
+          ports: [{ containerPort: 8080, name: http }]
+          env:
+            - { name: ${CACHE_ENV}, value: /models }
+          resources:
+            limits: { nvidia.com/gpu: 1 }
+          volumeMounts: [{ name: models, mountPath: /models }]
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 120
+      volumes:
+        - name: models
+          # Node-local on purpose. A re-downloadable ~18.5GB weight cache must not
+          # sit on 3x-replicated ceph-rbd: a 25Gi PVC of it consumed ~55GB raw and
+          # filled the entire Ceph cluster, blocking writes for every workload.
+          # Cost of node-local: a re-download whenever the pod moves nodes.
+          emptyDir: { sizeLimit: ${CACHE_SIZE} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: llamacpp, namespace: ${NS} }
+spec:
+  selector: { app: llamacpp }
+  ports: [{ port: 8080, targetPort: 8080, name: http }]
+YAML
