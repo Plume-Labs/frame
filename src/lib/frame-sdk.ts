@@ -427,6 +427,17 @@ export interface InferenceStatus {
   busySlotsPerDecode: number
 }
 
+/** Live TEI (text-embeddings-inference) status — CPU-only in this deployment. */
+export interface TeiStatus {
+  model: string
+  dtype: string
+  node: string
+  requestCount: number
+  successCount: number
+  queueSize: number
+  avgInferenceMs: number
+}
+
 /** Where workloads actually run — pods grouped by the node scheduling them. */
 export interface NodePlacement {
   node: string
@@ -1393,6 +1404,48 @@ class ClusterClient {
       promptTokensTotal: num('llamacpp:prompt_tokens_total'),
       tokensPredictedTotal: num('llamacpp:tokens_predicted_total'),
       busySlotsPerDecode: num('llamacpp:n_busy_slots_per_decode'),
+    }
+  }
+
+  /**
+   * Live TEI (text-embeddings-inference) status from its Prometheus /metrics
+   * + /info. Runs CPU-only in this deployment — no GPU telemetry to report.
+   */
+  async teiStatus(): Promise<TeiStatus | null> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string }; spec: { nodeName?: string } }>>(
+      '/api/v1/namespaces/inference/pods?labelSelector=app%3Dtei',
+    )
+    const pod = pods.items?.find((p) => p.metadata.name)
+    if (!pod) return null
+    const name = pod.metadata.name
+    const base = `/api/v1/namespaces/inference/pods/${name}:80/proxy`
+
+    const mRes = await fetch(`${base}/metrics`)
+    if (!mRes.ok) throw new FrameAPIError(mRes.status, 'cannot read TEI metrics')
+    const text = await mRes.text()
+    const num = (k: string) => Number(text.match(new RegExp(`^${k}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)`, 'm'))?.[1] ?? 0)
+
+    const durationSum = num('te_request_inference_duration_sum')
+    const durationCount = num('te_request_inference_duration_count')
+
+    let model = ''
+    let dtype = ''
+    try {
+      const info = await (await fetch(`${base}/info`)).json()
+      model = info.model_id ?? ''
+      dtype = info.model_dtype ?? ''
+    } catch {
+      /* info optional */
+    }
+
+    return {
+      model: model || 'TEI',
+      dtype,
+      node: pod.spec.nodeName ?? '',
+      requestCount: num('te_request_count'),
+      successCount: num('te_request_success'),
+      queueSize: num('te_queue_size'),
+      avgInferenceMs: durationCount ? (durationSum / durationCount) * 1000 : 0,
     }
   }
 

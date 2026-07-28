@@ -19,6 +19,7 @@ import { ClusterStorageView } from '@/components/ClusterStorageView'
 import { NetworkView } from '@/components/NetworkView'
 import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
 
+import { InferenceOverviewView } from '@/components/InferenceOverviewView'
 import { InferenceView } from '@/components/InferenceView'
 import { VolcanoPoolsView } from '@/components/VolcanoPoolsView'
 import { MpsView } from '@/components/MpsView'
@@ -54,6 +55,7 @@ import {
   Bell,
   ArrowsLeftRight,
   Calendar,
+  ChartBar,
   ChartLine,
   Clock,
   Cpu,
@@ -127,6 +129,7 @@ const NAV: NavGroup[] = [
   {
     label: 'Tuning',
     items: [
+      { id: 'inference', label: 'Inference', icon: <ChartBar />, description: 'GPU + llama.cpp + TEI serving status, aggregated' },
       { id: 'kv-cache', label: 'KV-Cache', icon: <Lightning />, description: 'Live KV-cache depth and inference throughput (llama.cpp)' },
       { id: 'elastic-pools', label: 'Elastic Pools', icon: <ArrowsLeftRight />, description: 'Live Volcano queues and gang-scheduled PodGroups' },
       { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding (not enabled)' },
@@ -217,6 +220,8 @@ function App() {
         return <WorkloadPlacementView />
 
       // ── Tuning ──────────────────────────────────────────────────────────
+      case 'inference':
+        return <InferenceOverviewView />
       case 'kv-cache':
         return <InferenceView />
       case 'elastic-pools':
