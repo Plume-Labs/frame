@@ -4,8 +4,7 @@ import { Button } from "./components/ui/button";
 import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react";
 
 export const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => {
-  // When encountering an error in the development mode, rethrow it and don't display the boundary.
-  // The parent UI will take care of showing a more helpful dialog.
+  // In dev, rethrow so Vite's own overlay shows the stack trace instead of this fallback.
   if (import.meta.env.DEV) throw error;
 
   return (
@@ -13,9 +12,9 @@ export const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; res
       <div className="w-full max-w-md">
         <Alert variant="destructive" className="mb-6">
           <AlertTriangleIcon />
-          <AlertTitle>This spark has encountered a runtime error</AlertTitle>
+          <AlertTitle>Cluster Control has encountered a runtime error</AlertTitle>
           <AlertDescription>
-            Something unexpected happened while running the application. The error details are shown below. Contact the spark author and let them know about this issue.
+            Something unexpected happened while rendering the UI. The error details are shown below — reloading usually clears it; if it persists, check the browser console and the pod logs.
           </AlertDescription>
         </Alert>
         
