@@ -129,6 +129,12 @@ ${ARGS}
           # sit on 3x-replicated ceph-rbd: a 25Gi PVC of it consumed ~55GB raw and
           # filled the entire Ceph cluster, blocking writes for every workload.
           # Cost of node-local: a re-download whenever the pod moves nodes.
+          #
+          # REQUIREMENT: the GPU node needs a root disk sized for this cache ON TOP
+          # of the usual image churn. On the default 51GB the cache plus ~23GB of
+          # container images drove the node to DiskPressure, which evicted pods and
+          # failed unrelated image pulls with ENOSPC. Budget the model size + 40GB;
+          # the test cluster's GPU node was grown to 119GB.
           emptyDir: { sizeLimit: ${CACHE_SIZE} }
 ---
 apiVersion: v1
