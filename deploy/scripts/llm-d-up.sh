@@ -16,7 +16,13 @@ set -euo pipefail
 
 NS=inference
 IGW_VERSION="${IGW_VERSION:-v1.5.0}"
-GWAPI_VERSION="${GWAPI_VERSION:-v1.3.0}"
+# v1.5.1, not v1.3.0: k3s's bundled Traefik chart requires
+# gateway.networking.k8s.io/v1/ReferenceGrant, which only exists from Gateway API
+# v1.4. standard-install.yaml is applied AFTER k3s installs its own CRDs, so a
+# lower pin here silently downgrades ReferenceGrant to v1beta1-only and the
+# bundled Traefik upgrade then CrashLoops on "Required CRDs are missing" while
+# the already-running Traefik keeps serving — a failure that looks unrelated.
+GWAPI_VERSION="${GWAPI_VERSION:-v1.5.1}"
 AGW_VERSION="${AGW_VERSION:-v1.0.0}"
 BACKEND_LABEL="${BACKEND_LABEL:-llamacpp}"   # pods to route to
 BACKEND_PORT="${BACKEND_PORT:-8080}"

@@ -14,6 +14,17 @@ say "Falco + Falcosidekick (runtime security)"
 helm repo add falcosecurity https://falcosecurity.github.io/charts >/dev/null 2>&1 || true
 helm repo update falcosecurity >/dev/null 2>&1 || true
 
+# modern_ebpf is the only workable driver on this cluster's kernel (7.0.0-28):
+#   - kmod: no prebuilt module is published for it (download.falco.org 404s) and
+#     the nodes carry no kernel headers to build one;
+#   - ebpf (legacy probe): removed from chart 9.x, see its BREAKING-CHANGES.md.
+# KNOWN ISSUE, not a misconfiguration: on this kernel the modern probe
+# periodically emits an event the userspace parser rejects — "could not parse
+# param 2 (name) for event ... of type 307 (openat) ... expected length 2, found
+# 227", always on an oversized cgroup path. Falco exits 1 and is restarted by the
+# kubelet every few minutes, losing events in between. Falco 0.44.1 / chart 9.1.0
+# is the latest release as of 2026-07-28 and still has it. Re-check on the next
+# Falco release before reaching for workarounds.
 helm upgrade -i falco falcosecurity/falco -n falco --create-namespace \
   --set driver.kind=modern_ebpf \
   --set falcosidekick.enabled=true \
