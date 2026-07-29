@@ -1,0 +1,45 @@
+# Single Argo CD Application bundling both Frame workloads — the
+# controller-manager (operator, config/default) and the Cluster Control UI
+# (deploy/kubernetes/overlays/production) — as one GitOps unit instead of two
+# unrelated deploy paths (kubectl apply -k for the operator, a separate
+# Application + a redundant unused Flux Kustomization for the UI).
+#
+# Each Kustomize source declares its own namespace (frame-system for the
+# operator, cluster-control for the UI), so no shared destination.namespace
+# is needed here.
+#
+# syncPolicy is intentionally manual: this is the first time the
+# CRD/webhook-owning controller is put under automated prune+selfHeal
+# alongside another workload, and a bad kustomize edit on either source could
+# prune cluster-scoped resources (CRDs, webhooks, RBAC) the whole platform
+# depends on. Verify one manual sync, then switch to automated if it's clean.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: frame
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: cluster-infrastructure
+  sources:
+    - repoURL: https://github.com/Plume-Labs/frame.git
+      targetRevision: main
+      path: config/default
+    - repoURL: https://github.com/Plume-Labs/frame.git
+      targetRevision: main
+      path: deploy/kubernetes/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
