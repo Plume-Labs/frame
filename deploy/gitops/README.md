@@ -13,11 +13,16 @@ cd gitops
 ./bootstrap-flux.sh
 ```
 
-This will:
-1. Install Flux controllers
-2. Create GitRepository source
-3. Create Kustomization for cluster-control
-4. Enable image automation
+This will install Flux controllers and bootstrap it against this repo — it then
+reconciles whatever Kustomizations live under `clusters/${CLUSTER_NAME}`.
+
+Flux manages a handful of cluster add-ons that aren't part of the
+Neura/cluster-control application stack: `ksm-tuner`, `node-feature-discovery`,
+`kmod-rdma-loader` (see `flux/kustomizations/`). **cluster-control-ui and the
+controller-manager are Argo CD-managed** (see the ArgoCD section below,
+`argocd/applications/frame.yaml`) — they used to have their own Flux
+Kustomization + image-automation setup too, but that duplicated the Argo CD
+Application for no reason and was removed.
 
 ### Manual Flux Installation
 
@@ -29,8 +34,9 @@ flux install --namespace flux-system
 
 ```bash
 kubectl apply -f flux/sources/git-repository.yaml
-kubectl apply -f flux/kustomizations/cluster-control.yaml
-kubectl apply -f flux/image-automation.yaml
+kubectl apply -f flux/kustomizations/ksm-tuner.yaml
+kubectl apply -f flux/kustomizations/node-feature-discovery.yaml
+kubectl apply -f flux/kustomizations/kmod-rdma-loader.yaml
 ```
 
 ### Monitor Flux
@@ -55,7 +61,7 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 
 ```bash
 kubectl apply -f argocd/projects/cluster-infrastructure.yaml
-kubectl apply -f argocd/applications/cluster-control.yaml
+kubectl apply -f argocd/applications/frame.yaml
 ```
 
 ### Access ArgoCD UI
@@ -108,14 +114,3 @@ Visit: https://localhost:8080
       │ Kubernetes │
       └────────────┘
 ```
-
-## Image Update Automation
-
-Flux can automatically update images when new versions are pushed to the container registry.
-
-The `image-automation.yaml` file configures:
-1. ImageRepository - watches the container registry
-2. ImagePolicy - defines version constraints
-3. ImageUpdateAutomation - commits updates to Git
-
-New images matching the semver policy will be automatically deployed.
