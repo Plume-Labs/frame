@@ -74,9 +74,20 @@ rules:
   - apiGroups: [""]
     resources: [pods/proxy]
     verbs: [get]
+  # POST-through-proxy, for the Alertmanager "silence" action (Alerts screen).
+  # Same blast radius as the get above (any pod's HTTP endpoint, not just
+  # Alertmanager's — pod names are dynamic so a resourceNames restriction
+  # would be fragile) — consistent with the accepted-risk posture already
+  # documented above, not a new trust boundary.
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [create]
   - apiGroups: [apps]
     resources: [deployments, daemonsets, statefulsets]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [patch]
   - apiGroups: [ceph.rook.io]
     resources: [cephclusters, cephblockpools, cephfilesystems]
     verbs: [get, list, watch]
@@ -92,6 +103,12 @@ rules:
   - apiGroups: [metrics.k8s.io]
     resources: [nodes, pods]
     verbs: [get, list]
+  # Trigger on-demand Velero backups (Resilience screen) — not restores,
+  # schedules, or backupstoragelocations: creating those is riskier/more
+  # complex than just kicking off a backup.
+  - apiGroups: [velero.io]
+    resources: [backups]
+    verbs: [get, list, watch, create]
   - apiGroups: [frame.plume-labs.io]
     resources: [framejobs, schedulingpolicies, frameresourcequotas, framenodes]
     verbs: [get, list, watch, create, update, patch, delete]

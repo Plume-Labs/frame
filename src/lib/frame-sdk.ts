@@ -385,6 +385,8 @@ export interface ActiveAlert {
   summary: string
   namespace: string
   startsAt: string
+  /** Raw label set, needed to build precise matchers for a silence. */
+  labels: Record<string, string>
 }
 export interface AlertsStatus {
   alerts: ActiveAlert[]
@@ -1709,6 +1711,21 @@ class ClusterClient {
     }
   }
 
+  /** Trigger an on-demand Velero backup of the whole cluster. */
+  async triggerBackup(): Promise<{ name: string }> {
+    const name = toK8sName(`on-demand-${new Date().toISOString()}`)
+    await k8sFetch<undefined>('/apis/velero.io/v1/namespaces/velero/backups', {
+      method: 'POST',
+      body: {
+        apiVersion: 'velero.io/v1',
+        kind: 'Backup',
+        metadata: { name, namespace: 'velero' },
+        spec: {},
+      },
+    })
+    return { name }
+  }
+
   /**
    * Capacity trend + forecast from Prometheus range queries (cluster CPU/mem
    * usage over the last few hours), with a linear projection to "days to full".
@@ -1794,12 +1811,41 @@ class ClusterClient {
         summary: a.annotations?.summary ?? a.annotations?.description ?? '',
         namespace: a.labels?.namespace ?? a.labels?.k8s_ns_name ?? '',
         startsAt: a.startsAt ?? '',
+        labels: a.labels ?? {},
       }))
     for (const a of alerts) bySeverity[a.severity] = (bySeverity[a.severity] ?? 0) + 1
     alerts.sort(
       (a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9) || b.startsAt.localeCompare(a.startsAt),
     )
     return { alerts, bySeverity }
+  }
+
+  /** Silence an active alert in Alertmanager for `durationMinutes`, matching on all its labels. */
+  async silenceAlert(alert: ActiveAlert, durationMinutes: number, createdBy: string): Promise<void> {
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
+      '/api/v1/namespaces/monitoring/pods?labelSelector=app.kubernetes.io%2Fname%3Dalertmanager',
+    )
+    const name = pods.items?.[0]?.metadata.name
+    if (!name) throw new FrameAPIError(404, 'Alertmanager pod not found')
+    const startsAt = new Date()
+    const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000)
+    const res = await fetch(`/api/v1/namespaces/monitoring/pods/${name}:9093/proxy/api/v2/silences`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        matchers: Object.entries(alert.labels).map(([labelName, value]) => ({
+          name: labelName,
+          value,
+          isRegex: false,
+          isEqual: true,
+        })),
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        createdBy,
+        comment: `Silenced from Frame UI (${durationMinutes}m)`,
+      }),
+    })
+    if (!res.ok) throw new FrameAPIError(res.status, `cannot create silence: ${await res.text()}`)
   }
 
   /** Recent Kubernetes events across all namespaces, newest first. */
@@ -1863,6 +1909,36 @@ class ApplicationClient {
         health: healthOf(app.readyReplicas, app.desiredReplicas),
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** Rolling-restart a Deployment/StatefulSet by bumping its pod template restart annotation. */
+  async restart(component: Pick<AppComponent, 'kind' | 'namespace' | 'name'>): Promise<void> {
+    const plural = component.kind === 'Deployment' ? 'deployments' : 'statefulsets'
+    await k8sFetch<undefined>(
+      `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}`,
+      {
+        method: 'PATCH',
+        contentType: 'application/strategic-merge-patch+json',
+        body: {
+          spec: {
+            template: {
+              metadata: {
+                annotations: { 'kubectl.kubernetes.io/restartedAt': new Date().toISOString() },
+              },
+            },
+          },
+        },
+      },
+    )
+  }
+
+  /** Scale a Deployment/StatefulSet to an explicit replica count. */
+  async scale(component: Pick<AppComponent, 'kind' | 'namespace' | 'name'>, replicas: number): Promise<void> {
+    const plural = component.kind === 'Deployment' ? 'deployments' : 'statefulsets'
+    await k8sFetch<undefined>(
+      `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}/scale`,
+      { method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: { replicas } } },
+    )
   }
 }
 
