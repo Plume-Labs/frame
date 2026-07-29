@@ -5,16 +5,16 @@
 # Prereqs: kubectl + helm reachable at the cluster; per-node node-prep.sh already
 # run (cpu=host, Ceph disk, ssd burst disk, ptp_kvm/ksm/burst). See docs/test-cluster.md.
 #
-# cluster-control-ui still needs manual ctr-import per node (see below) — it's
-# not built from the same values-driven chart Neura uses. Neura's own images
-# go through the in-cluster registry this script sets up (registry-up.sh),
-# no per-node import needed once that's live: podman build, podman push
-# --tls-verify=false <REGISTRY_NODE_IP>:30500/neura-api:<tag>, set
-# image.registry in values.local.yaml.
-#
-# cluster-control-ui image must exist on every node's containerd BEFORE this runs:
-#   docker build -t cluster-control:latest .
-#   docker save cluster-control:latest | ssh <node> 'sudo k3s ctr images import -'
+# cluster-control-ui goes through the same in-cluster registry this script
+# sets up (registry-up.sh) — same as Neura's images. Per-node ctr-import via
+# ssh was the original method and is still possible, but it needs SSH access
+# to every node and was already dropped for Neura's own images for being
+# unreliable (see k8s/scripts/deploy-remote.sh in the Neura repo). Prefer
+# the registry:
+#   podman build -t <REGISTRY_NODE_IP>:30500/cluster-control-ui:<tag> .
+#   podman push --tls-verify=false <REGISTRY_NODE_IP>:30500/cluster-control-ui:<tag>
+#   kubectl -n cluster-control set image deploy/cluster-control-ui \
+#     ui=<REGISTRY_NODE_IP>:30500/cluster-control-ui:<tag>
 #
 # Usage:  ./deploy/scripts/test-cluster-up.sh
 #   GPU=1                         also install the NVIDIA GPU operator + llama.cpp
