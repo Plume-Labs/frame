@@ -109,9 +109,19 @@ rules:
   - apiGroups: [velero.io]
     resources: [backups]
     verbs: [get, list, watch, create]
+  # No `update` (PUT) anywhere below — the SDK only ever does GET/POST/
+  # PATCH/DELETE against these, never a full-object PUT.
+  # framenodes/frameresourcequotas have no `delete`: NodeClient.delete() and
+  # a quota-delete method both exist/could exist but nothing in the UI calls
+  # them today — there's no screen listing FrameNode CRs by name to delete
+  # (NodeProvisionWizard only creates), and no quota-removal action. Add the
+  # verb back if/when that screen gets built instead of granting it early.
   - apiGroups: [frame.plume-labs.io]
-    resources: [framejobs, schedulingpolicies, frameresourcequotas, framenodes]
-    verbs: [get, list, watch, create, update, patch, delete]
+    resources: [framejobs, schedulingpolicies]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framenodes, frameresourcequotas]
+    verbs: [get, list, watch, create, patch]
   - apiGroups: [frame.plume-labs.io]
     resources: [talosmachineconfigs, talosupgrades]
     verbs: [get, list, watch]
