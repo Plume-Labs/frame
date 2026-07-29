@@ -46,12 +46,20 @@ rules:
     resources: [backups, schedules, backupstoragelocations, restores]
     verbs: [get, list, watch]
 ---
-# cluster-control-operator: bind to human operator accounts who need write access to Frame CRDs.
-# Example: kubectl create clusterrolebinding <user>-operator \
-#   --clusterrole=cluster-control-operator --user=<user@domain>
-# The UI pod's SA is bound to cluster-control-viewer (read-only) — not this role.
+# cluster-control-operator: write access to Frame CRDs + node cordon.
 #
-# Role 2: operator — write on safe Frame CRDs only (not Talos, not /status)
+# 2026-07-29: bound directly to the UI pod's own ServiceAccount below — a
+# conscious, accepted-risk decision for this private test cluster (not
+# internet-facing, single trusted network). It means every action taken
+# through the UI is attributed to the shared SA, not to the person who
+# clicked it — no per-person audit trail. Do NOT carry this binding as-is to
+# a cluster reachable outside a trusted network; replace it with per-user
+# auth (OIDC login + K8s impersonation) and bind this role to real users
+# instead, the same way `kubectl create clusterrolebinding <user>-operator
+# --clusterrole=cluster-control-operator --user=<user@domain>` would.
+#
+# Role 2: operator — write on safe Frame CRDs (not Talos, not /status),
+# plus core node cordon/uncordon (patch only — no node delete/create).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -60,6 +68,9 @@ rules:
   - apiGroups: [""]
     resources: [nodes, pods, services, namespaces, resourcequotas, events]
     verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [patch]
   - apiGroups: [""]
     resources: [pods/proxy]
     verbs: [get]
@@ -82,10 +93,10 @@ rules:
     resources: [nodes, pods]
     verbs: [get, list]
   - apiGroups: [frame.plume-labs.io]
-    resources: [framejobs, schedulingpolicies, frameresourcequotas]
+    resources: [framejobs, schedulingpolicies, frameresourcequotas, framenodes]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [frame.plume-labs.io]
-    resources: [framenodes, talosmachineconfigs, talosupgrades]
+    resources: [talosmachineconfigs, talosupgrades]
     verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -96,6 +107,19 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: cluster-control-viewer
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-control-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-control-operator
 subjects:
   - kind: ServiceAccount
     name: cluster-control-ui

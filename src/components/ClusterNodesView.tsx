@@ -1,16 +1,46 @@
+import { useState } from 'react'
+import { toast } from 'sonner'
 import { ClusterNodeInfo, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Cpu, ArrowClockwise, CheckCircle, XCircle } from '@phosphor-icons/react'
+import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 export function ClusterNodesView() {
   const { state, reload } = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes())
+  const [cordonTarget, setCordonTarget] = useState<ClusterNodeInfo | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function setCordon(node: ClusterNodeInfo, unschedulable: boolean) {
+    setBusy(node.name)
+    try {
+      await frame.cluster.cordon(node.name, unschedulable)
+      toast.success(`${node.name} ${unschedulable ? 'cordoned' : 'uncordoned'}`)
+      reload()
+    } catch (e) {
+      toast.error(`Failed to ${unschedulable ? 'cordon' : 'uncordon'} ${node.name}`, {
+        description: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      setBusy(null)
+      setCordonTarget(null)
+    }
+  }
 
   const nodes = state.phase === 'ready' ? state.data : []
   const ready = nodes.filter((n) => n.ready).length
@@ -73,13 +103,43 @@ export function ClusterNodesView() {
                       </p>
                     </div>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={`font-mono ${n.ready ? 'text-accent' : 'text-destructive'} border-current`}
-                  >
-                    {n.ready ? <CheckCircle className="mr-1" size={12} /> : <XCircle className="mr-1" size={12} />}
-                    {n.ready ? 'Ready' : 'NotReady'}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    {n.unschedulable && (
+                      <Badge variant="outline" className="font-mono text-warning border-current">
+                        Cordoned
+                      </Badge>
+                    )}
+                    <Badge
+                      variant="outline"
+                      className={`font-mono ${n.ready ? 'text-accent' : 'text-destructive'} border-current`}
+                    >
+                      {n.ready ? <CheckCircle className="mr-1" size={12} /> : <XCircle className="mr-1" size={12} />}
+                      {n.ready ? 'Ready' : 'NotReady'}
+                    </Badge>
+                    {n.unschedulable ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="font-mono gap-1.5"
+                        disabled={busy === n.name}
+                        onClick={() => setCordon(n, false)}
+                      >
+                        <LockSimpleOpen />
+                        Uncordon
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="font-mono gap-1.5"
+                        disabled={busy === n.name}
+                        onClick={() => setCordonTarget(n)}
+                      >
+                        <LockSimple />
+                        Cordon
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -105,6 +165,24 @@ export function ClusterNodesView() {
             </Card>
           )
         })}
+
+      <AlertDialog open={!!cordonTarget} onOpenChange={(open) => !open && setCordonTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cordon {cordonTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Marks the node unschedulable — no new pods will be placed on it. Existing pods keep running
+              until evicted separately. Reversible with Uncordon.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep schedulable</AlertDialogCancel>
+            <AlertDialogAction onClick={() => cordonTarget && setCordon(cordonTarget, true)}>
+              Cordon node
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
