@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Application, createFrameClient } from '@/lib/frame-sdk'
+import { toast } from 'sonner'
+import { Application, AppComponent, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { TONE_TEXT, Tone } from '@/lib/thresholds'
 import {
   Cube,
@@ -11,6 +22,9 @@ import {
   Warning,
   CheckCircle,
   Package,
+  ArrowsClockwise,
+  Minus,
+  Plus,
 } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -110,13 +124,46 @@ export function ApplicationsView() {
       )}
 
       {state.phase === 'ready' &&
-        state.apps.map((app) => <ApplicationCard key={`${app.namespace}/${app.name}`} app={app} />)}
+        state.apps.map((app) => (
+          <ApplicationCard key={`${app.namespace}/${app.name}`} app={app} onChanged={() => void load()} />
+        ))}
     </div>
   )
 }
 
-function ApplicationCard({ app }: { app: Application }) {
+function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () => void }) {
   const pct = app.desiredReplicas > 0 ? (app.readyReplicas / app.desiredReplicas) * 100 : 0
+  const [restartTarget, setRestartTarget] = useState<AppComponent | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function doRestart(c: AppComponent) {
+    setBusy(c.name)
+    try {
+      await frame.apps.restart(c)
+      toast.success(`${c.name} restarting`)
+      onChanged()
+    } catch (e) {
+      toast.error(`Failed to restart ${c.name}`, { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(null)
+      setRestartTarget(null)
+    }
+  }
+
+  async function doScale(c: AppComponent, delta: number) {
+    const target = Math.max(0, c.desiredReplicas + delta)
+    if (target === c.desiredReplicas) return
+    setBusy(c.name)
+    try {
+      await frame.apps.scale(c, target)
+      toast.success(`${c.name} scaled to ${target}`)
+      onChanged()
+    } catch (e) {
+      toast.error(`Failed to scale ${c.name}`, { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
 
   return (
     <Card>
@@ -175,10 +222,61 @@ function ApplicationCard({ app }: { app: Application }) {
                 {c.readyReplicas}/{c.desiredReplicas} ready
               </div>
               <div className="text-[10px] text-muted-foreground font-mono break-all">{c.image}</div>
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    disabled={busy === c.name}
+                    onClick={() => doScale(c, -1)}
+                  >
+                    <Minus size={10} />
+                  </Button>
+                  <span className="font-mono text-[10px] w-4 text-center">{c.desiredReplicas}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    disabled={busy === c.name}
+                    onClick={() => doScale(c, 1)}
+                  >
+                    <Plus size={10} />
+                  </Button>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 font-mono text-[10px] gap-1"
+                  disabled={busy === c.name}
+                  onClick={() => setRestartTarget(c)}
+                >
+                  <ArrowsClockwise className={busy === c.name ? 'animate-spin' : ''} size={10} />
+                  Restart
+                </Button>
+              </div>
             </div>
           ))}
         </div>
       </CardContent>
+
+      <AlertDialog open={!!restartTarget} onOpenChange={(open) => !open && setRestartTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restart {restartTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Rolling-restarts every pod of this {restartTarget?.kind}. Brief capacity dip while new pods
+              come up, no downtime if it has 2+ replicas with a working readiness probe.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => restartTarget && doRestart(restartTarget)}>
+              Restart
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }

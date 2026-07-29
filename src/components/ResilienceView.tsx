@@ -1,18 +1,34 @@
+import { useState } from 'react'
+import { toast } from 'sonner'
 import { BackupStatus, Resilience, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { ShieldWarning, ArrowClockwise, Database, ShieldCheck, Archive } from '@phosphor-icons/react'
+import { ShieldWarning, ArrowClockwise, Database, ShieldCheck, Archive, Play } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 export function ResilienceView() {
   const { state, reload } = useLiveResource<Resilience>(() => frame.cluster.resilience())
   const r = state.phase === 'ready' ? state.data : null
-  const { state: bkState } = useLiveResource<BackupStatus | null>(() => frame.cluster.backups())
+  const { state: bkState, reload: reloadBk } = useLiveResource<BackupStatus | null>(() => frame.cluster.backups())
   const bk = bkState.phase === 'ready' ? bkState.data : null
+  const [triggering, setTriggering] = useState(false)
+
+  async function doBackup() {
+    setTriggering(true)
+    try {
+      const { name } = await frame.cluster.triggerBackup()
+      toast.success(`Backup ${name} started`)
+      reloadBk()
+    } catch (e) {
+      toast.error('Failed to trigger backup', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setTriggering(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -113,6 +129,16 @@ export function ResilienceView() {
         <CardHeader>
           <CardTitle className="font-mono text-base flex items-center gap-2">
             <Archive size={16} className="text-primary" /> Backups (Velero → Ceph S3)
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto font-mono gap-1.5"
+              onClick={doBackup}
+              disabled={triggering}
+            >
+              <Play className={triggering ? 'animate-spin' : ''} size={12} />
+              {triggering ? 'Starting…' : 'Backup now'}
+            </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
