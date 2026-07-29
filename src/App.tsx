@@ -1,38 +1,39 @@
-import { ReactNode, useMemo, useState } from 'react'
+import { lazy, ReactNode, Suspense, useMemo, useState } from 'react'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 
-import { ClusterNodesView } from '@/components/ClusterNodesView'
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
 import { HeaderStats } from '@/components/HeaderStats'
-import { RacksView } from '@/components/RacksView'
-
-import { ApplicationsView } from '@/components/ApplicationsView'
-import { FrameJobsView } from '@/components/FrameJobsView'
-import { FrameSchedulerView } from '@/components/FrameSchedulerView'
-import { ServiceClassesView } from '@/components/ServiceClassesView'
-import { LineageView } from '@/components/LineageView'
-
-import { GpuView } from '@/components/GpuView'
-import { ClusterStorageView } from '@/components/ClusterStorageView'
-import { NetworkView } from '@/components/NetworkView'
-import { WorkloadPlacementView } from '@/components/WorkloadPlacementView'
-
-import { InferenceOverviewView } from '@/components/InferenceOverviewView'
-import { InferenceView } from '@/components/InferenceView'
-import { VolcanoPoolsView } from '@/components/VolcanoPoolsView'
-import { MpsView } from '@/components/MpsView'
 import { NotEnabledView } from '@/components/NotEnabledView'
-import { PtpView } from '@/components/PtpView'
-import { BurstBufferView } from '@/components/BurstBufferView'
-import { KsmView } from '@/components/KsmView'
 
-import { CapacityView } from '@/components/CapacityView'
-import { ResilienceView } from '@/components/ResilienceView'
-import { SecurityView } from '@/components/SecurityView'
-import { AlertsView } from '@/components/AlertsView'
-import { ClusterEventsView } from '@/components/ClusterEventsView'
+// Lazy: only the active screen is ever mounted (see renderScreen below), so
+// eagerly importing all 20+ of them bundled every one into the initial
+// chunk for nothing — dynamic import() gives each its own chunk, fetched
+// only when its nav item is actually clicked.
+const ClusterNodesView = lazy(() => import('@/components/ClusterNodesView').then((m) => ({ default: m.ClusterNodesView })))
+const RacksView = lazy(() => import('@/components/RacksView').then((m) => ({ default: m.RacksView })))
+const ApplicationsView = lazy(() => import('@/components/ApplicationsView').then((m) => ({ default: m.ApplicationsView })))
+const FrameJobsView = lazy(() => import('@/components/FrameJobsView').then((m) => ({ default: m.FrameJobsView })))
+const FrameSchedulerView = lazy(() => import('@/components/FrameSchedulerView').then((m) => ({ default: m.FrameSchedulerView })))
+const ServiceClassesView = lazy(() => import('@/components/ServiceClassesView').then((m) => ({ default: m.ServiceClassesView })))
+const LineageView = lazy(() => import('@/components/LineageView').then((m) => ({ default: m.LineageView })))
+const GpuView = lazy(() => import('@/components/GpuView').then((m) => ({ default: m.GpuView })))
+const ClusterStorageView = lazy(() => import('@/components/ClusterStorageView').then((m) => ({ default: m.ClusterStorageView })))
+const NetworkView = lazy(() => import('@/components/NetworkView').then((m) => ({ default: m.NetworkView })))
+const WorkloadPlacementView = lazy(() => import('@/components/WorkloadPlacementView').then((m) => ({ default: m.WorkloadPlacementView })))
+const InferenceOverviewView = lazy(() => import('@/components/InferenceOverviewView').then((m) => ({ default: m.InferenceOverviewView })))
+const InferenceView = lazy(() => import('@/components/InferenceView').then((m) => ({ default: m.InferenceView })))
+const VolcanoPoolsView = lazy(() => import('@/components/VolcanoPoolsView').then((m) => ({ default: m.VolcanoPoolsView })))
+const MpsView = lazy(() => import('@/components/MpsView').then((m) => ({ default: m.MpsView })))
+const PtpView = lazy(() => import('@/components/PtpView').then((m) => ({ default: m.PtpView })))
+const BurstBufferView = lazy(() => import('@/components/BurstBufferView').then((m) => ({ default: m.BurstBufferView })))
+const KsmView = lazy(() => import('@/components/KsmView').then((m) => ({ default: m.KsmView })))
+const CapacityView = lazy(() => import('@/components/CapacityView').then((m) => ({ default: m.CapacityView })))
+const ResilienceView = lazy(() => import('@/components/ResilienceView').then((m) => ({ default: m.ResilienceView })))
+const SecurityView = lazy(() => import('@/components/SecurityView').then((m) => ({ default: m.SecurityView })))
+const AlertsView = lazy(() => import('@/components/AlertsView').then((m) => ({ default: m.AlertsView })))
+const ClusterEventsView = lazy(() => import('@/components/ClusterEventsView').then((m) => ({ default: m.ClusterEventsView })))
 
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
@@ -338,7 +339,15 @@ function App() {
           </div>
         </header>
 
-        <div className="p-4 sm:p-6 min-w-0">{renderScreen()}</div>
+        <div className="p-4 sm:p-6 min-w-0">
+          <Suspense
+            fallback={
+              <div className="py-10 text-center font-mono text-sm text-muted-foreground">Loading…</div>
+            }
+          >
+            {renderScreen()}
+          </Suspense>
+        </div>
       </SidebarInset>
 
       <NodeDetailPanel
