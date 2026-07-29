@@ -35,6 +35,7 @@ import { AlertsView } from '@/components/AlertsView'
 import { ClusterEventsView } from '@/components/ClusterEventsView'
 
 import { Button } from '@/components/ui/button'
+import { Toaster } from '@/components/ui/sonner'
 import {
   Sidebar,
   SidebarContent,
@@ -355,6 +356,7 @@ function App() {
           setSelectedNode(node)
         }}
       />
+      <Toaster position="bottom-right" />
     </SidebarProvider>
   )
 }

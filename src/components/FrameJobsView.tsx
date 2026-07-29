@@ -1,10 +1,22 @@
+import { useState } from 'react'
+import { toast } from 'sonner'
 import { Job, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Queue, ArrowClockwise, CheckCircle, Spinner, XCircle, Clock } from '@phosphor-icons/react'
+import { Queue, ArrowClockwise, CheckCircle, Spinner, XCircle, Clock, ArrowCounterClockwise, Prohibit } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
@@ -20,6 +32,43 @@ export function FrameJobsView() {
   const jobs = state.phase === 'ready' ? state.data.items : []
   const { state: nsState } = useLiveResource(() => frame.cluster.neuraSandboxJobs())
   const ns = nsState.phase === 'ready' ? nsState.data : null
+  const [cancelTarget, setCancelTarget] = useState<Job | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  async function doCancel(job: Job) {
+    setBusy(job.id)
+    try {
+      await frame.jobs.cancel(job.id)
+      toast.success(`${job.name} cancelled`)
+      reload()
+    } catch (e) {
+      toast.error(`Failed to cancel ${job.name}`, { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(null)
+      setCancelTarget(null)
+    }
+  }
+
+  async function doRetry(job: Job) {
+    setBusy(job.id)
+    try {
+      const retryName = `${job.name}-retry-${Math.random().toString(36).slice(2, 7)}`
+      await frame.jobs.submit({
+        name: retryName,
+        pipeline: job.pipeline,
+        serviceClass: job.serviceClass,
+        priority: job.priority,
+        namespace: job.namespace,
+        gpuCount: job.gpuCount,
+      })
+      toast.success(`Resubmitted as ${retryName}`)
+      reload()
+    } catch (e) {
+      toast.error(`Failed to retry ${job.name}`, { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -92,17 +141,63 @@ export function FrameJobsView() {
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="flex flex-wrap gap-2 text-[10px] font-mono">
+              <CardContent className="flex flex-wrap items-center gap-2 text-[10px] font-mono">
                 <Badge variant="outline">class {j.serviceClass}</Badge>
                 <Badge variant="outline">priority {j.priority}</Badge>
                 <Badge variant="outline">{j.gpuCount} GPU</Badge>
                 <Badge variant="outline">
                   created {new Date(j.createdAt).toLocaleString()}
                 </Badge>
+                <div className="ml-auto flex gap-2">
+                  {j.status === 'failed' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="font-mono gap-1.5"
+                      disabled={busy === j.id}
+                      onClick={() => doRetry(j)}
+                    >
+                      <ArrowCounterClockwise className={busy === j.id ? 'animate-spin' : ''} />
+                      Retry
+                    </Button>
+                  )}
+                  {(j.status === 'queued' || j.status === 'running') && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="font-mono gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/10"
+                      disabled={busy === j.id}
+                      onClick={() => setCancelTarget(j)}
+                    >
+                      <Prohibit />
+                      Cancel
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )
         })}
+
+      <AlertDialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel {cancelTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deletes the FrameJob resource. A running job's pods are torn down immediately. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep job</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => cancelTarget && doCancel(cancelTarget)}
+            >
+              Cancel job
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

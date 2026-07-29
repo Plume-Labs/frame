@@ -138,6 +138,7 @@ export interface ClusterNodeInfo {
   memGiB: number
   memUsedGiB?: number
   createdAt?: string
+  unschedulable: boolean
 }
 
 /** One Alluxio tiered-storage layer (MEM/SSD/HDD). Bytes. */
@@ -733,6 +734,7 @@ function healthOf(ready: number, desired: number): AppHealth {
 
 interface NodeItemCR {
   metadata: { name: string; labels?: Record<string, string>; creationTimestamp?: string }
+  spec?: { unschedulable?: boolean }
   status?: {
     conditions?: Array<{ type: string; status: string }>
     capacity?: Record<string, string>
@@ -812,9 +814,19 @@ class ClusterClient {
           memGiB: memToGiB(n.status?.capacity?.memory),
           memUsedGiB: usage ? memToGiB(usage.memory) : undefined,
           createdAt: n.metadata.creationTimestamp,
+          unschedulable: n.spec?.unschedulable ?? false,
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** Cordon (true) or uncordon (false) a real Kubernetes node. */
+  async cordon(name: string, unschedulable: boolean): Promise<void> {
+    await k8sFetch<undefined>(`/api/v1/nodes/${name}`, {
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: { unschedulable } },
+    })
   }
 
   /**
