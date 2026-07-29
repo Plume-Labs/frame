@@ -18,14 +18,15 @@
 # (Traefik, not nginx) silently ignored. proxy-buffering has no Traefik
 # equivalent needed — Traefik streams responses by default, unlike nginx.
 #
-# KNOWN BROKEN on the current test cluster (2026-07-28): applying ANY
-# HelmChartConfig for `traefik` — even an empty one — makes k3s's
-# helm-install-traefik job fail with "Required CRDs are missing", although
-# every traefik.io CRD is actually present. Reproduces with zero added
-# values, so it's a pre-existing issue in this cluster's k3s-bundled
-# traefik-40.1.3+up40.1.0 release, not this script. The live traefik pod is
-# unaffected either way (only the reconcile Job fails/retries). Left as-is
-# until someone digs into the chart's validate-install-crd.yaml check.
+# Was broken on this cluster from 2026-07-28 to 2026-07-29: applying ANY
+# HelmChartConfig for `traefik` made k3s's helm-install-traefik job fail
+# with "Required CRDs are missing", despite every traefik.io CRD being
+# present. Root cause (found 2026-07-28, fixed same day, verified by
+# reapplying this script 2026-07-29): unrelated Gateway API tooling had
+# pinned v1.3.0 and applied it after k3s's own CRDs, downgrading
+# ReferenceGrant to v1beta1-only — the chart needs v1 (Gateway API >= 1.4).
+# Gateway API is now pinned to v1.5.1; this script applies cleanly and the
+# live traefik pod picks up idleTimeout=1h in its args.
 set -euo pipefail
 
 export KUBECONFIG="${KUBECONFIG:-$HOME/Neura/.test-cluster/kubeconfig-neura-test.yaml}"
