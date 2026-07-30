@@ -2,9 +2,12 @@ package authd
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
@@ -89,5 +92,78 @@ func TestCounterRegressionIsDistinguishable(t *testing.T) {
 	}
 	if !errors.Is(ErrCounterRegression, ErrCounterRegression) {
 		t.Fatal("ErrCounterRegression is not comparable with errors.Is")
+	}
+}
+
+// TestRecordLoginCounterRefusesOnCloneWarningWithoutTouchingStore exercises
+// the actual decision FinishLogin delegates to on every login: recordLoginCounter
+// is the same method the real ceremony calls (see FinishLogin), not a copy of
+// its logic. A post-validation credential with CloneWarning set must produce
+// ErrCounterRegression and must leave the stored credential exactly as it
+// was -- no sign-count write, no removal -- because the check runs after
+// go-webauthn already verified the assertion's signature, and revoking a key
+// that just proved possession of the private key would lock out its owner on
+// nothing more than a stale or restored counter.
+func TestRecordLoginCounterRefusesOnCloneWarningWithoutTouchingStore(t *testing.T) {
+	rawID := []byte("clone-warning-credential")
+	credID := base64.RawURLEncoding.EncodeToString(rawID)
+	stored := framev1alpha1.WebAuthnCredential{ID: credID, PublicKey: "pk", SignCount: 7}
+	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, stored)
+	a := testAuthenticator(t, u)
+
+	// SignCount is deliberately different from the stored value (7): if the
+	// early return in recordLoginCounter were ever deleted, the fallthrough
+	// would write this value and the test would catch it.
+	result := &webauthn.Credential{
+		ID:            rawID,
+		Authenticator: webauthn.Authenticator{SignCount: 99, CloneWarning: true},
+	}
+
+	err := a.recordLoginCounter(context.Background(), u, result)
+	if !errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("recordLoginCounter = %v, want ErrCounterRegression", err)
+	}
+
+	got, fetchErr := a.store.ByEmail(context.Background(), "alice@example.com")
+	if fetchErr != nil {
+		t.Fatalf("ByEmail: %v", fetchErr)
+	}
+	if len(got.Status.Credentials) != 1 {
+		t.Fatalf("credential was removed on a counter regression: %v", got.Status.Credentials)
+	}
+	if got.Status.Credentials[0].SignCount != 7 {
+		t.Fatalf("sign count changed on a counter regression: got %d, want 7 (unchanged)", got.Status.Credentials[0].SignCount)
+	}
+}
+
+// TestRecordLoginCounterRotatesSignCountWhenClean is the companion positive
+// case: a credential with no CloneWarning must have its sign count rotated
+// forward in the store, proving a legitimate login is not silently refused
+// by the same code path.
+func TestRecordLoginCounterRotatesSignCountWhenClean(t *testing.T) {
+	rawID := []byte("clean-credential")
+	credID := base64.RawURLEncoding.EncodeToString(rawID)
+	stored := framev1alpha1.WebAuthnCredential{ID: credID, PublicKey: "pk", SignCount: 7}
+	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, stored)
+	a := testAuthenticator(t, u)
+
+	result := &webauthn.Credential{
+		ID:            rawID,
+		Authenticator: webauthn.Authenticator{SignCount: 9, CloneWarning: false},
+	}
+
+	if err := a.recordLoginCounter(context.Background(), u, result); err != nil {
+		t.Fatalf("recordLoginCounter: %v", err)
+	}
+
+	got, fetchErr := a.store.ByEmail(context.Background(), "alice@example.com")
+	if fetchErr != nil {
+		t.Fatalf("ByEmail: %v", fetchErr)
+	}
+	if len(got.Status.Credentials) != 1 {
+		t.Fatalf("credential count changed: %v", got.Status.Credentials)
+	}
+	if got.Status.Credentials[0].SignCount != 9 {
+		t.Fatalf("sign count not rotated: got %d, want 9", got.Status.Credentials[0].SignCount)
 	}
 }

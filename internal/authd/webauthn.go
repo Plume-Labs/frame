@@ -24,11 +24,17 @@ const challengeTTL = 5 * time.Minute
 // advance — the library's clone/replay signal.
 //
 // It is deliberately a distinct error so the caller can log it for manual
-// investigation while refusing the login. It must never trigger deleting the
-// credential: a counter regression is exactly the kind of signal an attacker
-// who merely knows a credentialId (not a secret) could otherwise use to get
-// someone else's key disabled without ever authenticating, so the credential
-// is left alone and only the login is refused.
+// investigation while refusing the login. go-webauthn verifies the assertion's
+// signature before it ever compares counters (see the comment on the
+// CloneWarning check in FinishLogin), so by the time this error is produced
+// the caller has already proven possession of the private key: this is a
+// genuine clone/replay signal — or an authenticator restored from a backup —
+// not something an unauthenticated caller can trigger by guessing a
+// credentialId. It must still never trigger deleting or disabling the
+// credential: a legitimate owner whose authenticator glitched or was
+// restored from a backup must not automatically lose their only way in. The
+// login is refused and left for a human to investigate; the key stays
+// enrolled.
 var ErrCounterRegression = errors.New("authenticator sign counter did not advance")
 
 // Authenticator runs the two WebAuthn ceremonies against the FrameUser store.
@@ -146,24 +152,37 @@ func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response
 		return nil, fmt.Errorf("verifying assertion: %w", err)
 	}
 
-	// The library never returns an error for a counter that failed to
-	// advance: it verifies the signature (steps 4-16 of §7.2) first, and
-	// only afterwards (step 17) compares the reported counter against the
-	// stored one, recording the outcome as Authenticator.CloneWarning rather
-	// than failing the call. So a successful ValidateDiscoverableLogin still
-	// needs this check before the login can be trusted. Using the typed
-	// CloneWarning field here — instead of matching on error text — is also
-	// more robust: err.Error() is not a stable API and could change across
-	// point releases without a major-version bump.
+	if err := a.recordLoginCounter(ctx, matched, cred); err != nil {
+		return nil, err
+	}
+	return matched, nil
+}
+
+// recordLoginCounter applies the post-validation counter check for a login
+// that has already passed signature verification.
+//
+// The library never returns an error for a counter that failed to advance:
+// it verifies the signature (steps 4-16 of §7.2) first, and only afterwards
+// (step 17) compares the reported counter against the stored one, recording
+// the outcome as Authenticator.CloneWarning rather than failing the call. So
+// a successful ValidateDiscoverableLogin still needs this check before the
+// login can be trusted. Using the typed CloneWarning field here — instead of
+// matching on error text — is also more robust: err.Error() is not a stable
+// API and could change across point releases without a major-version bump.
+//
+// On a regression the login is refused (ErrCounterRegression) and the store
+// is deliberately left untouched: no UpdateSignCount, no credential removal.
+// Only a clean counter reaches the write that rotates it forward.
+func (a *Authenticator) recordLoginCounter(ctx context.Context, u *framev1alpha1.FrameUser, cred *webauthn.Credential) error {
 	if cred.Authenticator.CloneWarning {
-		return nil, fmt.Errorf("%w: authenticator reported counter %d", ErrCounterRegression, cred.Authenticator.SignCount)
+		return fmt.Errorf("%w: authenticator reported counter %d", ErrCounterRegression, cred.Authenticator.SignCount)
 	}
 
 	credID := base64.RawURLEncoding.EncodeToString(cred.ID)
-	if err := a.store.UpdateSignCount(ctx, matched, credID, cred.Authenticator.SignCount); err != nil {
-		return nil, fmt.Errorf("recording sign count: %w", err)
+	if err := a.store.UpdateSignCount(ctx, u, credID, cred.Authenticator.SignCount); err != nil {
+		return fmt.Errorf("recording sign count: %w", err)
 	}
-	return matched, nil
+	return nil
 }
 
 func (a *Authenticator) seal(options any, session *webauthn.SessionData) ([]byte, string, error) {
