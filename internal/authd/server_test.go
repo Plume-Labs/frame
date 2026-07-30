@@ -120,6 +120,41 @@ func TestBootstrapRejectsWrongToken(t *testing.T) {
 	}
 }
 
+// TestBootstrapRefusesWhenNoTokenIsConfigured covers the authentication
+// bypass found in review: subtle.ConstantTimeCompare([]byte(""), []byte(""))
+// returns 1, so a server whose BootstrapSecret is empty — the designed
+// steady state once bootstrap has already consumed and deleted the Secret,
+// per cmd/authd/main.go's loadBootstrapToken — must refuse every bootstrap
+// attempt outright, not fall through to a compare that a caller can satisfy
+// by simply omitting the token field.
+func TestBootstrapRefusesWhenNoTokenIsConfigured(t *testing.T) {
+	store := storeWith(t)
+	auth, err := NewAuthenticator("example.com", "https://example.com", store, testCodec())
+	if err != nil {
+		t.Fatalf("authenticator: %v", err)
+	}
+	srv, err := NewServer(ServerConfig{
+		Store:           store,
+		Auth:            auth,
+		Issuer:          testIssuer(t),
+		Codec:           testCodec(),
+		BootstrapSecret: "", // never configured, or already consumed
+		Namespace:       "cluster-control",
+		TokenTTL:        15 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+
+	for _, body := range []string{`{"token":""}`, `{}`} {
+		rec := do(t, srv, http.MethodPost, "/auth/bootstrap", body)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("bootstrap with body %q against an empty configured token = %d, want 404 "+
+				"(an empty submitted token must never match an empty configured one)", body, rec.Code)
+		}
+	}
+}
+
 // TestBootstrapCreatesTheFirstAdminAndDeletesTheSecret is the test the brief's
 // stub could never fail: it reads the FrameUser back and asserts on its role
 // and password mode, and confirms the bootstrap Secret is actually gone
@@ -214,6 +249,78 @@ func TestTokenRequiresASession(t *testing.T) {
 	rec := do(t, srv, http.MethodPost, "/auth/token", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("token without session = %d, want 401", rec.Code)
+	}
+}
+
+// TestDummyPasswordHashIsValidAndVerifiable covers the timing-oracle fix
+// found in review: handlePasswordLogin must call VerifyPassword exactly once
+// on every failure path, including the ones where there is no real account
+// or no real hash (unknown email, password disabled), using
+// dummyPasswordHash so the argon2id cost — and so the wall-clock time — is
+// identical to a genuine attempt. That guarantee only holds if
+// dummyPasswordHash is itself a real, correctly-parsing argon2id hash rather
+// than an empty or malformed placeholder that VerifyPassword would reject in
+// microseconds via its early parse-failure return (see VerifyPassword's own
+// "malformed input" fast path in password.go) — which would silently
+// reintroduce the timing gap this fix closes.
+func TestDummyPasswordHashIsValidAndVerifiable(t *testing.T) {
+	if dummyPasswordHash == "" {
+		t.Fatal("dummyPasswordHash was not initialized")
+	}
+	if !VerifyPassword(dummyPasswordHash, "authd-dummy-password-for-timing-safety") {
+		t.Fatal("dummyPasswordHash does not parse as a genuine argon2id hash — VerifyPassword would " +
+			"take its malformed-input fast path instead of paying the real argon2 cost, reopening the timing oracle")
+	}
+}
+
+// TestPasswordLoginAlwaysVerifiesExactlyOnce is the structural,
+// timing-independent counterpart to the timing-oracle fix: it proves
+// handlePasswordLogin calls verifyPassword exactly once per request on every
+// failure path (unknown email, password disabled, wrong password), not just
+// that the dummy hash constant happens to be valid. A regression to the
+// original `err != nil || u.Spec.PasswordAuth != Enabled || !VerifyPassword(...)`
+// short-circuit would make this test fail with 0 calls for the first two
+// cases, even though TestUnknownEmailAndWrongPasswordAreIndistinguishable and
+// TestDummyPasswordHashIsValidAndVerifiable would both still pass — neither
+// of those actually observes whether verifyPassword ran.
+func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
+	enabled := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
+	enabled.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+	hash, err := HashPassword("hunter2")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	enabled.Spec.PasswordHash = hash
+
+	disabled := fixture("bob", "bob@example.com", framev1alpha1.RoleViewer)
+	disabled.Spec.PasswordAuth = framev1alpha1.PasswordDisabled
+
+	cases := []struct {
+		name string
+		srv  *Server
+		body string
+	}{
+		{"unknown email", testServer(t, enabled), `{"email":"ghost@example.com","password":"nope"}`},
+		{"password disabled", testServer(t, disabled), `{"email":"bob@example.com","password":"nope"}`},
+		{"wrong password", testServer(t, enabled), `{"email":"alice@example.com","password":"nope"}`},
+	}
+
+	original := verifyPassword
+	defer func() { verifyPassword = original }()
+
+	for _, tc := range cases {
+		calls := 0
+		verifyPassword = func(encoded, plain string) bool {
+			calls++
+			return original(encoded, plain)
+		}
+		rec := do(t, tc.srv, http.MethodPost, "/auth/login/password", tc.body)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: status = %d, want 401", tc.name, rec.Code)
+		}
+		if calls != 1 {
+			t.Fatalf("%s: verifyPassword called %d times, want exactly 1", tc.name, calls)
+		}
 	}
 }
 
