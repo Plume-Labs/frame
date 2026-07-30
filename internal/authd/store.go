@@ -45,6 +45,20 @@ func (s *Store) ByEmail(ctx context.Context, email string) (*framev1alpha1.Frame
 	return nil, ErrUserNotFound
 }
 
+// Create writes a brand-new FrameUser. Only /auth/bootstrap calls this — every
+// other write in this package goes through Status().Update via
+// AddCredential/UpdateSignCount/RemoveCredential, because every other write
+// is authd editing an account that already exists.
+func (s *Store) Create(ctx context.Context, u *framev1alpha1.FrameUser) error {
+	if u.Namespace == "" {
+		u.Namespace = s.namespace
+	}
+	if err := s.client.Create(ctx, u); err != nil {
+		return fmt.Errorf("creating user: %w", err)
+	}
+	return nil
+}
+
 // ByCredentialID resolves the account owning a credential, which is how the
 // usernameless sign-in flow identifies who is at the keyboard.
 func (s *Store) ByCredentialID(ctx context.Context, credID string) (*framev1alpha1.FrameUser, error) {
