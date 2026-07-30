@@ -254,9 +254,11 @@ func loadHMACKey(path string) ([]byte, error) {
 // bootstrap has already happened (handleBootstrap deletes it on success), and
 // authd must keep serving logins after that — it must not crash-loop on every
 // restart of an already-bootstrapped cluster. In that case authd starts with
-// an empty token, which can never match a caller-supplied one, so
-// /auth/bootstrap simply stays refused (on top of the AdminCount guard, which
-// is already closed by then anyway).
+// an empty token. That is NOT safe to compare against a caller-supplied
+// token with subtle.ConstantTimeCompare — two empty byte slices compare
+// equal — so handleBootstrap explicitly refuses with 404 whenever
+// cfg.BootstrapSecret == "" before it ever reaches that compare, rather than
+// relying on the empty string being "unguessable".
 func loadBootstrapToken(ctx context.Context, kc client.Client, name, namespace string) (string, error) {
 	var secret corev1.Secret
 	err := kc.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &secret)

@@ -8,6 +8,36 @@ import (
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
 
+// dummyPasswordHash is a valid argon2id PHC string for a password nobody
+// will ever type. It exists purely so VerifyPassword is called with the same
+// cost parameters on every failure branch of handlePasswordLogin: Go
+// short-circuits `||`, so a naive `err != nil || ... || !VerifyPassword(...)`
+// never reaches VerifyPassword for an unknown email or a passkey-only
+// account, and those paths return in microseconds next to the ~100ms argon2id
+// costs on a real attempt — trivially distinguishable with a stopwatch, even
+// though the status code and body are already identical (see
+// TestUnknownEmailAndWrongPasswordAreIndistinguishable).
+var dummyPasswordHash = mustDummyPasswordHash()
+
+func mustDummyPasswordHash() string {
+	hash, err := HashPassword("authd-dummy-password-for-timing-safety")
+	if err != nil {
+		// HashPassword only fails if crypto/rand can't be read, which would
+		// make password hashing unsafe everywhere else too — fail loudly at
+		// package init rather than silently falling back to a timing oracle.
+		panic("authd: failed to precompute dummy password hash: " + err.Error())
+	}
+	return hash
+}
+
+// verifyPassword is an indirection over the package-level VerifyPassword,
+// solely so a test can count how many times handlePasswordLogin invokes it
+// per request — a structural, timing-independent way to pin down "exactly
+// one verification on every path" (see TestPasswordLoginAlwaysVerifiesExactlyOnce
+// in server_test.go) instead of relying on a wall-clock measurement, which
+// would be flaky. Production code always calls through this var unmodified.
+var verifyPassword = VerifyPassword
+
 func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email    string `json:"email"`
@@ -18,15 +48,28 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.cfg.Store.ByEmail(r.Context(), body.Email)
+	if err != nil && !errors.Is(err, ErrUserNotFound) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Always perform exactly one argon2id verification, on every path,
+	// whether or not there is a real account or a real hash to check: this
+	// keeps the CPU cost — and so the wall-clock time — identical for an
+	// unknown email, a passkey-only account, and a genuinely wrong password.
+	// usable stays false, and hash stays the dummy, for the first two; only
+	// a real, password-enabled account gets its own hash checked.
+	usable := err == nil && u.Spec.PasswordAuth == framev1alpha1.PasswordEnabled
+	hash := dummyPasswordHash
+	if usable {
+		hash = u.Spec.PasswordHash
+	}
+	verified := verifyPassword(hash, body.Password)
+
 	// One response for every failure: unknown account, password disabled, and
 	// wrong password are indistinguishable, so this endpoint cannot be used to
 	// enumerate who has an account.
-	if err != nil || u.Spec.PasswordAuth != framev1alpha1.PasswordEnabled ||
-		!VerifyPassword(u.Spec.PasswordHash, body.Password) {
-		if err != nil && !errors.Is(err, ErrUserNotFound) {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+	if !usable || !verified {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

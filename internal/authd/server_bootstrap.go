@@ -1,6 +1,7 @@
 package authd
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
@@ -37,6 +38,16 @@ var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+$`)
 // otherwise leave a permanently valid token around, e.g. after a rollback).
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	if n, err := s.cfg.Store.AdminCount(r.Context()); err != nil || n > 0 {
+		http.NotFound(w, r)
+		return
+	}
+	// An empty BootstrapSecret means no token is configured — either it was
+	// never set, or (the designed steady state) it was already consumed and
+	// the Secret deleted. This must be checked before the compare below:
+	// subtle.ConstantTimeCompare returns 1 for two empty slices, so without
+	// this a request with no "token" field at all (body.Token == "") would
+	// match an empty s.cfg.BootstrapSecret and mint an unauthenticated admin.
+	if s.cfg.BootstrapSecret == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -98,7 +109,14 @@ func (s *Server) deleteBootstrapSecret(r *http.Request) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: s.cfg.BootstrapSecretName, Namespace: s.cfg.Namespace},
 	}
-	if err := s.cfg.Client.Delete(r.Context(), secret); err != nil && !apierrors.IsNotFound(err) {
+	// context.WithoutCancel, not r.Context(): net/http cancels the request
+	// context the instant the client connection closes, and this delete is
+	// the durable half of the two-lock close described above (Store.Create
+	// already happened by the time this runs). A caller that hangs up right
+	// after receiving — or even before receiving — the response must not be
+	// able to skip the Secret delete just by disconnecting early.
+	ctx := context.WithoutCancel(r.Context())
+	if err := s.cfg.Client.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
 		slog.Error("bootstrap: failed to delete the bootstrap secret; delete it manually so the token cannot be reused",
 			"secret", s.cfg.BootstrapSecretName, "namespace", s.cfg.Namespace, "error", err)
 	}
