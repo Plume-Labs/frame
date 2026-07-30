@@ -39,3 +39,6 @@ deploy/talos/generated/
 # Go tool cache (controller-gen, kustomize, setup-envtest, golangci-lint)
 /bin/
 cover.out
+
+# Isolated worktrees for subagent-driven work — never part of the tree.
+.worktrees/
