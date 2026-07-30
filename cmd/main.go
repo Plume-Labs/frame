@@ -248,6 +248,12 @@ func main() {
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != "false" {
+		if err := webhookv1alpha1.SetupFrameUserWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameUser")
+			os.Exit(1)
+		}
+	}
+	if os.Getenv(enableWebhooksEnv) != "false" {
 		if err := webhookv1alpha1.SetupFrameResourceQuotaWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameResourceQuota")
 			os.Exit(1)
