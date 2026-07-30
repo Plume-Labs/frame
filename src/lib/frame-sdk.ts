@@ -19,6 +19,8 @@
  * ```
  */
 
+import { config, type Integration } from './frame-config'
+
 // ── Domain types ─────────────────────────────────────────────────────────────
 
 export type ServiceClass  = 'HIGH' | 'MEDIUM' | 'LOW'
@@ -533,7 +535,32 @@ const VERSION = 'v1alpha1'
 function frameNs(override?: string): string {
   return override
     ?? (window as unknown as Record<string, string>).__FRAME_NAMESPACE__
-    ?? 'default'
+    ?? config().frameNamespace
+}
+
+/**
+ * Pod-list URL for an integration's selector. An empty namespace means
+ * cluster-wide, for components whose pods are not pinned to one namespace.
+ */
+function integrationPods(i: Integration): string {
+  const scope = i.namespace ? `/namespaces/${i.namespace}` : ''
+  return `/api/v1${scope}/pods?labelSelector=${encodeURIComponent(i.selector)}`
+}
+
+/** Proxy URL to `path` on one of an integration's pods. */
+function integrationProxy(i: Integration, pod: string, path: string): string {
+  return `/api/v1/namespaces/${i.namespace}/pods/${pod}:${i.port}/proxy${path}`
+}
+
+/**
+ * Escape a value interpolated into a metrics-matching RegExp.
+ *
+ * Interface names and mount paths come from the config now, so they are
+ * arbitrary user input: an unescaped `+` or `(` builds a regex that throws
+ * instead of a match that fails, taking the whole screen down.
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function bearerToken(): string | undefined {
@@ -907,28 +934,35 @@ class ClusterClient {
    * running OSD/mon pods. Throws if Rook is not installed (no CephCluster).
    */
   async ceph(): Promise<CephStatus> {
-    const ns = 'rook-ceph'
-    const [cluster, pools, osdPods, monPods] = await Promise.all([
-      k8sFetch<{
-        status?: {
-          ceph?: {
-            health?: string
-            capacity?: { bytesTotal?: number; bytesUsed?: number; bytesAvailable?: number }
-            versions?: { overall?: Record<string, number> }
+    const cfg = config()
+    const ns = cfg.namespaces.ceph
+    const [clusters, pools, osdPods, monPods] = await Promise.all([
+      // Listed rather than fetched by name: Rook names the CR after its
+      // namespace by convention, but nothing enforces that, and a wrong guess
+      // would 404 a screen that could just read whichever cluster is there.
+      k8sFetch<
+        ListResponse<{
+          status?: {
+            ceph?: {
+              health?: string
+              capacity?: { bytesTotal?: number; bytesUsed?: number; bytesAvailable?: number }
+              versions?: { overall?: Record<string, number> }
+            }
           }
-        }
-      }>(`/apis/ceph.rook.io/v1/namespaces/${ns}/cephclusters/rook-ceph`),
+        }>
+      >(`/apis/ceph.rook.io/v1/namespaces/${ns}/cephclusters`),
       k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { replicated?: { size?: number } } }>>(
         `/apis/ceph.rook.io/v1/namespaces/${ns}/cephblockpools`,
       ),
       k8sFetch<ListResponse<{ status?: { phase?: string } }>>(
-        `/api/v1/namespaces/${ns}/pods?labelSelector=app%3Drook-ceph-osd`,
+        integrationPods(cfg.integrations.cephOsd),
       ),
       k8sFetch<ListResponse<{ status?: { phase?: string } }>>(
-        `/api/v1/namespaces/${ns}/pods?labelSelector=app%3Drook-ceph-mon`,
+        integrationPods(cfg.integrations.cephMon),
       ),
     ])
 
+    const cluster = clusters.items?.[0] ?? {}
     const cap = cluster.status?.ceph?.capacity ?? {}
     const version = Object.keys(cluster.status?.ceph?.versions?.overall ?? {})[0] ?? ''
     const running = (list: ListResponse<{ status?: { phase?: string } }>) =>
@@ -988,16 +1022,15 @@ class ClusterClient {
    * Live Alluxio tiered storage — MEM/SSD/HDD capacity + used and the cluster
    * cache hit-rate, read from the Alluxio master metrics over the pod-proxy.
    */
-  async alluxio(namespace = 'alluxio'): Promise<AlluxioStats> {
+  async alluxio(): Promise<AlluxioStats> {
+    const alluxio = config().integrations.alluxio
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      `/api/v1/namespaces/${namespace}/pods?labelSelector=app%3Dalluxio`,
+      integrationPods(alluxio),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) throw new FrameAPIError(404, 'Alluxio not deployed')
 
-    const res = await fetch(
-      `/api/v1/namespaces/${namespace}/pods/${name}:19999/proxy/metrics/json/`,
-    )
+    const res = await fetch(integrationProxy(alluxio, name, '/metrics/json/'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alluxio metrics')
     const g = ((await res.json()) as { gauges: Record<string, { value: number }> }).gauges
     const v = (k: string) => g[k]?.value ?? 0
@@ -1021,15 +1054,14 @@ class ClusterClient {
 
   /** Fetch node-exporter metrics text per node (pod-proxy), keyed by node name. */
   private async nodeExporterMetrics(): Promise<Array<{ node: string; text: string }>> {
+    const nodeExporter = config().integrations.nodeExporter
     const pods = await k8sFetch<
       ListResponse<{ metadata: { name: string }; spec?: { nodeName?: string } }>
-    >('/api/v1/namespaces/monitoring/pods?labelSelector=app%3Dnode-exporter')
+    >(integrationPods(nodeExporter))
     const results = await Promise.all(
       (pods.items ?? []).map(async (p) => {
         try {
-          const res = await fetch(
-            `/api/v1/namespaces/monitoring/pods/${p.metadata.name}:9100/proxy/metrics`,
-          )
+          const res = await fetch(integrationProxy(nodeExporter, p.metadata.name, '/metrics'))
           return { node: p.spec?.nodeName ?? p.metadata.name, text: res.ok ? await res.text() : '' }
         } catch {
           return { node: p.spec?.nodeName ?? p.metadata.name, text: '' }
@@ -1071,13 +1103,14 @@ class ClusterClient {
    * the flannel VXLAN overlay (flannel.1) and the pod bridge (cni0), with
    * bytes/packets/errors/drops each.
    */
-  async network(devices = ['eth0', 'flannel.1', 'cni0']): Promise<NetNode[]> {
+  async network(): Promise<NetNode[]> {
+    const devices = config().network.devices
     const metrics = await this.nodeExporterMetrics()
     if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
 
     const g = (text: string, key: string, dev: string) => {
       const m = text.match(
-        new RegExp(`^${key}\\{device="${dev.replace('.', '\\.')}"\\}\\s+([0-9.e+-]+)`, 'm'),
+        new RegExp(`^${key}\\{device="${escapeRegExp(dev)}"\\}\\s+([0-9.e+-]+)`, 'm'),
       )
       return m ? Number(m[1]) : 0
     }
@@ -1226,14 +1259,15 @@ class ClusterClient {
     const url = `/apis/scheduling.volcano.sh/v1beta1/queues/${name}`
     const queue = await k8sFetch<{ metadata: { uid: string } }>(url)
 
-    await k8sFetch<unknown>('/apis/bus.volcano.sh/v1alpha1/namespaces/default/commands', {
+    const commandNs = config().namespaces.volcanoCommands
+    await k8sFetch<unknown>(`/apis/bus.volcano.sh/v1alpha1/namespaces/${commandNs}/commands`, {
       method: 'POST',
       body: {
         apiVersion: 'bus.volcano.sh/v1alpha1',
         kind: 'Command',
         metadata: {
           generateName: `${state.toLowerCase()}queue-`,
-          namespace: 'default',
+          namespace: commandNs,
         },
         action: `${state}Queue`,
         target: {
@@ -1256,7 +1290,8 @@ class ClusterClient {
   }
 
   /** Live pipeline lineage from Argo Workflows: each run's DAG steps as timed spans. */
-  async workflows(namespace = 'argo'): Promise<WorkflowTrace[]> {
+  async workflows(): Promise<WorkflowTrace[]> {
+    const namespace = config().namespaces.argo
     const res = await k8sFetch<
       ListResponse<{
         metadata: { name: string }
@@ -1356,12 +1391,15 @@ class ClusterClient {
     }
   }
 
-  /** Burst-buffer SSD tier: capacity/used of the /burst-buffer mount per node. */
-  async burstBuffer(mount = '/burst-buffer'): Promise<BurstNode[]> {
+  /** Burst-buffer SSD tier: capacity/used of the configured scratch mount per node. */
+  async burstBuffer(): Promise<BurstNode[]> {
+    const mount = config().burstBuffer.mount
     const metrics = await this.nodeExporterMetrics()
     if (!metrics.length) throw new FrameAPIError(404, 'node-exporter not deployed')
     const g = (text: string, key: string) => {
-      const m = text.match(new RegExp(`^${key}\\{[^}]*mountpoint="${mount}"[^}]*\\}\\s+([0-9.e+-]+)`, 'm'))
+      const m = text.match(
+        new RegExp(`^${key}\\{[^}]*mountpoint="${escapeRegExp(mount)}"[^}]*\\}\\s+([0-9.e+-]+)`, 'm'),
+      )
       return m ? Number(m[1]) : 0
     }
     return metrics
@@ -1397,7 +1435,7 @@ class ClusterClient {
   async racks(): Promise<Rack[]> {
     const [fnRes, k8sNodes, nodes, placement] = await Promise.all([
       k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string } }>>(
-        `/apis/${GROUP}/${VERSION}/namespaces/default/framenodes`,
+        apiBase('framenodes'),
       ),
       k8sFetch<ListResponse<{ metadata: { name: string; labels?: Record<string, string> } }>>(
         '/api/v1/nodes',
@@ -1452,14 +1490,13 @@ class ClusterClient {
 
   /** Live GPU telemetry from DCGM-exporter (NVIDIA GPU operator). */
   async gpus(): Promise<GpuInfo[]> {
+    const dcgm = config().integrations.dcgm
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      '/api/v1/namespaces/gpu-operator/pods?labelSelector=app%3Dnvidia-dcgm-exporter',
+      integrationPods(dcgm),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) throw new FrameAPIError(404, 'DCGM exporter not deployed')
-    const res = await fetch(
-      `/api/v1/namespaces/gpu-operator/pods/${name}:9400/proxy/metrics`,
-    )
+    const res = await fetch(integrationProxy(dcgm, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read DCGM metrics')
     const text = await res.text()
 
@@ -1505,13 +1542,14 @@ class ClusterClient {
    * /metrics + /props). Real KV-cache depth, throughput and request queue.
    */
   async inference(): Promise<InferenceStatus | null> {
+    const llamacpp = config().integrations.llamacpp
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string }; spec: { nodeName?: string } }>>(
-      '/api/v1/namespaces/inference/pods?labelSelector=app%3Dllamacpp',
+      integrationPods(llamacpp),
     )
     const pod = pods.items?.find((p) => p.metadata.name)
     if (!pod) return null
     const name = pod.metadata.name
-    const base = `/api/v1/namespaces/inference/pods/${name}:8080/proxy`
+    const base = integrationProxy(llamacpp, name, '')
 
     const mRes = await fetch(`${base}/metrics`)
     if (!mRes.ok) throw new FrameAPIError(mRes.status, 'cannot read inference metrics')
@@ -1554,13 +1592,14 @@ class ClusterClient {
    * + /info. Runs CPU-only in this deployment — no GPU telemetry to report.
    */
   async teiStatus(): Promise<TeiStatus | null> {
+    const tei = config().integrations.tei
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string }; spec: { nodeName?: string } }>>(
-      '/api/v1/namespaces/inference/pods?labelSelector=app%3Dtei',
+      integrationPods(tei),
     )
     const pod = pods.items?.find((p) => p.metadata.name)
     if (!pod) return null
     const name = pod.metadata.name
-    const base = `/api/v1/namespaces/inference/pods/${name}:80/proxy`
+    const base = integrationProxy(tei, name, '')
 
     const mRes = await fetch(`${base}/metrics`)
     if (!mRes.ok) throw new FrameAPIError(mRes.status, 'cannot read TEI metrics')
@@ -1596,14 +1635,13 @@ class ClusterClient {
    * metrics). Each series is one (rule, priority, workload) with a firing count.
    */
   async security(): Promise<SecurityStatus | null> {
+    const falco = config().integrations.falcosidekick
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      '/api/v1/namespaces/falco/pods?labelSelector=app.kubernetes.io%2Fname%3Dfalcosidekick',
+      integrationPods(falco),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const res = await fetch(
-      `/api/v1/namespaces/falco/pods/${name}:2801/proxy/metrics`,
-    )
+    const res = await fetch(integrationProxy(falco, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Falco metrics')
     const text = await res.text()
 
@@ -1716,12 +1754,13 @@ class ClusterClient {
    * outbound network connections per workload.
    */
   async tetragon(): Promise<TetragonActivity | null> {
+    const tetragon = config().integrations.tetragon
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      '/api/v1/namespaces/tetragon/pods?labelSelector=app.kubernetes.io%2Fname%3Dtetragon',
+      integrationPods(tetragon),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const res = await fetch(`/api/v1/namespaces/tetragon/pods/${name}:2112/proxy/metrics`)
+    const res = await fetch(integrationProxy(tetragon, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Tetragon metrics')
     const text = await res.text()
 
@@ -1771,7 +1810,7 @@ class ClusterClient {
    */
   async neuraSandboxJobs(): Promise<{ byPhase: Record<string, number>; recent: Array<{ name: string; phase: string; node: string; age: string }> }> {
     const res = await k8sFetch<ListResponse<{ metadata: { name: string; creationTimestamp?: string }; spec?: { nodeName?: string }; status?: { phase?: string } }>>(
-      '/api/v1/pods?labelSelector=app%3Dneura-sandbox',
+      integrationPods(config().integrations.neuraSandbox),
     )
     const byPhase: Record<string, number> = {}
     const recent = (res.items ?? [])
@@ -1802,7 +1841,7 @@ class ClusterClient {
         progress?: { itemsBackedUp?: number }
       }
     }
-    const base = '/apis/velero.io/v1/namespaces/velero'
+    const base = `/apis/velero.io/v1/namespaces/${config().namespaces.velero}`
     const [bk, bsl, sch] = await Promise.all([
       k8sFetch<ListResponse<Backup>>(`${base}/backups`).catch(() => null),
       k8sFetch<ListResponse<{ status?: { phase?: string } }>>(`${base}/backupstoragelocations`).catch(() => null),
@@ -1842,12 +1881,13 @@ class ClusterClient {
   /** Trigger an on-demand Velero backup of the whole cluster. */
   async triggerBackup(): Promise<{ name: string }> {
     const name = toK8sName(`on-demand-${new Date().toISOString()}`)
-    await k8sFetch<undefined>('/apis/velero.io/v1/namespaces/velero/backups', {
+    const veleroNs = config().namespaces.velero
+    await k8sFetch<undefined>(`/apis/velero.io/v1/namespaces/${veleroNs}/backups`, {
       method: 'POST',
       body: {
         apiVersion: 'velero.io/v1',
         kind: 'Backup',
-        metadata: { name, namespace: 'velero' },
+        metadata: { name, namespace: veleroNs },
         spec: {},
       },
     })
@@ -1861,11 +1901,11 @@ class ClusterClient {
    */
   async forecast(windowHours = 3): Promise<ForecastStatus | null> {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      '/api/v1/namespaces/monitoring/pods?labelSelector=app.kubernetes.io%2Fname%3Dprometheus',
+      integrationPods(config().integrations.prometheus),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const base = `/api/v1/namespaces/monitoring/pods/${name}:9090/proxy/api/v1/query_range`
+    const base = integrationProxy(config().integrations.prometheus, name, '/api/v1/query_range')
     const end = Math.floor(Date.now() / 1000)
     const start = end - windowHours * 3600
     const step = 300
@@ -1915,11 +1955,13 @@ class ClusterClient {
    */
   async alerts(): Promise<AlertsStatus | null> {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      '/api/v1/namespaces/monitoring/pods?labelSelector=app.kubernetes.io%2Fname%3Dalertmanager',
+      integrationPods(config().integrations.alertmanager),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const res = await fetch(`/api/v1/namespaces/monitoring/pods/${name}:9093/proxy/api/v2/alerts`)
+    const res = await fetch(
+      integrationProxy(config().integrations.alertmanager, name, '/api/v2/alerts'),
+    )
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alertmanager alerts')
     const raw: Array<{
       labels?: Record<string, string>
@@ -1956,11 +1998,11 @@ class ClusterClient {
    */
   private async alertmanagerBase(): Promise<string> {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
-      '/api/v1/namespaces/monitoring/pods?labelSelector=app.kubernetes.io%2Fname%3Dalertmanager',
+      integrationPods(config().integrations.alertmanager),
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) throw new FrameAPIError(404, 'Alertmanager pod not found')
-    return `/api/v1/namespaces/monitoring/pods/${name}:9093/proxy/api/v2`
+    return integrationProxy(config().integrations.alertmanager, name, '/api/v2')
   }
 
   /** Silences that are currently active or pending — expired ones are dropped. */

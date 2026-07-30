@@ -31,6 +31,17 @@ spec:
       path: deploy/kubernetes/overlays/production
   destination:
     server: https://kubernetes.default.svc
+  # The UI's Settings screen writes its cluster wiring into this ConfigMap, so
+  # its contents are runtime state, not git state. Git declares the resource
+  # (see deploy/kubernetes/base/config.yaml) but never its data — without this,
+  # every saved setting would show as drift and be reverted on the next sync.
+  ignoreDifferences:
+    - group: ''
+      kind: ConfigMap
+      name: cluster-control-config
+      namespace: cluster-control
+      jsonPointers:
+        - /data
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
