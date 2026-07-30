@@ -12,6 +12,7 @@ import { NotEnabledView } from '@/components/NotEnabledView'
 // chunk for nothing — dynamic import() gives each its own chunk, fetched
 // only when its nav item is actually clicked.
 const ClusterNodesView = lazy(() => import('@/components/ClusterNodesView').then((m) => ({ default: m.ClusterNodesView })))
+const FrameNodesView = lazy(() => import('@/components/FrameNodesView').then((m) => ({ default: m.FrameNodesView })))
 const RacksView = lazy(() => import('@/components/RacksView').then((m) => ({ default: m.RacksView })))
 const ApplicationsView = lazy(() => import('@/components/ApplicationsView').then((m) => ({ default: m.ApplicationsView })))
 const FrameJobsView = lazy(() => import('@/components/FrameJobsView').then((m) => ({ default: m.FrameJobsView })))
@@ -116,6 +117,7 @@ const NAV: NavGroup[] = [
     label: 'Compute',
     items: [
       { id: 'nodes', label: 'Nodes', icon: <Cpu />, description: 'Fleet health and per-node status' },
+      { id: 'provisioned-nodes', label: 'Provisioned', icon: <HardDrives />, description: 'FrameNode resources the operator manages' },
       { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Nodes grouped by real hypervisor host (capacity, oversubscription)' },
     ],
   },
@@ -209,6 +211,8 @@ function App() {
             <ClusterNodesView />
           </div>
         )
+      case 'provisioned-nodes':
+        return <FrameNodesView />
       case 'racks':
         return <RacksView />
       // ── Resources ───────────────────────────────────────────────────────
