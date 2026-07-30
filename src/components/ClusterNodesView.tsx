@@ -17,13 +17,14 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen } from '@phosphor-icons/react'
+import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen, Eject } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 export function ClusterNodesView() {
   const { state, reload } = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes())
   const [cordonTarget, setCordonTarget] = useState<ClusterNodeInfo | null>(null)
+  const [drainTarget, setDrainTarget] = useState<ClusterNodeInfo | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
   async function setCordon(node: ClusterNodeInfo, unschedulable: boolean) {
@@ -39,6 +40,28 @@ export function ClusterNodesView() {
     } finally {
       setBusy(null)
       setCordonTarget(null)
+    }
+  }
+
+  async function drain(node: ClusterNodeInfo) {
+    setBusy(node.name)
+    try {
+      const { evicted, skipped, blocked } = await frame.cluster.drain(node.name)
+      const detail = `${evicted} evicted · ${skipped} skipped (DaemonSet/static)${
+        blocked ? ` · ${blocked} blocked by PodDisruptionBudget` : ''
+      }`
+      // A blocked pod is not a failure of the drain, but it does mean the node
+      // is not actually empty — say so rather than showing a plain success.
+      if (blocked) toast.warning(`${node.name} partially drained`, { description: detail })
+      else toast.success(`${node.name} drained`, { description: detail })
+      reload()
+    } catch (e) {
+      toast.error(`Failed to drain ${node.name}`, {
+        description: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      setBusy(null)
+      setDrainTarget(null)
     }
   }
 
@@ -139,6 +162,16 @@ export function ClusterNodesView() {
                         Cordon
                       </Button>
                     )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="font-mono gap-1.5"
+                      disabled={busy === n.name}
+                      onClick={() => setDrainTarget(n)}
+                    >
+                      <Eject />
+                      Drain
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -179,6 +212,26 @@ export function ClusterNodesView() {
             <AlertDialogCancel>Keep schedulable</AlertDialogCancel>
             <AlertDialogAction onClick={() => cordonTarget && setCordon(cordonTarget, true)}>
               Cordon node
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!drainTarget} onOpenChange={(open) => !open && setDrainTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Drain {drainTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cordons the node, then evicts every pod on it so its workloads reschedule elsewhere.
+              DaemonSet and static pods stay — their controllers would recreate them here anyway.
+              Pods protected by a PodDisruptionBudget may be refused and left running. Undo by
+              uncordoning; evicted pods do not come back to this node on their own.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => drainTarget && drain(drainTarget)}>
+              Drain node
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

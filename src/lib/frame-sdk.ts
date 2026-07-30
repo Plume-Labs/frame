@@ -388,6 +388,18 @@ export interface ActiveAlert {
   /** Raw label set, needed to build precise matchers for a silence. */
   labels: Record<string, string>
 }
+/** A live Alertmanager silence — what a "Silence" action produced, so it can be undone. */
+export interface AlertSilence {
+  id: string
+  /** `active` (suppressing now) or `pending` (starts later). */
+  state: string
+  /** Matchers rendered for display, e.g. `alertname=Foo, namespace=bar`. */
+  matchers: string
+  startsAt: string
+  endsAt: string
+  createdBy: string
+  comment: string
+}
 export interface AlertsStatus {
   alerts: ActiveAlert[]
   bySeverity: Record<string, number>
@@ -832,6 +844,65 @@ class ClusterClient {
   }
 
   /**
+   * Drain a node: cordon it, then evict every evictable pod on it.
+   *
+   * Skips the same pods `kubectl drain` skips by default — DaemonSet-owned and
+   * mirror (static) pods, whose controllers would just recreate them on the
+   * same node — plus already-terminal pods, which have nothing to evict.
+   *
+   * A pod whose PodDisruptionBudget refuses the eviction comes back 429; that
+   * is a normal outcome (the budget is doing its job), so it counts as
+   * `blocked` and the drain continues instead of aborting. Any other error —
+   * an RBAC denial in particular — still throws, so a misconfigured token
+   * fails loudly rather than looking like a partially-successful drain.
+   */
+  async drain(name: string): Promise<{ evicted: number; skipped: number; blocked: number }> {
+    await this.cordon(name, true)
+    const pods = await k8sFetch<
+      ListResponse<{
+        metadata: {
+          name: string
+          namespace: string
+          annotations?: Record<string, string>
+          ownerReferences?: Array<{ kind: string }>
+        }
+        status?: { phase?: string }
+      }>
+    >(`/api/v1/pods?fieldSelector=spec.nodeName%3D${encodeURIComponent(name)}`)
+
+    let evicted = 0
+    let skipped = 0
+    let blocked = 0
+    for (const p of pods.items ?? []) {
+      const ownedByDaemonSet = p.metadata.ownerReferences?.some((o) => o.kind === 'DaemonSet')
+      const mirror = p.metadata.annotations?.['kubernetes.io/config.mirror'] !== undefined
+      const terminal = p.status?.phase === 'Succeeded' || p.status?.phase === 'Failed'
+      if (ownedByDaemonSet || mirror || terminal) {
+        skipped++
+        continue
+      }
+      try {
+        await k8sFetch<undefined>(
+          `/api/v1/namespaces/${p.metadata.namespace}/pods/${p.metadata.name}/eviction`,
+          {
+            method: 'POST',
+            body: {
+              apiVersion: 'policy/v1',
+              kind: 'Eviction',
+              metadata: { name: p.metadata.name, namespace: p.metadata.namespace },
+            },
+          },
+        )
+        evicted++
+      } catch (e) {
+        if (e instanceof FrameAPIError && e.statusCode === 429) blocked++
+        else throw e
+      }
+    }
+    return { evicted, skipped, blocked }
+  }
+
+  /**
    * Live Ceph state from the Rook CephCluster CR, its CephBlockPools, and the
    * running OSD/mon pods. Throws if Rook is not installed (no CephCluster).
    */
@@ -1125,6 +1196,22 @@ class ClusterClient {
         minMember: p.spec?.minMember ?? 0,
       })),
     }
+  }
+
+  /**
+   * Patch a Volcano queue's admin-tunable fields.
+   *
+   * `state` is set on the spec, not the status — the queue controller observes
+   * it and reflects the result back into `status.state`, which is what
+   * `volcano()` reads. Closing a queue stops new PodGroups from being admitted
+   * to it; already-running ones keep their resources.
+   */
+  async patchQueue(name: string, patch: { state?: 'Open' | 'Closed'; weight?: number }): Promise<void> {
+    await k8sFetch<undefined>(`/apis/scheduling.volcano.sh/v1beta1/queues/${name}`, {
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: patch },
+    })
   }
 
   /** Live pipeline lineage from Argo Workflows: each run's DAG steps as timed spans. */
@@ -1820,16 +1907,67 @@ class ClusterClient {
     return { alerts, bySeverity }
   }
 
-  /** Silence an active alert in Alertmanager for `durationMinutes`, matching on all its labels. */
-  async silenceAlert(alert: ActiveAlert, durationMinutes: number, createdBy: string): Promise<void> {
+  /**
+   * Proxy base for the Alertmanager pod's v2 API. Throws when Alertmanager is
+   * absent — unlike `alerts()`, which returns null, because every caller here
+   * is a user-initiated write that should surface the failure rather than
+   * silently do nothing.
+   */
+  private async alertmanagerBase(): Promise<string> {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       '/api/v1/namespaces/monitoring/pods?labelSelector=app.kubernetes.io%2Fname%3Dalertmanager',
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) throw new FrameAPIError(404, 'Alertmanager pod not found')
+    return `/api/v1/namespaces/monitoring/pods/${name}:9093/proxy/api/v2`
+  }
+
+  /** Silences that are currently active or pending — expired ones are dropped. */
+  async silences(): Promise<AlertSilence[]> {
+    const res = await fetch(`${await this.alertmanagerBase()}/silences`)
+    if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alertmanager silences')
+    const raw: Array<{
+      id: string
+      status?: { state?: string }
+      matchers?: Array<{ name: string; value: string; isEqual?: boolean; isRegex?: boolean }>
+      startsAt?: string
+      endsAt?: string
+      createdBy?: string
+      comment?: string
+    }> = await res.json()
+
+    return raw
+      .filter((s) => s.status?.state !== 'expired')
+      .map((s) => ({
+        id: s.id,
+        state: s.status?.state ?? '',
+        matchers: (s.matchers ?? [])
+          .map((m) => `${m.name}${m.isEqual === false ? '!' : ''}${m.isRegex ? '~' : '='}${m.value}`)
+          .join(', '),
+        startsAt: s.startsAt ?? '',
+        endsAt: s.endsAt ?? '',
+        createdBy: s.createdBy ?? '',
+        comment: s.comment ?? '',
+      }))
+      .sort((a, b) => a.endsAt.localeCompare(b.endsAt))
+  }
+
+  /**
+   * End a silence now. Alertmanager has no hard delete — DELETE moves `endsAt`
+   * to the present, so the silence stays in the log as expired rather than
+   * vanishing. That's why `silences()` filters on state instead of assuming
+   * the list only holds live entries.
+   */
+  async expireSilence(id: string): Promise<void> {
+    const res = await fetch(`${await this.alertmanagerBase()}/silence/${id}`, { method: 'DELETE' })
+    if (!res.ok) throw new FrameAPIError(res.status, `cannot expire silence: ${await res.text()}`)
+  }
+
+  /** Silence an active alert in Alertmanager for `durationMinutes`, matching on all its labels. */
+  async silenceAlert(alert: ActiveAlert, durationMinutes: number, createdBy: string): Promise<void> {
     const startsAt = new Date()
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000)
-    const res = await fetch(`/api/v1/namespaces/monitoring/pods/${name}:9093/proxy/api/v2/silences`, {
+    const res = await fetch(`${await this.alertmanagerBase()}/silences`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

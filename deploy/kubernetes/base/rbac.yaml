@@ -74,13 +74,20 @@ rules:
   - apiGroups: [""]
     resources: [pods/proxy]
     verbs: [get]
-  # POST-through-proxy, for the Alertmanager "silence" action (Alerts screen).
-  # Same blast radius as the get above (any pod's HTTP endpoint, not just
-  # Alertmanager's — pod names are dynamic so a resourceNames restriction
-  # would be fragile) — consistent with the accepted-risk posture already
-  # documented above, not a new trust boundary.
+  # POST- and DELETE-through-proxy, for the Alertmanager silence actions
+  # (Alerts screen): create a silence, and end one early. Same blast radius as
+  # the get above (any pod's HTTP endpoint, not just Alertmanager's — pod names
+  # are dynamic so a resourceNames restriction would be fragile) — consistent
+  # with the accepted-risk posture already documented above, not a new trust
+  # boundary.
   - apiGroups: [""]
     resources: [pods/proxy]
+    verbs: [create, delete]
+  # Node drain (Nodes screen). Eviction, not pod delete: it is the API that
+  # honours PodDisruptionBudgets, so a drain that would breach a budget is
+  # refused by the apiserver rather than by us remembering to check.
+  - apiGroups: [""]
+    resources: [pods/eviction]
     verbs: [create]
   - apiGroups: [apps]
     resources: [deployments, daemonsets, statefulsets]
@@ -92,8 +99,13 @@ rules:
     resources: [cephclusters, cephblockpools, cephfilesystems]
     verbs: [get, list, watch]
   - apiGroups: [scheduling.volcano.sh]
-    resources: [queues, podgroups]
+    resources: [podgroups]
     verbs: [get, list, watch]
+  # Queue open/close and share-weight tuning (Elastic Pools screen). No delete:
+  # removing a queue orphans the PodGroups scheduled into it.
+  - apiGroups: [scheduling.volcano.sh]
+    resources: [queues]
+    verbs: [get, list, watch, patch]
   - apiGroups: [argoproj.io]
     resources: [workflows]
     verbs: [get, list, watch]
@@ -111,16 +123,14 @@ rules:
     verbs: [get, list, watch, create]
   # No `update` (PUT) anywhere below — the SDK only ever does GET/POST/
   # PATCH/DELETE against these, never a full-object PUT.
-  # framenodes/frameresourcequotas have no `delete`: NodeClient.delete() and
-  # a quota-delete method both exist/could exist but nothing in the UI calls
-  # them today — there's no screen listing FrameNode CRs by name to delete
-  # (NodeProvisionWizard only creates), and no quota-removal action. Add the
-  # verb back if/when that screen gets built instead of granting it early.
+  # frameresourcequotas has no `delete`: nothing in the UI removes a quota,
+  # only sets one. Add the verb if/when a removal action appears, rather than
+  # granting it early.
   - apiGroups: [frame.plume-labs.io]
-    resources: [framejobs, schedulingpolicies]
+    resources: [framejobs, schedulingpolicies, framenodes]
     verbs: [get, list, watch, create, patch, delete]
   - apiGroups: [frame.plume-labs.io]
-    resources: [framenodes, frameresourcequotas]
+    resources: [frameresourcequotas]
     verbs: [get, list, watch, create, patch]
   - apiGroups: [frame.plume-labs.io]
     resources: [talosmachineconfigs, talosupgrades]

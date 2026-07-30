@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ActiveAlert, AlertsStatus, createFrameClient } from '@/lib/frame-sdk'
+import { ActiveAlert, AlertSilence, AlertsStatus, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Bell, ArrowClockwise, BellSlash } from '@phosphor-icons/react'
+import { Bell, ArrowClockwise, BellSlash, BellRinging } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
@@ -37,10 +37,20 @@ const TONE: Record<string, string> = {
 
 export function AlertsView() {
   const { state, reload } = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts())
+  const { state: silenceState, reload: reloadSilences } = useLiveResource<AlertSilence[]>(() =>
+    frame.cluster.silences(),
+  )
   const data = state.phase === 'ready' ? state.data : null
+  const silences = silenceState.phase === 'ready' ? silenceState.data : []
   const [silenceTarget, setSilenceTarget] = useState<ActiveAlert | null>(null)
   const [duration, setDuration] = useState(60)
   const [busy, setBusy] = useState(false)
+  const [expiring, setExpiring] = useState<string | null>(null)
+
+  function reloadAll() {
+    reload()
+    reloadSilences()
+  }
 
   async function doSilence() {
     if (!silenceTarget) return
@@ -49,11 +59,24 @@ export function AlertsView() {
       await frame.cluster.silenceAlert(silenceTarget, duration, 'frame-ui')
       toast.success(`${silenceTarget.name} silenced`)
       setSilenceTarget(null)
-      reload()
+      reloadAll()
     } catch (e) {
       toast.error(`Failed to silence ${silenceTarget.name}`, { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function expire(s: AlertSilence) {
+    setExpiring(s.id)
+    try {
+      await frame.cluster.expireSilence(s.id)
+      toast.success('Silence lifted', { description: s.matchers })
+      reloadAll()
+    } catch (e) {
+      toast.error('Failed to lift silence', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setExpiring(null)
     }
   }
 
@@ -64,7 +87,7 @@ export function AlertsView() {
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Bell className="text-primary" />
             Active alerts (Alertmanager)
-            <Button variant="outline" size="sm" className="ml-auto font-mono gap-1.5" onClick={reload} disabled={state.phase === 'loading'}>
+            <Button variant="outline" size="sm" className="ml-auto font-mono gap-1.5" onClick={reloadAll} disabled={state.phase === 'loading'}>
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
               Refresh
             </Button>
@@ -108,6 +131,49 @@ export function AlertsView() {
                 >
                   <BellSlash size={10} />
                   Silence
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {silences.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-lg flex items-center gap-2">
+              <BellSlash className="text-warning" />
+              Silences ({silences.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {silences.map((s) => (
+              <div
+                key={s.id}
+                className="flex flex-wrap items-center gap-2 rounded border border-border bg-secondary/30 px-3 py-2"
+              >
+                <Badge
+                  variant="outline"
+                  className={`font-mono text-[10px] border-current ${
+                    s.state === 'active' ? 'text-warning' : 'text-muted-foreground'
+                  }`}
+                >
+                  {s.state}
+                </Badge>
+                <span className="font-mono text-[11px] flex-1 truncate">{s.matchers}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  until {s.endsAt ? new Date(s.endsAt).toLocaleString() : '—'}
+                </span>
+                <span className="font-mono text-[10px] text-muted-foreground">{s.createdBy}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 font-mono text-[10px] gap-1"
+                  disabled={expiring === s.id}
+                  onClick={() => expire(s)}
+                >
+                  <BellRinging size={10} />
+                  {expiring === s.id ? 'Lifting…' : 'Lift'}
                 </Button>
               </div>
             ))}
