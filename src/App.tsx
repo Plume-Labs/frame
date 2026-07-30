@@ -35,6 +35,7 @@ const ResilienceView = lazy(() => import('@/components/ResilienceView').then((m)
 const SecurityView = lazy(() => import('@/components/SecurityView').then((m) => ({ default: m.SecurityView })))
 const AlertsView = lazy(() => import('@/components/AlertsView').then((m) => ({ default: m.AlertsView })))
 const ClusterEventsView = lazy(() => import('@/components/ClusterEventsView').then((m) => ({ default: m.ClusterEventsView })))
+const SettingsView = lazy(() => import('@/components/SettingsView').then((m) => ({ default: m.SettingsView })))
 
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
@@ -65,6 +66,7 @@ import {
   Database,
   Detective,
   Gauge,
+  Gear,
   GitBranch,
   HardDrive,
   HardDrives,
@@ -152,6 +154,7 @@ const NAV: NavGroup[] = [
       { id: 'security', label: 'Security', icon: <Detective />, description: 'Runtime (Falco) + posture (trivy) + network (Tetragon)' },
       { id: 'alerts', label: 'Alerts', icon: <Bell />, description: 'Active Alertmanager alerts (rules + Falco)' },
       { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
+      { id: 'settings', label: 'Settings', icon: <Gear />, description: 'Namespaces, selectors and ports of every integration' },
     ],
   },
 ]
@@ -268,6 +271,8 @@ function App() {
         return <AlertsView />
       case 'events':
         return <ClusterEventsView />
+      case 'settings':
+        return <SettingsView />
 
       default:
         return null

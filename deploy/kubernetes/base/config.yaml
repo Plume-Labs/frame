@@ -1,0 +1,22 @@
+# Runtime wiring for the UI: where each cluster component lives, how its pods
+# are labelled, and which port it answers on. Read at page load and written
+# from the Settings screen.
+#
+# Declared with no `data` on purpose. This resource exists so the UI always has
+# a ConfigMap to PATCH — it needs no create permission, only get and patch on
+# this one name. The contents are owned at runtime, not by git:
+#
+#   - `kubectl apply` leaves fields it has never declared alone, so an apply
+#     will not wipe what the Settings screen wrote.
+#   - Argo CD would still flag the live `data` as a diff, hence the matching
+#     ignoreDifferences entry in deploy/gitops/argocd/applications/frame.yaml.
+#
+# Shipping the defaults here instead would mean maintaining every value in two
+# places, and would make each redeploy fight whoever last used the UI. The
+# compiled defaults in src/lib/frame-config.ts are the single source; an absent
+# or empty ConfigMap simply means "use them".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-control-config
+  namespace: cluster-control

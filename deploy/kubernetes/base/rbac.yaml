@@ -167,3 +167,37 @@ subjects:
   - kind: ServiceAccount
     name: cluster-control-ui
     namespace: cluster-control
+---
+# The Settings screen's own config, and nothing else. A namespaced Role rather
+# than more rules on the ClusterRole above, pinned by resourceNames to the one
+# ConfigMap: read access to every ConfigMap in the cluster would hand the UI
+# other components' configuration for no reason.
+#
+# No `create` — resourceNames cannot restrict it (the name is not known until
+# the object exists), so granting it would mean create on every ConfigMap in
+# the namespace. The resource is shipped by the kustomize base instead, and
+# `list` is likewise unnecessary since the UI only ever gets it by name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-config
+  namespace: cluster-control
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [cluster-control-config]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-config
+  namespace: cluster-control
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-config
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
