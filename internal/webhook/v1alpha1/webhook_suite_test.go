@@ -118,6 +118,9 @@ var _ = BeforeSuite(func() {
 	err = SetupSchedulingPolicyWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = SetupFrameUserWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
 	err = SetupFrameResourceQuotaWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 

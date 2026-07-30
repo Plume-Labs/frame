@@ -116,6 +116,27 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-frame-plume-labs-io-v1alpha1-frameuser
+  failurePolicy: Fail
+  name: vframeuser-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - frameusers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-frame-plume-labs-io-v1alpha1-schedulingpolicy
   failurePolicy: Fail
   name: vschedulingpolicy-v1alpha1.kb.io
