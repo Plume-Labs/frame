@@ -101,11 +101,17 @@ rules:
   - apiGroups: [scheduling.volcano.sh]
     resources: [podgroups]
     verbs: [get, list, watch]
-  # Queue open/close and share-weight tuning (Elastic Pools screen). No delete:
-  # removing a queue orphans the PodGroups scheduled into it.
+  # Share-weight tuning (Elastic Pools screen). No delete: removing a queue
+  # orphans the PodGroups scheduled into it.
   - apiGroups: [scheduling.volcano.sh]
     resources: [queues]
     verbs: [get, list, watch, patch]
+  # Queue open/close on the same screen. Volcano has no settable spec.state —
+  # the state change is a Command the queue controller consumes and then
+  # deletes, so this is a create-only grant on a self-cleaning resource.
+  - apiGroups: [bus.volcano.sh]
+    resources: [commands]
+    verbs: [get, list, watch, create]
   - apiGroups: [argoproj.io]
     resources: [workflows]
     verbs: [get, list, watch]

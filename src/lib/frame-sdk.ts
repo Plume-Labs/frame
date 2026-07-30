@@ -1198,20 +1198,61 @@ class ClusterClient {
     }
   }
 
-  /**
-   * Patch a Volcano queue's admin-tunable fields.
-   *
-   * `state` is set on the spec, not the status — the queue controller observes
-   * it and reflects the result back into `status.state`, which is what
-   * `volcano()` reads. Closing a queue stops new PodGroups from being admitted
-   * to it; already-running ones keep their resources.
-   */
-  async patchQueue(name: string, patch: { state?: 'Open' | 'Closed'; weight?: number }): Promise<void> {
+  /** Set a Volcano queue's share weight — its slice of capacity when queues compete. */
+  async setQueueWeight(name: string, weight: number): Promise<void> {
     await k8sFetch<undefined>(`/apis/scheduling.volcano.sh/v1beta1/queues/${name}`, {
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
-      body: { spec: patch },
+      body: { spec: { weight } },
     })
+  }
+
+  /**
+   * Open or close a Volcano queue. Closing stops new PodGroups from being
+   * admitted; the ones already running keep their resources.
+   *
+   * Deliberately not a spec patch. The Queue CRD has no `spec.state` — setting
+   * one returns 200 and is then silently pruned by the structural schema
+   * (verified against a live cluster). State is status-only and driven by a
+   * `bus.volcano.sh` Command that the queue controller consumes and deletes,
+   * which is what `vcctl queue --action` issues. The Command needs the target's
+   * UID, hence the read first.
+   *
+   * The controller is asynchronous, so a created Command is a request, not a
+   * result — we poll until the queue reports the requested state so a success
+   * here means the queue actually flipped.
+   */
+  async setQueueState(name: string, state: 'Open' | 'Closed'): Promise<void> {
+    const url = `/apis/scheduling.volcano.sh/v1beta1/queues/${name}`
+    const queue = await k8sFetch<{ metadata: { uid: string } }>(url)
+
+    await k8sFetch<unknown>('/apis/bus.volcano.sh/v1alpha1/namespaces/default/commands', {
+      method: 'POST',
+      body: {
+        apiVersion: 'bus.volcano.sh/v1alpha1',
+        kind: 'Command',
+        metadata: {
+          generateName: `${state.toLowerCase()}queue-`,
+          namespace: 'default',
+        },
+        action: `${state}Queue`,
+        target: {
+          apiVersion: 'scheduling.volcano.sh/v1beta1',
+          kind: 'Queue',
+          name,
+          uid: queue.metadata.uid,
+        },
+        reason: 'FrameUI',
+        message: `${state === 'Open' ? 'Opened' : 'Closed'} from the Frame UI`,
+      },
+    })
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const current = await k8sFetch<{ status?: { state?: string } }>(url)
+      if (current.status?.state === state) return
+    }
+    throw new FrameAPIError(504, `queue ${name} did not reach ${state} within 10s`)
   }
 
   /** Live pipeline lineage from Argo Workflows: each run's DAG steps as timed spans. */

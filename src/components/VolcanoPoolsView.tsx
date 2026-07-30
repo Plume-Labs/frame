@@ -41,10 +41,10 @@ export function VolcanoPoolsView() {
   const [weight, setWeight] = useState('1')
   const [busy, setBusy] = useState<string | null>(null)
 
-  async function patch(q: VolcanoQueue, body: { state?: 'Open' | 'Closed'; weight?: number }, what: string) {
+  async function run(q: VolcanoQueue, action: () => Promise<void>, what: string) {
     setBusy(q.name)
     try {
-      await frame.cluster.patchQueue(q.name, body)
+      await action()
       toast.success(`${q.name} ${what}`)
       reload()
     } catch (e) {
@@ -55,6 +55,9 @@ export function VolcanoPoolsView() {
       setWeightTarget(null)
     }
   }
+
+  const setState = (q: VolcanoQueue, state: 'Open' | 'Closed') =>
+    run(q, () => frame.cluster.setQueueState(q.name, state), state === 'Open' ? 'reopened' : 'closed')
 
   function openWeightDialog(q: VolcanoQueue) {
     setWeight(String(q.weight))
@@ -70,7 +73,7 @@ export function VolcanoPoolsView() {
       toast.error('Weight must be a positive integer')
       return
     }
-    patch(weightTarget, { weight: n }, `weight set to ${n}`)
+    run(weightTarget, () => frame.cluster.setQueueWeight(weightTarget.name, n), `weight set to ${n}`)
   }
 
   return (
@@ -127,7 +130,7 @@ export function VolcanoPoolsView() {
                         size="sm"
                         className="h-7 font-mono text-[10px] gap-1"
                         disabled={busy === q.name}
-                        onClick={() => patch(q, { state: 'Open' }, 'reopened')}
+                        onClick={() => setState(q, 'Open')}
                       >
                         <Play size={10} />
                         Open
@@ -193,7 +196,7 @@ export function VolcanoPoolsView() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep open</AlertDialogCancel>
-            <AlertDialogAction onClick={() => closeTarget && patch(closeTarget, { state: 'Closed' }, 'closed')}>
+            <AlertDialogAction onClick={() => closeTarget && setState(closeTarget, 'Closed')}>
               Close queue
             </AlertDialogAction>
           </AlertDialogFooter>
