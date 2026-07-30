@@ -27,6 +27,8 @@ import (
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
 
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameusers,verbs=get;list;watch
+
 // SetupFrameUserWebhookWithManager registers the webhook for FrameUser.
 func SetupFrameUserWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, &framev1alpha1.FrameUser{}).

@@ -18,12 +18,15 @@ package v1alpha1
 
 import (
 	"context"
+	"errors"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
 )
@@ -86,5 +89,22 @@ var _ = Describe("FrameUser webhook", func() {
 		v := newValidator(bob)
 		_, err := v.ValidateDelete(context.Background(), bob)
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("fails closed when the admin list cannot be read", func() {
+		alice := user("alice", framev1alpha1.RoleAdmin)
+		c := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(alice).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+					return errors.New("connection refused")
+				},
+			}).
+			Build()
+		v := &FrameUserCustomValidator{Client: c}
+		_, err := v.ValidateDelete(context.Background(), alice)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("cannot verify remaining admins"))
 	})
 })

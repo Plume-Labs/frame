@@ -90,6 +90,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameusers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - scheduling.k8s.io
   resources:
   - priorityclasses
