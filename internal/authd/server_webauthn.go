@@ -58,7 +58,9 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.setSession(w, u)
+	if !s.setSession(w, u) {
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

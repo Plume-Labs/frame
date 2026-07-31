@@ -194,7 +194,7 @@ func (a *Authenticator) seal(options any, session *webauthn.SessionData) ([]byte
 	if err != nil {
 		return nil, "", fmt.Errorf("encoding session: %w", err)
 	}
-	sealed, err := a.codec.Seal(encoded, challengeTTL)
+	sealed, err := a.codec.Seal(PurposeChallenge, encoded, challengeTTL)
 	if err != nil {
 		return nil, "", fmt.Errorf("sealing challenge: %w", err)
 	}
@@ -202,7 +202,7 @@ func (a *Authenticator) seal(options any, session *webauthn.SessionData) ([]byte
 }
 
 func (a *Authenticator) openSession(sealed string) (*webauthn.SessionData, error) {
-	payload, err := a.codec.Open(sealed)
+	payload, err := a.codec.Open(PurposeChallenge, sealed)
 	if err != nil {
 		return nil, err
 	}

@@ -121,10 +121,15 @@ carries the `userHandle` identifying the account. `authd` verifies the
 signature, advances the stored counter, and sets the session cookie.
 
 A counter that fails to advance is logged for investigation and rejects the
-login, but never revokes the credential. The library performs this check before
-signature verification, so an attacker who knows a `credentialId` — which is
-not cryptographically secret — could otherwise trigger an unauthenticated
-revocation. This reproduces a decision already validated in Neura.
+login, but never revokes the credential. The library verifies the assertion's
+signature first and only afterwards compares the reported counter against the
+stored one, so by the time this check can even fire the caller has already
+proven possession of the private key — this is a genuine clone/replay signal,
+or an authenticator restored from a backup, not something an unauthenticated
+caller can trigger by guessing a `credentialId`. Revoking automatically would
+instead punish the legitimate case: a real owner whose authenticator glitched
+or was restored must not lose their only way in over an automatic action.
+This reproduces a decision already validated in Neura.
 
 ### Signing in with a password
 

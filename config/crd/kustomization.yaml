@@ -8,6 +8,7 @@ resources:
 - bases/frame.plume-labs.io_frameresourcequotas.yaml
 - bases/frame.plume-labs.io_talosmachineconfigs.yaml
 - bases/frame.plume-labs.io_talosupgrades.yaml
+- bases/frame.plume-labs.io_frameusers.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
