@@ -61,7 +61,7 @@ func TestFinishLoginRejectsForgedChallenge(t *testing.T) {
 
 func TestFinishLoginRejectsExpiredChallenge(t *testing.T) {
 	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin))
-	expired, _ := testCodec().Seal([]byte(`{"challenge":"x"}`), -1)
+	expired, _ := testCodec().Seal(PurposeChallenge, []byte(`{"challenge":"x"}`), -1)
 	if _, err := a.FinishLogin(context.Background(), expired, []byte(`{}`)); err == nil {
 		t.Fatal("an expired challenge was accepted")
 	}
@@ -77,7 +77,7 @@ func TestBeginRegistrationSealsChallenge(t *testing.T) {
 	if len(opts) == 0 || sealed == "" {
 		t.Fatal("empty options or challenge")
 	}
-	if _, err := testCodec().Open(sealed); err != nil {
+	if _, err := testCodec().Open(PurposeChallenge, sealed); err != nil {
 		t.Fatalf("sealed challenge does not verify: %v", err)
 	}
 }
@@ -85,8 +85,14 @@ func TestBeginRegistrationSealsChallenge(t *testing.T) {
 func TestCounterRegressionIsDistinguishable(t *testing.T) {
 	// ErrCounterRegression must be its own error so the HTTP layer can log it
 	// for investigation while still refusing the login. It must never lead to
-	// deleting the credential: the check runs before signature verification,
-	// so anyone who learns a credentialId could otherwise revoke it.
+	// deleting the credential: go-webauthn's ValidateDiscoverableLogin
+	// verifies the assertion's signature first and only afterwards compares
+	// the reported counter against the stored one (see the comment on
+	// recordLoginCounter), so by the time this error can even occur the
+	// caller has already proven possession of the private key. Revoking here
+	// would instead punish the legitimate case — an authenticator that
+	// glitched or was restored from a backup — by automatically taking away
+	// its owner's only way in.
 	if ErrCounterRegression == nil {
 		t.Fatal("ErrCounterRegression is not defined")
 	}

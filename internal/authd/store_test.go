@@ -85,6 +85,31 @@ func TestRemoveCredentialKeepsLastKeyWhenPasswordDisabled(t *testing.T) {
 	}
 }
 
+// TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset pins the zero-value
+// behavior of Store.RemoveCredential's last-credential guard, which reads
+// `u.Spec.PasswordAuth != framev1alpha1.PasswordEnabled` rather than
+// `== framev1alpha1.PasswordDisabled`. Those two are equivalent today only
+// because fixture() never sets PasswordAuth explicitly here, leaving it at
+// Go's zero value for the string-typed field (""), which correctly falls on
+// the "not enabled" side of the `!=` comparison. A refactor to the `==`
+// spelling would compile, and every other RemoveCredential test would still
+// pass (they all set PasswordAuth explicitly), but it would silently treat
+// an unset field as "enabled" and let the last credential of an
+// unconfigured account be removed — reopening the lockout hole. This test is
+// the only thing that would catch that refactor, which matters because
+// RemoveCredential has no production caller yet: nothing else exercises this
+// guard until a future revocation endpoint wires it up.
+func TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset(t *testing.T) {
+	cred := framev1alpha1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
+	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred)
+	// PasswordAuth deliberately left at its zero value ("") — not set to
+	// PasswordDisabled, which is the point of this test.
+	s := storeWith(t, u)
+	if err := s.RemoveCredential(context.Background(), u, "only"); err == nil {
+		t.Fatal("removing the last key of an account with PasswordAuth unset (zero value) was allowed")
+	}
+}
+
 func TestRemoveCredentialAllowedWhenPasswordEnabled(t *testing.T) {
 	cred := framev1alpha1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
 	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred)

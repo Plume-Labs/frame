@@ -58,8 +58,19 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// keeps the CPU cost — and so the wall-clock time — identical for an
 	// unknown email, a passkey-only account, and a genuinely wrong password.
 	// usable stays false, and hash stays the dummy, for the first two; only
-	// a real, password-enabled account gets its own hash checked.
-	usable := err == nil && u.Spec.PasswordAuth == framev1alpha1.PasswordEnabled
+	// a real, password-enabled account with a parseable hash gets its own
+	// hash checked. Folding hasUsableHash into usable matters because an
+	// account can have PasswordAuth: enabled with an empty or malformed
+	// spec.passwordHash — nothing writes that field yet, so it's unreachable
+	// today, but it is exactly the half-completed state a future
+	// set-password endpoint will transiently create between enabling
+	// password auth and writing the hash. Without this check, that account
+	// would return 401 in microseconds (VerifyPassword's malformed-input
+	// fast path) while every other unknown/disabled account costs ~100ms of
+	// real argon2id work, positively identifying it by timing alone — the
+	// same class of oracle TestUnknownEmailAndWrongPasswordAreIndistinguishable
+	// guards against.
+	usable := err == nil && u.Spec.PasswordAuth == framev1alpha1.PasswordEnabled && hashIsUsable(u.Spec.PasswordHash)
 	hash := dummyPasswordHash
 	if usable {
 		hash = u.Spec.PasswordHash
@@ -73,15 +84,23 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.setSession(w, u)
+	if !s.setSession(w, u) {
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) setSession(w http.ResponseWriter, u *framev1alpha1.FrameUser) {
-	sealed, err := s.cfg.Codec.Seal([]byte(u.Spec.Email), s.cfg.SessionTTL)
+// setSession seals a session cookie for u and writes it onto the response.
+// It reports whether that succeeded; on failure it has already written a 500
+// itself, and every caller must stop immediately rather than go on to write
+// its own success status on top (the bug this return value exists to
+// prevent: a 500 followed by an unconditional 204, and the
+// "superfluous response.WriteHeader call" warning that comes with it).
+func (s *Server) setSession(w http.ResponseWriter, u *framev1alpha1.FrameUser) bool {
+	sealed, err := s.cfg.Codec.Seal(PurposeSession, []byte(u.Spec.Email), s.cfg.SessionTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return false
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -92,6 +111,7 @@ func (s *Server) setSession(w http.ResponseWriter, u *framev1alpha1.FrameUser) {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(s.cfg.SessionTTL.Seconds()),
 	})
+	return true
 }
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +120,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	email, err := s.cfg.Codec.Open(c.Value)
+	email, err := s.cfg.Codec.Open(PurposeSession, c.Value)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -142,7 +162,7 @@ func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*framev1al
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, false
 	}
-	email, err := s.cfg.Codec.Open(c.Value)
+	email, err := s.cfg.Codec.Open(PurposeSession, c.Value)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, false

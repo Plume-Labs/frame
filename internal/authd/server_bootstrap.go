@@ -94,6 +94,20 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deleteBootstrapSecret(r)
+
+	// Leave the caller holding a session, not just a created account: the
+	// only way to enrol a passkey is POST /auth/register/begin, which reads
+	// the account off the session cookie (see handleRegisterBegin), and by
+	// the time this handler returns the token that got the caller here is
+	// already spent — AdminCount() > 0 now closes /auth/bootstrap for good.
+	// Returning 204 without a session would leave the freshly-created admin
+	// unreachable: no password (PasswordDisabled above), no credential yet,
+	// and no way back in short of hand-editing the FrameUser's status or
+	// deleting the ValidatingWebhookConfiguration that guards the last
+	// admin.
+	if !s.setSession(w, user) {
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
