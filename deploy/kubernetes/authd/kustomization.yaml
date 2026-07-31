@@ -1,0 +1,25 @@
+# authd is deployed with its own kustomize target, deliberately kept out of
+# base/kustomization.yaml. Base still has the UI's Deployment/Service/Ingress
+# templated with placeholder values (image: cluster-control:latest,
+# host: REPLACE_HOSTNAME) that only overlays substitute — `kubectl apply -k
+# base/` is not safe to run against a live cluster (see Task 9 report). This
+# target lets authd be applied/rolled independently, with no path back to the
+# UI's manifests.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: cluster-control
+
+resources:
+  - certificate.yaml
+  - rbac.yaml
+  - service.yaml
+  - deployment.yaml
+
+# Matches base/kustomization.yaml's commonLabels. authd's Deployment/Service
+# were first created under base/ (which carries these), so its live selector
+# already includes them — Deployment selectors are immutable, so dropping
+# these here would make every future `apply -k` fail rather than reconcile.
+commonLabels:
+  app.kubernetes.io/name: cluster-control
+  app.kubernetes.io/part-of: monitoring-platform
