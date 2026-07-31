@@ -11,10 +11,10 @@ kind: Kustomization
 namespace: cluster-control
 
 resources:
-  - certificate.yaml
-  - rbac.yaml
-  - service.yaml
-  - deployment.yaml
+- certificate.yaml
+- rbac.yaml
+- service.yaml
+- deployment.yaml
 
 # Matches base/kustomization.yaml's commonLabels. authd's Deployment/Service
 # were first created under base/ (which carries these), so its live selector
@@ -23,3 +23,12 @@ resources:
 commonLabels:
   app.kubernetes.io/name: cluster-control
   app.kubernetes.io/part-of: monitoring-platform
+
+# Image tag is set via `make set-image-authd IMG_AUTHD=<registry>/<image>:<tag>`
+# before every apply — deployment.yaml's image: field is a placeholder, same
+# as base/kustomization.yaml's `images: - name: cluster-control` convention
+# for the UI. Run: kustomize edit set image cluster-control-auth=<registry>/<image>:<tag>
+images:
+- name: cluster-control-auth
+  newName: 192.168.2.201:30500/cluster-control-auth
+  newTag: 783d7fd

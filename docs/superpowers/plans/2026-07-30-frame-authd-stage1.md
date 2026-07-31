@@ -2201,10 +2201,12 @@ export KUBECONFIG=$HOME/Neura/.test-cluster/kubeconfig-neura-test.yaml
 SHA=$(git rev-parse --short HEAD)
 podman build -f Dockerfile.authd -t 192.168.2.201:30500/cluster-control-auth:$SHA .
 podman push --tls-verify=false 192.168.2.201:30500/cluster-control-auth:$SHA
-kubectl apply -k deploy/kubernetes/base/
-kubectl -n cluster-control set image deploy/cluster-control-auth authd=192.168.2.201:30500/cluster-control-auth:$SHA
+make set-image-authd IMG_AUTHD=192.168.2.201:30500/cluster-control-auth:$SHA
+kubectl apply -k deploy/kubernetes/authd/
 kubectl -n cluster-control rollout status deploy/cluster-control-auth --timeout=180s
 ```
+
+Do NOT run `kubectl apply -k deploy/kubernetes/base/` against a live cluster: `base/deployment.yaml`'s `image:` field and `base/service.yaml`'s NodePort settings are overlay-only placeholders, and a bare `apply -k base/` silently resets the live UI Deployment's image and Service type to those placeholders. authd is deployed through its own `deploy/kubernetes/authd/` kustomize target instead, which never resources anything under `base/`. `make set-image-authd` writes the real registry tag into `deploy/kubernetes/authd/kustomization.yaml`'s `images:` transformer (mirroring `set-image-ui`) before the apply, so the rendered Deployment never carries the `cluster-control-auth:latest` placeholder.
 
 Expected: rollout succeeds, 2/2 pods Running.
 
