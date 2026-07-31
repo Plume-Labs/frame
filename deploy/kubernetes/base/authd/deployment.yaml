@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-control-auth
+  namespace: cluster-control
+  labels:
+    app: cluster-control
+    component: auth
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cluster-control
+      component: auth
+  template:
+    metadata:
+      labels:
+        app: cluster-control
+        component: auth
+    spec:
+      serviceAccountName: cluster-control-auth
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: component
+                      operator: In
+                      values:
+                        - auth
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: authd
+          image: cluster-control-auth:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          env:
+            # Stage 1 placeholders. WebAuthn login is not exercised until the
+            # UI is switched over in Stage 3 — that stage sets RP_ID/RP_ORIGIN
+            # to the UI's real hostname and OIDC_ISSUER_URL/OIDC_CLIENT_ID to
+            # match whatever --oidc-issuer-url/--oidc-client-id the apiserver
+            # is given in Stage 2. This task only proves the discovery
+            # document and JWKS are served correctly at the in-cluster
+            # Service DNS name below.
+            - name: OIDC_ISSUER_URL
+              value: https://cluster-control-auth.cluster-control.svc
+            - name: OIDC_CLIENT_ID
+              value: frame-ui
+            - name: RP_ID
+              value: frame.local
+            - name: RP_ORIGIN
+              value: https://frame.local
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: TOKEN_TTL
+              value: 15m
+            - name: KEYS_DIR
+              value: /etc/frame-auth-keys
+            - name: TLS_CERT_FILE
+              value: /etc/frame-auth-tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /etc/frame-auth-tls/tls.key
+            - name: BOOTSTRAP_SECRET_NAME
+              value: frame-auth-bootstrap
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/frame-auth-tls
+              readOnly: true
+            - name: keys
+              mountPath: /etc/frame-auth-keys
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tls
+          secret:
+            secretName: frame-auth-tls
+        - name: keys
+          secret:
+            secretName: frame-auth-keys
+        - name: tmp
+          emptyDir: {}

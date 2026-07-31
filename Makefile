@@ -2,6 +2,8 @@
 IMG ?= controller:latest
 # Image for the React UI (Dockerfile at repo root)
 IMG_UI ?= frame-ui:latest
+# Image for authd, the Cluster Control UI's auth surface (Dockerfile.authd)
+IMG_AUTHD ?= cluster-control-auth:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -136,6 +138,14 @@ docker-build-ui: ## Build the Frame UI Docker image
 .PHONY: docker-push-ui
 docker-push-ui: ## Push the Frame UI Docker image
 	$(CONTAINER_TOOL) push $(IMG_UI)
+
+.PHONY: docker-build-authd
+docker-build-authd: ## Build the authd Docker image
+	$(CONTAINER_TOOL) build -f Dockerfile.authd -t $(IMG_AUTHD) .
+
+.PHONY: docker-push-authd
+docker-push-authd: ## Push the authd Docker image
+	$(CONTAINER_TOOL) push $(IMG_AUTHD)
 
 .PHONY: set-image-ui
 set-image-ui: ## Set UI image in development overlay (requires IMG_UI)

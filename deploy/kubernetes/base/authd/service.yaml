@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-control-auth
+  namespace: cluster-control
+  labels:
+    app: cluster-control
+    component: auth
+spec:
+  type: ClusterIP
+  selector:
+    app: cluster-control
+    component: auth
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP

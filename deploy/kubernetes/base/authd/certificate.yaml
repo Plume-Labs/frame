@@ -1,0 +1,48 @@
+# A dedicated CA rather than a self-signed leaf: the apiserver is given this CA
+# via --oidc-ca-file in Stage 2, so the serving certificate must be re-issuable
+# without touching the node again.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: frame-auth-ca
+  namespace: cluster-control
+spec:
+  isCA: true
+  commonName: frame-auth-ca
+  secretName: frame-auth-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: neura-selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: frame-auth-ca
+  namespace: cluster-control
+spec:
+  ca:
+    secretName: frame-auth-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: frame-auth-tls
+  namespace: cluster-control
+spec:
+  secretName: frame-auth-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - cluster-control-auth.cluster-control.svc
+    - cluster-control-auth.cluster-control.svc.cluster.local
+  issuerRef:
+    name: frame-auth-ca
+    kind: Issuer
