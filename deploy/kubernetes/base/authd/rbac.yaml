@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-control-auth
+  namespace: cluster-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-auth
+  namespace: cluster-control
+rules:
+  # Read accounts to authenticate; write status to record credentials and
+  # rotate sign counters. Create is for bootstrap only — the admission webhook
+  # is what stops it being abused to mint a second admin.
+  - apiGroups: [frame.plume-labs.io]
+    resources: [frameusers]
+    verbs: [get, list, watch, create]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [frameusers/status]
+    verbs: [get, patch, update]
+  # Get to load the bootstrap token, delete it once it is consumed.
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [frame-auth-bootstrap]
+    verbs: [get, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-auth
+  namespace: cluster-control
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-auth
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-auth
+    namespace: cluster-control
