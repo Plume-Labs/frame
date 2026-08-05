@@ -3,7 +3,6 @@ import { toast } from 'sonner'
 import { ClusterNodeInfo, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -17,6 +16,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { Stat, Meter } from '@/components/Primitives'
 import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen, Eject } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -240,40 +240,4 @@ export function ClusterNodesView() {
   )
 }
 
-function Stat({
-  label,
-  value,
-  tone,
-  size,
-}: {
-  label: string
-  value: string
-  tone?: 'accent'
-  size?: 'sm'
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div
-        className={`font-mono font-bold ${size === 'sm' ? 'text-sm' : 'text-2xl'} ${
-          tone === 'accent' ? 'text-accent' : 'text-foreground'
-        }`}
-      >
-        {value}
-      </div>
-    </div>
-  )
-}
 
-function Meter({ label, pct, detail }: { label: string; pct: number; detail: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs font-mono">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="text-foreground">{pct.toFixed(0)}%</span>
-      </div>
-      <Progress value={Math.max(0, Math.min(100, pct))} className="h-2" />
-      <div className="text-[10px] text-muted-foreground font-mono">{detail}</div>
-    </div>
-  )
-}

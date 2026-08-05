@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { Stat } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { Network, ArrowClockwise, WarningCircle, TrendUp } from '@phosphor-icons/react'
 
@@ -152,15 +153,6 @@ export function NetworkView() {
   )
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'warning' }) {
-  const c = tone === 'warning' ? 'text-warning' : tone === 'accent' ? 'text-accent' : 'text-foreground'
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`font-mono text-2xl font-bold ${c}`}>{value}</div>
-    </div>
-  )
-}
 
 function Micro({ v, l, tone }: { v: string; l: string; tone?: 'accent' | 'primary' }) {
   const c = tone === 'accent' ? 'text-accent' : tone === 'primary' ? 'text-primary' : 'text-foreground'

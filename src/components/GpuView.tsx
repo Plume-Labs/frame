@@ -2,9 +2,9 @@ import { GpuInfo, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { Stat, Meter } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { inverseScoreTone, TONE_TEXT } from '@/lib/thresholds'
 import { Speedometer, ArrowClockwise, Thermometer, Lightning, TrendUp } from '@phosphor-icons/react'
@@ -56,7 +56,7 @@ export function GpuView() {
             <Stat label="GPUs" value={`${gpus.length}`} tone="accent" />
             <Stat label="Avg util" value={`${gpus.length ? Math.round(gpus.reduce((s, g) => s + g.utilPct, 0) / gpus.length) : 0}%`} />
             <Stat label="Total power" value={`${gpus.reduce((s, g) => s + g.powerW, 0).toFixed(0)} W`} />
-            <Stat label="Model" value={gpus[0]?.model ?? '—'} small />
+            <Stat label="Model" value={gpus[0]?.model ?? '—'} size="sm" />
           </CardContent>
         )}
       </Card>
@@ -121,23 +121,4 @@ export function GpuView() {
   )
 }
 
-function Stat({ label, value, tone, small }: { label: string; value: string; tone?: 'accent'; small?: boolean }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`font-mono font-bold ${small ? 'text-sm' : 'text-2xl'} ${tone === 'accent' ? 'text-accent' : 'text-foreground'}`}>{value}</div>
-    </div>
-  )
-}
 
-function Meter({ label, pct, detail }: { label: string; pct: number; detail: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs font-mono">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="text-foreground">{detail}</span>
-      </div>
-      <Progress value={Math.max(0, Math.min(100, pct))} className="h-2" />
-    </div>
-  )
-}

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { LiveStates } from '@/components/LiveStates'
 import { LiveState } from '@/hooks/useLiveResource'
+import { Stat, StatGrid } from '@/components/Primitives'
 import { Tone, TONE_TEXT } from '@/lib/thresholds'
 import { cn } from '@/lib/utils'
 import { ArrowClockwise } from '@phosphor-icons/react'
@@ -84,14 +85,6 @@ const COLUMN_CLASS: Record<2 | 3 | 4, string> = {
   4: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3',
 }
 
-/** Stat grid columns follow the tile count instead of being picked per file. */
-function statGridClass(count: number): string {
-  if (count <= 2) return 'grid grid-cols-2 gap-4'
-  if (count === 3) return 'grid grid-cols-2 sm:grid-cols-3 gap-4'
-  if (count === 4) return 'grid grid-cols-2 sm:grid-cols-4 gap-4'
-  return 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4'
-}
-
 export function TuningDashboard<T>({
   title,
   icon,
@@ -136,24 +129,17 @@ export function TuningDashboard<T>({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className={statGridClass(stats.length)}>
+          <StatGrid count={stats.length}>
             {stats.map((stat) => (
-              <div key={stat.label} className="space-y-1">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide">
-                  {stat.label}
-                </div>
-                <div
-                  className={cn(
-                    'font-mono font-bold',
-                    stat.size === 'sm' ? 'text-sm' : 'text-2xl',
-                    TONE_TEXT[stat.tone ?? 'foreground'],
-                  )}
-                >
-                  {stat.value}
-                </div>
-              </div>
+              <Stat
+                key={stat.label}
+                label={stat.label}
+                value={stat.value}
+                tone={stat.tone}
+                size={stat.size === 'sm' ? 'sm' : 'lg'}
+              />
             ))}
-          </div>
+          </StatGrid>
 
           {progress && (
             <div className="space-y-1">

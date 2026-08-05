@@ -5,8 +5,9 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { Stat } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
-import { inverseScoreTone } from '@/lib/thresholds'
+import { Tone, inverseScoreTone } from '@/lib/thresholds'
 import { Database, ArrowClockwise, HardDrives, Cube, Stack, Lightning, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -19,10 +20,10 @@ const TIER_DETAIL: Record<string, string> = {
   HDD: 'under-store (object/HDD)',
 }
 
-function healthTone(h: string): string {
-  if (h === 'HEALTH_OK') return 'text-accent'
-  if (h === 'HEALTH_WARN') return 'text-warning'
-  return 'text-destructive'
+function healthTone(h: string): Tone {
+  if (h === 'HEALTH_OK') return 'accent'
+  if (h === 'HEALTH_WARN') return 'warning'
+  return 'destructive'
 }
 
 /** Alluxio stacked cache tiers (MEM -> SSD -> HDD) + cache hit-rate. Silent if absent. */
@@ -119,22 +120,10 @@ export function ClusterStorageView() {
         {c && (
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Stat label="Health">
-                <span className={`font-mono text-2xl font-bold ${healthTone(c.health)}`}>
-                  {c.health.replace('HEALTH_', '')}
-                </span>
-              </Stat>
-              <Stat label="OSDs">
-                <span className="font-mono text-2xl font-bold text-foreground">{c.osds}</span>
-              </Stat>
-              <Stat label="Monitors">
-                <span className="font-mono text-2xl font-bold text-foreground">{c.mons}</span>
-              </Stat>
-              <Stat label="Ceph version">
-                <span className="font-mono text-sm font-bold text-muted-foreground">
-                  {c.version || '—'}
-                </span>
-              </Stat>
+              <Stat label="Health" value={c.health.replace('HEALTH_', '')} tone={healthTone(c.health)} />
+              <Stat label="OSDs" value={c.osds} />
+              <Stat label="Monitors" value={c.mons} />
+              <Stat label="Ceph version" value={c.version || '—'} size="sm" tone="muted" />
             </div>
 
             <div className="space-y-1">
@@ -216,11 +205,3 @@ export function ClusterStorageView() {
   )
 }
 
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      {children}
-    </div>
-  )
-}

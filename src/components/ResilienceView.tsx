@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Tone, TONE_TEXT } from '@/lib/thresholds'
+import { Stat } from '@/components/Primitives'
 import { ShieldWarning, ArrowClockwise, Database, ShieldCheck, Archive, Play } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -174,11 +174,3 @@ export function ResilienceView() {
   )
 }
 
-function Stat({ label, value, tone = 'foreground' }: { label: string; value: string; tone?: Tone }) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`font-mono text-2xl font-bold ${TONE_TEXT[tone]}`}>{value}</div>
-    </div>
-  )
-}
