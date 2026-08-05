@@ -66,6 +66,20 @@ export function KsmView() {
           </>
         )
       }
+      note={
+        s && s.enabledNodes > 0 && s.totalPagesSharing === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            KSM is running on {s.enabledNodes} node{s.enabledNodes > 1 ? 's' : ''} but has merged
+            nothing, and that is expected rather than broken: the scanner only ever looks at memory a
+            process has explicitly offered with <span className="font-mono">madvise(MADV_MERGEABLE)</span>.
+            QEMU/KVM does that for guest RAM, which is where KSM earns its keep; container runtimes do
+            not, so on a plain Kubernetes node there is nothing for it to deduplicate. Making
+            containers participate needs the workload to opt in per process
+            (<span className="font-mono">prctl(PR_SET_MEMORY_MERGE)</span>, Linux 6.4+) — until then
+            these counters stay at zero however long it scans.
+          </p>
+        ) : undefined
+      }
       entitiesTitle="Per-node"
       entities={s?.nodes ?? []}
       entityKey={(n) => n.node}
