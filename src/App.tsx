@@ -39,6 +39,7 @@ const SettingsView = lazy(() => import('@/components/SettingsView').then((m) => 
 
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Sidebar,
   SidebarContent,
@@ -55,48 +56,81 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import {
-  Archive,
-  Bell,
-  ArrowsLeftRight,
   Calendar,
   ChartBar,
   ChartLine,
-  Clock,
   Cpu,
   Database,
   Detective,
   Gauge,
   Gear,
-  GitBranch,
-  HardDrive,
   HardDrives,
-  Info,
-  Lightning,
   Network,
   Package,
   Queue,
-  ShieldCheck,
-  ShieldWarning,
-  Shuffle,
   Speedometer,
-  Stack,
-  Waveform,
 } from '@phosphor-icons/react'
 
 /**
  * Navigation model.
  *
- * The app used to expose all 21 surfaces as one flat tab strip that wrapped
- * onto three rows. They are grouped here by the question each answers —
+ * Two levels. The sidebar carries screens grouped by the question each answers —
  * what runs (Workloads), what it runs on (Compute), what it consumes
  * (Resources), how it is tuned (Tuning), and how it is behaving (Operations).
+ * Within a screen, panels that answer the *same* question sit on tabs.
+ *
+ * The sidebar was 28 flat entries, most of them one-card panels (MPS, KSM, PTP,
+ * burst buffer) or capabilities this cluster cannot run at all (speculative
+ * decoding, pipeline parallelism). Folding those into tabs cuts the sidebar to
+ * 13 without hiding anything: every former entry is still one click away.
  */
+/**
+ * Every panel the app can render. Typing it as a union — rather than `string` —
+ * makes the nav table and `renderTab` check each other: a typo in NAV fails to
+ * assign, and a panel with no `case` trips the exhaustiveness guard.
+ */
+type TabId =
+  | 'applications'
+  | 'jobs'
+  | 'lineage'
+  | 'scheduler'
+  | 'service-classes'
+  | 'elastic-pools'
+  | 'nodes'
+  | 'provisioned-nodes'
+  | 'racks'
+  | 'gpu'
+  | 'storage'
+  | 'network'
+  | 'data-locality'
+  | 'inference'
+  | 'kv-cache'
+  | 'speculative'
+  | 'pipeline-pp'
+  | 'mps'
+  | 'ptp'
+  | 'burst-buffer'
+  | 'ksm'
+  | 'capacity'
+  | 'resilience'
+  | 'security'
+  | 'alerts'
+  | 'events'
+  | 'settings'
+
+interface NavTab {
+  id: TabId
+  label: string
+}
+
 interface NavItem {
   id: string
   label: string
   icon: ReactNode
   /** Shown under the page title; explains what the screen is for. */
   description: string
+  /** A single tab renders bare — no tab strip is drawn for it. */
+  tabs: NavTab[]
 }
 
 interface NavGroup {
@@ -108,53 +142,145 @@ const NAV: NavGroup[] = [
   {
     label: 'Workloads',
     items: [
-      { id: 'applications', label: 'Applications', icon: <Package />, description: 'Deployed apps read live from the cluster' },
-      { id: 'jobs', label: 'Jobs', icon: <Queue />, description: 'Workflow DAGs, queue depth and checkpoint state' },
-      { id: 'scheduler', label: 'Scheduler', icon: <Calendar />, description: 'Live SchedulingPolicy resources from the operator' },
-      { id: 'service-classes', label: 'Service Classes', icon: <ShieldCheck />, description: 'HIGH / MEDIUM / LOW tiers against their SLA targets' },
-      { id: 'lineage', label: 'Lineage', icon: <GitBranch />, description: 'Live Argo Workflow runs as timed span traces' },
+      {
+        id: 'applications',
+        label: 'Applications',
+        icon: <Package />,
+        description: 'Deployed apps read live from the cluster',
+        tabs: [{ id: 'applications', label: 'Applications' }],
+      },
+      {
+        id: 'jobs',
+        label: 'Jobs',
+        icon: <Queue />,
+        description: 'Workflow DAGs, queue depth, checkpoints and their Argo run traces',
+        tabs: [
+          { id: 'jobs', label: 'Queue' },
+          { id: 'lineage', label: 'Lineage' },
+        ],
+      },
+      {
+        id: 'scheduling',
+        label: 'Scheduling',
+        icon: <Calendar />,
+        description: 'Policies, service-class SLAs and the Volcano queues they land in',
+        tabs: [
+          { id: 'scheduler', label: 'Policies' },
+          { id: 'service-classes', label: 'Service Classes' },
+          { id: 'elastic-pools', label: 'Elastic Pools' },
+        ],
+      },
     ],
   },
   {
     label: 'Compute',
     items: [
-      { id: 'nodes', label: 'Nodes', icon: <Cpu />, description: 'Fleet health and per-node status' },
-      { id: 'provisioned-nodes', label: 'Provisioned', icon: <HardDrives />, description: 'FrameNode resources the operator manages' },
-      { id: 'racks', label: 'Racks', icon: <Stack />, description: 'Nodes grouped by real hypervisor host (capacity, oversubscription)' },
+      {
+        id: 'nodes',
+        label: 'Nodes',
+        icon: <Cpu />,
+        description: 'Fleet health, operator-managed FrameNodes and their hypervisor racks',
+        tabs: [
+          { id: 'nodes', label: 'Fleet' },
+          { id: 'provisioned-nodes', label: 'Provisioned' },
+          { id: 'racks', label: 'Racks' },
+        ],
+      },
     ],
   },
   {
     label: 'Resources',
     items: [
-      { id: 'gpu', label: 'GPU', icon: <Speedometer />, description: 'Live GPU telemetry (DCGM) — util, memory, temp, power' },
-      { id: 'storage', label: 'Storage', icon: <Database />, description: 'Live Ceph health, OSDs, capacity and pools' },
-      { id: 'network', label: 'Network', icon: <Network />, description: 'Live per-node NIC throughput' },
-      { id: 'data-locality', label: 'Placement', icon: <HardDrives />, description: 'Live pod-to-node workload placement' },
+      {
+        id: 'gpu',
+        label: 'GPU',
+        icon: <Speedometer />,
+        description: 'Live GPU telemetry (DCGM) — util, memory, temp, power',
+        tabs: [{ id: 'gpu', label: 'GPU' }],
+      },
+      {
+        id: 'storage',
+        label: 'Storage',
+        icon: <Database />,
+        description: 'Live Ceph health, OSDs, capacity and pools',
+        tabs: [{ id: 'storage', label: 'Storage' }],
+      },
+      {
+        id: 'network',
+        label: 'Network',
+        icon: <Network />,
+        description: 'Live per-node NIC throughput',
+        tabs: [{ id: 'network', label: 'Network' }],
+      },
+      {
+        id: 'data-locality',
+        label: 'Placement',
+        icon: <HardDrives />,
+        description: 'Live pod-to-node workload placement',
+        tabs: [{ id: 'data-locality', label: 'Placement' }],
+      },
     ],
   },
   {
     label: 'Tuning',
     items: [
-      { id: 'inference', label: 'Inference', icon: <ChartBar />, description: 'GPU + llama.cpp + TEI serving status, aggregated' },
-      { id: 'kv-cache', label: 'KV-Cache', icon: <Lightning />, description: 'Live KV-cache depth and inference throughput (llama.cpp)' },
-      { id: 'elastic-pools', label: 'Elastic Pools', icon: <ArrowsLeftRight />, description: 'Live Volcano queues and gang-scheduled PodGroups' },
-      { id: 'speculative', label: 'Speculative', icon: <Shuffle />, description: 'Draft-model speculative decoding (not enabled)' },
-      { id: 'pipeline-pp', label: 'Pipeline PP', icon: <Waveform />, description: 'Pipeline parallelism (N/A — single GPU)' },
-      { id: 'mps', label: 'MPS', icon: <Gauge />, description: 'Live GPU sharing status (MPS off — exclusive)' },
-      { id: 'ptp', label: 'PTP Sync', icon: <Clock />, description: 'Live clock sync (ptp_kvm + adjtimex)' },
-      { id: 'burst-buffer', label: 'Burst Buffer', icon: <HardDrive />, description: 'Live SSD scratch tier per node (node-exporter fs)' },
-      { id: 'ksm', label: 'KSM', icon: <Archive />, description: 'Live kernel same-page merging (node-exporter)' },
+      {
+        id: 'inference',
+        label: 'Inference',
+        icon: <ChartBar />,
+        description: 'Serving status, KV-cache pressure and the decode strategies in play',
+        tabs: [
+          { id: 'inference', label: 'Overview' },
+          { id: 'kv-cache', label: 'KV-Cache' },
+          { id: 'speculative', label: 'Speculative' },
+          { id: 'pipeline-pp', label: 'Pipeline PP' },
+        ],
+      },
+      {
+        id: 'node-tuning',
+        label: 'Node Tuning',
+        icon: <Gauge />,
+        description: 'Per-node knobs — GPU sharing, clock sync, scratch tier, page merging',
+        tabs: [
+          { id: 'mps', label: 'MPS' },
+          { id: 'ptp', label: 'PTP Sync' },
+          { id: 'burst-buffer', label: 'Burst Buffer' },
+          { id: 'ksm', label: 'KSM' },
+        ],
+      },
     ],
   },
   {
     label: 'Operations',
     items: [
-      { id: 'capacity', label: 'Capacity', icon: <ChartLine />, description: 'Live allocatable vs used vs reserved' },
-      { id: 'resilience', label: 'Resilience', icon: <ShieldWarning />, description: 'Durability, disruption budgets, restarts + Velero backups' },
-      { id: 'security', label: 'Security', icon: <Detective />, description: 'Runtime (Falco) + posture (trivy) + network (Tetragon)' },
-      { id: 'alerts', label: 'Alerts', icon: <Bell />, description: 'Active Alertmanager alerts (rules + Falco)' },
-      { id: 'events', label: 'Events', icon: <Info />, description: 'Cluster event feed' },
-      { id: 'settings', label: 'Settings', icon: <Gear />, description: 'Namespaces, selectors and ports of every integration' },
+      {
+        id: 'capacity',
+        label: 'Capacity',
+        icon: <ChartLine />,
+        description: 'Allocatable vs used vs reserved, and how much disruption the cluster absorbs',
+        tabs: [
+          { id: 'capacity', label: 'Capacity' },
+          { id: 'resilience', label: 'Resilience' },
+        ],
+      },
+      {
+        id: 'security',
+        label: 'Security',
+        icon: <Detective />,
+        description: 'Runtime and posture findings, firing alerts and the raw cluster event feed',
+        tabs: [
+          { id: 'security', label: 'Runtime & Posture' },
+          { id: 'alerts', label: 'Alerts' },
+          { id: 'events', label: 'Events' },
+        ],
+      },
+      {
+        id: 'settings',
+        label: 'Settings',
+        icon: <Gear />,
+        description: 'Namespaces, selectors and ports of every integration',
+        tabs: [{ id: 'settings', label: 'Settings' }],
+      },
     ],
   },
 ]
@@ -186,10 +312,10 @@ function App() {
 
   const active = NAV_INDEX[screen] ?? NAV_INDEX['jobs']
 
-  // Only the active screen is mounted — the previous flat-tab layout kept all
-  // 21 panels in the tree at once.
-  function renderScreen(): ReactNode {
-    switch (screen) {
+  // Only the active tab of the active screen is mounted. Radix keeps inactive
+  // TabsContent unmounted, so this holds at both levels.
+  function renderTab(tab: TabId): ReactNode {
+    switch (tab) {
       // ── Workloads ───────────────────────────────────────────────────────
       case 'applications':
         return <ApplicationsView />
@@ -274,9 +400,35 @@ function App() {
       case 'settings':
         return <SettingsView />
 
-      default:
-        return null
+      default: {
+        // Compile error if a TabId above gains a member with no case here.
+        const unhandled: never = tab
+        return unhandled
+      }
     }
+  }
+
+  function renderScreen(): ReactNode {
+    if (active.tabs.length === 1) return renderTab(active.tabs[0].id)
+
+    return (
+      // key={active.id} so switching screens resets the tab strip to its first
+      // tab rather than carrying a stale value across an unrelated screen.
+      <Tabs key={active.id} defaultValue={active.tabs[0].id} className="gap-4">
+        <TabsList className="flex-wrap h-auto">
+          {active.tabs.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id} className="font-mono text-xs">
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {active.tabs.map((tab) => (
+          <TabsContent key={tab.id} value={tab.id}>
+            {renderTab(tab.id)}
+          </TabsContent>
+        ))}
+      </Tabs>
+    )
   }
 
   return (
