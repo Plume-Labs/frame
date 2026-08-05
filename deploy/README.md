@@ -1,6 +1,6 @@
 # GitOps Deployment Infrastructure
 
-This directory contains all Infrastructure as Code (IaC) for deploying the bare-metal Kubernetes cluster with Talos/Sidero provisioning, RDMA networking, Ceph distributed storage, and the Cluster Control monitoring interface.
+This directory contains all Infrastructure as Code (IaC) for deploying the bare-metal Kubernetes cluster with Talos/Omni provisioning, RDMA networking, Ceph distributed storage, and the Cluster Control monitoring interface.
 
 ## Directory Structure
 
@@ -9,7 +9,7 @@ deploy/
 ├── kubernetes/           # K8s manifests for the monitoring app
 ├── gitops/              # Flux/ArgoCD configurations
 ├── talos/               # Talos MachineConfigs and schematics
-├── sidero/              # Sidero Metal resources (Environment/ServerClass)
+├── omni/                # Omni bare-metal provisioning (values, MachineClasses, patches)
 ├── pxe/                 # PXE boot configurations
 ├── ceph/                # Ceph cluster configurations
 ├── networking/          # RDMA and network fabric configs
@@ -89,7 +89,8 @@ See individual subdirectories for detailed configuration options:
 - [Kubernetes manifests](./kubernetes/README.md)
 - [GitOps setup](./gitops/README.md)
 - [Talos provisioning](./talos/README.md)
-- [Sidero Metal resources](./sidero/README.md)
+- [Omni bare-metal provisioning](./omni/README.md)
+- [Omni bare-metal provisioning](./omni/README.md)
 - [PXE configuration](./pxe/README.md)
 - [Ceph storage](./ceph/README.md)
 - [RDMA networking](./networking/README.md)

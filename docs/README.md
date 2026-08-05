@@ -34,7 +34,7 @@ Bare-metal IaC (deploy/)
 
 - **Control plane** (`src/`) — React UI + TypeScript SDK. Both talk **directly to the Kubernetes API** — no intermediate server. Dev: `kubectl proxy`. Prod: ServiceAccount Bearer token.
 - **Operator** (`internal/`) — Kubebuilder v4 controllers for six CRDs. This is the layer that actually mutates cluster state.
-- **IaC** (`deploy/`) — Talos + Sidero provisioning, Ceph (RGW) storage, Cilium RDMA networking, GitOps, and Argo Workflows manifests.
+- **IaC** (`deploy/`) — Talos provisioning (Omni for bare metal, prepared), Ceph (RGW) storage, Cilium RDMA networking, GitOps, and Argo Workflows manifests.
 
 ## Scope
 

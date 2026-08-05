@@ -1,0 +1,11 @@
+# Talos machine config patch for GPU workers.
+#
+# nvidia.com/gpu.present is what the GPU operator's node-feature-discovery
+# would otherwise have to work out; setting it here means the operator's
+# daemonset lands on the node from the first boot rather than after a
+# discovery round.
+machine:
+  nodeLabels:
+    nvidia.com/gpu.present: "true"
+    frame.plume-labs.io/service-class: HIGH
+    frame.plume-labs.io/server-class: gpu-worker

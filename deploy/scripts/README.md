@@ -184,7 +184,7 @@ deploy:
 ## Customization
 
 Scripts can be customized by editing:
-- Talos/Sidero resources under `deploy/talos/` and `deploy/sidero/`
+- Talos/Omni resources under `deploy/talos/` and `deploy/omni/`
 - Kubernetes manifests in `kubernetes/overlays/`
 - Ceph configuration in `ceph/cluster.yaml`
 - Network settings in `networking/`
