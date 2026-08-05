@@ -1781,13 +1781,13 @@ class ClusterClient {
       if (type === 'PROCESS_EXEC') {
         exec += v
         const binary = lbl(labels, 'binary')
-        const key = `${binary} ${workload}`
+        const key = `${binary}\u0000${workload}`
         const e = ex.get(key) ?? { binary, workload, count: 0 }
         e.count += v
         ex.set(key, e)
       } else if (type === 'PROCESS_KPROBE') {
         network += v
-        const key = `${workload} ${ns}`
+        const key = `${workload}\u0000${ns}`
         const e = net.get(key) ?? { workload, namespace: ns, count: 0 }
         e.count += v
         net.set(key, e)
