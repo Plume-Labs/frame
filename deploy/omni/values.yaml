@@ -1,0 +1,100 @@
+# Helm values for self-hosted Omni.
+#
+# Substituted by ../scripts/omni-up.sh from the environment, using shell-style
+# placeholders so the file stays readable as YAML and diffable in git.
+#
+# Do not write a placeholder anywhere except where one is meant to be filled:
+# the script refuses to install if any survive substitution, and a stray one in
+# a comment trips that check.
+#
+# Auth is Dex (local users) rather than Auth0: this is a homelab-scale
+# deployment and an external IdP dependency for a service that manages the
+# hardware underneath everything is a failure mode we do not need.
+
+config:
+  account:
+    # Stable per-install identity. Regenerating it orphans every enrolled
+    # machine, so omni-up.sh writes it once and refuses to overwrite.
+    id: ${OMNI_ACCOUNT_ID}
+    name: frame
+
+  auth:
+    auth0:
+      enabled: false
+    oidc:
+      enabled: true
+      clientID: omni
+      clientSecret: ${OMNI_CLIENT_SECRET}
+      providerURL: https://dex.${DOMAIN_SUFFIX}
+      scopes:
+        - openid
+        - profile
+        - email
+
+  # Created on first startup only, with the admin role. Later users are added
+  # through the UI.
+  initialUsers:
+    - ${INITIAL_USER}
+
+  services:
+    api:
+      advertisedURL: https://omni.${DOMAIN_SUFFIX}
+    kubernetesProxy:
+      advertisedURL: https://kubernetes.${DOMAIN_SUFFIX}
+    machineAPI:
+      advertisedURL: https://siderolink.${DOMAIN_SUFFIX}
+    siderolink:
+      wireGuard:
+        # Must be reachable over UDP from every managed machine. The port has
+        # to match service.wireguard.nodePort below — they are two halves of
+        # the same endpoint and drifting them apart fails silently, with
+        # machines that enrol and then never connect.
+        advertisedEndpoint: ${WIREGUARD_ADVERTISED_ENDPOINT}:30180
+
+# etcd holds the machine inventory and its secrets; this GPG key encrypts it.
+# Lose the key and the inventory is unrecoverable — back it up somewhere other
+# than the cluster it protects.
+etcdEncryptionKey:
+  existingSecret: omni-gpg-key
+
+service:
+  wireguard:
+    nodePort: 30180
+
+ingress:
+  main:
+    enabled: true
+    annotations:
+      cert-manager.io/cluster-issuer: ${CLUSTER_ISSUER}
+    className: traefik
+    host: omni.${DOMAIN_SUFFIX}
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.${DOMAIN_SUFFIX}
+  kubernetesProxy:
+    enabled: true
+    annotations:
+      cert-manager.io/cluster-issuer: ${CLUSTER_ISSUER}
+    className: traefik
+    host: kubernetes.${DOMAIN_SUFFIX}
+    tls:
+      - secretName: omni-k8s-tls
+        hosts:
+          - kubernetes.${DOMAIN_SUFFIX}
+  siderolinkApi:
+    enabled: true
+    annotations:
+      cert-manager.io/cluster-issuer: ${CLUSTER_ISSUER}
+    className: traefik
+    host: siderolink.${DOMAIN_SUFFIX}
+    tls:
+      - secretName: omni-siderolink-tls
+        hosts:
+          - siderolink.${DOMAIN_SUFFIX}
+
+persistence:
+  # etcd on replicated storage, same reasoning as postgres: the machine
+  # inventory must survive losing a node.
+  storageClass: ${OMNI_STORAGE_CLASS}
+  size: 10Gi

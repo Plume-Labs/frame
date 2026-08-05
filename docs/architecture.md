@@ -48,7 +48,7 @@ Frame is three cooperating layers in one repo.
 │           Cluster Primitives (deploy/)                   │
 │                                                          │
 │  Argo Workflows · PriorityClasses · ResourceQuotas       │
-│  Talos MachineConfigs · Sidero Metal · PXE boot          │
+│  Talos MachineConfigs · Omni (planned) · PXE boot        │
 │  Ceph (Rook, RGW) · Cilium · SR-IOV · RDMA               │
 │  Prometheus · Grafana · Jaeger · DCGM · OpenLineage      │
 └──────────────────────────────────────────────────────────┘
@@ -108,7 +108,7 @@ Everything needed to stand up the bare-metal cluster the operator runs on.
 | Directory | What it provisions |
 |---|---|
 | `deploy/talos/` | Talos MachineConfigs, Image Factory schematics |
-| `deploy/sidero/` | Sidero Metal bare-metal server lifecycle |
+| `deploy/omni/` | Omni bare-metal server lifecycle (prepared, not deployed) |
 | `deploy/pxe/` | PXE / DHCP / TFTP boot configuration |
 | `deploy/ceph/` | Rook-Ceph operator + cluster CRs (block + file storage) |
 | `deploy/networking/` | Cilium, SR-IOV device plugin, DPDK, RDMA device plugin |

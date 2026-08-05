@@ -1,0 +1,15 @@
+# Talos machine config patch for base workers.
+#
+# Carries the node labels the Sidero base-worker ServerClass used to apply via
+# configPatches. Referenced from a cluster template:
+#
+#   kind: Machine
+#   patches:
+#     - file: patches/base-worker.yaml
+#
+# The Frame scheduler reads frame.plume-labs.io/service-class to place work by
+# SLA tier, so a node that joins without it lands outside every tier.
+machine:
+  nodeLabels:
+    frame.plume-labs.io/service-class: MEDIUM
+    frame.plume-labs.io/server-class: base-worker

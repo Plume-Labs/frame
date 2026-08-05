@@ -95,7 +95,15 @@ type FrameNodeSpec struct {
 	// +optional
 	ServiceClass string `json:"serviceClass,omitempty"`
 
-	// Reference to Sidero ServerClass for provisioning
+	// Deprecated: referenced a Sidero Metal ServerClass, which no longer
+	// exists — upstream stopped developing Sidero Metal and provisioning moved
+	// to Omni (see deploy/omni/). No controller has ever read this field, so it
+	// is retained only to avoid breaking stored objects; it has no effect.
+	//
+	// Its Omni counterpart is a MachineClass, but that is selected when the
+	// boot media is generated rather than named per node, so a like-for-like
+	// replacement field would be misleading. One will be added if and when a
+	// controller genuinely needs it.
 	// +optional
 	ServerClassRef *corev1.ObjectReference `json:"serverClassRef,omitempty"`
 }

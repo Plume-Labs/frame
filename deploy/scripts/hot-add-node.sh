@@ -14,11 +14,15 @@ fi
 cat <<EOF
 ❌ Ansible-based hot-add has been removed.
 
-Use the Talos + Sidero flow instead:
-1. Register the server in your Sidero inventory (BMC + PXE environment).
-2. Assign an appropriate ServerClass in deploy/sidero/serverclasses/.
-3. Reconcile via Flux and verify:
-   kubectl get machines -A
+Use the Talos + Omni flow instead (Sidero Metal is no longer developed
+upstream — see deploy/omni/README.md):
+1. Register the machine's BMC with the bare-metal infrastructure provider.
+2. Boot it from the image carrying the right role label, e.g.
+     omnictl download iso --arch amd64 --initial-labels frame-role=<role>
+   The role comes from the image, not from the hardware, so booting the
+   wrong image silently joins the machine to the wrong class.
+3. Verify:
+   omnictl get machines
    kubectl get nodes
 
 Requested node metadata:

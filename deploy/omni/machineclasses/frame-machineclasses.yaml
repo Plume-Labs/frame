@@ -1,0 +1,47 @@
+# Hardware profiles, translated from deploy/sidero/serverclasses/.
+#
+# Apply with: omnictl apply -f frame-machineclasses.yaml
+#
+# READ THIS BEFORE TRUSTING THE TRANSLATION.
+#
+# The Sidero classes matched discovered hardware: the GPU class keyed off PCI
+# vendor 10de (NVIDIA), the RDMA class off 15b3 (Mellanox). A machine sorted
+# itself into a class the first time it booted.
+#
+# Omni has no automatic PCI-vendor label. What it assigns on its own is
+# architecture, CPU count and similar; anything role-shaped is an *initial
+# label*, baked into the boot media:
+#
+#   omnictl download iso --arch amd64 --initial-labels frame-role=gpu-worker
+#   omnictl download iso --arch amd64 --initial-labels frame-role=rdma-worker
+#   omnictl download iso --arch amd64 --initial-labels frame-role=base-worker
+#
+# So you now produce one image per profile and boot the right machine from the
+# right image, rather than one image that sorts them. That is a real loss of
+# automation, not a naming change — if a GPU node is booted from the base
+# image it will silently join as a base worker, where Sidero would have caught
+# the PCI ID regardless.
+---
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: frame-base-worker
+spec:
+  matchlabels:
+    - frame-role = base-worker, omni.sidero.dev/arch = amd64
+---
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: frame-gpu-worker
+spec:
+  matchlabels:
+    - frame-role = gpu-worker, omni.sidero.dev/arch = amd64
+---
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: frame-rdma-worker
+spec:
+  matchlabels:
+    - frame-role = rdma-worker, omni.sidero.dev/arch = amd64

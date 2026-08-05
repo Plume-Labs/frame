@@ -1,0 +1,6 @@
+# Talos machine config patch for RDMA workers (Mellanox/NVIDIA networking).
+machine:
+  nodeLabels:
+    rdma: "true"
+    frame.plume-labs.io/service-class: HIGH
+    frame.plume-labs.io/server-class: rdma-worker
