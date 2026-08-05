@@ -32,3 +32,33 @@ metadata: { name: llamacpp, namespace: inference, labels: { release: kps } }
 spec:
   selector: { matchLabels: { app: llamacpp } }
   podMetricsEndpoints: [{ port: http, path: /metrics, interval: 30s }]
+---
+# Ceph. The mgr has served its prometheus module on 9283 all along (770 ceph_*
+# series); nothing scraped it, so Storage was the one major screen with no
+# history at all — only ever a snapshot of a cluster whose whole job is to
+# change slowly.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: { name: rook-ceph-mgr, namespace: rook-ceph, labels: { release: kps } }
+spec:
+  selector: { matchLabels: { app: rook-ceph-mgr, rook_cluster: rook-ceph } }
+  endpoints: [{ port: http-metrics, interval: 30s }]
+---
+# Per-daemon perf counters (OSD latency, op rates) that the mgr module does not
+# expose — this is where "slow ops in BlueStore" becomes a number you can plot.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: { name: rook-ceph-exporter, namespace: rook-ceph, labels: { release: kps } }
+spec:
+  selector: { matchLabels: { app: rook-ceph-exporter, rook_cluster: rook-ceph } }
+  endpoints: [{ port: ceph-exporter-http-metrics, interval: 30s }]
+---
+# Embeddings. A PodMonitor rather than a ServiceMonitor because the tei Service
+# carries no labels to select on. Metrics are te_* (te_queue_size,
+# te_embed_inference_duration…).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: { name: tei, namespace: inference, labels: { release: kps } }
+spec:
+  selector: { matchLabels: { app: tei } }
+  podMetricsEndpoints: [{ port: http, path: /metrics, interval: 30s }]

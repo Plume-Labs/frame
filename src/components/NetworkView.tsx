@@ -1,12 +1,31 @@
-import { NetNode, createFrameClient } from '@/lib/frame-sdk'
+import { NetNode, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Network, ArrowClockwise, WarningCircle } from '@phosphor-icons/react'
+import { TrendRow } from '@/components/Sparkline'
+import { Network, ArrowClockwise, WarningCircle, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
+
+const WINDOW_HOURS = 3
+
+/**
+ * The tiles below count bytes since each node booted, which says how much has
+ * ever moved and nothing about now — a number that only ever goes up cannot
+ * show a spike or a stall. These are the same counters as rates, which is the
+ * form you can actually read traffic from.
+ */
+const TREND_QUERIES = [
+  { metric: 'Receive', q: 'sum(rate(node_network_receive_bytes_total{device="eth0"}[5m])) / 1024^2', unit: ' MiB/s' },
+  { metric: 'Transmit', q: 'sum(rate(node_network_transmit_bytes_total{device="eth0"}[5m])) / 1024^2', unit: ' MiB/s' },
+  {
+    metric: 'Errors + drops',
+    q: 'sum(rate(node_network_receive_errs_total[5m])) + sum(rate(node_network_transmit_errs_total[5m])) + sum(rate(node_network_receive_drop_total[5m])) + sum(rate(node_network_transmit_drop_total[5m]))',
+    unit: '/s',
+  },
+]
 
 const GiB = 1024 ** 3
 const MiB = 1024 ** 2
@@ -21,7 +40,11 @@ const IFACE_ROLE: Record<string, string> = {
 
 export function NetworkView() {
   const { state, reload } = useLiveResource<NetNode[]>(() => frame.cluster.network())
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
+    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  )
   const nodes = state.phase === 'ready' ? state.data : []
+  const trend = trendState.phase === 'ready' ? trendState.data : null
 
   const flat = nodes.flatMap((n) => n.ifaces)
   const rx = flat.filter((i) => i.device === 'eth0').reduce((s, i) => s + i.rxBytes, 0)
@@ -57,6 +80,27 @@ export function NetworkView() {
           </CardContent>
         )}
       </Card>
+
+      {trend && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-base flex items-center gap-2">
+              <TrendUp size={16} className="text-primary" /> Throughput, last {WINDOW_HOURS}h (Prometheus)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            {trend.map((series) => (
+              <TrendRow
+                key={series.metric}
+                series={series}
+                windowHours={WINDOW_HOURS}
+                format={(v) => (v >= 1 ? v.toFixed(1) : v.toFixed(3))}
+                tone={series.metric === 'Errors + drops' && series.current > 0 ? 'warning' : undefined}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <LiveStates state={state} emptyLabel="node-exporter (netdev) not deployed." />
 

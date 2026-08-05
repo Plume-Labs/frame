@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { TONE_TEXT, inverseScoreTone } from '@/lib/thresholds'
 import { Stack, ArrowClockwise, Cpu, CheckCircle, XCircle, HardDrives } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -60,7 +61,11 @@ export function RacksView() {
                     <HardDrives size={12} />{r.physical.hypervisor} host · {r.physical.pcpu} pCPU · {r.physical.pmemGiB} GiB
                   </Badge>
                   {r.physical.pcpu > 0 && (
-                    <span className={r.totalCpu > r.physical.pcpu ? 'text-warning' : 'text-muted-foreground'}>
+                    // Some oversubscription is the point of virtualising; past
+                    // 2× the guests start contending for real cores, and past 4×
+                    // scheduling latency is the dominant cost. Flagging anything
+                    // over 1× made the normal case look like a problem.
+                    <span className={TONE_TEXT[inverseScoreTone(r.totalCpu / r.physical.pcpu, 2, 4)]}>
                       vCPU {r.totalCpu.toFixed(0)}/{r.physical.pcpu} ({(r.totalCpu / r.physical.pcpu).toFixed(1)}× oversubscribed)
                     </span>
                   )}

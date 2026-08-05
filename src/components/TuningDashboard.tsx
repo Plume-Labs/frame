@@ -1,16 +1,25 @@
 import { ReactNode } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { LiveStates } from '@/components/LiveStates'
+import { LiveState } from '@/hooks/useLiveResource'
 import { Tone, TONE_TEXT } from '@/lib/thresholds'
 import { cn } from '@/lib/utils'
+import { ArrowClockwise } from '@phosphor-icons/react'
 
 /**
- * Shared shell for the eight tuning dashboards (KV-Cache, Elastic Pools,
- * Speculative Decoding, Pipeline PP, MPS, PTP Sync, Burst Buffer, KSM).
+ * Shared shell for the tuning dashboards (KV-Cache, MPS, PTP Sync, Burst
+ * Buffer, KSM…).
  *
- * They were eight copies of the same three cards — summary stats, a per-entity
- * grid, and a config `<pre>` — each re-deriving the same tile markup and colour
+ * They were copies of the same three cards — summary stats, a per-entity grid,
+ * and a config `<pre>` — each re-deriving the same tile markup and colour
  * ladder. This is that structure, once.
+ *
+ * It originally modelled only those three cards, which is why nothing adopted
+ * it: every real view also needs the refresh button and the loading/error/empty
+ * chrome, and a shell that forced you to hand-roll those around it saved
+ * nothing. It now owns them, plus a `trend` slot for Prometheus history.
  */
 
 export interface StatTile {
@@ -39,6 +48,12 @@ export interface TuningDashboardProps<T> {
    * the draft/target model panel, the "how it works" note.
    */
   note?: ReactNode
+  /**
+   * Prometheus history for this screen's key metrics, rendered under the stat
+   * grid. A snapshot says where a metric is; this says where it is heading,
+   * which is the difference between a number and a reading.
+   */
+  trend?: ReactNode
 
   entitiesTitle: string
   entities: T[]
@@ -49,8 +64,18 @@ export interface TuningDashboardProps<T> {
   /** Widest breakpoint column count for the grid layout. */
   entityColumns?: 2 | 3 | 4
 
-  configTitle: string
-  config: string
+  /** Omit both to drop the config card — not every screen documents knobs. */
+  configTitle?: string
+  config?: string
+
+  /**
+   * Live-fetch state. Given it, the shell renders the refresh button and the
+   * loading/error/empty chrome, so a view never hand-rolls that again.
+   */
+  state?: LiveState<unknown>
+  onReload?: () => void
+  /** Shown when the fetch succeeded but returned nothing. */
+  emptyLabel?: string
 }
 
 const COLUMN_CLASS: Record<2 | 3 | 4, string> = {
@@ -82,6 +107,10 @@ export function TuningDashboard<T>({
   entityColumns = 3,
   configTitle,
   config,
+  trend,
+  state,
+  onReload,
+  emptyLabel,
 }: TuningDashboardProps<T>) {
   return (
     <div className="space-y-6">
@@ -92,6 +121,18 @@ export function TuningDashboard<T>({
             {icon}
             {title}
             {badge && <span className="ml-auto">{badge}</span>}
+            {onReload && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn('font-mono gap-1.5', badge ? '' : 'ml-auto')}
+                onClick={onReload}
+                disabled={state?.phase === 'loading'}
+              >
+                <ArrowClockwise className={state?.phase === 'loading' ? 'animate-spin' : ''} />
+                Refresh
+              </Button>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -126,35 +167,43 @@ export function TuningDashboard<T>({
             </div>
           )}
 
+          {trend && <div className="space-y-4 pt-2 border-t border-border">{trend}</div>}
+
           {note}
         </CardContent>
       </Card>
 
+      {state && emptyLabel && <LiveStates state={state} emptyLabel={emptyLabel} />}
+
       {/* ── Per-entity ──────────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">{entitiesTitle}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className={entityLayout === 'stack' ? 'space-y-3' : COLUMN_CLASS[entityColumns]}>
-            {entities.map((entity, i) => (
-              <div key={entityKey(entity, i)}>{renderEntity(entity, i)}</div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      {entities.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-lg">{entitiesTitle}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className={entityLayout === 'stack' ? 'space-y-3' : COLUMN_CLASS[entityColumns]}>
+              {entities.map((entity, i) => (
+                <div key={entityKey(entity, i)}>{renderEntity(entity, i)}</div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Config reference ────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-lg">{configTitle}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">
-            {config}
-          </pre>
-        </CardContent>
-      </Card>
+      {config && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-lg">{configTitle}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-[11px] font-mono bg-secondary/40 rounded-lg p-4 overflow-x-auto text-muted-foreground leading-relaxed">
+              {config}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

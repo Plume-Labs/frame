@@ -407,12 +407,58 @@ export interface AlertsStatus {
   bySeverity: Record<string, number>
 }
 
-/** A capacity metric's recent history + linear projection (from Prometheus). */
-export interface CapacityTrend {
+/** One metric's recent history, from a Prometheus range query. */
+export interface MetricSeries {
   metric: string
-  current: number // percent
+  /** Last sample, or 0 when the query returned nothing. */
+  current: number
   history: Array<{ t: number; v: number }>
+  /** Passed through from the request, so a caller can label the axis. */
+  unit?: string
+}
+
+/** A capacity metric's recent history + linear projection (from Prometheus). */
+export interface CapacityTrend extends MetricSeries {
   projectedFullDays: number | null // null if flat/declining
+}
+
+/** One series to fetch: a display name and the PromQL behind it. */
+export interface RangeQuery {
+  metric: string
+  q: string
+  unit?: string
+}
+
+/**
+ * Least-squares slope over a percent series → "days until it reaches 100".
+ *
+ * Slopes at or below 0.1 %/day give `null` rather than a huge number: at that
+ * gradient the projection is noise, and "1200 days to full" reads as a fact
+ * when it is really a flat line.
+ */
+export function projectToFull(series: MetricSeries): CapacityTrend {
+  const { history } = series
+  const n = history.length
+  if (n < 2) return { ...series, projectedFullDays: null }
+
+  const t0 = history[0].t / 1000
+  const xs = history.map((p) => p.t / 1000 - t0)
+  const ys = history.map((p) => p.v)
+  const mx = xs.reduce((a, b) => a + b, 0) / n
+  const my = ys.reduce((a, b) => a + b, 0) / n
+  let num = 0
+  let den = 0
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - mx) * (ys[i] - my)
+    den += (xs[i] - mx) ** 2
+  }
+  const slopePerDay = (den > 0 ? num / den : 0) * 86400
+  const current = ys[n - 1]
+  return {
+    ...series,
+    current,
+    projectedFullDays: slopePerDay > 0.1 ? (100 - current) / slopePerDay : null,
+  }
 }
 export interface ForecastStatus {
   series: CapacityTrend[]
@@ -1895,11 +1941,18 @@ class ClusterClient {
   }
 
   /**
-   * Capacity trend + forecast from Prometheus range queries (cluster CPU/mem
-   * usage over the last few hours), with a linear projection to "days to full".
-   * Returns null if Prometheus isn't deployed.
+   * Recent history for arbitrary PromQL, via Prometheus range queries.
+   *
+   * This is the generic half of what `forecast()` used to do inline. Screens
+   * that only want a sparkline call this directly; `forecast()` layers its
+   * projection on top. Returns null when Prometheus isn't deployed, so a caller
+   * can tell "no monitoring" apart from "monitored, but flat".
+   *
+   * A query that fails or returns nothing yields an empty `history` rather than
+   * dropping the series, so a caller rendering one sparkline per query keeps a
+   * stable set of slots.
    */
-  async forecast(windowHours = 3): Promise<ForecastStatus | null> {
+  async range(queries: RangeQuery[], windowHours = 3, step = 300): Promise<MetricSeries[] | null> {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(config().integrations.prometheus),
     )
@@ -1908,45 +1961,44 @@ class ClusterClient {
     const base = integrationProxy(config().integrations.prometheus, name, '/api/v1/query_range')
     const end = Math.floor(Date.now() / 1000)
     const start = end - windowHours * 3600
-    const step = 300
 
-    const queries: Array<{ metric: string; q: string }> = [
-      { metric: 'Memory', q: '100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))' },
-      { metric: 'CPU', q: '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])))' },
-    ]
+    return Promise.all(
+      queries.map(async ({ metric, q, unit }): Promise<MetricSeries> => {
+        const empty: MetricSeries = { metric, current: 0, history: [], unit }
+        const url = `${base}?query=${encodeURIComponent(q)}&start=${start}&end=${end}&step=${step}`
+        let json: unknown
+        try {
+          const res = await fetch(url)
+          if (!res.ok) return empty
+          json = await res.json()
+        } catch {
+          return empty
+        }
+        const values: Array<[number, string]> =
+          (json as { data?: { result?: Array<{ values?: Array<[number, string]> }> } })?.data?.result?.[0]?.values ?? []
+        const history = values
+          .map(([t, v]) => ({ t: t * 1000, v: Number(v) }))
+          .filter((p) => Number.isFinite(p.v))
+        return { metric, current: history[history.length - 1]?.v ?? 0, history, unit }
+      }),
+    )
+  }
 
-    const series: CapacityTrend[] = []
-    for (const { metric, q } of queries) {
-      const url = `${base}?query=${encodeURIComponent(q)}&start=${start}&end=${end}&step=${step}`
-      const res = await fetch(url)
-      if (!res.ok) continue
-      const json = await res.json()
-      const values: Array<[number, string]> = json?.data?.result?.[0]?.values ?? []
-      const history = values.map(([t, v]) => ({ t: t * 1000, v: Number(v) })).filter((p) => Number.isFinite(p.v))
-      if (history.length < 2) {
-        series.push({ metric, current: history[history.length - 1]?.v ?? 0, history, projectedFullDays: null })
-        continue
-      }
-      // Least-squares slope over (seconds, percent) → percent per day.
-      const n = history.length
-      const t0 = history[0].t / 1000
-      const xs = history.map((p) => p.t / 1000 - t0)
-      const ys = history.map((p) => p.v)
-      const mx = xs.reduce((a, b) => a + b, 0) / n
-      const my = ys.reduce((a, b) => a + b, 0) / n
-      let num = 0
-      let den = 0
-      for (let i = 0; i < n; i++) {
-        num += (xs[i] - mx) * (ys[i] - my)
-        den += (xs[i] - mx) ** 2
-      }
-      const slopePerSec = den > 0 ? num / den : 0
-      const slopePerDay = slopePerSec * 86400
-      const current = ys[n - 1]
-      const projectedFullDays = slopePerDay > 0.1 ? (100 - current) / slopePerDay : null
-      series.push({ metric, current, history, projectedFullDays })
-    }
-    return { series, windowHours }
+  /**
+   * Capacity trend + forecast from Prometheus range queries (cluster CPU/mem
+   * usage over the last few hours), with a linear projection to "days to full".
+   * Returns null if Prometheus isn't deployed.
+   */
+  async forecast(windowHours = 3): Promise<ForecastStatus | null> {
+    const series = await this.range(
+      [
+        { metric: 'Memory', q: '100 * (1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))', unit: '%' },
+        { metric: 'CPU', q: '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])))', unit: '%' },
+      ],
+      windowHours,
+    )
+    if (!series) return null
+    return { series: series.map(projectToFull), windowHours }
   }
 
   /**

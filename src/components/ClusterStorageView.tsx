@@ -1,11 +1,13 @@
-import { AlluxioStats, CephStatus, createFrameClient } from '@/lib/frame-sdk'
+import { AlluxioStats, CephStatus, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Database, ArrowClockwise, HardDrives, Cube, Stack, Lightning } from '@phosphor-icons/react'
+import { TrendRow } from '@/components/Sparkline'
+import { inverseScoreTone } from '@/lib/thresholds'
+import { Database, ArrowClockwise, HardDrives, Cube, Stack, Lightning, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
@@ -64,9 +66,35 @@ function AlluxioTiersCard() {
   )
 }
 
+const WINDOW_HOURS = 3
+
+/**
+ * Fill level and latency, because for storage they are the same story told at
+ * two speeds: capacity says how long you have, apply latency says whether the
+ * OSDs are keeping up right now. A cluster that is 25% full but whose commit
+ * latency is climbing is in more trouble than one at 80% and flat.
+ */
+const TREND_QUERIES = [
+  { metric: 'Raw used', q: '100 * ceph_cluster_total_used_bytes / ceph_cluster_total_bytes', unit: '%' },
+  { metric: 'OSD apply latency', q: 'avg(ceph_osd_apply_latency_ms)', unit: ' ms' },
+  { metric: 'OSD commit latency', q: 'max(ceph_osd_commit_latency_ms)', unit: ' ms' },
+]
+
+// Ceph starts refusing writes near full, and the mons warn well before that.
+const USED_GOOD_PCT = 70
+const USED_OK_PCT = 85
+// Apply latency in the tens of ms is normal on spinning-rust-backed RBD; past
+// 100ms the "slow ops in BlueStore" warning is usually already firing.
+const LATENCY_GOOD_MS = 50
+const LATENCY_OK_MS = 100
+
 export function ClusterStorageView() {
   const { state, reload } = useLiveResource<CephStatus>(() => frame.cluster.ceph())
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
+    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  )
   const c = state.phase === 'ready' ? state.data : null
+  const trend = trendState.phase === 'ready' ? trendState.data : null
   const usedPct = c && c.bytesTotal ? (c.bytesUsed / c.bytesTotal) * 100 : 0
 
   return (
@@ -122,6 +150,31 @@ export function ClusterStorageView() {
           </CardContent>
         )}
       </Card>
+
+      {trend && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-base flex items-center gap-2">
+              <TrendUp size={16} className="text-primary" /> Last {WINDOW_HOURS}h (Prometheus / ceph-mgr)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            {trend.map((series) => (
+              <TrendRow
+                key={series.metric}
+                series={series}
+                windowHours={WINDOW_HOURS}
+                format={(v) => v.toFixed(1)}
+                tone={
+                  series.metric === 'Raw used'
+                    ? inverseScoreTone(series.current, USED_GOOD_PCT, USED_OK_PCT)
+                    : inverseScoreTone(series.current, LATENCY_GOOD_MS, LATENCY_OK_MS)
+                }
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <LiveStates state={state} emptyLabel="Rook-Ceph is not installed on this cluster." />
 
