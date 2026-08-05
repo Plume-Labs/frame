@@ -1,4 +1,5 @@
-import { lazy, ReactNode, Suspense, useMemo, useState } from 'react'
+import { lazy, ReactNode, Suspense, useCallback, useMemo, useState } from 'react'
+import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 
@@ -11,6 +12,7 @@ import { NotEnabledView } from '@/components/NotEnabledView'
 // eagerly importing all 20+ of them bundled every one into the initial
 // chunk for nothing — dynamic import() gives each its own chunk, fetched
 // only when its nav item is actually clicked.
+const OverviewView = lazy(() => import('@/components/OverviewView').then((m) => ({ default: m.OverviewView })))
 const ClusterNodesView = lazy(() => import('@/components/ClusterNodesView').then((m) => ({ default: m.ClusterNodesView })))
 const FrameNodesView = lazy(() => import('@/components/FrameNodesView').then((m) => ({ default: m.FrameNodesView })))
 const RacksView = lazy(() => import('@/components/RacksView').then((m) => ({ default: m.RacksView })))
@@ -69,6 +71,7 @@ import {
   Package,
   Queue,
   Speedometer,
+  SquaresFour,
 } from '@phosphor-icons/react'
 
 /**
@@ -90,6 +93,7 @@ import {
  * assign, and a panel with no `case` trips the exhaustiveness guard.
  */
 type TabId =
+  | 'overview'
   | 'applications'
   | 'jobs'
   | 'lineage'
@@ -139,6 +143,18 @@ interface NavGroup {
 }
 
 const NAV: NavGroup[] = [
+  {
+    label: 'Start',
+    items: [
+      {
+        id: 'overview',
+        label: 'Overview',
+        icon: <SquaresFour />,
+        description: 'What needs attention, where the cluster is heading, what it is serving',
+        tabs: [{ id: 'overview', label: 'Overview' }],
+      },
+    ],
+  },
   {
     label: 'Workloads',
     items: [
@@ -291,7 +307,15 @@ const NAV_INDEX: Record<string, NavItem> = Object.fromEntries(
 
 function App() {
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
-  const [screen, setScreen] = useState('jobs')
+  const [screen, setScreen] = useState('overview')
+  // Set when a navigation targets a specific tab; consumed by the Tabs below so
+  // "3 nodes not ready" can land on Nodes › Fleet rather than Nodes' first tab.
+  const [pendingTab, setPendingTab] = useState<string | undefined>(undefined)
+
+  const navigate = useCallback((next: string, tab?: string) => {
+    setScreen(next)
+    setPendingTab(tab)
+  }, [])
   const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
 
   const { nodes, setNodes } = useClusterSimulation(32)
@@ -310,12 +334,15 @@ function App() {
     [nodes],
   )
 
-  const active = NAV_INDEX[screen] ?? NAV_INDEX['jobs']
+  const active = NAV_INDEX[screen] ?? NAV_INDEX['overview']
 
   // Only the active tab of the active screen is mounted. Radix keeps inactive
   // TabsContent unmounted, so this holds at both levels.
   function renderTab(tab: TabId): ReactNode {
     switch (tab) {
+      case 'overview':
+        return <OverviewView />
+
       // ── Workloads ───────────────────────────────────────────────────────
       case 'applications':
         return <ApplicationsView />
@@ -412,9 +439,16 @@ function App() {
     if (active.tabs.length === 1) return renderTab(active.tabs[0].id)
 
     return (
-      // key={active.id} so switching screens resets the tab strip to its first
-      // tab rather than carrying a stale value across an unrelated screen.
-      <Tabs key={active.id} defaultValue={active.tabs[0].id} className="gap-4">
+      // key includes pendingTab so a navigation that names a tab re-mounts the
+      // strip onto it; without that the uncontrolled defaultValue is ignored on
+      // a screen that is already open.
+      <Tabs
+        key={`${active.id}:${pendingTab ?? ''}`}
+        defaultValue={
+          pendingTab && active.tabs.some((t) => t.id === pendingTab) ? pendingTab : active.tabs[0].id
+        }
+        className="gap-4"
+      >
         <TabsList className="flex-wrap h-auto">
           {active.tabs.map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id} className="font-mono text-xs">
@@ -432,6 +466,7 @@ function App() {
   }
 
   return (
+    <NavigationContext.Provider value={{ screen, navigate, pendingTab }}>
     <SidebarProvider>
       <Sidebar collapsible="icon">
         <SidebarHeader className="border-b border-sidebar-border">
@@ -459,7 +494,7 @@ function App() {
                       <SidebarMenuButton
                         isActive={screen === item.id}
                         tooltip={item.label}
-                        onClick={() => setScreen(item.id)}
+                        onClick={() => navigate(item.id)}
                         className="font-mono text-xs"
                       >
                         {item.icon}
@@ -528,6 +563,7 @@ function App() {
       />
       <Toaster position="bottom-right" />
     </SidebarProvider>
+    </NavigationContext.Provider>
   )
 }
 

@@ -2,9 +2,9 @@ import { GpuInfo, InferenceStatus, MetricSeries, TeiStatus, createFrameClient } 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { Stat, Meter } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { Lightning, ArrowClockwise, Database, Gauge, Speedometer, Thermometer, TrendUp } from '@phosphor-icons/react'
 
@@ -187,23 +187,4 @@ function TeiCard({ state }: { state: ReturnType<typeof useLiveResource<TeiStatus
   )
 }
 
-function Meter({ label, pct, detail }: { label: string; pct: number; detail: string }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[11px] font-mono">
-        <span className="text-muted-foreground">{label}</span>
-        <span>{detail}</span>
-      </div>
-      <Progress value={Math.max(0, Math.min(100, pct))} className="h-2" />
-    </div>
-  )
-}
 
-function Stat({ icon, label, value }: { icon?: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="space-y-0.5">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">{icon}{label}</div>
-      <div className="font-mono font-bold">{value}</div>
-    </div>
-  )
-}
