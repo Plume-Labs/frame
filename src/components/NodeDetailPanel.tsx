@@ -16,6 +16,7 @@ import {
   CheckCircle
 } from '@phosphor-icons/react'
 import { formatUptime, formatBytes, formatBandwidth } from '@/lib/cluster'
+import { TONE_TEXT, inverseScoreTone, scoreTone } from '@/lib/thresholds'
 import { useIsMobile } from '@/hooks/use-mobile'
 
 interface NodeDetailPanelProps {
@@ -157,7 +158,7 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                     <Thermometer className="text-primary" />
                     <span className="text-sm font-medium">Temperature</span>
                   </div>
-                  <div className={`font-mono text-sm font-semibold ${node.hardware.temperature > 75 ? 'text-warning' : ''}`}>
+                  <div className={`font-mono text-sm font-semibold ${TONE_TEXT[inverseScoreTone(node.hardware.temperature, 75, 85)]}`}>
                     {node.hardware.temperature.toFixed(1)}°C
                   </div>
                 </div>
@@ -226,14 +227,14 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                       <Clock className="text-xs" />
                       <div className="text-xs text-muted-foreground uppercase">Latency</div>
                     </div>
-                    <div className={`font-mono text-sm font-bold ${node.network.latency > 3 ? 'text-warning' : ''}`}>
+                    <div className={`font-mono text-sm font-bold ${TONE_TEXT[inverseScoreTone(node.network.latency, 3, 10)]}`}>
                       {node.network.latency.toFixed(2)} ms
                     </div>
                   </div>
 
                   <div className="p-3 rounded-lg bg-secondary/30">
                     <div className="text-xs text-muted-foreground uppercase mb-1">Packet Loss</div>
-                    <div className={`font-mono text-sm font-bold ${node.network.packetLoss > 0.3 ? 'text-warning' : ''}`}>
+                    <div className={`font-mono text-sm font-bold ${TONE_TEXT[inverseScoreTone(node.network.packetLoss, 0.3, 1)]}`}>
                       {node.network.packetLoss.toFixed(3)}%
                     </div>
                   </div>
@@ -345,7 +346,7 @@ export function NodeDetailPanel({ node, open, onClose }: NodeDetailPanelProps) {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 rounded-lg bg-secondary/30">
                     <div className="text-xs text-muted-foreground uppercase mb-1">Cache Hit Rate</div>
-                    <div className={`font-mono text-lg font-bold ${node.hardware.cacheHitRate > 0.7 ? 'text-accent' : 'text-warning'}`}>
+                    <div className={`font-mono text-lg font-bold ${TONE_TEXT[scoreTone(node.hardware.cacheHitRate, 0.7, 0.4)]}`}>
                       {(node.hardware.cacheHitRate * 100).toFixed(1)}%
                     </div>
                     <div className="text-xs text-muted-foreground">Alluxio / Redis</div>

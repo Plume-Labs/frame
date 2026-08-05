@@ -1,94 +1,110 @@
-import { KsmStats, createFrameClient } from '@/lib/frame-sdk'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KsmStats, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
-import { LiveStates } from '@/components/LiveStates'
-import { Archive, ArrowClockwise } from '@phosphor-icons/react'
+import { TuningDashboard, EntityTile } from '@/components/TuningDashboard'
+import { TrendRow } from '@/components/Sparkline'
+import { scoreTone } from '@/lib/thresholds'
+import { Archive } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
+const WINDOW_HOURS = 3
+
+/**
+ * Pages *sharing* is the win (how many duplicates were collapsed onto a shared
+ * page); pages *shared* is the cost (how many shared pages back them). The
+ * ratio between them is the actual saving, which is why the trend tracks both.
+ */
+const TREND_QUERIES = [
+  { metric: 'Pages sharing', q: 'sum(node_ksmd_pages_sharing)' },
+  { metric: 'Pages shared', q: 'sum(node_ksmd_pages_shared)' },
+]
+
 export function KsmView() {
   const { state, reload } = useLiveResource<KsmStats>(() => frame.cluster.ksm())
-  const s = state.phase === 'ready' ? state.data : null
-
-  return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <Archive className="text-primary" />
-            KSM — Kernel Same-page Merging
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto font-mono gap-1.5"
-              onClick={reload}
-              disabled={state.phase === 'loading'}
-            >
-              <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
-            </Button>
-          </CardTitle>
-        </CardHeader>
-        {s && (
-          <CardContent className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <Stat label="Enabled nodes" value={`${s.enabledNodes} / ${s.nodes.length}`} tone="accent" />
-            <Stat label="Memory saved" value={`${s.totalSavedMiB.toFixed(1)} MiB`} />
-            <Stat label="Pages sharing" value={s.totalPagesSharing.toLocaleString()} />
-          </CardContent>
-        )}
-      </Card>
-
-      <LiveStates state={state} emptyLabel="node-exporter (ksmd) not deployed." />
-
-      {s && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-mono text-lg">Per-node</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {s.nodes.map((n) => (
-              <div key={n.node} className="p-3 rounded-lg border border-border bg-secondary/30 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold truncate">{n.node}</span>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] font-mono ${n.run ? 'text-accent' : 'text-muted-foreground'}`}
-                  >
-                    KSM {n.run ? 'ON' : 'OFF'}
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground font-mono">
-                  <div>
-                    <div className="text-foreground font-bold">{n.savedMiB.toFixed(1)} MiB</div>
-                    saved
-                  </div>
-                  <div>
-                    <div className="text-foreground font-bold">{n.pagesSharing.toLocaleString()}</div>
-                    sharing
-                  </div>
-                  <div>
-                    <div className="text-foreground font-bold">{n.fullScans}</div>
-                    scans
-                  </div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-    </div>
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
+    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
   )
-}
+  const s = state.phase === 'ready' ? state.data : null
+  const trend = trendState.phase === 'ready' ? trendState.data : null
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'accent' }) {
+  // A node with KSM off contributes nothing, so rate the feature on the nodes
+  // that actually run it rather than on the fleet.
+  const coverage = s && s.nodes.length > 0 ? (s.enabledNodes / s.nodes.length) * 100 : 0
+
   return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className={`font-mono text-2xl font-bold ${tone === 'accent' ? 'text-accent' : 'text-foreground'}`}>
-        {value}
-      </div>
-    </div>
+    <TuningDashboard
+      title="KSM — Kernel Same-page Merging"
+      icon={<Archive className="text-primary" />}
+      state={state}
+      onReload={reload}
+      emptyLabel="node-exporter (ksmd) not deployed."
+      stats={
+        s
+          ? [
+              {
+                label: 'Enabled nodes',
+                value: `${s.enabledNodes} / ${s.nodes.length}`,
+                tone: scoreTone(coverage, 100, 50),
+              },
+              { label: 'Memory saved', value: `${s.totalSavedMiB.toFixed(1)} MiB` },
+              { label: 'Pages sharing', value: s.totalPagesSharing.toLocaleString() },
+            ]
+          : []
+      }
+      trend={
+        trend && (
+          <>
+            {trend.map((series) => (
+              <TrendRow
+                key={series.metric}
+                series={series}
+                windowHours={WINDOW_HOURS}
+                format={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              />
+            ))}
+          </>
+        )
+      }
+      entitiesTitle="Per-node"
+      entities={s?.nodes ?? []}
+      entityKey={(n) => n.node}
+      renderEntity={(n) => (
+        <EntityTile
+          name={n.node}
+          badge={
+            <Badge
+              variant="outline"
+              className={`text-[10px] font-mono ${n.run ? 'text-accent' : 'text-muted-foreground'}`}
+            >
+              KSM {n.run ? 'ON' : 'OFF'}
+            </Badge>
+          }
+          className={n.run ? undefined : 'opacity-60'}
+        >
+          <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground font-mono">
+            <div>
+              <div className="text-foreground font-bold">{n.savedMiB.toFixed(1)} MiB</div>
+              saved
+            </div>
+            <div>
+              <div className="text-foreground font-bold">{n.pagesSharing.toLocaleString()}</div>
+              sharing
+            </div>
+            <div>
+              <div className="text-foreground font-bold">{n.fullScans}</div>
+              scans
+            </div>
+          </div>
+        </EntityTile>
+      )}
+      configTitle="How KSM is enabled"
+      config={`# node-prep.sh sets these per node, persisted by ksm-enable.service
+echo 1    > /sys/kernel/mm/ksm/run
+echo 1000 > /sys/kernel/mm/ksm/pages_to_scan
+echo 200  > /sys/kernel/mm/ksm/sleep_millisecs
+
+# Read back by node-exporter's ksmd collector as node_ksmd_*`}
+    />
   )
 }

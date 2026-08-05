@@ -5,12 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { TrendRow } from '@/components/Sparkline'
+import { inverseScoreClass, inverseScoreTone } from '@/lib/thresholds'
 import { ChartLine, ArrowClockwise, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 const pct = (a: number, b: number) => (b > 0 ? (a / b) * 100 : 0)
-const tone = (p: number) => (p >= 90 ? 'text-destructive' : p >= 75 ? 'text-warning' : 'text-accent')
+// Usage percentages: lower is better, comfortable below 75, tight past 90.
+const capacityTone = (p: number) => inverseScoreTone(p, 75, 90)
+const tone = (p: number) => inverseScoreClass(p, 75, 90)
 
 export function CapacityView() {
   const { state, reload } = useLiveResource<CapacityResource[]>(() => frame.cluster.capacity())
@@ -98,44 +102,20 @@ function ForecastCard() {
         <LiveStates state={state} emptyLabel="Prometheus not deployed." />
         {fc &&
           fc.series.map((s) => (
-            <div key={s.metric} className="space-y-1">
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-muted-foreground">{s.metric}</span>
-                <span className={tone(s.current)}>{s.current.toFixed(0)}%</span>
-              </div>
-              <Sparkline points={s.history.map((p) => p.v)} />
-              <div className="text-[10px] text-muted-foreground font-mono">
-                last {fc.windowHours}h ·{' '}
-                {s.projectedFullDays == null
+            <TrendRow
+              key={s.metric}
+              series={s}
+              windowHours={fc.windowHours}
+              tone={capacityTone(s.current)}
+              caption={`last ${fc.windowHours}h · ${
+                s.projectedFullDays == null
                   ? 'flat/declining — no exhaustion projected'
-                  : `~${s.projectedFullDays.toFixed(1)} days to 100% at current trend`}
-              </div>
-            </div>
+                  : `~${s.projectedFullDays.toFixed(1)} days to 100% at current trend`
+              }`}
+            />
           ))}
       </CardContent>
     </Card>
-  )
-}
-
-// Inline SVG sparkline — no chart dep. Scales the series to a 0-100 viewBox.
-function Sparkline({ points }: { points: number[] }) {
-  if (points.length < 2) return <div className="h-8 text-[10px] text-muted-foreground font-mono">not enough history yet</div>
-  const min = Math.min(...points)
-  const max = Math.max(...points)
-  const span = max - min || 1
-  const w = 300
-  const h = 32
-  const d = points
-    .map((v, i) => {
-      const x = (i / (points.length - 1)) * w
-      const y = h - ((v - min) / span) * (h - 2) - 1
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-8" preserveAspectRatio="none">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" className="text-primary" />
-    </svg>
   )
 }
 

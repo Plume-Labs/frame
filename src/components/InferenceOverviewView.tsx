@@ -1,13 +1,27 @@
-import { GpuInfo, InferenceStatus, TeiStatus, createFrameClient } from '@/lib/frame-sdk'
+import { GpuInfo, InferenceStatus, MetricSeries, TeiStatus, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Lightning, ArrowClockwise, Database, Gauge, Speedometer, Thermometer } from '@phosphor-icons/react'
+import { TrendRow } from '@/components/Sparkline'
+import { Lightning, ArrowClockwise, Database, Gauge, Speedometer, Thermometer, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
+
+const WINDOW_HOURS = 3
+
+/**
+ * The serving chain end to end: what the GPU is doing, what the model gets out
+ * of it, and how deep the queue behind it is. Read together they say whether a
+ * slow response is the hardware, the model, or a backlog.
+ */
+const TREND_QUERIES = [
+  { metric: 'GPU utilisation', q: 'avg(DCGM_FI_DEV_GPU_UTIL)', unit: '%' },
+  { metric: 'Decode rate', q: 'llamacpp:predicted_tokens_seconds', unit: ' tok/s' },
+  { metric: 'Requests processing', q: 'llamacpp:requests_processing' },
+]
 
 /**
  * Single-glance serving overview: GPU (DCGM) + llama.cpp (GPU-backed chat
@@ -18,6 +32,10 @@ export function InferenceOverviewView() {
   const gpuState = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus())
   const llamaState = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference())
   const teiState = useLiveResource<TeiStatus | null>(() => frame.cluster.teiStatus())
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
+    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  )
+  const trend = trendState.phase === 'ready' ? trendState.data : null
 
   const loading = gpuState.state.phase === 'loading' || llamaState.state.phase === 'loading' || teiState.state.phase === 'loading'
 
@@ -53,6 +71,21 @@ export function InferenceOverviewView() {
         <LlamaCppCard state={llamaState.state} />
         <TeiCard state={teiState.state} />
       </div>
+
+      {trend && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-base flex items-center gap-2">
+              <TrendUp size={16} className="text-primary" /> Serving chain, last {WINDOW_HOURS}h (Prometheus)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            {trend.map((series) => (
+              <TrendRow key={series.metric} series={series} windowHours={WINDOW_HOURS} format={(v) => v.toFixed(1)} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

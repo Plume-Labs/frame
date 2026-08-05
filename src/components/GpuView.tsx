@@ -1,17 +1,42 @@
-import { GpuInfo, createFrameClient } from '@/lib/frame-sdk'
+import { GpuInfo, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { Speedometer, ArrowClockwise, Thermometer, Lightning } from '@phosphor-icons/react'
+import { TrendRow } from '@/components/Sparkline'
+import { inverseScoreTone, TONE_TEXT } from '@/lib/thresholds'
+import { Speedometer, ArrowClockwise, Thermometer, Lightning, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
+const WINDOW_HOURS = 3
+
+/**
+ * The three signals that explain each other: utilisation is the work, power is
+ * what that work draws, and temperature is what the card does with the heat.
+ * Utilisation flat while temperature climbs is a cooling problem; power capped
+ * below the limit while utilisation sits at 100% is a throttle.
+ */
+const TREND_QUERIES = [
+  { metric: 'Utilisation', q: 'avg(DCGM_FI_DEV_GPU_UTIL)', unit: '%' },
+  { metric: 'Temperature', q: 'max(DCGM_FI_DEV_GPU_TEMP)', unit: '°C' },
+  { metric: 'Power draw', q: 'sum(DCGM_FI_DEV_POWER_USAGE)', unit: ' W' },
+]
+
+// Tesla-class cards throttle in the mid-80s, so 75 is the comfortable ceiling
+// and 85 is where sustained throughput starts being clipped.
+const TEMP_GOOD_C = 75
+const TEMP_OK_C = 85
+
 export function GpuView() {
   const { state, reload } = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus())
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
+    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  )
   const gpus = state.phase === 'ready' ? state.data : []
+  const trend = trendState.phase === 'ready' ? trendState.data : null
 
   return (
     <div className="space-y-6">
@@ -36,6 +61,26 @@ export function GpuView() {
         )}
       </Card>
 
+      {trend && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-base flex items-center gap-2">
+              <TrendUp size={16} className="text-primary" /> Last {WINDOW_HOURS}h (Prometheus / DCGM)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            {trend.map((series) => (
+              <TrendRow
+                key={series.metric}
+                series={series}
+                windowHours={WINDOW_HOURS}
+                tone={series.metric === 'Temperature' ? inverseScoreTone(series.current, TEMP_GOOD_C, TEMP_OK_C) : undefined}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <LiveStates state={state} emptyLabel="No GPUs / DCGM exporter not present." />
 
       {state.phase === 'ready' &&
@@ -50,7 +95,13 @@ export function GpuView() {
                     <p className="text-xs text-muted-foreground font-mono">{g.node}</p>
                   </div>
                   <div className="flex gap-2">
-                    <Badge variant="outline" className="font-mono text-[10px] gap-1"><Thermometer size={11} />{g.tempC}°C</Badge>
+                    <Badge
+                      variant="outline"
+                      className={`font-mono text-[10px] gap-1 ${TONE_TEXT[inverseScoreTone(g.tempC, TEMP_GOOD_C, TEMP_OK_C)]}`}
+                    >
+                      <Thermometer size={11} />
+                      {g.tempC}°C
+                    </Badge>
                     <Badge variant="outline" className="font-mono text-[10px] gap-1"><Lightning size={11} />{g.powerW.toFixed(0)}W</Badge>
                   </div>
                 </div>
