@@ -29,7 +29,14 @@ set -euo pipefail
 
 NS=inference
 ENGINE="${INFER_ENGINE:-llamacpp}"
-CTX="${INFER_CTX:-4096}"
+# 4096 starved every agent: llama.cpp splits -c across its slots, so four
+# concurrent agents got ~1k tokens each and lost the thread of their own work
+# mid-run — malformed output and re-dispatch loops that looked like a bad model.
+CTX="${INFER_CTX:-32768}"
+# Slots share -c. One lane for interactive chat, one for background missions:
+# with a single slot a mission monopolised the model and chat requests timed
+# out; with four, nobody had enough context to finish anything.
+PARALLEL="${INFER_PARALLEL:-2}"
 CACHE_SIZE="${INFER_CACHE_SIZE:-22Gi}"
 
 say() { echo -e "\n\033[1;35m==>\033[0m $*"; }
@@ -54,13 +61,15 @@ case "$ENGINE" in
     # Do NOT add `--load-mode none`: it segfaults (exit 139) loading this model.
     MODEL="${INFER_MODEL:-unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M}"
     NGL="${LLAMACPP_NGL:-99}"
-    OFFLOAD="${LLAMACPP_OFFLOAD:--ncmoe 34}"
+    # 42, not 34: measured on the P4 with -c 32768, whose larger KV cache needs
+    # the VRAM that 8 more layers of experts would have taken.
+    OFFLOAD="${LLAMACPP_OFFLOAD:--ncmoe 42}"
     IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
     CACHE_ENV="LLAMA_CACHE"
     # $OFFLOAD is intentionally unquoted: it must word-split into separate args.
     # shellcheck disable=SC2086
     ARGS=$(args_yaml -hf "$MODEL" --host 0.0.0.0 --port 8080 \
-      -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX")
+      -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX" --parallel "$PARALLEL")
     ;;
   vllm)
     MODEL="${INFER_MODEL:-Qwen/Qwen3-30B-A3B-Instruct-2507}"
@@ -135,7 +144,22 @@ ${ARGS}
           # container images drove the node to DiskPressure, which evicted pods and
           # failed unrelated image pulls with ENOSPC. Budget the model size + 40GB;
           # the test cluster's GPU node was grown to 119GB.
-          emptyDir: { sizeLimit: ${CACHE_SIZE} }
+          # A PVC, not an emptyDir: an emptyDir dies with the pod, so every
+          # restart re-downloaded ~18.5GB and left the assistant without
+          # inference for ~25 minutes — twice in one morning during routine
+          # config changes. local-path keeps the same node-local guarantee (no
+          # Ceph, no replication, no network on the read path) while surviving
+          # the pod. The re-download on a node move is unchanged.
+          persistentVolumeClaim: { claimName: llamacpp-models }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: llamacpp-models, namespace: ${NS} }
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: { storage: ${CACHE_SIZE} }
 ---
 apiVersion: v1
 kind: Service
