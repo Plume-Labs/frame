@@ -51,6 +51,14 @@ type Provider interface {
 
 	// ParameterSchema is what the webhook validates spec.parameters against.
 	// The CRD cannot: parameters are a free-form map by design.
+	//
+	// Only a subset of JSONSchemaProps is enforced: on the root schema, Type
+	// and Required; on each entry of Properties, Type, Description, Enum and
+	// Pattern. Setting anything else — MinLength, Minimum, Maximum,
+	// MultipleOf, Format, AdditionalProperties, nested Properties, or any
+	// other JSON Schema field — is refused at registry construction with a
+	// panic naming the property and the field, rather than being silently
+	// accepted and never checked at admission.
 	ParameterSchema() *Schema
 
 	// Size derives the resources this instance needs from its parameters. It
