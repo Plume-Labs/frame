@@ -24,7 +24,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	framev1alpha1 "github.com/gothshoot/frame/api/v1alpha1"
+	framev1alpha1 "github.com/gothshoot/frame/api/frame/v1alpha1"
 )
 
 // nolint:unused

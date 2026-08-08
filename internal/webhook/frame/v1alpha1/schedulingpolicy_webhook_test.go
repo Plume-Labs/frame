@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1alpha1 "github.com/gothshoot/frame/api/v1alpha1"
+	framev1alpha1 "github.com/gothshoot/frame/api/frame/v1alpha1"
 	// TODO (user): Add any additional imports if needed
 )
 
