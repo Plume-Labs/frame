@@ -24,24 +24,27 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // SchedulingPolicySpec defines the desired state of SchedulingPolicy
+//
+// +kubebuilder:validation:XValidation:rule="!self.preemption || (has(self.priorityClass) && size(self.priorityClass) > 0)",message="priorityClass is required when preemption is true"
 type SchedulingPolicySpec struct {
 	// Scheduler selects the scheduler implementation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=volcano;yunikorn;default
 	Scheduler string `json:"scheduler"`
 
-	// QueueName is the Volcano/YuniKorn queue to submit jobs to.
+	// QueueName is the Volcano/YuniKorn queue to submit jobs to. Not an enum:
+	// it names an externally-created Queue object, but it is still a
+	// Kubernetes object name, hence the pattern.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 	QueueName string `json:"queueName,omitempty"`
 
 	// PriorityClass is the default Kubernetes PriorityClass for jobs under this policy.
 	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 	PriorityClass string `json:"priorityClass,omitempty"`
-
-	// GangScheduling enables all-or-nothing gang scheduling for jobs.
-	// +optional
-	// +kubebuilder:default=false
-	GangScheduling bool `json:"gangScheduling,omitempty"`
 
 	// Preemption allows higher-priority jobs to preempt lower-priority ones.
 	// +optional
@@ -86,6 +89,11 @@ type SchedulingPolicyStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Scheduler",type=string,JSONPath=".spec.scheduler"
+// +kubebuilder:printcolumn:name="Queue",type=string,JSONPath=".spec.queueName"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // SchedulingPolicy is the Schema for the schedulingpolicies API
 type SchedulingPolicy struct {

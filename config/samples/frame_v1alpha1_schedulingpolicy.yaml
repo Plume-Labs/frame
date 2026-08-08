@@ -15,5 +15,4 @@ spec:
   # controller degrades: it warns and still applies the PriorityClass.
   queueName: research
   queueWeight: 4
-  gangScheduling: true
   preemption: true
