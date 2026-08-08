@@ -617,6 +617,21 @@ function apiBase(plural: string, ns?: string): string {
   return `/apis/${GROUP}/${VERSION}/namespaces/${frameNs(ns)}/${plural}`
 }
 
+/**
+ * The list endpoint for a Frame CRD, for callers that want to watch it.
+ *
+ * Exported so a view can subscribe to the same collection the SDK reads
+ * without hand-assembling the path and drifting from `frameNs`.
+ */
+export function frameListPath(plural: string, ns?: string): string {
+  return apiBase(plural, ns)
+}
+
+/** The list endpoint for a core Kubernetes collection, e.g. `nodes`, `events`. */
+export function coreListPath(plural: string, ns?: string): string {
+  return ns ? `/api/v1/namespaces/${ns}/${plural}` : `/api/v1/${plural}`
+}
+
 function toK8sName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
 }

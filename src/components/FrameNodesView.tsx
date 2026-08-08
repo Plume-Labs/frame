@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { FrameNode, createFrameClient } from '@/lib/frame-sdk'
+import { FrameNode, createFrameClient, frameListPath, coreListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,8 +40,12 @@ const CLASS_TONE: Record<string, string> = {
  * there only once it is a cluster member, so the two lists differing is normal.
  */
 export function FrameNodesView() {
-  const { state, reload } = useLiveResource<{ items: FrameNode[]; total: number }>(() =>
-    frame.nodes.list(),
+  const { state, reload } = useLiveResource<{ items: FrameNode[]; total: number }>(
+    () => frame.nodes.list(),
+    [],
+    // Both sides move: the FrameNode as it provisions, and the Kubernetes
+    // Node whose readiness the controller syncs back into its status.
+    [frameListPath('framenodes'), coreListPath('nodes')],
   )
   const [deleteTarget, setDeleteTarget] = useState<FrameNode | null>(null)
   const [busy, setBusy] = useState<string | null>(null)

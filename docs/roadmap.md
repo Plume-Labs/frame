@@ -68,11 +68,16 @@ Runs in parallel with Phase B: it changes the SDK surface, not the CRD schemas.
 
 The previous roadmap called for an "SSE/Watch endpoint". There is no server left to host one. The apiserver the UI already talks to serves watch streams natively (`?watch=true`, chunked), so this is a client change with nothing new to deploy.
 
-- [ ] Replace polling with apiserver watch streams in `frame-sdk`
-- [ ] Handle `resourceVersion` expiry with a re-list, reconnect with backoff, and degrade to polling if the watch cannot be established
-- [ ] Convert the screens that change fastest first: FrameJobs (phase transitions), FrameNodes, Events
+It also called the current behaviour polling. It was not: `useLiveResource` fetched once and offered a manual `reload`, so outside the provisioning wizard's own loop **nothing in the UI ever refreshed itself**. A job that finished stayed running on screen until someone reloaded the page.
 
-**Exit:** a FrameJob phase transition appears in the UI with no poll interval in between, and killing the stream mid-flight recovers on its own.
+- [x] Watch streams in `src/lib/k8s-watch.ts`, read straight off the apiserver
+- [x] Handle `resourceVersion` expiry with a re-list, reconnect with backoff, and fall back to an interval when a watch cannot be established at all
+- [x] Convert the screens that change fastest first: FrameJobs (phase transitions), FrameNodes (plus the core `Node` its status mirrors), Events
+- [ ] Convert the remaining screens that read live cluster state
+
+A watch here is a change signal, not a data source: an event re-runs the fetch the view would have run anyway, rather than applying deltas to a local cache. Every view keeps its existing mapping code, at the cost of one list per change — free at this scale, and the note in `k8s-watch.ts` says what to do if a screen ever watches something that churns per second.
+
+**Exit:** a FrameJob phase transition appears in the UI with no reload, and killing the stream mid-flight recovers on its own.
 
 ### Phase D — Production hardening and release
 
