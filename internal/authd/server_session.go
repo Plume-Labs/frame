@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 )
 
 // dummyPasswordHash is a valid argon2id PHC string for a password nobody

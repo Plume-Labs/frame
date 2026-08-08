@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 )
 
 const talosUpgradeFinalizer = "frame.plume-labs.io/talosupgrade"

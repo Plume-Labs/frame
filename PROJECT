@@ -6,6 +6,7 @@ cliVersion: 4.14.0
 domain: plume-labs.io
 layout:
 - go.kubebuilder.io/v4
+multigroup: true
 projectName: frame
 repo: github.com/rmocq/frame
 resources:
@@ -86,7 +87,6 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
-  controller: false
   domain: plume-labs.io
   group: frame
   kind: FrameUser

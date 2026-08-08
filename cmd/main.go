@@ -35,9 +35,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
-	"github.com/rmocq/frame/internal/controller"
-	webhookv1alpha1 "github.com/rmocq/frame/internal/webhook/v1alpha1"
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	controller "github.com/rmocq/frame/internal/controller/frame"
+	webhookv1alpha1 "github.com/rmocq/frame/internal/webhook/frame/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
