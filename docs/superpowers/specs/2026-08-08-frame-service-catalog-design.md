@@ -246,8 +246,19 @@ controller only ever creates or updates Secrets it owns, tracked by owner
 reference and a `frame.plume-labs.io/owned-by` label, so it can never overwrite a
 Secret someone else created with the same name.
 
-Rotation is out of scope for part 1. The Secret is written once at provisioning.
-When a provider needs rotation, it belongs in that provider, not in the envelope.
+**The Secret has to hold something secret.** An inference instance's endpoint is
+already published in `status.binding.endpoint`, so a Secret carrying only that
+would protect nothing while looking like it protects something — the worst of
+both, because a reader seeing `secretRef` assumes there is a credential behind
+it. The inference provider therefore generates an API token, passes it to
+llama.cpp, and puts it in the Secret alongside the endpoint. Reaching the
+instance's Service is no longer enough to use it.
+
+Rotation is out of scope for part 1. The Secret is written once at
+provisioning, which means a leaked token stays valid until the instance is
+recreated — stated here so it is a known limit rather than a discovery.
+When a provider needs rotation, it belongs in that provider, not in the
+envelope.
 
 ## Deleting an instance
 
