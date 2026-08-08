@@ -24,13 +24,9 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // FrameJobSpec defines the desired state of FrameJob
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.gpuCount) || self.gpuCount == 0 || !has(self.serviceClass) || self.serviceClass != 'LOW'",message="jobs requesting GPUs must use serviceClass HIGH or MEDIUM, not LOW"
 type FrameJobSpec struct {
-	// Name of the job
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-	Name string `json:"name"`
-
 	// Pipeline template to use (training, inference, batch)
 	// +kubebuilder:validation:Required
 	Pipeline string `json:"pipeline"`
@@ -45,9 +41,16 @@ type FrameJobSpec struct {
 	// +kubebuilder:validation:Enum=critical;high;medium;low
 	Priority string `json:"priority,omitempty"`
 
-	// Kubernetes namespace for the job
+	// Kubernetes namespace for the job. Not required to match this FrameJob's
+	// own namespace: the controller creates the backing ArgoWorkflow here
+	// with cluster-wide RBAC, so a FrameJob in one namespace can direct
+	// workflow creation into another. That cross-namespace reach is
+	// deliberate-for-now; constraining it is Phase B's RBAC-tier
+	// lock-down to settle, not this validation. This only rejects a
+	// malformed value, not a cross-namespace one.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 	// +kubebuilder:default="default"
 	Namespace string `json:"namespace,omitempty"`
 

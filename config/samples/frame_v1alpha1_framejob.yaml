@@ -7,7 +7,6 @@ metadata:
   name: framejob-sample
   namespace: frame-system
 spec:
-  name: resnet-train
   pipeline: training
   # The namespace the Argo Workflow is created in, which need not be the
   # namespace holding this FrameJob.
