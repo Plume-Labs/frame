@@ -119,7 +119,7 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 		log.Info("Cannot build maintenance client", "ip", fn.Spec.IP, "err", err)
 		r.Recorder.Event(fn, corev1.EventTypeWarning, "DiscoveryFailed", fmt.Sprintf("Cannot reach %s: %v", fn.Spec.IP, err))
 	} else {
-		defer c.Close()
+		defer c.Close() //nolint:errcheck // discovery already ran; a failed close of the maintenance-mode client isn't actionable
 		r.populateDiscovery(tctx, fn, c)
 		r.Recorder.Event(fn, corev1.EventTypeNormal, nodePhaseDiscovered, "Maintenance API contacted")
 	}
@@ -182,7 +182,7 @@ func (r *FrameNodeReconciler) reconcileProvision(ctx context.Context, fn *framev
 		log.Info("Cannot reach node for provisioning", "ip", fn.Spec.IP, "err", err)
 		msg = "Waiting to apply config: " + err.Error()
 	} else {
-		defer c.Close()
+		defer c.Close() //nolint:errcheck // config apply already ran; a failed close of the maintenance-mode client isn't actionable
 		if _, aerr := c.ApplyConfiguration(tctx, &machineapi.ApplyConfigurationRequest{
 			Data: []byte(generateMachineConfig(fn)),
 			Mode: machineapi.ApplyConfigurationRequest_AUTO,
