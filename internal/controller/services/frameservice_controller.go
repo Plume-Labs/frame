@@ -18,46 +18,196 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	"github.com/rmocq/frame/internal/services/provider"
 )
 
-// FrameServiceReconciler reconciles a FrameService object
+const frameServiceFinalizer = "services.plume-labs.io/finalizer"
+
+// degradedRequeue is how long a degraded instance waits before the controller
+// looks again. Long enough not to hammer a missing operator, short enough that
+// installing one is noticed without a restart.
+const degradedRequeue = 2 * time.Minute
+
 type FrameServiceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
+	Registry *provider.Registry
 }
 
 // +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services;secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the FrameService object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.3/pkg/reconcile
 func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	var svc servicesv1alpha1.FrameService
+	if err := r.Get(ctx, req.NamespacedName, &svc); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
-	return ctrl.Result{}, nil
+	if !svc.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, &svc)
+	}
+
+	// The finalizer lands before the provider runs. A crash in between would
+	// otherwise leave a provisioned instance with nothing tracking it.
+	if !controllerutil.ContainsFinalizer(&svc, frameServiceFinalizer) {
+		controllerutil.AddFinalizer(&svc, frameServiceFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &svc)
+	}
+
+	p, err := r.Registry.Get(svc.Spec.Type)
+	if err != nil {
+		// A type the webhook would have refused can still reach here: the object
+		// may predate the provider being removed. Report it rather than retrying
+		// something no amount of retrying fixes.
+		r.Recorder.Event(&svc, corev1.EventTypeWarning, "UnknownType", err.Error())
+		frameServiceUnknownType.Inc()
+		return ctrl.Result{}, r.setStatus(ctx, &svc, "Degraded", metav1.ConditionFalse,
+			"UnknownType", err.Error(), nil, nil)
+	}
+
+	prov, ok := p.(provider.Provisioner)
+	if !ok {
+		msg := fmt.Sprintf("provider %q can validate but cannot provision", svc.Spec.Type)
+		return ctrl.Result{}, r.setStatus(ctx, &svc, "Degraded", metav1.ConditionFalse,
+			"NotProvisionable", msg, nil, nil)
+	}
+
+	sizing, err := prov.Size(svc.Spec.Parameters)
+	if err != nil {
+		return ctrl.Result{}, r.setStatus(ctx, &svc, "Degraded", metav1.ConditionFalse,
+			"SizeRefused", err.Error(), nil, nil)
+	}
+
+	result, err := prov.Reconcile(ctx, &svc)
+	if err != nil {
+		r.Recorder.Event(&svc, corev1.EventTypeWarning, "ProvisionFailed", err.Error())
+		frameServiceProvisionFailed.Inc()
+		return ctrl.Result{}, fmt.Errorf("provisioning %s: %w", svc.Spec.Type, err)
+	}
+
+	if !result.Ready {
+		// Degrading is not an error. Returning one would back off and bury the
+		// reason in controller-runtime's retry logging instead of status.
+		return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, &svc,
+			"Degraded", metav1.ConditionFalse, result.Reason, result.Message,
+			&sizing, result.Provisioned)
+	}
+
+	binding, err := prov.Bind(ctx, &svc)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("binding %s: %w", svc.Name, err)
+	}
+
+	// The endpoint is publishable on its own — it carries no credential. The
+	// Secret that carries the credentials is Task 8's, and status.binding.secretRef
+	// stays empty until then rather than naming an object that does not exist.
+	svc.Status.Binding = servicesv1alpha1.BindingStatus{Endpoint: binding.Endpoint}
+	frameServiceReady.Inc()
+	log.Info("Reconciled FrameService", "type", svc.Spec.Type, "endpoint", binding.Endpoint)
+	return ctrl.Result{}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
+		result.Reason, result.Message, &sizing, result.Provisioned)
+}
+
+// setStatus re-fetches the FrameService and writes the outcome of this
+// reconcile pass onto it. Re-fetching immediately before the write — rather
+// than reusing the copy Reconcile fetched at the top — means the update
+// carries the resourceVersion actually current on the server, so a status
+// write never conflicts with, or clobbers, anything that landed on the object
+// in between. Binding is carried over from svc because Reconcile may have set
+// it earlier in this same pass, and that would otherwise be lost by starting
+// from a fresh copy.
+func (r *FrameServiceReconciler) setStatus(
+	ctx context.Context,
+	svc *servicesv1alpha1.FrameService,
+	phase string,
+	status metav1.ConditionStatus,
+	reason, message string,
+	sizing *provider.Sizing,
+	provisioned []servicesv1alpha1.ProvisionedRef,
+) error {
+	var fresh servicesv1alpha1.FrameService
+	if err := r.Get(ctx, client.ObjectKeyFromObject(svc), &fresh); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	fresh.Status.Phase = phase
+	fresh.Status.Binding = svc.Status.Binding
+	fresh.Status.Provisioned = provisioned
+	fresh.Status.ObservedGeneration = fresh.Generation
+	if sizing != nil {
+		fresh.Status.Sizing = servicesv1alpha1.Sizing{
+			GPU:       sizing.GPU,
+			GPUMemory: sizing.GPUMemory,
+			CPU:       sizing.CPU,
+			Memory:    sizing.Memory,
+		}
+	}
+	meta.SetStatusCondition(&fresh.Status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: fresh.Generation,
+	})
+
+	return r.Status().Update(ctx, &fresh)
+}
+
+// reconcileDelete tears down a FrameService. Retain — the default — leaves
+// whatever the provider provisioned in place: the failure modes are not
+// symmetric, a retained volume costs disk and stays visible, a deleted one
+// costs the data at the moment someone meant to redeploy. Delete removes
+// every object the provider last reported in status.Provisioned. Either way
+// the finalizer clears last, so a crash mid-teardown leaves the object
+// undeleted rather than silently orphaning what it provisioned.
+func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1alpha1.FrameService) (ctrl.Result, error) {
+	if svc.Spec.DeletionPolicy == "Delete" {
+		for _, ref := range svc.Status.Provisioned {
+			obj := &unstructured.Unstructured{}
+			obj.SetAPIVersion(ref.APIVersion)
+			obj.SetKind(ref.Kind)
+			obj.SetName(ref.Name)
+			obj.SetNamespace(ref.Namespace)
+			if err := r.Delete(ctx, obj); client.IgnoreNotFound(err) != nil {
+				return ctrl.Result{}, fmt.Errorf("deleting %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+			}
+		}
+	}
+
+	controllerutil.RemoveFinalizer(svc, frameServiceFinalizer)
+	return ctrl.Result{}, r.Update(ctx, svc)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FrameServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&servicesv1alpha1.FrameService{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.Secret{}).
 		Named("services-frameservice").
 		Complete(r)
 }
