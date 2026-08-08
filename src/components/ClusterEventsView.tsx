@@ -1,4 +1,4 @@
-import { ClusterEvent, createFrameClient } from '@/lib/frame-sdk'
+import { ClusterEvent, createFrameClient, coreListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,11 @@ import { Info, ArrowClockwise } from '@phosphor-icons/react'
 const frame = createFrameClient()
 
 export function ClusterEventsView() {
-  const { state, reload } = useLiveResource<ClusterEvent[]>(() => frame.cluster.events())
+  const { state, reload } = useLiveResource<ClusterEvent[]>(
+    () => frame.cluster.events(),
+    [],
+    [coreListPath('events')],
+  )
   const events = state.phase === 'ready' ? state.data : []
 
   return (

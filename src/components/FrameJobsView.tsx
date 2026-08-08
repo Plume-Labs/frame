@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Job, createFrameClient } from '@/lib/frame-sdk'
+import { Job, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,7 +28,11 @@ const STATUS: Record<Job['status'], { tone: string; icon: React.ReactNode }> = {
 }
 
 export function FrameJobsView() {
-  const { state, reload } = useLiveResource<{ items: Job[] }>(() => frame.jobs.list())
+  const { state, reload } = useLiveResource<{ items: Job[] }>(
+    () => frame.jobs.list(),
+    [],
+    [frameListPath('framejobs')],
+  )
   const jobs = state.phase === 'ready' ? state.data.items : []
   const { state: nsState } = useLiveResource(() => frame.cluster.neuraSandboxJobs())
   const ns = nsState.phase === 'ready' ? nsState.data : null
