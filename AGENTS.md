@@ -41,7 +41,7 @@ Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check t
 - `config/rbac/role.yaml` - from `make manifests`
 - `config/webhook/manifests.yaml` - from `make manifests`
 - `**/zz_generated.*.go` - from `make generate`
-- `PROJECT` - from `kubebuilder [OPTIONS]`
+- `PROJECT` - from `kubebuilder [OPTIONS]`, except its `path:` fields during a multi-group conversion (step 6 above), since the CLI has no subcommand for them
 
 ### Never Remove Scaffold Markers
 Do NOT delete `// +kubebuilder:scaffold:*` comments. CLI injects code at these markers.
