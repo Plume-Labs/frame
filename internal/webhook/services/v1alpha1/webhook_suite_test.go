@@ -111,10 +111,11 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	// nil client: the webhook only ever calls Size and ParameterSchema through
-	// this registry, neither of which dereferences it — Reconcile and Bind are
-	// the only methods that do, and admission never reaches them.
-	err = SetupFrameServiceWebhookWithManager(mgr, provider.NewRegistry(inference.New(7680, nil)))
+	// nil client, nil apiReader: the webhook only ever calls Size and
+	// ParameterSchema through this registry, neither of which dereferences
+	// either — Reconcile and Bind are the only methods that do, and
+	// admission never reaches them.
+	err = SetupFrameServiceWebhookWithManager(mgr, provider.NewRegistry(inference.New(7680, nil, nil)))
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

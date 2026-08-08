@@ -36,9 +36,10 @@ var _ = Describe("FrameService Webhook", func() {
 		obj = &servicesv1alpha1.FrameService{}
 		oldObj = &servicesv1alpha1.FrameService{}
 		validator = FrameServiceCustomValidator{
-			// nil client: the validator only calls Size and ParameterSchema,
-			// never Reconcile or Bind, so nothing here dereferences it.
-			Registry: provider.NewRegistry(inference.New(7680, nil)),
+			// nil client, nil apiReader: the validator only calls Size and
+			// ParameterSchema, never Reconcile or Bind, so nothing here
+			// dereferences either.
+			Registry: provider.NewRegistry(inference.New(7680, nil, nil)),
 		}
 	})
 

@@ -63,6 +63,14 @@ type FrameServiceReconciler struct {
 // wedged in CreateContainerConfigError) with a named reason instead of a
 // silent, permanent RolloutInProgress degrade.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// The inference provider checks for a PersistentVolumeClaim holding cached
+// model weights before it will provision anything. That check is a single
+// named existence check, made through the manager's uncached APIReader
+// rather than its cached client specifically so this stays a single `get`:
+// routing it through the cache would make controller-runtime open a
+// cluster-scoped List+Watch informer over every PersistentVolumeClaim in the
+// cluster to serve one named lookup.
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get
 
 func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)

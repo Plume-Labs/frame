@@ -195,7 +195,7 @@ func main() {
 	// every reconcile, and the webhook (when enabled) validates admission
 	// against the same set, so the two can never disagree on what a valid
 	// type is.
-	serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB, mgr.GetClient()))
+	serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB, mgr.GetClient(), mgr.GetAPIReader()))
 
 	if err := (&controller.FrameNodeReconciler{
 		Client:   mgr.GetClient(),

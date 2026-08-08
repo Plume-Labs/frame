@@ -10,12 +10,13 @@ import (
 // The cluster's Tesla P4 reports 7680 MiB.
 const p4MiB = 7680
 
-// Every New(...) below passes a nil client: this file only ever calls Size
-// and ParameterSchema, neither of which dereferences it. Reconcile and Bind
-// are exercised separately in reconcile_test.go, with a real fake client.
+// Every New(...) below passes a nil client and a nil apiReader: this file
+// only ever calls Size and ParameterSchema, neither of which dereferences
+// either. Reconcile and Bind are exercised separately in reconcile_test.go,
+// with a real fake client.
 
 func TestSizeFitsAnEightBillionModelAtEightThousandContext(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	got, err := p.Size(map[string]string{
 		"model":         "llama-3.1-8b-instruct",
@@ -35,7 +36,7 @@ func TestSizeFitsAnEightBillionModelAtEightThousandContext(t *testing.T) {
 }
 
 func TestSizeRefusesTheSameModelAtThirtyTwoThousandContext(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	_, err := p.Size(map[string]string{
 		"model":         "llama-3.1-8b-instruct",
@@ -54,7 +55,7 @@ func TestSizeRefusesTheSameModelAtThirtyTwoThousandContext(t *testing.T) {
 }
 
 func TestSizeRefusesAModelTooBigForTheCardAtAnyContext(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	_, err := p.Size(map[string]string{
 		"model":         "llama-3.1-70b-instruct",
@@ -69,7 +70,7 @@ func TestSizeRefusesAModelTooBigForTheCardAtAnyContext(t *testing.T) {
 }
 
 func TestSizeRefusesAnUnknownModel(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	_, err := p.Size(map[string]string{"model": "gpt-9", "contextLength": "1024"})
 	if err == nil {
@@ -82,7 +83,7 @@ func TestSizeRefusesAnUnknownModel(t *testing.T) {
 }
 
 func TestSizeRefusesANonNumericContextLength(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	_, err := p.Size(map[string]string{
 		"model":         "llama-3.1-8b-instruct",
@@ -102,7 +103,7 @@ func TestSizeRefusesANonNumericContextLength(t *testing.T) {
 // all it takes to reach this from an admission request, so Size must refuse
 // it rather than silently wrap.
 func TestSizeRefusesAContextLengthThatWouldOverflowTheKVMultiplication(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	_, err := p.Size(map[string]string{
 		"model":         "llama-3.1-8b-instruct",
@@ -114,7 +115,7 @@ func TestSizeRefusesAContextLengthThatWouldOverflowTheKVMultiplication(t *testin
 }
 
 func TestTypeAndSchema(t *testing.T) {
-	p := inference.New(p4MiB, nil)
+	p := inference.New(p4MiB, nil, nil)
 
 	if p.Type() != "inference" {
 		t.Fatalf("Type() = %q, want inference", p.Type())
