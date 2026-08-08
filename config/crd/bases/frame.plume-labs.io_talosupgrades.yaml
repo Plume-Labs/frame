@@ -14,7 +14,24 @@ spec:
     singular: talosupgrade
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeName
+      name: NodeName
+      type: string
+    - jsonPath: .spec.image
+      name: Image
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: TalosUpgrade is the Schema for the talosupgrades API
@@ -42,18 +59,20 @@ spec:
               image:
                 description: Image is the Talos installer image to upgrade to (e.g.
                   ghcr.io/siderolabs/installer:v1.8.0).
+                maxLength: 255
                 type: string
+                x-kubernetes-validations:
+                - message: image must include a tag (e.g. installer:v1.8.0)
+                  rule: self.split('/')[self.split('/').size()-1].contains(':')
               nodeName:
                 description: NodeName is the Kubernetes node name to upgrade.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                 type: string
-              preserveData:
-                default: true
-                description: PreserveData controls whether to wipe ephemeral data
-                  during upgrade.
-                type: boolean
               talosEndpoint:
                 description: TalosEndpoint is the Talos API endpoint (host:port) for
                   this node.
+                pattern: ^[a-zA-Z0-9.-]+:[0-9]+$
                 type: string
               talosSecretRef:
                 description: |-
@@ -61,13 +80,20 @@ spec:
                   (keys: ca.crt, client.crt, client.key).
                 properties:
                   name:
-                    description: name is unique within a namespace to reference a
-                      secret resource.
+                    description: Name of the referenced Secret.
                     type: string
                   namespace:
-                    description: namespace defines the space within which the secret
-                      name must be unique.
+                    description: |-
+                      Namespace of the referenced Secret. May reference a namespace other
+                      than this CR's own: the controller's Secret RBAC is cluster-wide, so
+                      this is deliberately unconstrained today — Phase B's RBAC-tier
+                      lock-down is where that cross-namespace reach gets settled, not here.
+                      This only rejects a malformed value, not a cross-namespace one.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
+                required:
+                - name
                 type: object
                 x-kubernetes-map-type: atomic
             required:
