@@ -156,21 +156,25 @@ kubectl delete framejob llm-finetune-v4 -n neura-prod
 
 ## CRD API endpoints
 
-All resources are namespaced under `frame.plume-labs.io/v1alpha1`.
+All resources are namespaced. Seven are under `frame.plume-labs.io/v1alpha1`;
+`FrameService` is under the separate `services.plume-labs.io/v1alpha1` group
+(see [crd-reference.md](crd-reference.md) for why).
 
-| Resource | Plural | Shortname |
-|---|---|---|
-| FrameJob | `framejobs` | `fj` |
-| FrameNode | `framenodes` | `fn` |
-| SchedulingPolicy | `schedulingpolicies` | `sp` |
-| FrameResourceQuota | `frameresourcequotas` | `frq` |
-| TalosMachineConfig | `talosmachineconfigs` | `tmc` |
-| TalosUpgrade | `talosupgrades` | `tu` |
+| Resource | Group | Plural | Shortname |
+|---|---|---|---|
+| FrameJob | `frame.plume-labs.io` | `framejobs` | `fj` |
+| FrameNode | `frame.plume-labs.io` | `framenodes` | `fn` |
+| SchedulingPolicy | `frame.plume-labs.io` | `schedulingpolicies` | `sp` |
+| FrameResourceQuota | `frame.plume-labs.io` | `frameresourcequotas` | `frq` |
+| TalosMachineConfig | `frame.plume-labs.io` | `talosmachineconfigs` | `tmc` |
+| TalosUpgrade | `frame.plume-labs.io` | `talosupgrades` | `tu` |
+| FrameUser | `frame.plume-labs.io` | `frameusers` | — |
+| FrameService | `services.plume-labs.io` | `frameservices` | — |
 
 Direct API path pattern:
 
 ```
-/apis/frame.plume-labs.io/v1alpha1/namespaces/<namespace>/<plural>/<name>
+/apis/<group>/v1alpha1/namespaces/<namespace>/<plural>/<name>
 ```
 
 Example curl (with kubectl proxy running):
@@ -197,4 +201,4 @@ Bind the appropriate role to the ServiceAccount whose token you inject via `wind
 
 ## Field reference
 
-See [crd-reference.md](crd-reference.md) for the full field-level documentation of all seven CRDs.
+See [crd-reference.md](crd-reference.md) for the full field-level documentation of all eight CRDs across both API groups.

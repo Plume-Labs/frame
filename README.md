@@ -1,6 +1,6 @@
 # Frame — Mainframe Framework for Kubernetes
 
-Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-grade computing platform: seven CRDs, a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, and observability.
+Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-grade computing platform: eight CRDs across two API groups, a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, and observability.
 
 > Single physical location only — multi-site federation is out of scope.
 
@@ -41,7 +41,7 @@ make build && make run      # run the Go operator against your kubeconfig
 | [Getting Started](docs/getting-started.md) | Prerequisites, local dev, first deploy |
 | [Architecture](docs/architecture.md) | Three layers, data flows, topology constraints |
 | [API & SDK](docs/api.md) | `FrameClient` SDK, auth, raw K8s API, RBAC |
-| [CRD Reference](docs/crd-reference.md) | All seven CRDs — fields, controllers, webhooks |
+| [CRD Reference](docs/crd-reference.md) | All eight CRDs across two API groups — fields, controllers, webhooks |
 | [Development](docs/development.md) | Build, test, lint — Go operator and React UI |
 | [Deployment](docs/deployment.md) | Image build, kustomize overlays, cert-manager |
 | [Roadmap](docs/roadmap.md) | `v1alpha1` → stable V1 |
