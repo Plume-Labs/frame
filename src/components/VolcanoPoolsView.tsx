@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { VolcanoQueue, VolcanoStats, createFrameClient } from '@/lib/frame-sdk'
+import { VolcanoQueue, VolcanoStats, createFrameClient, crdListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,7 +34,14 @@ const phaseTone = (p: string) =>
   p === 'Running' ? 'text-accent' : p === 'Pending' || p === 'Inqueue' ? 'text-warning' : 'text-muted-foreground'
 
 export function VolcanoPoolsView() {
-  const { state, reload } = useLiveResource<VolcanoStats>(() => frame.cluster.volcano())
+  const { state, reload } = useLiveResource<VolcanoStats>(
+    () => frame.cluster.volcano(),
+    [],
+    [
+      crdListPath('scheduling.volcano.sh', 'v1beta1', 'queues'),
+      crdListPath('scheduling.volcano.sh', 'v1beta1', 'podgroups'),
+    ],
+  )
   const d = state.phase === 'ready' ? state.data : null
   const [closeTarget, setCloseTarget] = useState<VolcanoQueue | null>(null)
   const [weightTarget, setWeightTarget] = useState<VolcanoQueue | null>(null)

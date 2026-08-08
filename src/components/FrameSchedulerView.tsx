@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { SchedulingPolicy, SchedulerType, createFrameClient } from '@/lib/frame-sdk'
+import { SchedulingPolicy, SchedulerType, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -117,8 +117,10 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
 }
 
 export function FrameSchedulerView() {
-  const { state, reload } = useLiveResource<{ items: SchedulingPolicy[] }>(() =>
-    frame.scheduler.listPolicies(),
+  const { state, reload } = useLiveResource<{ items: SchedulingPolicy[] }>(
+    () => frame.scheduler.listPolicies(),
+    [],
+    [frameListPath('schedulingpolicies')],
   )
   const policies = state.phase === 'ready' ? state.data.items : []
   const [deleteTarget, setDeleteTarget] = useState<SchedulingPolicy | null>(null)
