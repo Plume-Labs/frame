@@ -39,9 +39,9 @@ Frame is three cooperating layers in one repo.
 │  SchedulingPolicy     → PriorityClass + Volcano/YuniKorn │
 │  TalosMachineConfig   → Talos gRPC ApplyConfiguration    │
 │  TalosUpgrade         → Talos gRPC Upgrade               │
-│  FrameResourceQuota   → namespace ResourceQuota (WIP)    │
+│  FrameResourceQuota   → namespace ResourceQuota          │
 │                                                          │
-│  Webhooks: validating + defaulting for all six kinds     │
+│  Webhooks: validation on 7 kinds, defaulting on 2        │
 └──────────────────────┬───────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────┐
@@ -71,7 +71,7 @@ Frame is three cooperating layers in one repo.
 
 | Path | Role |
 |---|---|
-| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over all six CRD kinds |
+| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over four kinds: FrameNode, FrameJob, SchedulingPolicy, FrameResourceQuota. TalosMachineConfig and TalosUpgrade have no SDK surface; FrameUser is authd's. |
 | `src/components/` | React control surfaces (Jobs, Scheduler, Nodes, …) |
 | `src/hooks/` | Real-time update hooks |
 | `vite.config.ts` | Dev proxy: `/apis` → `localhost:8001` |
@@ -80,7 +80,7 @@ Frame is three cooperating layers in one repo.
 
 ## Layer 2 — Operator (`api/`, `internal/`, `cmd/`)
 
-**What it is:** a Kubebuilder v4 operator (group `frame.plume-labs.io`, version `v1alpha1`) that reconciles six CRDs into real cluster effects.
+**What it is:** a Kubebuilder v4 operator (group `frame.plume-labs.io`, version `v1alpha1`) that reconciles six of the seven CRDs into real cluster effects. FrameUser has no controller — nothing reconciles a user account.
 
 **Entry point:** `cmd/main.go` — starts the controller-runtime manager, registers all controllers and webhooks, wires Prometheus metrics.
 
@@ -97,7 +97,7 @@ Frame is three cooperating layers in one repo.
 
 All controllers follow the same pattern: add finalizer on create, reconcile desired → actual, sync `.status` + conditions, emit a Kubernetes Event, clean up on delete.
 
-**Webhooks** (`internal/webhook/v1alpha1/`): validating + defaulting for all six kinds. Cert-manager manages TLS; see `config/certmanager/`.
+**Webhooks** (`internal/webhook/v1alpha1/`): validation on all seven kinds; defaulting on FrameNode and FrameJob only. Cert-manager manages TLS; see `config/certmanager/`.
 
 ---
 

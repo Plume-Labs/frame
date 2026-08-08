@@ -133,8 +133,39 @@ Retries with 30 s backoff on transient failures.
 
 ---
 
+## FrameUser
+
+A person who can sign in to the Cluster Control UI. Written by admins and by
+`authd`; it has **no controller** — nothing reconciles a FrameUser into cluster
+state. It is a record that `authd` reads at sign-in, which is why it is the one
+CRD with no entry in the controller table.
+
+**Spec:** `email` (becomes the Kubernetes username), `role`
+(`admin` | `operator` | `viewer`, decides the group the issued token carries),
+`passwordAuth` (`enabled` | `disabled`, **defaults to `disabled`** — an account
+is passkey-only unless someone deliberately opens the other door),
+`passwordHash` (argon2id PHC string, written only by `authd`).
+
+**Status:** `credentials[]` — enrolled WebAuthn authenticators, each with the
+base64url credential `id`, the COSE `publicKey`, the `signCount` as of the last
+assertion, `addedAt`, and an optional human `label`. Public data only: the
+private key never leaves the device. Credentials live in status precisely so an
+admin editing an account by hand cannot corrupt a key.
+
+**Webhook:** validation refuses to remove the last admin, whether by deletion or
+by demotion, and **fails closed** — if the admin list cannot be read, the request
+is denied rather than assumed safe.
+
+**Deployment status:** `authd` runs in the `cluster-control` namespace but is
+consumed by nothing, and on the current test cluster the
+`frameusers.frame.plume-labs.io` CRD is **not installed** — the operator there
+predates the type. Until it is applied, every FrameUser read or write returns
+NotFound. See the roadmap for the authd stages that switch this on.
+
+---
+
 ## Webhooks
 
-FrameNode and FrameJob have **defaulting + validation**; the other four have
+FrameNode and FrameJob have **defaulting + validation**; the other five have
 **validation** only (per `PROJECT`). Validators enforce required fields and
 value ranges before a CR is admitted. Tests: `internal/webhook/v1alpha1/*_test.go`.

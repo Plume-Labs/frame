@@ -197,4 +197,4 @@ Bind the appropriate role to the ServiceAccount whose token you inject via `wind
 
 ## Field reference
 
-See [crd-reference.md](crd-reference.md) for the full field-level documentation of all six CRDs.
+See [crd-reference.md](crd-reference.md) for the full field-level documentation of all seven CRDs.
