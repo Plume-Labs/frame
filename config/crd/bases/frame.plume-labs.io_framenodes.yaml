@@ -80,6 +80,7 @@ spec:
                     type: string
                   dns:
                     items:
+                      format: ip
                       type: string
                     type: array
                   gateway:
@@ -102,58 +103,6 @@ spec:
                 - worker
                 - ""
                 type: string
-              serverClassRef:
-                description: |-
-                  Deprecated: referenced a Sidero Metal ServerClass, which no longer
-                  exists — upstream stopped developing Sidero Metal and provisioning moved
-                  to Omni (see deploy/omni/). No controller has ever read this field, so it
-                  is retained only to avoid breaking stored objects; it has no effect.
-
-                  Its Omni counterpart is a MachineClass, but that is selected when the
-                  boot media is generated rather than named per node, so a like-for-like
-                  replacement field would be misleading. One will be added if and when a
-                  controller genuinely needs it.
-                properties:
-                  apiVersion:
-                    description: API version of the referent.
-                    type: string
-                  fieldPath:
-                    description: |-
-                      If referring to a piece of an object instead of an entire object, this string
-                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                      For example, if the object reference is to a container within a pod, this would take on a value like:
-                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                      the event) or if no container name is specified "spec.containers[2]" (container with
-                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                      referencing a part of an object.
-                    type: string
-                  kind:
-                    description: |-
-                      Kind of the referent.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                    type: string
-                  name:
-                    description: |-
-                      Name of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                    type: string
-                  namespace:
-                    description: |-
-                      Namespace of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                    type: string
-                  resourceVersion:
-                    description: |-
-                      Specific resourceVersion to which this reference is made, if any.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                    type: string
-                  uid:
-                    description: |-
-                      UID of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                    type: string
-                type: object
-                x-kubernetes-map-type: atomic
               serviceClass:
                 description: Service class for workload placement
                 enum:
@@ -168,6 +117,13 @@ spec:
             required:
             - ip
             type: object
+            x-kubernetes-validations:
+            - message: network.address, network.gateway, and at least one network.dns
+                entry are required once disk is set
+              rule: '!has(self.disk) || size(self.disk) == 0 || (has(self.network)
+                && has(self.network.address) && size(self.network.address) > 0 &&
+                has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns)
+                && self.network.dns.size() > 0)'
           status:
             description: status defines the observed state of FrameNode
             properties:
@@ -299,10 +255,6 @@ spec:
               kubeletVersion:
                 description: Kubelet version running on the node
                 type: string
-              lastHeartbeat:
-                description: Last heartbeat received from the node
-                format: date-time
-                type: string
               nodeName:
                 description: NodeName is the Kubernetes node name
                 type: string
@@ -316,12 +268,6 @@ spec:
                 - Degraded
                 - Offline
                 - Failed
-                type: string
-              providerID:
-                description: ProviderID is the cloud provider ID
-                type: string
-              talosVersion:
-                description: Talos version running on the node
                 type: string
             type: object
         required:

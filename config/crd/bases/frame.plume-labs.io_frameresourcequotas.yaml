@@ -14,7 +14,21 @@ spec:
     singular: frameresourcequota
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.serviceClass
+      name: ServiceClass
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: FrameResourceQuota is the Schema for the frameresourcequotas
@@ -79,6 +93,11 @@ spec:
             required:
             - serviceClass
             type: object
+            x-kubernetes-validations:
+            - message: at least one of maxGPUs, maxCPU, maxMemory, or maxJobs must
+                be set
+              rule: (has(self.maxGPUs) && self.maxGPUs > 0) || has(self.maxCPU) ||
+                has(self.maxMemory) || (has(self.maxJobs) && self.maxJobs > 0)
           status:
             description: status defines the observed state of FrameResourceQuota
             properties:

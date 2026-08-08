@@ -63,15 +63,18 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
-              name:
-                description: Name of the job
-                maxLength: 63
-                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                type: string
               namespace:
                 default: default
-                description: Kubernetes namespace for the job
+                description: |-
+                  Kubernetes namespace for the job. Not required to match this FrameJob's
+                  own namespace: the controller creates the backing ArgoWorkflow here
+                  with cluster-wide RBAC, so a FrameJob in one namespace can direct
+                  workflow creation into another. That cross-namespace reach is
+                  deliberate-for-now; constraining it is Phase B's RBAC-tier
+                  lock-down to settle, not this validation. This only rejects a
+                  malformed value, not a cross-namespace one.
                 maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               parameters:
                 additionalProperties:
@@ -102,9 +105,13 @@ spec:
                   Set to false to resume.
                 type: boolean
             required:
-            - name
             - pipeline
             type: object
+            x-kubernetes-validations:
+            - message: jobs requesting GPUs must use serviceClass HIGH or MEDIUM,
+                not LOW
+              rule: '!has(self.gpuCount) || self.gpuCount == 0 || !has(self.serviceClass)
+                || self.serviceClass != ''LOW'''
           status:
             description: status defines the observed state of FrameJob
             properties:

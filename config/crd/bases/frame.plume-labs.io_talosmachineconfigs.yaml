@@ -14,7 +14,21 @@ spec:
     singular: talosmachineconfig
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeName
+      name: NodeName
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: TalosMachineConfig is the Schema for the talosmachineconfigs
@@ -71,10 +85,13 @@ spec:
               nodeName:
                 description: NodeName is the Kubernetes node name to apply the config
                   patch to.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                 type: string
               talosEndpoint:
                 description: TalosEndpoint is the Talos API endpoint (host:port) for
                   this node.
+                pattern: ^[a-zA-Z0-9.-]+:[0-9]+$
                 type: string
               talosSecretRef:
                 description: |-
@@ -82,13 +99,20 @@ spec:
                   (keys: ca.crt, client.crt, client.key).
                 properties:
                   name:
-                    description: name is unique within a namespace to reference a
-                      secret resource.
+                    description: Name of the referenced Secret.
                     type: string
                   namespace:
-                    description: namespace defines the space within which the secret
-                      name must be unique.
+                    description: |-
+                      Namespace of the referenced Secret. May reference a namespace other
+                      than this CR's own: the controller's Secret RBAC is cluster-wide, so
+                      this is deliberately unconstrained today — Phase B's RBAC-tier
+                      lock-down is where that cross-namespace reach gets settled, not here.
+                      This only rejects a malformed value, not a cross-namespace one.
+                    maxLength: 63
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
+                required:
+                - name
                 type: object
                 x-kubernetes-map-type: atomic
             required:
@@ -96,6 +120,9 @@ spec:
             - talosEndpoint
             - talosSecretRef
             type: object
+            x-kubernetes-validations:
+            - message: exactly one of configPatch or configPatchRef must be set
+              rule: (has(self.configPatch) && size(self.configPatch) > 0) != has(self.configPatchRef)
           status:
             description: status defines the observed state of TalosMachineConfig
             properties:
