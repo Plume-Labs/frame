@@ -2398,6 +2398,130 @@ class ResourceClient {
   }
 }
 
+// ── Talos ─────────────────────────────────────────────────────────────────────
+
+/** A machine-config patch or an OS upgrade, as the control plane sees it. */
+export interface TalosOperation {
+  kind: 'TalosMachineConfig' | 'TalosUpgrade'
+  name: string
+  nodeName: string
+  endpoint: string
+  /** The Talos image, for an upgrade. Absent on a config patch. */
+  image?: string
+  /** True, False, or Unknown while the controller has not reported yet. */
+  ready: 'True' | 'False' | 'Unknown'
+  /** What the controller did, or why it could not: Applied, ClientBuildFailed, … */
+  reason: string
+  message: string
+}
+
+interface TalosCR {
+  metadata: { name: string; namespace?: string }
+  spec: { nodeName?: string; talosEndpoint?: string; image?: string }
+  status?: {
+    conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>
+  }
+}
+
+function crToTalosOperation(kind: TalosOperation['kind'], cr: TalosCR): TalosOperation {
+  const ready = cr.status?.conditions?.find((c) => c.type === 'Ready')
+  return {
+    kind,
+    name: cr.metadata.name,
+    nodeName: cr.spec.nodeName ?? '',
+    endpoint: cr.spec.talosEndpoint ?? '',
+    image: cr.spec.image,
+    ready: (ready?.status as TalosOperation['ready']) ?? 'Unknown',
+    reason: ready?.reason ?? 'Pending',
+    message: ready?.message ?? '',
+  }
+}
+
+/**
+ * TalosMachineConfig and TalosUpgrade — the two CRDs that reconfigure and
+ * upgrade a node's operating system.
+ *
+ * Both are write-once-and-watch: the controller talks Talos gRPC and reports
+ * the outcome in the Ready condition, so there is nothing to edit afterwards.
+ * Re-running an operation means a new object, which is also what makes the
+ * history readable.
+ */
+class TalosClient {
+  constructor(private readonly ns?: string) {}
+
+  async listMachineConfigs(): Promise<TalosOperation[]> {
+    const res = await k8sFetch<ListResponse<TalosCR>>(apiBase('talosmachineconfigs', this.ns))
+    return (res.items ?? []).map((cr) => crToTalosOperation('TalosMachineConfig', cr))
+  }
+
+  async listUpgrades(): Promise<TalosOperation[]> {
+    const res = await k8sFetch<ListResponse<TalosCR>>(apiBase('talosupgrades', this.ns))
+    return (res.items ?? []).map((cr) => crToTalosOperation('TalosUpgrade', cr))
+  }
+
+  /** Both kinds, newest-looking first by node then name, for a single table. */
+  async list(): Promise<TalosOperation[]> {
+    const [configs, upgrades] = await Promise.all([
+      this.listMachineConfigs(),
+      this.listUpgrades(),
+    ])
+    return [...configs, ...upgrades].sort(
+      (a, b) => a.nodeName.localeCompare(b.nodeName) || a.name.localeCompare(b.name),
+    )
+  }
+
+  async applyMachineConfig(input: {
+    name: string
+    nodeName: string
+    talosEndpoint: string
+    configPatch: string
+    secretName: string
+  }): Promise<void> {
+    await k8sFetch<TalosCR>(apiBase('talosmachineconfigs', this.ns), {
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'TalosMachineConfig',
+        metadata: { name: toK8sName(input.name), namespace: frameNs(this.ns) },
+        spec: {
+          nodeName: input.nodeName,
+          talosEndpoint: input.talosEndpoint,
+          talosSecretRef: { name: input.secretName, namespace: frameNs(this.ns) },
+          configPatch: input.configPatch,
+        },
+      },
+    })
+  }
+
+  async requestUpgrade(input: {
+    name: string
+    nodeName: string
+    talosEndpoint: string
+    image: string
+    secretName: string
+  }): Promise<void> {
+    await k8sFetch<TalosCR>(apiBase('talosupgrades', this.ns), {
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'TalosUpgrade',
+        metadata: { name: toK8sName(input.name), namespace: frameNs(this.ns) },
+        spec: {
+          nodeName: input.nodeName,
+          talosEndpoint: input.talosEndpoint,
+          talosSecretRef: { name: input.secretName, namespace: frameNs(this.ns) },
+          image: input.image,
+        },
+      },
+    })
+  }
+
+  async remove(op: Pick<TalosOperation, 'kind' | 'name'>): Promise<void> {
+    const plural = op.kind === 'TalosUpgrade' ? 'talosupgrades' : 'talosmachineconfigs'
+    await k8sFetch<undefined>(`${apiBase(plural, this.ns)}/${op.name}`, { method: 'DELETE' })
+  }
+}
+
 // ── Main client ───────────────────────────────────────────────────────────────
 
 export interface FrameClientOptions {
@@ -2417,6 +2541,7 @@ export class FrameClient {
   public readonly resources: ResourceClient
   public readonly apps: ApplicationClient
   public readonly cluster: ClusterClient
+  public readonly talos: TalosClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -2425,6 +2550,7 @@ export class FrameClient {
     this.resources = new ResourceClient(opts.namespace)
     this.apps      = new ApplicationClient()
     this.cluster   = new ClusterClient()
+    this.talos     = new TalosClient(opts.namespace)
   }
 
   async health(): Promise<HealthStatus> {
