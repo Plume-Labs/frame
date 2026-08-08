@@ -9,6 +9,7 @@ package inference
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -97,6 +98,25 @@ func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 		return provider.Sizing{}, fmt.Errorf(
 			"model %q needs %dMi for weights alone, and the GPU has %dMi",
 			name, m.WeightsMiB, p.gpuMemoryMiB)
+	}
+
+	// maxTokens is the largest context this card's remaining memory could ever
+	// hold, derived by division so computing it can never overflow — unlike
+	// ctx times the per-token KV cost below, which can, for a contextLength
+	// large enough. The subtraction is positive: the weights-alone case above
+	// already returned otherwise.
+	maxTokens := (p.gpuMemoryMiB - m.WeightsMiB) * bytesPerMiB / m.kvBytesPerToken()
+
+	// Past this point ctx*kvBytesPerToken would wrap int64 silently, which
+	// can turn a request that plainly does not fit into one whose (wrapped,
+	// possibly negative) footprint looks like it does. Refuse before ever
+	// forming that product, naming the context that would actually have fit
+	// rather than just the verdict.
+	if ctx > math.MaxInt64/m.kvBytesPerToken() {
+		return provider.Sizing{}, fmt.Errorf(
+			"parameters.contextLength %d is too large to size for model %q: the %dMi GPU "+
+				"holds at most %d tokens of context alongside the %dMi weights",
+			ctx, name, p.gpuMemoryMiB, maxTokens, m.WeightsMiB)
 	}
 
 	kvMiB := (m.kvBytesPerToken()*ctx + bytesPerMiB - 1) / bytesPerMiB
