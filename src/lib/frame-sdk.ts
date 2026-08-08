@@ -99,7 +99,6 @@ export interface SchedulingPolicy {
   queueWeight: number
   priority: number
   preemption: boolean
-  gangScheduling: boolean
   maxGPUs: number
   maxCPUs: number
 }
@@ -681,7 +680,7 @@ interface FrameNodeCR {
 
 interface SchedulingPolicyCR {
   metadata: { name: string; namespace?: string }
-  spec: { scheduler?: string; queueName?: string; queueWeight?: number; priorityValue?: number; preemption?: boolean; gangScheduling?: boolean }
+  spec: { scheduler?: string; queueName?: string; queueWeight?: number; priorityValue?: number; preemption?: boolean }
 }
 
 interface FrameResourceQuotaCR {
@@ -760,7 +759,6 @@ function crToPolicy(cr: SchedulingPolicyCR): SchedulingPolicy {
     queueWeight: cr.spec.queueWeight ?? 0,
     priority:   cr.spec.priorityValue ?? 0,
     preemption: cr.spec.preemption ?? false,
-    gangScheduling: cr.spec.gangScheduling ?? false,
     maxGPUs:    0,
     maxCPUs:    0,
   }

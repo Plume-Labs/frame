@@ -54,9 +54,6 @@ func (v *SchedulingPolicyCustomValidator) ValidateDelete(_ context.Context, _ *f
 }
 
 func validateSchedulingPolicy(sp *framev1alpha1.SchedulingPolicy) (admission.Warnings, error) {
-	if sp.Spec.GangScheduling && sp.Spec.QueueName == "" {
-		return nil, fmt.Errorf("spec.queueName is required when gangScheduling is true")
-	}
 	if sp.Spec.Preemption && sp.Spec.PriorityClass == "" {
 		return nil, fmt.Errorf("spec.priorityClass is required when preemption is true")
 	}
