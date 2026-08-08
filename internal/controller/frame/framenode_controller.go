@@ -43,6 +43,16 @@ import (
 
 const frameNodeFinalizer = "frame.plume-labs.io/framenode"
 
+// FrameNode lifecycle phases.
+const (
+	// nodePhaseDiscovered means the maintenance API has been contacted (or an
+	// attempt was made) and status.discoveredDisks/discoveredTalosVersion are
+	// populated; the node is waiting for a user to fill in the full spec.
+	nodePhaseDiscovered = "Discovered"
+	// nodePhaseOnline means the corresponding Kubernetes Node is Ready.
+	nodePhaseOnline = "Online"
+)
+
 // FrameNodeReconciler reconciles a FrameNode object
 type FrameNodeReconciler struct {
 	client.Client
@@ -76,7 +86,7 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Phase 2: full spec present, not yet provisioned → apply machineConfig.
-	if fn.Status.Phase == "" || fn.Status.Phase == "Discovered" {
+	if fn.Status.Phase == "" || fn.Status.Phase == nodePhaseDiscovered {
 		return r.reconcileProvision(ctx, &fn)
 	}
 
@@ -91,13 +101,13 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev1alpha1.FrameNode) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	if fn.Status.Phase == "Discovered" {
+	if fn.Status.Phase == nodePhaseDiscovered {
 		// Waiting for user to patch spec with full disk/network/role info.
 		return ctrl.Result{}, nil
 	}
 
 	patch := client.MergeFrom(fn.DeepCopy())
-	fn.Status.Phase = "Discovered"
+	fn.Status.Phase = nodePhaseDiscovered
 	fn.Status.DiscoveredDisks = nil
 	fn.Status.DiscoveredNICs = nil
 
@@ -111,13 +121,13 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 	} else {
 		defer c.Close()
 		r.populateDiscovery(tctx, fn, c)
-		r.Recorder.Event(fn, corev1.EventTypeNormal, "Discovered", "Maintenance API contacted")
+		r.Recorder.Event(fn, corev1.EventTypeNormal, nodePhaseDiscovered, "Maintenance API contacted")
 	}
 
 	setCondition(&fn.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
+		Type:               conditionTypeReady,
 		Status:             metav1.ConditionFalse,
-		Reason:             "Discovered",
+		Reason:             nodePhaseDiscovered,
 		Message:            "Discovery complete; waiting for spec",
 		ObservedGeneration: fn.Generation,
 	})
@@ -230,8 +240,8 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	fn.Status.Allocatable = node.Status.Allocatable
 	fn.Status.KubeletVersion = node.Status.NodeInfo.KubeletVersion
 	setCondition(&fn.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
-		Status:             conditionStatus(phase == "Online"),
+		Type:               conditionTypeReady,
+		Status:             conditionStatus(phase == nodePhaseOnline),
 		Reason:             phase,
 		Message:            "Synced from k8s Node",
 		ObservedGeneration: fn.Generation,
@@ -241,7 +251,7 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	}
 
 	eventType := corev1.EventTypeNormal
-	if phase != "Online" {
+	if phase != nodePhaseOnline {
 		eventType = corev1.EventTypeWarning
 	}
 	r.Recorder.Event(fn, eventType, phase, fmt.Sprintf("Node %s is %s", nodeName, phase))
@@ -276,7 +286,7 @@ func (r *FrameNodeReconciler) setPhase(ctx context.Context, fn *framev1alpha1.Fr
 	patch := client.MergeFrom(fn.DeepCopy())
 	fn.Status.Phase = phase
 	setCondition(&fn.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
+		Type:               conditionTypeReady,
 		Status:             conditionStatus(false),
 		Reason:             phase,
 		Message:            msg,
@@ -290,7 +300,7 @@ func nodePhase(node *corev1.Node) string {
 		if c.Type == corev1.NodeReady {
 			switch c.Status {
 			case corev1.ConditionTrue:
-				return "Online"
+				return nodePhaseOnline
 			case corev1.ConditionFalse:
 				return "Degraded"
 			}

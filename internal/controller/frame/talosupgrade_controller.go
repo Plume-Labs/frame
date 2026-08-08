@@ -70,7 +70,7 @@ func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// again while the node is rebooting would cause a second upgrade. Guard by
 	// ObservedGeneration — only call Upgrade when spec.generation changes.
 	for _, cond := range tu.Status.Conditions {
-		if cond.Type == "Ready" && cond.ObservedGeneration == tu.Generation &&
+		if cond.Type == conditionTypeReady && cond.ObservedGeneration == tu.Generation &&
 			(cond.Reason == "UpgradeRequested" || cond.Reason == "AlreadyAtVersion") {
 			return ctrl.Result{}, nil
 		}

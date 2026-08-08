@@ -48,6 +48,9 @@ import (
 
 const enableWebhooksEnv = "ENABLE_WEBHOOKS"
 
+// webhooksDisabled is the ENABLE_WEBHOOKS value that turns admission webhooks off.
+const webhooksDisabled = "false"
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -245,43 +248,43 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosupgrade")
 		os.Exit(1)
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameNode")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameJobWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameJob")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupSchedulingPolicyWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SchedulingPolicy")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameUserWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameUser")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameResourceQuotaWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameResourceQuota")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupTalosMachineConfigWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosMachineConfig")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupTalosUpgradeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosUpgrade")
 			os.Exit(1)
@@ -296,8 +299,7 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "services-frameservice")
 		os.Exit(1)
 	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookservicesv1alpha1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
 			os.Exit(1)
