@@ -34,18 +34,23 @@ import (
 //
 // +structType=atomic
 type TalosSecretReference struct {
-	// Name of the referenced Secret.
-	// +kubebuilder:validation:Required
-	Name string `json:"name"`
+	// Name of the referenced Secret. Optional to match corev1.SecretReference,
+	// which this type mirrors -- making it Required here would be a new
+	// constraint arriving unremarked. Whether it should be required is
+	// Phase B's to decide deliberately.
+	// +optional
+	Name string `json:"name,omitempty"`
 
-	// Namespace of the referenced Secret. May reference a namespace other
-	// than this CR's own: the controller's Secret RBAC is cluster-wide, so
-	// this is deliberately unconstrained today — Phase B's RBAC-tier
-	// lock-down is where that cross-namespace reach gets settled, not here.
+	// Namespace of the referenced Secret. Empty means "this CR's own
+	// namespace" -- buildTalosClient falls back to it explicitly -- so the
+	// pattern accepts empty alongside a well-formed label. May reference a
+	// namespace other than this CR's own: the controller's Secret RBAC is
+	// cluster-wide, so that reach is deliberately unconstrained today --
+	// Phase B's RBAC-tier lock-down is where it gets settled, not here.
 	// This only rejects a malformed value, not a cross-namespace one.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	// +kubebuilder:validation:Pattern="^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"
 	Namespace string `json:"namespace,omitempty"`
 }
 
@@ -60,8 +65,10 @@ type TalosMachineConfigSpec struct {
 	NodeName string `json:"nodeName"`
 
 	// TalosEndpoint is the Talos API endpoint (host:port) for this node.
+	// The bracketed form (e.g. [fd00::1]:50000) is accepted for IPv6, same
+	// as net.SplitHostPort in the webhook check this mirrors.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9.-]+:[0-9]+$"
+	// +kubebuilder:validation:Pattern="^(\\[[0-9a-fA-F:]+\\]|[a-zA-Z0-9.-]+):[0-9]+$"
 	TalosEndpoint string `json:"talosEndpoint"`
 
 	// TalosSecretRef references the Secret containing Talos client certificates

@@ -31,7 +31,9 @@ type NetworkSpec struct {
 	// +optional
 	Gateway string `json:"gateway,omitempty"`
 	// +optional
-	// +kubebuilder:validation:items:Format=ip
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=45
+	// +kubebuilder:validation:XValidation:rule="self.all(x, isIP(x))",message="each network.dns entry must be a valid IP"
 	DNS []string `json:"dns,omitempty"`
 	// +optional
 	VLAN *int32 `json:"vlan,omitempty"`

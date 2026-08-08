@@ -62,10 +62,11 @@ spec:
                   ones.
                 type: boolean
               priorityClass:
-                description: PriorityClass is the default Kubernetes PriorityClass
-                  for jobs under this policy.
+                description: |-
+                  PriorityClass is the default Kubernetes PriorityClass for jobs under this policy.
+                  The pattern accepts empty for the same reason as QueueName above.
                 maxLength: 253
-                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$
                 type: string
               priorityValue:
                 description: |-
@@ -79,9 +80,12 @@ spec:
                 description: |-
                   QueueName is the Volcano/YuniKorn queue to submit jobs to. Not an enum:
                   it names an externally-created Queue object, but it is still a
-                  Kubernetes object name, hence the pattern.
+                  Kubernetes object name, hence the pattern. The pattern accepts empty:
+                  the controller branches on "" to skip queue reconciliation, and the
+                  SDK's create form sends this field unconditionally, so a user clearing
+                  it must still be able to save.
                 maxLength: 253
-                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$
                 type: string
               queueWeight:
                 description: QueueWeight is the relative weight of the Volcano/YuniKorn
