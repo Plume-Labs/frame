@@ -59,6 +59,10 @@ type FrameServiceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=services;secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// The inference provider inspects pods to explain a stuck rollout (a pod
+// wedged in CreateContainerConfigError) with a named reason instead of a
+// silent, permanent RolloutInProgress degrade.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)

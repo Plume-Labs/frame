@@ -664,3 +664,82 @@ func TestReconcileDegradesOnCreateContainerConfigError(t *testing.T) {
 		t.Fatalf("Message %q does not name the pod and container", result.Message)
 	}
 }
+
+// apiKeyDigestAnnotationForTest mirrors the provider's own unexported
+// apiKeyDigestAnnotation, for the same reason apiKeySecretNameForTest does:
+// this file is package inference_test and can only observe what the
+// provider produces.
+const apiKeyDigestAnnotationForTest = "frame.plume-labs.io/api-key-sha256"
+
+// TestReconcileRollsThePodOntoARegeneratedAPIKey pins the fix for a silent
+// authentication outage: deleting the API key Secret out from under a
+// running instance used to mint a new token and republish it through Bind
+// while the already-running pod kept the old value in its process
+// environment forever, because Kubernetes never live-updates an env var
+// sourced from a secretKeyRef. A SHA-256 digest of the token on the pod
+// template turns a regenerated token into a real template diff, so
+// CreateOrUpdate updates the Deployment and Kubernetes rolls the pod. This
+// test proves both halves: a new token is minted, and the template actually
+// changed — the second is what proves a rollout will follow, since nothing
+// here can observe a real rollout against a fake client.
+func TestReconcileRollsThePodOntoARegeneratedAPIKey(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	var firstSecret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: apiKeySecretNameForTest(svc.Name), Namespace: svc.Namespace}, &firstSecret); err != nil {
+		t.Fatalf("API key Secret not created: %v", err)
+	}
+	firstToken := string(firstSecret.Data["apiKey"])
+
+	var d appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d); err != nil {
+		t.Fatalf("Deployment not created: %v", err)
+	}
+	firstDigest := d.Spec.Template.Annotations[apiKeyDigestAnnotationForTest]
+	if firstDigest == "" {
+		t.Fatal("pod template has no api-key digest annotation after the first Reconcile")
+	}
+	// Mark the instance running, the way TestReconcileReportsNotReadyUntilThePodIsServing does.
+	d.Status.ReadyReplicas = 1
+	if err := c.Status().Update(ctx, &d); err != nil {
+		t.Fatalf("marking the Deployment ready: %v", err)
+	}
+
+	// The operator (or anything else) deletes the Secret out from under the
+	// running instance.
+	if err := c.Delete(ctx, &firstSecret); err != nil {
+		t.Fatalf("deleting the API key Secret: %v", err)
+	}
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	var secondSecret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: apiKeySecretNameForTest(svc.Name), Namespace: svc.Namespace}, &secondSecret); err != nil {
+		t.Fatalf("API key Secret missing after second Reconcile: %v", err)
+	}
+	secondToken := string(secondSecret.Data["apiKey"])
+	if secondToken == "" {
+		t.Fatal("no token minted after the Secret was deleted")
+	}
+	if secondToken == firstToken {
+		t.Fatal("token unchanged after the Secret was deleted, want a freshly minted one")
+	}
+
+	var d2 appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d2); err != nil {
+		t.Fatalf("Deployment missing after second Reconcile: %v", err)
+	}
+	secondDigest := d2.Spec.Template.Annotations[apiKeyDigestAnnotationForTest]
+	if secondDigest == "" {
+		t.Fatal("pod template lost its api-key digest annotation")
+	}
+	if secondDigest == firstDigest {
+		t.Fatal("pod template digest unchanged after the token was regenerated: no rollout would follow")
+	}
+}

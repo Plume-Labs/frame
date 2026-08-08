@@ -10,7 +10,9 @@ package inference
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -76,11 +78,29 @@ const (
 	// ensureAPIKey for why writing to that exact coordinate before the
 	// controller's own binding reconciler has recorded it in
 	// status.binding.projected would trip its ownership-conflict check.
+	//
+	// This is reachable, not just theoretical: an operator who sets
+	// spec.binding.secretName to exactly "<name>-inference-key" collides
+	// with this Secret. claimNewCoordinates
+	// (internal/controller/services/binding.go) then finds a Secret already
+	// sitting at that coordinate that status.binding.projected has never
+	// recorded, and permanently degrades the instance with BindingConflict,
+	// naming a Secret "not written by" this FrameService — when it was,
+	// just outside reconcileBinding's own bookkeeping. Deliberately not
+	// validated against: it is a confusing message to land on, but a rare
+	// and recoverable naming collision, not a security question. Left here
+	// so whoever hits it finds the explanation next to the cause.
 	apiKeySecretSuffix = "-inference-key"
 	// apiKeyDataKey is the key this provider stores the generated token
 	// under, both in the Secret it owns and in the Data map Bind returns —
 	// the same key a consumer looks up in the credentials Secret.
 	apiKeyDataKey = "apiKey"
+	// apiKeyDigestAnnotation carries a SHA-256 hex digest of the current API
+	// key on the Deployment's pod template — the digest, never the token
+	// itself, since a pod template is visible the same way Args would be.
+	// Its only purpose is making a changed token a changed template: see the
+	// comment where it is set in Reconcile for why that has to be true.
+	apiKeyDigestAnnotation = "frame.plume-labs.io/api-key-sha256"
 	// apiKeyEnvVar is the environment variable llama.cpp's server reads its
 	// API key from. Confirmed against tools/server/README.md: --api-key has
 	// a documented environment-variable equivalent (LLAMA_API_KEY), unlike
@@ -277,6 +297,15 @@ func generateAPIKey() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
+// apiKeyDigest fingerprints token for apiKeyDigestAnnotation: a one-way hash
+// lets the pod template change whenever the token does — the actual
+// requirement, see where the annotation is set — without the template itself
+// ever carrying the credential.
+func apiKeyDigest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // ensureAPIKey makes the Secret backing the FrameService's llama.cpp API key
 // exist and returns the token in it, generating one only the first time.
 //
@@ -410,7 +439,8 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 	// ensureAPIKey for why creating it after, the way the controller's own
 	// credentials Secret is written, would deadlock the instance forever.
 	apiKeySecret := apiKeySecretName(svc.Name)
-	if _, err := p.ensureAPIKey(ctx, svc); err != nil {
+	apiKey, err := p.ensureAPIKey(ctx, svc)
+	if err != nil {
 		return provider.Result{}, err
 	}
 
@@ -430,6 +460,22 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
 			serviceClassLabel: svc.Spec.ServiceClass,
 		}
+		// A digest of the token, never the token itself, rides on the pod
+		// template so a changed token is a changed template: if the API key
+		// Secret is ever deleted and ensureAPIKey mints a new value, the
+		// Deployment's env reference to the Secret is unchanged and
+		// CreateOrUpdate would otherwise see no diff and roll nothing —
+		// leaving the running pod holding the old value in its process
+		// environment forever, since Kubernetes never live-updates an env
+		// var sourced from a secretKeyRef. Putting the digest here makes
+		// that rewrite a real template diff, so CreateOrUpdate updates the
+		// Deployment and Kubernetes rolls the pods onto the new value on its
+		// own — no detection logic needed, and the same mechanism covers
+		// rotation whenever that arrives.
+		if deployment.Spec.Template.Annotations == nil {
+			deployment.Spec.Template.Annotations = map[string]string{}
+		}
+		deployment.Spec.Template.Annotations[apiKeyDigestAnnotation] = apiKeyDigest(apiKey)
 		setModelCacheVolume(&deployment.Spec.Template.Spec, cacheName)
 		// Read-only: several instances can share one cache, and none of them
 		// should be able to corrupt it.
@@ -486,34 +532,6 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		{APIVersion: "v1", Kind: "Service", Name: service.Name, Namespace: service.Namespace},
 	}
 
-	// ensureAPIKey above closes the ordinary deadlock — the Secret exists
-	// before this Deployment does — but it cannot cover every way a pod can
-	// still end up unable to read it (an operator deleting the Secret by
-	// hand, RBAC narrowed after the fact). That failure surfaces as
-	// CreateContainerConfigError on the pod, not as a Deployment condition,
-	// and left unchecked it would just read as an ordinary, permanent
-	// RolloutInProgress: a degrade that never explains itself and never
-	// clears. Naming it here turns a silent crash loop into a status message
-	// an operator can act on.
-	var pods corev1.PodList
-	if err := p.client.List(ctx, &pods, client.InNamespace(svc.Namespace), client.MatchingLabels(labels)); err != nil {
-		return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
-	}
-	for i := range pods.Items {
-		for _, cs := range pods.Items[i].Status.ContainerStatuses {
-			if cs.State.Waiting == nil || cs.State.Waiting.Reason != "CreateContainerConfigError" {
-				continue
-			}
-			return provider.Result{
-				Ready:  false,
-				Reason: "CreateContainerConfigError",
-				Message: fmt.Sprintf("Pod %s container %s cannot start: %s",
-					pods.Items[i].Name, cs.Name, cs.State.Waiting.Message),
-				Provisioned: provisioned,
-			}, nil
-		}
-	}
-
 	// Ready means serving, not merely "the objects exist": CreateOrUpdate
 	// succeeding says the Deployment was created or converged, not that its
 	// pod ever started. deployment.Status here is whatever CreateOrUpdate's
@@ -524,6 +542,41 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 	// degrades and requeues on Ready: false, which is exactly right for a
 	// rollout in progress.
 	if deployment.Status.ReadyReplicas < desiredReplicas {
+		// A replica is actually missing, so it's worth asking why: this is
+		// the only situation the pod List below exists to explain, and
+		// listing pods on every reconcile of every already-healthy instance
+		// is work nobody needs — and, on a real cluster, an RBAC-gated call
+		// that would otherwise run constantly instead of only when it has
+		// something to look for.
+		//
+		// ensureAPIKey closes the ordinary Deployment-before-Secret deadlock
+		// — the Secret exists before this Deployment does — but it cannot
+		// cover every way a pod can still end up unable to read it (an
+		// operator deleting the Secret by hand, RBAC narrowed after the
+		// fact). That failure surfaces as CreateContainerConfigError on the
+		// pod, not as a Deployment condition, and left unchecked it would
+		// just read as an ordinary, permanent RolloutInProgress: a degrade
+		// that never explains itself and never clears. Naming it here turns
+		// a silent crash loop into a status message an operator can act on.
+		var pods corev1.PodList
+		if err := p.client.List(ctx, &pods, client.InNamespace(svc.Namespace), client.MatchingLabels(labels)); err != nil {
+			return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
+		}
+		for i := range pods.Items {
+			for _, cs := range pods.Items[i].Status.ContainerStatuses {
+				if cs.State.Waiting == nil || cs.State.Waiting.Reason != "CreateContainerConfigError" {
+					continue
+				}
+				return provider.Result{
+					Ready:  false,
+					Reason: "CreateContainerConfigError",
+					Message: fmt.Sprintf("Pod %s container %s cannot start: %s",
+						pods.Items[i].Name, cs.Name, cs.State.Waiting.Message),
+					Provisioned: provisioned,
+				}, nil
+			}
+		}
+
 		return provider.Result{
 			Ready:       false,
 			Reason:      "RolloutInProgress",
