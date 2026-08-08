@@ -39,7 +39,10 @@ import (
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	controller "github.com/rmocq/frame/internal/controller/frame"
 	servicescontroller "github.com/rmocq/frame/internal/controller/services"
+	"github.com/rmocq/frame/internal/services/provider"
+	"github.com/rmocq/frame/internal/services/provider/inference"
 	webhookv1alpha1 "github.com/rmocq/frame/internal/webhook/frame/v1alpha1"
+	webhookservicesv1alpha1 "github.com/rmocq/frame/internal/webhook/services/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -67,6 +70,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var inferenceGPUMemoryMiB int64
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -85,6 +89,9 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.Int64Var(&inferenceGPUMemoryMiB, "inference-gpu-memory-mib", 7680,
+		"Usable GPU memory per card, in MiB, that inference instances are sized against. "+
+			"Defaults to the Tesla P4's 7680.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -280,6 +287,14 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "services-frameservice")
 		os.Exit(1)
+	}
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB))
+		if err := webhookservicesv1alpha1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 
