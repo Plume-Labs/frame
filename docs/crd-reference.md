@@ -45,8 +45,18 @@ A workload submitted to the cluster, realized as an Argo `Workflow`.
 `suspended` (bool, default false). `spec.name` was removed pre-freeze: it
 was `Required` and pattern-validated, but no controller ever read it
 (`metadata.name` is used throughout) and the SDK's submit path never sent
-it. GPU jobs (`gpuCount > 0`) may not use `serviceClass: LOW` (CEL,
-mirroring the existing webhook check). `namespace` carries a DNS-1123 label
+it. GPU jobs (`gpuCount > 0`) may not use `serviceClass: LOW` — enforced
+only by the webhook (`framejob_webhook.go`'s `validateFrameJob`), which
+returns early with a warning (not this check) for any `pipeline` outside
+`knownPipelines`, so the constraint silently doesn't apply to `training`
+and most other real pipelines today. A CEL mirror of this rule was tried
+and reverted: CEL has no such bypass and runs before webhooks, so it
+rejected objects the webhook has always accepted and, being spec-level,
+would have permanently refused even an unrelated update (e.g. flipping
+`spec.suspended`) on any already-stored object shaped that way. Whether
+the webhook's bypass is itself intended is Phase B's to decide before
+this constraint is expressed any more strictly than it is now.
+`namespace` carries a DNS-1123 label
 pattern so a malformed value is refused at admission, but is deliberately
 *not* constrained to match this FrameJob's own namespace — the controller
 creates the backing Argo `Workflow` there with cluster-wide RBAC, and
@@ -144,17 +154,23 @@ Declarative Talos MachineConfig application to a node.
 **Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, and one of
 `configPatch` (inline YAML) or `configPatchRef` (ConfigMap key selector) —
 exactly one must be set (CEL, mirroring the existing webhook check).
-`nodeName` carries a DNS-1123 subdomain pattern and `talosEndpoint` a
-`host:port` pattern, both pushed down from the webhook. `talosSecretRef` is
-a local `TalosSecretReference {name, namespace}` type — not
-`corev1.SecretReference` directly, because a kubebuilder marker can't be
-attached to a subfield of an external type, and the CEL equivalent for the
-namespace pattern exceeded the per-schema CEL cost budget (no declared
-`maxLength` for the estimator to bound the regex against). Its `namespace`
-carries a DNS-1123 label pattern but is deliberately *not* constrained to
-match this CR's own namespace, since the controller's Secret RBAC is
-cluster-wide already; narrowing that is Phase B's RBAC-tier lock-down to
-decide.
+`talosEndpoint` carries a `host:port` pattern (bracketed IPv6 accepted,
+e.g. `[fd00::1]:50000`, matching what `net.SplitHostPort` in the webhook
+accepts), pushed down from the webhook. `nodeName` carries a DNS-1123
+subdomain pattern — net-new validation; no webhook ever checked
+`nodeName`'s shape. `talosSecretRef` is a local
+`TalosSecretReference {name, namespace}` type — not `corev1.SecretReference`
+directly, because a kubebuilder marker can't be attached to a subfield of
+an external type, and the CEL equivalent for the namespace pattern
+exceeded the per-schema CEL cost budget (no declared `maxLength` for the
+estimator to bound the regex against). `name` stays optional, matching
+`corev1.SecretReference` (an early version wrongly made it `Required`).
+`namespace` carries a DNS-1123 label pattern that also accepts empty —
+`buildTalosClient` treats `""` as "use this CR's own namespace," a
+fallback the pattern must not block — but is deliberately *not*
+constrained to match this CR's own namespace when non-empty, since the
+controller's Secret RBAC is cluster-wide already; narrowing that is
+Phase B's RBAC-tier lock-down to decide.
 
 **Status:** `conditions[]` (Ready=True reason `Applied`; False reasons:
 `PatchResolveFailed`, `ClientBuildFailed`, `ApplyFailed`).
@@ -176,7 +192,9 @@ A Talos OS upgrade for a single node.
 **Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, `image`. `nodeName`
 and `talosEndpoint` carry the same patterns as `TalosMachineConfig`;
 `talosSecretRef` is the same local `TalosSecretReference` type; `image`
-must include a tag (CEL, mirroring the existing webhook check).
+must include a tag (CEL, mirroring the existing webhook check) and is
+capped at 255 characters (`MaxLength`, a new limit added solely to keep
+that CEL rule's cost bounded, not a mirror of anything the webhook checks).
 `preserveData` was removed pre-freeze: it defaulted to `true` but had no
 reader — the controller's `c.Upgrade(ctx, image, stage, force)` call is the
 deprecated Talos client method, whose signature has no wipe/preserve
