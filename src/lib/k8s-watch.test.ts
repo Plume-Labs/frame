@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-import { watchPaths } from './k8s-watch'
+import { pollInterval, watchPaths } from './k8s-watch'
 
 const PATH = '/apis/frame.plume-labs.io/v1alpha1/namespaces/frame-system/framejobs'
 
@@ -146,4 +146,41 @@ describe('watchPaths', () => {
     await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 25_000 })
     stop()
   }, 30_000)
+})
+
+describe('pollInterval', () => {
+  it('fires repeatedly on the given interval', async () => {
+    const onChange = vi.fn()
+    const stop = pollInterval(20, onChange)
+    await new Promise((r) => setTimeout(r, 90))
+    stop()
+
+    // ~4 ticks in 90ms at 20ms each; allow slack for CI jitter.
+    expect(onChange.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('never fires before the first interval elapses', async () => {
+    const onChange = vi.fn()
+    const stop = pollInterval(1_000, onChange)
+    await new Promise((r) => setTimeout(r, 50))
+    stop()
+
+    // The silent contract polling shares with watchPaths: subscribing must not
+    // itself trigger a refresh on top of the initial (non-silent) fetch a
+    // screen already did on mount — that would flash the loading skeleton a
+    // second time for nothing.
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('stops firing once stopped, even for a tick already scheduled', async () => {
+    const onChange = vi.fn()
+    const stop = pollInterval(20, onChange)
+    await new Promise((r) => setTimeout(r, 30))
+    stop()
+    const callsAtStop = onChange.mock.calls.length
+    expect(callsAtStop).toBeGreaterThan(0)
+
+    await new Promise((r) => setTimeout(r, 80))
+    expect(onChange.mock.calls.length).toBe(callsAtStop)
+  })
 })
