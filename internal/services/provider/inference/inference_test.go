@@ -89,6 +89,26 @@ func TestSizeRefusesANonNumericContextLength(t *testing.T) {
 	}
 }
 
+// TestSizeRefusesAContextLengthThatWouldOverflowTheKVMultiplication guards
+// the fix for a request whose contextLength is large enough that
+// ctx*kvBytesPerToken wraps int64: for llama-3.1-8b-instruct's 131072
+// bytes/token, that is anything above roughly 7.04e13 tokens. Before the
+// fix, the wrapped (and possibly negative) product could make an impossible
+// request look like it fit within the card's memory. A digit-only string is
+// all it takes to reach this from an admission request, so Size must refuse
+// it rather than silently wrap.
+func TestSizeRefusesAContextLengthThatWouldOverflowTheKVMultiplication(t *testing.T) {
+	p := inference.New(p4MiB)
+
+	_, err := p.Size(map[string]string{
+		"model":         "llama-3.1-8b-instruct",
+		"contextLength": "100000000000000",
+	})
+	if err == nil {
+		t.Fatal("Size accepted a contextLength that overflows the KV cache multiplication")
+	}
+}
+
 func TestTypeAndSchema(t *testing.T) {
 	p := inference.New(p4MiB)
 
