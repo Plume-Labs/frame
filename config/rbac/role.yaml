@@ -122,3 +122,29 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices/status
+  verbs:
+  - get
+  - patch
+  - update
