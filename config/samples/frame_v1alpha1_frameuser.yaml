@@ -1,0 +1,15 @@
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: admin
+  namespace: cluster-control
+spec:
+  email: admin@example.test
+  role: admin
+  # Passkey-only unless deliberately opened. authd writes passwordHash; leave
+  # it out here. The validating webhook refuses to delete or demote the last
+  # account holding the admin role.
+  passwordAuth: disabled

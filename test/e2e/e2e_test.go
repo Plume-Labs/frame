@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +45,18 @@ const metricsServiceName = "frame-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "frame-metrics-binding"
+
+// crNamespace holds the custom resources the CRD specs create.
+const crNamespace = "frame-e2e"
+
+// e2ePriorityClass is the cluster-scoped PriorityClass a SchedulingPolicy projects.
+const e2ePriorityClass = "frame-e2e-high"
+
+// frameKinds is every Frame CRD, used to release finalizers before teardown.
+var frameKinds = []string{
+	"framejobs", "framenodes", "frameresourcequotas", "schedulingpolicies",
+	"talosmachineconfigs", "talosupgrades", "frameusers",
+}
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -343,18 +356,354 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	// One spec per CRD, each proving the same chain against a real apiserver:
+	// a spec is admitted, the controller turns it into a cluster effect, and the
+	// effect is reported back in status. Envtest already covers the reconcile
+	// logic; what only a real cluster proves is that the deployed manager —
+	// with its generated RBAC, its webhooks and its cert-manager TLS — can
+	// actually perform those effects.
+	Context("CRD reconciliation", Ordered, func() {
+		BeforeAll(func() {
+			By("creating a namespace for the test resources")
+			cmd := exec.Command("kubectl", "create", "ns", crNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create the CR namespace")
+
+			By("labelling it for the HIGH service class")
+			cmd = exec.Command("kubectl", "label", "--overwrite", "ns", crNamespace,
+				"frame.plume-labs.io/service-class=HIGH")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to label the CR namespace")
+		})
+
+		AfterAll(func() {
+			// Strip finalizers before the outer AfterAll undeploys the manager.
+			// Once it is gone nothing answers the finalizers, and both the CRD
+			// uninstall and the namespace deletion would hang on them.
+			By("releasing finalizers on any leftover Frame CRs")
+			for _, kind := range frameKinds {
+				out, err := utils.Run(exec.Command("kubectl", "get", kind,
+					"-n", crNamespace, "-o", "name", "--ignore-not-found"))
+				if err != nil {
+					continue
+				}
+				for _, ref := range utils.GetNonEmptyLines(out) {
+					if !strings.Contains(ref, "/") {
+						continue
+					}
+					_, _ = utils.Run(exec.Command("kubectl", "patch", ref, "-n", crNamespace,
+						"--type=merge", "-p", `{"metadata":{"finalizers":null}}`))
+				}
+			}
+
+			By("removing the test namespace and the cluster-scoped leftovers")
+			_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", crNamespace,
+				"--ignore-not-found", "--timeout=120s"))
+			_, _ = utils.Run(exec.Command("kubectl", "delete", "priorityclass",
+				e2ePriorityClass, "--ignore-not-found"))
+			_, _ = utils.Run(exec.Command("kubectl", "delete", "crd",
+				"workflows.argoproj.io", "--ignore-not-found"))
+		})
+
+		It("projects a SchedulingPolicy into a PriorityClass", func() {
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: SchedulingPolicy
+metadata:
+  name: e2e-policy
+  namespace: %s
+spec:
+  scheduler: default
+  priorityClass: %s
+  priorityValue: 123456
+`, crNamespace, e2ePriorityClass))
+
+			By("checking the PriorityClass carries the requested value")
+			Eventually(func(g Gomega) {
+				value, err := kubectlGet(g, "priorityclass", e2ePriorityClass, "",
+					"{.value}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(value).To(Equal("123456"))
+			}).Should(Succeed())
+
+			By("checking the status reports it applied")
+			Eventually(readyReason("schedulingpolicy", "e2e-policy")).Should(Equal("Applied"))
+		})
+
+		It("projects a FrameResourceQuota into a namespace ResourceQuota", func() {
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameResourceQuota
+metadata:
+  name: e2e-quota
+  namespace: %s
+spec:
+  serviceClass: HIGH
+  maxJobs: 7
+  maxCPU: "12"
+`, crNamespace))
+
+			By("checking maxJobs became an object-count quota on FrameJobs, not on pods")
+			Eventually(func(g Gomega) {
+				hard, err := kubectlGet(g, "resourcequota", "frame-high", crNamespace,
+					`{.spec.hard.count/framejobs\.frame\.plume-labs\.io}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(hard).To(Equal("7"))
+			}).Should(Succeed())
+
+			By("checking the status reports the namespaces it reached")
+			Eventually(readyReason("frameresourcequota", "e2e-quota")).Should(Equal("Reconciled"))
+		})
+
+		It("turns a FrameJob into an Argo Workflow", func() {
+			// A stand-in for the real Argo CRD: the assertion is that Frame
+			// creates the Workflow object with the right owner and parameters,
+			// not that Argo executes it. Installing Argo itself would test
+			// Argo, and would tie the suite to an upstream release.
+			By("installing a permissive Workflow CRD")
+			applyCR(`
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: workflows.argoproj.io
+spec:
+  group: argoproj.io
+  scope: Namespaced
+  names:
+    kind: Workflow
+    listKind: WorkflowList
+    plural: workflows
+    singular: workflow
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+`)
+			Eventually(func(g Gomega) {
+				_, err := utils.Run(exec.Command("kubectl", "get", "crd", "workflows.argoproj.io"))
+				g.Expect(err).NotTo(HaveOccurred())
+			}).Should(Succeed())
+
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameJob
+metadata:
+  name: e2e-job
+  namespace: %s
+spec:
+  name: e2e-job
+  pipeline: training
+  namespace: %s
+  serviceClass: HIGH
+  priority: high
+  gpuCount: 2
+`, crNamespace, crNamespace))
+
+			By("checking the Workflow exists and carries the GPU count as a parameter")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "workflow.argoproj.io", "e2e-job", crNamespace,
+					"{.spec.arguments.parameters[?(@.name=='gpu-count')].value}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("2"))
+			}).Should(Succeed())
+
+			By("checking the status names the Workflow it created")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "framejob", "e2e-job", crNamespace,
+					"{.status.argoWorkflowName}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("e2e-job"))
+			}).Should(Succeed())
+		})
+
+		It("syncs a FrameNode onto the real Kubernetes Node", func() {
+			By("finding a node in the cluster")
+			nodeName, err := utils.Run(exec.Command("kubectl", "get", "nodes",
+				"-o", "jsonpath={.items[0].metadata.name}"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodeName).NotTo(BeEmpty())
+
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameNode
+metadata:
+  name: e2e-node
+  namespace: %s
+spec:
+  ip: 127.0.0.1
+  role: worker
+  hostname: %s
+  disk: /dev/null
+  rack: rack-e2e
+  zone: zone-e2e
+  serviceClass: HIGH
+  network:
+    address: 127.0.0.1/8
+    gateway: 127.0.0.1
+    dns:
+      - 1.1.1.1
+`, crNamespace, nodeName))
+
+			// Phase 3 (sync from the Kubernetes Node) is only reached once the
+			// node is past provisioning. Provisioning talks Talos gRPC, which
+			// has no counterpart in Kind, so the phase is set directly here —
+			// the point of this spec is the sync, not the provisioning that
+			// precedes it in production.
+			By("advancing the FrameNode past provisioning")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "patch", "framenode", "e2e-node",
+					"-n", crNamespace, "--subresource=status", "--type=merge",
+					"-p", `{"status":{"phase":"Provisioning"}}`)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}).Should(Succeed())
+
+			By("checking the controller labelled the real Node")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "node", nodeName, "",
+					`{.metadata.labels.frame\.plume-labs\.io/service-class}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("HIGH"))
+			}).Should(Succeed())
+
+			By("checking the status was filled from the Node")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "framenode", "e2e-node", crNamespace,
+					"{.status.nodeName}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal(nodeName))
+			}).Should(Succeed())
+		})
+
+		// The two Talos kinds drive a gRPC endpoint that does not exist in Kind.
+		// What a real cluster can still prove is that an unreachable target ends
+		// as a reported failure rather than a hang or a crash — a controller
+		// that wedges on a missing endpoint is the failure mode worth catching.
+		It("reports a TalosMachineConfig it cannot apply", func() {
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: TalosMachineConfig
+metadata:
+  name: e2e-machineconfig
+  namespace: %s
+spec:
+  nodeName: nowhere
+  talosEndpoint: "127.0.0.1:50000"
+  talosSecretRef:
+    name: absent-talos-certs
+    namespace: %s
+  configPatch: |
+    machine:
+      sysctls:
+        vm.max_map_count: "524288"
+`, crNamespace, crNamespace))
+
+			Eventually(readyReason("talosmachineconfig", "e2e-machineconfig")).
+				Should(Equal("ClientBuildFailed"))
+		})
+
+		It("reports a TalosUpgrade it cannot request", func() {
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: TalosUpgrade
+metadata:
+  name: e2e-upgrade
+  namespace: %s
+spec:
+  nodeName: nowhere
+  talosEndpoint: "127.0.0.1:50000"
+  talosSecretRef:
+    name: absent-talos-certs
+    namespace: %s
+  image: ghcr.io/siderolabs/talos:v1.9.0
+`, crNamespace, crNamespace))
+
+			Eventually(readyReason("talosupgrade", "e2e-upgrade")).
+				Should(Equal("ClientBuildFailed"))
+		})
+
+		// FrameUser has no controller. Its cluster effect is the admission
+		// decision itself, which is what this spec exercises against the
+		// deployed webhook and its cert-manager-issued TLS.
+		It("refuses to let the last FrameUser admin be removed", func() {
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  name: e2e-admin-one
+  namespace: %s
+spec:
+  email: one@example.test
+  role: admin
+---
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  name: e2e-admin-two
+  namespace: %s
+spec:
+  email: two@example.test
+  role: admin
+`, crNamespace, crNamespace))
+
+			By("allowing one admin to go while another remains")
+			_, err := utils.Run(exec.Command("kubectl", "delete", "frameuser",
+				"e2e-admin-two", "-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("refusing the deletion of the last one")
+			out, err := utils.Run(exec.Command("kubectl", "delete", "frameuser",
+				"e2e-admin-one", "-n", crNamespace))
+			Expect(err).To(HaveOccurred(), "The last admin must not be deletable")
+			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
+
+			By("refusing the demotion of the last one just as firmly")
+			out, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+				"e2e-admin-one", "-n", crNamespace, "--type=merge",
+				"-p", `{"spec":{"role":"viewer"}}`))
+			Expect(err).To(HaveOccurred(), "The last admin must not be demotable")
+			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
+		})
 	})
 })
+
+// applyCR pipes a manifest through kubectl apply. Manifests are written inline
+// so each spec reads as one thing: the input, and what the cluster does with it.
+func applyCR(manifest string) {
+	GinkgoHelper()
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to apply manifest:\n%s", manifest)
+}
+
+// kubectlGet reads one JSONPath expression off a resource, namespaced or not.
+func kubectlGet(_ Gomega, kind, name, ns, jsonPath string) (string, error) {
+	args := []string{"get", kind, name, "-o", "jsonpath=" + jsonPath}
+	if ns != "" {
+		args = append(args, "-n", ns)
+	}
+	return utils.Run(exec.Command("kubectl", args...))
+}
+
+// readyReason returns a Gomega-friendly getter for the Ready condition's reason,
+// which is where every Frame controller records what it did or why it could not.
+func readyReason(kind, name string) func(Gomega) string {
+	return func(g Gomega) string {
+		out, err := kubectlGet(g, kind, name, crNamespace,
+			`{.status.conditions[?(@.type=="Ready")].reason}`)
+		g.Expect(err).NotTo(HaveOccurred())
+		return out
+	}
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
