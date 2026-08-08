@@ -61,26 +61,64 @@ var _ = Describe("FrameNode Webhook", func() {
 	})
 
 	Context("When creating or updating FrameNode under Validating Webhook", func() {
-		// TODO (user): Add logic for validating webhooks
-		// Example:
-		// It("Should deny creation if a required field is missing", func() {
-		//     By("simulating an invalid creation scenario")
-		//     obj.SomeRequiredField = ""
-		//     Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
-		// })
-		//
-		// It("Should admit creation if all required fields are present", func() {
-		//     By("simulating an invalid creation scenario")
-		//     obj.SomeRequiredField = "valid_value"
-		//     Expect(validator.ValidateCreate(ctx, obj)).To(BeNil())
-		// })
-		//
-		// It("Should validate updates correctly", func() {
-		//     By("simulating a valid update scenario")
-		//     oldObj.SomeRequiredField = "updated_value"
-		//     obj.SomeRequiredField = "updated_value"
-		//     Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
-		// })
+		provisioned := func() framev1alpha1.FrameNodeSpec {
+			return framev1alpha1.FrameNodeSpec{
+				IP:   "192.168.10.10",
+				Disk: "/dev/nvme0n1",
+				Network: framev1alpha1.NetworkSpec{
+					Address: "192.168.10.10/24",
+					Gateway: "192.168.10.1",
+					DNS:     []string{"1.1.1.1"},
+				},
+			}
+		}
+
+		It("admits a discovery-phase node carrying nothing but an IP", func() {
+			// This is the wizard's first call: create the CR so the controller
+			// can reach the maintenance API and report the disks back. Rejecting
+			// it makes every later step unreachable.
+			obj.Spec = framev1alpha1.FrameNodeSpec{IP: "192.168.10.10"}
+			Expect(validator.ValidateCreate(ctx, obj)).To(BeNil())
+		})
+
+		It("rejects a node whose IP is not an IP, in either phase", func() {
+			obj.Spec = framev1alpha1.FrameNodeSpec{IP: "worker-01"}
+			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
+		})
+
+		It("still checks the shape of network detail given during discovery", func() {
+			obj.Spec = framev1alpha1.FrameNodeSpec{
+				IP:      "192.168.10.10",
+				Network: framev1alpha1.NetworkSpec{DNS: []string{"not-an-ip"}},
+			}
+			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
+		})
+
+		It("admits a fully provisioned node", func() {
+			obj.Spec = provisioned()
+			Expect(validator.ValidateCreate(ctx, obj)).To(BeNil())
+		})
+
+		DescribeTable("requires the network once a disk is chosen",
+			func(mutate func(*framev1alpha1.FrameNodeSpec)) {
+				spec := provisioned()
+				mutate(&spec)
+				obj.Spec = spec
+				Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
+			},
+			Entry("no address", func(s *framev1alpha1.FrameNodeSpec) { s.Network.Address = "" }),
+			Entry("no gateway", func(s *framev1alpha1.FrameNodeSpec) { s.Network.Gateway = "" }),
+			Entry("no DNS", func(s *framev1alpha1.FrameNodeSpec) { s.Network.DNS = nil }),
+		)
+
+		It("applies the same rule on update, so patching in a disk pulls the network in with it", func() {
+			oldObj.Spec = framev1alpha1.FrameNodeSpec{IP: "192.168.10.10"}
+			obj.Spec = framev1alpha1.FrameNodeSpec{IP: "192.168.10.10", Disk: "/dev/nvme0n1"}
+			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).Error().To(HaveOccurred())
+
+			obj.Spec = provisioned()
+			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
+		})
 	})
 
 })

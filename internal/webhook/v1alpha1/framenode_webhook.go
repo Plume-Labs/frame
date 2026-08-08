@@ -70,19 +70,33 @@ func validateFrameNode(fn *framev1alpha1.FrameNode) (admission.Warnings, error) 
 	if net.ParseIP(fn.Spec.IP) == nil {
 		return nil, fmt.Errorf("spec.ip %q is not a valid IP address", fn.Spec.IP)
 	}
-	if fn.Spec.Network.Address == "" {
-		return nil, fmt.Errorf("spec.network.address is required")
-	}
-	if fn.Spec.Network.Gateway == "" {
-		return nil, fmt.Errorf("spec.network.gateway is required")
-	}
-	if len(fn.Spec.Network.DNS) == 0 {
-		return nil, fmt.Errorf("spec.network.dns must have at least one entry")
-	}
+
+	// Whatever network detail is present must be well-formed, in either phase.
 	for _, dns := range fn.Spec.Network.DNS {
 		if net.ParseIP(dns) == nil {
 			return nil, fmt.Errorf("spec.network.dns entry %q is not a valid IP address", dns)
 		}
+	}
+
+	// A FrameNode is created with nothing but an IP so the controller can reach
+	// the machine's Talos maintenance API and report back the disks and NICs it
+	// found; the operator picks from those and patches the spec to provision.
+	// spec.disk is the gate the controller itself uses to tell the two phases
+	// apart, so the webhook uses the same one. Requiring a network before
+	// discovery had rejected that first create outright, which made the whole
+	// provisioning flow — and the wizard driving it — unreachable.
+	if fn.Spec.Disk == "" {
+		return nil, nil
+	}
+
+	if fn.Spec.Network.Address == "" {
+		return nil, fmt.Errorf("spec.network.address is required once spec.disk is set")
+	}
+	if fn.Spec.Network.Gateway == "" {
+		return nil, fmt.Errorf("spec.network.gateway is required once spec.disk is set")
+	}
+	if len(fn.Spec.Network.DNS) == 0 {
+		return nil, fmt.Errorf("spec.network.dns must have at least one entry once spec.disk is set")
 	}
 	return nil, nil
 }
