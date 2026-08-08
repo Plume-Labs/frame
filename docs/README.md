@@ -12,7 +12,7 @@ Engineering documentation for the Frame operator and control plane. For the prod
 | [crd-reference.md](crd-reference.md) | All six `frame.plume-labs.io/v1alpha1` CRDs — fields, controllers, webhooks |
 | [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
 | [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager |
-| [roadmap.md](roadmap.md) | Path from `v1alpha1` preview to stable V1 |
+| [roadmap.md](roadmap.md) | Path from `v1alpha1` preview to stable V1, plus the new API groups building alongside it |
 
 ## 30-second model
 
