@@ -2,17 +2,20 @@ package inference_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	"github.com/rmocq/frame/internal/services/provider/inference"
@@ -434,6 +437,75 @@ func TestReconcileDegradesWhenModelCacheMissing(t *testing.T) {
 	}
 	if len(deployments.Items) != 0 {
 		t.Fatalf("a Deployment was created despite the missing model cache: %v", deployments.Items)
+	}
+}
+
+// TestReconcileDegradesWhenModelCacheCheckFails pins the fix for this
+// branch's own Critical: any error other than NotFound while checking for
+// the model-cache PVC — Forbidden included — must degrade with its own named
+// reason instead of returning a bare error. A bare error takes
+// FrameServiceReconciler's error path, which never calls setStatus, so the
+// FrameService would be left with empty status forever: nothing for
+// `kubectl describe` to show, indistinguishable from a resource still being
+// admitted. Every other test in this file seeds the PVC the way a cluster
+// with correct RBAC would, so none of them would catch a regression here — a
+// refactor that quietly restored `return provider.Result{}, err` on this
+// branch would pass every one of them while silently reintroducing the bug.
+func TestReconcileDegradesWhenModelCacheCheckFails(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = servicesv1alpha1.AddToScheme(scheme)
+
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	// Only the PVC lookup is intercepted: everything else — the Deployment
+	// and Service CreateOrUpdate calls Reconcile would reach next, if this
+	// branch failed to stop it from getting there — goes through the real
+	// fake client unchanged.
+	apiReader := interceptor.NewClient(c, interceptor.Funcs{
+		Get: func(ctx context.Context, inner client.WithWatch, key types.NamespacedName, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*corev1.PersistentVolumeClaim); ok {
+				return apierrors.NewInternalError(errors.New("etcd unavailable"))
+			}
+			return inner.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	p := inference.New(7680, c, apiReader)
+	svc := &servicesv1alpha1.FrameService{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama", Namespace: "research"},
+		Spec: servicesv1alpha1.FrameServiceSpec{
+			Type:         "inference",
+			ServiceClass: "HIGH",
+			Parameters: map[string]string{
+				"model":         "llama-3.1-8b-instruct",
+				"contextLength": "8192",
+			},
+		},
+	}
+
+	result, err := p.Reconcile(context.Background(), svc)
+	if err != nil {
+		t.Fatalf("Reconcile returned an error %v, want a degraded Result instead", err)
+	}
+	if result.Ready {
+		t.Fatal("Ready = true despite the model-cache check failing")
+	}
+	if result.Reason != "ModelCacheCheckFailed" {
+		t.Fatalf("Reason = %q, want ModelCacheCheckFailed", result.Reason)
+	}
+	for _, want := range []string{defaultModelCachePVC, "research"} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("Message %q does not name %q", result.Message, want)
+		}
+	}
+
+	var deployments appsv1.DeploymentList
+	if err := c.List(context.Background(), &deployments); err != nil {
+		t.Fatalf("listing Deployments: %v", err)
+	}
+	if len(deployments.Items) != 0 {
+		t.Fatalf("a Deployment was created despite the model-cache check failing: %v", deployments.Items)
 	}
 }
 

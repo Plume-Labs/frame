@@ -190,6 +190,43 @@ var _ = Describe("FrameService Binding", func() {
 		}, "5s").Should(BeTrue())
 	})
 
+	It("removes the projected Secret from another namespace when the FrameService is deleted", func() {
+		// deleteAllProjections, exercised here through the real delete path,
+		// is the ONLY mechanism that ever removes a projected Secret: it
+		// carries no owner reference for Kubernetes garbage collection to
+		// act on (owner references do not cross namespaces), unlike the
+		// primary Secret beside the FrameService. AfterEach in this file
+		// nulls finalizers and deletes the FrameService directly, which
+		// bypasses reconcileDelete — and therefore deleteAllProjections —
+		// entirely; every other spec in this file that ends with a live
+		// FrameService relies on that shortcut, so none of them exercises
+		// this path. This spec deletes through the finalizer instead,
+		// specifically to prove the projected Secret is actually removed.
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+		updateProjectTo([]string{bindingProjectedNamespaceA})
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: name, Namespace: bindingProjectedNamespaceA}, &corev1.Secret{})).To(Succeed())
+
+		Expect(k8sClient.Delete(ctx, svc)).To(Succeed())
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx,
+				types.NamespacedName{Name: name, Namespace: bindingProjectedNamespaceA}, &corev1.Secret{}))
+		}, "5s").Should(BeTrue())
+
+		// reconcileDelete only releases the finalizer after
+		// deleteAllProjections succeeds, so the FrameService being gone here
+		// is itself evidence the projection cleanup ran rather than errored.
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+		}, "5s").Should(BeTrue())
+	})
+
 	It("degrades naming the namespace when projectTo lists one that does not exist", func() {
 		_, _ = r().Reconcile(ctx, req) // lands the finalizer
 		updateProjectTo([]string{"binding-namespace-does-not-exist"})

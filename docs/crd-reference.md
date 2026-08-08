@@ -207,12 +207,18 @@ internals), `observedGeneration`.
 
 **Controller:** dispatches to the registered provider for `spec.type`;
 generic reconcile drives create → status → delete through the `Provisioner`
-interface. Owns everything that *exposes* the instance (Service, credentials
-Secret, projected copies) via owner references, so those are garbage
-collected with the FrameService regardless of `deletionPolicy`. Data objects
-(a PVC, a delegating operator's CR) never carry that owner reference — that
-split is what lets `Retain` keep them. A finalizer holds the object open
-until the provider reports what it released.
+interface. Owns the Service and the credentials Secret in the FrameService's
+own namespace via owner references, so those are garbage collected with the
+FrameService regardless of `deletionPolicy`. A projected copy of the
+credentials Secret, in another namespace, cannot carry that owner reference —
+owner references do not cross namespaces — so its removal is handled
+explicitly by the controller's delete path instead, driven by
+`status.binding.projected`. Data objects (a PVC, a delegating operator's CR)
+also never carry an owner reference — that split is what lets `Retain` keep
+them. A finalizer holds the object open until the controller itself has
+removed the projected Secrets and, under `deletionPolicy: Delete`, deleted the
+objects listed in `status.provisioned`; `Provisioner` has no teardown hook, so
+the provider is not consulted at delete time at all.
 
 **Webhook:** validation only, no defaulting. Refuses an unknown `spec.type`,
 validates `spec.parameters` against that provider's schema, and runs the

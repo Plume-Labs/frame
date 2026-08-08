@@ -188,7 +188,17 @@ func (r *FrameServiceReconciler) setStatus(
 
 	fresh.Status.Phase = phase
 	fresh.Status.Binding = svc.Status.Binding
-	fresh.Status.Provisioned = provisioned
+	// Provisioned is sticky, the same way Sizing is below: it is the
+	// controller's only handle on data objects (see reconcileDelete's own
+	// comment), so a degrade that has nothing new to report — UnknownType,
+	// NotProvisionable, SizeRefused, or a provider degrade like the
+	// inference provider's ModelCacheMissing/ModelCacheCheckFailed, none of
+	// which touch what a previous successful Reconcile already created —
+	// must not erase what an earlier pass recorded. Only a caller that
+	// actually supplies a non-nil list overwrites it.
+	if provisioned != nil {
+		fresh.Status.Provisioned = provisioned
+	}
 	fresh.Status.ObservedGeneration = fresh.Generation
 	if sizing != nil {
 		fresh.Status.Sizing = servicesv1alpha1.Sizing{

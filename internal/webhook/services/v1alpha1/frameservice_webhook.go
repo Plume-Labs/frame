@@ -22,8 +22,10 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -31,6 +33,19 @@ import (
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	"github.com/rmocq/frame/internal/services/provider"
 )
+
+// inferenceAPIKeySecretSuffix mirrors the unexported apiKeySecretSuffix
+// constant in internal/services/provider/inference/inference.go, which names
+// the Secret that provider owns for its generated API key
+// (<FrameService name>-inference-key). Duplicated here, rather than
+// exported and imported, because this webhook is deliberately
+// provider-agnostic everywhere else — it dispatches through the registry by
+// spec.type and never imports a concrete provider package. This one check is
+// the sole exception: see the comment on apiKeySecretSuffix in inference.go
+// for why the collision is reachable and why it produces a confusing
+// BindingConflict message if left to happen at reconcile time instead of
+// being refused here.
+const inferenceAPIKeySecretSuffix = "-inference-key"
 
 // nolint:unused
 // log is for logging in this package.
@@ -101,6 +116,39 @@ func (v *FrameServiceCustomValidator) validate(svc *servicesv1alpha1.FrameServic
 	if slices.Contains(svc.Spec.Binding.ProjectTo, "") {
 		return fmt.Errorf("spec.binding.projectTo contains an empty namespace")
 	}
+
+	if name := svc.Spec.Binding.SecretName; name != "" {
+		// A Secret name must be a valid DNS-1123 subdomain — the same rule
+		// Kubernetes applies to the object itself. Left unvalidated, a name
+		// like "My_Secret" is admitted, and every write the controller then
+		// attempts against it fails identically on every reconcile: the
+		// instance error-loops with backoff while status keeps reporting the
+		// last-known-good phase and secretRef forever, actively lying rather
+		// than merely stalling. checkNamespaceExists in binding.go rejects
+		// spec.binding.projectTo entries the analogous way, with
+		// IsDNS1123Label; this is the same idea one level up, at admission.
+		if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+			return fmt.Errorf("spec.binding.secretName %q is not a valid Secret name: %s",
+				name, strings.Join(errs, "; "))
+		}
+
+		// This exact coordinate collides with the inference provider's own
+		// API-key Secret (see inferenceAPIKeySecretSuffix). Left unchecked,
+		// claimNewCoordinates in binding.go finds that Secret already sitting
+		// there, unrecorded in status.binding.projected, and permanently
+		// degrades the instance with BindingConflict — a message that claims
+		// the Secret "was not written by" this FrameService, when it was,
+		// just by a different Secret this same FrameService owns. Refusing
+		// it here, with its own reason, replaces that confusing message with
+		// one that names the actual cause.
+		if svc.Spec.Type == "inference" && name == svc.Name+inferenceAPIKeySecretSuffix {
+			return fmt.Errorf(
+				"spec.binding.secretName %q collides with the inference provider's own API-key Secret "+
+					"for this FrameService; choose a different name",
+				name)
+		}
+	}
+
 	return nil
 }
 
