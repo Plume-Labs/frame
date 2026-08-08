@@ -223,6 +223,25 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
+/**
+ * Poll on a fixed interval until stopped.
+ *
+ * For resources with nothing to watch — a Prometheus query, a DCGM/node-exporter
+ * scrape, or anything else read through `integrationProxy`. A metric is not a
+ * Kubernetes object, so the apiserver has no change stream for it; polling is
+ * the only option.
+ *
+ * Mirrors `watchPaths`' shape (a start call returning its own stop function) so
+ * `useLiveResource` can wire either one into the same "run a silent refresh"
+ * callback. Never fires immediately — the first call lands after the first
+ * full interval — so subscribing never causes a surprise extra refresh on top
+ * of the initial (non-silent) fetch a screen already did on mount.
+ */
+export function pollInterval(ms: number, onChange: () => void): () => void {
+  const timer = setInterval(onChange, ms)
+  return () => clearInterval(timer)
+}
+
 export class WatchError extends Error {
   constructor(
     readonly status: number,

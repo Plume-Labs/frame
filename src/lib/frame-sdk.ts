@@ -631,6 +631,17 @@ export function coreListPath(plural: string, ns?: string): string {
   return ns ? `/api/v1/namespaces/${ns}/${plural}` : `/api/v1/${plural}`
 }
 
+/**
+ * The list endpoint for a CRD outside Frame's own group — Argo Workflows,
+ * Volcano Queues, Rook-Ceph's CRs, Velero backups, trivy-operator reports —
+ * for callers that want to watch it. `frameListPath` covers `frame.plume-labs.io`
+ * itself; this is the same shape for everything else the SDK reads that isn't
+ * a Frame CRD or a core collection.
+ */
+export function crdListPath(group: string, version: string, plural: string, ns?: string): string {
+  return ns ? `/apis/${group}/${version}/namespaces/${ns}/${plural}` : `/apis/${group}/${version}/${plural}`
+}
+
 function toK8sName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
 }

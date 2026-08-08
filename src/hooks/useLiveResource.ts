@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { watchPaths } from '@/lib/k8s-watch'
+import { pollInterval, watchPaths } from '@/lib/k8s-watch'
 
 export type LiveState<T> =
   | { phase: 'loading' }
@@ -17,11 +17,21 @@ export type LiveState<T> =
  * shows as finished without anyone reloading the page. Those refreshes are
  * silent: the view keeps rendering the data it has rather than flashing its
  * loading skeleton on every event.
+ *
+ * Pass `pollMs` instead for a fetcher with nothing to watch — a Prometheus
+ * query, a DCGM/node-exporter scrape, or anything else read through
+ * `integrationProxy`. A metric is not a Kubernetes object, so the apiserver
+ * has no change stream for it. Polling refreshes the same silent way watching
+ * does. A resource should get one mechanism or the other, never both — pick
+ * `watch` when the fetcher reads real objects and `pollMs` when it reads a
+ * metric, and keep `pollMs` at 5000 or above (most screens want 30000+; only
+ * something that visibly changes second to second earns a faster rate).
  */
 export function useLiveResource<T>(
   fetcher: () => Promise<T>,
   deps: unknown[] = [],
   watch: string[] = [],
+  pollMs?: number,
 ): { state: LiveState<T>; reload: () => void } {
   const [state, setState] = useState<LiveState<T>>({ phase: 'loading' })
 
@@ -71,6 +81,11 @@ export function useLiveResource<T>(
     if (!watchKey) return
     return watchPaths(watchKey.split('|'), () => run(true))
   }, [watchKey, run])
+
+  useEffect(() => {
+    if (!pollMs) return
+    return pollInterval(pollMs, () => run(true))
+  }, [pollMs, run])
 
   return { state, reload }
 }
