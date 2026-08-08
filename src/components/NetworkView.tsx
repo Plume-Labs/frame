@@ -40,9 +40,13 @@ const IFACE_ROLE: Record<string, string> = {
 }
 
 export function NetworkView() {
-  const { state, reload } = useLiveResource<NetNode[]>(() => frame.cluster.network())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // node-exporter's own /metrics, not a Kubernetes object — nothing to watch.
+  const { state, reload } = useLiveResource<NetNode[]>(() => frame.cluster.network(), [], [], 30_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const nodes = state.phase === 'ready' ? state.data : []
   const trend = trendState.phase === 'ready' ? trendState.data : null
