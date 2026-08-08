@@ -21,10 +21,15 @@ Kubernetes `v1.Node`.
 
 **Spec:** `ip`, `role`, `network` (`address`, `gateway`, `dns[]`, optional
 `vlan`, `bond`), `disk`, `rack`, `zone`, `serviceClass`, optional
-`rdmaInterface`, `hostname`, `serverClassRef`.
+`rdmaInterface`, `hostname`. `network.address`, `network.gateway`, and at
+least one `network.dns` entry become required once `disk` is set (CEL),
+mirroring what the webhook already enforced.
 
-**Status:** `phase`, `conditions[]`, `talosVersion`, `kubeletVersion`,
-`lastHeartbeat`, `capacity`, `allocatable`, `nodeName`, `providerID`.
+**Status:** `phase`, `conditions[]`, `kubeletVersion`, `capacity`,
+`allocatable`, `nodeName`. `talosVersion`, `lastHeartbeat`, and `providerID`
+were removed pre-freeze: none had a writer or a reader anywhere in the
+controller, SDK, or UI (`serverClassRef` was already dead and documented as
+such before this cleanup, and is removed with the same evidence).
 
 **Controller:** finalizer-guarded; secondary-watches core `v1.Node` and maps it
 back to its FrameNode (`nodeToFrameNode`) to keep phase/versions in sync.
@@ -35,9 +40,18 @@ back to its FrameNode (`nodeToFrameNode`) to keep phase/versions in sync.
 
 A workload submitted to the cluster, realized as an Argo `Workflow`.
 
-**Spec:** `name`, `pipeline`, optional `serviceClass`, `priority`
+**Spec:** `pipeline`, optional `serviceClass`, `priority`
 (critical/high/medium/low), `namespace`, `gpuCount`, `parameters` (map),
-`suspended` (bool, default false).
+`suspended` (bool, default false). `spec.name` was removed pre-freeze: it
+was `Required` and pattern-validated, but no controller ever read it
+(`metadata.name` is used throughout) and the SDK's submit path never sent
+it. GPU jobs (`gpuCount > 0`) may not use `serviceClass: LOW` (CEL,
+mirroring the existing webhook check). `namespace` carries a DNS-1123 label
+pattern so a malformed value is refused at admission, but is deliberately
+*not* constrained to match this FrameJob's own namespace — the controller
+creates the backing Argo `Workflow` there with cluster-wide RBAC, and
+whether that cross-namespace reach should be narrowed is Phase B's
+RBAC-tier lock-down to decide, not this pre-freeze pass.
 
 **Status:** `phase` (Pending/Submitted/Running/Suspended/Completed/Failed),
 `conditions[]`, `argoWorkflowName`, `startTime`, `completionTime`, `message`.
@@ -61,10 +75,25 @@ A workload submitted to the cluster, realized as an Argo `Workflow`.
 Queue / priority configuration for the HPC scheduler.
 
 **Spec:** `scheduler` (volcano/yunikorn/…), optional `queueName`,
-`priorityClass`, `gangScheduling`, `preemption`, `priorityValue` (int32,
-default 0), `queueWeight` (int32, min 1, default 1).
+`priorityClass`, `preemption`, `priorityValue` (int32, default 0),
+`queueWeight` (int32, min 1, default 1). `queueName` and `priorityClass`
+carry a Kubernetes-object-name pattern (not an enum — they name objects
+created outside this CR). `preemption: true` requires `priorityClass` to be
+set (CEL, mirroring the existing webhook check).
+
+`gangScheduling` was removed pre-freeze: it was validated (required
+`queueName` alongside it) and shown in the UI, but no controller ever
+created a Volcano/YuniKorn `PodGroup` or set a `minMember` — setting it had
+zero cluster-side effect beyond the validation rule. Gang scheduling is
+unimplemented; see `docs/roadmap.md`'s V1 path, which records that it
+belongs on `FrameJob` (a property of the job being scheduled, not the
+policy) if someone builds it.
 
 **Status:** `conditions[]`.
+
+**Printer columns:** `Scheduler`, `Queue`, `Ready`, `Reason` (hidden by
+default, `-o wide`), `Age` — previously none; `kubectl get
+schedulingpolicy` showed only `NAME`/`AGE`.
 
 **Controller:**
 - Reconciles a cluster-scoped `PriorityClass` named by `spec.priorityClass`
@@ -88,9 +117,13 @@ Per-service-class resource ceiling. The controller projects it as a
 `frame.plume-labs.io/service-class` with the matching value.
 
 **Spec:** `serviceClass`, optional `maxGPUs`, `maxCPU` (Quantity),
-`maxMemory` (Quantity), `maxJobs`.
+`maxMemory` (Quantity), `maxJobs`. At least one of the four limits must be
+set (CEL, mirroring the existing webhook check).
 
 **Status:** `conditions[]`.
+
+**Printer columns:** `ServiceClass`, `Ready`, `Reason` (hidden by default,
+`-o wide`), `Age` — previously none.
 
 **Quota mapping:** `maxGPUs` → `requests.nvidia.com/gpu`, `maxCPU` →
 `limits.cpu`, `maxMemory` → `limits.memory`, `maxJobs` →
@@ -109,10 +142,25 @@ two resources authoritative for one number.
 Declarative Talos MachineConfig application to a node.
 
 **Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, and one of
-`configPatch` (inline YAML) or `configPatchRef` (ConfigMap key selector).
+`configPatch` (inline YAML) or `configPatchRef` (ConfigMap key selector) —
+exactly one must be set (CEL, mirroring the existing webhook check).
+`nodeName` carries a DNS-1123 subdomain pattern and `talosEndpoint` a
+`host:port` pattern, both pushed down from the webhook. `talosSecretRef` is
+a local `TalosSecretReference {name, namespace}` type — not
+`corev1.SecretReference` directly, because a kubebuilder marker can't be
+attached to a subfield of an external type, and the CEL equivalent for the
+namespace pattern exceeded the per-schema CEL cost budget (no declared
+`maxLength` for the estimator to bound the regex against). Its `namespace`
+carries a DNS-1123 label pattern but is deliberately *not* constrained to
+match this CR's own namespace, since the controller's Secret RBAC is
+cluster-wide already; narrowing that is Phase B's RBAC-tier lock-down to
+decide.
 
 **Status:** `conditions[]` (Ready=True reason `Applied`; False reasons:
 `PatchResolveFailed`, `ClientBuildFailed`, `ApplyFailed`).
+
+**Printer columns:** `NodeName`, `Ready`, `Reason` (hidden by default,
+`-o wide`), `Age` — previously none.
 
 **Controller:** reads TLS credentials from the referenced Secret (keys
 `ca`/`ca.crt`, `crt`/`tls.crt`, `key`/`tls.key`), resolves the patch,
@@ -125,11 +173,23 @@ with 30 s backoff on transient failures. Uses a finalizer for clean deletion.
 
 A Talos OS upgrade for a single node.
 
-**Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, `image`, optional
-`preserveData`.
+**Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, `image`. `nodeName`
+and `talosEndpoint` carry the same patterns as `TalosMachineConfig`;
+`talosSecretRef` is the same local `TalosSecretReference` type; `image`
+must include a tag (CEL, mirroring the existing webhook check).
+`preserveData` was removed pre-freeze: it defaulted to `true` but had no
+reader — the controller's `c.Upgrade(ctx, image, stage, force)` call is the
+deprecated Talos client method, whose signature has no wipe/preserve
+parameter at all to pass it to, so the field could not have been honored
+without first migrating that call to `LifecycleClient` (out of scope here;
+see the deferred-migration note already in
+`internal/controller/frame/talosupgrade_controller.go`).
 
 **Status:** `conditions[]` (Ready=True reasons: `UpgradeRequested`,
 `AlreadyAtVersion`; False reasons: `ClientBuildFailed`, `UpgradeFailed`).
+
+**Printer columns:** `NodeName`, `Image`, `Ready`, `Reason` (hidden by
+default, `-o wide`), `Age` — previously none.
 
 **Controller:** generation-based idempotency guard — only calls `Upgrade` gRPC
 when the `Ready` condition's `observedGeneration` differs from `.metadata.generation`,
