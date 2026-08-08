@@ -82,10 +82,21 @@ func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setCondition(ctx, &tu,
 			metav1.ConditionFalse, "ClientBuildFailed", err.Error())
 	}
-	defer c.Close() //nolint:errcheck
+	defer c.Close() //nolint:errcheck // upgrade already ran; a failed close of the Talos client isn't actionable
 
 	// stage=false: upgrade without staging; force=false: honour version guards.
-	_, err = c.Upgrade(ctx, tu.Spec.Image, false, false)
+	//
+	// c.Upgrade is deprecated in favour of LifecycleClient, but the swap is not
+	// mechanical: LifecycleClient is the raw generated gRPC stub
+	// (machineapi.LifecycleServiceClient), so migrating means hand-building the
+	// UpgradeRequest (image, reboot mode, stage, force) and reimplementing the
+	// response/error filtering that client.Client.Upgrade currently does via
+	// FilterMessages. isAlreadyAtVersion below depends on the exact error
+	// message shape that filtering produces; a naive migration could silently
+	// change that shape and break the idempotency guard above (which exists
+	// specifically to avoid re-triggering an upgrade while a node reboots).
+	// Deferring until that path is migrated deliberately and re-verified.
+	_, err = c.Upgrade(ctx, tu.Spec.Image, false, false) //nolint:staticcheck
 	if err != nil {
 		// Talos returns a "no upgrade required" error when already at the target version.
 		if isAlreadyAtVersion(err) {
