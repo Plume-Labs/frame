@@ -278,6 +278,17 @@ func (r *FrameServiceReconciler) checkNamespaceExists(ctx context.Context, ns st
 // earlier pass's successful reconcile for anything already in
 // status.binding.projected — so this function's only job is converging
 // content, never gating access.
+//
+// A CreateOrUpdate failure here degrades rather than returning a bare error,
+// for the same reason every other binding failure does (see the
+// bindingDegradation type): it is reported to Reconcile as an error, whose
+// only path is fmt.Errorf into controller-runtime's retry logging, and that
+// path never calls setStatus. An instance stuck here — for example because
+// spec.binding.secretName resolves to a name the apiserver refuses — would
+// error-loop with backoff while status kept reporting whatever phase and
+// secretRef it last reached, forever. Degrading instead makes the same
+// failure visible in status, exactly like a rejected namespace or a
+// conflicting Secret already is.
 func (r *FrameServiceReconciler) writeSecret(
 	ctx context.Context,
 	svc *servicesv1alpha1.FrameService,
@@ -297,7 +308,11 @@ func (r *FrameServiceReconciler) writeSecret(
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("reconciling Secret %s/%s: %w", coord.Namespace, coord.Name, err)
+		return &bindingDegradation{
+			Reason: "SecretWriteFailed",
+			Message: fmt.Sprintf(
+				"writing Secret %s/%s: %v", coord.Namespace, coord.Name, err),
+		}
 	}
 	return nil
 }

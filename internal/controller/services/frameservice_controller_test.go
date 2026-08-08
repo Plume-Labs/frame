@@ -83,6 +83,16 @@ var _ = Describe("FrameService Controller", func() {
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
+		// A spec that reaches Ready has reconcileBinding write a real
+		// credentials Secret at (ns, name) via the envtest apiserver, which
+		// runs no garbage-collector controller: nothing ever removes it on
+		// its own the way a real cluster's owner-reference GC would. Left
+		// uncleaned, it would outlive this spec and collide with the next
+		// one that reaches Ready under the same coordinate, exactly the way
+		// claimNewCoordinates is designed to catch a real foreign Secret —
+		// see binding_test.go's AfterEach, which cleans up for the same
+		// reason.
+		_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
 	})
 
 	r := func() *FrameServiceReconciler {
@@ -131,6 +141,35 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
 		Expect(svc.Status.Phase).To(Equal("Degraded"))
 		Expect(readyCondition(svc).Reason).To(Equal("OperatorMissing"))
+	})
+
+	It("keeps a previously recorded status.Provisioned when a later degrade reports none", func() {
+		provisioned := []servicesv1alpha1.ProvisionedRef{
+			{APIVersion: "apps/v1", Kind: "Deployment", Name: name, Namespace: ns},
+		}
+		fake.result = provider.Result{Ready: true, Reason: "Provisioned", Message: "Serving", Provisioned: provisioned}
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		Expect(svc.Status.Phase).To(Equal("Ready"))
+		Expect(svc.Status.Provisioned).To(Equal(provisioned))
+
+		// A later pass degrades without reporting any Provisioned at all —
+		// exactly what the inference provider's ModelCacheMissing and
+		// ModelCacheCheckFailed do. That must not erase the earlier record:
+		// it is the only handle reconcileDelete has on data objects under
+		// deletionPolicy: Delete, and erasing it here would silently make
+		// deletion delete nothing.
+		fake.result = provider.Result{Ready: false, Reason: "ModelCacheMissing", Message: "cache gone"}
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Reason).To(Equal("ModelCacheMissing"))
+		Expect(svc.Status.Provisioned).To(Equal(provisioned))
 	})
 
 	It("refuses to reconcile an unknown type, and says so in status", func() {

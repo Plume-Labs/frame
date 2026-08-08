@@ -242,9 +242,22 @@ Credentials land in a Secret in the FrameService's own namespace, named
 `spec.binding.projectTo` copies that Secret into other namespaces. It is opt-in
 and explicit: a service catalog that writes Secrets into namespaces nobody
 listed is a cross-tenant leak wearing a convenience feature's clothes. The
-controller only ever creates or updates Secrets it owns, tracked by owner
-reference and a `frame.plume-labs.io/owned-by` label, so it can never overwrite a
-Secret someone else created with the same name.
+controller only ever creates or updates Secrets it owns, and ownership is
+decided by `status.binding.projected` — the list of namespace/name coordinates
+the controller has itself recorded there — never by a label: a label is data,
+and anyone able to patch one onto an arbitrary Secret could otherwise make the
+controller overwrite or delete that Secret on their behalf by forging it. A
+coordinate not yet in that list is claimed only after confirming no Secret
+already exists there; a coordinate already recorded is trusted without
+re-checking the cluster. The primary Secret, in the FrameService's own
+namespace, additionally carries a controller owner reference, so garbage
+collection removes it the moment the FrameService is deleted; a projected copy
+cannot carry one — owner references do not cross namespaces — so its removal
+is handled explicitly instead, driven by that same recorded list. A
+`frame.plume-labs.io/owned-by` label is still written onto every Secret the
+controller creates, but purely so a human running `kubectl get secret
+--show-labels` can see which FrameService it belongs to; nothing ever reads it
+back to decide ownership.
 
 **The Secret has to hold something secret.** An inference instance's endpoint is
 already published in `status.binding.endpoint`, so a Secret carrying only that
@@ -265,15 +278,23 @@ envelope.
 `deletionPolicy: Retain` is the default. Deleting a FrameService removes what
 Frame created to *expose* the instance — Service, Secret, projected copies — and
 leaves the data behind: the PVC, and for a delegating provider the backing CR.
-`Delete` removes those too.
+`Delete` removes those too. The two exposing objects in the FrameService's own
+namespace go by owner-reference garbage collection; a projected copy of the
+Secret cannot carry one — owner references do not cross namespaces — so the
+controller removes it explicitly instead, from its own record of where it was
+written.
 
 Retain is the default because the failure modes are not symmetric. A retained
 volume costs disk and is visible in `kubectl get pvc`. A deleted one costs the
 data, silently, at the moment someone typed `kubectl delete` meaning to redeploy.
 The Zalando operator makes the same choice with its own delete protection.
 
-A finalizer holds the FrameService open until the provider has reported what it
-released, so status always explains what was kept.
+A finalizer holds the FrameService open until the controller itself has
+removed the projected Secrets and, under `deletionPolicy: Delete`, deleted
+every object listed in `status.provisioned`. The provider is not consulted at
+delete time at all — `Provisioner` has no teardown hook — so that status field,
+last written by the provider's final successful reconcile, is the only record
+of what exists to delete.
 
 ## Where this may force the core API to change
 
