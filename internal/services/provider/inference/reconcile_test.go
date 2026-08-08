@@ -213,6 +213,15 @@ func TestReconcileDoesNotFightApiserverDefaults(t *testing.T) {
 	d.Spec.Template.Spec.Containers[0].ImagePullPolicy = corev1.PullIfNotPresent
 	d.Spec.Template.Spec.Containers[0].TerminationMessagePath = "/dev/termination-log"
 	d.Spec.Template.Spec.Containers[0].TerminationMessagePolicy = corev1.TerminationMessageReadFile
+	// ContainerPort.Protocol defaults to TCP exactly like ServicePort.Protocol
+	// does — this is the field the previous fix round's version of this test
+	// never seeded, which is why a wholesale-replaced Ports slice one level
+	// inside the container shipped undetected.
+	d.Spec.Template.Spec.Containers[0].Ports[0].Protocol = corev1.ProtocolTCP
+	// Kubernetes defaults a missing Requests entry for an extended resource
+	// from its Limits entry when only Limits is set, so a real apiserver adds
+	// this key on its own; nothing in this provider ever writes it directly.
+	d.Spec.Template.Spec.Containers[0].Resources.Requests["nvidia.com/gpu"] = resource.MustParse("1")
 	if err := c.Update(ctx, &d); err != nil {
 		t.Fatalf("simulating apiserver defaults on the Deployment: %v", err)
 	}
@@ -243,6 +252,13 @@ func TestReconcileDoesNotFightApiserverDefaults(t *testing.T) {
 	}
 	if c2.TerminationMessagePolicy != corev1.TerminationMessageReadFile {
 		t.Fatalf("TerminationMessagePolicy = %q, want it to survive a second Reconcile", c2.TerminationMessagePolicy)
+	}
+	if c2.Ports[0].Protocol != corev1.ProtocolTCP {
+		t.Fatalf("ContainerPort.Protocol = %q, want it to survive a second Reconcile", c2.Ports[0].Protocol)
+	}
+	if c2.Resources.Requests["nvidia.com/gpu"] != resource.MustParse("1") {
+		t.Fatalf("Requests[nvidia.com/gpu] = %v, want the apiserver-defaulted value to survive a second Reconcile",
+			c2.Resources.Requests["nvidia.com/gpu"])
 	}
 
 	var s2 corev1.Service

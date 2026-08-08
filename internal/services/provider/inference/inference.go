@@ -235,16 +235,24 @@ func modelPath(model string) string {
 // of spec.deletionPolicy, which only ever governs data objects, and this
 // provider creates none.
 //
-// The mutate closures below set only the fields this provider owns and leave
-// everything else on the fetched object untouched. controller-runtime's
+// The mutate closures below, and the setContainer/setContainerPort/
+// setContainerResources/setModelCacheVolume/setServicePort helpers they call,
+// set only the fields this provider owns and leave everything else on the
+// fetched object untouched — down to individual slice entries and resource
+// map keys, not just the top-level Containers/Ports slices. controller-runtime's
 // CreateOrUpdate compares the object before and after the closure with
 // equality.Semantic.DeepEqual and issues an Update on any difference; a real
-// apiserver defaults fields these literals never set (ImagePullPolicy,
-// TerminationMessagePath/Policy on a container, Protocol on a Service port),
-// so replacing the whole Containers or Ports slice would make every
-// Reconcile see a diff, Update, and — because the controller Owns() both
-// kinds — re-trigger itself. Forever. A fake client does no such defaulting,
-// which is why that failure mode is invisible to a naive test.
+// apiserver defaults fields these literals never set on their own
+// (ImagePullPolicy, TerminationMessagePath/Policy on a container, Protocol on
+// both a container port and a Service port, and a Requests entry mirrored
+// from Limits for an extended resource like nvidia.com/gpu), so replacing any
+// of those wholesale — the whole Containers slice, or a Ports/Resources field
+// one level inside a single container — would make every Reconcile after the
+// first see a diff, Update, and, because the controller Owns() both kinds,
+// re-trigger itself. Forever. A fake client models none of that defaulting,
+// which is why this failure mode is invisible to a naive test and had to be
+// closed twice: first at the Containers-slice level, then again one level
+// down inside a single container's Ports and Resources.
 func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameService) (provider.Result, error) {
 	sizing, err := p.Size(svc.Spec.Parameters)
 	if err != nil {
@@ -291,39 +299,24 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 			serviceClassLabel: svc.Spec.ServiceClass,
 		}
 		setModelCacheVolume(&deployment.Spec.Template.Spec, cacheName)
-		setContainer(&deployment.Spec.Template.Spec, corev1.Container{
-			Name:  containerName,
-			Image: "ghcr.io/ggml-org/llama.cpp:server-cuda",
-			Args: []string{
-				"--host", "0.0.0.0",
-				"--port", strconv.Itoa(containerPort),
-				"-m", modelPath(svc.Spec.Parameters["model"]),
-				"-c", strconv.FormatInt(contextLength, 10),
-			},
-			Ports: []corev1.ContainerPort{{ContainerPort: containerPort}},
-			// Read-only: several instances can share one cache, and none of
-			// them should be able to corrupt it.
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: modelCacheVolumeName, MountPath: modelMountPath, ReadOnly: true},
-			},
-			// The GPU is requested as a resource, never as a nodeName, so the
-			// scheduler finds the card on its own and the same spec keeps
-			// working the day a second one arrives. CPU and memory come from
-			// Size rather than being recomputed here, so the resources a pod
-			// actually gets are the ones the operator's request was costed
-			// against.
-			Resources: corev1.ResourceRequirements{
-				Limits: corev1.ResourceList{
-					"nvidia.com/gpu":      resource.MustParse("1"),
-					corev1.ResourceCPU:    resource.MustParse(sizing.CPU),
-					corev1.ResourceMemory: resource.MustParse(sizing.Memory),
-				},
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse(sizing.CPU),
-					corev1.ResourceMemory: resource.MustParse(sizing.Memory),
-				},
-			},
-		})
+		// Read-only: several instances can share one cache, and none of them
+		// should be able to corrupt it.
+		mounts := []corev1.VolumeMount{
+			{Name: modelCacheVolumeName, MountPath: modelMountPath, ReadOnly: true},
+		}
+		args := []string{
+			"--host", "0.0.0.0",
+			"--port", strconv.Itoa(containerPort),
+			"-m", modelPath(svc.Spec.Parameters["model"]),
+			"-c", strconv.FormatInt(contextLength, 10),
+		}
+		// The GPU is requested as a resource, never as a nodeName, so the
+		// scheduler finds the card on its own and the same spec keeps working
+		// the day a second one arrives. CPU and memory come from Size rather
+		// than being recomputed here, so the resources a pod actually gets
+		// are the ones the operator's request was costed against.
+		setContainer(&deployment.Spec.Template.Spec, containerName,
+			"ghcr.io/ggml-org/llama.cpp:server-cuda", args, containerPort, mounts, sizing)
 		return controllerutil.SetControllerReference(svc, deployment, p.client.Scheme())
 	}); err != nil {
 		return provider.Result{}, fmt.Errorf("reconciling Deployment %s/%s: %w", svc.Namespace, svc.Name, err)
@@ -371,31 +364,103 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 	}, nil
 }
 
-// setContainer finds the container named c.Name inside spec and overwrites
-// only the fields this provider owns — Image, Args, Resources, Ports,
-// VolumeMounts — leaving anything the apiserver defaulted (ImagePullPolicy,
-// TerminationMessagePath, TerminationMessagePolicy, ...) exactly as fetched.
-// If no such container exists yet, it is appended; the apiserver then
-// defaults the remaining fields on Create, and the next Reconcile pass finds
-// this same container by name and preserves them.
-func setContainer(spec *corev1.PodSpec, c corev1.Container) {
+// setContainer finds the container named name inside spec and overwrites
+// only the fields this provider owns — Image, Args, VolumeMounts, plus the
+// port and resources handled below — leaving anything the apiserver
+// defaulted (ImagePullPolicy, TerminationMessagePath, TerminationMessagePolicy,
+// ...) exactly as fetched. If no such container exists yet, one is appended;
+// the apiserver then defaults the remaining fields on Create, and the next
+// Reconcile pass finds this same container by name and preserves them.
+//
+// VolumeMounts is assigned wholesale rather than merged entry-by-entry like
+// Ports and Resources below, but this is provably safe rather than merely
+// convenient: this provider ever mounts exactly one VolumeMount (the model
+// cache), VolumeMount has no apiserver-defaulted subfields (unlike
+// ContainerPort.Protocol or a Requests key), and the slice this provider
+// sets is byte-for-byte identical on every pass. There is nothing here for a
+// real apiserver to add that a wholesale replacement could then drop.
+func setContainer(spec *corev1.PodSpec, name, image string, args []string, port int32, mounts []corev1.VolumeMount, sizing provider.Sizing) {
 	for i := range spec.Containers {
-		if spec.Containers[i].Name != c.Name {
+		if spec.Containers[i].Name != name {
 			continue
 		}
-		spec.Containers[i].Image = c.Image
-		spec.Containers[i].Args = c.Args
-		spec.Containers[i].Resources = c.Resources
-		spec.Containers[i].Ports = c.Ports
-		spec.Containers[i].VolumeMounts = c.VolumeMounts
+		c := &spec.Containers[i]
+		c.Image = image
+		c.Args = args
+		c.VolumeMounts = mounts
+		setContainerPort(c, port)
+		setContainerResources(c, sizing)
 		return
 	}
+	c := corev1.Container{Name: name, Image: image, Args: args, VolumeMounts: mounts}
+	setContainerPort(&c, port)
+	setContainerResources(&c, sizing)
 	spec.Containers = append(spec.Containers, c)
 }
 
+// setContainerPort finds or appends a ContainerPort by its port number. This
+// provider sets nothing about a container port beyond the number itself, so
+// — mirroring setServicePort below — an existing entry is left untouched in
+// full, preserving whatever the apiserver defaulted (Protocol: TCP, the same
+// field setServicePort preserves on the Service side), and a new entry is
+// appended only when no entry with that port number exists yet.
+//
+// This exists because the previous fix for the update loop stopped
+// replacing the whole Containers slice and then replaced this one instead:
+// ContainerPort.Protocol defaults to TCP exactly like ServicePort.Protocol
+// does, and a rebuilt []corev1.ContainerPort{{ContainerPort: port}} literal
+// silently dropped it on every pass after the first.
+func setContainerPort(c *corev1.Container, port int32) {
+	for i := range c.Ports {
+		if c.Ports[i].ContainerPort == port {
+			return
+		}
+	}
+	c.Ports = append(c.Ports, corev1.ContainerPort{ContainerPort: port})
+}
+
+// setContainerResources sets only the resource keys this provider computes —
+// CPU and memory in both Limits and Requests, and the GPU in Limits — leaving
+// any other key already present untouched.
+//
+// This matters for the same reason setContainerPort does: Kubernetes
+// defaults a missing Requests entry for an extended resource (such as
+// nvidia.com/gpu) from its Limits entry when only Limits is set, so the
+// stored container ends up with requests["nvidia.com/gpu"] = "1" that this
+// provider never wrote. Wholesale-replacing ResourceRequirements — as the
+// original submission did — would drop that defaulted key on every pass
+// after the first, which is the identical failure shape as
+// ContainerPort.Protocol, just in a field the review's own test could not
+// see because the fake client does not model extended-resource defaulting
+// either.
+func setContainerResources(c *corev1.Container, sizing provider.Sizing) {
+	if c.Resources.Limits == nil {
+		c.Resources.Limits = corev1.ResourceList{}
+	}
+	if c.Resources.Requests == nil {
+		c.Resources.Requests = corev1.ResourceList{}
+	}
+	c.Resources.Limits["nvidia.com/gpu"] = resource.MustParse("1")
+	c.Resources.Limits[corev1.ResourceCPU] = resource.MustParse(sizing.CPU)
+	c.Resources.Limits[corev1.ResourceMemory] = resource.MustParse(sizing.Memory)
+	c.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(sizing.CPU)
+	c.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(sizing.Memory)
+}
+
 // setModelCacheVolume finds or appends the Volume backing the model cache
-// mount, addressing the existing entry in place for the same reason
-// setContainer does.
+// mount, addressing the existing entry in place by index for the same
+// reason setContainer does.
+//
+// Unlike setContainerPort and setContainerResources, this replaces the found
+// entry wholesale rather than merging field by field — deliberately, not
+// because it was missed. A Volume backed by PersistentVolumeClaim has
+// exactly two meaningful fields (ClaimName, ReadOnly), both fully owned and
+// set by this provider, and neither is a field Kubernetes' pod defaulting
+// ever populates when absent (unlike ContainerPort.Protocol or a Requests
+// key) — there is nothing here for a wholesale replacement to drop. It is
+// also the behavior actually wanted: if an operator changes
+// parameters.modelCache, the volume's ClaimName must change to match, which
+// leave-alone-if-present (the Port/Resources pattern) would not do.
 //
 // The PVC itself is a data object under the ownership contract on
 // Provisioner.Reconcile — it holds the instance's data (the cached weights)
