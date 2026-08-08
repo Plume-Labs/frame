@@ -46,7 +46,6 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
         queueWeight: 1,
         priority: Number(priority) || 0,
         preemption,
-        gangScheduling: false,
         maxGPUs: 0,
         maxCPUs: 0,
       })
@@ -164,7 +163,7 @@ export function FrameSchedulerView() {
         <CardContent>
           <p className="text-sm text-muted-foreground">
             Live <span className="font-mono">SchedulingPolicy</span> resources — scheduler backend,
-            queues and gang/preemption settings reconciled by the operator.
+            queues and preemption settings reconciled by the operator.
           </p>
         </CardContent>
       </Card>
@@ -201,9 +200,6 @@ export function FrameSchedulerView() {
             <CardContent className="flex flex-wrap gap-2 text-[10px] font-mono">
               <Badge variant="outline">weight {p.queueWeight}</Badge>
               <Badge variant="outline">priority {p.priority}</Badge>
-              <Badge variant="outline" className={p.gangScheduling ? 'text-accent' : 'text-muted-foreground'}>
-                gang {p.gangScheduling ? 'on' : 'off'}
-              </Badge>
               <Badge variant="outline" className={p.preemption ? 'text-warning' : 'text-muted-foreground'}>
                 preemption {p.preemption ? 'on' : 'off'}
               </Badge>

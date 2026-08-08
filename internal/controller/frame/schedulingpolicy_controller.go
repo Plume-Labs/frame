@@ -92,7 +92,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	patch := client.MergeFrom(sp.DeepCopy())
 	if len(errs) > 0 {
 		setCondition(&sp.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
+			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconcileError",
 			Message:            fmt.Sprintf("%v", errs),
@@ -100,7 +100,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		})
 	} else {
 		setCondition(&sp.Status.Conditions, metav1.Condition{
-			Type:               "Ready",
+			Type:               conditionTypeReady,
 			Status:             metav1.ConditionTrue,
 			Reason:             "Applied",
 			Message:            appliedMsg(&sp),
