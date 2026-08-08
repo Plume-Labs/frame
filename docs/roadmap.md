@@ -104,7 +104,7 @@ Declarative provisioning of service instances with a lifecycle and credential bi
 
 **This is the one new group that precedes the V1 freeze**, and it is sliced so that only its first part does:
 
-1. **The model + inference** — the instance/binding shape, and one type implemented against it. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze.
+1. **The model + inference** — the instance/binding shape, and one type implemented against it. Designed in [`docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`](superpowers/specs/2026-08-08-frame-service-catalog-design.md): one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze.
 2. **Database, queue, VM** — further types on a settled model. These do not gate anything. VM implies KubeVirt, which appears nowhere in the repo: greenfield, and the reason V1 must not wait for the full catalog.
 
 Note the hardware constraint on the inference type: the current GPU is a Pascal P4 (`sm_6.1`), which rules out vLLM and KubeAI. `deploy/caching/vllm-rdma-kvcache.yaml` exists but cannot run here. llama.cpp is the only viable backend until the hardware changes — the model must not assume otherwise.
