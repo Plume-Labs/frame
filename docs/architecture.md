@@ -27,8 +27,11 @@ Frame is three cooperating layers in one repo.
 │  └──────────────┘ └───────────────┘ └─────────────────┘ │
 │  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
 │  │FrameResource │ │TalosMachine   │ │  TalosUpgrade   │ │
-│  │    Quota     │ │    Config     │ │     FrameUser   │ │
+│  │    Quota     │ │    Config     │ │                 │ │
 │  └──────────────┘ └───────────────┘ └─────────────────┘ │
+│  ┌──────────────┐                                       │
+│  │  FrameUser   │                                       │
+│  └──────────────┘                                       │
 │                                                          │
 │  services.plume-labs.io/v1alpha1 CRDs (1)               │
 │  ┌──────────────┐                                       │
