@@ -354,6 +354,7 @@ package provider_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/rmocq/frame/internal/services/provider"
@@ -388,7 +389,7 @@ func TestRegistryRejectsAnUnknownType(t *testing.T) {
 	}
 	// The message has to name the alternatives: this error reaches an operator
 	// through kubectl, and "unknown type" alone tells them nothing.
-	if got := err.Error(); !contains(got, "inference") {
+	if got := err.Error(); !strings.Contains(got, "inference") {
 		t.Fatalf("error %q does not list the valid types", got)
 	}
 }
@@ -403,21 +404,6 @@ func TestRegistryListsItsTypesInOrder(t *testing.T) {
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("Types() = %v, want %v", got, want)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	return len(haystack) >= len(needle) &&
-		(haystack == needle || len(needle) == 0 ||
-			indexOf(haystack, needle) >= 0)
-}
-
-func indexOf(h, n string) int {
-	for i := 0; i+len(n) <= len(h); i++ {
-		if h[i:i+len(n)] == n {
-			return i
-		}
-	}
-	return -1
 }
 ```
 
@@ -1477,15 +1463,11 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("binding %s: %w", svc.Name, err)
 	}
-	secretName, err := r.reconcileBinding(ctx, &svc, binding)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconciling binding for %s: %w", svc.Name, err)
-	}
 
-	svc.Status.Binding = servicesv1alpha1.BindingStatus{
-		SecretRef: &corev1.LocalObjectReference{Name: secretName},
-		Endpoint:  binding.Endpoint,
-	}
+	// The endpoint is publishable on its own — it carries no credential. The
+	// Secret that carries the credentials is Task 8's, and status.binding.secretRef
+	// stays empty until then rather than naming an object that does not exist.
+	svc.Status.Binding = servicesv1alpha1.BindingStatus{Endpoint: binding.Endpoint}
 	frameServiceReady.Inc()
 	log.Info("Reconciled FrameService", "type", svc.Spec.Type, "endpoint", binding.Endpoint)
 	return ctrl.Result{}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
@@ -1493,7 +1475,9 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 }
 ```
 
-Write `setStatus` to patch status and set the `Ready` condition, `reconcileDelete` to honour `spec.deletionPolicy` and then remove the finalizer, and `SetupWithManager` to own `Deployment`, `Service` and `Secret`. `reconcileBinding` arrives in Task 8 — for now have it return the Secret name without creating anything, so this task's tests pass on their own.
+Write `setStatus` to patch status and set the `Ready` condition, `reconcileDelete` to honour `spec.deletionPolicy` and then remove the finalizer, and `SetupWithManager` to own `Deployment`, `Service` and `Secret`.
+
+This task publishes the endpoint and leaves `status.binding.secretRef` empty. Do not stub a binding function: an empty `secretRef` is honest about a Secret that does not exist yet, where a stub returning a name for a missing object is a lie the next reader has to discover. Task 8 fills it in.
 
 - [ ] **Step 5: Write the metrics**
 
@@ -1696,7 +1680,7 @@ the day a second one arrives."
 **Files:**
 - Create: `internal/controller/services/binding.go`
 - Test: `internal/controller/services/binding_test.go`
-- Modify: `internal/controller/services/frameservice_controller.go` (replace the Task 6 stub)
+- Modify: `internal/controller/services/frameservice_controller.go` (call `reconcileBinding` and fill in `status.binding.secretRef`, which Task 6 deliberately left empty)
 
 **Interfaces:**
 - Consumes: `provider.Binding` (Task 3).
@@ -1728,7 +1712,7 @@ Write each of these out in full against the envtest client, following the Task 6
 - [ ] **Step 2: Run it and watch it fail**
 
 Run: `make test`
-Expected: FAIL — `reconcileBinding` is still the stub.
+Expected: FAIL — `reconcileBinding` does not exist yet.
 
 - [ ] **Step 3: Implement**
 
