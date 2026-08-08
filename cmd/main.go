@@ -191,6 +191,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Built once and shared: the controller resolves spec.type through it on
+	// every reconcile, and the webhook (when enabled) validates admission
+	// against the same set, so the two can never disagree on what a valid
+	// type is.
+	serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB))
+
 	if err := (&controller.FrameNodeReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -282,15 +288,16 @@ func main() {
 		}
 	}
 	if err := (&servicescontroller.FrameServiceReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("services-frameservice"),
+		Registry: serviceRegistry,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "services-frameservice")
 		os.Exit(1)
 	}
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB))
 		if err := webhookservicesv1alpha1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
 			os.Exit(1)
