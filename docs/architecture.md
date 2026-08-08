@@ -21,7 +21,7 @@ Frame is three cooperating layers in one repo.
 ┌──────────────────────▼───────────────────────────────────┐
 │                  Kubernetes API Server                   │
 │                                                          │
-│  frame.plume-labs.io/v1alpha1 CRDs                      │
+│  frame.plume-labs.io/v1alpha1 CRDs (7)                  │
 │  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
 │  │  FrameJob    │ │  FrameNode    │ │SchedulingPolicy │ │
 │  └──────────────┘ └───────────────┘ └─────────────────┘ │
@@ -29,6 +29,14 @@ Frame is three cooperating layers in one repo.
 │  │FrameResource │ │TalosMachine   │ │  TalosUpgrade   │ │
 │  │    Quota     │ │    Config     │ │                 │ │
 │  └──────────────┘ └───────────────┘ └─────────────────┘ │
+│  ┌──────────────┐                                       │
+│  │  FrameUser   │                                       │
+│  └──────────────┘                                       │
+│                                                          │
+│  services.plume-labs.io/v1alpha1 CRDs (1)               │
+│  ┌──────────────┐                                       │
+│  │ FrameService │                                       │
+│  └──────────────┘                                       │
 └──────────────────────┬───────────────────────────────────┘
                        │  controller-runtime watches
 ┌──────────────────────▼───────────────────────────────────┐
@@ -40,8 +48,9 @@ Frame is three cooperating layers in one repo.
 │  TalosMachineConfig   → Talos gRPC ApplyConfiguration    │
 │  TalosUpgrade         → Talos gRPC Upgrade               │
 │  FrameResourceQuota   → namespace ResourceQuota          │
+│  FrameService         → per-type provider (llama.cpp …) │
 │                                                          │
-│  Webhooks: validation on 7 kinds, defaulting on 2        │
+│  Webhooks: validation on 8 kinds, defaulting on 2        │
 └──────────────────────┬───────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────┐
@@ -71,7 +80,7 @@ Frame is three cooperating layers in one repo.
 
 | Path | Role |
 |---|---|
-| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over six of the seven kinds. FrameUser is authd's and has no SDK surface. |
+| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over six of the eight kinds. FrameUser is authd's and has no SDK surface; FrameService has none yet. |
 | `src/components/` | React control surfaces (Jobs, Scheduler, Nodes, …) |
 | `src/hooks/` | Real-time update hooks |
 | `vite.config.ts` | Dev proxy: `/apis` → `localhost:8001` |
@@ -80,7 +89,7 @@ Frame is three cooperating layers in one repo.
 
 ## Layer 2 — Operator (`api/`, `internal/`, `cmd/`)
 
-**What it is:** a Kubebuilder v4 operator (group `frame.plume-labs.io`, version `v1alpha1`) that reconciles six of the seven CRDs into real cluster effects. FrameUser has no controller — nothing reconciles a user account.
+**What it is:** a Kubebuilder v4 operator, multi-group: `frame.plume-labs.io/v1alpha1` (seven CRDs) and `services.plume-labs.io/v1alpha1` (`FrameService`). It reconciles seven of the eight CRDs into real cluster effects. FrameUser has no controller — nothing reconciles a user account; every other CRD, including `FrameService`, does.
 
 **Entry point:** `cmd/main.go` — starts the controller-runtime manager, registers all controllers and webhooks, wires Prometheus metrics.
 
@@ -94,10 +103,11 @@ Frame is three cooperating layers in one repo.
 | `TalosMachineConfig` | Builds a Talos gRPC client from a referenced Secret; calls `ApplyConfiguration` with inline patch or ConfigMap ref |
 | `TalosUpgrade` | Calls Talos gRPC `Upgrade`; generation-based idempotency guard prevents re-trigger on unchanged spec |
 | `FrameResourceQuota` | Validates namespace quotas (webhooks); projection into `ResourceQuota` + scheduler limits in progress |
+| `FrameService` | Dispatches to a registered provider (`internal/services/provider/`) by `spec.type`; the `inference` provider creates a llama.cpp Deployment + Service, sized from `spec.parameters`, and a credentials Secret |
 
 All controllers follow the same pattern: add finalizer on create, reconcile desired → actual, sync `.status` + conditions, emit a Kubernetes Event, clean up on delete.
 
-**Webhooks** (`internal/webhook/v1alpha1/`): validation on all seven kinds; defaulting on FrameNode and FrameJob only. Cert-manager manages TLS; see `config/certmanager/`.
+**Webhooks** (`internal/webhook/frame/v1alpha1/` and `internal/webhook/services/v1alpha1/`): validation on all eight kinds; defaulting on FrameNode and FrameJob only. Cert-manager manages TLS; see `config/certmanager/`.
 
 ---
 

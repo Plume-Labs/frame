@@ -13,7 +13,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 )
 
 // challengeTTL bounds how long a ceremony may take. Long enough to find the

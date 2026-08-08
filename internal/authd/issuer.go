@@ -9,7 +9,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 )
 
 // keyID is stable because the apiserver caches the JWKS: a changing kid would

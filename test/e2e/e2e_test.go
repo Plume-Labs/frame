@@ -55,7 +55,7 @@ const e2ePriorityClass = "frame-e2e-high"
 // frameKinds is every Frame CRD, used to release finalizers before teardown.
 var frameKinds = []string{
 	"framejobs", "framenodes", "frameresourcequotas", "schedulingpolicies",
-	"talosmachineconfigs", "talosupgrades", "frameusers",
+	"talosmachineconfigs", "talosupgrades", "frameusers", "frameservices",
 }
 
 var _ = Describe("Manager", Ordered, func() {
@@ -671,6 +671,111 @@ spec:
 				"-p", `{"spec":{"role":"viewer"}}`))
 			Expect(err).To(HaveOccurred(), "The last admin must not be demotable")
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
+		})
+
+		It("provisions a FrameService through its inference provider", func() {
+			// The inference provider requires a PersistentVolumeClaim for model
+			// weights, named by parameters.modelCache and defaulting to
+			// model-cache-pvc, in the FrameService's own namespace. Absent that,
+			// the provider degrades with ModelCacheMissing and creates no
+			// Deployment at all — so it has to exist before the FrameService is
+			// created, not be waited for afterwards.
+			By("creating the model cache PVC the inference provider requires")
+			applyCR(fmt.Sprintf(`
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache-pvc
+  namespace: %s
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+`, crNamespace))
+
+			applyCR(fmt.Sprintf(`
+apiVersion: services.plume-labs.io/v1alpha1
+kind: FrameService
+metadata:
+  name: e2e-inference
+  namespace: %s
+spec:
+  type: inference
+  serviceClass: HIGH
+  parameters:
+    model: llama-3.1-8b-instruct
+    contextLength: "4096"
+`, crNamespace))
+
+			By("checking the Deployment was created and carries the GPU request")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "deployment", "e2e-inference", crNamespace,
+					`{.spec.template.spec.containers[0].resources.limits.nvidia\.com/gpu}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("1"))
+			}).Should(Succeed())
+
+			By("checking the Deployment is placed for the HIGH service class, not a named node")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "deployment", "e2e-inference", crNamespace,
+					`{.spec.template.spec.nodeSelector.frame\.plume-labs\.io/service-class}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("HIGH"))
+			}).Should(Succeed())
+
+			By("checking the provider's own API-key Secret exists")
+			// This is the Secret the inference provider creates for itself,
+			// separate from the controller's binding Secret (which is never
+			// written here — see below).
+			Eventually(func(g Gomega) {
+				_, err := kubectlGet(g, "secret", "e2e-inference-inference-key", crNamespace,
+					"{.metadata.name}")
+				g.Expect(err).NotTo(HaveOccurred())
+			}).Should(Succeed())
+
+			By("checking the status reports the sizing Frame computed")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "frameservice", "e2e-inference", crNamespace,
+					"{.status.sizing.gpu}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("1"))
+			}).Should(Succeed())
+
+			// The pod never becomes Ready in Kind: there is no GPU to satisfy
+			// the nvidia.com/gpu request and the llama.cpp image is never
+			// pulled, so the Deployment sits at 0/1 ready replicas forever and
+			// the FrameService reports Degraded/RolloutInProgress rather than
+			// Ready. That is asserted here as the expected, honest outcome —
+			// not worked around — because it is what Reconcile is documented to
+			// report from a rollout that has not finished. Because Ready is
+			// never reached, the controller never calls Bind, so
+			// status.binding.secretRef is deliberately never asserted: it stays
+			// empty for the same reason.
+			By("checking the status reports the rollout in progress, not a silent Pending")
+			Eventually(readyReason("frameservice", "e2e-inference")).Should(Equal("RolloutInProgress"))
+		})
+
+		It("refuses a FrameService that cannot fit the card", func() {
+			// The refusal is the feature: it happens at admission, so there is
+			// no object to inspect afterwards and no pod to crash-loop.
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: services.plume-labs.io/v1alpha1
+kind: FrameService
+metadata:
+  name: e2e-too-big
+  namespace: %s
+spec:
+  type: inference
+  parameters:
+    model: llama-3.1-8b-instruct
+    contextLength: "32768"
+`, crNamespace))
+			out, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "A service that cannot fit must be refused")
+			Expect(out).To(ContainSubstring("7680Mi"))
 		})
 	})
 })

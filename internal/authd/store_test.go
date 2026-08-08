@@ -9,7 +9,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1alpha1 "github.com/rmocq/frame/api/v1alpha1"
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 )
 
 func storeWith(t *testing.T, users ...*framev1alpha1.FrameUser) *Store {

@@ -6,6 +6,7 @@ cliVersion: 4.14.0
 domain: plume-labs.io
 layout:
 - go.kubebuilder.io/v4
+multigroup: true
 projectName: frame
 repo: github.com/rmocq/frame
 resources:
@@ -16,7 +17,7 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: FrameNode
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
   version: v1alpha1
   webhooks:
     defaulting: true
@@ -29,7 +30,7 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: FrameJob
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
   version: v1alpha1
   webhooks:
     defaulting: true
@@ -42,7 +43,7 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: SchedulingPolicy
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -54,7 +55,7 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: FrameResourceQuota
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -66,7 +67,7 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: TalosMachineConfig
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -78,7 +79,7 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: TalosUpgrade
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -86,11 +87,22 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
-  controller: false
   domain: plume-labs.io
   group: frame
   kind: FrameUser
-  path: github.com/rmocq/frame/api/v1alpha1
+  path: github.com/rmocq/frame/api/frame/v1alpha1
+  version: v1alpha1
+  webhooks:
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: plume-labs.io
+  group: services
+  kind: FrameService
+  path: github.com/rmocq/frame/api/services/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
