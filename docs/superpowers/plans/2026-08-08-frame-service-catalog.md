@@ -4,7 +4,7 @@
 
 **Goal:** Ship the service catalog's model plus its first type, so an operator can declare an inference server as a Kubernetes resource and a workload can mount its credentials.
 
-**Architecture:** One generic `FrameService` CRD in a new API group, `services.frame.plume-labs.io/v1alpha1`. One controller, which delegates to a Go `Provider` chosen by `spec.type`. Providers register a JSON Schema for their parameters — enforced by the validating webhook, not by the CRD — and a `Size` function that derives resource requests from those parameters. The inference provider owns its workload directly: a Deployment running llama.cpp, a Service, and a Secret.
+**Architecture:** One generic `FrameService` CRD in a new API group, `services.plume-labs.io/v1alpha1`. One controller, which delegates to a Go `Provider` chosen by `spec.type`. Providers register a JSON Schema for their parameters — enforced by the validating webhook, not by the CRD — and a `Size` function that derives resource requests from those parameters. The inference provider owns its workload directly: a Deployment running llama.cpp, a Service, and a Secret.
 
 **Tech Stack:** Go 1.26.1, Kubebuilder v4.14.0 (`/home/rmocq/bin/kubebuilder`), controller-runtime, Ginkgo v2 + Gomega with envtest, Kind for e2e, Prometheus client for metrics.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- API group: `services.frame.plume-labs.io`, version `v1alpha1`. Domain is `plume-labs.io`, project repo is `github.com/rmocq/frame`.
+- API group: `services.plume-labs.io`, version `v1alpha1`. Domain is `plume-labs.io`, project repo is `github.com/rmocq/frame`.
 - Never hand-edit `config/crd/bases/*`, `config/rbac/role.yaml`, `config/webhook/manifests.yaml`, `**/zz_generated.*.go`, or `PROJECT`. Regenerate with `make manifests generate`.
 - Never delete a `// +kubebuilder:scaffold:*` marker.
 - Scaffold with `kubebuilder create api` / `kubebuilder create webhook`, never by hand-creating the files.
@@ -149,7 +149,7 @@ git commit -m "refactor: move to the kubebuilder multi-group layout
 
 A second API group cannot live in api/v1alpha1: the package registers one
 GroupVersion with its SchemeBuilder, so two groups cannot both be registered
-from it. The service catalog needs services.frame.plume-labs.io, so the
+from it. The service catalog needs services.plume-labs.io, so the
 existing group moves under api/frame/ and the controllers and webhooks
 follow.
 
@@ -308,7 +308,7 @@ The scaffolded `Reconcile` returns `ctrl.Result{}, nil`. Leave it. Task 6 replac
 make manifests generate
 ```
 
-Run: `grep -c 'deletionPolicy\|serviceClass\|projectTo' config/crd/bases/services.frame.plume-labs.io_frameservices.yaml`
+Run: `grep -c 'deletionPolicy\|serviceClass\|projectTo' config/crd/bases/services.plume-labs.io_frameservices.yaml`
 Expected: at least 3 — the fields reached the schema.
 
 - [ ] **Step 5: Run the suite**
@@ -1380,7 +1380,7 @@ Expected: FAIL — `FrameServiceReconciler` has no `Registry` field and `frameSe
 Replace `internal/controller/services/frameservice_controller.go`'s reconcile:
 
 ```go
-const frameServiceFinalizer = "services.frame.plume-labs.io/finalizer"
+const frameServiceFinalizer = "services.plume-labs.io/finalizer"
 
 // degradedRequeue is how long a degraded instance waits before the controller
 // looks again. Long enough not to hammer a missing operator, short enough that
@@ -1394,9 +1394,9 @@ type FrameServiceReconciler struct {
 	Registry *provider.Registry
 }
 
-// +kubebuilder:rbac:groups=services.frame.plume-labs.io,resources=frameservices,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=services.frame.plume-labs.io,resources=frameservices/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=services.frame.plume-labs.io,resources=frameservices/finalizers,verbs=update
+// +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -1763,7 +1763,7 @@ Add to the `CRD reconciliation` context, following the pattern the six existing 
 ```go
 It("provisions a FrameService through its provider", func() {
 	applyCR(fmt.Sprintf(`
-apiVersion: services.frame.plume-labs.io/v1alpha1
+apiVersion: services.plume-labs.io/v1alpha1
 kind: FrameService
 metadata:
   name: e2e-inference
@@ -1796,7 +1796,7 @@ It("refuses a FrameService that cannot fit the card", func() {
 	// object to inspect afterwards and no pod to crash-loop.
 	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(fmt.Sprintf(`
-apiVersion: services.frame.plume-labs.io/v1alpha1
+apiVersion: services.plume-labs.io/v1alpha1
 kind: FrameService
 metadata:
   name: e2e-too-big

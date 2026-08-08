@@ -1,7 +1,7 @@
 # FrameService — the service catalog (S1, part 1)
 
 Status: design agreed, not yet implemented
-Group: `services.frame.plume-labs.io/v1alpha1`
+Group: `services.plume-labs.io/v1alpha1`
 Gates: Phase B (the `frame.plume-labs.io` API freeze)
 
 ## What this is
@@ -55,7 +55,7 @@ than accepted:
 ## API
 
 ```yaml
-apiVersion: services.frame.plume-labs.io/v1alpha1
+apiVersion: services.plume-labs.io/v1alpha1
 kind: FrameService
 metadata:
   name: llama-70b

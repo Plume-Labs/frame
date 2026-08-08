@@ -98,7 +98,7 @@ Four capabilities that Frame does not have. Each gets its own API group at `v1al
 
 Four of these requests share one shape — *declare a desired resource, a controller provisions it, a consumer binds to it*. Databases, queues, inference servers and VMs are not four projects; they are four types in one catalog.
 
-### S1 — Service catalog (`services.frame.plume-labs.io/v1alpha1`)
+### S1 — Service catalog (`services.plume-labs.io/v1alpha1`)
 
 Declarative provisioning of service instances with a lifecycle and credential binding: **inference, database, queue, VM**.
 
@@ -109,7 +109,7 @@ Declarative provisioning of service instances with a lifecycle and credential bi
 
 Note the hardware constraint on the inference type: the current GPU is a Pascal P4 (`sm_6.1`), which rules out vLLM and KubeAI. `deploy/caching/vllm-rdma-kvcache.yaml` exists but cannot run here. llama.cpp is the only viable backend until the hardware changes — the model must not assume otherwise.
 
-### S2 — SDN (`net.frame.plume-labs.io/v1alpha1`)
+### S2 — SDN (`net.plume-labs.io/v1alpha1`)
 
 `deploy/networking/` is static YAML — Cilium, Multus, SR-IOV, RDMA device plugin, PTP, DPDK — applied once, with no management surface. S2 turns segmentation, policies and network attachments into declared resources a controller reconciles.
 
