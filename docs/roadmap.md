@@ -1,6 +1,6 @@
 # Roadmap
 
-Frame is a **`v1alpha1` preview**: the operator reconciles seven CRDs with webhooks and envtest coverage, the IaC under `deploy/` provisions the cluster, and the UI talks directly to the Kubernetes CRD API.
+Frame is a **`v1alpha1` preview**: the operator reconciles eight CRDs across two API groups with webhooks and envtest coverage, the IaC under `deploy/` provisions the cluster, and the UI talks directly to the Kubernetes CRD API.
 
 Two things advance at once:
 
@@ -104,10 +104,18 @@ Declarative provisioning of service instances with a lifecycle and credential bi
 
 **This is the one new group that precedes the V1 freeze**, and it is sliced so that only its first part does:
 
-1. **The model + inference** — the instance/binding shape, and one type implemented against it. Designed in [`docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`](superpowers/specs/2026-08-08-frame-service-catalog-design.md): one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze.
+1. ✅ **Done. The model + inference** — the instance/binding shape, and one type implemented against it. Designed in [`docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`](superpowers/specs/2026-08-08-frame-service-catalog-design.md): one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze. See "What implementing S1 proved" below for the answers.
 2. **Database, queue, VM** — further types on a settled model. These do not gate anything. VM implies KubeVirt, which appears nowhere in the repo: greenfield, and the reason V1 must not wait for the full catalog.
 
 Note the hardware constraint on the inference type: the current GPU is a Pascal P4 (`sm_6.1`), which rules out vLLM and KubeAI. `deploy/caching/vllm-rdma-kvcache.yaml` exists but cannot run here. llama.cpp is the only viable backend until the hardware changes — the model must not assume otherwise.
+
+#### What implementing S1 proved about the core API
+
+The design spec posed three hypotheses under "Where this may force the core API to change," to be settled by implementing the inference type rather than guessed up front. Implementing it answered all three — two by evidence already in the code, one that stays open until FrameApplication itself is designed:
+
+- **FrameResourceQuota — turned out not to matter.** No change was made to `FrameResourceQuota`'s API or controller in this branch. `maxGPUs` maps straight to a Kubernetes `ResourceQuota`'s `requests.nvidia.com/gpu` hard limit (`internal/controller/frame/frameresourcequota_controller.go`), and that primitive already meters *currently outstanding* requests for as long as a pod holds them — it does not distinguish a job that ends from an instance that does not. A `FrameService`'s inference pod consumes exactly one accounting slot in its namespace's quota, the same as any other pod, for exactly as long as it runs. The aggregate ceiling the spec worried about was already the right ceiling; nothing new to fold in.
+- **SchedulingPolicy — turned out to matter, and Phase B has to fold it in.** The `inference` provider's Deployment sets no `PriorityClassName` at all (`internal/services/provider/inference/inference.go`), so its pod runs at the Kubernetes default priority (0) — the lowest value in the cluster. `FrameJob`, by contrast, explicitly maps `spec.priority` to a Frame-managed `PriorityClass` (`frame-{priority}`, values 1000–1000000: `internal/controller/frame/framejob_controller.go`, `deploy/kubernetes/scheduling/priority-classes.yaml`). On the single-GPU node, that makes today's long-lived inference instance the single most preemptible workload in the cluster — evictable by even a `low`-priority batch job. Phase B must add a `serviceClass` → `PriorityClass` mapping for `FrameService` (the same shape `FrameJob` already has for `priority`), or the first real instance this catalog provisions is one `kubectl apply` of a training job away from being killed.
+- **FrameApplication (S4) — settled as "reference," pending S4 itself.** `status.binding` (`api/services/v1alpha1/frameservice_types.go`) already publishes exactly a reference shape: `secretRef` (a same-namespace `LocalObjectReference`, name only) plus a credential-free `endpoint`, and `spec.binding.projectTo` lets the owning `FrameService` push a copy of its credentials `Secret` into a consumer's namespace on request. That is the surface S4 binds to: a `FrameApplication` names a `FrameService` and reads its `status.binding`, requesting a projection into its own namespace rather than needing a selector or a claim object. No envelope field had to change to make this workable, and nothing in the inference type argued for a claim or label-selector model instead — S4 can consume what already exists.
 
 ### S2 — SDN (`net.plume-labs.io/v1alpha1`)
 
