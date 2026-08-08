@@ -140,11 +140,12 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// The endpoint carries no credential and was already publishable on its
-	// own; secretRef now names the Secret reconcileBinding just wrote.
-	svc.Status.Binding = servicesv1alpha1.BindingStatus{
-		Endpoint:  binding.Endpoint,
-		SecretRef: &corev1.LocalObjectReference{Name: secretRefName},
-	}
+	// own; secretRef now names the Secret reconcileBinding just wrote. Fields
+	// are set individually, not by replacing svc.Status.Binding wholesale:
+	// reconcileBinding already recorded status.binding.projected on this same
+	// svc, and a fresh struct literal here would silently drop it.
+	svc.Status.Binding.Endpoint = binding.Endpoint
+	svc.Status.Binding.SecretRef = &corev1.LocalObjectReference{Name: secretRefName}
 	frameServiceReady.Inc()
 	log.Info("Reconciled FrameService", "type", svc.Spec.Type, "endpoint", binding.Endpoint)
 	return ctrl.Result{}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
@@ -216,17 +217,18 @@ func (r *FrameServiceReconciler) setStatus(
 //
 // A projected credentials Secret is exposure, not data, so it is removed
 // unconditionally above, under neither branch of deletionPolicy: owner
-// references do not cross namespaces, so pruneProjections — passed a nil
-// keep set, meaning "keep none of them" — is the only thing that will ever
-// remove it. Leaving that to deletionPolicy: Retain would silently leave
+// references do not cross namespaces, so deleteAllProjections — driven by
+// status.binding.projected, the controller's own record of what it wrote,
+// never by asking the cluster who owns what — is the only thing that will
+// ever remove it. Leaving that to deletionPolicy: Retain would silently leave
 // credentials behind in every namespace the FrameService had projected into.
 //
 // Either way the finalizer clears last, so a crash mid-teardown leaves the
 // object undeleted — and retried — rather than orphaning a data object with
 // nothing left tracking it.
 func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1alpha1.FrameService) (ctrl.Result, error) {
-	if err := r.pruneProjections(ctx, svc, nil); err != nil {
-		return ctrl.Result{}, fmt.Errorf("pruning projected Secrets for %s/%s: %w", svc.Namespace, svc.Name, err)
+	if err := r.deleteAllProjections(ctx, svc); err != nil {
+		return ctrl.Result{}, fmt.Errorf("deleting projected Secrets for %s/%s: %w", svc.Namespace, svc.Name, err)
 	}
 
 	if svc.Spec.DeletionPolicy == "Delete" {

@@ -117,6 +117,30 @@ spec:
                     description: Endpoint is what a consumer connects to. Never contains
                       credentials.
                     type: string
+                  projected:
+                    description: |-
+                      Projected records every Secret coordinate this controller has actually
+                      written: the primary Secret beside the FrameService and every copy
+                      spec.binding.projectTo asked for. It is the sole record the controller
+                      consults to decide what it may write to and what it must delete when a
+                      namespace leaves projectTo or secretName changes — never a label on the
+                      Secret itself, which is data anyone with patch rights on Secrets can
+                      set. See the comment on reconcileBinding in
+                      internal/controller/services/binding.go for why that distinction is
+                      load-bearing.
+                    items:
+                      description: ProjectedSecretRef names one Secret coordinate
+                        this controller has written.
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
+                    type: array
                   secretRef:
                     description: |-
                       LocalObjectReference contains enough information to let you locate the

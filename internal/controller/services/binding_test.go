@@ -201,4 +201,134 @@ var _ = Describe("FrameService Binding", func() {
 		Expect(svc.Status.Phase).To(Equal("Degraded"))
 		Expect(readyCondition(svc).Reason).To(Equal("ProjectedNamespaceMissing"))
 	})
+
+	It("degrades naming the entry when projectTo lists a syntactically invalid namespace name", func() {
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+		updateProjectTo([]string{"Not_A_Valid_Namespace!"})
+
+		// A syntactically invalid name is rejected by client-go itself before
+		// the request ever reaches the apiserver, as a plain error carrying
+		// none of the apierrors sentinels a NotFound check would catch. Left
+		// unhandled, that used to fall through to a hard reconcile error —
+		// retried forever, even though no amount of retrying could ever make
+		// "Not_A_Valid_Namespace!" become a real namespace.
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Reason).To(Equal("ProjectedNamespaceInvalid"))
+	})
+
+	It("leaves a forged-label Secret alone when its namespace was never in projectTo", func() {
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Planted directly, with no controller involvement, in a namespace
+		// this FrameService never listed in projectTo — carrying a label that
+		// claims ownership this FrameService never granted through its own
+		// status. Under the old label-trusting design, the cluster-wide
+		// List(MatchingLabels{...}) in pruneProjections would have picked
+		// this up on the very next reconcile and deleted it: a label is data
+		// anyone with patch rights on Secrets can set, and using it to decide
+		// what Frame's cluster-wide delete privilege acts on is a confused
+		// deputy.
+		forged := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: bindingProjectedNamespaceB,
+				Labels:    map[string]string{ownedByLabel: ns + "." + name},
+			},
+			Data: map[string][]byte{"planted": []byte("not-yours-to-delete")},
+		}
+		Expect(k8sClient.Create(ctx, forged)).To(Succeed())
+
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var stillThere corev1.Secret
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: name, Namespace: bindingProjectedNamespaceB}, &stillThere)).To(Succeed())
+		Expect(stillThere.Data).To(Equal(forged.Data))
+	})
+
+	It("degrades instead of overwriting a forged-label Secret sitting at a listed projectTo coordinate", func() {
+		// Planted before the FrameService ever reconciles with this
+		// projectTo entry, so the coordinate is genuinely new to it — the
+		// only case where ownership is ever decided rather than trusted from
+		// a prior recorded pass. Carries a forged label matching what this
+		// FrameService would itself write, so the old label-based check would
+		// have read it as already-owned and overwritten its Data with the
+		// real credential instead of raising a conflict.
+		forged := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: bindingProjectedNamespaceA,
+				Labels:    map[string]string{ownedByLabel: ns + "." + name},
+			},
+			Data: map[string][]byte{"planted": []byte("not-yours-to-overwrite")},
+		}
+		Expect(k8sClient.Create(ctx, forged)).To(Succeed())
+
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+		updateProjectTo([]string{bindingProjectedNamespaceA})
+
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Reason).To(Equal("BindingConflict"))
+
+		var untouched corev1.Secret
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: name, Namespace: bindingProjectedNamespaceA}, &untouched)).To(Succeed())
+		Expect(untouched.Data).To(Equal(forged.Data))
+	})
+
+	It("orphans nothing when spec.binding.secretName is renamed on a live service", func() {
+		const renamed = "binding-svc-renamed"
+
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+		updateProjectTo([]string{bindingProjectedNamespaceA})
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The original name exists in both the service's own namespace and
+		// the projected one before the rename.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, &corev1.Secret{})).To(Succeed())
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: name, Namespace: bindingProjectedNamespaceA}, &corev1.Secret{})).To(Succeed())
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		svc.Spec.Binding.SecretName = renamed
+		Expect(k8sClient.Update(ctx, svc)).To(Succeed())
+
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The new name exists at both coordinates.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: renamed, Namespace: ns}, &corev1.Secret{})).To(Succeed())
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: renamed, Namespace: bindingProjectedNamespaceA}, &corev1.Secret{})).To(Succeed())
+
+		// The old name is gone from both — otherwise a rename would leave a
+		// second, unrecorded copy of the same credential behind for the rest
+		// of the instance's life, invisible to anyone auditing via
+		// status.binding.secretRef.
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, &corev1.Secret{}))
+		}, "5s").Should(BeTrue())
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx,
+				types.NamespacedName{Name: name, Namespace: bindingProjectedNamespaceA}, &corev1.Secret{}))
+		}, "5s").Should(BeTrue())
+
+		// AfterEach only knows to clean up the original name; delete the
+		// renamed copies directly so they don't leak into the next spec.
+		_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: renamed, Namespace: ns}})
+		_ = k8sClient.Delete(ctx,
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: renamed, Namespace: bindingProjectedNamespaceA}})
+	})
 })
