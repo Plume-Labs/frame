@@ -31,9 +31,15 @@ const TEMP_GOOD_C = 75
 const TEMP_OK_C = 85
 
 export function GpuView() {
-  const { state, reload } = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // DCGM's own /metrics, not a Kubernetes object — nothing to watch. A GPU
+  // utilisation/temp/power gauge is exactly the kind of reading that moves
+  // second to second, so it gets the fast end of the polling range.
+  const { state, reload } = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus(), [], [], 10_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const gpus = state.phase === 'ready' ? state.data : []
   const trend = trendState.phase === 'ready' ? trendState.data : null

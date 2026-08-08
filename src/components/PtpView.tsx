@@ -28,9 +28,14 @@ const OFFSET_GOOD_S = 100e-6
 const OFFSET_OK_S = 1e-3
 
 export function PtpView() {
-  const { state, reload } = useLiveResource<PtpNode[]>(() => frame.cluster.ptp())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // Both read node-exporter/Prometheus metrics, not Kubernetes objects — there
+  // is nothing to watch. Clock offset drifts over minutes, not seconds.
+  const { state, reload } = useLiveResource<PtpNode[]>(() => frame.cluster.ptp(), [], [], 30_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const nodes = state.phase === 'ready' ? state.data : []
   const trend = trendState.phase === 'ready' ? trendState.data : null

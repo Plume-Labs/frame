@@ -23,9 +23,15 @@ const TREND_QUERIES = [
 ]
 
 export function InferenceView() {
-  const { state, reload } = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // llama.cpp's own /metrics, not a Kubernetes object — nothing to watch.
+  // Decode rate and KV depth move within a single generation, so this wants a
+  // faster read than the slower node-level gauges elsewhere.
+  const { state, reload } = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const inf = state.phase === 'ready' ? state.data : null
   const trend = trendState.phase === 'ready' ? trendState.data : null
