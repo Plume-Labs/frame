@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the frame itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- services_frameservice_admin_role.yaml
+- services_frameservice_editor_role.yaml
+- services_frameservice_viewer_role.yaml
 - talosupgrade_admin_role.yaml
 - talosupgrade_editor_role.yaml
 - talosupgrade_viewer_role.yaml

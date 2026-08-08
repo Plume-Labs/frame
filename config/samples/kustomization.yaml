@@ -7,4 +7,5 @@ resources:
 - frame_v1alpha1_talosmachineconfig.yaml
 - frame_v1alpha1_talosupgrade.yaml
 - frame_v1alpha1_frameuser.yaml
+- services_v1alpha1_frameservice.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

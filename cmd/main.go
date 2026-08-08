@@ -36,7 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	controller "github.com/rmocq/frame/internal/controller/frame"
+	servicescontroller "github.com/rmocq/frame/internal/controller/services"
 	webhookv1alpha1 "github.com/rmocq/frame/internal/webhook/frame/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -52,6 +54,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(framev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(servicesv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -270,6 +273,13 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosUpgrade")
 			os.Exit(1)
 		}
+	}
+	if err := (&servicescontroller.FrameServiceReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "services-frameservice")
+		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 
