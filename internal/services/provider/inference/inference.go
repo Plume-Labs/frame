@@ -17,8 +17,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -43,6 +45,28 @@ const (
 	// requested class without this package ever naming a node: Frame decides
 	// placement, not the provider.
 	serviceClassLabel = "frame.plume-labs.io/service-class"
+	// containerName identifies llama.cpp's container within the pod, so
+	// Reconcile can find and update it in place on every pass rather than
+	// replacing the whole Containers slice — see the comment on Reconcile.
+	containerName = "llama-cpp"
+	// modelCacheVolumeName is the Volume/VolumeMount name for the shared
+	// model cache, distinct from any name an operator might reuse elsewhere
+	// in a future container spec.
+	modelCacheVolumeName = "model-cache"
+	// modelMountPath is where the cache is mounted, and where modelPath looks
+	// for the weights.
+	modelMountPath = "/models"
+	// defaultModelCache is the PersistentVolumeClaim this provider mounts
+	// when spec.parameters.modelCache is unset. It is the same cache
+	// deploy/jobs/speculative-decoding.yaml and deploy/jobs/pipeline-parallelism.yaml
+	// already mount for their own inference workloads — this provider does
+	// not create storage, it shares what the cluster already provisions.
+	defaultModelCache = "model-cache-pvc"
+	// desiredReplicas is how many pods this provider ever asks for. A
+	// constant, not spec.replicas, because nothing in the spec asks for more
+	// than one instance; Reconcile and the readiness check both reference it
+	// so they can never disagree about what "ready" means.
+	desiredReplicas = 1
 )
 
 // Provider serves models with llama.cpp.
@@ -85,6 +109,13 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 						"GPU: an oversized window is refused here rather than exhausting the KV "+
 						"cache at runtime.", defaultContextLength),
 				Pattern: `^[0-9]+$`,
+			},
+			"modelCache": {
+				Type: "string",
+				Description: fmt.Sprintf(
+					"Name of the PersistentVolumeClaim, already present in this namespace, that "+
+						"holds cached GGUF weights. Defaults to %q. This provider mounts it "+
+						"read-only rather than creating or populating it.", defaultModelCache),
 			},
 		},
 	}
@@ -181,20 +212,19 @@ func resolveContextLength(params map[string]string) (int64, error) {
 	return ctx, nil
 }
 
+// resolveModelCache names the PersistentVolumeClaim Reconcile mounts,
+// defaulting when spec.parameters.modelCache is unset.
+func resolveModelCache(params map[string]string) string {
+	if name, set := params["modelCache"]; set && name != "" {
+		return name
+	}
+	return defaultModelCache
+}
+
 // modelPath is where llama.cpp is told to find the weights inside the
-// container.
-//
-// NOTE: nothing in this package, or in the plan this provider was built
-// against, arranges for the file to actually be there — there is no volume,
-// no init container, and no download step wired up. This path is a
-// placeholder naming convention only; a pod scheduled from today's Deployment
-// will crash-loop looking for it. Getting the weights onto the node (a
-// pre-populated PVC, an init container pulling from a model registry, a
-// hostPath, ...) is a real design decision — it decides whether the object
-// holding them counts as "data" under the ownership contract in provider.go —
-// and is left for a follow-up task rather than guessed here.
+// container: on the model cache volume, mounted at modelMountPath.
 func modelPath(model string) string {
-	return fmt.Sprintf("/models/%s.gguf", model)
+	return fmt.Sprintf("%s/%s.gguf", modelMountPath, model)
 }
 
 // Reconcile creates or converges the Deployment and Service a FrameService
@@ -204,6 +234,17 @@ func modelPath(model string) string {
 // Reconcile: deleting the FrameService must garbage-collect them regardless
 // of spec.deletionPolicy, which only ever governs data objects, and this
 // provider creates none.
+//
+// The mutate closures below set only the fields this provider owns and leave
+// everything else on the fetched object untouched. controller-runtime's
+// CreateOrUpdate compares the object before and after the closure with
+// equality.Semantic.DeepEqual and issues an Update on any difference; a real
+// apiserver defaults fields these literals never set (ImagePullPolicy,
+// TerminationMessagePath/Policy on a container, Protocol on a Service port),
+// so replacing the whole Containers or Ports slice would make every
+// Reconcile see a diff, Update, and — because the controller Owns() both
+// kinds — re-trigger itself. Forever. A fake client does no such defaulting,
+// which is why that failure mode is invisible to a naive test.
 func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameService) (provider.Result, error) {
 	sizing, err := p.Size(svc.Spec.Parameters)
 	if err != nil {
@@ -214,13 +255,32 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		return provider.Result{}, err
 	}
 
+	cacheName := resolveModelCache(svc.Spec.Parameters)
+	var pvc corev1.PersistentVolumeClaim
+	if err := p.client.Get(ctx, types.NamespacedName{Name: cacheName, Namespace: svc.Namespace}, &pvc); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Not provisioning anything is the point: an operator reads why
+			// nothing started here, instead of finding a pod stuck failing to
+			// mount a volume that was never going to appear.
+			return provider.Result{
+				Ready:  false,
+				Reason: "ModelCacheMissing",
+				Message: fmt.Sprintf(
+					"PersistentVolumeClaim %q not found in namespace %q: create the model cache "+
+						"(or set parameters.modelCache to an existing one) before this instance can start",
+					cacheName, svc.Namespace),
+			}, nil
+		}
+		return provider.Result{}, fmt.Errorf("checking model cache PVC %s/%s: %w", svc.Namespace, cacheName, err)
+	}
+
 	labels := map[string]string{"app": svc.Name}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: svc.Name, Namespace: svc.Namespace},
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, p.client, deployment, func() error {
-		replicas := int32(1)
+		replicas := int32(desiredReplicas)
 		deployment.Spec.Replicas = &replicas
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		deployment.Spec.Template.Labels = labels
@@ -230,8 +290,9 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
 			serviceClassLabel: svc.Spec.ServiceClass,
 		}
-		deployment.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:  "llama-cpp",
+		setModelCacheVolume(&deployment.Spec.Template.Spec, cacheName)
+		setContainer(&deployment.Spec.Template.Spec, corev1.Container{
+			Name:  containerName,
 			Image: "ghcr.io/ggml-org/llama.cpp:server-cuda",
 			Args: []string{
 				"--host", "0.0.0.0",
@@ -240,6 +301,11 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 				"-c", strconv.FormatInt(contextLength, 10),
 			},
 			Ports: []corev1.ContainerPort{{ContainerPort: containerPort}},
+			// Read-only: several instances can share one cache, and none of
+			// them should be able to corrupt it.
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: modelCacheVolumeName, MountPath: modelMountPath, ReadOnly: true},
+			},
 			// The GPU is requested as a resource, never as a nodeName, so the
 			// scheduler finds the card on its own and the same spec keeps
 			// working the day a second one arrives. CPU and memory come from
@@ -257,7 +323,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 					corev1.ResourceMemory: resource.MustParse(sizing.Memory),
 				},
 			},
-		}}
+		})
 		return controllerutil.SetControllerReference(svc, deployment, p.client.Scheme())
 	}); err != nil {
 		return provider.Result{}, fmt.Errorf("reconciling Deployment %s/%s: %w", svc.Namespace, svc.Name, err)
@@ -268,24 +334,107 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, p.client, service, func() error {
 		service.Spec.Selector = labels
-		service.Spec.Ports = []corev1.ServicePort{{
-			Port:       containerPort,
-			TargetPort: intstr.FromInt32(int32(containerPort)),
-		}}
+		setServicePort(&service.Spec, containerPort, intstr.FromInt32(int32(containerPort)))
 		return controllerutil.SetControllerReference(svc, service, p.client.Scheme())
 	}); err != nil {
 		return provider.Result{}, fmt.Errorf("reconciling Service %s/%s: %w", svc.Namespace, svc.Name, err)
 	}
 
+	provisioned := []servicesv1alpha1.ProvisionedRef{
+		{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, Namespace: deployment.Namespace},
+		{APIVersion: "v1", Kind: "Service", Name: service.Name, Namespace: service.Namespace},
+	}
+
+	// Ready means serving, not merely "the objects exist": CreateOrUpdate
+	// succeeding says the Deployment was created or converged, not that its
+	// pod ever started. deployment.Status here is whatever CreateOrUpdate's
+	// own Get last observed — untouched by the mutate closure above — so a
+	// freshly created Deployment (ReadyReplicas defaults to zero) or one
+	// still rolling out correctly reports not-yet-ready rather than lying
+	// about an endpoint nothing is serving on. The controller already
+	// degrades and requeues on Ready: false, which is exactly right for a
+	// rollout in progress.
+	if deployment.Status.ReadyReplicas < desiredReplicas {
+		return provider.Result{
+			Ready:       false,
+			Reason:      "RolloutInProgress",
+			Message:     fmt.Sprintf("Deployment %s has %d/%d ready replicas", deployment.Name, deployment.Status.ReadyReplicas, desiredReplicas),
+			Provisioned: provisioned,
+		}, nil
+	}
+
 	return provider.Result{
-		Ready:   true,
-		Reason:  "Provisioned",
-		Message: "Deployment and Service created",
-		Provisioned: []servicesv1alpha1.ProvisionedRef{
-			{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, Namespace: deployment.Namespace},
-			{APIVersion: "v1", Kind: "Service", Name: service.Name, Namespace: service.Namespace},
-		},
+		Ready:       true,
+		Reason:      "Provisioned",
+		Message:     "Deployment and Service created",
+		Provisioned: provisioned,
 	}, nil
+}
+
+// setContainer finds the container named c.Name inside spec and overwrites
+// only the fields this provider owns — Image, Args, Resources, Ports,
+// VolumeMounts — leaving anything the apiserver defaulted (ImagePullPolicy,
+// TerminationMessagePath, TerminationMessagePolicy, ...) exactly as fetched.
+// If no such container exists yet, it is appended; the apiserver then
+// defaults the remaining fields on Create, and the next Reconcile pass finds
+// this same container by name and preserves them.
+func setContainer(spec *corev1.PodSpec, c corev1.Container) {
+	for i := range spec.Containers {
+		if spec.Containers[i].Name != c.Name {
+			continue
+		}
+		spec.Containers[i].Image = c.Image
+		spec.Containers[i].Args = c.Args
+		spec.Containers[i].Resources = c.Resources
+		spec.Containers[i].Ports = c.Ports
+		spec.Containers[i].VolumeMounts = c.VolumeMounts
+		return
+	}
+	spec.Containers = append(spec.Containers, c)
+}
+
+// setModelCacheVolume finds or appends the Volume backing the model cache
+// mount, addressing the existing entry in place for the same reason
+// setContainer does.
+//
+// The PVC itself is a data object under the ownership contract on
+// Provisioner.Reconcile — it holds the instance's data (the cached weights)
+// rather than exposing the instance — but this provider does not create it
+// and never will: it is provisioned once, out of band, and shared read-only
+// across every inference instance. There is deliberately no owner reference
+// question to answer here, unlike the Deployment and Service below: nothing
+// in this package ever creates or deletes the PVC, so nothing in this
+// package can leak or prematurely collect it.
+func setModelCacheVolume(spec *corev1.PodSpec, pvcName string) {
+	vol := corev1.Volume{
+		Name: modelCacheVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvcName,
+				ReadOnly:  true,
+			},
+		},
+	}
+	for i := range spec.Volumes {
+		if spec.Volumes[i].Name == vol.Name {
+			spec.Volumes[i] = vol
+			return
+		}
+	}
+	spec.Volumes = append(spec.Volumes, vol)
+}
+
+// setServicePort finds or appends the Service port by port number, setting
+// only Port and TargetPort and leaving anything the apiserver defaulted
+// (Protocol: TCP) exactly as fetched — same reasoning as setContainer.
+func setServicePort(spec *corev1.ServiceSpec, port int32, targetPort intstr.IntOrString) {
+	for i := range spec.Ports {
+		if spec.Ports[i].Port == port {
+			spec.Ports[i].TargetPort = targetPort
+			return
+		}
+	}
+	spec.Ports = append(spec.Ports, corev1.ServicePort{Port: port, TargetPort: targetPort})
 }
 
 // Bind returns the in-cluster DNS name of the Service Reconcile created.
