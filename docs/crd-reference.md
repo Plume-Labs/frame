@@ -78,12 +78,24 @@ default 0), `queueWeight` (int32, min 1, default 1).
 
 ## FrameResourceQuota
 
-Per-service-class resource ceiling.
+Per-service-class resource ceiling. The controller projects it as a
+`ResourceQuota` named `frame-<serviceclass>` into every namespace labelled
+`frame.plume-labs.io/service-class` with the matching value.
 
 **Spec:** `serviceClass`, optional `maxGPUs`, `maxCPU` (Quantity),
 `maxMemory` (Quantity), `maxJobs`.
 
 **Status:** `conditions[]`.
+
+**Quota mapping:** `maxGPUs` → `requests.nvidia.com/gpu`, `maxCPU` →
+`limits.cpu`, `maxMemory` → `limits.memory`, `maxJobs` →
+`count/framejobs.frame.plume-labs.io`. `maxJobs` counts FrameJob objects, not
+the pods their workflows fan out to, and completed FrameJobs keep counting
+until deleted.
+
+**Not in scope:** scheduler queue limits. `SchedulingPolicy` already reconciles
+Volcano/YuniKorn queues; projecting the same ceiling into a queue would make
+two resources authoritative for one number.
 
 ---
 

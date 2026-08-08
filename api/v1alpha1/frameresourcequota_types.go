@@ -44,7 +44,10 @@ type FrameResourceQuotaSpec struct {
 	// +optional
 	MaxMemory *resource.Quantity `json:"maxMemory,omitempty"`
 
-	// MaxJobs is the maximum number of concurrent jobs.
+	// MaxJobs is the maximum number of FrameJob objects that may exist in a
+	// namespace of this service class. It is projected as the object-count quota
+	// count/framejobs.frame.plume-labs.io, which the apiserver enforces on
+	// creation. Completed FrameJobs keep counting until they are deleted.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	MaxJobs int32 `json:"maxJobs,omitempty"`
