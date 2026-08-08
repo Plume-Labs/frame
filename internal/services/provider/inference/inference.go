@@ -127,14 +127,28 @@ type Provider struct {
 	// Size never do, so a caller that only validates and sizes — the webhook —
 	// can pass nil.
 	client client.Client
+	// apiReader is the manager's uncached reader (mgr.GetAPIReader()), used
+	// solely for the model-cache PVC existence check in Reconcile. That check
+	// is a single Get by name, and controller-runtime's cached client cannot
+	// serve a Get without first opening an informer for the whole GVK — a
+	// cluster-scoped List+Watch across every PersistentVolumeClaim in the
+	// cluster, held in the manager's memory for as long as it runs, just to
+	// answer one named lookup. The uncached reader talks straight to the
+	// apiserver instead, so the RBAC this provider needs stays a single `get`
+	// on one object rather than list+watch on the whole resource type
+	// cluster-wide. May be nil for a caller that only ever calls Size and
+	// ParameterSchema, exactly like client above.
+	apiReader client.Reader
 }
 
 // New builds the provider for a card of the given size, using c to create and
-// converge the workload. c may be nil for a caller that only ever calls Size
-// and ParameterSchema — the webhook is the only such caller today — since
-// Reconcile and Bind are the sole methods that dereference it.
-func New(gpuMemoryMiB int64, c client.Client) *Provider {
-	return &Provider{gpuMemoryMiB: gpuMemoryMiB, client: c}
+// converge the workload and apiReader for the uncached model-cache PVC check
+// (see the field comment on apiReader for why it must not go through c's
+// cache). Both may be nil for a caller that only ever calls Size and
+// ParameterSchema — the webhook is the only such caller today — since
+// Reconcile and Bind are the sole methods that dereference either.
+func New(gpuMemoryMiB int64, c client.Client, apiReader client.Reader) *Provider {
+	return &Provider{gpuMemoryMiB: gpuMemoryMiB, client: c, apiReader: apiReader}
 }
 
 func (p *Provider) Type() string { return "inference" }
@@ -418,7 +432,10 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 
 	cacheName := resolveModelCache(svc.Spec.Parameters)
 	var pvc corev1.PersistentVolumeClaim
-	if err := p.client.Get(ctx, types.NamespacedName{Name: cacheName, Namespace: svc.Namespace}, &pvc); err != nil {
+	// Deliberately p.apiReader, not p.client: see the field comment on
+	// apiReader for why this single named lookup must not go through the
+	// cached client.
+	if err := p.apiReader.Get(ctx, types.NamespacedName{Name: cacheName, Namespace: svc.Namespace}, &pvc); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Not provisioning anything is the point: an operator reads why
 			// nothing started here, instead of finding a pod stuck failing to
@@ -432,7 +449,25 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 					cacheName, svc.Namespace),
 			}, nil
 		}
-		return provider.Result{}, fmt.Errorf("checking model cache PVC %s/%s: %w", svc.Namespace, cacheName, err)
+		// Any other error — Forbidden included — means Frame could not
+		// determine whether the cache exists, which is not the same claim as
+		// ModelCacheMissing and must not be reported as it. Degrading with
+		// its own named reason, rather than returning a bare error here, is
+		// deliberate: a hard error takes FrameServiceReconciler's error path,
+		// which never calls setStatus, so the FrameService is left with
+		// empty status forever — nothing for kubectl describe to show,
+		// indistinguishable from a resource still being admitted. Returning
+		// a Result instead (nil error) keeps this on the same degradedRequeue
+		// cadence as every other degrade, so a permission fix, once granted,
+		// is picked up on the next scheduled pass without needing a restart
+		// or an edit to the object to force one.
+		return provider.Result{
+			Ready:  false,
+			Reason: "ModelCacheCheckFailed",
+			Message: fmt.Sprintf(
+				"checking for PersistentVolumeClaim %q in namespace %q: %v",
+				cacheName, svc.Namespace, err),
+		}, nil
 	}
 
 	// The API key Secret must exist before the Deployment that reads it: see

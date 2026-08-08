@@ -58,7 +58,10 @@ func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.
 	}
 	c := builder.Build()
 
-	p := inference.New(7680, c)
+	// c stands in for both the cached client and the uncached APIReader: the
+	// fake client satisfies both interfaces, and Reconcile's model-cache
+	// check is exercised the same way either way in these tests.
+	p := inference.New(7680, c, c)
 	svc := &servicesv1alpha1.FrameService{
 		ObjectMeta: metav1.ObjectMeta{Name: "llama", Namespace: "research"},
 		Spec: servicesv1alpha1.FrameServiceSpec{
