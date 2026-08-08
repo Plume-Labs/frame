@@ -4,10 +4,14 @@ Frame is a **`v1alpha1` preview**: the operator reconciles seven CRDs with webho
 
 Two things advance at once:
 
-- **The V1 path** — freeze the current API group, make it real-time, package it, release it. This is a narrowing exercise: no new capability enters V1.
+- **The V1 path** — clear the debt, go real-time, freeze the current API group, package it, release it. This is a narrowing exercise: no new capability enters V1.
 - **New API groups** — a service catalog, SDN management, auto-update, and application management. Each lives in its own API group at `v1alpha1` so it can move without blocking the V1 freeze.
 
-Running both in parallel with a single operator means alternating between them, not advancing both at once. Whichever gets attention, the other waits.
+They are not fully independent. **The service catalog (S1) comes before the freeze**, because a catalog is the most likely thing to prove the core API wrong — service instances have to be counted by FrameResourceQuota, their workloads have to reach SchedulingPolicy, and FrameApplication has to bind to them. Freezing before learning that buys a conversion to v2 later.
+
+The gate is narrow on purpose: the freeze waits for S1's *model* to settle, proven by one service type, not for all four types to ship. Otherwise V1 waits on KubeVirt.
+
+Running both tracks with a single operator means alternating between them, not advancing both at once. Whichever gets attention, the other waits.
 
 The bar for each phase is its **Exit criteria** — a phase is not done until those are demonstrable, not just coded.
 
@@ -42,7 +46,10 @@ Nothing here is new capability. It removes claims the code no longer backs, and 
 
 ### Phase B — Freeze the API, lock RBAC
 
+**Gated on S1.** Do not start this until the service catalog's model is settled and proven by the inference type, and any core-API changes it forces have landed. See S1 under "New API groups" below.
+
 - [ ] Freeze field names and semantics; remove speculative fields
+- [ ] Fold in whatever S1 proved the core needs — quota accounting for service instances, scheduling for service workloads, the binding surface applications consume
 - [ ] Introduce `v1beta1` with a conversion webhook and a documented storage version
 - [ ] Add CRD field validation (CEL / kubebuilder markers), printer columns, defaults
 - [ ] Write a deprecation and migration policy; promote to `v1` once `v1beta1` is stable
@@ -87,8 +94,12 @@ Four of these requests share one shape — *declare a desired resource, a contro
 
 Declarative provisioning of service instances with a lifecycle and credential binding: **inference, database, queue, VM**.
 
-- Inference goes first and proves the pattern. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up.
-- VM implies KubeVirt. There is no KubeVirt anywhere in the repo: greenfield.
+**This is the one new group that precedes the V1 freeze**, and it is sliced so that only its first part does:
+
+1. **The model + inference** — the instance/binding shape, and one type implemented against it. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze.
+2. **Database, queue, VM** — further types on a settled model. These do not gate anything. VM implies KubeVirt, which appears nowhere in the repo: greenfield, and the reason V1 must not wait for the full catalog.
+
+Note the hardware constraint on the inference type: the current GPU is a Pascal P4 (`sm_6.1`), which rules out vLLM and KubeAI. `deploy/caching/vllm-rdma-kvcache.yaml` exists but cannot run here. llama.cpp is the only viable backend until the hardware changes — the model must not assume otherwise.
 
 ### S2 — SDN (`net.frame.plume-labs.io/v1alpha1`)
 
