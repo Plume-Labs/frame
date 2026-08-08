@@ -33,7 +33,8 @@ func TestSizeGuardsTheCeilingDivisionNotJustTheMultiplication(t *testing.T) {
 	maxSafeCtx := (int64(math.MaxInt64) - (bytesPerMiB - 1)) / perToken
 
 	const p4MiB = 7680 // the cluster's Tesla P4.
-	p := New(p4MiB)
+	// nil client: this test only calls Size, which never dereferences it.
+	p := New(p4MiB, nil)
 
 	t.Run("largest context the guard's arithmetic must still accept", func(t *testing.T) {
 		_, err := p.Size(map[string]string{
