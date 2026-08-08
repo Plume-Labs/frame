@@ -18,6 +18,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -56,6 +57,7 @@ type FrameServiceReconciler struct {
 // +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -121,10 +123,28 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("binding %s: %w", svc.Name, err)
 	}
 
-	// The endpoint is publishable on its own — it carries no credential. The
-	// Secret that carries the credentials is Task 8's, and status.binding.secretRef
-	// stays empty until then rather than naming an object that does not exist.
-	svc.Status.Binding = servicesv1alpha1.BindingStatus{Endpoint: binding.Endpoint}
+	secretRefName, err := r.reconcileBinding(ctx, &svc, binding)
+	if err != nil {
+		// A bindingDegradation is not a transient error: retrying without
+		// operator intervention (an unrelated Secret in the way, a missing
+		// namespace) would never succeed on its own, so it goes to status
+		// exactly like an unready provider does, instead of into
+		// controller-runtime's retry logging.
+		var degradation *bindingDegradation
+		if errors.As(err, &degradation) {
+			return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, &svc,
+				"Degraded", metav1.ConditionFalse, degradation.Reason, degradation.Message,
+				&sizing, result.Provisioned)
+		}
+		return ctrl.Result{}, fmt.Errorf("reconciling binding for %s: %w", svc.Name, err)
+	}
+
+	// The endpoint carries no credential and was already publishable on its
+	// own; secretRef now names the Secret reconcileBinding just wrote.
+	svc.Status.Binding = servicesv1alpha1.BindingStatus{
+		Endpoint:  binding.Endpoint,
+		SecretRef: &corev1.LocalObjectReference{Name: secretRefName},
+	}
 	frameServiceReady.Inc()
 	log.Info("Reconciled FrameService", "type", svc.Spec.Type, "endpoint", binding.Endpoint)
 	return ctrl.Result{}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
@@ -178,10 +198,11 @@ func (r *FrameServiceReconciler) setStatus(
 
 // reconcileDelete tears down a FrameService. The split deletionPolicy
 // controls is never "does anything get deleted" — the objects that expose
-// the instance are always removed, by Kubernetes garbage collection acting on
-// the owner reference every Provisioner.Reconcile is required to set on them,
-// with no code needed here for that half. What deletionPolicy actually
-// decides is the instance's data:
+// the instance are always removed, either by Kubernetes garbage collection
+// acting on the owner reference every Provisioner.Reconcile is required to
+// set on them, or, for the one exposing object that cannot carry that owner
+// reference, explicitly right here. What deletionPolicy actually decides is
+// the instance's data:
 //
 //   - Retain (the default) does nothing in this function beyond releasing the
 //     finalizer. That is correct, not incomplete: the exposing objects are
@@ -193,10 +214,21 @@ func (r *FrameServiceReconciler) setStatus(
 //     teardown method, so the provider's last reconcile report is the sole
 //     record of what exists to delete.
 //
+// A projected credentials Secret is exposure, not data, so it is removed
+// unconditionally above, under neither branch of deletionPolicy: owner
+// references do not cross namespaces, so pruneProjections — passed a nil
+// keep set, meaning "keep none of them" — is the only thing that will ever
+// remove it. Leaving that to deletionPolicy: Retain would silently leave
+// credentials behind in every namespace the FrameService had projected into.
+//
 // Either way the finalizer clears last, so a crash mid-teardown leaves the
 // object undeleted — and retried — rather than orphaning a data object with
 // nothing left tracking it.
 func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1alpha1.FrameService) (ctrl.Result, error) {
+	if err := r.pruneProjections(ctx, svc, nil); err != nil {
+		return ctrl.Result{}, fmt.Errorf("pruning projected Secrets for %s/%s: %w", svc.Namespace, svc.Name, err)
+	}
+
 	if svc.Spec.DeletionPolicy == "Delete" {
 		for _, ref := range svc.Status.Provisioned {
 			obj := &unstructured.Unstructured{}
