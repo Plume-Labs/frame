@@ -92,6 +92,26 @@ type BindingStatus struct {
 	// Endpoint is what a consumer connects to. Never contains credentials.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
+
+	// Projected records every Secret coordinate this controller has actually
+	// written: the primary Secret beside the FrameService and every copy
+	// spec.binding.projectTo asked for. It is the sole record the controller
+	// consults to decide what it may write to and what it must delete when a
+	// namespace leaves projectTo or secretName changes — never a label on the
+	// Secret itself, which is data anyone with patch rights on Secrets can
+	// set. See the comment on reconcileBinding in
+	// internal/controller/services/binding.go for why that distinction is
+	// load-bearing.
+	// +optional
+	Projected []ProjectedSecretRef `json:"projected,omitempty"`
+}
+
+// ProjectedSecretRef names one Secret coordinate this controller has written.
+type ProjectedSecretRef struct {
+	// +kubebuilder:validation:Required
+	Namespace string `json:"namespace"`
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
 }
 
 // ProvisionedRef names one object the provider created, so kubectl describe
