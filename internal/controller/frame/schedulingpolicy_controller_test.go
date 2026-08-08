@@ -119,7 +119,7 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 		_, _ = r().Reconcile(ctx, req)
 
 		Expect(k8sClient.Get(ctx, key, sp)).To(Succeed())
-		cond := findCondition(sp.Status.Conditions, "Ready")
+		cond := findCondition(sp.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		Expect(cond.Reason).To(Equal("Applied"))
@@ -153,16 +153,18 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 		Expect(err).NotTo(HaveOccurred()) // must not propagate queue error
 
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "volcano-policy", Namespace: ns}, spV)).To(Succeed())
-		cond := findCondition(spV.Status.Conditions, "Ready")
+		cond := findCondition(spV.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(cond.Reason).To(Equal("ReconcileError"))
 	})
 })
 
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
+// findCondition returns the Ready condition — the only condition type any
+// caller looks up — or nil if it hasn't been set yet.
+func findCondition(conditions []metav1.Condition) *metav1.Condition {
 	for i := range conditions {
-		if conditions[i].Type == condType {
+		if conditions[i].Type == conditionTypeReady {
 			return &conditions[i]
 		}
 	}

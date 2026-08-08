@@ -89,7 +89,7 @@ var _ = Describe("TalosUpgrade Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
-		cond := findCondition(tu.Status.Conditions, "Ready")
+		cond := findCondition(tu.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(cond.Reason).To(Equal("ClientBuildFailed"))
@@ -114,7 +114,7 @@ var _ = Describe("TalosUpgrade Controller", func() {
 		Expect(err).NotTo(HaveOccurred()) // must not propagate Talos errors
 
 		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
-		cond := findCondition(tu.Status.Conditions, "Ready")
+		cond := findCondition(tu.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		// Either ClientBuildFailed (TLS parse error) or UpgradeFailed (dial error).
@@ -154,7 +154,7 @@ var _ = Describe("TalosUpgrade Controller", func() {
 
 		// Condition must still reflect the manually-set value.
 		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
-		cond := findCondition(tu.Status.Conditions, "Ready")
+		cond := findCondition(tu.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Reason).To(Equal("UpgradeRequested"))
 	})

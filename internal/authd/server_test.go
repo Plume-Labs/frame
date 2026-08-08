@@ -36,10 +36,12 @@ func sessionCookieFrom(t *testing.T, rec *httptest.ResponseRecorder) *http.Cooki
 }
 
 // doWithCookie is like do, but attaches a cookie to the request first — for
-// tests driving an endpoint that requires an existing session.
-func doWithCookie(t *testing.T, srv *Server, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
+// tests driving an endpoint that requires an existing session. Every caller
+// exercises a POST endpoint, so the method is fixed rather than threaded
+// through as a parameter that never varies.
+func doWithCookie(t *testing.T, srv *Server, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -78,13 +80,21 @@ func do(t *testing.T, srv *Server, method, path, body string) *httptest.Response
 	return rec
 }
 
+// bootstrapServerToken and bootstrapServerSecretName are the bootstrap token
+// and Secret name every bootstrapServer caller configures; they're fixed here
+// rather than threaded through as parameters that never vary.
+const (
+	bootstrapServerToken      = "s3cret-bootstrap"
+	bootstrapServerSecretName = "frame-auth-bootstrap"
+)
+
 // bootstrapServer builds a Server whose Store and ServerConfig.Client share the
 // same fake client, so a test can both drive /auth/bootstrap and read back
 // what it did to the FrameUser and the bootstrap Secret. testServer (above)
 // cannot be reused for this: it doesn't expose the client underneath its
 // Store, and the bootstrap-completion tests need to inspect that same client
 // directly (via NewStore, and via a raw Get on the Secret).
-func bootstrapServer(t *testing.T, token, secretName string, seedSecret bool, users ...*framev1alpha1.FrameUser) (*Server, client.Client) {
+func bootstrapServer(t *testing.T, seedSecret bool, users ...*framev1alpha1.FrameUser) (*Server, client.Client) {
 	t.Helper()
 	s := scheme.Scheme
 	if err := framev1alpha1.AddToScheme(s); err != nil {
@@ -96,8 +106,8 @@ func bootstrapServer(t *testing.T, token, secretName string, seedSecret bool, us
 	}
 	if seedSecret {
 		b = b.WithObjects(&corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "cluster-control"},
-			Data:       map[string][]byte{"token": []byte(token)},
+			ObjectMeta: metav1.ObjectMeta{Name: bootstrapServerSecretName, Namespace: "cluster-control"},
+			Data:       map[string][]byte{"token": []byte(bootstrapServerToken)},
 		})
 	}
 	c := b.Build()
@@ -111,8 +121,8 @@ func bootstrapServer(t *testing.T, token, secretName string, seedSecret bool, us
 		Auth:                auth,
 		Issuer:              testIssuer(t),
 		Codec:               testCodec(),
-		BootstrapSecret:     token,
-		BootstrapSecretName: secretName,
+		BootstrapSecret:     bootstrapServerToken,
+		BootstrapSecretName: bootstrapServerSecretName,
 		Client:              c,
 		Namespace:           "cluster-control",
 		TokenTTL:            15 * time.Minute,
@@ -189,7 +199,7 @@ func TestBootstrapRefusesWhenNoTokenIsConfigured(t *testing.T) {
 // and password mode, and confirms the bootstrap Secret is actually gone
 // afterwards, not just that the HTTP call returned 204.
 func TestBootstrapCreatesTheFirstAdminAndDeletesTheSecret(t *testing.T) {
-	srv, c := bootstrapServer(t, "s3cret-bootstrap", "frame-auth-bootstrap", true)
+	srv, c := bootstrapServer(t, true)
 
 	rec := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"Eve@Example.com"}`)
 	if rec.Code != http.StatusNoContent {
@@ -219,7 +229,7 @@ func TestBootstrapCreatesTheFirstAdminAndDeletesTheSecret(t *testing.T) {
 // close-the-door path end to end, through the real AdminCount guard rather
 // than a pre-seeded admin fixture.
 func TestSecondBootstrapCallIs404AfterFirstSucceeds(t *testing.T) {
-	srv, _ := bootstrapServer(t, "s3cret-bootstrap", "frame-auth-bootstrap", true)
+	srv, _ := bootstrapServer(t, true)
 
 	first := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"eve@example.com"}`)
 	if first.Code != http.StatusNoContent {
@@ -233,7 +243,7 @@ func TestSecondBootstrapCallIs404AfterFirstSucceeds(t *testing.T) {
 }
 
 func TestBootstrapRejectsMalformedEmail(t *testing.T) {
-	srv, _ := bootstrapServer(t, "s3cret-bootstrap", "frame-auth-bootstrap", true)
+	srv, _ := bootstrapServer(t, true)
 	rec := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"not-an-email"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bootstrap with a malformed email = %d, want 400", rec.Code)
@@ -379,7 +389,7 @@ func TestUnknownEmailAndWrongPasswordAreIndistinguishable(t *testing.T) {
 // handleBootstrap: sessionCookieFrom would fail the test outright because
 // there would be no Set-Cookie header to find.
 func TestBootstrapSessionAllowsImmediateRegisterBegin(t *testing.T) {
-	srv, _ := bootstrapServer(t, "s3cret-bootstrap", "frame-auth-bootstrap", true)
+	srv, _ := bootstrapServer(t, true)
 
 	bootstrapRec := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"eve@example.com"}`)
 	if bootstrapRec.Code != http.StatusNoContent {
@@ -387,7 +397,7 @@ func TestBootstrapSessionAllowsImmediateRegisterBegin(t *testing.T) {
 	}
 	session := sessionCookieFrom(t, bootstrapRec)
 
-	rec := doWithCookie(t, srv, http.MethodPost, "/auth/register/begin", "", session)
+	rec := doWithCookie(t, srv, "/auth/register/begin", "", session)
 	if rec.Code == http.StatusUnauthorized {
 		t.Fatalf("register/begin with the bootstrap session cookie = 401, want anything else "+
 			"(the freshly-bootstrapped admin has no other way to enrol a passkey): %s", rec.Body.String())
@@ -409,7 +419,7 @@ func TestTokenIsBodyOnlyNeverCookie(t *testing.T) {
 	loginRec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
 	session := sessionCookieFrom(t, loginRec)
 
-	rec := doWithCookie(t, srv, http.MethodPost, "/auth/token", "", session)
+	rec := doWithCookie(t, srv, "/auth/token", "", session)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("token = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -445,7 +455,7 @@ func TestTokenIsBodyOnlyNeverCookie(t *testing.T) {
 // from the store on every call to handleToken, not cached in the cookie.
 func TestTokenReflectsRoleChangedAfterSessionIssued(t *testing.T) {
 	u := fixture("alice", "alice@example.com", framev1alpha1.RoleViewer)
-	srv, c := bootstrapServer(t, "s3cret-bootstrap", "frame-auth-bootstrap", false, u)
+	srv, c := bootstrapServer(t, false, u)
 
 	sessRec := httptest.NewRecorder()
 	if !srv.setSession(sessRec, u) {
@@ -462,7 +472,7 @@ func TestTokenReflectsRoleChangedAfterSessionIssued(t *testing.T) {
 		t.Fatalf("promote alice to admin: %v", err)
 	}
 
-	rec := doWithCookie(t, srv, http.MethodPost, "/auth/token", "", session)
+	rec := doWithCookie(t, srv, "/auth/token", "", session)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("token = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -505,7 +515,7 @@ func TestRegisterBeginIgnoresRequestBodyAccount(t *testing.T) {
 	}
 	session := sessionCookieFrom(t, sessRec)
 
-	rec := doWithCookie(t, srv, http.MethodPost, "/auth/register/begin", `{"email":"bob@example.com"}`, session)
+	rec := doWithCookie(t, srv, "/auth/register/begin", `{"email":"bob@example.com"}`, session)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("register/begin = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
