@@ -37,7 +37,7 @@ V1 means: a frozen, conversion-guaranteed API for `frame.plume-labs.io`; live st
 
 Nothing here is new capability. It removes claims the code no longer backs, and proves the claims it does.
 
-- [ ] Delete `deploy/api/openapi.yaml`. It documents a REST API on `localhost:4000` served by an Express server that was removed. Keeping a spec for an API that does not exist is worse than having no spec.
+- [x] Delete `deploy/api/openapi.yaml`. It documented a REST API on `localhost:4000` served by an Express server that was removed. Keeping a spec for an API that does not exist is worse than having no spec. `PRD.md` described the same absent server and was corrected with it — the CRDs are the API, and their OpenAPI schema is served by the apiserver from the kubebuilder markers.
 - [ ] Decide FrameResourceQuota's scheduler queue limits. **Proposal: cut them.** The controller already projects `corev1.ResourceQuota` into every matching namespace; `SchedulingPolicy` already reconciles Volcano/YuniKorn queues. Duplicating quota into queue limits is a second source of truth for the same number, and no caller has asked for it.
 - [ ] Extend the Kind e2e suite to cover each CRD. It currently covers manager startup, the metrics endpoint, cert-manager provisioning and webhook CA injection — no CRD is exercised end-to-end in CI.
 - [ ] Document FrameUser and correct the CRD count. `crd-reference.md` describes six CRDs and omits FrameUser entirely; `README.md`, `docs/README.md`, `architecture.md`, `api.md` and `deployment.md` all say "six" on the strength of it. Write the reference entry first, then fix the count — renaming six to seven while the seventh is undocumented only moves the lie.

@@ -1,25 +1,25 @@
 # Planning Guide
 
-Frame is a **mainframe framework for Kubernetes** — not merely a monitoring dashboard. It provides a complete operator control plane (REST API, TypeScript SDK, and UI) that lets operators, workloads, and CI pipelines manage jobs, scheduling policies, resource quotas, storage, networking, and resilience programmatically or through the interface.
+Frame is a **mainframe framework for Kubernetes** — not merely a monitoring dashboard. It provides a complete operator control plane (CRD API, TypeScript SDK, and UI) that lets operators, workloads, and CI pipelines manage jobs, scheduling policies, resource quotas, storage, networking, and resilience programmatically or through the interface.
 
 > **Cluster scope:** Frame manages a **single local cluster** — one physical location, with one or more racks. The RDMA fabric (InfiniBand or RoCE) is a local, intra-datacenter interconnect and does **not** traverse the internet or WAN. `zones` and `racks` are failure-domain labels within the same site. Multi-site / multi-region federation is **out of scope** for this version.
 
 **Experience Qualities**:
 1. **Control-first** - The interface leads with operator actions: job submission, policy management, resource provisioning, and resilience controls. Observability is present but secondary.
-2. **Programmable** - Every framework action available in the UI is also exposed through the REST API and TypeScript SDK so workloads and automation can interact without a human in the loop.
+2. **Programmable** - Every framework action available in the UI is also a Kubernetes resource, reachable through the TypeScript SDK or any Kubernetes client, so workloads and automation can interact without a human in the loop.
 3. **Authoritative** - Design conveys ownership and control over complex distributed infrastructure, not just passive visibility into it.
 
-**Complexity Level**: Complex Application (advanced functionality, multiple views, client/server split)
-Frame is a full-stack mainframe framework: a React control-plane UI, an Express REST API server, a TypeScript operator SDK, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph (RGW) storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
+**Complexity Level**: Complex Application (advanced functionality, multiple views, operator + control plane)
+Frame is a full-stack mainframe framework: a React control-plane UI, a TypeScript operator SDK, a Kubebuilder operator reconciling the Frame CRDs, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph (RGW) storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
 
 ## Essential Features
 
-**Operator REST API & TypeScript SDK** *(primary)*
-- Functionality: HTTP REST API (`server/index.ts`) exposing endpoints for job submission, scheduling policy management, resource quota control, and node inspection; TypeScript `FrameClient` SDK wrapping the API
-- Purpose: Lets workloads, CI pipelines, and operator CLIs interact with Frame programmatically without the UI
-- Trigger: Any client calls `POST /api/jobs`, `POST /api/scheduler/policies`, `PUT /api/resources/quotas/:ns`, etc.
-- Progression: Client calls SDK → SDK calls REST API → API mutates in-memory/cluster state → Response returned with updated resource
-- Success criteria: All CRUD operations complete with correct status codes; TypeScript types are accurate; full OpenAPI spec (`deploy/api/openapi.yaml`) documents every endpoint
+**CRD API & TypeScript SDK** *(primary)*
+- Functionality: the Frame CRDs are the API. The TypeScript `FrameClient` SDK reads and writes them directly against the Kubernetes API — job submission, scheduling policy management, resource quota control, node inspection. There is no intermediate REST server.
+- Purpose: Lets workloads, CI pipelines, and operator CLIs interact with Frame programmatically without the UI, using ordinary Kubernetes clients if they prefer
+- Trigger: Any client writes a Frame CR — `POST /apis/frame.plume-labs.io/v1alpha1/namespaces/:ns/framejobs`, and so on — through the SDK, `kubectl`, or its own client
+- Progression: Client calls SDK → SDK calls the Kubernetes API → operator reconciles the CR into real cluster state → status subresource reports back
+- Success criteria: every CRD kind is readable and writable through the SDK with accurate TypeScript types; the schema contract is the CRD's own OpenAPI, served by the apiserver and generated from the kubebuilder markers, not a hand-maintained document
 
 **Job Orchestration Control Surface** *(primary)*
 - Functionality: UI for submitting, monitoring, and cancelling Argo Workflow jobs; DAG visualisation; checkpoint/resume status
