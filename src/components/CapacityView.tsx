@@ -1,4 +1,4 @@
-import { CapacityResource, ForecastStatus, createFrameClient } from '@/lib/frame-sdk'
+import { CapacityResource, ForecastStatus, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,13 @@ const capacityTone = (p: number) => inverseScoreTone(p, 75, 90)
 const tone = (p: number) => inverseScoreClass(p, 75, 90)
 
 export function CapacityView() {
-  const { state, reload } = useLiveResource<CapacityResource[]>(() => frame.cluster.capacity())
+  const { state, reload } = useLiveResource<CapacityResource[]>(
+    () => frame.cluster.capacity(),
+    [],
+    // Allocatable/requested come straight from Node and Pod objects; "used"
+    // layers metrics-server on top best-effort, same as the header stats.
+    [coreListPath('nodes'), coreListPath('pods')],
+  )
   const res = state.phase === 'ready' ? state.data : []
 
   return (
@@ -89,7 +95,9 @@ export function CapacityView() {
 }
 
 function ForecastCard() {
-  const { state } = useLiveResource<ForecastStatus | null>(() => frame.cluster.forecast())
+  // A Prometheus projection over a 3h history — a "days to full" number that
+  // does not need to be fresher than a minute, unlike the gauges above it.
+  const { state } = useLiveResource<ForecastStatus | null>(() => frame.cluster.forecast(), [], [], 60_000)
   const fc = state.phase === 'ready' ? state.data : null
   return (
     <Card>
