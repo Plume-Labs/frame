@@ -87,7 +87,7 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, tmc)).To(Succeed())
-		cond := findCondition(tmc.Status.Conditions, "Ready")
+		cond := findCondition(tmc.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(cond.Reason).To(Equal("ClientBuildFailed"))
@@ -123,7 +123,7 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, cmKey, tmcCM)).To(Succeed())
-		cond := findCondition(tmcCM.Status.Conditions, "Ready")
+		cond := findCondition(tmcCM.Status.Conditions)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(cond.Reason).To(Equal("PatchResolveFailed"))

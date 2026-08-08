@@ -110,8 +110,8 @@ var _ = Describe("buildWorkflow", func() {
 	It("sets gpu-count and service-class parameters", func() {
 		wf := buildWorkflow(makeJob("high", 4, false, nil))
 		params, _, _ := unstructured.NestedSlice(wf.Object, "spec", "arguments", "parameters")
-		Expect(params).To(ContainElement(map[string]interface{}{"name": "gpu-count", "value": "4"}))
-		Expect(params).To(ContainElement(map[string]interface{}{"name": "service-class", "value": "HIGH"}))
+		Expect(params).To(ContainElement(map[string]any{"name": "gpu-count", "value": "4"}))
+		Expect(params).To(ContainElement(map[string]any{"name": "service-class", "value": "HIGH"}))
 	})
 
 	It("wires priorityClassName for known priorities", func() {
@@ -156,13 +156,13 @@ var _ = Describe("buildWorkflow", func() {
 	It("appends extra parameters from spec.parameters", func() {
 		wf := buildWorkflow(makeJob("high", 2, false, map[string]string{"dataset": "s3://bucket/ds"}))
 		params, _, _ := unstructured.NestedSlice(wf.Object, "spec", "arguments", "parameters")
-		Expect(params).To(ContainElement(map[string]interface{}{"name": "dataset", "value": "s3://bucket/ds"}))
+		Expect(params).To(ContainElement(map[string]any{"name": "dataset", "value": "s3://bucket/ds"}))
 	})
 })
 
 var _ = Describe("workflowPhase", func() {
 	makeWF := func(phase string) *unstructured.Unstructured {
-		wf := &unstructured.Unstructured{Object: map[string]interface{}{}}
+		wf := &unstructured.Unstructured{Object: map[string]any{}}
 		if phase != "" {
 			_ = unstructured.SetNestedField(wf.Object, phase, "status", "phase")
 		}
