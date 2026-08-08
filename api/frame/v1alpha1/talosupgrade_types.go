@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -28,25 +27,27 @@ import (
 type TalosUpgradeSpec struct {
 	// NodeName is the Kubernetes node name to upgrade.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 	NodeName string `json:"nodeName"`
 
 	// TalosEndpoint is the Talos API endpoint (host:port) for this node.
+	// The bracketed form (e.g. [fd00::1]:50000) is accepted for IPv6, same
+	// as net.SplitHostPort in the webhook check this mirrors.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern="^(\\[[0-9a-fA-F:]+\\]|[a-zA-Z0-9.-]+):[0-9]+$"
 	TalosEndpoint string `json:"talosEndpoint"`
 
 	// TalosSecretRef references the Secret containing Talos client certificates
 	// (keys: ca.crt, client.crt, client.key).
 	// +kubebuilder:validation:Required
-	TalosSecretRef corev1.SecretReference `json:"talosSecretRef"`
+	TalosSecretRef TalosSecretReference `json:"talosSecretRef"`
 
 	// Image is the Talos installer image to upgrade to (e.g. ghcr.io/siderolabs/installer:v1.8.0).
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:XValidation:rule="self.split('/')[self.split('/').size()-1].contains(':')",message="image must include a tag (e.g. installer:v1.8.0)"
 	Image string `json:"image"`
-
-	// PreserveData controls whether to wipe ephemeral data during upgrade.
-	// +optional
-	// +kubebuilder:default=true
-	PreserveData bool `json:"preserveData,omitempty"`
 }
 
 // TalosUpgradeStatus defines the observed state of TalosUpgrade.
@@ -74,6 +75,11 @@ type TalosUpgradeStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="NodeName",type=string,JSONPath=".spec.nodeName"
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=".spec.image"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // TalosUpgrade is the Schema for the talosupgrades API
 type TalosUpgrade struct {

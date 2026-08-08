@@ -14,7 +14,24 @@ spec:
     singular: schedulingpolicy
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.scheduler
+      name: Scheduler
+      type: string
+    - jsonPath: .spec.queueName
+      name: Queue
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: SchedulingPolicy is the Schema for the schedulingpolicies API
@@ -39,19 +56,17 @@ spec:
           spec:
             description: spec defines the desired state of SchedulingPolicy
             properties:
-              gangScheduling:
-                default: false
-                description: GangScheduling enables all-or-nothing gang scheduling
-                  for jobs.
-                type: boolean
               preemption:
                 default: false
                 description: Preemption allows higher-priority jobs to preempt lower-priority
                   ones.
                 type: boolean
               priorityClass:
-                description: PriorityClass is the default Kubernetes PriorityClass
-                  for jobs under this policy.
+                description: |-
+                  PriorityClass is the default Kubernetes PriorityClass for jobs under this policy.
+                  The pattern accepts empty for the same reason as QueueName above.
+                maxLength: 253
+                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$
                 type: string
               priorityValue:
                 description: |-
@@ -62,8 +77,15 @@ spec:
                 minimum: -2147483648
                 type: integer
               queueName:
-                description: QueueName is the Volcano/YuniKorn queue to submit jobs
-                  to.
+                description: |-
+                  QueueName is the Volcano/YuniKorn queue to submit jobs to. Not an enum:
+                  it names an externally-created Queue object, but it is still a
+                  Kubernetes object name, hence the pattern. The pattern accepts empty:
+                  the controller branches on "" to skip queue reconciliation, and the
+                  SDK's create form sends this field unconditionally, so a user clearing
+                  it must still be able to save.
+                maxLength: 253
+                pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$
                 type: string
               queueWeight:
                 description: QueueWeight is the relative weight of the Volcano/YuniKorn
@@ -81,6 +103,10 @@ spec:
             required:
             - scheduler
             type: object
+            x-kubernetes-validations:
+            - message: priorityClass is required when preemption is true
+              rule: '!self.preemption || (has(self.priorityClass) && size(self.priorityClass)
+                > 0)'
           status:
             description: status defines the observed state of SchedulingPolicy
             properties:

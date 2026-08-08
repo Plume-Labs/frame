@@ -27,6 +27,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 )
 
 // buildTalosClient creates an authenticated Talos gRPC client from a K8s Secret.
@@ -35,7 +37,7 @@ import (
 //   - "ca"  or "ca.crt"  — PEM-encoded CA certificate
 //   - "crt" or "tls.crt" — PEM-encoded client certificate
 //   - "key" or "tls.key" — PEM-encoded client private key
-func buildTalosClient(ctx context.Context, kube client.Client, namespace, endpoint string, ref corev1.SecretReference) (*talosclient.Client, error) {
+func buildTalosClient(ctx context.Context, kube client.Client, namespace, endpoint string, ref framev1alpha1.TalosSecretReference) (*talosclient.Client, error) {
 	ns := ref.Namespace
 	if ns == "" {
 		ns = namespace

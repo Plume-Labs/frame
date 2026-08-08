@@ -99,7 +99,7 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	patch := client.MergeFrom(frq.DeepCopy())
 	setCondition(&frq.Status.Conditions, metav1.Condition{
-		Type:               "Ready",
+		Type:               conditionTypeReady,
 		Status:             metav1.ConditionTrue,
 		Reason:             "Reconciled",
 		Message:            fmt.Sprintf("Applied to %d namespaces", len(nsList.Items)),

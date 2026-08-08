@@ -46,7 +46,7 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 			Spec: framev1alpha1.TalosMachineConfigSpec{
 				NodeName:      "worker-1",
 				TalosEndpoint: "10.0.0.1:50000",
-				TalosSecretRef: corev1.SecretReference{
+				TalosSecretRef: framev1alpha1.TalosSecretReference{
 					Name:      "talos-creds",
 					Namespace: ns,
 				},
@@ -99,7 +99,7 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 			Spec: framev1alpha1.TalosMachineConfigSpec{
 				NodeName:       "worker-2",
 				TalosEndpoint:  "10.0.0.2:50000",
-				TalosSecretRef: corev1.SecretReference{Name: "talos-creds", Namespace: ns},
+				TalosSecretRef: framev1alpha1.TalosSecretReference{Name: "talos-creds", Namespace: ns},
 				ConfigPatchRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "nonexistent-cm"},
 					Key:                  "patch.yaml",

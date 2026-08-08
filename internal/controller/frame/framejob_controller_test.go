@@ -44,7 +44,6 @@ var _ = Describe("FrameJob Controller", func() {
 		*job = framev1alpha1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: framev1alpha1.FrameJobSpec{
-				Name:         name,
 				Pipeline:     "neura-training-dag",
 				ServiceClass: "HIGH",
 				Priority:     "high",

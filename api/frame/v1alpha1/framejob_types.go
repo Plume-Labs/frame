@@ -24,13 +24,18 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // FrameJobSpec defines the desired state of FrameJob
+//
+// The GPU/serviceClass:LOW conflict the webhook enforces (validateFrameJob
+// in framejob_webhook.go) is deliberately NOT mirrored here as CEL. The
+// webhook returns early with just a warning for any pipeline outside
+// knownPipelines, so the GPU/LOW check never runs for most real jobs
+// (including "training", used by this project's own sample and e2e
+// suite). A CEL rule has no such bypass and runs unconditionally, which
+// would (a) reject objects the webhook has always accepted, and (b)
+// permanently strand any already-stored object shaped that way, since
+// the rule is spec-level and re-evaluates on every update including one
+// that only flips spec.suspended. See docs/roadmap.md's Phase B note.
 type FrameJobSpec struct {
-	// Name of the job
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-	Name string `json:"name"`
-
 	// Pipeline template to use (training, inference, batch)
 	// +kubebuilder:validation:Required
 	Pipeline string `json:"pipeline"`
@@ -45,9 +50,16 @@ type FrameJobSpec struct {
 	// +kubebuilder:validation:Enum=critical;high;medium;low
 	Priority string `json:"priority,omitempty"`
 
-	// Kubernetes namespace for the job
+	// Kubernetes namespace for the job. Not required to match this FrameJob's
+	// own namespace: the controller creates the backing ArgoWorkflow here
+	// with cluster-wide RBAC, so a FrameJob in one namespace can direct
+	// workflow creation into another. That cross-namespace reach is
+	// deliberate-for-now; constraining it is Phase B's RBAC-tier
+	// lock-down to settle, not this validation. This only rejects a
+	// malformed value, not a cross-namespace one.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
 	// +kubebuilder:default="default"
 	Namespace string `json:"namespace,omitempty"`
 
