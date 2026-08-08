@@ -499,7 +499,6 @@ metadata:
   name: e2e-job
   namespace: %s
 spec:
-  name: e2e-job
   pipeline: training
   namespace: %s
   serviceClass: HIGH
