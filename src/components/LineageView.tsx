@@ -1,4 +1,5 @@
-import { WorkflowTrace, createFrameClient } from '@/lib/frame-sdk'
+import { WorkflowTrace, createFrameClient, crdListPath } from '@/lib/frame-sdk'
+import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,11 @@ const phaseTone = (p: string) =>
 const dur = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`)
 
 export function LineageView() {
-  const { state, reload } = useLiveResource<WorkflowTrace[]>(() => frame.cluster.workflows())
+  const { state, reload } = useLiveResource<WorkflowTrace[]>(
+    () => frame.cluster.workflows(),
+    [],
+    [crdListPath('argoproj.io', 'v1alpha1', 'workflows', config().namespaces.argo)],
+  )
   const traces = state.phase === 'ready' ? state.data : []
 
   return (

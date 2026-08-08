@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ResourceQuota, ServiceClass, ServiceClassSummary, createFrameClient } from '@/lib/frame-sdk'
+import { ResourceQuota, ServiceClass, ServiceClassSummary, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -93,13 +93,17 @@ function EditQuotaDialog({
 }
 
 export function ServiceClassesView() {
-  const { state, reload } = useLiveResource<Data>(async () => {
-    const [classes, quotas] = await Promise.all([
-      frame.resources.listServiceClasses(),
-      frame.resources.listQuotas(),
-    ])
-    return { classes: classes.items, quotas: quotas.items }
-  })
+  const { state, reload } = useLiveResource<Data>(
+    async () => {
+      const [classes, quotas] = await Promise.all([
+        frame.resources.listServiceClasses(),
+        frame.resources.listQuotas(),
+      ])
+      return { classes: classes.items, quotas: quotas.items }
+    },
+    [],
+    [frameListPath('framenodes'), frameListPath('frameresourcequotas')],
+  )
 
   const data = state.phase === 'ready' ? state.data : null
 

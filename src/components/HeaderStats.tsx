@@ -1,4 +1,4 @@
-import { CapacityResource, ClusterNodeInfo, createFrameClient } from '@/lib/frame-sdk'
+import { CapacityResource, ClusterNodeInfo, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { useLiveResource } from '@/hooks/useLiveResource'
 
 const frame = createFrameClient()
@@ -10,6 +10,10 @@ export function HeaderStats() {
       const [nodes, cap] = await Promise.all([frame.cluster.nodes(), frame.cluster.capacity()])
       return { nodes, cap }
     },
+    [],
+    // Both calls are real Node/Pod objects underneath, with metrics-server
+    // usage layered on top best-effort (no watch support of its own).
+    [coreListPath('nodes'), coreListPath('pods')],
   )
   if (state.phase !== 'ready') return null
 

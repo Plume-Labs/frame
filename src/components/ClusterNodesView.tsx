@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ClusterNodeInfo, createFrameClient } from '@/lib/frame-sdk'
+import { ClusterNodeInfo, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,15 @@ import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen, 
 const frame = createFrameClient()
 
 export function ClusterNodesView() {
-  const { state, reload } = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes())
+  const { state, reload } = useLiveResource<ClusterNodeInfo[]>(
+    () => frame.cluster.nodes(),
+    [],
+    // The cpu/mem usage columns come from metrics-server, which has no watch
+    // support — but the Node objects driving readiness/roles/capacity do, and
+    // a node joining, leaving, or changing Ready is the event this screen
+    // actually needs to catch.
+    [coreListPath('nodes')],
+  )
   const [cordonTarget, setCordonTarget] = useState<ClusterNodeInfo | null>(null)
   const [drainTarget, setDrainTarget] = useState<ClusterNodeInfo | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
