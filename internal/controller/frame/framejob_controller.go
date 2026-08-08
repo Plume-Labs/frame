@@ -42,6 +42,13 @@ import (
 
 const frameJobFinalizer = "frame.plume-labs.io/framejob"
 
+// FrameJob phases derived from the backing ArgoWorkflow's status.phase.
+const (
+	jobPhaseCompleted = "Completed"
+	jobPhaseRunning   = "Running"
+	jobPhaseFailed    = "Failed"
+)
+
 var argoWorkflowGVK = schema.GroupVersionKind{
 	Group:   "argoproj.io",
 	Version: "v1alpha1",
@@ -119,7 +126,7 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		patch := client.MergeFrom(job.DeepCopy())
 		job.Status.Phase = phase
 		job.Status.Message = workflowMessage(existing)
-		if phase == "Completed" || phase == "Failed" {
+		if phase == jobPhaseCompleted || phase == jobPhaseFailed {
 			now := metav1.Now()
 			job.Status.CompletionTime = &now
 		}
@@ -127,19 +134,19 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, err
 		}
 		eventType := corev1.EventTypeNormal
-		if phase == "Failed" {
+		if phase == jobPhaseFailed {
 			eventType = corev1.EventTypeWarning
 		}
 		r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
 		switch phase {
-		case "Completed":
+		case jobPhaseCompleted:
 			frameJobCompleted.Inc()
-		case "Failed":
+		case jobPhaseFailed:
 			frameJobFailed.Inc()
 		}
 	}
 
-	if phase == "Completed" || phase == "Failed" {
+	if phase == jobPhaseCompleted || phase == jobPhaseFailed {
 		log.Info("Job terminal", "phase", phase)
 		return ctrl.Result{}, nil
 	}
@@ -173,26 +180,27 @@ func (r *FrameJobReconciler) reconcileDelete(ctx context.Context, job *framev1al
 }
 
 func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
-	params := []interface{}{
-		map[string]interface{}{"name": "gpu-count", "value": strconv.Itoa(int(job.Spec.GPUCount))},
-		map[string]interface{}{"name": "service-class", "value": job.Spec.ServiceClass},
-	}
+	params := make([]any, 0, 2+len(job.Spec.Parameters))
+	params = append(params,
+		map[string]any{"name": "gpu-count", "value": strconv.Itoa(int(job.Spec.GPUCount))},
+		map[string]any{"name": "service-class", "value": job.Spec.ServiceClass},
+	)
 	for k, v := range job.Spec.Parameters {
-		params = append(params, map[string]interface{}{"name": k, "value": v})
+		params = append(params, map[string]any{"name": k, "value": v})
 	}
 
-	labels := map[string]interface{}{
+	labels := map[string]any{
 		"frame.plume-labs.io/job":           job.Name,
 		"frame.plume-labs.io/job-namespace": job.Namespace,
 		"frame.plume-labs.io/pipeline":      job.Spec.Pipeline,
 		"frame.plume-labs.io/service-class": job.Spec.ServiceClass,
 	}
 
-	spec := map[string]interface{}{
-		"workflowTemplateRef": map[string]interface{}{
+	spec := map[string]any{
+		"workflowTemplateRef": map[string]any{
 			"name": job.Spec.Pipeline,
 		},
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"parameters": params,
 		},
 		"suspend": job.Spec.Suspended,
@@ -202,10 +210,10 @@ func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
 	}
 
 	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "argoproj.io/v1alpha1",
 			"kind":       "Workflow",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      job.Name,
 				"namespace": job.Spec.Namespace,
 				"labels":    labels,
@@ -233,16 +241,16 @@ func jobPriorityClass(priority string) string {
 
 func workflowPhase(wf *unstructured.Unstructured, suspended bool) string {
 	phase, _, _ := unstructured.NestedString(wf.Object, "status", "phase")
-	if suspended && (phase == "Running" || phase == "") {
+	if suspended && (phase == jobPhaseRunning || phase == "") {
 		return "Suspended"
 	}
 	switch phase {
 	case "Succeeded":
-		return "Completed"
-	case "Failed", "Error":
-		return "Failed"
-	case "Running":
-		return "Running"
+		return jobPhaseCompleted
+	case jobPhaseFailed, "Error":
+		return jobPhaseFailed
+	case jobPhaseRunning:
+		return jobPhaseRunning
 	default:
 		return "Submitted"
 	}

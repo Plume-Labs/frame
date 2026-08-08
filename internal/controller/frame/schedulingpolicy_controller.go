@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -147,13 +148,11 @@ func (r *SchedulingPolicyReconciler) reconcileQueue(ctx context.Context, sp *fra
 	q.SetGroupVersionKind(gvk)
 	q.SetName(sp.Spec.QueueName)
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, q, func() error {
-		existing, _ := q.Object["spec"].(map[string]interface{})
+		existing, _ := q.Object["spec"].(map[string]any)
 		if existing == nil {
-			existing = map[string]interface{}{}
+			existing = map[string]any{}
 		}
-		for k, v := range spec {
-			existing[k] = v
-		}
+		maps.Copy(existing, spec)
 		q.Object["spec"] = existing
 		labels := q.GetLabels()
 		if labels == nil {
@@ -168,7 +167,7 @@ func (r *SchedulingPolicyReconciler) reconcileQueue(ctx context.Context, sp *fra
 }
 
 // queueGVKAndSpec returns GVK + spec fields for the scheduler-native queue type.
-func queueGVKAndSpec(sp *framev1alpha1.SchedulingPolicy) (schema.GroupVersionKind, map[string]interface{}) {
+func queueGVKAndSpec(sp *framev1alpha1.SchedulingPolicy) (schema.GroupVersionKind, map[string]any) {
 	weight := int64(1)
 	if sp.Spec.QueueWeight != nil {
 		weight = int64(*sp.Spec.QueueWeight)
@@ -177,16 +176,16 @@ func queueGVKAndSpec(sp *framev1alpha1.SchedulingPolicy) (schema.GroupVersionKin
 	case "volcano":
 		return schema.GroupVersionKind{
 				Group: "scheduling.volcano.sh", Version: "v1beta1", Kind: "Queue",
-			}, map[string]interface{}{
+			}, map[string]any{
 				"weight":      weight,
 				"reclaimable": sp.Spec.Preemption,
 			}
 	case "yunikorn":
 		return schema.GroupVersionKind{
 				Group: "yunikorn.apache.org", Version: "v1alpha1", Kind: "Queue",
-			}, map[string]interface{}{
+			}, map[string]any{
 				"weight": weight,
-				"preemption": map[string]interface{}{
+				"preemption": map[string]any{
 					"allowPreemptSelf": sp.Spec.Preemption,
 				},
 			}

@@ -18,8 +18,11 @@ package controller
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+// conditionTypeReady is the standard status.conditions[].type this package's
+// controllers use to report overall reconcile health.
+const conditionTypeReady = "Ready"
 
 func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
 	c.LastTransitionTime = metav1.Now()
@@ -39,8 +42,4 @@ func conditionStatus(ok bool) metav1.ConditionStatus {
 		return metav1.ConditionTrue
 	}
 	return metav1.ConditionFalse
-}
-
-func corev1GVK(version, kind string) schema.GroupVersionKind {
-	return schema.GroupVersionKind{Group: "", Version: version, Kind: kind}
 }

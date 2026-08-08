@@ -76,7 +76,7 @@ func (v *FrameJobCustomValidator) ValidateDelete(_ context.Context, _ *framev1al
 
 func validateFrameJob(job *framev1alpha1.FrameJob) (admission.Warnings, error) {
 	if !knownPipelines[job.Spec.Pipeline] {
-		var known []string
+		known := make([]string, 0, len(knownPipelines))
 		for k := range knownPipelines {
 			known = append(known, k)
 		}

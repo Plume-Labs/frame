@@ -48,6 +48,9 @@ import (
 
 const enableWebhooksEnv = "ENABLE_WEBHOOKS"
 
+// webhooksDisabled is the ENABLE_WEBHOOKS value that turns admission webhooks off.
+const webhooksDisabled = "false"
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -197,10 +200,20 @@ func main() {
 	// type is.
 	serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB, mgr.GetClient(), mgr.GetAPIReader()))
 
+	// mgr.GetEventRecorderFor is deprecated in favour of GetEventRecorder, but
+	// that method returns the newer events/v1 events.EventRecorder, whose
+	// Eventf(regarding, related, eventtype, reason, action, note, args...)
+	// signature and semantics differ from the record.EventRecorder.Event(...)
+	// every reconciler's Recorder field and every controller test in this
+	// package (via record.NewFakeRecorder) is written against. Migrating would
+	// mean re-typing Recorder across all reconcilers, rewriting every
+	// r.Recorder.Event(...) call site, and could change the events actually
+	// emitted — a behaviour change several tests assert on. Deferring until
+	// that migration is done deliberately, not as a side effect of a lint pass.
 	if err := (&controller.FrameNodeReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("framenode"),
+		Recorder: mgr.GetEventRecorderFor("framenode"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framenode")
 		os.Exit(1)
@@ -208,7 +221,7 @@ func main() {
 	if err := (&controller.FrameJobReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("framejob"),
+		Recorder: mgr.GetEventRecorderFor("framejob"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framejob")
 		os.Exit(1)
@@ -216,7 +229,7 @@ func main() {
 	if err := (&controller.SchedulingPolicyReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("schedulingpolicy"),
+		Recorder: mgr.GetEventRecorderFor("schedulingpolicy"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "schedulingpolicy")
 		os.Exit(1)
@@ -224,7 +237,7 @@ func main() {
 	if err := (&controller.FrameResourceQuotaReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("frameresourcequota"),
+		Recorder: mgr.GetEventRecorderFor("frameresourcequota"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "frameresourcequota")
 		os.Exit(1)
@@ -232,7 +245,7 @@ func main() {
 	if err := (&controller.TalosMachineConfigReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("talosmachineconfig"),
+		Recorder: mgr.GetEventRecorderFor("talosmachineconfig"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosmachineconfig")
 		os.Exit(1)
@@ -240,48 +253,48 @@ func main() {
 	if err := (&controller.TalosUpgradeReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("talosupgrade"),
+		Recorder: mgr.GetEventRecorderFor("talosupgrade"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosupgrade")
 		os.Exit(1)
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameNode")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameJobWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameJob")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupSchedulingPolicyWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SchedulingPolicy")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameUserWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameUser")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupFrameResourceQuotaWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameResourceQuota")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupTalosMachineConfigWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosMachineConfig")
 			os.Exit(1)
 		}
 	}
-	if os.Getenv(enableWebhooksEnv) != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1alpha1.SetupTalosUpgradeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosUpgrade")
 			os.Exit(1)
@@ -290,14 +303,13 @@ func main() {
 	if err := (&servicescontroller.FrameServiceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("services-frameservice"),
+		Recorder: mgr.GetEventRecorderFor("services-frameservice"), //nolint:staticcheck
 		Registry: serviceRegistry,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "services-frameservice")
 		os.Exit(1)
 	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookservicesv1alpha1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
 			os.Exit(1)
