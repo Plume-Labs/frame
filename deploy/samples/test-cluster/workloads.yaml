@@ -41,7 +41,7 @@ spec:
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: SchedulingPolicy
 metadata: { name: neura-default, namespace: default }
-spec: { scheduler: volcano, queueName: neura-high, queueWeight: 100, gangScheduling: true, preemption: true, priorityClass: neura-high, priorityValue: 100 }
+spec: { scheduler: volcano, queueName: neura-high, queueWeight: 100, preemption: true, priorityClass: neura-high, priorityValue: 100 }
 ---
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: FrameResourceQuota
@@ -126,12 +126,12 @@ spec:
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: FrameJob
 metadata: { name: neura-embed-refresh, namespace: default }
-spec: { name: neura-embed-refresh, pipeline: neura-inference-dag, serviceClass: HIGH, priority: high, gpuCount: 0 }
+spec: { pipeline: neura-inference-dag, serviceClass: HIGH, priority: high, gpuCount: 0 }
 ---
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: FrameJob
 metadata: { name: nightly-consolidation, namespace: default }
-spec: { name: nightly-consolidation, pipeline: neura-training-dag, serviceClass: LOW, priority: low, gpuCount: 0 }
+spec: { pipeline: neura-training-dag, serviceClass: LOW, priority: low, gpuCount: 0 }
 ---
 # ── Volcano queues (elastic pools) ──────────────────────────────────────────
 apiVersion: scheduling.volcano.sh/v1beta1
