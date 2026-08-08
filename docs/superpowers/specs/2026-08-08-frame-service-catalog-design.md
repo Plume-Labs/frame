@@ -47,8 +47,8 @@ than accepted:
   enforcing it; it does not give up the enforcement.
 - *Freezability.* `parameters` cannot be frozen the way a typed field can. Rather
   than pretend otherwise, the compatibility boundary is stated: the **envelope**
-  (`type`, `plan`, `binding`, `deletionPolicy`, `status`) is covered by the API
-  guarantee; **`parameters` is provider-owned** and versioned with its provider.
+  (`type`, `serviceClass`, `binding`, `deletionPolicy`, `status`) is covered by
+  the API guarantee; **`parameters` is provider-owned** and versioned with its provider.
   A provider that needs a breaking parameter change ships a new `type` value
   rather than redefining the old one.
 
@@ -65,18 +65,20 @@ spec:
   # the webhook, so a typo is refused rather than left Pending forever.
   type: inference
 
-  # A named size, resolved by the provider into concrete requests/limits.
-  # Provider-defined; the webhook checks it against that provider's list.
-  plan: small
-
   # Provider-owned. Validated at admission against the schema the provider
   # registers, not by the CRD's own OpenAPI.
+  #
+  # There is no `plan` field. Size is derived, not chosen: the provider reads
+  # the parameters that describe the instance — for inference, the model — and
+  # computes the resources it needs. See "Sizing".
   parameters:
     model: llama-3.1-70b-instruct
     contextLength: "32768"
 
   # Which service class this instance's workloads run under, so the existing
   # FrameResourceQuota and SchedulingPolicy apply to it like any other workload.
+  # It expresses *what tier* the instance runs at, never *which node* — Frame
+  # decides placement. See "Placement".
   serviceClass: HIGH
 
   binding:
@@ -97,6 +99,14 @@ status:
     # What the consumer actually needs, so a human can see it without opening
     # the Secret. Never contains credentials.
     endpoint: http://llama-70b.research.svc:8080
+  # The resources the provider derived from the parameters. Surfaced because
+  # nothing in the spec states them, and an operator has to be able to see what
+  # an instance will cost before it schedules.
+  sizing:
+    gpu: "1"
+    gpuMemory: 6Gi
+    cpu: "4"
+    memory: 12Gi
   # What the provider created, so `kubectl describe` explains the instance
   # without anyone having to know the provider's internals.
   provisioned:
@@ -105,8 +115,8 @@ status:
   observedGeneration: 3
 ```
 
-Printer columns: `TYPE`, `PLAN`, `PHASE`, `ENDPOINT`, `AGE`. This is most of what
-typed CRDs would have given at the terminal, and it costs five markers.
+Printer columns: `TYPE`, `PHASE`, `ENDPOINT`, `AGE`. This is most of what typed
+CRDs would have given at the terminal, and it costs four markers.
 
 ## Providers
 
@@ -118,8 +128,10 @@ type Provider interface {
     Type() string
     // ParameterSchema is what the webhook validates spec.parameters against.
     ParameterSchema() *apiextensionsv1.JSONSchemaProps
-    // Plans enumerates the named sizes this provider accepts.
-    Plans() []string
+    // Size derives the resources this instance needs from its parameters.
+    // Called at admission so an instance that cannot fit is refused there,
+    // and again during reconcile to build the pod spec.
+    Size(params map[string]string) (Sizing, error)
     // Reconcile drives the instance towards the spec and reports what exists.
     Reconcile(ctx context.Context, svc *FrameService) (Result, error)
     // Bind returns the Secret contents and the endpoint for status.
@@ -162,22 +174,60 @@ means a new provider implementation behind the same `type`, not an API change.
 What it creates:
 
 - A Deployment running llama.cpp with the model and context length from
-  `parameters`, GPU request from `plan`, and the node selector implied by
-  `serviceClass`
+  `parameters`, and the resource requests its `Size` derived from them
 - A Service in front of it
-- A Secret holding the endpoint and, when the plan enables it, an API token
+- A Secret holding the endpoint and, where the provider issues one, an API token
 
 Two operational facts the provider has to respect, both learned the hard way on
 this cluster and recorded so the implementation does not rediscover them:
 
 - **Context length is not free.** An oversized `-c` exhausts the KV cache and
-  turns into runtime errors rather than a clean rejection. The provider caps
-  `contextLength` per plan against the GPU memory the plan reserves, and refuses
-  at admission rather than crash-looping.
+  turns into runtime errors rather than a clean rejection. `Size` computes the
+  KV cache the requested `contextLength` implies for that model and refuses at
+  admission when it will not fit, rather than admitting a pod that crash-loops.
 - **The GPU is shared.** Neura's own inference already occupies this card. A
   second instance on the same node competes for the same 7680 MiB, so the
   provider must request GPU memory explicitly and let the scheduler refuse rather
   than oversubscribe.
+
+## Sizing
+
+**Size is derived, not chosen.** There is no `plan` field and no `ServicePlan`
+resource. A provider's `Size` reads the parameters that describe the instance and
+computes what it needs: for inference, the model's weights and quantisation give
+the GPU memory floor, and the requested context length gives the KV cache on top.
+
+This removes the question of who curates plans, rather than answering it. A named
+size is a second description of something the parameters already determine, and
+two descriptions of one fact drift: `plan: small` with a 70B model is a
+contradiction the API would have had to police. Deriving makes it unrepresentable.
+
+`Size` runs at admission as well as during reconcile, so an instance that cannot
+fit is refused by `kubectl apply` with the numbers in the message — not admitted
+and left Pending against a cluster that will never have room. The result is
+published in `status.sizing`, because nothing in the spec states it and an
+operator has to be able to see what an instance costs.
+
+The trade-off, stated plainly: an operator cannot ask for a deliberately
+under-resourced instance to save capacity. If that turns out to be wanted, it
+arrives as an explicit `parameters` override in the provider that needs it, not
+as a size vocabulary across the whole catalog.
+
+## Placement
+
+**Frame decides placement.** A FrameService says what tier it runs at through
+`serviceClass`; it cannot name a node.
+
+The tempting exception is the one GPU: inference will only ever land on the node
+holding the Tesla P4, so a `nodeName` would make that explicit. It would also be
+the wrong mechanism. Requesting `nvidia.com/gpu` lets the scheduler find that node
+by itself, and keeps working unchanged the day a second card arrives — whereas a
+pinned name would then be a stale constraint nobody remembers to remove.
+
+So the provider expresses needs as resource requests and node selectors derived
+from `serviceClass`, and the scheduler places the pod. If a future service genuinely
+needs to be pinned — a local disk, a specific NIC — that is an argument for a node
+selector over a label, still not a node name.
 
 ## Binding
 
@@ -247,10 +297,11 @@ Database, queue and VM types. Credential rotation. Instance resize after
 creation. A UI beyond a read-only list — the catalog's surface belongs with S4,
 which is what consumes it.
 
-## Open questions
+## Resolved
 
-- Does `plan` stay provider-defined, or become a cluster-wide `ServicePlan`
-  resource an admin curates? Provider-defined is enough for one type; a second
-  type with overlapping plan names will answer this.
-- Should a FrameService be able to target a node explicitly, or only through
-  `serviceClass`? Only through `serviceClass` until something needs otherwise.
+Two questions were open when this spec was first written; both are now decided
+and folded into the design above.
+
+- *Who defines the sizes?* Nobody: sizes are derived from the parameters. See
+  "Sizing". This closed the question by deleting the field it was about.
+- *Can a service target a node?* No. Frame decides placement. See "Placement".
