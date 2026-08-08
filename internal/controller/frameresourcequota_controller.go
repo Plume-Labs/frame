@@ -123,7 +123,11 @@ func buildResourceList(frq *framev1alpha1.FrameResourceQuota) corev1.ResourceLis
 		hard[corev1.ResourceName("requests.nvidia.com/gpu")] = *resource.NewQuantity(int64(frq.Spec.MaxGPUs), resource.DecimalSI)
 	}
 	if frq.Spec.MaxJobs > 0 {
-		hard[corev1.ResourcePods] = *resource.NewQuantity(int64(frq.Spec.MaxJobs), resource.DecimalSI)
+		// Object-count quota on the FrameJob resource itself. Quoting pods here
+		// would have capped the pods an ArgoWorkflow fans out to, not the jobs:
+		// a single FrameJob can exhaust a pod quota on its own.
+		hard[corev1.ResourceName("count/framejobs.frame.plume-labs.io")] =
+			*resource.NewQuantity(int64(frq.Spec.MaxJobs), resource.DecimalSI)
 	}
 	return hard
 }

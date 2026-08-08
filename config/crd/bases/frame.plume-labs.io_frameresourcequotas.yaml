@@ -54,7 +54,11 @@ spec:
                 minimum: 0
                 type: integer
               maxJobs:
-                description: MaxJobs is the maximum number of concurrent jobs.
+                description: |-
+                  MaxJobs is the maximum number of FrameJob objects that may exist in a
+                  namespace of this service class. It is projected as the object-count quota
+                  count/framejobs.frame.plume-labs.io, which the apiserver enforces on
+                  creation. Completed FrameJobs keep counting until they are deleted.
                 format: int32
                 minimum: 0
                 type: integer

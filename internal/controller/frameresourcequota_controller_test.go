@@ -118,4 +118,33 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 		Expect(quota.Spec.Hard[corev1.ResourceName("requests.nvidia.com/gpu")]).
 			To(Equal(resource.MustParse("8")))
 	})
+
+	It("quotas FrameJob objects rather than the pods they fan out to", func() {
+		labeledNS := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "high-jobcount",
+				Labels: map[string]string{"frame.plume-labs.io/service-class": "HIGH"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, labeledNS)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, labeledNS) })
+
+		_, _ = r().Reconcile(ctx, req)
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		quota := &corev1.ResourceQuota{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: "frame-high", Namespace: "high-jobcount",
+		}, quota)).To(Succeed())
+
+		// maxJobs: 10 must cap FrameJobs, not pods — one FrameJob becomes an
+		// ArgoWorkflow that fans out to many pods, so a pod quota would let a
+		// single job exhaust the whole service class.
+		Expect(quota.Spec.Hard).To(HaveKeyWithValue(
+			corev1.ResourceName("count/framejobs.frame.plume-labs.io"),
+			resource.MustParse("10"),
+		))
+		Expect(quota.Spec.Hard).NotTo(HaveKey(corev1.ResourcePods))
+	})
 })
