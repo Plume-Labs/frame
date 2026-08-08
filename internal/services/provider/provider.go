@@ -73,6 +73,37 @@ type Provider interface {
 // alone, and so a test can register a schema-only stub.
 type Provisioner interface {
 	Provider
+
+	// Reconcile builds or converges the instance and reports what exists.
+	//
+	// Ownership is a requirement, not a suggestion, because it is what gives
+	// spec.deletionPolicy its meaning: the controller itself has no idea what
+	// kind of objects a given provider creates, so it cannot enumerate them at
+	// delete time. It can only rely on Kubernetes garbage collection acting on
+	// whatever ownership Reconcile set up.
+	//
+	//   - Every object that exposes the instance — a Service, a credentials
+	//     Secret, anything a consumer talks to or reads — MUST be created with
+	//     controllerutil.SetControllerReference against the FrameService.
+	//     Garbage collection then removes it the moment the FrameService is
+	//     deleted, regardless of deletionPolicy: exposure never survives its
+	//     FrameService.
+	//   - Every object that holds the instance's data — a PersistentVolumeClaim,
+	//     a delegating operator's own CR — MUST NOT carry that owner reference.
+	//     That is what lets deletionPolicy: Retain (the default) keep it after
+	//     the FrameService and its exposing objects are gone, and it is why a
+	//     provider author who gets this backwards leaks nothing: forgetting the
+	//     owner reference on an exposing object is the failure mode that leaves
+	//     an orphaned Service or Secret behind on every delete, silent until
+	//     someone finds it.
+	//
+	// Objects the provider wants deleted outright under deletionPolicy: Delete
+	// — typically the data objects above, which by design outlive owner-reference
+	// GC — belong in Result.Provisioned: it is the only handle the generic
+	// reconcileDelete has on them, since Provisioner exposes no teardown hook.
 	Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameService) (Result, error)
+
+	// Bind returns what a consumer needs to reach the instance once Reconcile
+	// reports Ready.
 	Bind(ctx context.Context, svc *servicesv1alpha1.FrameService) (Binding, error)
 }

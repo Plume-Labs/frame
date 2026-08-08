@@ -176,13 +176,26 @@ func (r *FrameServiceReconciler) setStatus(
 	return r.Status().Update(ctx, &fresh)
 }
 
-// reconcileDelete tears down a FrameService. Retain — the default — leaves
-// whatever the provider provisioned in place: the failure modes are not
-// symmetric, a retained volume costs disk and stays visible, a deleted one
-// costs the data at the moment someone meant to redeploy. Delete removes
-// every object the provider last reported in status.Provisioned. Either way
-// the finalizer clears last, so a crash mid-teardown leaves the object
-// undeleted rather than silently orphaning what it provisioned.
+// reconcileDelete tears down a FrameService. The split deletionPolicy
+// controls is never "does anything get deleted" — the objects that expose
+// the instance are always removed, by Kubernetes garbage collection acting on
+// the owner reference every Provisioner.Reconcile is required to set on them,
+// with no code needed here for that half. What deletionPolicy actually
+// decides is the instance's data:
+//
+//   - Retain (the default) does nothing in this function beyond releasing the
+//     finalizer. That is correct, not incomplete: the exposing objects are
+//     already gone or going via owner-reference GC, and the data objects — a
+//     PVC, a delegating operator's CR — deliberately carry no owner reference,
+//     so GC leaves them alone and Retain needs no extra code to keep them.
+//   - Delete additionally removes every object in status.Provisioned, which is
+//     the only handle this controller has on data objects: Provisioner has no
+//     teardown method, so the provider's last reconcile report is the sole
+//     record of what exists to delete.
+//
+// Either way the finalizer clears last, so a crash mid-teardown leaves the
+// object undeleted — and retried — rather than orphaning a data object with
+// nothing left tracking it.
 func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1alpha1.FrameService) (ctrl.Result, error) {
 	if svc.Spec.DeletionPolicy == "Delete" {
 		for _, ref := range svc.Status.Provisioned {

@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -155,6 +156,62 @@ var _ = Describe("FrameService Controller", func() {
 		Eventually(func() bool {
 			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
 		}, "5s").Should(BeTrue())
+	})
+
+	It("deletes what status.Provisioned lists when the policy is Delete", func() {
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		svc.Spec.DeletionPolicy = "Delete"
+		Expect(k8sClient.Update(ctx, svc)).To(Succeed())
+
+		// A ConfigMap stands in for a data object a real provider would list —
+		// the controller only ever acts on the apiVersion/kind/name/namespace in
+		// status.Provisioned, never on what kind of object it actually is.
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "provisioned-delete", Namespace: ns}}
+		Expect(k8sClient.Create(ctx, cm)).To(Succeed())
+		cmKey := types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		svc.Status.Provisioned = []servicesv1alpha1.ProvisionedRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: cm.Name, Namespace: cm.Namespace},
+		}
+		Expect(k8sClient.Status().Update(ctx, svc)).To(Succeed())
+
+		Expect(k8sClient.Delete(ctx, svc)).To(Succeed())
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+		}, "5s").Should(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}))).To(BeTrue())
+	})
+
+	It("leaves status.Provisioned in place when the policy is Retain", func() {
+		_, _ = r().Reconcile(ctx, req) // lands the finalizer; DeletionPolicy stays Retain from BeforeEach
+
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "provisioned-retain", Namespace: ns}}
+		Expect(k8sClient.Create(ctx, cm)).To(Succeed())
+		cmKey := types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}
+		defer func() { _ = k8sClient.Delete(ctx, cm) }()
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		svc.Status.Provisioned = []servicesv1alpha1.ProvisionedRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: cm.Name, Namespace: cm.Namespace},
+		}
+		Expect(k8sClient.Status().Update(ctx, svc)).To(Succeed())
+
+		Expect(k8sClient.Delete(ctx, svc)).To(Succeed())
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+		}, "5s").Should(BeTrue())
+		// Retain relies on owner-reference GC for exposing objects; a data
+		// object named in status.Provisioned is never touched by reconcileDelete.
+		Expect(k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{})).To(Succeed())
 	})
 })
 
