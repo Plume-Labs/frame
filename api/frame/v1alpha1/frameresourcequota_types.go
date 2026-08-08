@@ -25,6 +25,8 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // FrameResourceQuotaSpec defines the desired state of FrameResourceQuota
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.maxGPUs) && self.maxGPUs > 0) || has(self.maxCPU) || has(self.maxMemory) || (has(self.maxJobs) && self.maxJobs > 0)",message="at least one of maxGPUs, maxCPU, maxMemory, or maxJobs must be set"
 type FrameResourceQuotaSpec struct {
 	// ServiceClass this quota applies to.
 	// +kubebuilder:validation:Required
@@ -78,6 +80,10 @@ type FrameResourceQuotaStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="ServiceClass",type=string,JSONPath=".spec.serviceClass"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // FrameResourceQuota is the Schema for the frameresourcequotas API
 type FrameResourceQuota struct {
