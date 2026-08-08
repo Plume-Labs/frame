@@ -80,9 +80,13 @@ spec:
                     type: string
                   dns:
                     items:
-                      format: ip
+                      maxLength: 45
                       type: string
+                    maxItems: 16
                     type: array
+                    x-kubernetes-validations:
+                    - message: each network.dns entry must be a valid IP
+                      rule: self.all(x, isIP(x))
                   gateway:
                     type: string
                   vlan:

@@ -32,8 +32,10 @@ type TalosUpgradeSpec struct {
 	NodeName string `json:"nodeName"`
 
 	// TalosEndpoint is the Talos API endpoint (host:port) for this node.
+	// The bracketed form (e.g. [fd00::1]:50000) is accepted for IPv6, same
+	// as net.SplitHostPort in the webhook check this mirrors.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9.-]+:[0-9]+$"
+	// +kubebuilder:validation:Pattern="^(\\[[0-9a-fA-F:]+\\]|[a-zA-Z0-9.-]+):[0-9]+$"
 	TalosEndpoint string `json:"talosEndpoint"`
 
 	// TalosSecretRef references the Secret containing Talos client certificates

@@ -34,16 +34,20 @@ type SchedulingPolicySpec struct {
 
 	// QueueName is the Volcano/YuniKorn queue to submit jobs to. Not an enum:
 	// it names an externally-created Queue object, but it is still a
-	// Kubernetes object name, hence the pattern.
+	// Kubernetes object name, hence the pattern. The pattern accepts empty:
+	// the controller branches on "" to skip queue reconciliation, and the
+	// SDK's create form sends this field unconditionally, so a user clearing
+	// it must still be able to save.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+	// +kubebuilder:validation:Pattern="^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$"
 	QueueName string `json:"queueName,omitempty"`
 
 	// PriorityClass is the default Kubernetes PriorityClass for jobs under this policy.
+	// The pattern accepts empty for the same reason as QueueName above.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+	// +kubebuilder:validation:Pattern="^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$"
 	PriorityClass string `json:"priorityClass,omitempty"`
 
 	// Preemption allows higher-priority jobs to preempt lower-priority ones.

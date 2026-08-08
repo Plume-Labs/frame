@@ -107,11 +107,6 @@ spec:
             required:
             - pipeline
             type: object
-            x-kubernetes-validations:
-            - message: jobs requesting GPUs must use serviceClass HIGH or MEDIUM,
-                not LOW
-              rule: '!has(self.gpuCount) || self.gpuCount == 0 || !has(self.serviceClass)
-                || self.serviceClass != ''LOW'''
           status:
             description: status defines the observed state of FrameJob
             properties:
