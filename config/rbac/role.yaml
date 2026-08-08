@@ -9,11 +9,18 @@ rules:
   resources:
   - configmaps
   - namespaces
-  - secrets
+  - pods
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - ""
   resources:
@@ -27,7 +34,27 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - persistentvolumeclaims
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
   - resourcequotas
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
   verbs:
   - create
   - delete
@@ -122,3 +149,29 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices/status
+  verbs:
+  - get
+  - patch
+  - update

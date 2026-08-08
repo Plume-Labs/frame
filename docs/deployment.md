@@ -39,7 +39,7 @@ docker push ghcr.io/<your-org>/frame-ui:dev
 kubectl apply -k config/default
 ```
 
-This applies the `frame-system` namespace, all seven CRDs, RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
+This applies the `frame-system` namespace, all eight CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
 Verify:
 
