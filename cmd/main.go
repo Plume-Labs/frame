@@ -200,10 +200,20 @@ func main() {
 	// type is.
 	serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB, mgr.GetClient(), mgr.GetAPIReader()))
 
+	// mgr.GetEventRecorderFor is deprecated in favour of GetEventRecorder, but
+	// that method returns the newer events/v1 events.EventRecorder, whose
+	// Eventf(regarding, related, eventtype, reason, action, note, args...)
+	// signature and semantics differ from the record.EventRecorder.Event(...)
+	// every reconciler's Recorder field and every controller test in this
+	// package (via record.NewFakeRecorder) is written against. Migrating would
+	// mean re-typing Recorder across all reconcilers, rewriting every
+	// r.Recorder.Event(...) call site, and could change the events actually
+	// emitted — a behaviour change several tests assert on. Deferring until
+	// that migration is done deliberately, not as a side effect of a lint pass.
 	if err := (&controller.FrameNodeReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("framenode"),
+		Recorder: mgr.GetEventRecorderFor("framenode"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framenode")
 		os.Exit(1)
@@ -211,7 +221,7 @@ func main() {
 	if err := (&controller.FrameJobReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("framejob"),
+		Recorder: mgr.GetEventRecorderFor("framejob"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framejob")
 		os.Exit(1)
@@ -219,7 +229,7 @@ func main() {
 	if err := (&controller.SchedulingPolicyReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("schedulingpolicy"),
+		Recorder: mgr.GetEventRecorderFor("schedulingpolicy"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "schedulingpolicy")
 		os.Exit(1)
@@ -227,7 +237,7 @@ func main() {
 	if err := (&controller.FrameResourceQuotaReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("frameresourcequota"),
+		Recorder: mgr.GetEventRecorderFor("frameresourcequota"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "frameresourcequota")
 		os.Exit(1)
@@ -235,7 +245,7 @@ func main() {
 	if err := (&controller.TalosMachineConfigReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("talosmachineconfig"),
+		Recorder: mgr.GetEventRecorderFor("talosmachineconfig"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosmachineconfig")
 		os.Exit(1)
@@ -243,7 +253,7 @@ func main() {
 	if err := (&controller.TalosUpgradeReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("talosupgrade"),
+		Recorder: mgr.GetEventRecorderFor("talosupgrade"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosupgrade")
 		os.Exit(1)
@@ -293,7 +303,7 @@ func main() {
 	if err := (&servicescontroller.FrameServiceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("services-frameservice"),
+		Recorder: mgr.GetEventRecorderFor("services-frameservice"), //nolint:staticcheck
 		Registry: serviceRegistry,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "services-frameservice")
