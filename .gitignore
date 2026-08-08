@@ -42,3 +42,6 @@ cover.out
 
 # Isolated worktrees for subagent-driven work — never part of the tree.
 .worktrees/
+
+# Superpowers scratch: plans workspaces, ledgers, review packages, reports.
+.superpowers/
