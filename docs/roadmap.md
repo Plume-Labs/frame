@@ -125,7 +125,16 @@ The design spec posed three hypotheses under "Where this may force the core API 
 
 ### S3 — Auto-update
 
-Frame itself and its components. `TalosUpgrade` already covers the node OS; nothing covers the operator, the UI, authd, or the addons under `deploy/`.
+Frame itself. `TalosUpgrade` already covers the node OS; nothing covered the operator, the UI or authd. Designed as two pieces, neither of which is an API group:
+
+- a [release chain](superpowers/specs/2026-08-09-frame-release-chain-design.md) publishing the three images to GHCR from a git tag — a prerequisite, and the place where CI's own defect gets fixed: `build.yml` builds the root Dockerfile, which is the UI, and publishes it under the bare repository name as though it were the project, while the operator and authd are built by CI nowhere
+- an [update screen](superpowers/specs/2026-08-09-frame-update-screen-design.md) showing what runs, what is available, and what an update would disturb right now
+
+No self-updating operator: the UI patches the Deployment, so the bootstrap problem — a controller surviving its own rollout mid-reconcile — never arises. No new CRD either, which means **S3 does not gate the Phase B freeze**, contrary to the assumption behind the phase ordering.
+
+Argo CD already converges declared versions and this does not compete with it. What Argo cannot see is whether now is a moment the cluster can afford the interruption. Frame can, by reading its own resources. That panel is the point; the button is the easy part.
+
+The addons under `deploy/` — Argo, cert-manager, Volcano, Cilium, the Postgres operator — stay out. They are Argo CD's to converge, and Frame has nothing to add about them that Argo does not already know.
 
 ### S4 — Application management
 
