@@ -22,6 +22,10 @@ import (
 // spec.parameters.modelCache is unset.
 const defaultModelCachePVC = "model-cache-pvc"
 
+// frameServiceKind is the owner-reference Kind every object this provider
+// creates must carry, asserted by every ownership test in this file.
+const frameServiceKind = "FrameService"
+
 // argsContain reports whether args holds flag immediately followed by value,
 // the way a []string of CLI arguments carries a "-c 8192" pair.
 func argsContain(args []string, flag, value string) bool {
@@ -131,7 +135,7 @@ func TestReconcileCreatesADeploymentSizedFromTheModel(t *testing.T) {
 	// exist at all), so it must be owner-referenced to the FrameService —
 	// deleting one has to garbage-collect the other.
 	owners := d.GetOwnerReferences()
-	if len(owners) != 1 || owners[0].Name != svc.Name || owners[0].Kind != "FrameService" {
+	if len(owners) != 1 || owners[0].Name != svc.Name || owners[0].Kind != frameServiceKind {
 		t.Fatalf("Deployment owner references = %v, want a single FrameService owner", owners)
 	}
 
@@ -141,7 +145,7 @@ func TestReconcileCreatesADeploymentSizedFromTheModel(t *testing.T) {
 		t.Fatalf("Service not created: %v", err)
 	}
 	svcOwners := s.GetOwnerReferences()
-	if len(svcOwners) != 1 || svcOwners[0].Name != svc.Name || svcOwners[0].Kind != "FrameService" {
+	if len(svcOwners) != 1 || svcOwners[0].Name != svc.Name || svcOwners[0].Kind != frameServiceKind {
 		t.Fatalf("Service owner references = %v, want a single FrameService owner", svcOwners)
 	}
 
@@ -446,7 +450,217 @@ func TestBindReturnsTheClusterEndpoint(t *testing.T) {
 		t.Fatalf("Endpoint = %q", b.Endpoint)
 	}
 	// The endpoint is published in status, so it must never carry a credential.
-	if strings.Contains(b.Endpoint, "token") || strings.Contains(b.Endpoint, "@") {
+	if strings.Contains(b.Endpoint, "token") || strings.Contains(b.Endpoint, "@") || strings.Contains(b.Endpoint, "key") {
 		t.Fatalf("endpoint %q looks like it carries a credential", b.Endpoint)
+	}
+}
+
+// apiKeySecretNameForTest mirrors the provider's own apiKeySecretName, which
+// is unexported: this file is package inference_test and can only observe
+// the Secret it produces, not call the naming helper directly.
+func apiKeySecretNameForTest(svcName string) string {
+	return svcName + "-inference-key"
+}
+
+// TestReconcileGeneratesAnAPIKeyWhenNoneExists pins the first half of the
+// stability contract: a fresh instance gets a real, non-empty token minted
+// from crypto/rand, not an empty or placeholder value.
+func TestReconcileGeneratesAnAPIKeyWhenNoneExists(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	var secret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: apiKeySecretNameForTest(svc.Name), Namespace: svc.Namespace}, &secret); err != nil {
+		t.Fatalf("API key Secret not created: %v", err)
+	}
+	token := secret.Data["apiKey"]
+	if len(token) == 0 {
+		t.Fatal("API key Secret has no apiKey data")
+	}
+	// 32 bytes of entropy, base64url-encoded without padding, is 43
+	// characters — long enough that a placeholder or truncated value would
+	// be caught here.
+	if len(token) < 40 {
+		t.Fatalf("apiKey %q looks too short to be 32 bytes of entropy", token)
+	}
+
+	// Ownership: the API key Secret carries a credential, so — like the
+	// Deployment and Service — it must be owner-referenced to the
+	// FrameService and garbage-collected with it.
+	owners := secret.GetOwnerReferences()
+	if len(owners) != 1 || owners[0].Name != svc.Name || owners[0].Kind != frameServiceKind {
+		t.Fatalf("API key Secret owner references = %v, want a single FrameService owner", owners)
+	}
+}
+
+// TestReconcileReusesTheSameAPIKeyOnASecondPass pins the stability contract
+// that actually matters: Reconcile runs repeatedly, and a fresh token on
+// every pass would rewrite the Deployment (and invalidate every client
+// holding the old value) forever.
+func TestReconcileReusesTheSameAPIKeyOnASecondPass(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	var first corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: apiKeySecretNameForTest(svc.Name), Namespace: svc.Namespace}, &first); err != nil {
+		t.Fatalf("API key Secret not created: %v", err)
+	}
+	firstToken := string(first.Data["apiKey"])
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	var second corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: apiKeySecretNameForTest(svc.Name), Namespace: svc.Namespace}, &second); err != nil {
+		t.Fatalf("API key Secret missing after second Reconcile: %v", err)
+	}
+	if string(second.Data["apiKey"]) != firstToken {
+		t.Fatalf("apiKey changed between reconciles: %q -> %q", firstToken, string(second.Data["apiKey"]))
+	}
+}
+
+// TestReconcileWiresTheAPIKeyIntoTheContainerAsAnEnvVar pins the exposure
+// decision: the token reaches llama.cpp through LLAMA_API_KEY sourced from
+// the Secret, never as a --api-key argument, which kubectl describe pod and
+// Events would expose to a far wider audience than whoever can read the
+// Secret.
+func TestReconcileWiresTheAPIKeyIntoTheContainerAsAnEnvVar(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	var d appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d); err != nil {
+		t.Fatalf("Deployment not created: %v", err)
+	}
+	container := d.Spec.Template.Spec.Containers[0]
+
+	var found *corev1.EnvVar
+	for i := range container.Env {
+		if container.Env[i].Name == "LLAMA_API_KEY" {
+			found = &container.Env[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("no LLAMA_API_KEY env var: %v", container.Env)
+	}
+	if found.Value != "" {
+		t.Fatalf("LLAMA_API_KEY.Value = %q, want it sourced from a Secret, not set inline", found.Value)
+	}
+	if found.ValueFrom == nil || found.ValueFrom.SecretKeyRef == nil {
+		t.Fatal("LLAMA_API_KEY has no ValueFrom.SecretKeyRef")
+	}
+	if got := found.ValueFrom.SecretKeyRef.Name; got != apiKeySecretNameForTest(svc.Name) {
+		t.Fatalf("SecretKeyRef.Name = %q, want %q", got, apiKeySecretNameForTest(svc.Name))
+	}
+	if got := found.ValueFrom.SecretKeyRef.Key; got != "apiKey" {
+		t.Fatalf("SecretKeyRef.Key = %q, want apiKey", got)
+	}
+
+	// The whole point: nothing about the key ever appears in Args, which is
+	// visible to anyone who can kubectl describe the pod.
+	for _, a := range container.Args {
+		if strings.Contains(strings.ToLower(a), "api-key") {
+			t.Fatalf("args %v mention the API key flag; it must only reach the container via env", container.Args)
+		}
+	}
+}
+
+// TestBindReturnsTheAPIKeyAlongsideTheEndpoint pins the last leg: Bind must
+// hand the same token back to the controller so it lands in the credentials
+// Secret, and it must be the exact value ensureAPIKey already committed to
+// during Reconcile — not a second, independently generated one.
+func TestBindReturnsTheAPIKeyAlongsideTheEndpoint(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+	var secret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Name: apiKeySecretNameForTest(svc.Name), Namespace: svc.Namespace}, &secret); err != nil {
+		t.Fatalf("API key Secret not created: %v", err)
+	}
+	wantToken := string(secret.Data["apiKey"])
+
+	b, err := p.Bind(ctx, svc)
+	if err != nil {
+		t.Fatalf("Bind returned %v", err)
+	}
+	gotToken, ok := b.Data["apiKey"]
+	if !ok {
+		t.Fatalf("Bind Data = %v, want an apiKey entry", b.Data)
+	}
+	if string(gotToken) != wantToken {
+		t.Fatalf("Bind's apiKey = %q, want the same token Reconcile committed to the Secret (%q)", gotToken, wantToken)
+	}
+	if string(b.Data["endpoint"]) != b.Endpoint {
+		t.Fatalf("Bind Data[endpoint] = %q, want it to match Endpoint %q", b.Data["endpoint"], b.Endpoint)
+	}
+}
+
+// TestReconcileDegradesOnCreateContainerConfigError pins the second half of
+// the Deployment-before-Secret ordering fix: ensureAPIKey closes the
+// ordinary race, but a pod can still end up unable to read its Secret for
+// reasons outside this provider's control (an operator deleting it by hand,
+// RBAC narrowed after the fact). That must surface as a named, actionable
+// degrade rather than reading like an ordinary rollout that never finishes.
+func TestReconcileDegradesOnCreateContainerConfigError(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "llama-pod",
+			Namespace: svc.Namespace,
+			Labels:    map[string]string{"app": svc.Name},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "llama-cpp",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason:  "CreateContainerConfigError",
+							Message: `secret "llama-inference-key" not found`,
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatalf("seeding the failing Pod: %v", err)
+	}
+	if err := c.Status().Update(ctx, pod); err != nil {
+		t.Fatalf("setting Pod status: %v", err)
+	}
+
+	result, err := p.Reconcile(ctx, svc)
+	if err != nil {
+		t.Fatalf("Reconcile returned an error %v, want a degraded Result instead", err)
+	}
+	if result.Ready {
+		t.Fatal("Ready = true with a pod stuck in CreateContainerConfigError")
+	}
+	if result.Reason != "CreateContainerConfigError" {
+		t.Fatalf("Reason = %q, want CreateContainerConfigError", result.Reason)
+	}
+	if !strings.Contains(result.Message, "llama-pod") || !strings.Contains(result.Message, "llama-cpp") {
+		t.Fatalf("Message %q does not name the pod and container", result.Message)
 	}
 }
