@@ -72,8 +72,8 @@ spec:
   # the parameters that describe the instance — for inference, the model — and
   # computes the resources it needs. See "Sizing".
   parameters:
-    model: llama-3.1-70b-instruct
-    contextLength: "32768"
+    model: llama-3.1-8b-instruct
+    contextLength: "8192"
 
   # Which service class this instance's workloads run under, so the existing
   # FrameResourceQuota and SchedulingPolicy apply to it like any other workload.
@@ -104,7 +104,7 @@ status:
   # an instance will cost before it schedules.
   sizing:
     gpu: "1"
-    gpuMemory: 6Gi
+    gpuMemory: 5720Mi     # 4.58Gi of Q4_K_M weights + 1Gi of KV cache at 8192
     cpu: "4"
     memory: 12Gi
   # What the provider created, so `kubectl describe` explains the instance
@@ -185,6 +185,11 @@ this cluster and recorded so the implementation does not rediscover them:
   turns into runtime errors rather than a clean rejection. `Size` computes the
   KV cache the requested `contextLength` implies for that model and refuses at
   admission when it will not fit, rather than admitting a pod that crash-loops.
+  The numbers are unforgiving on this card, which is the point of computing them:
+  Llama 3.1 8B at Q4_K_M is 4.58Gi of weights and 128Ki of KV cache per token, so
+  8192 tokens fit in the P4's 7680Mi and 32768 tokens do not. An operator finds
+  that out from `kubectl apply`, not from a crash loop.
+
 - **The GPU is shared.** Neura's own inference already occupies this card. A
   second instance on the same node competes for the same 7680 MiB, so the
   provider must request GPU memory explicitly and let the scheduler refuse rather
