@@ -9,6 +9,8 @@ package inference
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"math"
 	"strconv"
@@ -67,6 +69,31 @@ const (
 	// than one instance; Reconcile and the readiness check both reference it
 	// so they can never disagree about what "ready" means.
 	desiredReplicas = 1
+	// apiKeySecretSuffix names the Secret this provider owns to hold the
+	// generated llama.cpp API key, appended to the FrameService's name.
+	// Deliberately distinct from the credentials Secret the controller
+	// writes at (svc.Namespace, spec.binding.secretName or svc.Name): see
+	// ensureAPIKey for why writing to that exact coordinate before the
+	// controller's own binding reconciler has recorded it in
+	// status.binding.projected would trip its ownership-conflict check.
+	apiKeySecretSuffix = "-inference-key"
+	// apiKeyDataKey is the key this provider stores the generated token
+	// under, both in the Secret it owns and in the Data map Bind returns —
+	// the same key a consumer looks up in the credentials Secret.
+	apiKeyDataKey = "apiKey"
+	// apiKeyEnvVar is the environment variable llama.cpp's server reads its
+	// API key from. Confirmed against tools/server/README.md: --api-key has
+	// a documented environment-variable equivalent (LLAMA_API_KEY), unlike
+	// --api-key-file, which does not. Using the env var instead of the flag
+	// keeps the key out of the pod spec: args are visible to anyone who can
+	// `kubectl describe pod` or read Events, which is a much wider audience
+	// than those who can read the Secret an env var's secretKeyRef points at.
+	apiKeyEnvVar = "LLAMA_API_KEY"
+	// apiKeyBytes is the entropy encoded into every generated API key: 32
+	// bytes (256 bits) of crypto/rand output, base64url-encoded without
+	// padding below, is far past the point where guessing it is easier than
+	// reaching the Service and asking nicely.
+	apiKeyBytes = 32
 )
 
 // Provider serves models with llama.cpp.
@@ -227,6 +254,103 @@ func modelPath(model string) string {
 	return fmt.Sprintf("%s/%s.gguf", modelMountPath, model)
 }
 
+// apiKeySecretName names the Secret this provider owns to hold the
+// generated llama.cpp API key. See apiKeySecretSuffix for why it is never
+// the same coordinate as the credentials Secret the controller writes.
+func apiKeySecretName(svcName string) string {
+	return svcName + apiKeySecretSuffix
+}
+
+// generateAPIKey mints a fresh token from crypto/rand — never math/rand,
+// which is predictable and unfit for anything a client authenticates with.
+// 32 bytes of entropy, base64url-encoded without padding, keeps the value
+// safely outside guessing range while remaining a plain string llama.cpp's
+// --api-key/LLAMA_API_KEY accepts verbatim.
+func generateAPIKey() (string, error) {
+	buf := make([]byte, apiKeyBytes)
+	if _, err := rand.Read(buf); err != nil {
+		// A silent failure here would produce an instance with an empty or
+		// predictable token, which is worse than no token at all, so the
+		// read error is wrapped and surfaced rather than ignored.
+		return "", fmt.Errorf("reading random bytes for API key: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// ensureAPIKey makes the Secret backing the FrameService's llama.cpp API key
+// exist and returns the token in it, generating one only the first time.
+//
+// The Secret is the source of truth, not a field this provider recomputes:
+// Reconcile runs repeatedly, and Reconcile and Bind are separate calls that
+// both need the exact same value, so something has to persist it between
+// calls and across reconciles. Nothing in this provider's own state survives
+// a restart, and the token must never reach svc.Status (conditions and
+// status are logged and displayed; a credential must not be). A Secret is
+// the only object already in this design meant to hold a credential, so it
+// is where this one lives too — read back here on every call rather than
+// generated fresh, which is what keeps it stable across reconciles instead
+// of rewriting the Deployment (and breaking every client holding the old
+// value) on every pass.
+//
+// This also fixes the Deployment-before-Secret ordering the controller's own
+// credentials Secret has: that one is only written by reconcileBinding after
+// Reconcile has already reported Ready, so a Deployment reading its API key
+// from that Secret could never start — the pod would sit in
+// CreateContainerConfigError forever, Reconcile would never see a ready
+// replica, and the controller would never reach the code that creates the
+// Secret the pod is waiting on. Owning a separate Secret here, and creating
+// it before the Deployment below, breaks that deadlock: this Secret exists
+// before anything reads it, on every pass including the first.
+func (p *Provider) ensureAPIKey(ctx context.Context, svc *servicesv1alpha1.FrameService) (string, error) {
+	name := apiKeySecretName(svc.Name)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: svc.Namespace}}
+
+	var genErr error
+	if _, err := controllerutil.CreateOrUpdate(ctx, p.client, secret, func() error {
+		if len(secret.Data[apiKeyDataKey]) > 0 {
+			// Already generated on an earlier pass: reuse it rather than
+			// mint a second value that would invalidate every client
+			// holding the first.
+			return controllerutil.SetControllerReference(svc, secret, p.client.Scheme())
+		}
+		token, err := generateAPIKey()
+		if err != nil {
+			genErr = err
+			return err
+		}
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		secret.Data[apiKeyDataKey] = []byte(token)
+		return controllerutil.SetControllerReference(svc, secret, p.client.Scheme())
+	}); err != nil {
+		if genErr != nil {
+			return "", fmt.Errorf("generating API key for %s/%s: %w", svc.Namespace, svc.Name, genErr)
+		}
+		return "", fmt.Errorf("reconciling API key Secret %s/%s: %w", svc.Namespace, name, err)
+	}
+	return string(secret.Data[apiKeyDataKey]), nil
+}
+
+// readAPIKey reads back the token ensureAPIKey wrote, for Bind to hand to a
+// consumer. Bind runs after Reconcile has already reported Ready, so the
+// Secret ensureAPIKey depends on is guaranteed to exist by the time this is
+// called — but the Get is real rather than assumed, so a Secret deleted out
+// from under a Ready instance surfaces as an error here instead of Bind
+// quietly returning an empty credential.
+func (p *Provider) readAPIKey(ctx context.Context, svc *servicesv1alpha1.FrameService) (string, error) {
+	name := apiKeySecretName(svc.Name)
+	var secret corev1.Secret
+	if err := p.client.Get(ctx, types.NamespacedName{Name: name, Namespace: svc.Namespace}, &secret); err != nil {
+		return "", fmt.Errorf("reading API key Secret %s/%s: %w", svc.Namespace, name, err)
+	}
+	token := secret.Data[apiKeyDataKey]
+	if len(token) == 0 {
+		return "", fmt.Errorf("API key Secret %s/%s has no %q key", svc.Namespace, name, apiKeyDataKey)
+	}
+	return string(token), nil
+}
+
 // Reconcile creates or converges the Deployment and Service a FrameService
 // needs. Both are exposing objects — a consumer reaches the instance through
 // the Service, and the Deployment is what makes it exist at all — so both
@@ -282,6 +406,14 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		return provider.Result{}, fmt.Errorf("checking model cache PVC %s/%s: %w", svc.Namespace, cacheName, err)
 	}
 
+	// The API key Secret must exist before the Deployment that reads it: see
+	// ensureAPIKey for why creating it after, the way the controller's own
+	// credentials Secret is written, would deadlock the instance forever.
+	apiKeySecret := apiKeySecretName(svc.Name)
+	if _, err := p.ensureAPIKey(ctx, svc); err != nil {
+		return provider.Result{}, err
+	}
+
 	labels := map[string]string{"app": svc.Name}
 
 	deployment := &appsv1.Deployment{
@@ -310,13 +442,29 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 			"-m", modelPath(svc.Spec.Parameters["model"]),
 			"-c", strconv.FormatInt(contextLength, 10),
 		}
+		// The API key reaches llama.cpp through the environment, sourced
+		// from the Secret ensureAPIKey just converged — never as a --api-key
+		// argument, which kubectl describe pod and Events would expose to
+		// anyone who can read the pod spec, a far wider audience than
+		// whoever can read the Secret.
+		env := []corev1.EnvVar{
+			{
+				Name: apiKeyEnvVar,
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: apiKeySecret},
+						Key:                  apiKeyDataKey,
+					},
+				},
+			},
+		}
 		// The GPU is requested as a resource, never as a nodeName, so the
 		// scheduler finds the card on its own and the same spec keeps working
 		// the day a second one arrives. CPU and memory come from Size rather
 		// than being recomputed here, so the resources a pod actually gets
 		// are the ones the operator's request was costed against.
 		setContainer(&deployment.Spec.Template.Spec, containerName,
-			"ghcr.io/ggml-org/llama.cpp:server-cuda", args, containerPort, mounts, sizing)
+			"ghcr.io/ggml-org/llama.cpp:server-cuda", args, containerPort, mounts, env, sizing)
 		return controllerutil.SetControllerReference(svc, deployment, p.client.Scheme())
 	}); err != nil {
 		return provider.Result{}, fmt.Errorf("reconciling Deployment %s/%s: %w", svc.Namespace, svc.Name, err)
@@ -336,6 +484,34 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 	provisioned := []servicesv1alpha1.ProvisionedRef{
 		{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, Namespace: deployment.Namespace},
 		{APIVersion: "v1", Kind: "Service", Name: service.Name, Namespace: service.Namespace},
+	}
+
+	// ensureAPIKey above closes the ordinary deadlock — the Secret exists
+	// before this Deployment does — but it cannot cover every way a pod can
+	// still end up unable to read it (an operator deleting the Secret by
+	// hand, RBAC narrowed after the fact). That failure surfaces as
+	// CreateContainerConfigError on the pod, not as a Deployment condition,
+	// and left unchecked it would just read as an ordinary, permanent
+	// RolloutInProgress: a degrade that never explains itself and never
+	// clears. Naming it here turns a silent crash loop into a status message
+	// an operator can act on.
+	var pods corev1.PodList
+	if err := p.client.List(ctx, &pods, client.InNamespace(svc.Namespace), client.MatchingLabels(labels)); err != nil {
+		return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
+	}
+	for i := range pods.Items {
+		for _, cs := range pods.Items[i].Status.ContainerStatuses {
+			if cs.State.Waiting == nil || cs.State.Waiting.Reason != "CreateContainerConfigError" {
+				continue
+			}
+			return provider.Result{
+				Ready:  false,
+				Reason: "CreateContainerConfigError",
+				Message: fmt.Sprintf("Pod %s container %s cannot start: %s",
+					pods.Items[i].Name, cs.Name, cs.State.Waiting.Message),
+				Provisioned: provisioned,
+			}, nil
+		}
 	}
 
 	// Ready means serving, not merely "the objects exist": CreateOrUpdate
@@ -365,21 +541,23 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 }
 
 // setContainer finds the container named name inside spec and overwrites
-// only the fields this provider owns — Image, Args, VolumeMounts, plus the
-// port and resources handled below — leaving anything the apiserver
+// only the fields this provider owns — Image, Args, VolumeMounts, Env, plus
+// the port and resources handled below — leaving anything the apiserver
 // defaulted (ImagePullPolicy, TerminationMessagePath, TerminationMessagePolicy,
 // ...) exactly as fetched. If no such container exists yet, one is appended;
 // the apiserver then defaults the remaining fields on Create, and the next
 // Reconcile pass finds this same container by name and preserves them.
 //
-// VolumeMounts is assigned wholesale rather than merged entry-by-entry like
-// Ports and Resources below, but this is provably safe rather than merely
-// convenient: this provider ever mounts exactly one VolumeMount (the model
-// cache), VolumeMount has no apiserver-defaulted subfields (unlike
-// ContainerPort.Protocol or a Requests key), and the slice this provider
-// sets is byte-for-byte identical on every pass. There is nothing here for a
-// real apiserver to add that a wholesale replacement could then drop.
-func setContainer(spec *corev1.PodSpec, name, image string, args []string, port int32, mounts []corev1.VolumeMount, sizing provider.Sizing) {
+// VolumeMounts and Env are each assigned wholesale rather than merged
+// entry-by-entry like Ports and Resources below, but this is provably safe
+// rather than merely convenient: this provider ever mounts exactly one
+// VolumeMount (the model cache) and sets exactly one EnvVar (the API key),
+// neither VolumeMount nor EnvVar/EnvVarSource/SecretKeySelector has any
+// apiserver-defaulted subfield (unlike ContainerPort.Protocol or a Requests
+// key), and both slices this provider sets are byte-for-byte identical on
+// every pass. There is nothing here for a real apiserver to add that a
+// wholesale replacement could then drop.
+func setContainer(spec *corev1.PodSpec, name, image string, args []string, port int32, mounts []corev1.VolumeMount, env []corev1.EnvVar, sizing provider.Sizing) {
 	for i := range spec.Containers {
 		if spec.Containers[i].Name != name {
 			continue
@@ -388,11 +566,12 @@ func setContainer(spec *corev1.PodSpec, name, image string, args []string, port 
 		c.Image = image
 		c.Args = args
 		c.VolumeMounts = mounts
+		c.Env = env
 		setContainerPort(c, port)
 		setContainerResources(c, sizing)
 		return
 	}
-	c := corev1.Container{Name: name, Image: image, Args: args, VolumeMounts: mounts}
+	c := corev1.Container{Name: name, Image: image, Args: args, VolumeMounts: mounts, Env: env}
 	setContainerPort(&c, port)
 	setContainerResources(&c, sizing)
 	spec.Containers = append(spec.Containers, c)
@@ -502,14 +681,25 @@ func setServicePort(spec *corev1.ServiceSpec, port int32, targetPort intstr.IntO
 	spec.Ports = append(spec.Ports, corev1.ServicePort{Port: port, TargetPort: targetPort})
 }
 
-// Bind returns the in-cluster DNS name of the Service Reconcile created.
-// Nothing here can carry a credential — the Service exposes a bare HTTP
-// endpoint — so Data only echoes the same endpoint under a key a consumer can
-// look up without special-casing Binding.Endpoint.
-func (p *Provider) Bind(_ context.Context, svc *servicesv1alpha1.FrameService) (provider.Binding, error) {
+// Bind returns the in-cluster DNS name of the Service Reconcile created,
+// together with the API key that Service now requires. Endpoint itself
+// carries no credential — it is published in status.binding.endpoint, in
+// plain sight — so the token only ever travels in Data, which the controller
+// writes into the credentials Secret and never into status. The token is
+// read back from the Secret ensureAPIKey wrote during Reconcile rather than
+// generated here: Bind and Reconcile are separate calls, and both have to
+// agree on the same value.
+func (p *Provider) Bind(ctx context.Context, svc *servicesv1alpha1.FrameService) (provider.Binding, error) {
 	endpoint := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, containerPort)
+	token, err := p.readAPIKey(ctx, svc)
+	if err != nil {
+		return provider.Binding{}, err
+	}
 	return provider.Binding{
 		Endpoint: endpoint,
-		Data:     map[string][]byte{"endpoint": []byte(endpoint)},
+		Data: map[string][]byte{
+			"endpoint":    []byte(endpoint),
+			apiKeyDataKey: []byte(token),
+		},
 	}, nil
 }
