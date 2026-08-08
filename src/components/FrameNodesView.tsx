@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { TalosOperationsPanel } from '@/components/TalosOperationsPanel'
 import { HardDrives, ArrowClockwise, Trash } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -144,6 +145,8 @@ export function FrameNodesView() {
             </CardContent>
           </Card>
         ))}
+
+      <TalosOperationsPanel />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

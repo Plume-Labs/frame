@@ -71,7 +71,7 @@ Frame is three cooperating layers in one repo.
 
 | Path | Role |
 |---|---|
-| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over four kinds: FrameNode, FrameJob, SchedulingPolicy, FrameResourceQuota. TalosMachineConfig and TalosUpgrade have no SDK surface; FrameUser is authd's. |
+| `src/lib/frame-sdk.ts` | `FrameClient` — CRUD over six of the seven kinds. FrameUser is authd's and has no SDK surface. |
 | `src/components/` | React control surfaces (Jobs, Scheduler, Nodes, …) |
 | `src/hooks/` | Real-time update hooks |
 | `vite.config.ts` | Dev proxy: `/apis` → `localhost:8001` |
