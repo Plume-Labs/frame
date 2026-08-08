@@ -24,20 +24,50 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// TalosSecretReference names the Secret holding Talos client certificates.
+// Mirrors corev1.SecretReference's wire shape (name + namespace) as a local
+// type so Namespace can carry a validation marker directly: a kubebuilder
+// marker cannot be attached to a subfield of an external k8s.io/api type,
+// and the CEL XValidation equivalent (self.namespace.matches(...)) blows the
+// per-schema CEL cost budget because corev1.SecretReference.Namespace has no
+// declared maxLength for the cost estimator to bound the regex against.
+//
+// +structType=atomic
+type TalosSecretReference struct {
+	// Name of the referenced Secret.
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Namespace of the referenced Secret. May reference a namespace other
+	// than this CR's own: the controller's Secret RBAC is cluster-wide, so
+	// this is deliberately unconstrained today — Phase B's RBAC-tier
+	// lock-down is where that cross-namespace reach gets settled, not here.
+	// This only rejects a malformed value, not a cross-namespace one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	Namespace string `json:"namespace,omitempty"`
+}
+
 // TalosMachineConfigSpec defines the desired state of TalosMachineConfig
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.configPatch) && size(self.configPatch) > 0) != has(self.configPatchRef)",message="exactly one of configPatch or configPatchRef must be set"
 type TalosMachineConfigSpec struct {
 	// NodeName is the Kubernetes node name to apply the config patch to.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 	NodeName string `json:"nodeName"`
 
 	// TalosEndpoint is the Talos API endpoint (host:port) for this node.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9.-]+:[0-9]+$"
 	TalosEndpoint string `json:"talosEndpoint"`
 
 	// TalosSecretRef references the Secret containing Talos client certificates
 	// (keys: ca.crt, client.crt, client.key).
 	// +kubebuilder:validation:Required
-	TalosSecretRef corev1.SecretReference `json:"talosSecretRef"`
+	TalosSecretRef TalosSecretReference `json:"talosSecretRef"`
 
 	// ConfigPatch is an inline Talos config patch document (YAML).
 	// +optional
@@ -73,6 +103,10 @@ type TalosMachineConfigStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="NodeName",type=string,JSONPath=".spec.nodeName"
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // TalosMachineConfig is the Schema for the talosmachineconfigs API
 type TalosMachineConfig struct {

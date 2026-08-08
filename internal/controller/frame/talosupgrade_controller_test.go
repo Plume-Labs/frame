@@ -47,12 +47,11 @@ var _ = Describe("TalosUpgrade Controller", func() {
 			Spec: framev1alpha1.TalosUpgradeSpec{
 				NodeName:      "worker-1",
 				TalosEndpoint: "10.0.0.1:50000",
-				TalosSecretRef: corev1.SecretReference{
+				TalosSecretRef: framev1alpha1.TalosSecretReference{
 					Name:      "talos-upgrade-creds",
 					Namespace: ns,
 				},
-				Image:        "ghcr.io/siderolabs/installer:v1.8.0",
-				PreserveData: true,
+				Image: "ghcr.io/siderolabs/installer:v1.8.0",
 			},
 		}
 		Expect(k8sClient.Create(ctx, tu)).To(Succeed())
