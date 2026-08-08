@@ -31,6 +31,7 @@ type NetworkSpec struct {
 	// +optional
 	Gateway string `json:"gateway,omitempty"`
 	// +optional
+	// +kubebuilder:validation:items:Format=ip
 	DNS []string `json:"dns,omitempty"`
 	// +optional
 	VLAN *int32 `json:"vlan,omitempty"`
@@ -53,6 +54,8 @@ type NICInfo struct {
 }
 
 // FrameNodeSpec defines the desired state of FrameNode
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.disk) || size(self.disk) == 0 || (has(self.network) && has(self.network.address) && size(self.network.address) > 0 && has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns) && self.network.dns.size() > 0)",message="network.address, network.gateway, and at least one network.dns entry are required once disk is set"
 type FrameNodeSpec struct {
 	// IP address of the node in maintenance mode
 	// +kubebuilder:validation:Required
@@ -94,18 +97,6 @@ type FrameNodeSpec struct {
 	// +kubebuilder:validation:Enum=HIGH;MEDIUM;LOW;""
 	// +optional
 	ServiceClass string `json:"serviceClass,omitempty"`
-
-	// Deprecated: referenced a Sidero Metal ServerClass, which no longer
-	// exists — upstream stopped developing Sidero Metal and provisioning moved
-	// to Omni (see deploy/omni/). No controller has ever read this field, so it
-	// is retained only to avoid breaking stored objects; it has no effect.
-	//
-	// Its Omni counterpart is a MachineClass, but that is selected when the
-	// boot media is generated rather than named per node, so a like-for-like
-	// replacement field would be misleading. One will be added if and when a
-	// controller genuinely needs it.
-	// +optional
-	ServerClassRef *corev1.ObjectReference `json:"serverClassRef,omitempty"`
 }
 
 // FrameNodeStatus defines the observed state of FrameNode.
@@ -136,17 +127,9 @@ type FrameNodeStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// Talos version running on the node
-	// +optional
-	TalosVersion string `json:"talosVersion,omitempty"`
-
 	// Kubelet version running on the node
 	// +optional
 	KubeletVersion string `json:"kubeletVersion,omitempty"`
-
-	// Last heartbeat received from the node
-	// +optional
-	LastHeartbeat *metav1.Time `json:"lastHeartbeat,omitempty"`
 
 	// Capacity represents the total resources of the node
 	// +optional
@@ -159,10 +142,6 @@ type FrameNodeStatus struct {
 	// NodeName is the Kubernetes node name
 	// +optional
 	NodeName string `json:"nodeName,omitempty"`
-
-	// ProviderID is the cloud provider ID
-	// +optional
-	ProviderID string `json:"providerID,omitempty"`
 }
 
 // +kubebuilder:object:root=true
