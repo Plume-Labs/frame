@@ -107,12 +107,16 @@ func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 	// already returned otherwise.
 	maxTokens := (p.gpuMemoryMiB - m.WeightsMiB) * bytesPerMiB / m.kvBytesPerToken()
 
-	// Past this point ctx*kvBytesPerToken would wrap int64 silently, which
+	// Past this point ctx*kvBytesPerToken, or the ceiling division's
+	// +(bytesPerMiB-1) immediately below, would wrap int64 silently, which
 	// can turn a request that plainly does not fit into one whose (wrapped,
-	// possibly negative) footprint looks like it does. Refuse before ever
-	// forming that product, naming the context that would actually have fit
-	// rather than just the verdict.
-	if ctx > math.MaxInt64/m.kvBytesPerToken() {
+	// possibly negative) footprint looks like it does. The bound covers the
+	// whole expression that follows, not just the multiplication: bounding
+	// the product alone still leaves a band of ctx values whose sum with
+	// (bytesPerMiB-1) overflows on its own. Refuse before ever forming
+	// either, naming the context that would actually have fit rather than
+	// just the verdict.
+	if ctx > (math.MaxInt64-(bytesPerMiB-1))/m.kvBytesPerToken() {
 		return provider.Sizing{}, fmt.Errorf(
 			"parameters.contextLength %d is too large to size for model %q: the %dMi GPU "+
 				"holds at most %d tokens of context alongside the %dMi weights",
