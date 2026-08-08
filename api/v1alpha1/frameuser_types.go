@@ -80,8 +80,9 @@ type FrameUserStatus struct {
 // +kubebuilder:printcolumn:name="Email",type=string,JSONPath=`.spec.email`
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.spec.role`
 // +kubebuilder:printcolumn:name="Password",type=string,JSONPath=`.spec.passwordAuth`
-// +kubebuilder:printcolumn:name="Keys",type=integer,JSONPath=`.status.credentials[*]`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// Enrolled key count is deliberately absent: printer columns evaluate a
+// JSONPath, and JSONPath has no way to count a list.
 
 // FrameUser is a person who can sign in to the Cluster Control UI.
 type FrameUser struct {

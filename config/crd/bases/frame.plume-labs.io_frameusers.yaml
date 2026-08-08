@@ -24,9 +24,6 @@ spec:
     - jsonPath: .spec.passwordAuth
       name: Password
       type: string
-    - jsonPath: .status.credentials[*]
-      name: Keys
-      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
