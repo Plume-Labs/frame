@@ -22,10 +22,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -81,12 +83,63 @@ var _ = Describe("FrameJob Controller", func() {
 
 	It("attempts ArgoWorkflow creation on second reconcile", func() {
 		_, _ = r().Reconcile(ctx, req) // add finalizer
-		// Argo CRD not installed in envtest — expect Create error, not panic.
-		_, _ = r().Reconcile(ctx, req)
+		_, _ = r().Reconcile(ctx, req) // creates the backing ArgoWorkflow
 
 		// Object still exists and retains finalizer.
 		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
 		Expect(controllerutil.ContainsFinalizer(job, frameJobFinalizer)).To(BeTrue())
+	})
+
+	It("writes a Ready condition that tracks the workflow, not a write-once Submitted", func() {
+		ctx := context.Background()
+		name := "cond-tracking"
+
+		job := &framev1alpha1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec:       framev1alpha1.FrameJobSpec{Pipeline: "neura-training-dag", Namespace: "default"},
+		}
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, job)
+		})
+
+		reconciler := &FrameJobReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(20),
+		}
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+
+		// Pass 1 adds the finalizer, pass 2 creates the Workflow.
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &framev1alpha1.FrameJob{}
+		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+		ready := meta.FindStatusCondition(fetched.Status.Conditions, conditionTypeReady)
+		Expect(ready).NotTo(BeNil(), "a FrameJob must carry a Ready condition")
+		Expect(ready.Reason).To(Equal(jobPhaseSubmitted))
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse), "Submitted is not Ready")
+		Expect(meta.FindStatusCondition(fetched.Status.Conditions, "Submitted")).
+			To(BeNil(), "the Submitted condition type is gone (F3)")
+
+		// Drive the backing Workflow to Failed and reconcile again.
+		wf := &unstructured.Unstructured{}
+		wf.SetGroupVersionKind(argoWorkflowGVK)
+		Expect(k8sClient.Get(ctx, key, wf)).To(Succeed())
+		Expect(unstructured.SetNestedField(wf.Object, "Failed", "status", "phase")).To(Succeed())
+		Expect(k8sClient.Update(ctx, wf)).To(Succeed())
+
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+		ready = meta.FindStatusCondition(fetched.Status.Conditions, conditionTypeReady)
+		Expect(ready.Reason).To(Equal(jobPhaseFailed),
+			"the Ready condition must follow the workflow, not stay at its first value")
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 	})
 })
 
