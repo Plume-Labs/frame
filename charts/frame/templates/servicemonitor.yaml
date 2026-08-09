@@ -1,0 +1,40 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "frame.name" . }}-controller-manager-metrics-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+    control-plane: controller-manager
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+  - path: /metrics
+    port: {{ include "frame.metricsPortName" . }}
+    scheme: {{ include "frame.metricsPortName" . }}
+    {{- with .Values.metrics.serviceMonitor.interval }}
+    interval: {{ . }}
+    {{- end }}
+    {{- if .Values.metrics.secure }}
+    # bearerTokenFile only makes sense (and is only sent) when metrics.secure
+    # is true: with it false, cmd/main.go never installs the FilterProvider
+    # that checks the token server-side (see deployment.yaml's
+    # --metrics-secure=false), so serving it here would just leak the
+    # ServiceAccount token in cleartext for no benefit (N-5).
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      # The manager's metrics server uses controller-runtime's own
+      # self-signed cert (nothing mounts the metrics-server-cert Secret into
+      # the Deployment, same as upstream: config/default's
+      # cert_metrics_manager_patch.yaml is commented out) so there is no
+      # cert-manager CA to verify against here either. Matches
+      # config/prometheus/monitor.yaml's default exactly.
+      insecureSkipVerify: true
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "frame.selectorLabels" . | nindent 6 }}
+{{- end }}

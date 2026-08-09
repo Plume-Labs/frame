@@ -23,7 +23,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3 # matches the helm version used for local development
+
       - name: Check linter configuration
         run: make lint-config
       - name: Run linter
         run: make lint
+
+      - name: Verify Helm chart CRDs are in sync with config/crd/bases
+        run: make helm-crds-check
+      - name: Lint Helm chart
+        run: make helm-lint
+      - name: Check Helm/kustomize parity
+        run: make helm-parity

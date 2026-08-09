@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "frame.name" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "frame.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        {{- include "frame.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: manager
+        image: "{{ required "image.repository is required: set it to wherever you pushed the operator image built from Dockerfile.controller (NOT the root Dockerfile, which is the UI) — there is no default published image yet, so leaving this unset would otherwise install cleanly and then sit in ImagePullBackOff." .Values.image.repository }}:{{ include "frame.imageTag" . }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /manager
+        args:
+        {{- if .Values.metrics.enabled }}
+        - --metrics-bind-address=:{{ include "frame.metricsPort" . }}
+        {{- end }}
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        {{- if not .Values.metrics.secure }}
+        - --metrics-secure=false
+        {{- end }}
+        {{- if .Values.webhooks.enabled }}
+        - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        {{- end }}
+        {{- if not .Values.webhooks.enabled }}
+        env:
+        # cmd/main.go only skips webhook *registration* when this is exactly
+        # "false" (it checks os.Getenv, not this chart's flag) — dropping just
+        # the cert mount/volume/port below still leaves the manager trying to
+        # register all 10 webhooks and crash-looping on the now-missing
+        # tls.crt (C-1). This is the actual switch that turns them off.
+        - name: ENABLE_WEBHOOKS
+          value: "false"
+        {{- end }}
+        ports:
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        {{- if .Values.webhooks.enabled }}
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        {{- end }}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        {{- if .Values.webhooks.enabled }}
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: webhook-certs
+          readOnly: true
+        {{- else }}
+        volumeMounts: []
+        {{- end }}
+      {{- if .Values.webhooks.enabled }}
+      volumes:
+      - name: webhook-certs
+        secret:
+          secretName: {{ .Values.webhooks.certSecretName }}
+      {{- else }}
+      volumes: []
+      {{- end }}
+      serviceAccountName: {{ include "frame.name" . }}-controller-manager
+      terminationGracePeriodSeconds: 10
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if .Values.podAntiAffinity.enabled }}
+      # Soft (preferred) anti-affinity built from frame.selectorLabels — the
+      # same helper the Deployment's own selector and every Service/
+      # NetworkPolicy/ServiceMonitor selector use (N-4: values.yaml can't call
+      # a template helper, so a hand-written copy of these two labels there
+      # would silently stop matching if the helper ever changed). Disable via
+      # podAntiAffinity.enabled: false, or replace entirely by setting
+      # .Values.affinity.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "frame.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      {{- end }}

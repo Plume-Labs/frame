@@ -1,0 +1,75 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.metrics.enabled }}
+# Allows ingress to the metrics endpoint only from namespaces labeled
+# `metrics: enabled`. Mirrors config/network-policy/allow-metrics-traffic.yaml,
+# which kustomize has commented out of config/default (same off-by-default
+# posture this chart takes via networkPolicy.enabled: false).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "frame.name" . }}-allow-metrics-traffic
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "frame.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            metrics: enabled
+      ports:
+        - port: {{ include "frame.metricsPort" . }}
+          protocol: TCP
+{{- end }}
+{{- if .Values.webhooks.enabled }}
+---
+# Restricts the pod to accepting webhook traffic only on port 9443 (I-3:
+# NetworkPolicy ingress ports are *pod* ports, not Service ports — the
+# webhook Service is 443 -> 9443, so the pod itself only ever receives
+# traffic on 9443; kustomize's own copy of this rule says `port: 443`, the
+# Service port, which blocks every admission request the moment it's
+# enabled — a pre-existing upstream kubebuilder scaffold bug, not something
+# this chart introduced or copies).
+#
+# Deliberately does NOT restrict *who* may connect on that port (no `from`
+# below unless webhookSourceCIDRs is set) — see the long comment on
+# networkPolicy in values.yaml (N-1). Short version: kube-apiserver is a host
+# process with no namespace on every target this chart cares about (k3s,
+# kubeadm, …), so a namespaceSelector-based rule can never match it, and
+# `failurePolicy: Fail` on all 10 webhooks turns that mismatch into a
+# cluster-wide CR write outage rather than a source restriction. Verified
+# cross-node on Kind+Calico: a namespaceSelector-restricted rule dropped
+# host->pod webhook traffic even with the port already fixed to 9443; this
+# open rule did not, and blocking a different, non-9443 port from the same
+# host still worked (so the policy is enforced, just not scoped by source).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "frame.name" . }}-allow-webhook-traffic
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "frame.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 9443
+          protocol: TCP
+      {{- with .Values.networkPolicy.webhookSourceCIDRs }}
+      from:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

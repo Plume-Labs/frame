@@ -1,0 +1,140 @@
+# Default values for the frame chart.
+# See charts/frame/README.md for the two load-bearing decisions this chart
+# makes (templated CRDs, fixed resource names) before changing either.
+
+image:
+  # No default: there is no published operator image yet (publishing is out
+  # of scope for this chart — see charts/frame/README.md). Leaving this
+  # unset used to install cleanly and land in ImagePullBackOff with
+  # example.com/frame; the Deployment template now wraps it in `required` so
+  # a missing value fails at install time with an actionable message instead.
+  # `make helm-lint` / `hack/helm-parity.sh` pass --set image.repository=... explicitly
+  # for this reason — that isn't this chart's real default, just how the
+  # render-only checks get past the guard.
+  repository: ""
+  # Defaults to .Chart.AppVersion when empty — see charts/frame/README.md.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Leader election is always on (cmd/main.go always gets --leader-elect); with
+# replicaCount > 1 the extra pods sit hot-standby behind the Lease in
+# frame-system, and this is a supported, tested configuration.
+replicaCount: 1
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+# Soft (preferred, not required) anti-affinity so replicaCount: 2 actually
+# buys availability instead of two pods that can both land on one node — but
+# never blocks scheduling outright, so this is also safe on a single-node
+# cluster (e.g. Kind) with replicaCount: 1. Built in templates/deployment.yaml
+# from frame.selectorLabels (not hardcoded here — a values.yaml literal can't
+# call that helper, and a second hand-copied set of labels would silently
+# stop matching if the helper ever changed — see _helpers.tpl and N-4 in the
+# delivery report). Set affinity below to anything non-empty to replace this
+# default entirely; set podAntiAffinity.enabled: false to drop it with no
+# replacement.
+affinity: {}
+podAntiAffinity:
+  enabled: true
+
+# Off by default deliberately: a PodDisruptionBudget with replicaCount: 1
+# (the chart's own default) would block voluntary node drains/evictions
+# forever, since minAvailable: 1 can never be satisfied while evicting the
+# only pod. Only turn this on once replicaCount > 1.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# CRDs are rendered from templates/ (not Helm's magic crds/ directory) so
+# `helm upgrade` can evolve schemas — see charts/frame/README.md. Each CRD
+# still carries helm.sh/resource-policy: keep, so `helm uninstall` never
+# takes a user's CRs (or the CRDs themselves) down with it.
+crds:
+  install: true
+
+metrics:
+  # Controls both the metrics port on the manager and the RBAC
+  # (metrics-auth-role / metrics-reader) and Service that expose it.
+  enabled: true
+  # Serve metrics over HTTPS with authn/authz (matches config/default), on
+  # :8443. Setting this to false switches the manager to plain HTTP on :8080
+  # instead — the metrics Service, NetworkPolicy and ServiceMonitor all
+  # derive their port/scheme from this value (see templates/_helpers.tpl's
+  # frame.metricsPort/frame.metricsPortName) so they can't drift out of sync
+  # with it. Only for local debugging — never in a shared cluster.
+  secure: true
+  serviceMonitor:
+    # Off by default: kustomize's config/prometheus is commented out of
+    # config/default too, so this keeps the chart's default rendering
+    # identical to `kustomize build config/default` (see hack/helm-parity.sh).
+    enabled: false
+    interval: ""
+    labels: {}
+
+webhooks:
+  enabled: true
+  # Secret the manager reads its serving certificate from
+  # (tls.crt / tls.key), mounted at /tmp/k8s-webhook-server/serving-certs.
+  # With certManager.enabled: true, cert-manager owns and rotates this
+  # Secret. With it false, you must create the Secret yourself before
+  # installing — see charts/frame/README.md.
+  certSecretName: webhook-server-cert
+  # Only used when certManager.enabled is false: a PEM CA bundle (base64,
+  # as Kubernetes expects for admission webhook clientConfig.caBundle)
+  # injected into both WebhookConfigurations so the API server trusts the
+  # externally-provisioned certificate above. Leave empty when certManager
+  # is enabled — cert-manager's CA injector fills this in instead.
+  caBundle: ""
+
+certManager:
+  # When true (default), cert-manager issues and rotates the webhook (and,
+  # if metrics.enabled, metrics) serving certificates via a self-signed
+  # Issuer, exactly like config/certmanager does today. When false, the
+  # chart renders no Issuer/Certificate objects and expects the Secrets
+  # named above to already exist — see charts/frame/README.md.
+  enabled: true
+
+networkPolicy:
+  # Matches today's kustomize behaviour: config/network-policy exists but is
+  # commented out of config/default, so it's off by default here too.
+  #
+  # IMPORTANT (N-1): the webhook rule intentionally does NOT restrict *who*
+  # can reach port 9443, only that nothing else can. On a real cluster
+  # (k3s, kubeadm, EKS with self-managed control plane, …) kube-apiserver is
+  # a HOST PROCESS, not a pod — it has no namespace, so a `namespaceSelector`
+  # can never match it (kustomize's own config/network-policy/
+  # allow-webhook-traffic.yaml has exactly this problem, on top of the port
+  # bug this chart already fixes — see templates/networkpolicy.yaml).
+  # `failurePolicy: Fail` is set on all 10 admission webhooks, so a policy
+  # the apiserver can't satisfy is not a source restriction, it is a
+  # cluster-wide CR write outage the moment this value is turned on. Verified
+  # cross-node on Kind+Calico: a `namespaceSelector`-restricted rule dropped
+  # host->pod webhook traffic even with the port fixed; the open rule below
+  # did not.
+  #
+  # The webhook server's real authentication is mTLS (cert-manager-issued,
+  # or your own PKI — see certManager.enabled), so leaving 9443 open to any
+  # source and relying on that is the honest default. If you want to
+  # additionally restrict *where* admission calls may originate, set
+  # webhookSourceCIDRs to your control-plane node IPs/CIDR — those are
+  # cluster-specific and cannot be a chart default.
+  enabled: false
+  webhookSourceCIDRs: []
+
+rbac:
+  # The viewer/editor/admin ClusterRoles scaffolded per CRD (framejob,
+  # framenode, frameresourcequota, schedulingpolicy, talosmachineconfig,
+  # talosupgrade, frameservice). Not used by the manager itself — they're
+  # convenience roles for cluster admins to bind to real users/groups.
+  tierRoles:
+    install: true
