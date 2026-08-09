@@ -87,7 +87,25 @@ type FrameUserStatus struct {
 	Credentials []WebAuthnCredential `json:"credentials,omitempty"`
 }
 
+// This version is deprecated and yet it is still the storage version, for the
+// reason set out at length on the v1alpha1 FrameJob: with conversion still at
+// strategy None the apiserver prunes writes against the *storage* version's
+// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
+// every v1alpha1 write, in the create response itself. FrameUser has exactly
+// one such field — spec.passwordHash, moved to status by F11 — so the marker
+// staying here is not merely tidy, it is what keeps authd's writes from
+// coming back empty while it still speaks v1alpha1.
+//
+// FrameUser is also the first kind in the freeze where the difference runs
+// *both* ways: v1beta1 has status.passwordHash, which this version lacks. So
+// whichever version is the storage version, one field is prunable — the
+// asymmetry cannot be parked on one side. That is why nothing may write
+// v1beta1 status.passwordHash before the conversion webhook serves, and why
+// Task 19 and Task 20 have to land together for this kind.
+//
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use frame.plume-labs.io/v1beta1. spec.passwordHash has moved to status.passwordHash — writing it through v1alpha1 requires the frameusers/status subresource."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Email",type=string,JSONPath=`.spec.email`
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.spec.role`
