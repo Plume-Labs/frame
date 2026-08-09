@@ -46,8 +46,6 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
         queueWeight: 1,
         priority: Number(priority) || 0,
         preemption,
-        maxGPUs: 0,
-        maxCPUs: 0,
       })
       toast.success(`Policy ${name} applied`)
       setOpen(false)

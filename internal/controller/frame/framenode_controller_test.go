@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -103,5 +104,50 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(readyCond).NotTo(BeNil())
 		Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCond.Reason).To(Equal("Provisioning"))
+	})
+
+	It("projects the frame-prefixed rack label and skips empty values", func() {
+		ctx := context.Background()
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "label-projection-node",
+				Labels: map[string]string{"topology.kubernetes.io/rack": "stale"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		fn := &framev1alpha1.FrameNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "label-projection", Namespace: "default"},
+			Spec: framev1alpha1.FrameNodeSpec{
+				IP:           "127.0.0.1",
+				Role:         "worker",
+				Hostname:     "label-projection-node",
+				Rack:         "rack-07",
+				ServiceClass: "HIGH",
+				// Zone and RDMAInterface deliberately left empty.
+			},
+		}
+		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, fn) })
+
+		reconciler := &FrameNodeReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(20),
+		}
+		_, err := reconciler.reconcileOnline(ctx, fn)
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "label-projection-node"}, fetched)).To(Succeed())
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRack, "rack-07"))
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelServiceClass, "HIGH"))
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRole, "worker"))
+		Expect(fetched.Labels).NotTo(HaveKey(nodeLabelZone), "an empty zone must not be written")
+		Expect(fetched.Labels).NotTo(HaveKey(nodeLabelRDMA), "no RDMA interface, no label")
+		Expect(fetched.Labels).NotTo(HaveKey("topology.kubernetes.io/rack"),
+			"the reserved-prefix key must be cleaned up on reconcile")
 	})
 })

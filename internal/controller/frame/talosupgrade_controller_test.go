@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -138,7 +139,7 @@ var _ = Describe("TalosUpgrade Controller", func() {
 		// Manually set condition to "UpgradeRequested" to simulate success.
 		Expect(k8sClient.Get(ctx, key, tu)).To(Succeed())
 		p := client.MergeFrom(tu.DeepCopy())
-		setCondition(&tu.Status.Conditions, metav1.Condition{
+		meta.SetStatusCondition(&tu.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionTrue,
 			Reason:             "UpgradeRequested",

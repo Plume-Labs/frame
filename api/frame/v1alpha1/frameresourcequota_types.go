@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -57,6 +58,31 @@ type FrameResourceQuotaSpec struct {
 
 // FrameResourceQuotaStatus defines the observed state of FrameResourceQuota.
 type FrameResourceQuotaStatus struct {
+	// ObservedGeneration is the metadata.generation this status was computed
+	// from. A client can compare it to metadata.generation to tell whether
+	// the controller has seen the current spec yet, without knowing anything
+	// about this kind's condition vocabulary.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Used is the sum of status.used across every corev1.ResourceQuota this
+	// object projects into. The keys are the ones buildResourceList writes:
+	// limits.cpu, limits.memory, requests.nvidia.com/gpu and
+	// count/framejobs.frame.plume-labs.io. Absent until at least one
+	// projected quota reports usage.
+	// +optional
+	Used corev1.ResourceList `json:"used,omitempty"`
+
+	// Namespaces is how many namespaces this quota currently projects into.
+	// It is what makes Used interpretable: a zero Used with zero namespaces
+	// means "nothing selected this quota", which is a different problem from
+	// "selected, and idle". Unlike Used, this is a count rather than a set,
+	// so 0 is a real measurement and is serialized rather than omitted:
+	// absent means "not yet reconciled", 0 means "reconciled, matched
+	// nothing".
+	// +optional
+	Namespaces int32 `json:"namespaces"`
+
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 

@@ -23,9 +23,11 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -127,5 +129,36 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(cond.Reason).To(Equal("PatchResolveFailed"))
+	})
+
+	It("does not re-apply once Applied is recorded for the same generation", func() {
+		_, _ = r().Reconcile(ctx, req) // add finalizer
+
+		// Manually record a successful Applied condition, as if resolvePatch
+		// and ApplyConfiguration had already succeeded for this generation.
+		Expect(k8sClient.Get(ctx, key, tmc)).To(Succeed())
+		p := client.MergeFrom(tmc.DeepCopy())
+		meta.SetStatusCondition(&tmc.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Applied",
+			Message:            "Config patch applied to worker-1 via 10.0.0.1:50000",
+			ObservedGeneration: tmc.Generation,
+		})
+		Expect(k8sClient.Status().Patch(ctx, tmc, p)).To(Succeed())
+
+		// Without the ObservedGeneration guard this reconcile would call
+		// resolvePatch/buildTalosClient again, fail on the absent talos-creds
+		// secret, and overwrite Applied with ClientBuildFailed — re-running
+		// ApplyConfiguration against a live machine for no reason is exactly
+		// what the guard exists to prevent.
+		result, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeZero())
+
+		Expect(k8sClient.Get(ctx, key, tmc)).To(Succeed())
+		cond := findCondition(tmc.Status.Conditions)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Reason).To(Equal("Applied"))
 	})
 })

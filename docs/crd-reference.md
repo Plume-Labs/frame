@@ -14,6 +14,18 @@ CRs in `config/samples/`. Each kind has a controller
 
 ---
 
+### `status.observedGeneration`
+
+Every kind carries a top-level `status.observedGeneration`: the
+`metadata.generation` its status was computed from. Compare it to
+`metadata.generation` to tell whether the controller has seen the current
+spec. Conditions carry their own per-condition `observedGeneration` as well;
+the top-level field is the one a client can read without knowing which
+condition types this kind writes. `FrameUser` has the field and no writer —
+it has no controller.
+
+---
+
 ## FrameNode
 
 A bare-metal machine Frame manages. Bridges a physical/Talos node to its
@@ -34,6 +46,36 @@ such before this cleanup, and is removed with the same evidence).
 **Controller:** finalizer-guarded; secondary-watches core `v1.Node` and maps it
 back to its FrameNode (`nodeToFrameNode`) to keep phase/versions in sync.
 
+### Node labels Frame writes
+
+The FrameNode controller projects five labels onto the corresponding
+`corev1.Node`, and strips them when the FrameNode is deleted. **These are
+API.** Two other components select on them, so renaming one unschedules
+running workloads at runtime with no admission-time error to warn anyone.
+
+| Key | Source | Read by |
+|---|---|---|
+| `frame.plume-labs.io/rack` | `spec.rack` | operators; topology-aware placement |
+| `topology.kubernetes.io/zone` | `spec.zone` | Kubernetes' own well-known zone key |
+| `frame.plume-labs.io/service-class` | `spec.serviceClass` | the inference provider's `NodeSelector`; the FrameJob controller's Workflow labels |
+| `frame.plume-labs.io/role` | `spec.role` | operators |
+| `frame.plume-labs.io/rdma` | `"true"` when `spec.rdmaInterface` is set | operators |
+
+Empty values are not written: a label that is absent means "unclassified",
+and there is no separate "explicitly empty" state.
+
+`rack` lives under `frame.plume-labs.io/`, not `topology.kubernetes.io/`.
+The well-known keys in the `kubernetes.io` namespace are `zone` and `region`;
+`rack` is not one of them and that prefix is reserved for upstream use. Frame
+wrote `topology.kubernetes.io/rack` before `v1beta1`; the controller removes
+that key on every reconcile so an existing node relabels itself.
+
+**One key, two meanings.** `frame.plume-labs.io/service-class` on a **Node**
+is the tier of hardware the FrameNode controller classified. The same key on
+a **Namespace** selects which namespaces a `FrameResourceQuota` projects
+into. They are unrelated; the shared key is historical and is frozen as-is
+because renaming either breaks the other's readers silently.
+
 ---
 
 ## FrameJob
@@ -45,17 +87,19 @@ A workload submitted to the cluster, realized as an Argo `Workflow`.
 `suspended` (bool, default false). `spec.name` was removed pre-freeze: it
 was `Required` and pattern-validated, but no controller ever read it
 (`metadata.name` is used throughout) and the SDK's submit path never sent
-it. GPU jobs (`gpuCount > 0`) may not use `serviceClass: LOW` — enforced
-only by the webhook (`framejob_webhook.go`'s `validateFrameJob`), which
-returns early with a warning (not this check) for any `pipeline` outside
-`knownPipelines`, so the constraint silently doesn't apply to `training`
-and most other real pipelines today. A CEL mirror of this rule was tried
-and reverted: CEL has no such bypass and runs before webhooks, so it
-rejected objects the webhook has always accepted and, being spec-level,
-would have permanently refused even an unrelated update (e.g. flipping
-`spec.suspended`) on any already-stored object shaped that way. Whether
-the webhook's bypass is itself intended is Phase B's to decide before
-this constraint is expressed any more strictly than it is now.
+it. There is no rule coupling `gpuCount` to `serviceClass`. One used to be
+enforced by the webhook (`framejob_webhook.go`'s `validateFrameJob`) for
+`gpuCount > 0` jobs at `serviceClass: LOW`, but it only ever ran for the
+three pipelines in `knownPipelines` — it silently didn't apply to
+`training` or most other real pipelines — and it was deleted outright in
+the v1beta1 freeze (F8) rather than repaired, because it coupled two
+orthogonal properties: how much hardware a job wants and how preemptible
+it is. `validateFrameJob` today only warns, never rejects: it returns a
+warning when `pipeline` is outside `knownPipelines`, on the grounds that
+`pipeline` names an Argo `WorkflowTemplate` Frame does not own, so
+enumerating other people's templates isn't Frame's business. See
+`docs/roadmap.md` and
+`docs/superpowers/specs/2026-08-09-frame-api-freeze-inventory.md`.
 `namespace` carries a DNS-1123 label
 pattern so a malformed value is refused at admission, but is deliberately
 *not* constrained to match this FrameJob's own namespace — the controller
@@ -66,10 +110,15 @@ RBAC-tier lock-down to decide, not this pre-freeze pass.
 **Status:** `phase` (Pending/Submitted/Running/Suspended/Completed/Failed),
 `conditions[]`, `argoWorkflowName`, `startTime`, `completionTime`, `message`.
 
+**Conditions:** `Ready` only. Its `reason` is the job phase — one of
+`Submitted`, `Running`, `Suspended`, `Completed`, `Failed` — and its `status`
+is `True` only for `Completed`. The `Submitted` condition type this kind used
+to write once and never update is gone (F3).
+
 **Controller:**
 - On create: builds an Argo `Workflow` with `spec.suspend`, `priorityClassName`
   (mapped from `priority` → `frame-{priority}`), and arguments `gpu-count` +
-  `service-class`; sets `Submitted` condition.
+  `service-class`; sets `Ready` to `Submitted`.
 - On update: syncs `spec.suspended` → `Workflow.spec.suspend` via patch;
   derives `phase` from workflow status (Argo `Succeeded` → `Completed`, etc.);
   surfaces `Suspended` when `spec.suspended=true` and workflow isn't terminal.
@@ -130,7 +179,13 @@ Per-service-class resource ceiling. The controller projects it as a
 `maxMemory` (Quantity), `maxJobs`. At least one of the four limits must be
 set (CEL, mirroring the existing webhook check).
 
-**Status:** `conditions[]`.
+**Status:** `observedGeneration`, `conditions[]`, `namespaces` (how many
+namespaces this quota projects into) and `used` — the sum of `status.used`
+across every projected `corev1.ResourceQuota`, keyed exactly as
+`buildResourceList` writes them (`limits.cpu`, `limits.memory`,
+`requests.nvidia.com/gpu`, `count/framejobs.frame.plume-labs.io`). A key no
+namespace reported is absent rather than zero: "not measured" and "measured
+as nothing" are different answers.
 
 **Printer columns:** `ServiceClass`, `Ready`, `Reason` (hidden by default,
 `-o wide`), `Age` — previously none.
@@ -270,6 +325,27 @@ provider registry), `parameters` (map[string]string, provider-owned),
 tier, never a node), `binding.secretName` (defaults to the FrameService's own
 name), `binding.projectTo` (namespaces to copy the credentials Secret into,
 default none), `deletionPolicy` (`Retain` default | `Delete`).
+
+`serviceClass` carries two meanings, deliberately. It selects the node pool
+and the `FrameResourceQuota` the instance's workloads belong to, **and** it
+determines the instance's scheduling priority: `HIGH`/`MEDIUM`/`LOW` map onto
+the `frame-high`/`frame-medium`/`frame-low` PriorityClasses that
+`SchedulingPolicy`'s controller creates. There is no `spec.priority` on a
+FrameService and no `spec.priorityClassName`: a long-lived instance's tier is
+its urgency, and letting a user name an arbitrary PriorityClass would break
+the invariant that Frame owns placement. If a HIGH-tier instance ever needs
+to be evicted before a MEDIUM one, that is a `v1beta2` problem (F10).
+
+This mapping only *names* a PriorityClass — it does not create one. Unless a
+`SchedulingPolicy` object exists with `spec.priorityClass` set to exactly
+`frame-high`, `frame-medium` or `frame-low` (see
+`config/samples/frame_v1alpha1_schedulingpolicy.yaml`), the named
+PriorityClass does not exist on the cluster, and the apiserver rejects every
+pod naming a PriorityClass it cannot find — the instance becomes
+unschedulable outright, not merely unprioritised. `FrameJob.spec.priority`
+maps onto the same names through the same failure mode; provisioning
+`SchedulingPolicy` objects for all four tiers is an operational
+prerequisite this API does not enforce.
 
 **Status:** `phase` (Pending/Provisioning/Ready/Degraded/Deleting),
 `conditions[]`, `binding.secretRef` + `binding.endpoint` (never a credential)
