@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"context"
@@ -39,7 +39,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	framev1alpha1 "github.com/gothshoot/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -84,7 +84,7 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	var err error
-	err = framev1alpha1.AddToScheme(scheme.Scheme)
+	err = framev1beta1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme

@@ -164,12 +164,16 @@ var _ = Describe("TalosMachineConfig v1beta1 schema", func() {
 		Expect(name).To(Equal("talos-client-certs"))
 	})
 
-	It("still accepts talosSecretRef.namespace on v1alpha1, so the removal is v1beta1's alone (F6)", func() {
-		// The counterpart to the spec above. v1alpha1 keeps the field and is
-		// still the storage version, so a v1alpha1 client that names a
-		// namespace gets it back — which is exactly why the storageversion
-		// marker has not moved yet. If this ever fails, promoting the storage
-		// version early is what did it.
+	It("still accepts talosSecretRef.namespace on v1alpha1, but storage no longer keeps it (F6)", func() {
+		// The counterpart to the spec above, and the pair is the whole of F6's
+		// compatibility story. v1alpha1 keeps the *field*: a client that names
+		// a namespace is still admitted, so no existing manifest or CI
+		// pipeline starts erroring. What it does not keep is the *value* —
+		// v1beta1 is the storage version now, ConvertTo has nowhere to put a
+		// namespace, and the read back comes through ConvertFrom with the
+		// field empty. Silent data loss on one field of one spoke version is
+		// the price of the fix; refusing the write instead would have broken
+		// every caller on the day the operator upgraded.
 		old := &framev1alpha1.TalosMachineConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "f6-alpha-keeps-ns", Namespace: "default"},
 			Spec: framev1alpha1.TalosMachineConfigSpec{
@@ -188,7 +192,10 @@ var _ = Describe("TalosMachineConfig v1beta1 schema", func() {
 		back := &framev1alpha1.TalosMachineConfig{}
 		Expect(k8sClient.Get(ctx,
 			types.NamespacedName{Name: "f6-alpha-keeps-ns", Namespace: "default"}, back)).To(Succeed())
-		Expect(back.Spec.TalosSecretRef.Namespace).To(Equal("kube-system"))
+		Expect(back.Spec.TalosSecretRef.Name).To(Equal("talos-client-certs"),
+			"everything v1beta1 still models must survive the round trip")
+		Expect(back.Spec.TalosSecretRef.Namespace).To(BeEmpty(),
+			"the namespace has nowhere to live at the storage version, so it does not come back")
 	})
 
 	// ---- F7: talosSecretRef.name is Required ----

@@ -54,12 +54,12 @@ func VerifyPassword(encoded, plain string) bool {
 // PHC hash — the same parse VerifyPassword performs, without paying its
 // argon2id computation cost. handlePasswordLogin folds this into `usable` so
 // an account with spec.passwordAuth: enabled but an empty or unparseable
-// spec.passwordHash falls onto the same dummy-hash, full-cost verification
+// status.passwordHash falls onto the same dummy-hash, full-cost verification
 // path as an unknown email, instead of returning in microseconds through
 // VerifyPassword's own malformed-input fast path — which would otherwise
 // positively identify such an account by timing alone, the same class of
 // oracle TestUnknownEmailAndWrongPasswordAreIndistinguishable guards
-// against. Nothing writes spec.passwordHash yet (a future set-password
+// against. Nothing writes status.passwordHash yet (a future set-password
 // endpoint will), so today this only ever sees a fully-formed hash or an
 // empty string, but the check is general.
 func hashIsUsable(encoded string) bool {

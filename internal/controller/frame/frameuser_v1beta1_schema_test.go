@@ -46,7 +46,7 @@ import (
 //     becomes the Kubernetes username in every token authd issues.
 //
 // Nothing here touches the last-admin guard in
-// internal/webhook/frame/v1alpha1/frameuser_webhook.go. That is admission
+// internal/webhook/frame/v1beta1/frameuser_webhook.go. That is admission
 // logic, it has its own suite, and no schema rule may duplicate it — this
 // suite installs no webhook, which is why these specs can delete freely.
 //

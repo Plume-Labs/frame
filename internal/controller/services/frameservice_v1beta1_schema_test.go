@@ -48,7 +48,7 @@ const (
 // These specs are about the v1beta1 *schema* of FrameService, the last of the
 // eight kinds to gain a hub type. They install no webhook — the provider
 // registry check and the parameter JSON Schema live in
-// internal/webhook/services/v1alpha1 and have their own suite — so everything
+// internal/webhook/services/v1beta1 and have their own suite — so everything
 // asserted here is what the apiserver enforces from the CRD alone.
 //
 // Four decisions are pinned.
@@ -244,7 +244,15 @@ var _ = Describe("FrameService v1beta1 schema", func() {
 		Expect(typed.Status.Conditions[0].Reason).To(Equal("UnknownType"))
 	})
 
-	It("still stores status.phase on v1alpha1, so the removal is v1beta1's alone (F2)", func() {
+	It("still serves status.phase on v1alpha1, computed rather than stored (F2)", func() {
+		// v1alpha1 keeps the field, so `kubectl get -o jsonpath` and every
+		// existing script still read a phase. What changed is where it comes
+		// from: v1beta1 is the storage version and has no phase, so a write
+		// through v1alpha1 is dropped by ConvertTo and the read back is
+		// FrameServicePhaseFromStatus computing it from Ready and the
+		// deletion timestamp. Writing "Ready" onto an object with no
+		// conditions therefore reads back as Pending — the projection is
+		// telling the truth, and the write was the lie.
 		old := &servicesv1alpha1.FrameService{
 			ObjectMeta: metav1.ObjectMeta{Name: "fs-f2-alpha-keeps-phase", Namespace: schemaNS},
 			Spec:       servicesv1alpha1.FrameServiceSpec{Type: "inference"},
@@ -257,8 +265,25 @@ var _ = Describe("FrameService v1beta1 schema", func() {
 
 		back := &servicesv1alpha1.FrameService{}
 		Expect(k8sClient.Get(ctx, key, back)).To(Succeed())
-		Expect(back.Status.Phase).To(Equal("Ready"),
-			"v1alpha1 keeps phase — it is the storage version and nothing may drop it under it")
+		Expect(back.Status.Phase).To(Equal("Pending"),
+			"a hand-written phase is not stored; with no Ready condition the projection says Pending")
+
+		// And the projection tracks the conditions, which is the half that
+		// matters: a v1alpha1 reader watching phase still sees the object go
+		// Ready once the controller says so.
+		beta := &servicesv1beta1.FrameService{}
+		Expect(k8sClient.Get(ctx, key, beta)).To(Succeed())
+		beta.Status.Conditions = []metav1.Condition{{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "Provisioned",
+			Message:            "serving",
+			LastTransitionTime: metav1.Now(),
+		}}
+		Expect(k8sClient.Status().Update(ctx, beta)).To(Succeed())
+
+		Expect(k8sClient.Get(ctx, key, back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Ready"))
 	})
 
 	// The other seven kinds make v1beta1 a strict subset of v1alpha1, and so

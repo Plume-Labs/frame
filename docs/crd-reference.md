@@ -281,14 +281,20 @@ CRD with no entry in the controller table.
 **Spec:** `email` (becomes the Kubernetes username), `role`
 (`admin` | `operator` | `viewer`, decides the group the issued token carries),
 `passwordAuth` (`enabled` | `disabled`, **defaults to `disabled`** — an account
-is passkey-only unless someone deliberately opens the other door),
-`passwordHash` (argon2id PHC string, written only by `authd`).
+is passkey-only unless someone deliberately opens the other door). On
+`v1alpha1` only, `passwordHash` is also a spec field; see status below.
 
-**Status:** `credentials[]` — enrolled WebAuthn authenticators, each with the
+**Status:** `passwordHash` (argon2id PHC string, read and written only by
+`authd`) and `credentials[]` — enrolled WebAuthn authenticators, each with the
 base64url credential `id`, the COSE `publicKey`, the `signCount` as of the last
 assertion, `addedAt`, and an optional human `label`. Public data only: the
 private key never leaves the device. Credentials live in status precisely so an
-admin editing an account by hand cannot corrupt a key.
+admin editing an account by hand cannot corrupt a key — and `passwordHash`
+joined them there in `v1beta1` (F11), which is the whole asymmetry the security
+review raised: the *public* key material was protected from hand-editing while
+the password hash sat in a widely-readable spec field. A `v1alpha1` client
+still spells it `spec.passwordHash`; the conversion webhook moves it both ways,
+so it is the one genuine bijection in the freeze.
 
 **Webhook:** validation refuses to remove the last admin, whether by deletion or
 by demotion, and **fails closed** — if the admin list cannot be read, the request
@@ -441,5 +447,9 @@ SchedulingPolicy, FrameResourceQuota, TalosMachineConfig, TalosUpgrade,
 FrameUser, and FrameService — have **validation** only. Validators enforce
 required fields and value ranges (or, for FrameService, dispatch to the
 provider's own parameter schema) before a CR is admitted. Tests:
-`internal/webhook/frame/v1alpha1/*_test.go` and
-`internal/webhook/services/v1alpha1/*_test.go`.
+`internal/webhook/frame/v1beta1/*_test.go` and
+`internal/webhook/services/v1beta1/*_test.go`.
+
+The webhooks register on `v1beta1` only. The apiserver's default
+`matchPolicy: Equivalent` converts a request arriving at `v1alpha1` into the
+storage version before dispatch, so one registration covers both versions.
