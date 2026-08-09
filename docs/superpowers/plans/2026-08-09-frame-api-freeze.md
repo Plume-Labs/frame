@@ -6990,3 +6990,43 @@ Four. Each implements the inventory's recommendation as written except where doi
 **3. F6 — the local `TalosSecretReference` type survives.** F6 notes that with `Namespace` gone "the type can be `corev1.LocalObjectReference` and the CEL-cost workaround disappears with it". It cannot, jointly with F7: `corev1.LocalObjectReference.Name` is `+optional`, and a kubebuilder marker cannot be attached to a subfield of an external `k8s.io/api` type — the same limitation that created the local type. The alternatives are a CEL rule on the `talosSecretRef` node (which works, is field-level, and is cheap, but adds an `XValidation` for something a marker expresses better) or accepting an optional name (which contradicts F7). I kept the local type with one required field. **Not really a disagreement with F6's substance** — the cross-namespace reach is gone, which is what F6 was about — but it is a deviation from its letter and I would rather it be adjudicated than found in review.
 
 **4. F2's consequence for the FrameNode controller is larger than the inventory implies.** F2's ⚠ note says removing `phase` is "doable for FrameNode (`Ready` reason carries the phase)". That is true of the *projection*, and it understates the controller change: `framenode_controller.go:89,104` reads `fn.Status.Phase` as a **state-machine input**, deciding whether to contact the maintenance API, apply a machine config, or sync from the Kubernetes Node. Removing the field moves that decision onto a condition reason — and the condition writer was silently dropping reason-only updates (`helpers.go:31`), so a FrameNode moving `Provisioning → Degraded → Offline` would have kept its first reason forever and the state machine would have stuck. That is Task 2, which the inventory does not contain because it is a bug the inventory had no reason to look for. **Recorded here because it changes F2's cost estimate**: the inventory prices removing `phase` at "three printer columns and two SDK mappers, a day's work". It is that plus a controller state machine and a condition-writer fix. Still the right decision — but if the estimate was load-bearing in making it, the owner should know the estimate was low.
+
+---
+
+## Rulings on the open disagreements
+
+**1. `parameters` key validation — envelope bound only. Do not move to a
+struct list.** The finding is correct and worth the space it took: controller-gen
+v0.20.1 silently drops key-type markers on a `map[Named]Named`, emitting no
+`propertyNames`, and the CEL alternative has no key `maxLength` for the cost
+estimator to bound against, so it ships a CRD the apiserver refuses to install.
+Discovering that by running the generator rather than by reading its docs is the
+right way to have found it.
+
+The reason the remaining gap does not matter: **`parameters` is already validated
+at admission against the provider's own `ParameterSchema`**, per type, and the
+registry's `checkNoUnenforcedFields` allow-list rejects any schema field it
+cannot actually enforce. A key that no provider declares is refused there. CRD-level
+key patterns would be a second, weaker copy of a check that already exists in the
+place that knows what the keys mean — and `parameters` is explicitly outside the
+API compatibility guarantee, so it is the wrong field to spend an irreversible
+shape change on. Keep `map[string]string`, keep the three bounds that do generate,
+drop the key pattern.
+
+**2. `omitempty` over `omitzero` — accepted as resolved.** Changing one type to
+match seven beats changing seven to match one, for a wire difference no real
+object exhibits.
+
+**3. `TalosSecretReference` stays local — accepted as resolved.** F6's substance
+is the removal of cross-namespace reach, and that is delivered; a marker cannot
+be attached to a subfield of an external `k8s.io/api` type, so F7 and the
+parenthetical were mutually exclusive.
+
+**4. Not a disagreement — a corrected estimate, and the most valuable thing in
+this list.** `framenode_controller.go:89,104` reads `Status.Phase` as a
+*state-machine input*, not as display, and `helpers.go:31`'s `setCondition`
+silently drops reason-only updates — so a naive move of that machine onto the
+condition reason would have pinned a FrameNode at its first reason forever. The
+decision stands; the plan now carries the controller rewrite and the
+condition-writer bugfix as Task 2. The inventory had no reason to look there,
+which is exactly why a plan is written by someone who reads the code again.
