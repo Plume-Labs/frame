@@ -192,8 +192,14 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
 	"$(GOVULNCHECK)" ./...
 
+# docker-images builds all three images the security targets below inspect, so
+# `make sbom` and `make scan` work from a clean tree instead of failing on
+# whichever image happens not to be in the local daemon.
+.PHONY: docker-images
+docker-images: docker-build docker-build-ui docker-build-authd ## Build all three images (controller, UI, authd).
+
 .PHONY: sbom
-sbom: syft ## Write a CycloneDX SBOM for each of the three images to dist/.
+sbom: syft docker-images ## Write a CycloneDX SBOM for each of the three images to dist/.
 	@mkdir -p dist
 	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
@@ -201,12 +207,22 @@ sbom: syft ## Write a CycloneDX SBOM for each of the three images to dist/.
 		"$(SYFT)" scan "$(CONTAINER_TOOL):$${image}" -o cyclonedx-json="dist/sbom-$${name}.cyclonedx.json"; \
 	done
 
+# Trivy runs from its own image rather than through go-install-tool like every
+# other tool here. Not a style lapse: `go install` of trivy does not build on
+# this module's Go toolchain — it reaches encoding/json/v2, which is behind a
+# build constraint — so there is no pinned-source install to use. The official
+# image is the upstream-supported distribution, and it is what the CI action
+# runs too. The docker socket is mounted because the images being scanned live
+# in the local daemon, not a registry.
 .PHONY: scan
-scan: trivy ## Scan all three images for CRITICAL/HIGH vulnerabilities.
+scan: docker-images ## Scan all three images for CRITICAL/HIGH vulnerabilities.
 	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "=== $${name} ($${image}) ==="; \
-		"$(TRIVY)" image --severity CRITICAL,HIGH --ignore-unfixed "$${image}"; \
+		$(CONTAINER_TOOL) run --rm \
+			-v /var/run/docker.sock:/var/run/docker.sock \
+			ghcr.io/aquasecurity/trivy:$(TRIVY_VERSION_BARE) \
+			image --severity CRITICAL,HIGH --ignore-unfixed "$${image}"; \
 	done
 
 ##@ Deployment
@@ -290,7 +306,6 @@ ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 GOVULNCHECK ?= $(LOCALBIN)/govulncheck
 SYFT ?= $(LOCALBIN)/syft
-TRIVY ?= $(LOCALBIN)/trivy
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -312,7 +327,9 @@ GOLANGCI_LINT_VERSION ?= v2.11.4
 # than a curl-pipe-sh.
 GOVULNCHECK_VERSION ?= v1.6.0
 SYFT_VERSION ?= v1.50.0
-TRIVY_VERSION ?= v0.73.0
+# Trivy's published image tags carry no leading "v"; see the scan target for
+# why trivy is not installed from source like the others.
+TRIVY_VERSION_BARE ?= 0.73.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -345,11 +362,6 @@ $(GOVULNCHECK): $(LOCALBIN)
 syft: $(SYFT) ## Download syft locally if necessary.
 $(SYFT): $(LOCALBIN)
 	$(call go-install-tool,$(SYFT),github.com/anchore/syft/cmd/syft,$(SYFT_VERSION))
-
-.PHONY: trivy
-trivy: $(TRIVY) ## Download trivy locally if necessary.
-$(TRIVY): $(LOCALBIN)
-	$(call go-install-tool,$(TRIVY),github.com/aquasecurity/trivy/cmd/trivy,$(TRIVY_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
