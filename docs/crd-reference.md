@@ -68,10 +68,15 @@ RBAC-tier lock-down to decide, not this pre-freeze pass.
 **Status:** `phase` (Pending/Submitted/Running/Suspended/Completed/Failed),
 `conditions[]`, `argoWorkflowName`, `startTime`, `completionTime`, `message`.
 
+**Conditions:** `Ready` only. Its `reason` is the job phase — one of
+`Submitted`, `Running`, `Suspended`, `Completed`, `Failed` — and its `status`
+is `True` only for `Completed`. The `Submitted` condition type this kind used
+to write once and never update is gone (F3).
+
 **Controller:**
 - On create: builds an Argo `Workflow` with `spec.suspend`, `priorityClassName`
   (mapped from `priority` → `frame-{priority}`), and arguments `gpu-count` +
-  `service-class`; sets `Submitted` condition.
+  `service-class`; sets `Ready` to `Submitted`.
 - On update: syncs `spec.suspended` → `Workflow.spec.suspend` via patch;
   derives `phase` from workflow status (Argo `Succeeded` → `Completed`, etc.);
   surfaces `Suspended` when `spec.suspended=true` and workflow isn't terminal.
