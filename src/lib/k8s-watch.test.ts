@@ -202,7 +202,11 @@ describe('pollInterval', () => {
   })
 
   it('clamps an interval below the 5s floor instead of honouring it', () => {
-    const setIntervalSpy = vi.spyOn(global, 'setInterval')
+    // globalThis, not global: `tsc -b` type-checks this file as part of
+    // `npm run build`, and the browser lib config it runs under has no Node
+    // `global`. The image build failed on TS2304 with the runtime test passing
+    // — a green test suite is not evidence that the app compiles.
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
     const stop = pollInterval(100, () => {})
 
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 5_000)
