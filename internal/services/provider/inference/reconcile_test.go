@@ -818,3 +818,199 @@ func TestReconcileRollsThePodOntoARegeneratedAPIKey(t *testing.T) {
 		t.Fatal("pod template digest unchanged after the token was regenerated: no rollout would follow")
 	}
 }
+
+// hardenedRunAsUser is the uid inference.Provider runs llama.cpp as. Asserted
+// as an unprivileged uid rather than pinned to a magic number for its own
+// sake: what matters is that it is not 0.
+const hardenedRunAsUser = int64(65532)
+
+// TestReconcileHardensTheInferencePod pins the securityContext on the pod this
+// provider creates. Before this existed the Deployment carried none at all, so
+// every inference pod ran as root, with a writable root filesystem, the full
+// default capability set including NET_RAW, no seccomp profile, and the
+// namespace default ServiceAccount's token mounted. llama.cpp parses untrusted
+// input in C++, so that combination turned any memory-safety bug in it into
+// immediate lateral movement.
+//
+// Each assertion below is a distinct containment property, so they are checked
+// individually rather than by comparing whole structs: a struct comparison
+// would fail as one opaque diff, and would also break the moment a field this
+// provider does not own is added by something else.
+func TestReconcileHardensTheInferencePod(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	var d appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d); err != nil {
+		t.Fatalf("Deployment not created: %v", err)
+	}
+	pod := d.Spec.Template.Spec
+
+	// No ServiceAccount token in the pod: this container never calls the
+	// Kubernetes API, so mounting one only ever helps an attacker.
+	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+		t.Error("AutomountServiceAccountToken is not false: a compromised llama.cpp would inherit the namespace default SA")
+	}
+
+	if pod.SecurityContext == nil {
+		t.Fatal("pod has no securityContext at all")
+	}
+	if pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+		t.Error("pod securityContext.runAsNonRoot is not true")
+	}
+	if pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != hardenedRunAsUser {
+		t.Errorf("pod securityContext.runAsUser = %v, want %d", pod.SecurityContext.RunAsUser, hardenedRunAsUser)
+	}
+	if pod.SecurityContext.SeccompProfile == nil ||
+		pod.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("pod seccompProfile = %v, want RuntimeDefault", pod.SecurityContext.SeccompProfile)
+	}
+
+	container := pod.Containers[0]
+	if container.SecurityContext == nil {
+		t.Fatal("container has no securityContext at all")
+	}
+	sc := container.SecurityContext
+	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Error("container allowPrivilegeEscalation is not false")
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("container readOnlyRootFilesystem is not true")
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Error("container securityContext.runAsNonRoot is not true")
+	}
+	if sc.RunAsUser == nil || *sc.RunAsUser != hardenedRunAsUser {
+		t.Errorf("container securityContext.runAsUser = %v, want %d", sc.RunAsUser, hardenedRunAsUser)
+	}
+	// Dropping ALL is the whole point; dropping a named subset would leave
+	// NET_RAW and CHOWN behind, which is most of what is worth having.
+	if sc.Capabilities == nil ||
+		len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != corev1.Capability("ALL") {
+		t.Errorf("container capabilities.drop = %v, want exactly [ALL]", sc.Capabilities)
+	}
+	if len(sc.Capabilities.Add) != 0 {
+		t.Errorf("container capabilities.add = %v, want nothing added back", sc.Capabilities.Add)
+	}
+
+}
+
+// TestReconcileGivesTheReadOnlyRootFilesystemSomewhereWritable is the other
+// half of TestReconcileHardensTheInferencePod, split out because the two
+// together exceed the repo's cyclomatic-complexity limit. readOnlyRootFilesystem
+// is only survivable if the process has one writable path; this pins that the
+// path exists, that it is a per-pod emptyDir rather than anything shared or
+// host-backed, and that adding it did not quietly make the shared model cache
+// writable too.
+func TestReconcileGivesTheReadOnlyRootFilesystemSomewhereWritable(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	var d appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d); err != nil {
+		t.Fatalf("Deployment not created: %v", err)
+	}
+	pod := d.Spec.Template.Spec
+
+	var tmp *corev1.Volume
+	for i := range pod.Volumes {
+		if pod.Volumes[i].Name == "tmp" {
+			tmp = &pod.Volumes[i]
+		}
+	}
+	if tmp == nil {
+		t.Fatal("no tmp volume: a read-only root filesystem with no writable path is a crash waiting for the first write")
+	}
+	if tmp.EmptyDir == nil {
+		t.Errorf("tmp volume is %v, want an emptyDir", tmp.VolumeSource)
+	}
+	if tmp.HostPath != nil {
+		t.Errorf("tmp volume is a hostPath (%v), which would be a node escape hatch", tmp.HostPath)
+	}
+
+	var tmpMount, modelMount *corev1.VolumeMount
+	for i := range pod.Containers[0].VolumeMounts {
+		switch pod.Containers[0].VolumeMounts[i].Name {
+		case "tmp":
+			tmpMount = &pod.Containers[0].VolumeMounts[i]
+		case "model-cache":
+			modelMount = &pod.Containers[0].VolumeMounts[i]
+		}
+	}
+	if tmpMount == nil || tmpMount.MountPath != "/tmp" {
+		t.Errorf("tmp mount = %v, want it mounted at /tmp", tmpMount)
+	}
+	// The hardening must not have quietly made the shared model cache
+	// writable: several instances share it, and none may corrupt it.
+	if modelMount == nil || !modelMount.ReadOnly {
+		t.Errorf("model-cache mount = %v, want it still mounted read-only", modelMount)
+	}
+}
+
+// TestReconcilePreservesSecurityContextFieldsItDoesNotOwn pins why the
+// securityContext helpers set individual fields on an existing struct instead
+// of assigning a fresh one. A mutating admission webhook — a policy engine, a
+// service mesh — may add fields to this pod template. If Reconcile replaced
+// the whole SecurityContext each pass it would drop them, CreateOrUpdate would
+// see a diff and Update, and that Update would re-trigger a reconcile: exactly
+// the hot loop this file already had to close twice, in a third field.
+//
+// Same technique as TestReconcileDoesNotFightApiserverDefaults: apply the
+// foreign fields by hand between two Reconcile calls, then assert both that
+// they survived and that the owned fields are still right.
+func TestReconcilePreservesSecurityContextFieldsItDoesNotOwn(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+
+	var d appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d); err != nil {
+		t.Fatalf("Deployment not created: %v", err)
+	}
+	fsGroup := int64(2000)
+	runAsGroup := int64(3000)
+	d.Spec.Template.Spec.SecurityContext.FSGroup = &fsGroup
+	d.Spec.Template.Spec.Containers[0].SecurityContext.RunAsGroup = &runAsGroup
+	if err := c.Update(ctx, &d); err != nil {
+		t.Fatalf("simulating a mutating webhook on the Deployment: %v", err)
+	}
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	var d2 appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d2); err != nil {
+		t.Fatalf("Deployment missing after second Reconcile: %v", err)
+	}
+	pod := d2.Spec.Template.Spec
+	if pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != fsGroup {
+		t.Errorf("pod securityContext.fsGroup = %v, want the foreign value %d to survive",
+			pod.SecurityContext.FSGroup, fsGroup)
+	}
+	sc := pod.Containers[0].SecurityContext
+	if sc.RunAsGroup == nil || *sc.RunAsGroup != runAsGroup {
+		t.Errorf("container securityContext.runAsGroup = %v, want the foreign value %d to survive",
+			sc.RunAsGroup, runAsGroup)
+	}
+
+	// And the fields this provider does own are still what it set.
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("container readOnlyRootFilesystem lost on the second pass")
+	}
+	if pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != hardenedRunAsUser {
+		t.Errorf("pod securityContext.runAsUser = %v after the second pass, want %d",
+			pod.SecurityContext.RunAsUser, hardenedRunAsUser)
+	}
+}
