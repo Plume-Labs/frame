@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,17 +25,17 @@ import (
 // controllers use to report overall reconcile health.
 const conditionTypeReady = "Ready"
 
-func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
-	c.LastTransitionTime = metav1.Now()
-	for i, existing := range *conditions {
-		if existing.Type == c.Type {
-			if existing.Status != c.Status {
-				(*conditions)[i] = c
-			}
-			return
-		}
+// readyReason is the Reason of the Ready condition, or "" when there is none.
+//
+// This is the controllers' state-machine input now that status.phase is gone
+// (F2). It is also exactly what api/frame/v1alpha1's conversion projects back
+// out as the legacy phase, so a reason that stops tracking reality here shows
+// up as a wrong phase to every v1alpha1 client.
+func readyReason(conditions []metav1.Condition) string {
+	if c := meta.FindStatusCondition(conditions, conditionTypeReady); c != nil {
+		return c.Reason
 	}
-	*conditions = append(*conditions, c)
+	return ""
 }
 
 func conditionStatus(ok bool) metav1.ConditionStatus {

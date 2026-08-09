@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -124,7 +125,7 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 		r.Recorder.Event(fn, corev1.EventTypeNormal, nodePhaseDiscovered, "Maintenance API contacted")
 	}
 
-	setCondition(&fn.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionFalse,
 		Reason:             nodePhaseDiscovered,
@@ -239,7 +240,7 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	fn.Status.Capacity = node.Status.Capacity
 	fn.Status.Allocatable = node.Status.Allocatable
 	fn.Status.KubeletVersion = node.Status.NodeInfo.KubeletVersion
-	setCondition(&fn.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             conditionStatus(phase == nodePhaseOnline),
 		Reason:             phase,
@@ -285,7 +286,7 @@ func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1al
 func (r *FrameNodeReconciler) setPhase(ctx context.Context, fn *framev1alpha1.FrameNode, phase, msg string) error {
 	patch := client.MergeFrom(fn.DeepCopy())
 	fn.Status.Phase = phase
-	setCondition(&fn.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             conditionStatus(false),
 		Reason:             phase,
