@@ -55,14 +55,14 @@ Nothing here is new capability. It removes claims the code no longer backs, and 
 - [ ] Fold in whatever S1 proved the core needs — quota accounting for service instances, scheduling for service workloads, the binding surface applications consume
 - [ ] Introduce `v1beta1` with a conversion webhook and a documented storage version
 - [ ] Add CRD field validation (CEL / kubebuilder markers), printer columns, defaults
-- [ ] Write a deprecation and migration policy; promote to `v1` once `v1beta1` is stable
+- [ ] Write a deprecation and migration policy. **`v1` is not part of V1.** Frame is still in beta and needs capability before it needs a stability promise it cannot yet keep; promotion waits until `v1beta1` has survived real use. Shipping V1 on `v1beta1` says that honestly, where a `v1` issued on schedule would not.
 - [ ] Lock the viewer/editor/admin RBAC tiers to the final schema, and extend them to the new API groups as those land
 
 **On what RBAC means in V1.** The tiers exist as manifests, but the UI authenticates with a single ServiceAccount token — so the tiers are not currently enforced against any human. V1 delivers *correct, frozen, tested tiers*. Enforcing them per user requires authd Stages 2 and 3, which are post-V1. V1 documentation must say this plainly rather than advertise RBAC it does not enforce.
 
 **Pre-freeze cleanup (done ahead of the phase proper).** A survey of `frame.plume-labs.io/v1alpha1` turned up several fields worth cutting or hardening before conversion makes that expensive. Landed: `FrameNode.Spec.ServerClassRef`/`Status.ProviderID`/`Status.TalosVersion`/`Status.LastHeartbeat`, `FrameJob.Spec.Name`, `SchedulingPolicy.Spec.GangScheduling`, and `TalosUpgrade.Spec.PreserveData` removed (each had no reader anywhere in the controller, SDK, or UI — a follow-up review found the first pass had missed two *writers*, `test/e2e/e2e_test.go` and `deploy/samples/test-cluster/workloads.yaml`, both now fixed); CEL/kubebuilder validation pushed down for most rules a webhook already enforced in Go (conditional-required FrameNode network fields including a real `isIP()` check on `network.dns[*]`, `SchedulingPolicy` preemption/priorityClass, `FrameResourceQuota`'s at-least-one-limit rule, `TalosMachineConfig`'s configPatch/configPatchRef oneof, `host:port` — IPv6 included — and image-tag patterns); printer columns added to the four kinds that had none (`SchedulingPolicy`, `FrameResourceQuota`, `TalosMachineConfig`, `TalosUpgrade`). **The GPU/`serviceClass:LOW` conflict was deliberately *not* pushed into CEL**, unlike the others: the webhook only enforces it for pipelines in a known-list and returns early with a warning for everything else (including `training`, this project's own sample and e2e pipeline), so a CEL mirror rejected objects the webhook has always accepted and would have permanently stranded stored ones. This constraint's real state — it silently doesn't apply to most pipelines today — is now Phase B's to resolve, not this pass's. **`GangScheduling` specifically:** it was validated (required `queueName` alongside it) and shown in the UI, but no controller ever created a Volcano/YuniKorn `PodGroup` or set a `minMember` — the field gated an input-shape rule with zero cluster-side effect. Gang scheduling is unimplemented. It belongs on `FrameJob`, not `SchedulingPolicy`, when someone builds it — gang scheduling is a property of the job being scheduled, not of the queue/priority policy it schedules through. Left alone: renames (e.g. `FrameJob.Spec.ServiceClass` vs `FrameNode.Spec.ServiceClass` enum asymmetry, `FrameJob`'s `"Submitted"` condition-type outlier), the `status.phase`-vs-conditions-only split across kinds, the missing top-level `observedGeneration`, the cross-namespace reach of `TalosSecretRef.Namespace`/`FrameJob.Spec.Namespace` (form-validated now, but whether the controller should be allowed to act across namespaces at all is this phase's RBAC-tier question, not a pre-freeze one), whether `TalosSecretReference.Name` should become `Required` (an early draft did this by accident; reverted), and the FrameJob GPU/LOW bypass above — all deferred to this phase's own design work. Full detail, including a Fix Round 1 section covering a review pass's findings, in `.superpowers/pre-freeze-cleanup-report.md`.
 
-**Exit:** `v1` is the storage version, conversion is tested round-trip, and a documented upgrade path exists from any earlier alpha.
+**Exit:** `v1beta1` is the storage version, conversion is tested round-trip against objects written as `v1alpha1`, and a documented upgrade path exists from the alpha.
 
 ### Phase C — Real-time
 
@@ -92,7 +92,7 @@ A watch here is a change signal, not a data source: an event re-runs the fetch t
 
 **Two things the NetworkPolicies taught us, worth keeping.** They were broken twice over — allowing port 443 while the webhook listens on 9443, and sourcing from a `namespaceSelector` that a k3s **host-process** apiserver can never match. Either one, with `failurePolicy: Fail` on all the webhooks, turns enabling the policy into a cluster-wide CR write outage. Both were found independently by the chart review and the security review, and the second survived a first fix round: a port fix that leaves an unmatched source is not a fix. They stay off by default.
 
-**Exit:** a tagged `v1.0.0` installs from a published chart on a fresh cluster, passes e2e, and survives a manager failover and an upgrade from the prior release. **Not met, and blocked on two things outside this phase**: no `v1` exists until Phase B, and nothing can be published until local `main` reaches GitHub, for which no working credential exists (see the release chain under S3). Everything the phase can deliver without those is delivered.
+**Exit:** a tagged `v1.0.0` installs from a published chart on a fresh cluster, passes e2e, and survives a manager failover and an upgrade from the prior release. **Not met, and blocked on two things outside this phase**: there is no frozen version to tag until Phase B ships `v1beta1`, and nothing can be published until local `main` reaches GitHub, for which no working credential exists (see the release chain under S3). Everything the phase can deliver without those is delivered.
 
 ---
 
@@ -172,7 +172,7 @@ The same ritual as Phase B — conversion webhook, CEL validation, printer colum
 
 ## V1 definition of done
 
-1. `frame.plume-labs.io` is `v1` with tested conversion from alpha and beta.
+1. `frame.plume-labs.io` is `v1beta1` with tested conversion from alpha, and a written deprecation policy. Not `v1` — see Phase B.
 2. UI and SDK drive real CRDs over watch streams; no polling and no simulation in the default path.
 3. All seven controllers produce real, observable cluster effects with metrics and events, each proven end-to-end on Kind in CI.
 4. One-command install from a published, versioned Helm chart.
