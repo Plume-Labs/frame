@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -103,10 +104,20 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 
 	if fn.Status.Phase == nodePhaseDiscovered {
 		// Waiting for user to patch spec with full disk/network/role info.
+		// The controller has still looked at this generation even though
+		// there's nothing else to do with it, so observedGeneration must
+		// still catch up — otherwise a spec-only edit that never sets Disk
+		// leaves it stuck behind metadata.generation indefinitely.
+		if fn.Status.ObservedGeneration != fn.Generation {
+			patch := client.MergeFrom(fn.DeepCopy())
+			fn.Status.ObservedGeneration = fn.Generation
+			return ctrl.Result{}, r.Status().Patch(ctx, fn, patch)
+		}
 		return ctrl.Result{}, nil
 	}
 
 	patch := client.MergeFrom(fn.DeepCopy())
+	fn.Status.ObservedGeneration = fn.Generation
 	fn.Status.Phase = nodePhaseDiscovered
 	fn.Status.DiscoveredDisks = nil
 	fn.Status.DiscoveredNICs = nil
@@ -124,7 +135,7 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 		r.Recorder.Event(fn, corev1.EventTypeNormal, nodePhaseDiscovered, "Maintenance API contacted")
 	}
 
-	setCondition(&fn.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionFalse,
 		Reason:             nodePhaseDiscovered,
@@ -198,6 +209,47 @@ func (r *FrameNodeReconciler) reconcileProvision(ctx context.Context, fn *framev
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setPhase(ctx, fn, "Provisioning", msg)
 }
 
+// The labels Frame projects from a FrameNode onto its corev1.Node. These are
+// API, not an implementation detail: the inference provider's NodeSelector
+// and the FrameJob controller's Workflow labels both read
+// nodeLabelServiceClass, so renaming one of these silently unschedules
+// everything that selects on it (F12).
+//
+// rack is under frame.plume-labs.io, not topology.kubernetes.io: the
+// well-known keys in the kubernetes.io namespace are zone and region, and
+// rack is not one of them — that prefix is reserved for upstream.
+//
+// A caution for anyone reading nodeLabelServiceClass and generalising: the
+// same key means something else on a Namespace, where
+// FrameResourceQuota uses it to select which namespaces a quota projects
+// into. Two meanings, one key, distinguished only by what it is attached to.
+const (
+	nodeLabelRack         = "frame.plume-labs.io/rack"
+	nodeLabelZone         = "topology.kubernetes.io/zone"
+	nodeLabelServiceClass = "frame.plume-labs.io/service-class"
+	nodeLabelRole         = "frame.plume-labs.io/role"
+	nodeLabelRDMA         = "frame.plume-labs.io/rdma"
+)
+
+// frameNodeLabels is every key reconcileDelete strips. Keeping the list in
+// one place is what stops a fifth label being added to the write path and
+// forgotten in the delete path.
+var frameNodeLabels = []string{
+	nodeLabelRack, nodeLabelZone, nodeLabelServiceClass, nodeLabelRole, nodeLabelRDMA,
+}
+
+// applyNodeLabel sets key when value is non-empty and removes it otherwise.
+// Writing an empty value is legal but makes "unclassified" and "explicitly
+// empty" indistinguishable to a selector, which is not a distinction Frame
+// wants to have to explain.
+func applyNodeLabel(labels map[string]string, key, value string) {
+	if value == "" {
+		delete(labels, key)
+		return
+	}
+	labels[key] = value
+}
+
 // reconcileOnline syncs Kubernetes Node readiness back into the FrameNode status.
 func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1alpha1.FrameNode) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -221,25 +273,33 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	if node.Labels == nil {
 		node.Labels = make(map[string]string)
 	}
-	node.Labels["topology.kubernetes.io/rack"] = fn.Spec.Rack
-	node.Labels["topology.kubernetes.io/zone"] = fn.Spec.Zone
-	node.Labels["frame.plume-labs.io/service-class"] = fn.Spec.ServiceClass
-	node.Labels["frame.plume-labs.io/role"] = fn.Spec.Role
+	applyNodeLabel(node.Labels, nodeLabelRack, fn.Spec.Rack)
+	applyNodeLabel(node.Labels, nodeLabelZone, fn.Spec.Zone)
+	applyNodeLabel(node.Labels, nodeLabelServiceClass, fn.Spec.ServiceClass)
+	applyNodeLabel(node.Labels, nodeLabelRole, fn.Spec.Role)
+	rdma := ""
 	if fn.Spec.RDMAInterface != "" {
-		node.Labels["frame.plume-labs.io/rdma"] = "true"
+		rdma = "true"
 	}
+	applyNodeLabel(node.Labels, nodeLabelRDMA, rdma)
+	// The old topology.kubernetes.io/rack key is removed here as well as in
+	// reconcileDelete, so an existing node relabels itself on its next
+	// reconcile rather than carrying both keys until someone deletes the
+	// FrameNode.
+	delete(node.Labels, "topology.kubernetes.io/rack")
 	if err := r.Patch(ctx, &node, client.MergeFrom(base)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patching node labels: %w", err)
 	}
 
 	phase := nodePhase(&node)
 	patch := client.MergeFrom(fn.DeepCopy())
+	fn.Status.ObservedGeneration = fn.Generation
 	fn.Status.Phase = phase
 	fn.Status.NodeName = node.Name
 	fn.Status.Capacity = node.Status.Capacity
 	fn.Status.Allocatable = node.Status.Allocatable
 	fn.Status.KubeletVersion = node.Status.NodeInfo.KubeletVersion
-	setCondition(&fn.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             conditionStatus(phase == nodePhaseOnline),
 		Reason:             phase,
@@ -268,11 +328,11 @@ func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1al
 	var node corev1.Node
 	if err := r.Get(ctx, types.NamespacedName{Name: nodeName}, &node); err == nil {
 		base := node.DeepCopy()
+		for _, key := range frameNodeLabels {
+			delete(node.Labels, key)
+		}
+		// The pre-freeze key, for nodes labelled before F12.
 		delete(node.Labels, "topology.kubernetes.io/rack")
-		delete(node.Labels, "topology.kubernetes.io/zone")
-		delete(node.Labels, "frame.plume-labs.io/service-class")
-		delete(node.Labels, "frame.plume-labs.io/role")
-		delete(node.Labels, "frame.plume-labs.io/rdma")
 		if err := r.Patch(ctx, &node, client.MergeFrom(base)); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -284,8 +344,9 @@ func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1al
 
 func (r *FrameNodeReconciler) setPhase(ctx context.Context, fn *framev1alpha1.FrameNode, phase, msg string) error {
 	patch := client.MergeFrom(fn.DeepCopy())
+	fn.Status.ObservedGeneration = fn.Generation
 	fn.Status.Phase = phase
-	setCondition(&fn.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             conditionStatus(false),
 		Reason:             phase,

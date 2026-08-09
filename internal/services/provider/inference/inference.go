@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	"github.com/rmocq/frame/internal/scheduling"
 	"github.com/rmocq/frame/internal/services/provider"
 )
 
@@ -541,6 +542,18 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
 			serviceClassLabel: svc.Spec.ServiceClass,
 		}
+		// Scheduling priority is derived from serviceClass, not from a
+		// field of its own (F10): a long-lived instance's tier is its
+		// urgency. The mapping is shared with the FrameJob controller so
+		// the two cannot drift, and it only ever names a PriorityClass
+		// SchedulingPolicy's controller created — never a system one.
+		//
+		// PriorityClassName is a scalar on the PodSpec, so setContainer's
+		// partial-update discipline does not apply: it is assigned
+		// wholesale. An unrecognised serviceClass yields "", which leaves
+		// the pod at the cluster's implicit default rather than failing.
+		deployment.Spec.Template.Spec.PriorityClassName =
+			scheduling.PriorityClassForServiceClass(svc.Spec.ServiceClass)
 		// A digest of the token, never the token itself, rides on the pod
 		// template so a changed token is a changed template: if the API key
 		// Secret is ever deleted and ensureAPIKey mints a new value, the

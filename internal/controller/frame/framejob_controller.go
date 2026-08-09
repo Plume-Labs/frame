@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,16 +39,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	"github.com/rmocq/frame/internal/scheduling"
 )
 
 const frameJobFinalizer = "frame.plume-labs.io/framejob"
 
-// FrameJob phases derived from the backing ArgoWorkflow's status.phase.
+// FrameJob phases. They are the Reason on the Ready condition, and the value
+// api/frame/v1alpha1's conversion projects back out as the legacy
+// status.phase. Do not write a reason here that is not one of these.
 const (
-	jobPhaseCompleted = "Completed"
+	jobPhaseSubmitted = "Submitted"
 	jobPhaseRunning   = "Running"
+	jobPhaseSuspended = "Suspended"
+	jobPhaseCompleted = "Completed"
 	jobPhaseFailed    = "Failed"
 )
+
+// setJobReady writes the one condition a FrameJob carries. Ready is True only
+// on Completed: a job that failed an hour ago must not read as healthy, which
+// is precisely what the old write-once Submitted=True condition did (F3).
+func setJobReady(job *framev1alpha1.FrameJob, phase, message string) {
+	meta.SetStatusCondition(&job.Status.Conditions, metav1.Condition{
+		Type:               conditionTypeReady,
+		Status:             conditionStatus(phase == jobPhaseCompleted),
+		Reason:             phase,
+		Message:            message,
+		ObservedGeneration: job.Generation,
+	})
+}
 
 var argoWorkflowGVK = schema.GroupVersionKind{
 	Group:   "argoproj.io",
@@ -102,17 +121,12 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		log.Info("Created ArgoWorkflow", "name", job.Name, "namespace", ns)
 
 		patch := client.MergeFrom(job.DeepCopy())
-		job.Status.Phase = "Submitted"
+		job.Status.ObservedGeneration = job.Generation
+		job.Status.Phase = jobPhaseSubmitted
 		job.Status.ArgoWorkflowName = job.Name
 		now := metav1.Now()
 		job.Status.StartTime = &now
-		setCondition(&job.Status.Conditions, metav1.Condition{
-			Type:               "Submitted",
-			Status:             metav1.ConditionTrue,
-			Reason:             "WorkflowCreated",
-			Message:            fmt.Sprintf("ArgoWorkflow %s/%s created", ns, job.Name),
-			ObservedGeneration: job.Generation,
-		})
+		setJobReady(&job, jobPhaseSubmitted, fmt.Sprintf("ArgoWorkflow %s/%s created", ns, job.Name))
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.Status().Patch(ctx, &job, patch)
 	}
 
@@ -122,27 +136,39 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	phase := workflowPhase(existing, job.Spec.Suspended)
-	if job.Status.Phase != phase {
+	phaseChanged := readyReason(job.Status.Conditions) != phase || job.Status.Phase != phase
+	// Also patch on a bare generation bump with no phase change (e.g. a
+	// spec-only edit that doesn't affect the derived phase): otherwise
+	// status.observedGeneration would go stale exactly when a client most
+	// needs it — to tell whether the controller has caught up with the spec
+	// it is looking at right now.
+	if phaseChanged || job.Status.ObservedGeneration != job.Generation {
 		patch := client.MergeFrom(job.DeepCopy())
-		job.Status.Phase = phase
-		job.Status.Message = workflowMessage(existing)
-		if phase == jobPhaseCompleted || phase == jobPhaseFailed {
-			now := metav1.Now()
-			job.Status.CompletionTime = &now
+		job.Status.ObservedGeneration = job.Generation
+		if phaseChanged {
+			job.Status.Phase = phase
+			job.Status.Message = workflowMessage(existing)
+			if phase == jobPhaseCompleted || phase == jobPhaseFailed {
+				now := metav1.Now()
+				job.Status.CompletionTime = &now
+			}
+			setJobReady(&job, phase, job.Status.Message)
 		}
 		if err := r.Status().Patch(ctx, &job, patch); err != nil {
 			return ctrl.Result{}, err
 		}
-		eventType := corev1.EventTypeNormal
-		if phase == jobPhaseFailed {
-			eventType = corev1.EventTypeWarning
-		}
-		r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
-		switch phase {
-		case jobPhaseCompleted:
-			frameJobCompleted.Inc()
-		case jobPhaseFailed:
-			frameJobFailed.Inc()
+		if phaseChanged {
+			eventType := corev1.EventTypeNormal
+			if phase == jobPhaseFailed {
+				eventType = corev1.EventTypeWarning
+			}
+			r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
+			switch phase {
+			case jobPhaseCompleted:
+				frameJobCompleted.Inc()
+			case jobPhaseFailed:
+				frameJobFailed.Inc()
+			}
 		}
 	}
 
@@ -205,7 +231,7 @@ func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
 		},
 		"suspend": job.Spec.Suspended,
 	}
-	if pc := jobPriorityClass(job.Spec.Priority); pc != "" {
+	if pc := scheduling.PriorityClassForJobPriority(job.Spec.Priority); pc != "" {
 		spec["priorityClassName"] = pc
 	}
 
@@ -223,26 +249,10 @@ func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
 	}
 }
 
-// jobPriorityClass maps FrameJob priority to the Frame-managed PriorityClass name.
-func jobPriorityClass(priority string) string {
-	switch priority {
-	case "critical":
-		return "frame-critical"
-	case "high":
-		return "frame-high"
-	case "medium":
-		return "frame-medium"
-	case "low":
-		return "frame-low"
-	default:
-		return ""
-	}
-}
-
 func workflowPhase(wf *unstructured.Unstructured, suspended bool) string {
 	phase, _, _ := unstructured.NestedString(wf.Object, "status", "phase")
 	if suspended && (phase == jobPhaseRunning || phase == "") {
-		return "Suspended"
+		return jobPhaseSuspended
 	}
 	switch phase {
 	case "Succeeded":
@@ -252,7 +262,7 @@ func workflowPhase(wf *unstructured.Unstructured, suspended bool) string {
 	case jobPhaseRunning:
 		return jobPhaseRunning
 	default:
-		return "Submitted"
+		return jobPhaseSubmitted
 	}
 }
 

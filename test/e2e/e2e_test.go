@@ -580,6 +580,19 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(out).To(Equal(nodeName))
 			}).Should(Succeed())
+
+			By("checking the node carries the frame-prefixed rack label and no reserved-prefix one")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "node", nodeName, "",
+					`{.metadata.labels.frame\.plume-labs\.io/rack}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal("rack-e2e"))
+
+				out, err = kubectlGet(g, "node", nodeName, "",
+					`{.metadata.labels.topology\.kubernetes\.io/rack}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(BeEmpty(), "topology.kubernetes.io/ is reserved for upstream keys")
+			}).Should(Succeed())
 		})
 
 		// The two Talos kinds drive a gRPC endpoint that does not exist in Kind.

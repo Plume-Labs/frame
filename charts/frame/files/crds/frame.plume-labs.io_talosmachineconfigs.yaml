@@ -201,6 +201,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from. A client can compare it to metadata.generation to tell whether
+                  the controller has seen the current spec yet, without knowing anything
+                  about this kind's condition vocabulary.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

@@ -123,6 +123,19 @@ spec:
                   - signCount
                   type: object
                 type: array
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from. A client can compare it to metadata.generation to tell whether
+                  the controller has seen the current spec yet, without knowing anything
+                  about this kind's condition vocabulary.
+
+                  FrameUser has no controller — authd is its store — so nothing writes
+                  this field today. It is present anyway because it is part of the
+                  frozen shape: a future writer must not have to add a status field to
+                  an already-frozen version.
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

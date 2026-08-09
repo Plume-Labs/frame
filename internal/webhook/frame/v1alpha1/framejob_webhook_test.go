@@ -17,6 +17,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -84,3 +87,39 @@ var _ = Describe("FrameJob Webhook", func() {
 	})
 
 })
+
+func TestValidateFrameJobAdmitsGPUsAtLowServiceClass(t *testing.T) {
+	// F8: the constraint was deleted deliberately. This test is the guard
+	// against it being "restored" by someone reading the old doc comment in a
+	// git blame.
+	job := &framev1alpha1.FrameJob{
+		Spec: framev1alpha1.FrameJobSpec{
+			Pipeline:     "neura-training-dag",
+			ServiceClass: "LOW",
+			GPUCount:     2,
+		},
+	}
+	warnings, err := validateFrameJob(job)
+	if err != nil {
+		t.Fatalf("expected a GPU job at LOW to be admitted, got error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for a known pipeline, got %v", warnings)
+	}
+}
+
+func TestValidateFrameJobWarnsOnUnknownPipeline(t *testing.T) {
+	job := &framev1alpha1.FrameJob{
+		Spec: framev1alpha1.FrameJobSpec{Pipeline: "training", ServiceClass: "LOW", GPUCount: 2},
+	}
+	warnings, err := validateFrameJob(job)
+	if err != nil {
+		t.Fatalf("an unknown pipeline must warn, not reject: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning, got %v", warnings)
+	}
+	if !strings.Contains(warnings[0], `pipeline "training" not in known list`) {
+		t.Fatalf("warning did not name the pipeline: %q", warnings[0])
+	}
+}

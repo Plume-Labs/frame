@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -90,8 +91,9 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	patch := client.MergeFrom(sp.DeepCopy())
+	sp.Status.ObservedGeneration = sp.Generation
 	if len(errs) > 0 {
-		setCondition(&sp.Status.Conditions, metav1.Condition{
+		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconcileError",
@@ -99,7 +101,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			ObservedGeneration: sp.Generation,
 		})
 	} else {
-		setCondition(&sp.Status.Conditions, metav1.Condition{
+		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionTrue,
 			Reason:             "Applied",

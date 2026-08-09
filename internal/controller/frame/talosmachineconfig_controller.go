@@ -23,6 +23,7 @@ import (
 
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -69,6 +70,18 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if !controllerutil.ContainsFinalizer(&tmc, talosMachineConfigFinalizer) {
 		controllerutil.AddFinalizer(&tmc, talosMachineConfigFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &tmc)
+	}
+
+	// ApplyConfiguration is not idempotent-safe to call on every reconcile
+	// trigger: a successful apply's own status patch re-enters the work queue
+	// (the same self-triggering effect TalosUpgradeReconciler guards below),
+	// and without this guard that second pass re-applies the patch to a live
+	// machine for no reason. Guard by ObservedGeneration — only apply again
+	// when spec.generation changes.
+	for _, cond := range tmc.Status.Conditions {
+		if cond.Type == conditionTypeReady && cond.ObservedGeneration == tmc.Generation && cond.Reason == "Applied" {
+			return ctrl.Result{}, nil
+		}
 	}
 
 	patch, err := r.resolvePatch(ctx, &tmc)
@@ -132,7 +145,8 @@ func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *fr
 
 func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tmc.DeepCopy())
-	setCondition(&tmc.Status.Conditions, metav1.Condition{
+	tmc.Status.ObservedGeneration = tmc.Generation
+	meta.SetStatusCondition(&tmc.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             status,
 		Reason:             reason,

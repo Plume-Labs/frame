@@ -69,6 +69,18 @@ type FrameUserSpec struct {
 }
 
 type FrameUserStatus struct {
+	// ObservedGeneration is the metadata.generation this status was computed
+	// from. A client can compare it to metadata.generation to tell whether
+	// the controller has seen the current spec yet, without knowing anything
+	// about this kind's condition vocabulary.
+	//
+	// FrameUser has no controller — authd is its store — so nothing writes
+	// this field today. It is present anyway because it is part of the
+	// frozen shape: a future writer must not have to add a status field to
+	// an already-frozen version.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Credentials are owned by authd, which is why they live in status: an
 	// admin editing an account cannot corrupt a key by hand.
 	// +optional
