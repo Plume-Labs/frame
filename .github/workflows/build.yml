@@ -152,8 +152,84 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Buildx attaches both as OCI referrers beside the pushed image, so
+          # the SBOM travels with the artifact instead of living in a CI
+          # artifact nobody correlates back to a digest. No extra action needed.
+          sbom: true
+          provenance: mode=max
 
-  # ── 4. Integration test on a kind virtual cluster ─────────────────────────
+  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all three images ─────
+  #
+  # Frame builds three images, and only one of them is pushed by this workflow
+  # today. Scanning still covers all three, because a CVE in the operator is a
+  # CVE whether or not this workflow is what publishes it. The matrix names
+  # each Dockerfile explicitly rather than deriving anything, so a fourth image
+  # cannot be added without also being listed here.
+  scan:
+    name: Scan (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    needs: [quality, iac]
+    permissions:
+      contents: read
+    strategy:
+      # One image failing its scan should not hide the other two.
+      fail-fast: false
+      matrix:
+        include:
+          - name: controller
+            dockerfile: Dockerfile.controller
+          - name: ui
+            dockerfile: Dockerfile
+          - name: authd
+            dockerfile: Dockerfile.authd
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build image locally
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: frame-${{ matrix.name }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: frame-${{ matrix.name }}:scan
+          format: cyclonedx-json
+          artifact-name: sbom-${{ matrix.name }}.cyclonedx.json
+          output-file: ${{ runner.temp }}/sbom-${{ matrix.name }}.cyclonedx.json
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: frame-${{ matrix.name }}:scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          # Report-only for now, deliberately. nginx:alpine and the Go base
+          # images carry a standing backlog of HIGH findings that nobody has
+          # triaged yet, and a gate that fails on day one is a gate somebody
+          # disables in week one. Tighten to exit-code 1 on CRITICAL once the
+          # first clean run establishes the baseline.
+          exit-code: '0'
+        env:
+          # Trivy's default DB registry is rate-limited for anonymous pulls;
+          # these are the documented GHCR mirrors.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
+
+  # ── 5. Integration test on a kind virtual cluster ─────────────────────────
   integration:
     name: Integration (kind)
     runs-on: ubuntu-latest
@@ -208,7 +284,7 @@ jobs:
           echo "Smoke test failed: service did not become reachable" >&2
           exit 1
 
-  # ── 5. Create a versioned release package on tags ─────────────────────────
+  # ── 6. Create a versioned release package on tags ─────────────────────────
   release:
     name: Release
     runs-on: ubuntu-latest

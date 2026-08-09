@@ -183,6 +183,32 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+##@ Security
+
+# These are the same checks CI runs, so a finding can be reproduced and fixed
+# locally instead of only ever being seen in a workflow log.
+
+.PHONY: vuln
+vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
+	"$(GOVULNCHECK)" ./...
+
+.PHONY: sbom
+sbom: syft ## Write a CycloneDX SBOM for each of the three images to dist/.
+	@mkdir -p dist
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
+		name="$${pair%%:*}"; image="$${pair#*:}"; \
+		echo "SBOM for $${name} ($${image})"; \
+		"$(SYFT)" scan "$(CONTAINER_TOOL):$${image}" -o cyclonedx-json="dist/sbom-$${name}.cyclonedx.json"; \
+	done
+
+.PHONY: scan
+scan: trivy ## Scan all three images for CRITICAL/HIGH vulnerabilities.
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
+		name="$${pair%%:*}"; image="$${pair#*:}"; \
+		echo "=== $${name} ($${image}) ==="; \
+		"$(TRIVY)" image --severity CRITICAL,HIGH --ignore-unfixed "$${image}"; \
+	done
+
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -262,6 +288,9 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOVULNCHECK ?= $(LOCALBIN)/govulncheck
+SYFT ?= $(LOCALBIN)/syft
+TRIVY ?= $(LOCALBIN)/trivy
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -278,6 +307,12 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.11.4
+# Security tooling. Pinned like every other tool here, and installed through
+# go-install-tool so they go through the Go module checksum database rather
+# than a curl-pipe-sh.
+GOVULNCHECK_VERSION ?= v1.6.0
+SYFT_VERSION ?= v1.50.0
+TRIVY_VERSION ?= v0.73.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -300,6 +335,21 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+.PHONY: govulncheck
+govulncheck: $(GOVULNCHECK) ## Download govulncheck locally if necessary.
+$(GOVULNCHECK): $(LOCALBIN)
+	$(call go-install-tool,$(GOVULNCHECK),golang.org/x/vuln/cmd/govulncheck,$(GOVULNCHECK_VERSION))
+
+.PHONY: syft
+syft: $(SYFT) ## Download syft locally if necessary.
+$(SYFT): $(LOCALBIN)
+	$(call go-install-tool,$(SYFT),github.com/anchore/syft/cmd/syft,$(SYFT_VERSION))
+
+.PHONY: trivy
+trivy: $(TRIVY) ## Download trivy locally if necessary.
+$(TRIVY): $(LOCALBIN)
+	$(call go-install-tool,$(TRIVY),github.com/aquasecurity/trivy/cmd/trivy,$(TRIVY_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
