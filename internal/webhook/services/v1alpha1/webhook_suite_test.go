@@ -45,6 +45,24 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+// crdRenderRelativeRoot is the path from this package back to the repo root.
+var crdRenderRelativeRoot = filepath.Join("..", "..", "..", "..")
+
+// renderedCRDPath is bin/crd-render, where `make crd-render` writes the CRDs
+// as kustomize builds them — conversion stanza included.
+//
+// The suites used to read config/crd/bases directly. Those are the
+// controller-gen output, and controller-gen has no marker that emits
+// spec.conversion: the stanza is a kustomize patch. envtest can drive a
+// conversion webhook (WebhookInstallOptions rewrites clientConfig to the
+// local server and injects its CA) but only for a CRD that already declares
+// strategy: Webhook, so reading the bases would have made every conversion
+// test silently exercise nothing (F14 point 3).
+func renderedCRDPath() string {
+	// The number of ".." segments differs per suite; see crdRenderRelativeRoot above.
+	return filepath.Join(crdRenderRelativeRoot, "bin", "crd-render")
+}
+
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
@@ -75,7 +93,7 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths:     []string{renderedCRDPath()},
 		ErrorIfCRDPathMissing: false,
 
 		WebhookInstallOptions: envtest.WebhookInstallOptions{
@@ -86,6 +104,11 @@ var _ = BeforeSuite(func() {
 	// Retrieve the first found binary directory to allow running tests from IDEs
 	if getFirstFoundEnvTestBinaryDir() != "" {
 		testEnv.BinaryAssetsDirectory = getFirstFoundEnvTestBinaryDir()
+	}
+
+	if _, err := os.Stat(renderedCRDPath()); err != nil {
+		Fail(fmt.Sprintf("%s is missing — run `make crd-render` (or `make test`, which does): %v",
+			renderedCRDPath(), err))
 	}
 
 	// cfg is defined in this file globally.
