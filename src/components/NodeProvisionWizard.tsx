@@ -131,11 +131,11 @@ export function NodeProvisionWizard({
           setStep(1)
           return
         }
-        if (status.phase === 'Failed') {
-          setDiscoverError('Discovery failed — node not reachable in maintenance mode')
-          setDiscovering(false)
-          return
-        }
+        // There is no 'Failed' branch here. Failed was in v1alpha1's phase
+        // enum and no controller ever wrote it; the Ready reason vocabulary
+        // v1beta1 froze is Discovered|Provisioning|Online|Degraded|Offline.
+        // A node that cannot be reached simply never leaves the empty phase,
+        // which the poll-failure counter below is what actually catches.
       } catch {
         failureCount += 1
         if (failureCount >= MAX_STATUS_POLL_FAILURES) {
@@ -166,9 +166,11 @@ export function NodeProvisionWizard({
       try {
         const status: FrameNodeStatus = await frame.nodes.getStatus(provisionNodeId)
         failureCount = 0
+        // 'Failed' is gone for the same reason as above; 'Offline' is real
+        // and stays.
         const mapped =
-          status.phase === 'Online'   ? 'online'  :
-          status.phase === 'Failed' || status.phase === 'Offline' ? 'offline' :
+          status.phase === 'Online'  ? 'online'  :
+          status.phase === 'Offline' ? 'offline' :
           'provisioning'
         setProvisionStatus(mapped)
         setProvisionLogs([`Phase: ${status.phase}`])

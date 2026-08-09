@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import { pollInterval, watchPaths } from './k8s-watch'
 
-const PATH = '/apis/frame.plume-labs.io/v1alpha1/namespaces/frame-system/framejobs'
+const PATH = '/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/framejobs'
 
 /** A response body that emits the given chunks, then ends the stream. */
 function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
