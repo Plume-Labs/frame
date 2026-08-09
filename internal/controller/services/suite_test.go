@@ -18,9 +18,13 @@ package services
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -33,6 +37,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	conversionwebhook "sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
@@ -108,10 +114,85 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 
+	serveConversionWebhook(testEnv)
+
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 })
+
+// serveConversionWebhook starts a /convert endpoint on the coordinate envtest
+// has already reserved for it.
+//
+// This is not optional and it is not this suite opting in to something. From
+// Task 18 on, the v1alpha1 kinds implement Convertible and the v1beta1 kinds
+// implement Hub, and envtest reacts to that by itself: Environment.Start
+// unconditionally generates a serving CA (server.go's PrepWithoutInstalling),
+// hands it to CRDInstallOptions.WebhookOptions, and modifyConversionWebhooks
+// then rewrites *every CRD whose GroupKind is convertible in the scheme* to
+// spec.conversion.strategy: Webhook with a clientConfig pointing at a local
+// https://host:port/convert. It reads the Go types, not the CRD — so the
+// rendered manifests still say nothing about conversion and every create and
+// get in this suite still fails with "connection refused" until something
+// answers on that port.
+//
+// So: writing the conversion functions turns the conversion webhook on in
+// envtest, whatever the manifests say. Serving it here restores the suite and
+// makes every spec below exercise the real dispatch path — the apiserver
+// calling ConvertTo and ConvertFrom over HTTP — rather than only the Go
+// functions.
+//
+// What it does NOT do, and what Task 19 still owns in full: the conversion
+// stanza in the shipped CRDs (a kustomize patch, config/crd), the manager
+// serving /convert in production, the cert-manager CA injection and Service
+// coordinate, and moving +kubebuilder:storageversion onto the eight v1beta1
+// kinds. A green suite here is not evidence for any of that; `make
+// helm-parity` is what guards the shipped side (Task 10).
+func serveConversionWebhook(env *envtest.Environment) {
+	GinkgoHelper()
+	opts := env.WebhookInstallOptions
+
+	srv := webhook.NewServer(webhook.Options{
+		Host:    opts.LocalServingHost,
+		Port:    opts.LocalServingPort,
+		CertDir: opts.LocalServingCertDir,
+	})
+	srv.Register("/convert", conversionwebhook.NewWebhookHandler(scheme.Scheme, conversionwebhook.NewRegistry()))
+
+	exited := make(chan error, 1)
+	go func() {
+		defer GinkgoRecover()
+		exited <- srv.Start(ctx)
+	}()
+
+	// Verify against the CA envtest generated rather than skipping
+	// verification: it is the same CA the apiserver was handed, so a
+	// successful handshake here proves the apiserver's call will get that far
+	// too. A readiness probe that skipped verification would still pass
+	// against a certificate the apiserver goes on to reject.
+	roots := x509.NewCertPool()
+	Expect(roots.AppendCertsFromPEM(opts.LocalServingCAData)).To(BeTrue(),
+		"envtest produced no usable serving CA, so conversion could not be verified by anyone")
+
+	addr := net.JoinHostPort(opts.LocalServingHost, strconv.Itoa(opts.LocalServingPort))
+	Eventually(func() error {
+		select {
+		case err := <-exited:
+			return fmt.Errorf("the conversion webhook server exited: %w", err)
+		default:
+		}
+		conn, err := tls.Dial("tcp", addr, &tls.Config{
+			RootCAs:    roots,
+			ServerName: opts.LocalServingHost,
+			MinVersion: tls.VersionTLS12,
+		})
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}, 15*time.Second, 100*time.Millisecond).Should(Succeed(),
+		"nothing is serving a verifiable /convert at %s, so every convertible kind in this suite would fail to read", addr)
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
