@@ -23,9 +23,15 @@ const TREND_QUERIES = [
 ]
 
 export function MpsView() {
-  const { state, reload } = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // DCGM's own /metrics, not a Kubernetes object — nothing to watch.
+  // Utilisation is exactly the kind of second-to-second gauge that earns a
+  // fast rate rather than the 30s+ most screens use.
+  const { state, reload } = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus(), [], [], 10_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const gpus = state.phase === 'ready' ? state.data : []
   const trend = trendState.phase === 'ready' ? trendState.data : null

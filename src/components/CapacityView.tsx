@@ -1,4 +1,4 @@
-import { CapacityResource, ForecastStatus, createFrameClient } from '@/lib/frame-sdk'
+import { CapacityResource, ForecastStatus, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,17 @@ const capacityTone = (p: number) => inverseScoreTone(p, 75, 90)
 const tone = (p: number) => inverseScoreClass(p, 75, 90)
 
 export function CapacityView() {
-  const { state, reload } = useLiveResource<CapacityResource[]>(() => frame.cluster.capacity())
+  const { state, reload } = useLiveResource<CapacityResource[]>(
+    () => frame.cluster.capacity(),
+    [],
+    // Allocatable/requested come straight from Node and Pod objects, watched.
+    [coreListPath('nodes'), coreListPath('pods')],
+    // "Used (live)" layers metrics-server on top, best-effort, with no watch
+    // support and continuous drift the object watch above cannot see. Slow
+    // poll: the watch already covers every discrete change, this only tops
+    // up the one number that moves on its own.
+    30_000,
+  )
   const res = state.phase === 'ready' ? state.data : []
 
   return (
@@ -89,7 +99,9 @@ export function CapacityView() {
 }
 
 function ForecastCard() {
-  const { state } = useLiveResource<ForecastStatus | null>(() => frame.cluster.forecast())
+  // A Prometheus projection over a 3h history — a "days to full" number that
+  // does not need to be fresher than a minute, unlike the gauges above it.
+  const { state } = useLiveResource<ForecastStatus | null>(() => frame.cluster.forecast(), [], [], 60_000)
   const fc = state.phase === 'ready' ? state.data : null
   return (
     <Card>

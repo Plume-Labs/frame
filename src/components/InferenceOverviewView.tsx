@@ -29,11 +29,17 @@ const TREND_QUERIES = [
  * per-surface breakdowns still live on their own screens (GPU, KV-Cache).
  */
 export function InferenceOverviewView() {
-  const gpuState = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus())
-  const llamaState = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference())
-  const teiState = useLiveResource<TeiStatus | null>(() => frame.cluster.teiStatus())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // All three are proxied Prometheus /metrics endpoints, not Kubernetes
+  // objects — nothing to watch. GPU and llama.cpp move within a single
+  // generation; TEI's embedding queue a little slower.
+  const gpuState = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus(), [], [], 10_000)
+  const llamaState = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
+  const teiState = useLiveResource<TeiStatus | null>(() => frame.cluster.teiStatus(), [], [], 15_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const trend = trendState.phase === 'ready' ? trendState.data : null
 

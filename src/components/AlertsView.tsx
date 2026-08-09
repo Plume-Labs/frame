@@ -36,9 +36,13 @@ const TONE: Record<string, string> = {
 }
 
 export function AlertsView() {
-  const { state, reload } = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts())
-  const { state: silenceState, reload: reloadSilences } = useLiveResource<AlertSilence[]>(() =>
-    frame.cluster.silences(),
+  // Alertmanager's own API, not a Kubernetes object — nothing to watch.
+  const { state, reload } = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts(), [], [], 30_000)
+  const { state: silenceState, reload: reloadSilences } = useLiveResource<AlertSilence[]>(
+    () => frame.cluster.silences(),
+    [],
+    [],
+    30_000,
   )
   const data = state.phase === 'ready' ? state.data : null
   const silences = silenceState.phase === 'ready' ? silenceState.data : []

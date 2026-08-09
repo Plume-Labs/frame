@@ -30,9 +30,14 @@ const TREND_QUERIES = [
 ]
 
 export function BurstBufferView() {
-  const { state, reload } = useLiveResource<BurstNode[]>(() => frame.cluster.burstBuffer())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // node-exporter/Prometheus metrics, not objects — nothing to watch. A
+  // scratch tier fills and drains over minutes, so 30s is plenty fresh.
+  const { state, reload } = useLiveResource<BurstNode[]>(() => frame.cluster.burstBuffer(), [], [], 30_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const nodes = state.phase === 'ready' ? state.data : []
   const trend = trendState.phase === 'ready' ? trendState.data : null

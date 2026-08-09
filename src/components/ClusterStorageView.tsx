@@ -1,4 +1,5 @@
-import { AlluxioStats, CephStatus, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
+import { AlluxioStats, CephStatus, MetricSeries, createFrameClient, coreListPath, crdListPath } from '@/lib/frame-sdk'
+import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -28,7 +29,8 @@ function healthTone(h: string): Tone {
 
 /** Alluxio stacked cache tiers (MEM -> SSD -> HDD) + cache hit-rate. Silent if absent. */
 function AlluxioTiersCard() {
-  const { state } = useLiveResource<AlluxioStats>(() => frame.cluster.alluxio())
+  // Alluxio's own JSON metrics endpoint, not a Kubernetes object.
+  const { state } = useLiveResource<AlluxioStats>(() => frame.cluster.alluxio(), [], [], 30_000)
   if (state.phase !== 'ready') return null
   const a = state.data
 
@@ -90,9 +92,32 @@ const LATENCY_GOOD_MS = 50
 const LATENCY_OK_MS = 100
 
 export function ClusterStorageView() {
-  const { state, reload } = useLiveResource<CephStatus>(() => frame.cluster.ceph())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  const cephNs = config().namespaces.ceph
+  // Pod namespaces come from the same integration config ceph() itself reads
+  // them from — cephOsd/cephMon, not namespaces.ceph — so a Settings edit to
+  // either can never make the watch diverge from the fetch. Both default to
+  // rook-ceph and usually match, hence the dedupe.
+  const cephPodNamespaces = [...new Set([
+    config().integrations.cephOsd.namespace,
+    config().integrations.cephMon.namespace,
+  ])]
+  // ceph() reads the CephCluster/CephBlockPool CRs plus the osd/mon pods —
+  // all real objects, so this watches rather than polls.
+  const { state, reload } = useLiveResource<CephStatus>(
+    () => frame.cluster.ceph(),
+    [],
+    [
+      crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
+      crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
+      ...cephPodNamespaces.map((ns) => coreListPath('pods', ns)),
+    ],
+  )
+  // Prometheus/ceph-mgr history — nothing to watch there.
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const c = state.phase === 'ready' ? state.data : null
   const trend = trendState.phase === 'ready' ? trendState.data : null

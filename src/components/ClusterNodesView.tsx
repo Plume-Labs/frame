@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ClusterNodeInfo, createFrameClient } from '@/lib/frame-sdk'
+import { ClusterNodeInfo, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,20 @@ import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen, 
 const frame = createFrameClient()
 
 export function ClusterNodesView() {
-  const { state, reload } = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes())
+  const { state, reload } = useLiveResource<ClusterNodeInfo[]>(
+    () => frame.cluster.nodes(),
+    [],
+    // The Node objects driving readiness/roles/capacity are watched, so a
+    // node joining, leaving, or changing Ready refreshes immediately.
+    [coreListPath('nodes')],
+    // The cpu/mem usage columns come from metrics-server, which has no watch
+    // support of its own and drifts continuously rather than on a discrete
+    // event — the watch above would leave them frozen between Node changes,
+    // which can be a long time on a quiet cluster. Slow poll because the
+    // watch already covers everything else; this only needs to catch the
+    // one thing that moves on its own.
+    30_000,
+  )
   const [cordonTarget, setCordonTarget] = useState<ClusterNodeInfo | null>(null)
   const [drainTarget, setDrainTarget] = useState<ClusterNodeInfo | null>(null)
   const [busy, setBusy] = useState<string | null>(null)

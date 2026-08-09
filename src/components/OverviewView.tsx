@@ -6,8 +6,11 @@ import {
   InferenceStatus,
   MetricSeries,
   PostureStatus,
+  coreListPath,
   createFrameClient,
+  crdListPath,
 } from '@/lib/frame-sdk'
+import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useLiveResource } from '@/hooks/useLiveResource'
@@ -52,14 +55,40 @@ const TREND_QUERIES = [
  * context before this could exist.
  */
 export function OverviewView() {
-  const nodes = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes())
-  const alerts = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts())
-  const ceph = useLiveResource<CephStatus>(() => frame.cluster.ceph())
-  const backups = useLiveResource<BackupStatus | null>(() => frame.cluster.backups())
-  const inference = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference())
-  const posture = useLiveResource<PostureStatus | null>(() => frame.cluster.posture())
-  const trendState = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  const cephNs = config().namespaces.ceph
+  const veleroNs = config().namespaces.velero
+  // Sourced from the same integration config ceph() itself reads osd/mon pods
+  // from, so a Settings edit to either can never make the watch diverge from
+  // the fetch. Both default to rook-ceph and usually match, hence the dedupe.
+  const cephPodNamespaces = [...new Set([
+    config().integrations.cephOsd.namespace,
+    config().integrations.cephMon.namespace,
+  ])]
+
+  // A mix, call by call: some read real objects (watch), some read a proxied
+  // metric with nothing to watch (poll).
+  const nodes = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes(), [], [coreListPath('nodes')])
+  const alerts = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts(), [], [], 30_000)
+  const ceph = useLiveResource<CephStatus>(() => frame.cluster.ceph(), [], [
+    crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
+    crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
+    ...cephPodNamespaces.map((ns) => coreListPath('pods', ns)),
+  ])
+  const backups = useLiveResource<BackupStatus | null>(() => frame.cluster.backups(), [], [
+    crdListPath('velero.io', 'v1', 'backups', veleroNs),
+    crdListPath('velero.io', 'v1', 'backupstoragelocations', veleroNs),
+    crdListPath('velero.io', 'v1', 'schedules', veleroNs),
+  ])
+  const inference = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
+  const posture = useLiveResource<PostureStatus | null>(() => frame.cluster.posture(), [], [
+    crdListPath('aquasecurity.github.io', 'v1alpha1', 'vulnerabilityreports'),
+    crdListPath('aquasecurity.github.io', 'v1alpha1', 'configauditreports'),
+  ])
+  const trendState = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
 
   const loading = [nodes, alerts, ceph, backups, inference, posture].some(

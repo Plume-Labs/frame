@@ -21,9 +21,14 @@ const TREND_QUERIES = [
 ]
 
 export function KsmView() {
-  const { state, reload } = useLiveResource<KsmStats>(() => frame.cluster.ksm())
-  const { state: trendState } = useLiveResource<MetricSeries[] | null>(() =>
-    frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+  // node-exporter's own /metrics, not a Kubernetes object — nothing to watch.
+  // Page-sharing counts move slowly, so this stays at the default 30s cadence.
+  const { state, reload } = useLiveResource<KsmStats>(() => frame.cluster.ksm(), [], [], 30_000)
+  const { state: trendState } = useLiveResource<MetricSeries[] | null>(
+    () => frame.cluster.range(TREND_QUERIES, WINDOW_HOURS),
+    [],
+    [],
+    30_000,
   )
   const s = state.phase === 'ready' ? state.data : null
   const trend = trendState.phase === 'ready' ? trendState.data : null
