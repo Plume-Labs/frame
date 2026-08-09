@@ -34,6 +34,36 @@ such before this cleanup, and is removed with the same evidence).
 **Controller:** finalizer-guarded; secondary-watches core `v1.Node` and maps it
 back to its FrameNode (`nodeToFrameNode`) to keep phase/versions in sync.
 
+### Node labels Frame writes
+
+The FrameNode controller projects five labels onto the corresponding
+`corev1.Node`, and strips them when the FrameNode is deleted. **These are
+API.** Two other components select on them, so renaming one unschedules
+running workloads at runtime with no admission-time error to warn anyone.
+
+| Key | Source | Read by |
+|---|---|---|
+| `frame.plume-labs.io/rack` | `spec.rack` | operators; topology-aware placement |
+| `topology.kubernetes.io/zone` | `spec.zone` | Kubernetes' own well-known zone key |
+| `frame.plume-labs.io/service-class` | `spec.serviceClass` | the inference provider's `NodeSelector`; the FrameJob controller's Workflow labels |
+| `frame.plume-labs.io/role` | `spec.role` | operators |
+| `frame.plume-labs.io/rdma` | `"true"` when `spec.rdmaInterface` is set | operators |
+
+Empty values are not written: a label that is absent means "unclassified",
+and there is no separate "explicitly empty" state.
+
+`rack` lives under `frame.plume-labs.io/`, not `topology.kubernetes.io/`.
+The well-known keys in the `kubernetes.io` namespace are `zone` and `region`;
+`rack` is not one of them and that prefix is reserved for upstream use. Frame
+wrote `topology.kubernetes.io/rack` before `v1beta1`; the controller removes
+that key on every reconcile so an existing node relabels itself.
+
+**One key, two meanings.** `frame.plume-labs.io/service-class` on a **Node**
+is the tier of hardware the FrameNode controller classified. The same key on
+a **Namespace** selects which namespaces a `FrameResourceQuota` projects
+into. They are unrelated; the shared key is historical and is frozen as-is
+because renaming either breaks the other's readers silently.
+
 ---
 
 ## FrameJob
