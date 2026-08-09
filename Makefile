@@ -318,7 +318,11 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
-KIND ?= kind
+# Prefer a kind in ./bin, where every other tool this repo drives lives, and
+# fall back to one on PATH. Without this `make test-e2e` fails on a checkout
+# that has bin/kind but no kind installed system-wide, which is every developer
+# machine set up by following docs/development.md.
+KIND ?= $(shell test -x "$(LOCALBIN)/kind" && echo "$(LOCALBIN)/kind" || echo kind)
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest

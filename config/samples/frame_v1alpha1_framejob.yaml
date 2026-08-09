@@ -1,4 +1,4 @@
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameJob
 metadata:
   labels:
@@ -8,9 +8,8 @@ metadata:
   namespace: frame-system
 spec:
   pipeline: training
-  # The namespace the Argo Workflow is created in, which need not be the
-  # namespace holding this FrameJob.
-  namespace: default
+  # The Argo Workflow is created in this FrameJob's own namespace. v1alpha1
+  # had a spec.namespace naming another one; it is gone (F5).
   serviceClass: HIGH
   priority: high
   gpuCount: 2
