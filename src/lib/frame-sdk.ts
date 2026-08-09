@@ -99,8 +99,6 @@ export interface SchedulingPolicy {
   queueWeight: number
   priority: number
   preemption: boolean
-  maxGPUs: number
-  maxCPUs: number
 }
 
 export interface ResourceQuota {
@@ -112,6 +110,7 @@ export interface ResourceQuota {
   usedCPU: string
   usedMemory: string
   usedGPUs: number
+  namespaces: number
 }
 
 export interface ServiceClassSummary {
@@ -680,7 +679,7 @@ interface FrameJobCR {
 
 interface FrameNodeCR {
   metadata: { name: string; namespace?: string }
-  spec: { ip: string; serviceClass?: string; zone?: string; rack?: string; gpuCount?: number; rdmaInterface?: string; hostname?: string }
+  spec: { ip: string; serviceClass?: string; zone?: string; rack?: string; rdmaInterface?: string; hostname?: string }
   status?: {
     phase?: string; capacity?: Record<string, string>; allocatable?: Record<string, string>
     discoveredHostname?: string; discoveredTalosVersion?: string
@@ -697,6 +696,7 @@ interface SchedulingPolicyCR {
 interface FrameResourceQuotaCR {
   metadata: { name: string; namespace?: string }
   spec: { serviceClass: string; maxGPUs?: number; maxCPU?: string; maxMemory?: string }
+  status?: { used?: Record<string, string>; namespaces?: number }
 }
 
 interface ListResponse<T> { items: T[] }
@@ -757,34 +757,43 @@ function crToNode(cr: FrameNodeCR): FrameNode {
     cpu:          quantityToNum(alloc['cpu']),
     memory:       quantityToNum(alloc['memory']),
     storage:      0,
-    gpuCount:     cr.spec.gpuCount ?? 0,
+    // FrameNodeSpec has no gpuCount and never did: the number shown here was
+    // structurally always 0. status.allocatable is what the controller
+    // actually syncs from the corev1.Node, so read the GPU count from there.
+    gpuCount:     quantityToNum(alloc['nvidia.com/gpu']),
     gpuModel:     cr.spec.rdmaInterface ? 'RDMA' : 'Unknown',
   }
 }
 
 function crToPolicy(cr: SchedulingPolicyCR): SchedulingPolicy {
   return {
-    name:       cr.metadata.name,
-    scheduler:  (cr.spec.scheduler ?? 'default') as SchedulerType,
-    queue:      cr.spec.queueName ?? '',
+    name:        cr.metadata.name,
+    scheduler:   (cr.spec.scheduler ?? 'default') as SchedulerType,
+    queue:       cr.spec.queueName ?? '',
     queueWeight: cr.spec.queueWeight ?? 0,
-    priority:   cr.spec.priorityValue ?? 0,
-    preemption: cr.spec.preemption ?? false,
-    maxGPUs:    0,
-    maxCPUs:    0,
+    priority:    cr.spec.priorityValue ?? 0,
+    preemption:  cr.spec.preemption ?? false,
+    // maxGPUs/maxCPUs were hardcoded to 0 here. SchedulingPolicySpec has no
+    // such fields and never did; resource ceilings are FrameResourceQuota's.
   }
 }
 
 function crToQuota(cr: FrameResourceQuotaCR): ResourceQuota {
+  // status.used is the sum the controller aggregates across every projected
+  // corev1.ResourceQuota, keyed exactly as buildResourceList writes them. A
+  // key no namespace reported is absent, not zero — hence the ?? fallbacks
+  // rather than a required shape.
+  const used = cr.status?.used ?? {}
   return {
     namespace:    cr.metadata.namespace ?? frameNs(),
     serviceClass: (cr.spec.serviceClass ?? 'MEDIUM') as ServiceClass,
-    maxCPU:     cr.spec.maxCPU ?? '0',
-    maxMemory:  cr.spec.maxMemory ?? '0Gi',
-    maxGPUs:    cr.spec.maxGPUs ?? 0,
-    usedCPU:    '0',
-    usedMemory: '0Gi',
-    usedGPUs:   0,
+    maxCPU:       cr.spec.maxCPU ?? '0',
+    maxMemory:    cr.spec.maxMemory ?? '0Gi',
+    maxGPUs:      cr.spec.maxGPUs ?? 0,
+    usedCPU:      used['limits.cpu'] ?? '0',
+    usedMemory:   used['limits.memory'] ?? '0Gi',
+    usedGPUs:     quantityToNum(used['requests.nvidia.com/gpu']),
+    namespaces:   cr.status?.namespaces ?? 0,
   }
 }
 
@@ -2401,7 +2410,11 @@ class ResourceClient {
     const items = (['HIGH', 'MEDIUM', 'LOW'] as ServiceClass[]).map((sc) => ({
       serviceClass: sc,
       nodeCount:   nodes.filter((n) => n.spec.serviceClass === sc).length,
-      totalGPUs:   nodes.filter((n) => n.spec.serviceClass === sc).reduce((s, n) => s + (n.spec.gpuCount ?? 0), 0),
+      // FrameNodeSpec has no gpuCount (see crToNode); the GPU count the
+      // controller actually maintains lives in status.allocatable.
+      totalGPUs:   nodes
+        .filter((n) => n.spec.serviceClass === sc)
+        .reduce((s, n) => s + quantityToNum(n.status?.allocatable?.['nvidia.com/gpu']), 0),
     }))
     return { items }
   }
@@ -2575,3 +2588,6 @@ export class FrameClient {
 export function createFrameClient(opts: FrameClientOptions = {}): FrameClient {
   return new FrameClient(opts)
 }
+
+/** Module-private mappers, exposed for unit tests only. Not part of the SDK. */
+export const __testing = { crToJob, crToNode, crToPolicy, crToQuota }
