@@ -1126,3 +1126,33 @@ If that premise is wrong — if there is a real case for a HIGH-tier instance th
 before a MEDIUM one — then the right answer is a separate `spec.priority`, and it has to be added in
 `v1beta1` with the correct semantics, not bolted on later. The premise is a statement about how Frame
 will be operated, which the owner knows and I am inferring.
+
+---
+
+## Decisions taken (2026-08-09, repository owner)
+
+The three above were put to the owner as posed. All three are settled; two went
+against this document's own recommendation.
+
+**F2 — conditions only, everywhere.** `status.phase` goes. The convention
+argument wins over the sunk cost: three printer columns and two SDK mappers are
+a day's work, and a `phase` field removed after the freeze needs a third
+version. The consequence F3 names stands and must be handled — conversion
+cannot reconstruct `phase` from conditions, so `v1alpha1`'s `phase` becomes a
+one-way projection *out* of conditions, computed, never stored.
+
+**F8 — delete the constraint.** The GPU/`LOW` rule couples two orthogonal
+properties and rests on a hardware fact with an expiry date. It currently
+constrains nothing, so deleting it removes no protection anyone has. The type
+comment and the webhook branch both go; the security review's finding is closed
+by removal rather than by enforcement.
+
+**F10 — derive priority from `serviceClass`.** The premise is accepted: a
+service instance's tier is its urgency, so `serviceClass` maps to a
+`PriorityClass` exactly as `FrameJob.spec.priority` already does. This is
+irreversible and knowingly gives an existing field a second meaning. Recorded
+here so that a later reader finds the reasoning rather than rediscovering the
+overloading and assuming it was an accident: if a HIGH-tier instance ever needs
+to be evicted before a MEDIUM one, that is a `v1beta2` problem, and this
+paragraph is the evidence that the case was considered and rejected rather than
+missed.
