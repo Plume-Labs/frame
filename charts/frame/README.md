@@ -90,7 +90,7 @@ See `values.yaml` for the full, commented list. Highlights:
 | `webhooks.certSecretName` | `webhook-server-cert` | The Secret the manager mounts at `/tmp/k8s-webhook-server/serving-certs`, keys `tls.crt` / `tls.key`. |
 | `webhooks.caBundle` | `""` | Only used when `certManager.enabled: false` — base64 PEM CA bundle injected into both WebhookConfigurations' `clientConfig.caBundle`. **Required whenever `certManager.enabled: false` and `webhooks.enabled: true`**: `templates/webhookconfigurations.yaml` fails the render if it's left empty, because an empty `caBundle` installs cleanly and then fails every CR create/update cluster-wide with an x509 error (`failurePolicy: Fail` on all 10 webhooks) — a silent, fail-closed outage is exactly what this guard turns into a loud, install-time one. |
 | `certManager.enabled` | `true` | When `false`, the chart renders no Issuer/Certificate and expects `webhooks.certSecretName` to already exist with a cert whose CA matches `webhooks.caBundle`, provisioned by whatever your cluster uses instead (manual, `openssl`, a different PKI operator, …). |
-| `networkPolicy.enabled` | `false` | Matches kustomize (`config/network-policy` is commented out of `config/default`), with one fix: the webhook rule's ingress port is `9443` (the webhook server's actual pod port), not kustomize's `443` (the *Service* port — NetworkPolicy `ingress.ports[].port` is a pod port, so kustomize's copy of this rule blocks admission the moment it's enabled; verified with Calico on Kind, see the round-2 fix report). |
+| `networkPolicy.enabled` | `false` | Matches kustomize (`config/network-policy` is commented out of `config/default`). **The webhook rule is open to any source on port 9443, by design — this is not a partial fix, it is the honest answer.** The port is corrected from kustomize's `443` (the Service port; NetworkPolicy `ingress.ports[].port` is a pod port, and the webhook server only ever listens on 9443 — kustomize's own copy of this rule has this bug too). But restricting *source* is a different problem: on every real target (k3s, kubeadm, …) `kube-apiserver` is a host process, not a pod, so a `namespaceSelector` can never match it — verified cross-node on Kind+Calico: even with the port fixed, a `namespaceSelector`-restricted rule DROPPED (timed out) genuine host→pod admission traffic; the open rule below did not, and a real `kubectl apply` through the actual apiserver was admitted. `failurePolicy: Fail` on all 10 webhooks makes a rule the apiserver can't satisfy a cluster-wide CR write outage, not a source restriction, so this chart does not ship one by default. Set `networkPolicy.webhookSourceCIDRs` (your control-plane node IPs — cluster-specific, no safe chart default) to tighten it. |
 | `rbac.tierRoles.install` | `true` | The 21 viewer/editor/admin ClusterRoles kubebuilder scaffolds per CRD — not used by the manager itself, convenience roles for cluster admins. |
 
 ## Installing without cert-manager
@@ -116,18 +116,35 @@ sets. It fails if either side grows a resource the other one lacks. The only
 allowed one-directional difference in that pass is the chart's `Namespace`
 omission (decision #1's namespace-supplied-externally model).
 
-A second pass turns on `networkPolicy.enabled` and
-`metrics.serviceMonitor.enabled` and asserts that *exactly* the three expected
-extra resources (`frame-allow-metrics-traffic`, `frame-allow-webhook-traffic`,
-`frame-controller-manager-metrics-monitor` — allow-listed by full
-`kind|namespace|name`, not just kind) appear, then diffs their bodies against
-`kustomize build config/network-policy` / `config/prometheus` (both build
-standalone). Allow-listing by kind alone used to mean the chart could rename,
-mis-namespace or stop rendering these three entirely and the script would
+Once the sets are confirmed identical, a second pass diffs every shared
+resource's *full body* (not just its name), because a name-only check cannot
+see a dropped ClusterRole verb, a dropped `--leader-elect`, or a changed
+probe port — all of which would break a `--take-ownership` migration
+silently. Three narrow, permanent exceptions are allow-listed explicitly in
+the script: `CustomResourceDefinition` (verified separately, see decision #2
+and `make helm-crds-check`), and on the `frame-controller-manager` Deployment
+and `frame-metrics-certs` Certificate, the specific fields already documented
+above and in `values.yaml` (`image`/`imagePullPolicy`, the default
+`affinity`, and `dnsNames`).
+
+A third pass turns on `networkPolicy.enabled`, `metrics.serviceMonitor.enabled`
+and `podDisruptionBudget.enabled`, and asserts that *exactly* the four
+expected extra resources (`frame-allow-metrics-traffic`,
+`frame-allow-webhook-traffic`, `frame-controller-manager-metrics-monitor`,
+`frame-controller-manager` PodDisruptionBudget — allow-listed by full
+`kind|namespace|name`, not just kind) appear, then diffs the three that have a
+`config/` counterpart against `kustomize build config/network-policy` /
+`config/prometheus` (both build standalone); the PodDisruptionBudget has no
+kustomize equivalent, so it gets a shape assertion (`minAvailable`, selector)
+instead. Allow-listing by kind alone used to mean the chart could rename,
+mis-namespace or stop rendering any of these entirely and the script would
 still print `OK`; allow-listing by exact identity plus a presence assertion
 closes both holes, and the content diff catches anything that renders but
-drifts semantically (the one expected exception, the webhook rule's port,
-is asserted explicitly — see the `networkPolicy.enabled` row above).
+drifts semantically. Two expected exceptions are asserted explicitly rather
+than silently ignored: the webhook rule's port (see the `networkPolicy.enabled`
+row above) and its `from` — the chart's copy must have none by default (open
+to any source), where kustomize's has a `namespaceSelector` that can never
+match a host-process apiserver.
 
 The extractor (`kind`/`namespace`/`name` and full-body JSON) is a small Go
 program the script writes to a temp file and runs with `go run` — deliberately

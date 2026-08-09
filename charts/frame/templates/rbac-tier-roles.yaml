@@ -1,5 +1,7 @@
 {{- if .Values.rbac.tierRoles.install }}
+{{- $root := . }}
 {{- $labels := include "frame.chartLabels" . }}
+{{- $namePrefix := include "frame.name" $root }}
 {{- range (fromYamlArray (include "frame.tierRoleCRDs" .)) }}
 # This rule is not used by the project frame itself. It is provided to allow
 # the cluster admin to help manage permissions for users.
@@ -8,7 +10,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: frame-{{ .roleBase }}-admin-role
+  name: {{ $namePrefix }}-{{ .roleBase }}-admin-role
   labels:
     {{- $labels | nindent 4 }}
 rules:
@@ -30,7 +32,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: frame-{{ .roleBase }}-editor-role
+  name: {{ $namePrefix }}-{{ .roleBase }}-editor-role
   labels:
     {{- $labels | nindent 4 }}
 rules:
@@ -57,7 +59,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: frame-{{ .roleBase }}-viewer-role
+  name: {{ $namePrefix }}-{{ .roleBase }}-viewer-role
   labels:
     {{- $labels | nindent 4 }}
 rules:

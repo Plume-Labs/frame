@@ -109,7 +109,24 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if .Values.podAntiAffinity.enabled }}
+      # Soft (preferred) anti-affinity built from frame.selectorLabels — the
+      # same helper the Deployment's own selector and every Service/
+      # NetworkPolicy/ServiceMonitor selector use (N-4: values.yaml can't call
+      # a template helper, so a hand-written copy of these two labels there
+      # would silently stop matching if the helper ever changed). Disable via
+      # podAntiAffinity.enabled: false, or replace entirely by setting
+      # .Values.affinity.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "frame.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
       {{- end }}
