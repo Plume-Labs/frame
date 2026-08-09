@@ -132,12 +132,12 @@ type FrameUserStatus struct {
 	Credentials []WebAuthnCredential `json:"credentials,omitempty"`
 }
 
-// This is the conversion hub, but it is deliberately *not* the storage
-// version yet — v1alpha1 still carries +kubebuilder:storageversion, and
-// Task 19 moves the marker here when the conversion webhook starts serving.
-// See the note on the v1alpha1 FrameJob for the full reasoning.
+// This is the conversion hub and the storage version. The marker arrived here
+// in the same change that turned the conversion webhook on; see the note on
+// the v1alpha1 FrameUser for why the two could not be separated.
 //
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Email",type=string,JSONPath=`.spec.email`
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.spec.role`

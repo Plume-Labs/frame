@@ -108,8 +108,8 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: priorityClass is required when preemption is true
-              rule: '!self.preemption || (has(self.priorityClass) && size(self.priorityClass)
-                > 0)'
+              rule: '!has(self.preemption) || !self.preemption || (has(self.priorityClass)
+                && size(self.priorityClass) > 0)'
           status:
             description: status defines the observed state of SchedulingPolicy
             properties:
@@ -195,7 +195,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: true
+    storage: false
     subresources:
       status: {}
   - additionalPrinterColumns:
@@ -299,8 +299,8 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: priorityClass is required when preemption is true
-              rule: '!self.preemption || (has(self.priorityClass) && size(self.priorityClass)
-                > 0)'
+              rule: '!has(self.preemption) || !self.preemption || (has(self.priorityClass)
+                && size(self.priorityClass) > 0)'
           status:
             description: status defines the observed state of SchedulingPolicy
             properties:
@@ -379,6 +379,6 @@ spec:
         - spec
         type: object
     served: true
-    storage: false
+    storage: true
     subresources:
       status: {}

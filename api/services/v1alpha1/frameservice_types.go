@@ -144,12 +144,13 @@ type FrameServiceStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
-// v1alpha1 keeps +kubebuilder:storageversion until the conversion webhook
-// serves; Task 19 moves the marker to v1beta1 atomically with it. See the
-// note on the v1alpha1 FrameJob for the full reasoning.
+// This version is served and deprecated; v1beta1 is the storage version. The
+// marker moved there in the same change that turned the conversion webhook on
+// — see the note on the v1alpha1 FrameJob for why those two could not be
+// separated. FrameService was single-version until F12, so this is the one
+// kind whose storage version has never sat anywhere else.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
 // +kubebuilder:deprecatedversion:warning="services.plume-labs.io/v1alpha1 FrameService is deprecated; use services.plume-labs.io/v1beta1. status.phase is computed from status.conditions and is not stored."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`

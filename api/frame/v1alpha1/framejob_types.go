@@ -111,28 +111,24 @@ type FrameJobStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
-// This version is deprecated and yet it is still the storage version. That
-// is deliberate, and temporary.
+// This version is served and deprecated; v1beta1 is the storage version.
 //
-// Until the conversion webhook is serving, a CRD's conversion strategy is
-// None, and None does not mean "keep everything": the apiserver prunes the
-// object against the *storage* version's schema on write. Making v1beta1 the
-// storage version before the webhook exists would therefore delete
-// spec.namespace and status.phase from every v1alpha1 write — the create
-// response itself comes back with them empty — and a v1alpha1 client would
-// silently lose two fields with no conversion code anywhere to blame.
+// The marker moved here-to-there in the same change that turned the conversion
+// webhook on, and the two could not be separated. A CRD whose conversion
+// strategy is None does not mean "keep everything": the apiserver prunes the
+// object against the *storage* version's schema on write. Promoting v1beta1
+// while None was still in force would therefore have deleted spec.namespace
+// and status.phase from every v1alpha1 write — the create response itself
+// coming back with them empty — with no conversion code anywhere to blame.
+// With the webhook serving, ConvertTo/ConvertFrom carry those fields across
+// and nothing is pruned in either direction. The same reasoning applies to the
+// other seven kinds, whose notes point back here.
 //
-// The reverse direction is free, which is why the marker sits here: v1beta1
-// has no field v1alpha1 lacks (Part 0 made sure of that so the conversion
-// functions need no annotation escape hatch), so storing a v1beta1 object at
-// v1alpha1 prunes nothing. Both versions are served losslessly in the
-// meantime.
+// Flipping the marker does not rewrite anything already stored: existing
+// objects stay encoded at v1alpha1 until something touches them, and
+// status.storedVersions keeps listing it. Migrating them, and pruning
+// storedVersions afterwards, is a separate step.
 //
-// **Task 19 moves +kubebuilder:storageversion to the v1beta1 FrameJob**, in
-// the same change that turns the conversion webhook on, and does the same
-// for the other six kinds. Until then this marker stays put.
-//
-// +kubebuilder:storageversion
 // +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameJob is deprecated; use frame.plume-labs.io/v1beta1. spec.namespace is ignored — the Argo Workflow is created in the FrameJob's own namespace. status.phase is computed from status.conditions and is not stored."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

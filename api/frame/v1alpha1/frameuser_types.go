@@ -87,24 +87,21 @@ type FrameUserStatus struct {
 	Credentials []WebAuthnCredential `json:"credentials,omitempty"`
 }
 
-// This version is deprecated and yet it is still the storage version, for the
-// reason set out at length on the v1alpha1 FrameJob: with conversion still at
-// strategy None the apiserver prunes writes against the *storage* version's
-// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
-// every v1alpha1 write, in the create response itself. FrameUser has exactly
-// one such field — spec.passwordHash, moved to status by F11 — so the marker
-// staying here is not merely tidy, it is what keeps authd's writes from
-// coming back empty while it still speaks v1alpha1.
+// This version is served and deprecated; v1beta1 is the storage version. The
+// marker moved there in the same change that turned the conversion webhook on
+// — see the note on the v1alpha1 FrameJob for the general reasoning.
 //
-// FrameUser is also the first kind in the freeze where the difference runs
-// *both* ways: v1beta1 has status.passwordHash, which this version lacks. So
-// whichever version is the storage version, one field is prunable — the
-// asymmetry cannot be parked on one side. That is why nothing may write
-// v1beta1 status.passwordHash before the conversion webhook serves, and why
-// Task 19 and Task 20 have to land together for this kind.
+// FrameUser is the kind where that atomicity is not merely tidy. Its
+// difference from v1beta1 runs *both* ways: this version has spec.passwordHash
+// and v1beta1 has status.passwordHash (F11 moved it), so under strategy None
+// — which persists the intersection of the request-version and
+// storage-version schemas — there is no lossless placement of the storage
+// version at all. Whichever side it sat on, one hash was pruned on write and
+// the apiserver still answered 200. Only the conversion webhook makes either
+// placement lossless: turning it on without moving this marker, or moving the
+// marker without it, silently breaks password login.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
 // +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use frame.plume-labs.io/v1beta1. spec.passwordHash has moved to status.passwordHash — writing it through v1alpha1 requires the frameusers/status subresource."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Email",type=string,JSONPath=`.spec.email`
