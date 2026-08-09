@@ -98,6 +98,14 @@ type SchedulingPolicyStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// This version is deprecated and yet it is still the storage version, for the
+// reason set out at length on the v1alpha1 FrameJob: with conversion still at
+// strategy None the apiserver prunes writes against the *storage* version's
+// schema. SchedulingPolicy loses no field in v1beta1, so storing at v1alpha1
+// prunes nothing in either direction. Task 19 moves the marker.
+//
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 SchedulingPolicy is deprecated; use frame.plume-labs.io/v1beta1."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Scheduler",type=string,JSONPath=".spec.scheduler"

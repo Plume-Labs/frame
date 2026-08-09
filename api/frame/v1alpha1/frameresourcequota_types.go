@@ -104,6 +104,17 @@ type FrameResourceQuotaStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// This version is deprecated and yet it is still the storage version, for the
+// reason set out at length on the v1alpha1 FrameJob: with conversion still at
+// strategy None the apiserver prunes writes against the *storage* version's
+// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
+// every v1alpha1 write, in the create response itself. FrameResourceQuota has
+// no such field in either direction — Part 0's Task 7 put observedGeneration,
+// used and namespaces here first — so storing at v1alpha1 prunes nothing.
+// Task 19 moves the marker.
+//
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameResourceQuota is deprecated; use frame.plume-labs.io/v1beta1."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="ServiceClass",type=string,JSONPath=".spec.serviceClass"
