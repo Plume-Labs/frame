@@ -37,7 +37,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	controller "github.com/rmocq/frame/internal/controller/frame"
 	servicescontroller "github.com/rmocq/frame/internal/controller/services"
@@ -61,8 +63,19 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(framev1beta1.AddToScheme(scheme))
-	utilruntime.Must(servicesv1beta1.AddToScheme(scheme))
+	// Both versions of both groups, and the spokes are not optional.
+	// controller-runtime registers the /convert handler from
+	// registerConversionWebhook, which first asks conversion.IsConvertible
+	// whether the type has more than one GVK **in this scheme**. Nothing in
+	// the operator uses the v1alpha1 Go types any more — every controller and
+	// webhook is on the hub — so a sweep that retypes the operator onto
+	// v1beta1 will happily drop these two lines, leaving one GVK per
+	// GroupKind, IsConvertible false, and no /convert served at all. The CRDs
+	// still declare strategy: Webhook, so every read and write at v1alpha1
+	// then fails with a 404 from the webhook server. cmd/scheme_test.go pins
+	// this; do not delete either without deleting that too.
+	utilruntime.Must(framev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(servicesv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(framev1beta1.AddToScheme(scheme))
 	utilruntime.Must(servicesv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
