@@ -28,6 +28,26 @@ jobs:
           go mod tidy
           make test
 
+      # Runs after the tests rather than before, so a vulnerability in a
+      # dependency never masks a real test failure in the diff under review.
+      # govulncheck reports only vulnerabilities on a code path this module
+      # actually reaches, so a finding here is genuinely reachable, not just
+      # present in go.sum.
+      #
+      # Report-only for now. As of 2026-08-09 this already reports two
+      # reachable vulnerabilities in the current dependency set:
+      #
+      #   GO-2026-6061  google.golang.org/grpc  v1.81.0 -> fixed in v1.82.1
+      #   GO-2026-5970  golang.org/x/text       v0.37.0 -> fixed in v0.39.0
+      #
+      # Both are dependency bumps, not code changes, and neither is in scope
+      # for the change that added this step — so the step is added open rather
+      # than either shipping a red CI or quietly not adding it at all. Flip
+      # continue-on-error off in the same change that lands those two bumps.
+      - name: Go vulnerability scan
+        continue-on-error: true
+        run: make vuln
+
       - name: Coverage threshold
         run: |
           # cover.out format: file:start,end numstmts hitcount

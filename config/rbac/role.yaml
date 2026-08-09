@@ -41,7 +41,6 @@ rules:
   - ""
   resources:
   - resourcequotas
-  - secrets
   - services
   verbs:
   - create
@@ -51,6 +50,15 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - update
 - apiGroups:
   - apps
   resources:

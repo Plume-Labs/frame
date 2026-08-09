@@ -45,6 +45,31 @@ const frameServiceFinalizer = "services.plume-labs.io/finalizer"
 // installing one is noticed without a restart.
 const degradedRequeue = 2 * time.Minute
 
+// readyRequeue is how long a *healthy* instance waits before being reconciled
+// again. Without it a Ready FrameService returns a bare ctrl.Result{} and is
+// never requeued on a timer at all: the only thing that would look at it again
+// is the informer resync, and because cmd/main.go sets no Cache.SyncPeriod
+// that is controller-runtime's default of 10 hours, jittered — a real worst
+// case of roughly 9 to 11 hours.
+//
+// That matters because this controller deliberately does not watch Secrets
+// (see SetupWithManager). This requeue is what bounds the repair window for
+// the binding Secret: delete it, or overwrite it with a substituted endpoint
+// or credential, and CreateOrUpdate converges it back within this interval
+// instead of within half a day.
+//
+// Why 10 minutes. The floor is cost: Secrets are read uncached now (see the
+// Cache.DisableFor comment in cmd/main.go), so every pass costs one live
+// apiserver Get per projected coordinate plus one for the API-key Secret.
+// At 10 minutes that is a handful of reads per instance per 10 minutes, which
+// is nothing; below about 5 minutes it starts being real traffic for no gain.
+// The ceiling is the exposure window itself — an hour of serving a substituted
+// credential is not meaningfully better than two. 10 minutes sits an order of
+// magnitude below the point where cost matters and two orders below the resync
+// it replaces. It is deliberately *not* set through Cache.SyncPeriod, which
+// would re-reconcile every controller in the manager rather than this one.
+const readyRequeue = 10 * time.Minute
+
 type FrameServiceReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
@@ -56,7 +81,32 @@ type FrameServiceReconciler struct {
 // +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=services.plume-labs.io,resources=frameservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services;secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// Secrets are deliberately NOT granted list or watch, and this is the one
+// grant in this file where that distinction carries real weight. The binding
+// code writes credentials into namespaces named by spec.binding.projectTo,
+// which is free-form, so the write side genuinely cannot be namespace-scoped
+// at install time. But every Secret access it makes is at a coordinate it
+// already knows by name: Get in claimNewCoordinates, CreateOrUpdate in
+// writeSecret, Delete in deleteSecrets. Nothing here ever enumerates. Adding
+// list/watch would turn "can write Secrets it names" into "can read every
+// Secret in the cluster", which includes the Talos PKI and every
+// ServiceAccount token — a far larger grant than the feature needs.
+//
+// Keeping it out has two prerequisites, both satisfied deliberately, and
+// either one being undone silently re-requires the verbs:
+//   - This controller must not Owns(&corev1.Secret{}): an Owns watch is a
+//     cluster-wide Secret informer, i.e. list+watch. See SetupWithManager.
+//   - The manager's client must not cache Secrets, or controller-runtime
+//     opens the same informer to serve a by-name Get. See the Cache
+//     DisableFor entry in cmd/main.go.
+//
+// update is kept because controllerutil.CreateOrUpdate issues a real Update,
+// not a patch. patch is deliberately absent: every Secret write here goes
+// through CreateOrUpdate or Delete, and nothing in the tree ever issues a
+// Patch against a Secret — granting it would be a gratuitous extra verb on
+// precisely the resource this whole grant exists to keep narrow.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // The inference provider inspects pods to explain a stuck rollout (a pod
@@ -160,7 +210,10 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	svc.Status.Binding.SecretRef = &corev1.LocalObjectReference{Name: secretRefName}
 	frameServiceReady.Inc()
 	log.Info("Reconciled FrameService", "type", svc.Spec.Type, "endpoint", binding.Endpoint)
-	return ctrl.Result{}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
+	// Ready still requeues: see readyRequeue. This is the only thing that
+	// converges a binding Secret someone deleted or overwrote out of band,
+	// because this controller does not watch Secrets.
+	return ctrl.Result{RequeueAfter: readyRequeue}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
 		result.Reason, result.Message, &sizing, result.Provisioned)
 }
 
@@ -276,7 +329,28 @@ func (r *FrameServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&servicesv1alpha1.FrameService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&corev1.Secret{}).
+		// Deliberately no Owns(&corev1.Secret{}). An Owns watch is a
+		// cluster-wide informer over the type, which is list+watch on Secrets
+		// in every namespace — the exact enumeration grant the rbac marker
+		// above exists to avoid.
+		//
+		// What it bought was narrow. Owner references do not cross namespaces
+		// (see deleteAllProjections), so it never covered the projected
+		// Secrets at all — their repair window was already the requeue
+		// interval before this. Nor did it cover the inference provider's
+		// API-key Secret, which self-heals through the Owns(Deployment) watch:
+		// delete it and the pod wedges in CreateContainerConfigError,
+		// availableReplicas drops, this controller wakes on the Deployment
+		// event and ensureAPIKey mints a new one within seconds.
+		//
+		// The one thing it did cover is the single same-namespace binding
+		// Secret, and for that one the repair window goes from ~instant to
+		// readyRequeue — 10 minutes, bounded by the RequeueAfter on the Ready
+		// path, NOT by the informer resync, which would be ~10 hours. Stating
+		// the real number because it is the whole trade: 10 minutes of a
+		// deleted or substituted binding Secret, against the standing right to
+		// read every Secret in the cluster. If you remove the Ready-path
+		// RequeueAfter, you silently turn that 10 minutes back into 10 hours.
 		Named("services-frameservice").
 		Complete(r)
 }

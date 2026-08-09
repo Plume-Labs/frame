@@ -183,6 +183,55 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+##@ Security
+
+# These are the same checks CI runs, so a finding can be reproduced and fixed
+# locally instead of only ever being seen in a workflow log.
+
+.PHONY: vuln
+vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
+	"$(GOVULNCHECK)" ./...
+
+# docker-images builds all three images the security targets below inspect, so
+# `make sbom` and `make scan` work from a clean tree instead of failing on
+# whichever image happens not to be in the local daemon.
+.PHONY: docker-images
+docker-images: docker-build docker-build-ui docker-build-authd ## Build all three images (controller, UI, authd).
+
+.PHONY: sbom
+sbom: syft docker-images ## Write a CycloneDX SBOM for each of the three images to dist/.
+	@mkdir -p dist
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
+		name="$${pair%%:*}"; image="$${pair#*:}"; \
+		echo "SBOM for $${name} ($${image})"; \
+		"$(SYFT)" scan "$(CONTAINER_TOOL):$${image}" -o cyclonedx-json="dist/sbom-$${name}.cyclonedx.json"; \
+	done
+
+# Trivy runs from its own image rather than through go-install-tool like every
+# other tool here. Not a style lapse: `go install` of trivy does not build on
+# this module's Go toolchain — it reaches encoding/json/v2, which is behind a
+# build constraint — so there is no pinned-source install to use. The official
+# image is the upstream-supported distribution, and it is what the CI action
+# runs too. The docker socket is mounted because the images being scanned live
+# in the local daemon, not a registry.
+#
+# Same severities, same .trivyignore and the same blocking --exit-code 1 as the
+# scan job in .github/workflows/build.yml, so a finding that fails CI fails
+# here first. Divergence between the two would make this target worse than
+# useless: it would say "clean" about a build CI is about to reject.
+.PHONY: scan
+scan: docker-images ## Scan all three images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
+		name="$${pair%%:*}"; image="$${pair#*:}"; \
+		echo "=== $${name} ($${image}) ==="; \
+		$(CONTAINER_TOOL) run --rm \
+			-v /var/run/docker.sock:/var/run/docker.sock \
+			-v "$(PWD)/.trivyignore:/.trivyignore:ro" \
+			-e TRIVY_IGNOREFILE=/.trivyignore \
+			ghcr.io/aquasecurity/trivy:$(TRIVY_VERSION_BARE) \
+			image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 "$${image}"; \
+	done
+
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -262,6 +311,8 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOVULNCHECK ?= $(LOCALBIN)/govulncheck
+SYFT ?= $(LOCALBIN)/syft
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
@@ -278,6 +329,14 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.11.4
+# Security tooling. Pinned like every other tool here, and installed through
+# go-install-tool so they go through the Go module checksum database rather
+# than a curl-pipe-sh.
+GOVULNCHECK_VERSION ?= v1.6.0
+SYFT_VERSION ?= v1.50.0
+# Trivy's published image tags carry no leading "v"; see the scan target for
+# why trivy is not installed from source like the others.
+TRIVY_VERSION_BARE ?= 0.73.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -300,6 +359,16 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+
+.PHONY: govulncheck
+govulncheck: $(GOVULNCHECK) ## Download govulncheck locally if necessary.
+$(GOVULNCHECK): $(LOCALBIN)
+	$(call go-install-tool,$(GOVULNCHECK),golang.org/x/vuln/cmd/govulncheck,$(GOVULNCHECK_VERSION))
+
+.PHONY: syft
+syft: $(SYFT) ## Download syft locally if necessary.
+$(SYFT): $(LOCALBIN)
+	$(call go-install-tool,$(SYFT),github.com/anchore/syft/cmd/syft,$(SYFT_VERSION))
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.

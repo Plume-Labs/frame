@@ -60,6 +60,52 @@ const (
 	// modelMountPath is where the cache is mounted, and where modelPath looks
 	// for the weights.
 	modelMountPath = "/models"
+	// tmpVolumeName / tmpMountPath give llama.cpp one writable directory
+	// while the root filesystem stays read-only. An emptyDir, so it is
+	// per-pod, never shared, and gone when the pod is.
+	//
+	// Verified against ghcr.io/ggml-org/llama.cpp:server-cuda that the
+	// serving path does not need it: booted under exactly the securityContext
+	// set below — uid 65532, read-only rootfs, all capabilities dropped,
+	// no-new-privileges — the server loaded a model, served a completion, and
+	// wrote nothing at all to its root filesystem. This mount is kept anyway
+	// for the one path that could not be exercised here: on a GPU node the
+	// CUDA runtime may JIT-compile kernels and want somewhere to cache them.
+	// CUDA degrades to not caching rather than failing when it cannot write,
+	// so this is insurance, not a dependency — but it costs nothing, and the
+	// alternative is discovering it on a GPU node instead.
+	tmpVolumeName = "tmp"
+	tmpMountPath  = "/tmp"
+	// runAsUser is the unprivileged uid llama.cpp runs as. The same uid the
+	// project's own images already use (Dockerfile.controller:23,
+	// Dockerfile.authd:25), so there is one non-root identity across Frame
+	// rather than a second convention.
+	//
+	// The image itself declares no USER and would otherwise run as root.
+	// Verified this uid can actually run it: every file in the image's /app
+	// is mode 0755 root:root (llama-server, and all of libggml*/libllama*),
+	// so a non-root uid reads and executes them.
+	//
+	// One deployment precondition follows from this and is worth knowing
+	// before it bites: the model cache PVC must be readable by uid 65532.
+	// Weights fetched with a normal umask are world-readable and fine, and
+	// hostPath-style provisioners (local-path among them) create the volume
+	// root 0777. A cache populated by a job with a restrictive umask, or a
+	// CSI driver that creates the root 0700, is not.
+	//
+	// The symptom when it is not: llama-server takes EACCES opening the GGUF
+	// and exits non-zero, so the pod goes CrashLoopBackOff rather than
+	// failing to start. That reason is in blockedWaitingReasons and the
+	// underlying exit is surfaced by containerBlockedMessage, so the
+	// FrameService reports it in status instead of sitting at
+	// RolloutInProgress forever — which is what it did before that was
+	// handled, and is the only reason this precondition was ever hard to
+	// diagnose.
+	//
+	// No fsGroup is set to force the issue, deliberately — fsGroup triggers a
+	// recursive chown, and this volume is a large cache shared read-only
+	// between instances, which is the wrong thing to rewrite the ownership of.
+	runAsUser = int64(65532)
 	// defaultModelCache is the PersistentVolumeClaim this provider mounts
 	// when spec.parameters.modelCache is unset. It is the same cache
 	// deploy/jobs/speculative-decoding.yaml and deploy/jobs/pipeline-parallelism.yaml
@@ -511,11 +557,15 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 			deployment.Spec.Template.Annotations = map[string]string{}
 		}
 		deployment.Spec.Template.Annotations[apiKeyDigestAnnotation] = apiKeyDigest(apiKey)
+		setPodSecurityContext(&deployment.Spec.Template.Spec)
 		setModelCacheVolume(&deployment.Spec.Template.Spec, cacheName)
+		setTmpVolume(&deployment.Spec.Template.Spec)
 		// Read-only: several instances can share one cache, and none of them
-		// should be able to corrupt it.
+		// should be able to corrupt it. /tmp is the one writable path, and it
+		// is an emptyDir, not the container's own root filesystem.
 		mounts := []corev1.VolumeMount{
 			{Name: modelCacheVolumeName, MountPath: modelMountPath, ReadOnly: true},
+			{Name: tmpVolumeName, MountPath: tmpMountPath},
 		}
 		args := []string{
 			"--host", "0.0.0.0",
@@ -586,27 +636,48 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		//
 		// ensureAPIKey closes the ordinary Deployment-before-Secret deadlock
 		// — the Secret exists before this Deployment does — but it cannot
-		// cover every way a pod can still end up unable to read it (an
-		// operator deleting the Secret by hand, RBAC narrowed after the
-		// fact). That failure surfaces as CreateContainerConfigError on the
-		// pod, not as a Deployment condition, and left unchecked it would
-		// just read as an ordinary, permanent RolloutInProgress: a degrade
-		// that never explains itself and never clears. Naming it here turns
-		// a silent crash loop into a status message an operator can act on.
+		// cover every way a pod can still end up unable to start. Those
+		// failures surface on the pod, not as a Deployment condition, and
+		// left unchecked they would all read as an ordinary, permanent
+		// RolloutInProgress: a degrade that never explains itself and never
+		// clears. Naming them here turns a silent crash loop into a status
+		// message an operator can act on.
+		//
+		// Two distinct shapes have to be recognised, because they present
+		// differently and only one of them was originally handled:
+		//
+		//   - The container never starts at all — a missing or unreadable
+		//     Secret gives CreateContainerConfigError, which sits in
+		//     State.Waiting with the cause in Waiting.Message.
+		//   - The container starts and then exits — which is what an
+		//     unreadable model cache does. llama-server gets EACCES opening
+		//     the GGUF and exits non-zero, so the pod lands in
+		//     CrashLoopBackOff. Waiting.Message for CrashLoopBackOff says
+		//     only "back-off 5m0s restarting failed container", which names
+		//     no cause at all; the actual cause is in the *previous*
+		//     container's termination record. That is why
+		//     LastTerminationState is read below rather than trusting
+		//     Waiting.Message.
+		//
+		// This second case is the one failure mode the pod hardening above
+		// can itself introduce (runAsUser 65532 against a model cache that
+		// is not world-readable), so leaving it undiagnosable would mean
+		// shipping a change whose one plausible breakage is invisible in the
+		// place an operator looks first.
 		var pods corev1.PodList
 		if err := p.client.List(ctx, &pods, client.InNamespace(svc.Namespace), client.MatchingLabels(labels)); err != nil {
 			return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
 		}
 		for i := range pods.Items {
 			for _, cs := range pods.Items[i].Status.ContainerStatuses {
-				if cs.State.Waiting == nil || cs.State.Waiting.Reason != "CreateContainerConfigError" {
+				if cs.State.Waiting == nil || !blockedWaitingReasons[cs.State.Waiting.Reason] {
 					continue
 				}
 				return provider.Result{
 					Ready:  false,
-					Reason: "CreateContainerConfigError",
+					Reason: cs.State.Waiting.Reason,
 					Message: fmt.Sprintf("Pod %s container %s cannot start: %s",
-						pods.Items[i].Name, cs.Name, cs.State.Waiting.Message),
+						pods.Items[i].Name, cs.Name, containerBlockedMessage(cs)),
 					Provisioned: provisioned,
 				}, nil
 			}
@@ -628,6 +699,70 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 	}, nil
 }
 
+// blockedWaitingReasons are the pod waiting reasons that mean "this container
+// is not going to start on its own, and an operator needs to know why" — as
+// opposed to the ordinary transient ones (ContainerCreating, PodInitializing)
+// that a rollout passes through and that must keep reading as
+// RolloutInProgress rather than as a named degrade.
+//
+// CrashLoopBackOff and Error cover the container-started-then-exited shape;
+// CreateContainerConfigError and CreateContainerError cover
+// never-started. ImagePullBackOff and ErrImagePull are included because they
+// are the same class of permanent, operator-actionable stall: a bad image
+// reference or a missing pull secret will never resolve by waiting.
+var blockedWaitingReasons = map[string]bool{
+	"CreateContainerConfigError": true,
+	"CreateContainerError":       true,
+	"CrashLoopBackOff":           true,
+	"Error":                      true,
+	"ImagePullBackOff":           true,
+	"ErrImagePull":               true,
+}
+
+// terminationMessageLimit caps how much of a dead container's output reaches
+// the FrameService's status. Status is displayed by kubectl describe and
+// carried in every watch event for the object, so an unbounded stack trace
+// there is both unreadable and a real payload on every consumer of the CR.
+const terminationMessageLimit = 512
+
+// containerBlockedMessage explains why a container is stuck, preferring the
+// most specific evidence available.
+//
+// For a container that never started, Waiting.Message carries the cause
+// directly. For CrashLoopBackOff it does not — it says only "back-off 5m0s
+// restarting failed container", naming nothing — so the useful information is
+// in the previous run's termination record: its exit code, and whatever the
+// process wrote to the termination message path. Both are reported when
+// present, because an exit code alone ("exited with code 1") is rarely enough
+// and the message alone loses the distinction between a clean refusal and a
+// signal.
+func containerBlockedMessage(cs corev1.ContainerStatus) string {
+	waiting := ""
+	if cs.State.Waiting != nil {
+		waiting = cs.State.Waiting.Message
+	}
+
+	term := cs.LastTerminationState.Terminated
+	if term == nil {
+		return waiting
+	}
+
+	detail := fmt.Sprintf("previous run exited with code %d", term.ExitCode)
+	if term.Reason != "" {
+		detail += " (" + term.Reason + ")"
+	}
+	if msg := strings.TrimSpace(term.Message); msg != "" {
+		if len(msg) > terminationMessageLimit {
+			msg = msg[:terminationMessageLimit] + "…"
+		}
+		detail += ": " + msg
+	}
+	if waiting == "" {
+		return detail
+	}
+	return waiting + "; " + detail
+}
+
 // setContainer finds the container named name inside spec and overwrites
 // only the fields this provider owns — Image, Args, VolumeMounts, Env, plus
 // the port and resources handled below — leaving anything the apiserver
@@ -638,13 +773,14 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 //
 // VolumeMounts and Env are each assigned wholesale rather than merged
 // entry-by-entry like Ports and Resources below, but this is provably safe
-// rather than merely convenient: this provider ever mounts exactly one
-// VolumeMount (the model cache) and sets exactly one EnvVar (the API key),
-// neither VolumeMount nor EnvVar/EnvVarSource/SecretKeySelector has any
-// apiserver-defaulted subfield (unlike ContainerPort.Protocol or a Requests
-// key), and both slices this provider sets are byte-for-byte identical on
-// every pass. There is nothing here for a real apiserver to add that a
-// wholesale replacement could then drop.
+// rather than merely convenient: this provider ever mounts exactly two
+// VolumeMounts (the model cache and the writable /tmp emptyDir) and sets
+// exactly one EnvVar (the API key), neither VolumeMount nor
+// EnvVar/EnvVarSource/SecretKeySelector has any apiserver-defaulted subfield
+// (unlike ContainerPort.Protocol or a Requests key), and both slices this
+// provider sets are byte-for-byte identical on every pass. There is nothing
+// here for a real apiserver to add that a wholesale replacement could then
+// drop.
 func setContainer(spec *corev1.PodSpec, name, image string, args []string, port int32, mounts []corev1.VolumeMount, env []corev1.EnvVar, sizing provider.Sizing) {
 	for i := range spec.Containers {
 		if spec.Containers[i].Name != name {
@@ -657,12 +793,92 @@ func setContainer(spec *corev1.PodSpec, name, image string, args []string, port 
 		c.Env = env
 		setContainerPort(c, port)
 		setContainerResources(c, sizing)
+		setContainerSecurityContext(c)
 		return
 	}
 	c := corev1.Container{Name: name, Image: image, Args: args, VolumeMounts: mounts, Env: env}
 	setContainerPort(&c, port)
 	setContainerResources(&c, sizing)
+	setContainerSecurityContext(&c)
 	spec.Containers = append(spec.Containers, c)
+}
+
+// setPodSecurityContext hardens the pod llama.cpp runs in. Without this the
+// pod inherits every default there is: root, an automounted ServiceAccount
+// token, and an unconfined seccomp profile. llama.cpp parses untrusted input
+// (GGUF weights, HTTP bodies, chat templates) in C++ and has a real CVE
+// history, so the question is not whether a memory-safety bug is reachable
+// but what it yields when it is. With these set it yields an unprivileged
+// process that cannot talk to the apiserver.
+//
+// Fields are set individually on an existing struct rather than by replacing
+// it, matching setContainerResources rather than setModelCacheVolume. That is
+// deliberate: a mutating admission webhook (a policy engine, a service mesh)
+// may add fsGroup or seLinuxOptions to this pod template, and wholesale
+// replacement would drop whatever it added on every pass — the same
+// CreateOrUpdate update-loop shape this file has already had to close twice.
+// Only the fields this provider owns are touched.
+func setPodSecurityContext(spec *corev1.PodSpec) {
+	// No ServiceAccount token in the pod. This provider's container never
+	// calls the Kubernetes API; the only credential it needs is the llama.cpp
+	// API key, which arrives through the environment from its own Secret.
+	// Leaving the default token mounted would hand any code execution in this
+	// container the namespace default SA's rights for free.
+	spec.AutomountServiceAccountToken = new(false)
+
+	if spec.SecurityContext == nil {
+		spec.SecurityContext = &corev1.PodSecurityContext{}
+	}
+	spec.SecurityContext.RunAsNonRoot = new(true)
+	spec.SecurityContext.RunAsUser = new(runAsUser)
+	spec.SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+		Type: corev1.SeccompProfileTypeRuntimeDefault,
+	}
+}
+
+// setContainerSecurityContext hardens llama.cpp's own container, for the same
+// reasons and with the same set-fields-not-the-struct discipline as
+// setPodSecurityContext.
+//
+// readOnlyRootFilesystem is safe here and was checked rather than assumed:
+// booted under exactly this configuration, the real server-cuda image loaded
+// a model, served a completion, and wrote nothing whatsoever to its root
+// filesystem. The writable path it gets is the /tmp emptyDir — see
+// tmpVolumeName.
+func setContainerSecurityContext(c *corev1.Container) {
+	if c.SecurityContext == nil {
+		c.SecurityContext = &corev1.SecurityContext{}
+	}
+	c.SecurityContext.AllowPrivilegeEscalation = new(false)
+	c.SecurityContext.ReadOnlyRootFilesystem = new(true)
+	c.SecurityContext.RunAsNonRoot = new(true)
+	c.SecurityContext.RunAsUser = new(runAsUser)
+	// Dropping ALL and adding nothing back: llama.cpp binds a port above 1024
+	// and reads files, neither of which needs a capability. NET_RAW in
+	// particular, which the default set grants, is what turns code execution
+	// in this container into a packet-crafting position on the pod network.
+	if c.SecurityContext.Capabilities == nil {
+		c.SecurityContext.Capabilities = &corev1.Capabilities{}
+	}
+	c.SecurityContext.Capabilities.Drop = []corev1.Capability{"ALL"}
+}
+
+// setTmpVolume finds or appends the emptyDir backing the container's one
+// writable path. Addressed by name and replaced wholesale for the same reason
+// setModelCacheVolume is: an EmptyDirVolumeSource this provider leaves zeroed
+// has no apiserver-defaulted subfield for a replacement to drop.
+func setTmpVolume(spec *corev1.PodSpec) {
+	vol := corev1.Volume{
+		Name:         tmpVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+	for i := range spec.Volumes {
+		if spec.Volumes[i].Name == vol.Name {
+			spec.Volumes[i] = vol
+			return
+		}
+	}
+	spec.Volumes = append(spec.Volumes, vol)
 }
 
 // setContainerPort finds or appends a ContainerPort by its port number. This
