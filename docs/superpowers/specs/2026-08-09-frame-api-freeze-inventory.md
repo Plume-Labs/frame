@@ -634,6 +634,7 @@ password hash is not.
 
 1. Move `passwordHash` to `status`, matching `credentials`. Only authd's status-subresource RBAC can
    then write it, and the viewer/editor tiers can be denied `frameusers/status` read.
+   *(Correction, 2026-08-09 — the second clause is wrong; see the note at the end of this finding.)*
 2. Move it out of the CR entirely into a `Secret` referenced by name.
 3. Leave it, and rely on RBAC never granting `get frameusers` broadly.
 
@@ -649,6 +650,31 @@ move within the same object, and is trivially expressible in the conversion webh
 
 **Reversible?** No — moving a field between `spec` and `status` changes which RBAC verb and which
 subresource governs it.
+
+> **Correction, added 2026-08-09 after option 1 was implemented and measured.**
+> Option 1 delivers **write protection, not confidentiality**, and this finding
+> as written over-claims it. Measured against a real apiserver with a real
+> FrameUser carrying a real hash, not inferred: a viewer holding `get
+> frameusers` and **no** `frameusers/status` rule at all still reads
+> `status.passwordHash`, because a plain `GET` on the object returns the whole
+> object, `status` included. **The status subresource splits writes, not
+> reads.** Denying `/status` removes a separate read *endpoint* and the write
+> path; it does not project `status` out of the main GET.
+>
+> The write half is real and was measured the same way: an editor's single
+> merge patch carrying both a spec change and a status change applies the spec
+> half and the apiserver silently drops the status half. In `spec`, the same
+> patch overwrote the hash. So the move bought exactly one of the two things
+> this finding credits it with.
+>
+> Option 2 — the `Secret` — is therefore not merely the tidier destination; it
+> is **the only option that closes the read side**. Until it lands, the
+> operational line is that **`get frameusers` must be treated as equivalent to
+> holding every password hash**, and `frameuser-viewer-role` becomes a
+> credential-disclosure role the moment authd Stage 2 makes these tiers
+> meaningful. The tiers were still written with no `/status` rule for viewer
+> and editor, which is correct and is the shape they will need after the
+> Secret migration; they are just not a confidentiality boundary today.
 
 ---
 
@@ -957,6 +983,33 @@ Two separate points, and the roadmap conflates them:
 Additive/corrective, and it does not touch the schema — but the roadmap's phrase "match the frozen
 schema" does have one schema dependency: whatever F11 decides about `passwordHash` determines whether
 `frameusers/status` can be granted to the viewer tier at all.
+
+> **Correction, added 2026-08-09.** That last sentence frames the `/status`
+> grant as the decision that protects the hash. It is not — see the correction
+> at the end of F11. Denying the viewer tier `frameusers/status` prevents it
+> writing the hash and removes the dedicated status read endpoint; it does not
+> stop the viewer reading the hash out of a plain `GET frameusers`. R2 was
+> implemented as written (three new `frameuser` tiers, no `/status` rule on
+> viewer or editor, `get`/`patch`/`update` on admin only) and that shape is
+> correct; the claim about what it buys was not.
+>
+> Two further things measured while implementing R2 and R3, both worth having
+> here rather than only in the task report:
+>
+> - **No existing role gained a verb.** R3's "grant `<resource>/status` write
+>   only to admin" was applied to `frameusers` alone. `'*'` sat on the main
+>   resource and RBAC resource names are literal, so `framejobs` never implied
+>   `framejobs/status`; widening seven kinds' status to write would have been a
+>   real privilege increase introduced by the commit whose argument is that a
+>   tier must not quietly acquire more. Pinned by allow-*and*-deny assertions
+>   against a real apiserver, 65/65 from `config/rbac/` and 12/12 re-run
+>   against the chart's render.
+> - **The migration needs a verb no tier can hold.**
+>   `hack/migrate-storage-version.sh` requires `patch` on
+>   `customresourcedefinitions/status`, which is a different API group and
+>   changes which version is stored for *any* CRD in the cluster. Deliberately
+>   no shipped role: a bindable `ClusterRole` with that verb is cluster-admin
+>   power under a narrow name.
 
 ### R4 — `InferenceRoute`: a kind that does not exist, in manifests that ship
 

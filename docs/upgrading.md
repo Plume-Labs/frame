@@ -1,10 +1,10 @@
 # Upgrading
 
-Three different things get called "upgrading" here, and they don't share a
+Four different things get called "upgrading" here, and they don't share a
 procedure: moving today's kustomize install onto the Helm chart, moving from
-one chart version to the next, and — the part with no procedure yet —
-upgrading across a schema change once the API stops being `v1alpha1`. Each
-gets its own section below.
+one chart version to the next, moving an existing install across the
+`v1alpha1` → `v1beta1` API freeze, and the parts still not covered. Each gets
+its own section below.
 
 Everything marked "verified" in this doc was run against either the live k3s
 test cluster (read-only checks and `--dry-run=server` only — nothing on that
@@ -129,10 +129,11 @@ un-shippable through a normal upgrade. Rendering from `templates/` means
 `helm upgrade` **does** apply CRD changes, the same as any other templated
 resource. The full reasoning is in "CRDs are rendered from `templates/`, not
 Helm's `crds/` directory" in `charts/frame/README.md` — it is not repeated
-here. No CRD schema has actually changed since the chart shipped (there is
-only one version, `v1alpha1`, of everything), so this describes the
-mechanism the chart provides, not a schema migration that has been
-exercised end-to-end.
+here. Section 3 is the first schema change to go through that mechanism, and
+it is the one the choice was made for: the chart now ships two-version CRDs
+with `conversion.strategy: Webhook` and a cert-manager-injected `caBundle`,
+which Helm's magic `crds/` directory would have installed once and never
+updated.
 
 ### `helm.sh/resource-policy: keep`
 
@@ -150,24 +151,194 @@ planning an upgrade, and the answer is the same regardless of how many
 
 ---
 
-## 3. What is not covered yet
+## 3. API versions and the migration path
 
-Frame's API is `v1alpha1` and explicitly unfrozen — see
-[roadmap.md](roadmap.md), Phase B, which is gated on the S1 service catalog
-and has not started. `v1beta1` with a conversion webhook, a documented
-storage version, and a real deprecation/migration policy are all Phase B
-deliverables, not shipped.
+Frame's API is frozen at **`v1beta1`**, in both `frame.plume-labs.io` and
+`services.plume-labs.io`, on all eight kinds. `v1beta1` is the storage
+version and the conversion hub; `v1alpha1` is still served, is marked
+`deprecated: true`, and emits a warning on every read and write naming what
+changed for that kind.
 
-Concretely, for someone upgrading the chart today:
+**`v1` is deliberately not part of V1.** Frame is in beta and needs
+capability before it needs a stability promise it cannot yet keep; promotion
+waits until `v1beta1` has survived real use, not until a date arrives.
+Shipping V1 on `v1beta1` says that honestly, where a `v1` issued on schedule
+would not. Concretely, what would justify promotion: `v1beta1` carried by
+installs other than this project's own test cluster, for long enough that a
+missing field or a wrong bound would have surfaced; the `parameters` maps
+(see below) either bounded per-provider or accepted as permanently
+out-of-guarantee; and `FrameUser`'s password hash moved out of the CR into a
+`Secret`, because that move is a spec change on a `v1` kind and there is no
+reason to spend a conversion on it later when it can be spent now. None of
+those has happened.
 
-- **There is no compatibility guarantee across chart versions.** A future
-  chart release can change a CRD field's name, type, or validation without
-  a conversion path, because there is no second API version yet for
-  anything to convert between. `helm upgrade` will apply that change
-  mechanically (see the CRD section above) — it will not warn you that the
-  change is breaking, because Helm has no way to know that and this
-  project has not yet built the layer that would (that layer is `v1beta1` +
-  the conversion webhook, per Phase B).
+### What the guarantee is
+
+Within `v1beta1`:
+
+- No field is renamed, removed, or given a new meaning.
+- No validation is tightened. It may be loosened.
+- New optional fields, new status fields, new printer columns and new enum
+  *values* may appear in any `v1beta1.z`. They require no conversion and old
+  clients ignore them.
+- Condition `type` strings are part of the contract. Every kind that has a
+  controller writes `Ready`; its `reason` vocabulary is documented per kind
+  in [crd-reference.md](crd-reference.md), and clients branch on it now that
+  `status.phase` is gone.
+
+Two carve-outs, both deliberate:
+
+- **`spec.parameters` on `FrameJob` and `FrameService` is outside the
+  guarantee.** The envelope is bounded — at most 64 keys, each value at most
+  1024 characters — but the *meaning* of a key belongs to the pipeline or the
+  provider, not to this API. A provider needing a breaking parameter change
+  ships a new `spec.type` value rather than redefining an existing one's
+  parameters.
+- **The validation tightening happened at the version bump, and that was the
+  point of doing it there.** `v1beta1` added bounds `v1alpha1` did not have
+  (`rack`/`zone` length and pattern, a CEL `isIP()` on `spec.ip`, ceilings on
+  `gpuCount`/`maxGPUs`/`queueWeight`, a length cap on `email`, form patterns
+  on `pipeline` and `FrameService.spec.type`). Those are the last tightenings
+  this API group gets; the rule above starts from here.
+
+### Upgrading from `v1alpha1`
+
+**Order matters, and getting it wrong is a full outage for the affected
+kinds.** A two-version CRD declaring `conversion.strategy: Webhook` with
+nothing answering `/convert` fails *every* read and write of that kind, not
+just the conversions.
+
+1. Roll out the manager that serves `/convert` — the image from this release.
+   `helm upgrade` does both in one apply, which is fine because the CRDs are
+   inert until something reads them; a kustomize install must not apply
+   `config/crd/bases/` from a checkout whose manager image is not yet
+   deployed.
+2. Let cert-manager issue the webhook certificate and confirm the `caBundle`
+   is injected into all eight CRDs. `make helm-parity` proves the manifests
+   agree; the cluster-side check is in [runbook.md](runbook.md).
+3. Only then migrate the storage version.
+
+Existing objects keep working from step 1 — the apiserver converts them on
+read — but they are still *stored* at `v1alpha1` until something rewrites
+them, and a version cannot be removed from a CRD while it appears in
+`.status.storedVersions`.
+
+```bash
+./hack/migrate-storage-version.sh            # dry run, changes nothing
+./hack/migrate-storage-version.sh --apply
+```
+
+Run it as a cluster administrator: it needs `patch` on every Frame resource
+*and* `patch` on `customresourcedefinitions/status`, and no shipped role
+grants the second (deliberately — see
+[deployment.md](deployment.md), "Running the storage-version migration").
+[runbook.md](runbook.md), "Migrating the storage version", is the reference
+for what the script does, including the kinds that have no objects at all and
+are therefore never rewritten.
+
+**One precondition the script cannot check for you: the Argo Workflows.**
+Rewriting a FrameJob re-triggers its controller, which is wanted — see the
+FrameJob note below — but if a completed job's Workflow has been
+garbage-collected, the controller's `IsNotFound` branch creates a new one and
+silently re-runs the job. List them first:
+
+```bash
+kubectl get framejobs -A \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,WF:.status.argoWorkflowName
+kubectl get workflows.argoproj.io -A
+```
+
+### What changed between `v1alpha1` and `v1beta1`
+
+Nine changes, each announced by the deprecation warning on the version you
+are leaving:
+
+| Change | Effect on a `v1alpha1` client |
+|---|---|
+| `status.phase` removed from FrameJob, FrameNode and FrameService | Still readable at `v1alpha1`, computed from `status.conditions` on the way down. Never stored. Writing it has no effect. |
+| `FrameJob.spec.namespace` removed | Ignored. The Argo Workflow is created in the FrameJob's own namespace. A read at `v1alpha1` returns the object's own namespace, not the value you set. |
+| `TalosSecretReference.namespace` removed | Ignored. The Secret is read from the CR's own namespace, which is what an empty value always meant. A read returns empty. |
+| `TalosSecretReference.name` now required | A `v1beta1` write without it is rejected. |
+| `FrameUser.spec.passwordHash` moved to `status.passwordHash` | Writing it through `v1alpha1` requires the `frameusers/status` subresource. Reading it does not — see below. |
+| `FrameNode.spec.serviceClass` no longer accepts `""` | Omit the field instead; absence means unclassified. |
+| `FrameJob.spec.serviceClass` and `spec.priority` default in the schema, not only in the webhook | Unchanged values (`LOW`, `medium`), but they are now applied before CEL rather than after. |
+| The GPU / `serviceClass: LOW` constraint deleted | A GPU job at `LOW` is admitted. It was only ever enforced for three pipeline names, so it never applied to `training` — this project's own sample. |
+| `topology.kubernetes.io/rack` on Nodes → `frame.plume-labs.io/rack` | Any selector you wrote on the old key must be updated. The controller removes the old key on reconcile. `rack` is not a well-known `kubernetes.io` key and that prefix is reserved for upstream. |
+
+### Two client-visible breaks that are not schema changes
+
+Both come from the SDK moving to `v1beta1` and are visible in the UI:
+
+- **`JobSpec.namespace` now steers the request URL.** It used to be copied
+  into the removed `spec.namespace` field and otherwise ignored; the SDK now
+  uses it as the namespace the FrameJob is created *in*. This is the correct
+  behaviour — the Jobs view's Retry button passes the original job's
+  namespace, and ignoring it would silently relocate every retried job to the
+  default — but it is a behaviour change for any caller that was passing a
+  namespace it did not mean.
+- **The two FrameJobs already stored on the test cluster will display
+  `queued`, not `completed`, until they are re-reconciled.** They predate the
+  change that made `Ready` track the lifecycle (F3): they carry a write-once
+  `Submitted` condition, no `Ready` condition, and a `status.phase:
+  Completed` that is not derivable from anything else in the object. The
+  outcome is genuinely not in the object, and a projection that guessed it
+  from `completionTime` would report an old *failure* as healthy, since the
+  controller sets that field on both outcomes. The storage migration's
+  rewrite forces the re-reconcile that restores the real answer.
+
+### The deprecation policy
+
+`v1alpha1` is served for at least **two minor chart releases** after the
+release that introduced `v1beta1`, and is removed no earlier than the first
+release in which every install this project knows about reports
+`storedVersions: ["v1beta1"]`. The `deprecationWarning` on each `v1alpha1`
+kind is the policy's only enforcement mechanism; it costs nothing and it is
+what a client sees before the removal rather than after.
+
+**Removal is a hand-run migration plus an explicit claim, not a version
+bump.** `.status.storedVersions` only grows. The apiserver appends the
+storage version the moment an *apply* makes that version storage — not when
+an object is written at it — and nothing ever prunes the list. So dropping
+`v1alpha1` from `spec.versions` requires running
+`hack/migrate-storage-version.sh --apply`, whose final step patches
+`status.storedVersions` to `["v1beta1"]`. That patch is a **claim** that
+nothing remains stored at the old version. The script does what it can to
+make the claim true and refuses to half-finish — it aborts rather than treat
+a failed listing as "no objects", it refuses a CRD whose storage version is
+not the one it is migrating to, and it exits non-zero if a CRD does not end
+at a single stored version — but the apiserver does not verify it. If you
+patch and you were wrong, the objects you missed are unreadable.
+
+**The script has not been run against the live cluster.** It was rehearsed on
+a throwaway Kind cluster carrying the pre-freeze CRDs plus copies of the live
+cluster's nine objects, where all eight CRDs went `["v1alpha1"]` →
+`["v1alpha1","v1beta1"]` on apply → `["v1beta1"]` after migration. The live
+k3s test cluster still runs the pre-freeze operator and single-version
+`v1alpha1` CRDs; the whole of section 3 is untried there.
+
+### The one thing the deprecation window costs
+
+**While `v1alpha1` is served, it is the only way to violate a `v1beta1`
+bound.** CR schema validation runs against the *request* version, and
+conversion-webhook output is stored **without re-validation**. So every bound
+`v1beta1` adds that `v1alpha1` lacks — the `rack`/`zone` patterns, the
+`isIP()` rule, the numeric ceilings, the `parameters` envelope — is
+enforceable only against clients that already moved. A `v1alpha1` write can
+still land an object that a `v1beta1` write would refuse, and the controller
+will read it back through the hub as though it were valid.
+
+That is a property of the window, not a defect in it, and it argues for
+closing the window rather than for widening the rules. It is also why the
+same asymmetry bit in the other direction during the freeze: the apiserver
+also declines to re-default conversion output, which made a `v1alpha1` status
+patch on SchedulingPolicy evaluate a CEL rule against an absent
+`spec.preemption` key. Every CEL rule in `api/` was surveyed for unguarded
+scalar dereferences after that; `preemption` was the only one.
+
+---
+
+## 4. What is still not covered
+
 - **There is no published, versioned chart yet.** `Chart.yaml` is at
   `version: 0.1.0`/`appVersion: 0.1.0`, and `image.repository` has no
   default because no operator image is published anywhere. "Upgrading" the
@@ -175,15 +346,18 @@ Concretely, for someone upgrading the chart today:
   pulling a new release from a chart repository — the "one-command install
   from a published, versioned Helm chart" in the roadmap's V1 definition of
   done has not happened yet.
-- **What to expect instead, until Phase B ships:** read the diff between the
-  chart versions (or CRD YAML under `config/crd/bases/`) before upgrading,
-  same as you would for any other pre-1.0 CRD-based project. Test the
-  upgrade against a disposable cluster first if the CRD diff touches a field
-  your CRs actually use. There is no tooling here yet that does this for
-  you.
+- **Nothing has upgraded across the freeze for real.** Section 3's ordering,
+  script and rollback story are rehearsed, asserted in the Kind e2e suite,
+  and unexercised on any cluster that matters. Test against a disposable
+  cluster first.
+- **The new API groups are not frozen.** `services.plume-labs.io` got
+  `v1beta1` alongside `frame.plume-labs.io` because `FrameService` is part of
+  what the freeze covers, but S2–S4 (see [roadmap.md](roadmap.md)) will
+  arrive at `v1alpha1` in their own groups and this section's guarantee will
+  not apply to them until Phase E.
 
 See [roadmap.md](roadmap.md) — Phase D's exit criteria ("a tagged `v1.0.0`
 installs from a published chart on a fresh cluster, passes e2e, and survives
 a manager failover and an upgrade from the prior release") is the bar this
-document does not yet meet, and Phase B's exit criteria is what closes the
-schema-stability gap above.
+document does not yet meet. Phase B's exit criteria, which closed the
+schema-stability gap, is met.

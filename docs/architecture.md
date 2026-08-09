@@ -21,7 +21,7 @@ Frame is three cooperating layers in one repo.
 ┌──────────────────────▼───────────────────────────────────┐
 │                  Kubernetes API Server                   │
 │                                                          │
-│  frame.plume-labs.io/v1alpha1 CRDs (7)                  │
+│  frame.plume-labs.io/v1beta1 CRDs (7)                   │
 │  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
 │  │  FrameJob    │ │  FrameNode    │ │SchedulingPolicy │ │
 │  └──────────────┘ └───────────────┘ └─────────────────┘ │
@@ -33,7 +33,7 @@ Frame is three cooperating layers in one repo.
 │  │  FrameUser   │                                       │
 │  └──────────────┘                                       │
 │                                                          │
-│  services.plume-labs.io/v1alpha1 CRDs (1)               │
+│  services.plume-labs.io/v1beta1 CRDs (1)                │
 │  ┌──────────────┐                                       │
 │  │ FrameService │                                       │
 │  └──────────────┘                                       │
@@ -71,7 +71,7 @@ Frame is three cooperating layers in one repo.
 
 **How it works:**
 
-- The React 19 UI (`src/components/`) and the TypeScript SDK (`src/lib/frame-sdk.ts`) both call the Kubernetes API directly at `/apis/frame.plume-labs.io/v1alpha1/…`.
+- The React 19 UI (`src/components/`) and the TypeScript SDK (`src/lib/frame-sdk.ts`) both call the Kubernetes API directly at `/apis/frame.plume-labs.io/v1beta1/…`.
 - **Dev:** `kubectl proxy --port=8001` exposes the K8s API locally; Vite proxies `/apis/*` to it (see `vite.config.ts`).
 - **Prod:** `window.__FRAME_TOKEN__` is set to a ServiceAccount Bearer token before the app mounts. The SDK picks it up via `Authorization: Bearer <token>`.
 - There is **no intermediate API server**. The UI is fully K8s-native.
@@ -89,7 +89,7 @@ Frame is three cooperating layers in one repo.
 
 ## Layer 2 — Operator (`api/`, `internal/`, `cmd/`)
 
-**What it is:** a Kubebuilder v4 operator, multi-group: `frame.plume-labs.io/v1alpha1` (seven CRDs) and `services.plume-labs.io/v1alpha1` (`FrameService`). It reconciles seven of the eight CRDs into real cluster effects. FrameUser has no controller — nothing reconciles a user account; every other CRD, including `FrameService`, does.
+**What it is:** a Kubebuilder v4 operator, multi-group: `frame.plume-labs.io/v1beta1` (seven CRDs) and `services.plume-labs.io/v1beta1` (`FrameService`), each with a deprecated `v1alpha1` still served through a conversion webhook. It reconciles seven of the eight CRDs into real cluster effects. FrameUser has no controller — nothing reconciles a user account; every other CRD, including `FrameService`, does.
 
 **Entry point:** `cmd/main.go` — starts the controller-runtime manager, registers all controllers and webhooks, wires Prometheus metrics.
 
@@ -97,17 +97,21 @@ Frame is three cooperating layers in one repo.
 
 | Controller | Real effect |
 |---|---|
-| `FrameJob` | Creates/updates/deletes an Argo `Workflow`; syncs `spec.suspend` → `Workflow.spec.suspend`; secondary-watches Argo Workflows for event-driven phase updates |
+| `FrameJob` | Creates/updates/deletes an Argo `Workflow`; syncs `spec.suspend` → `Workflow.spec.suspend`; secondary-watches Argo Workflows for event-driven `Ready`-condition updates |
 | `FrameNode` | Secondary-watches core `v1.Node` (label mapping `nodeToFrameNode`) to reflect readiness and versions into status |
 | `SchedulingPolicy` | Reconciles a `PriorityClass`; when Volcano/YuniKorn CRD is present, also reconciles the scheduler-native queue. Gracefully degrades when CRD is absent |
 | `TalosMachineConfig` | Builds a Talos gRPC client from a referenced Secret; calls `ApplyConfiguration` with inline patch or ConfigMap ref |
 | `TalosUpgrade` | Calls Talos gRPC `Upgrade`; generation-based idempotency guard prevents re-trigger on unchanged spec |
-| `FrameResourceQuota` | Validates namespace quotas (webhooks); projection into `ResourceQuota` + scheduler limits in progress |
+| `FrameResourceQuota` | Projects a `corev1.ResourceQuota` into every namespace labelled with the matching service class, and aggregates their `status.used` back into `status.used`/`status.namespaces`. Scheduler queue limits are deliberately not projected — `SchedulingPolicy` owns those |
 | `FrameService` | Dispatches to a registered provider (`internal/services/provider/`) by `spec.type`; the `inference` provider creates a llama.cpp Deployment + Service, sized from `spec.parameters`, and a credentials Secret |
 
 All controllers follow the same pattern: add finalizer on create, reconcile desired → actual, sync `.status` + conditions, emit a Kubernetes Event, clean up on delete.
 
 **Webhooks** (`internal/webhook/frame/v1beta1/` and `internal/webhook/services/v1beta1/`): validation on all eight kinds; defaulting on FrameNode and FrameJob only. They register on `v1beta1` alone — `matchPolicy: Equivalent` converts a `v1alpha1` request to the storage version before dispatch, so one registration covers both. Cert-manager manages TLS; see `config/certmanager/`.
+
+**Conversion webhook** (`api/frame/v1alpha1/conversion.go`, `api/services/v1alpha1/conversion.go`): every CRD declares `conversion.strategy: Webhook` pointing at the manager's `/convert`, with the same cert-manager-injected CA. `v1beta1` is the hub; `v1alpha1` is the spoke and implements `ConvertTo`/`ConvertFrom`. Seven kinds are field-wise strict subsets of `v1alpha1`, and `FrameUser` is a bijection (`spec.passwordHash` ↔ `status.passwordHash`), so no annotation escape hatch is needed anywhere. controller-runtime registers `/convert` implicitly, through the same `registerWebhooks()` every `SetupXWebhookWithManager` already goes through — which means **both** GVKs must be in `cmd/main.go`'s scheme or `conversion.IsConvertible` sees one version per GroupKind, `/convert` is never registered, and every `v1alpha1` request 404s against CRDs that declare `strategy: Webhook`. `cmd/scheme_test.go` pins that.
+
+Two consequences worth knowing before changing anything here. Conversion output is stored **without re-validation**, so a `v1alpha1` write is the only way to violate a bound `v1beta1` adds. And it is not re-defaulted either, so a CEL rule dereferencing an `omitempty` scalar must be `has()`-guarded on both versions.
 
 ---
 
@@ -148,7 +152,7 @@ Frame is designed for a **single physical location**:
 User clicks "Submit" in UI
         │
         ▼
-FrameClient.jobs.submit() — POST /apis/frame.plume-labs.io/v1alpha1/namespaces/<ns>/framejobs
+FrameClient.jobs.submit() — POST /apis/frame.plume-labs.io/v1beta1/namespaces/<ns>/framejobs
         │
         ▼
 K8s API server validates (webhook: FrameJob defaulting + validation)
@@ -167,8 +171,8 @@ Argo Workflow controller runs the DAG on the cluster
         │
         ▼
 FrameJob controller secondary-watch detects Workflow phase change
-  → updates FrameJob.status.phase + emits K8s Event
+  → updates the FrameJob's Ready condition (status + reason) + emits K8s Event
         │
         ▼
-UI polls FrameJob CR → reflects live status
+UI's watch stream fires → re-reads the FrameJob → reflects live status
 ```

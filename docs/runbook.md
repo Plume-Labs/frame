@@ -65,6 +65,21 @@ Reach for this only when the alternative is worse. The defaulting webhook is
 what fills in fields the controllers assume are set, so an object written this
 way can be one the reconcile loop has never had to handle.
 
+**That escape hatch does not cover conversion, and conversion is worse.** Each
+CRD also declares `conversion.strategy: Webhook` pointing at the same
+manager's `/convert`, and CRD conversion is configured *on the CRD*, not in a
+`ValidatingWebhookConfiguration` you can delete. With the manager
+unreachable, every read and write of a Frame kind fails at **both** versions —
+including `kubectl get`, which the paragraph above says is unaffected. It is
+unaffected only for the single-version CRDs of the pre-freeze install.
+
+There is no safe local escape hatch for that: setting `strategy: None` on a
+live CRD makes the apiserver hand back stored `v1beta1` bytes to a `v1alpha1`
+client unconverted, which is how fields get silently dropped. Fix the manager
+instead; that is what `failurePolicy` and the leader lease's 16-second
+takeover are for, and it is the argument for `replicaCount: 2` restated in
+sharper terms.
+
 ## Failover
 
 Leader election is wired (`--leader-elect`) and 2 replicas is a supported

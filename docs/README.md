@@ -13,7 +13,7 @@ Engineering documentation for the Frame operator and control plane. For the prod
 | [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
 | [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm |
 | [upgrading.md](upgrading.md) | Migrating a kustomize install to Helm, chart-to-chart upgrades, what schema stability to expect pre-Phase B |
-| [roadmap.md](roadmap.md) | Path from `v1alpha1` preview to stable V1, plus the new API groups building alongside it |
+| [roadmap.md](roadmap.md) | Path from the `v1beta1` beta to stable V1, plus the new API groups building alongside it |
 
 ## 30-second model
 
@@ -21,7 +21,7 @@ Engineering documentation for the Frame operator and control plane. For the prod
 Operator / CI / UI (TypeScript SDK)
         │  reads/writes Kubernetes CRs directly
         ▼
-Frame CRDs (frame.plume-labs.io/v1alpha1, services.plume-labs.io/v1alpha1)
+Frame CRDs (frame.plume-labs.io/v1beta1, services.plume-labs.io/v1beta1)
         │
         ▼
 Frame operator (controllers + webhooks)   ← api/, internal/, cmd/
