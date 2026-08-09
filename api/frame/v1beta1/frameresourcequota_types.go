@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -22,21 +22,33 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// FrameResourceQuotaSpec defines the desired state of FrameResourceQuota
+// FrameResourceQuotaSpec defines the desired state of FrameResourceQuota.
+//
+// The spec-level rule below is inherited from v1alpha1 unchanged and is one
+// of the four object-level CEL rules the freeze makes permanent. Object-level
+// rules are the ones ratcheting cannot save you from — it is per-schema-node,
+// so an over-strict rule here permanently freezes a stored object — which is
+// why this one is carried over verbatim and no new one is added. Verified
+// against the live cluster: all three stored quotas set maxCPU and maxMemory,
+// so the rule holds on every one of them.
 //
 // +kubebuilder:validation:XValidation:rule="(has(self.maxGPUs) && self.maxGPUs > 0) || has(self.maxCPU) || has(self.maxMemory) || (has(self.maxJobs) && self.maxJobs > 0)",message="at least one of maxGPUs, maxCPU, maxMemory, or maxJobs must be set"
 type FrameResourceQuotaSpec struct {
-	// ServiceClass this quota applies to.
+	// ServiceClass this quota applies to. Required: a quota that does not say
+	// what it caps is meaningless, which is why this one member of the shared
+	// enum is not optional and not defaulted. The enum lives on the
+	// ServiceClass type, not here.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=HIGH;MEDIUM;LOW
-	ServiceClass string `json:"serviceClass"`
+	ServiceClass ServiceClass `json:"serviceClass"`
 
-	// MaxGPUs is the maximum number of GPUs allocatable across all jobs in this service class.
+	// MaxGPUs is the maximum number of GPUs allocatable across all jobs in
+	// this service class. Capped for the same reason as FrameJob.gpuCount
+	// (T5): three orders of magnitude above the one physical card this
+	// cluster has, so it constrains nothing real and turns a typo into a
+	// validation error. All three stored quotas hold 0.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1024
 	MaxGPUs int32 `json:"maxGPUs,omitempty"`
 
 	// MaxCPU is the maximum total CPU allocatable.
@@ -48,7 +60,7 @@ type FrameResourceQuotaSpec struct {
 	MaxMemory *resource.Quantity `json:"maxMemory,omitempty"`
 
 	// MaxJobs is the maximum number of FrameJob objects that may exist in a
-	// namespace of this service class. It is projected as the object-count quota
+	// namespace of this service class. Projected as the object-count quota
 	// count/framejobs.frame.plume-labs.io, which the apiserver enforces on
 	// creation. Completed FrameJobs keep counting until they are deleted.
 	// +optional
@@ -57,6 +69,12 @@ type FrameResourceQuotaSpec struct {
 }
 
 // FrameResourceQuotaStatus defines the observed state of FrameResourceQuota.
+//
+// No status.phase (F2): this kind never had one. Every field here already
+// exists on v1alpha1 — Part 0's Task 7 added observedGeneration, used and
+// namespaces there first, deliberately, so that v1beta1 has no field
+// v1alpha1 lacks and Task 18's conversion functions need no annotation
+// escape hatch.
 type FrameResourceQuotaStatus struct {
 	// ObservedGeneration is the metadata.generation this status was computed
 	// from. A client can compare it to metadata.generation to tell whether
@@ -68,8 +86,9 @@ type FrameResourceQuotaStatus struct {
 	// Used is the sum of status.used across every corev1.ResourceQuota this
 	// object projects into. The keys are the ones buildResourceList writes:
 	// limits.cpu, limits.memory, requests.nvidia.com/gpu and
-	// count/framejobs.frame.plume-labs.io. Absent until at least one
-	// projected quota reports usage.
+	// count/framejobs.frame.plume-labs.io. A key no namespace reported is
+	// absent, not zero — this is a set, so omitempty is right here and
+	// deliberately wrong on Namespaces below.
 	// +optional
 	Used corev1.ResourceList `json:"used,omitempty"`
 
@@ -79,45 +98,28 @@ type FrameResourceQuotaStatus struct {
 	// "selected, and idle". Unlike Used, this is a count rather than a set,
 	// so 0 is a real measurement and is serialized rather than omitted:
 	// absent means "not yet reconciled", 0 means "reconciled, matched
-	// nothing".
+	// nothing". All three stored quotas currently match zero namespaces, so
+	// the asymmetry is load-bearing on every object that exists.
 	// +optional
 	Namespaces int32 `json:"namespaces"`
 
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the FrameResourceQuota resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the current state of the FrameResourceQuota
+	// resource.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// This version is deprecated and yet it is still the storage version, for the
-// reason set out at length on the v1alpha1 FrameJob: with conversion still at
-// strategy None the apiserver prunes writes against the *storage* version's
-// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
-// every v1alpha1 write, in the create response itself. FrameResourceQuota has
-// no such field in either direction — Part 0's Task 7 put observedGeneration,
-// used and namespaces here first — so storing at v1alpha1 prunes nothing.
-// Task 19 moves the marker.
+// This is the conversion hub, but it is deliberately *not* the storage
+// version yet — v1alpha1 still carries +kubebuilder:storageversion, and
+// Task 19 moves the marker here when the conversion webhook starts serving.
+// See the note on the v1alpha1 FrameJob for the full reasoning.
 //
-// +kubebuilder:storageversion
-// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameResourceQuota is deprecated; use frame.plume-labs.io/v1beta1."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="ServiceClass",type=string,JSONPath=".spec.serviceClass"
+// +kubebuilder:printcolumn:name="Namespaces",type=integer,JSONPath=".status.namespaces"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"

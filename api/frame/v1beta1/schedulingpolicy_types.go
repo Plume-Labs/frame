@@ -14,16 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// SchedulingPolicySpec defines the desired state of SchedulingPolicy
+// SchedulingPolicySpec defines the desired state of SchedulingPolicy.
+//
+// The spec-level rule below is inherited from v1alpha1 unchanged, one of the
+// four object-level CEL rules the freeze makes permanent. It carries over
+// verbatim and nothing is added beside it: ratcheting is per-schema-node, so
+// an over-strict object-level rule permanently freezes a stored object.
+// Verified against the live cluster: the one stored policy sets
+// preemption: true with priorityClass: neura-high, which satisfies it.
 //
 // +kubebuilder:validation:XValidation:rule="!self.preemption || (has(self.priorityClass) && size(self.priorityClass) > 0)",message="priorityClass is required when preemption is true"
 type SchedulingPolicySpec struct {
@@ -43,32 +47,45 @@ type SchedulingPolicySpec struct {
 	// +kubebuilder:validation:Pattern="^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$"
 	QueueName string `json:"queueName,omitempty"`
 
-	// PriorityClass is the default Kubernetes PriorityClass for jobs under this policy.
-	// The pattern accepts empty for the same reason as QueueName above.
+	// PriorityClass is the default Kubernetes PriorityClass for jobs under
+	// this policy. Accepts empty for the same reason as QueueName.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$"
 	PriorityClass string `json:"priorityClass,omitempty"`
 
 	// Preemption allows higher-priority jobs to preempt lower-priority ones.
+	// Setting it obliges PriorityClass, per the object-level rule above.
 	// +optional
 	// +kubebuilder:default=false
 	Preemption bool `json:"preemption,omitempty"`
 
-	// PriorityValue is the integer value for the Kubernetes PriorityClass. Ignored when PriorityClass is empty.
-	// Higher values = higher priority. System pods use 2000000000.
+	// PriorityValue is the integer value for the Kubernetes PriorityClass.
+	// Ignored when PriorityClass is empty. Higher values = higher priority;
+	// system pods use 2000000000.
 	// +optional
 	// +kubebuilder:validation:Minimum=-2147483648
 	// +kubebuilder:validation:Maximum=1000000000
 	PriorityValue *int32 `json:"priorityValue,omitempty"`
 
-	// QueueWeight is the relative weight of the Volcano/YuniKorn queue (default 1).
+	// QueueWeight is the relative weight of the Volcano/YuniKorn queue
+	// (default 1).
+	//
+	// The ceiling is new (T5). PriorityValue beside it was already bounded,
+	// so the absence here was inconsistency rather than policy, and a bound
+	// can only ever be introduced before the freeze — adding one afterwards
+	// rejects objects that were valid the day before. The one stored policy
+	// holds 100. Field-level, so ratcheting protects anything stored.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1000000
 	QueueWeight *int32 `json:"queueWeight,omitempty"`
 }
 
 // SchedulingPolicyStatus defines the observed state of SchedulingPolicy.
+//
+// No status.phase (F2): this kind never had one, it was already
+// conditions-only, and every field here already exists on v1alpha1.
 type SchedulingPolicyStatus struct {
 	// ObservedGeneration is the metadata.generation this status was computed
 	// from. A client can compare it to metadata.generation to tell whether
@@ -77,35 +94,19 @@ type SchedulingPolicyStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the SchedulingPolicy resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the current state of the SchedulingPolicy
+	// resource.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// This version is deprecated and yet it is still the storage version, for the
-// reason set out at length on the v1alpha1 FrameJob: with conversion still at
-// strategy None the apiserver prunes writes against the *storage* version's
-// schema. SchedulingPolicy loses no field in v1beta1, so storing at v1alpha1
-// prunes nothing in either direction. Task 19 moves the marker.
+// This is the conversion hub, but it is deliberately *not* the storage
+// version yet — v1alpha1 still carries +kubebuilder:storageversion, and
+// Task 19 moves the marker here when the conversion webhook starts serving.
+// See the note on the v1alpha1 FrameJob for the full reasoning.
 //
-// +kubebuilder:storageversion
-// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 SchedulingPolicy is deprecated; use frame.plume-labs.io/v1beta1."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Scheduler",type=string,JSONPath=".spec.scheduler"
