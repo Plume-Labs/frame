@@ -34,18 +34,13 @@ jobs:
       # actually reaches, so a finding here is genuinely reachable, not just
       # present in go.sum.
       #
-      # Report-only for now. As of 2026-08-09 this already reports two
-      # reachable vulnerabilities in the current dependency set:
-      #
-      #   GO-2026-6061  google.golang.org/grpc  v1.81.0 -> fixed in v1.82.1
-      #   GO-2026-5970  golang.org/x/text       v0.37.0 -> fixed in v0.39.0
-      #
-      # Both are dependency bumps, not code changes, and neither is in scope
-      # for the change that added this step — so the step is added open rather
-      # than either shipping a red CI or quietly not adding it at all. Flip
-      # continue-on-error off in the same change that lands those two bumps.
+      # Blocking. It was added report-only on 2026-08-09 because two reachable
+      # vulnerabilities existed at the time (GO-2026-6061 in grpc, GO-2026-5970
+      # in x/text) and shipping a red CI alongside the step that detects it
+      # helps nobody. Both were bumps rather than code changes, they landed,
+      # and the step was closed in that same change — which is the only reason
+      # a temporarily-open gate is an honest thing to ship.
       - name: Go vulnerability scan
-        continue-on-error: true
         run: make vuln
 
       - name: Coverage threshold
