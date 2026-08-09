@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
-func testAuthenticator(t *testing.T, users ...*framev1alpha1.FrameUser) *Authenticator {
+func testAuthenticator(t *testing.T, users ...*framev1beta1.FrameUser) *Authenticator {
 	t.Helper()
 	a, err := NewAuthenticator("example.com", "https://example.com", storeWith(t, users...), testCodec())
 	if err != nil {
@@ -22,8 +22,8 @@ func testAuthenticator(t *testing.T, users ...*framev1alpha1.FrameUser) *Authent
 }
 
 func TestBeginLoginIsUsernameless(t *testing.T) {
-	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin,
-		framev1alpha1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk"}))
+	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin,
+		framev1beta1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk"}))
 
 	opts, sealed, err := a.BeginLogin(context.Background())
 	if err != nil {
@@ -52,7 +52,7 @@ func TestBeginLoginIsUsernameless(t *testing.T) {
 }
 
 func TestFinishLoginRejectsForgedChallenge(t *testing.T) {
-	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin))
+	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	_, err := a.FinishLogin(context.Background(), "forged.challenge", []byte(`{}`))
 	if err == nil {
 		t.Fatal("a forged sealed challenge was accepted")
@@ -60,7 +60,7 @@ func TestFinishLoginRejectsForgedChallenge(t *testing.T) {
 }
 
 func TestFinishLoginRejectsExpiredChallenge(t *testing.T) {
-	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin))
+	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	expired, _ := testCodec().Seal(PurposeChallenge, []byte(`{"challenge":"x"}`), -1)
 	if _, err := a.FinishLogin(context.Background(), expired, []byte(`{}`)); err == nil {
 		t.Fatal("an expired challenge was accepted")
@@ -68,7 +68,7 @@ func TestFinishLoginRejectsExpiredChallenge(t *testing.T) {
 }
 
 func TestBeginRegistrationSealsChallenge(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
 	a := testAuthenticator(t, u)
 	opts, sealed, err := a.BeginRegistration(context.Background(), u)
 	if err != nil {
@@ -113,8 +113,8 @@ func TestCounterRegressionIsDistinguishable(t *testing.T) {
 func TestRecordLoginCounterRefusesOnCloneWarningWithoutTouchingStore(t *testing.T) {
 	rawID := []byte("clone-warning-credential")
 	credID := base64.RawURLEncoding.EncodeToString(rawID)
-	stored := framev1alpha1.WebAuthnCredential{ID: credID, PublicKey: "pk", SignCount: 7}
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, stored)
+	stored := framev1beta1.WebAuthnCredential{ID: credID, PublicKey: "pk", SignCount: 7}
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, stored)
 	a := testAuthenticator(t, u)
 
 	// SignCount is deliberately different from the stored value (7): if the
@@ -149,8 +149,8 @@ func TestRecordLoginCounterRefusesOnCloneWarningWithoutTouchingStore(t *testing.
 func TestRecordLoginCounterRotatesSignCountWhenClean(t *testing.T) {
 	rawID := []byte("clean-credential")
 	credID := base64.RawURLEncoding.EncodeToString(rawID)
-	stored := framev1alpha1.WebAuthnCredential{ID: credID, PublicKey: "pk", SignCount: 7}
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, stored)
+	stored := framev1beta1.WebAuthnCredential{ID: credID, PublicKey: "pk", SignCount: 7}
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, stored)
 	a := testAuthenticator(t, u)
 
 	result := &webauthn.Credential{

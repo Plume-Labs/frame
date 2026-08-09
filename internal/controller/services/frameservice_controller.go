@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/services/provider"
 )
 
@@ -125,7 +125,7 @@ type FrameServiceReconciler struct {
 func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var svc servicesv1alpha1.FrameService
+	var svc servicesv1beta1.FrameService
 	if err := r.Get(ctx, req.NamespacedName, &svc); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -148,20 +148,20 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// something no amount of retrying fixes.
 		r.Recorder.Event(&svc, corev1.EventTypeWarning, "UnknownType", err.Error())
 		frameServiceUnknownType.Inc()
-		return ctrl.Result{}, r.setStatus(ctx, &svc, "Degraded", metav1.ConditionFalse,
+		return ctrl.Result{}, r.setStatus(ctx, &svc, metav1.ConditionFalse,
 			"UnknownType", err.Error(), nil, nil)
 	}
 
 	prov, ok := p.(provider.Provisioner)
 	if !ok {
 		msg := fmt.Sprintf("provider %q can validate but cannot provision", svc.Spec.Type)
-		return ctrl.Result{}, r.setStatus(ctx, &svc, "Degraded", metav1.ConditionFalse,
+		return ctrl.Result{}, r.setStatus(ctx, &svc, metav1.ConditionFalse,
 			"NotProvisionable", msg, nil, nil)
 	}
 
-	sizing, err := prov.Size(svc.Spec.Parameters)
+	sizing, err := prov.Size(provider.Params(svc.Spec.Parameters))
 	if err != nil {
-		return ctrl.Result{}, r.setStatus(ctx, &svc, "Degraded", metav1.ConditionFalse,
+		return ctrl.Result{}, r.setStatus(ctx, &svc, metav1.ConditionFalse,
 			"SizeRefused", err.Error(), nil, nil)
 	}
 
@@ -176,7 +176,7 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// Degrading is not an error. Returning one would back off and bury the
 		// reason in controller-runtime's retry logging instead of status.
 		return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, &svc,
-			"Degraded", metav1.ConditionFalse, result.Reason, result.Message,
+			metav1.ConditionFalse, result.Reason, result.Message,
 			&sizing, result.Provisioned)
 	}
 
@@ -195,7 +195,7 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		var degradation *bindingDegradation
 		if errors.As(err, &degradation) {
 			return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, &svc,
-				"Degraded", metav1.ConditionFalse, degradation.Reason, degradation.Message,
+				metav1.ConditionFalse, degradation.Reason, degradation.Message,
 				&sizing, result.Provisioned)
 		}
 		return ctrl.Result{}, fmt.Errorf("reconciling binding for %s: %w", svc.Name, err)
@@ -213,12 +213,19 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Ready still requeues: see readyRequeue. This is the only thing that
 	// converges a binding Secret someone deleted or overwrote out of band,
 	// because this controller does not watch Secrets.
-	return ctrl.Result{RequeueAfter: readyRequeue}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
+	return ctrl.Result{RequeueAfter: readyRequeue}, r.setStatus(ctx, &svc, metav1.ConditionTrue,
 		result.Reason, result.Message, &sizing, result.Provisioned)
 }
 
 // setStatus re-fetches the FrameService and writes the outcome of this
-// reconcile pass onto it. Re-fetching immediately before the write — rather
+// reconcile pass onto it.
+//
+// It used to take a phase alongside the condition status, and wrote both.
+// status.phase is gone from the hub (F2) and v1alpha1's projection derives it
+// from Ready.Status and the deletion timestamp — which is exactly what the
+// phase argument always was: every caller paired "Ready" with ConditionTrue
+// and "Degraded" with ConditionFalse. The argument is dropped rather than
+// ignored so no caller can reintroduce the disagreement. Re-fetching immediately before the write — rather
 // than reusing the copy Reconcile fetched at the top — means the update
 // carries the resourceVersion actually current on the server, so a status
 // write never conflicts with, or clobbers, anything that landed on the object
@@ -227,19 +234,17 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // from a fresh copy.
 func (r *FrameServiceReconciler) setStatus(
 	ctx context.Context,
-	svc *servicesv1alpha1.FrameService,
-	phase string,
+	svc *servicesv1beta1.FrameService,
 	status metav1.ConditionStatus,
 	reason, message string,
 	sizing *provider.Sizing,
-	provisioned []servicesv1alpha1.ProvisionedRef,
+	provisioned []servicesv1beta1.ProvisionedRef,
 ) error {
-	var fresh servicesv1alpha1.FrameService
+	var fresh servicesv1beta1.FrameService
 	if err := r.Get(ctx, client.ObjectKeyFromObject(svc), &fresh); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
-	fresh.Status.Phase = phase
 	fresh.Status.Binding = svc.Status.Binding
 	// Provisioned is sticky, the same way Sizing is below: it is the
 	// controller's only handle on data objects (see reconcileDelete's own
@@ -254,7 +259,7 @@ func (r *FrameServiceReconciler) setStatus(
 	}
 	fresh.Status.ObservedGeneration = fresh.Generation
 	if sizing != nil {
-		fresh.Status.Sizing = servicesv1alpha1.Sizing{
+		fresh.Status.Sizing = servicesv1beta1.Sizing{
 			GPU:       sizing.GPU,
 			GPUMemory: sizing.GPUMemory,
 			CPU:       sizing.CPU,
@@ -301,7 +306,7 @@ func (r *FrameServiceReconciler) setStatus(
 // Either way the finalizer clears last, so a crash mid-teardown leaves the
 // object undeleted — and retried — rather than orphaning a data object with
 // nothing left tracking it.
-func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1alpha1.FrameService) (ctrl.Result, error) {
+func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1beta1.FrameService) (ctrl.Result, error) {
 	if err := r.deleteAllProjections(ctx, svc); err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting projected Secrets for %s/%s: %w", svc.Namespace, svc.Name, err)
 	}
@@ -326,7 +331,7 @@ func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servi
 // SetupWithManager sets up the controller with the Manager.
 func (r *FrameServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&servicesv1alpha1.FrameService{}).
+		For(&servicesv1beta1.FrameService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		// Deliberately no Owns(&corev1.Secret{}). An Owns watch is a

@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 const schedulingPolicyFinalizer = "frame.plume-labs.io/schedulingpolicy"
@@ -56,7 +56,7 @@ type SchedulingPolicyReconciler struct {
 func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var sp framev1alpha1.SchedulingPolicy
+	var sp framev1beta1.SchedulingPolicy
 	if err := r.Get(ctx, req.NamespacedName, &sp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -116,7 +116,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	return ctrl.Result{}, r.Status().Patch(ctx, &sp, patch)
 }
 
-func (r *SchedulingPolicyReconciler) reconcilePriorityClass(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) error {
+func (r *SchedulingPolicyReconciler) reconcilePriorityClass(ctx context.Context, sp *framev1beta1.SchedulingPolicy) error {
 	val := int32(0)
 	if sp.Spec.PriorityValue != nil {
 		val = *sp.Spec.PriorityValue
@@ -144,7 +144,7 @@ func (r *SchedulingPolicyReconciler) reconcilePriorityClass(ctx context.Context,
 	return err
 }
 
-func (r *SchedulingPolicyReconciler) reconcileQueue(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) error {
+func (r *SchedulingPolicyReconciler) reconcileQueue(ctx context.Context, sp *framev1beta1.SchedulingPolicy) error {
 	gvk, spec := queueGVKAndSpec(sp)
 	q := &unstructured.Unstructured{}
 	q.SetGroupVersionKind(gvk)
@@ -169,7 +169,7 @@ func (r *SchedulingPolicyReconciler) reconcileQueue(ctx context.Context, sp *fra
 }
 
 // queueGVKAndSpec returns GVK + spec fields for the scheduler-native queue type.
-func queueGVKAndSpec(sp *framev1alpha1.SchedulingPolicy) (schema.GroupVersionKind, map[string]any) {
+func queueGVKAndSpec(sp *framev1beta1.SchedulingPolicy) (schema.GroupVersionKind, map[string]any) {
 	weight := int64(1)
 	if sp.Spec.QueueWeight != nil {
 		weight = int64(*sp.Spec.QueueWeight)
@@ -197,7 +197,7 @@ func queueGVKAndSpec(sp *framev1alpha1.SchedulingPolicy) (schema.GroupVersionKin
 	}
 }
 
-func (r *SchedulingPolicyReconciler) reconcileDelete(ctx context.Context, sp *framev1alpha1.SchedulingPolicy) (ctrl.Result, error) {
+func (r *SchedulingPolicyReconciler) reconcileDelete(ctx context.Context, sp *framev1beta1.SchedulingPolicy) (ctrl.Result, error) {
 	if sp.Spec.PriorityClass != "" {
 		pc := &schedulingv1.PriorityClass{}
 		pc.Name = sp.Spec.PriorityClass
@@ -220,7 +220,7 @@ func (r *SchedulingPolicyReconciler) reconcileDelete(ctx context.Context, sp *fr
 	return ctrl.Result{}, r.Update(ctx, sp)
 }
 
-func appliedMsg(sp *framev1alpha1.SchedulingPolicy) string {
+func appliedMsg(sp *framev1beta1.SchedulingPolicy) string {
 	msg := fmt.Sprintf("scheduler=%s", sp.Spec.Scheduler)
 	if sp.Spec.PriorityClass != "" {
 		msg += fmt.Sprintf(" priorityClass=%s", sp.Spec.PriorityClass)
@@ -234,7 +234,7 @@ func appliedMsg(sp *framev1alpha1.SchedulingPolicy) string {
 // SetupWithManager sets up the controller with the Manager.
 func (r *SchedulingPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1alpha1.SchedulingPolicy{}).
+		For(&framev1beta1.SchedulingPolicy{}).
 		Named("schedulingpolicy").
 		Complete(r)
 }

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"strings"
@@ -23,21 +23,21 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	// TODO (user): Add any additional imports if needed
 )
 
 var _ = Describe("FrameJob Webhook", func() {
 	var (
-		obj       *framev1alpha1.FrameJob
-		oldObj    *framev1alpha1.FrameJob
+		obj       *framev1beta1.FrameJob
+		oldObj    *framev1beta1.FrameJob
 		validator FrameJobCustomValidator
 		defaulter FrameJobCustomDefaulter
 	)
 
 	BeforeEach(func() {
-		obj = &framev1alpha1.FrameJob{}
-		oldObj = &framev1alpha1.FrameJob{}
+		obj = &framev1beta1.FrameJob{}
+		oldObj = &framev1beta1.FrameJob{}
 		validator = FrameJobCustomValidator{}
 		Expect(validator).NotTo(BeNil(), "Expected validator to be initialized")
 		defaulter = FrameJobCustomDefaulter{}
@@ -92,8 +92,8 @@ func TestValidateFrameJobAdmitsGPUsAtLowServiceClass(t *testing.T) {
 	// F8: the constraint was deleted deliberately. This test is the guard
 	// against it being "restored" by someone reading the old doc comment in a
 	// git blame.
-	job := &framev1alpha1.FrameJob{
-		Spec: framev1alpha1.FrameJobSpec{
+	job := &framev1beta1.FrameJob{
+		Spec: framev1beta1.FrameJobSpec{
 			Pipeline:     "neura-training-dag",
 			ServiceClass: "LOW",
 			GPUCount:     2,
@@ -109,8 +109,8 @@ func TestValidateFrameJobAdmitsGPUsAtLowServiceClass(t *testing.T) {
 }
 
 func TestValidateFrameJobWarnsOnUnknownPipeline(t *testing.T) {
-	job := &framev1alpha1.FrameJob{
-		Spec: framev1alpha1.FrameJobSpec{Pipeline: "training", ServiceClass: "LOW", GPUCount: 2},
+	job := &framev1beta1.FrameJob{
+		Spec: framev1beta1.FrameJobSpec{Pipeline: "training", ServiceClass: "LOW", GPUCount: 2},
 	}
 	warnings, err := validateFrameJob(job)
 	if err != nil {

@@ -17,7 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
+	"github.com/rmocq/frame/internal/services/provider"
 	"github.com/rmocq/frame/internal/services/provider/inference"
 )
 
@@ -51,13 +53,13 @@ func argsContain(args []string, flag, value string) bool {
 // file reconciles against. seedModelCache controls whether the default model
 // cache PVC exists in the fake client — every test wants it present except
 // the one proving what happens when it is missing.
-func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.Client, *servicesv1alpha1.FrameService) {
+func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.Client, *servicesv1beta1.FrameService) {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
-	_ = servicesv1alpha1.AddToScheme(scheme)
+	_ = servicesv1beta1.AddToScheme(scheme)
 
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	if seedModelCache {
@@ -71,12 +73,12 @@ func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.
 	// fake client satisfies both interfaces, and Reconcile's model-cache
 	// check is exercised the same way either way in these tests.
 	p := inference.New(7680, c, c)
-	svc := &servicesv1alpha1.FrameService{
+	svc := &servicesv1beta1.FrameService{
 		ObjectMeta: metav1.ObjectMeta{Name: "llama", Namespace: "research"},
-		Spec: servicesv1alpha1.FrameServiceSpec{
+		Spec: servicesv1beta1.FrameServiceSpec{
 			Type:         "inference",
 			ServiceClass: "HIGH",
-			Parameters: map[string]string{
+			Parameters: map[string]framev1beta1.ParameterValue{
 				"model":         "llama-3.1-8b-instruct",
 				"contextLength": "8192",
 			},
@@ -87,7 +89,7 @@ func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.
 
 // newReconcileFixture is newFixture with the default model cache PVC already
 // present — the common case every test but the missing-cache one wants.
-func newReconcileFixture(t *testing.T) (*inference.Provider, client.Client, *servicesv1alpha1.FrameService) {
+func newReconcileFixture(t *testing.T) (*inference.Provider, client.Client, *servicesv1beta1.FrameService) {
 	return newFixture(t, true)
 }
 
@@ -122,7 +124,7 @@ func TestReconcileCreatesADeploymentSizedFromTheModel(t *testing.T) {
 
 	// CPU and memory come from Size, not recomputed independently: they must
 	// be the exact numbers the operator's request was costed against.
-	sizing, err := p.Size(svc.Spec.Parameters)
+	sizing, err := p.Size(provider.Params(svc.Spec.Parameters))
 	if err != nil {
 		t.Fatalf("Size returned %v", err)
 	}
@@ -461,7 +463,7 @@ func TestReconcileDegradesWhenModelCacheCheckFails(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
-	_ = servicesv1alpha1.AddToScheme(scheme)
+	_ = servicesv1beta1.AddToScheme(scheme)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 	// Only the PVC lookup is intercepted: everything else — the Deployment
@@ -478,12 +480,12 @@ func TestReconcileDegradesWhenModelCacheCheckFails(t *testing.T) {
 	})
 
 	p := inference.New(7680, c, apiReader)
-	svc := &servicesv1alpha1.FrameService{
+	svc := &servicesv1beta1.FrameService{
 		ObjectMeta: metav1.ObjectMeta{Name: "llama", Namespace: "research"},
-		Spec: servicesv1alpha1.FrameServiceSpec{
+		Spec: servicesv1beta1.FrameServiceSpec{
 			Type:         "inference",
 			ServiceClass: "HIGH",
-			Parameters: map[string]string{
+			Parameters: map[string]framev1beta1.ParameterValue{
 				"model":         "llama-3.1-8b-instruct",
 				"contextLength": "8192",
 			},
@@ -749,7 +751,7 @@ func TestReconcileDegradesOnCreateContainerConfigError(t *testing.T) {
 // seedFailingPod creates a Pod carrying containerStatus and returns it, so the
 // crash-loop tests below differ only in the status they are proving.
 func seedFailingPod(t *testing.T, ctx context.Context, c client.Client,
-	svc *servicesv1alpha1.FrameService, name string, cs corev1.ContainerStatus) {
+	svc *servicesv1beta1.FrameService, name string, cs corev1.ContainerStatus) {
 	t.Helper()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1176,12 +1178,12 @@ func TestReconcilePreservesSecurityContextFieldsItDoesNotOwn(t *testing.T) {
 // scheduling priority is derived from spec.serviceClass through the same
 // mapping the FrameJob controller uses, not from a field of its own.
 func TestReconcileSetsPriorityClassFromServiceClass(t *testing.T) {
-	for serviceClass, want := range map[string]string{
-		"HIGH":   "frame-high",
-		"MEDIUM": "frame-medium",
-		"LOW":    "frame-low",
+	for serviceClass, want := range map[framev1beta1.ServiceClass]string{
+		framev1beta1.ServiceClassHigh:   "frame-high",
+		framev1beta1.ServiceClassMedium: "frame-medium",
+		framev1beta1.ServiceClassLow:    "frame-low",
 	} {
-		t.Run(serviceClass, func(t *testing.T) {
+		t.Run(string(serviceClass), func(t *testing.T) {
 			// newReconcileFixture and newFixture are the helpers this file
 			// already uses for every other Deployment assertion; reuse them
 			// rather than building a second fixture shape.

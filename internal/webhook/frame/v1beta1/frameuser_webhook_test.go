@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"context"
@@ -28,13 +28,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
-func user(name, role string) *framev1alpha1.FrameUser {
-	return &framev1alpha1.FrameUser{
+func user(name, role string) *framev1beta1.FrameUser {
+	return &framev1beta1.FrameUser{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "cluster-control"},
-		Spec: framev1alpha1.FrameUserSpec{
+		Spec: framev1beta1.FrameUserSpec{
 			Email: name + "@example.com",
 			Role:  role,
 		},
@@ -42,7 +42,7 @@ func user(name, role string) *framev1alpha1.FrameUser {
 }
 
 var _ = Describe("FrameUser webhook", func() {
-	newValidator := func(objs ...*framev1alpha1.FrameUser) *FrameUserCustomValidator {
+	newValidator := func(objs ...*framev1beta1.FrameUser) *FrameUserCustomValidator {
 		b := fake.NewClientBuilder().WithScheme(scheme.Scheme)
 		for _, o := range objs {
 			b = b.WithObjects(o)
@@ -51,48 +51,48 @@ var _ = Describe("FrameUser webhook", func() {
 	}
 
 	It("refuses deleting the only admin", func() {
-		only := user("alice", framev1alpha1.RoleAdmin)
-		v := newValidator(only, user("bob", framev1alpha1.RoleViewer))
+		only := user("alice", framev1beta1.RoleAdmin)
+		v := newValidator(only, user("bob", framev1beta1.RoleViewer))
 		_, err := v.ValidateDelete(context.Background(), only)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("last admin"))
 	})
 
 	It("allows deleting an admin when another remains", func() {
-		alice := user("alice", framev1alpha1.RoleAdmin)
-		v := newValidator(alice, user("carol", framev1alpha1.RoleAdmin))
+		alice := user("alice", framev1beta1.RoleAdmin)
+		v := newValidator(alice, user("carol", framev1beta1.RoleAdmin))
 		_, err := v.ValidateDelete(context.Background(), alice)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("refuses demoting the only admin", func() {
-		alice := user("alice", framev1alpha1.RoleAdmin)
+		alice := user("alice", framev1beta1.RoleAdmin)
 		v := newValidator(alice)
 		demoted := alice.DeepCopy()
-		demoted.Spec.Role = framev1alpha1.RoleViewer
+		demoted.Spec.Role = framev1beta1.RoleViewer
 		_, err := v.ValidateUpdate(context.Background(), alice, demoted)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("last admin"))
 	})
 
 	It("allows an admin to keep being an admin", func() {
-		alice := user("alice", framev1alpha1.RoleAdmin)
+		alice := user("alice", framev1beta1.RoleAdmin)
 		v := newValidator(alice)
 		same := alice.DeepCopy()
-		same.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+		same.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 		_, err := v.ValidateUpdate(context.Background(), alice, same)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("allows deleting a non-admin even if no admin exists", func() {
-		bob := user("bob", framev1alpha1.RoleViewer)
+		bob := user("bob", framev1beta1.RoleViewer)
 		v := newValidator(bob)
 		_, err := v.ValidateDelete(context.Background(), bob)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("fails closed when the admin list cannot be read", func() {
-		alice := user("alice", framev1alpha1.RoleAdmin)
+		alice := user("alice", framev1beta1.RoleAdmin)
 		c := fake.NewClientBuilder().
 			WithScheme(scheme.Scheme).
 			WithObjects(alice).

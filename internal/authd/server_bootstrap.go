@@ -13,12 +13,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // emailPattern mirrors the CRD's own validation
 // (`+kubebuilder:validation:Pattern` on FrameUserSpec.Email in
-// api/v1alpha1/frameuser_types.go): no '@' or whitespace on either side of
+// api/frame/v1beta1/frameuser_types.go): no '@' or whitespace on either side of
 // exactly one '@'. Checking it here means a malformed email is rejected with
 // a clean 400 instead of surfacing as an opaque admission-webhook failure
 // after the Secret has already been consulted.
@@ -74,15 +74,15 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := &framev1alpha1.FrameUser{
+	user := &framev1beta1.FrameUser{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.cfg.Namespace},
-		Spec: framev1alpha1.FrameUserSpec{
+		Spec: framev1beta1.FrameUserSpec{
 			Email: body.Email,
-			Role:  framev1alpha1.RoleAdmin,
+			Role:  framev1beta1.RoleAdmin,
 			// The first admin enrols a passkey next (POST /auth/register/*,
 			// once they have a session); it does not get a password by
 			// default.
-			PasswordAuth: framev1alpha1.PasswordDisabled,
+			PasswordAuth: framev1beta1.PasswordDisabled,
 		},
 	}
 	if err := s.cfg.Store.Create(r.Context(), user); err != nil {

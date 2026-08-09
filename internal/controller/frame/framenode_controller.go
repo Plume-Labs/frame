@@ -39,7 +39,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 const frameNodeFinalizer = "frame.plume-labs.io/framenode"
@@ -54,6 +54,20 @@ const (
 	nodePhaseOnline = "Online"
 )
 
+// nodePhaseFromStatus is the FrameNode reconciler's state-machine input.
+//
+// It used to read fn.Status.Phase. That field is gone (F2), and the Ready
+// condition's reason has always carried the same value — the controller set
+// Reason: phase alongside it — so this is a read of the same information
+// from the place it now lives. It is deliberately not the conversion
+// package's FrameNodePhaseFromConditions: controllers work on the hub and
+// must not depend on a spoke's projection, which answers "" for any reason
+// outside v1alpha1's phase enum precisely because it exists to feed a
+// v1alpha1 reader, not to drive this state machine.
+func nodePhaseFromStatus(fn *framev1beta1.FrameNode) string {
+	return readyReason(fn.Status.Conditions)
+}
+
 // FrameNodeReconciler reconciles a FrameNode object
 type FrameNodeReconciler struct {
 	client.Client
@@ -67,7 +81,7 @@ type FrameNodeReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch;update
 
 func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var fn framev1alpha1.FrameNode
+	var fn framev1beta1.FrameNode
 	if err := r.Get(ctx, req.NamespacedName, &fn); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -87,7 +101,7 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Phase 2: full spec present, not yet provisioned → apply machineConfig.
-	if fn.Status.Phase == "" || fn.Status.Phase == nodePhaseDiscovered {
+	if p := nodePhaseFromStatus(&fn); p == "" || p == nodePhaseDiscovered {
 		return r.reconcileProvision(ctx, &fn)
 	}
 
@@ -99,10 +113,10 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // populates status.discoveredDisks / discoveredTalosVersion. Even if the call
 // fails (node not yet reachable) the phase advances to Discovered so the UI can
 // let the user fill in spec manually.
-func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev1alpha1.FrameNode) (ctrl.Result, error) {
+func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev1beta1.FrameNode) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	if fn.Status.Phase == nodePhaseDiscovered {
+	if nodePhaseFromStatus(fn) == nodePhaseDiscovered {
 		// Waiting for user to patch spec with full disk/network/role info.
 		// The controller has still looked at this generation even though
 		// there's nothing else to do with it, so observedGeneration must
@@ -118,7 +132,6 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 
 	patch := client.MergeFrom(fn.DeepCopy())
 	fn.Status.ObservedGeneration = fn.Generation
-	fn.Status.Phase = nodePhaseDiscovered
 	fn.Status.DiscoveredDisks = nil
 	fn.Status.DiscoveredNICs = nil
 
@@ -150,7 +163,7 @@ type talosDiscoveryClient interface {
 	Disks(context.Context, ...grpc.CallOption) (*storageapi.DisksResponse, error)
 }
 
-func (r *FrameNodeReconciler) populateDiscovery(ctx context.Context, fn *framev1alpha1.FrameNode, c talosDiscoveryClient) {
+func (r *FrameNodeReconciler) populateDiscovery(ctx context.Context, fn *framev1beta1.FrameNode, c talosDiscoveryClient) {
 	log := logf.FromContext(ctx)
 
 	if vr, err := c.Version(ctx); err == nil && len(vr.Messages) > 0 && vr.Messages[0].Version != nil {
@@ -166,7 +179,7 @@ func (r *FrameNodeReconciler) populateDiscovery(ctx context.Context, fn *framev1
 	}
 	for _, msg := range dr.Messages {
 		for _, d := range msg.Disks {
-			fn.Status.DiscoveredDisks = append(fn.Status.DiscoveredDisks, framev1alpha1.DiskInfo{
+			fn.Status.DiscoveredDisks = append(fn.Status.DiscoveredDisks, framev1beta1.DiskInfo{
 				Name: "/dev/" + d.DeviceName,
 				Size: humanizeBytes(d.Size),
 				Type: diskTypeStr(d.Type),
@@ -178,7 +191,7 @@ func (r *FrameNodeReconciler) populateDiscovery(ctx context.Context, fn *framev1
 // reconcileProvision generates a Talos machineConfig and applies it via the maintenance API
 // (port 50000, unauthenticated). Whether the call succeeds or not, phase becomes Provisioning
 // so that reconcileOnline can start watching for the k8s Node to appear.
-func (r *FrameNodeReconciler) reconcileProvision(ctx context.Context, fn *framev1alpha1.FrameNode) (ctrl.Result, error) {
+func (r *FrameNodeReconciler) reconcileProvision(ctx context.Context, fn *framev1beta1.FrameNode) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// 3s is enough for a LAN node and keeps envtest tests fast on unreachable hosts.
@@ -251,7 +264,7 @@ func applyNodeLabel(labels map[string]string, key, value string) {
 }
 
 // reconcileOnline syncs Kubernetes Node readiness back into the FrameNode status.
-func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1alpha1.FrameNode) (ctrl.Result, error) {
+func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1beta1.FrameNode) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	nodeName := fn.Spec.Hostname
@@ -275,7 +288,7 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	}
 	applyNodeLabel(node.Labels, nodeLabelRack, fn.Spec.Rack)
 	applyNodeLabel(node.Labels, nodeLabelZone, fn.Spec.Zone)
-	applyNodeLabel(node.Labels, nodeLabelServiceClass, fn.Spec.ServiceClass)
+	applyNodeLabel(node.Labels, nodeLabelServiceClass, string(fn.Spec.ServiceClass))
 	applyNodeLabel(node.Labels, nodeLabelRole, fn.Spec.Role)
 	rdma := ""
 	if fn.Spec.RDMAInterface != "" {
@@ -294,7 +307,6 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	phase := nodePhase(&node)
 	patch := client.MergeFrom(fn.DeepCopy())
 	fn.Status.ObservedGeneration = fn.Generation
-	fn.Status.Phase = phase
 	fn.Status.NodeName = node.Name
 	fn.Status.Capacity = node.Status.Capacity
 	fn.Status.Allocatable = node.Status.Allocatable
@@ -319,7 +331,7 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 }
 
-func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1alpha1.FrameNode) (ctrl.Result, error) {
+func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1beta1.FrameNode) (ctrl.Result, error) {
 	nodeName := fn.Spec.Hostname
 	if nodeName == "" {
 		nodeName = fn.Name
@@ -342,13 +354,15 @@ func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1al
 	return ctrl.Result{}, r.Update(ctx, fn)
 }
 
-func (r *FrameNodeReconciler) setPhase(ctx context.Context, fn *framev1alpha1.FrameNode, phase, msg string) error {
+func (r *FrameNodeReconciler) setPhase(ctx context.Context, fn *framev1beta1.FrameNode, phase, msg string) error {
 	patch := client.MergeFrom(fn.DeepCopy())
 	fn.Status.ObservedGeneration = fn.Generation
-	fn.Status.Phase = phase
+	// Status is derived from the phase rather than hardcoded to False, so
+	// setPhase(ctx, fn, nodePhaseOnline, ...) stays honest if it is ever
+	// called that way. Today every caller passes a non-Online phase.
 	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
-		Status:             conditionStatus(false),
+		Status:             conditionStatus(phase == nodePhaseOnline),
 		Reason:             phase,
 		Message:            msg,
 		ObservedGeneration: fn.Generation,
@@ -371,7 +385,7 @@ func nodePhase(node *corev1.Node) string {
 }
 
 // generateMachineConfig produces a minimal Talos machineConfig YAML for bootstrapping.
-func generateMachineConfig(fn *framev1alpha1.FrameNode) string {
+func generateMachineConfig(fn *framev1beta1.FrameNode) string {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 
@@ -464,14 +478,14 @@ func diskTypeStr(t storageapi.Disk_DiskType) string {
 // SetupWithManager sets up the controller with the Manager.
 func (r *FrameNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1alpha1.FrameNode{}).
+		For(&framev1beta1.FrameNode{}).
 		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.nodeToFrameNode)).
 		Named("framenode").
 		Complete(r)
 }
 
 func (r *FrameNodeReconciler) nodeToFrameNode(ctx context.Context, obj client.Object) []reconcile.Request {
-	var list framev1alpha1.FrameNodeList
+	var list framev1beta1.FrameNodeList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}

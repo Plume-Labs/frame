@@ -14,27 +14,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	// TODO (user): Add any additional imports if needed
 )
 
-var _ = Describe("FrameResourceQuota Webhook", func() {
+var _ = Describe("TalosUpgrade Webhook", func() {
 	var (
-		obj       *framev1alpha1.FrameResourceQuota
-		oldObj    *framev1alpha1.FrameResourceQuota
-		validator FrameResourceQuotaCustomValidator
+		obj       *framev1beta1.TalosUpgrade
+		oldObj    *framev1beta1.TalosUpgrade
+		validator TalosUpgradeCustomValidator
 	)
 
 	BeforeEach(func() {
-		obj = &framev1alpha1.FrameResourceQuota{}
-		oldObj = &framev1alpha1.FrameResourceQuota{}
-		validator = FrameResourceQuotaCustomValidator{}
+		obj = &framev1beta1.TalosUpgrade{}
+		oldObj = &framev1beta1.TalosUpgrade{}
+		validator = TalosUpgradeCustomValidator{}
 		Expect(validator).NotTo(BeNil(), "Expected validator to be initialized")
 		Expect(oldObj).NotTo(BeNil(), "Expected oldObj to be initialized")
 		Expect(obj).NotTo(BeNil(), "Expected obj to be initialized")
@@ -44,7 +44,7 @@ var _ = Describe("FrameResourceQuota Webhook", func() {
 		// TODO (user): Add any teardown logic common to all tests
 	})
 
-	Context("When creating or updating FrameResourceQuota under Validating Webhook", func() {
+	Context("When creating or updating TalosUpgrade under Validating Webhook", func() {
 		// TODO (user): Add logic for validating webhooks
 		// Example:
 		// It("Should deny creation if a required field is missing", func() {

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"context"
@@ -30,7 +30,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/services/provider"
 )
 
@@ -53,14 +53,14 @@ var frameservicelog = logf.Log.WithName("frameservice-resource")
 
 // SetupFrameServiceWebhookWithManager registers the webhook for FrameService in the manager.
 func SetupFrameServiceWebhookWithManager(mgr ctrl.Manager, registry *provider.Registry) error {
-	return ctrl.NewWebhookManagedBy(mgr, &servicesv1alpha1.FrameService{}).
+	return ctrl.NewWebhookManagedBy(mgr, &servicesv1beta1.FrameService{}).
 		WithValidator(&FrameServiceCustomValidator{Registry: registry}).
 		Complete()
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 // NOTE: If you want to customise the 'path', use the flags '--defaulting-path' or '--validation-path'.
-// +kubebuilder:webhook:path=/validate-services-plume-labs-io-v1alpha1-frameservice,mutating=false,failurePolicy=fail,sideEffects=None,groups=services.plume-labs.io,resources=frameservices,verbs=create;update,versions=v1alpha1,name=vframeservice-v1alpha1.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-services-plume-labs-io-v1beta1-frameservice,mutating=false,failurePolicy=fail,sideEffects=None,groups=services.plume-labs.io,resources=frameservices,verbs=create;update,versions=v1beta1,name=vframeservice-v1beta1.kb.io,admissionReviewVersions=v1
 
 // FrameServiceCustomValidator enforces what the CRD cannot.
 //
@@ -74,13 +74,13 @@ type FrameServiceCustomValidator struct {
 }
 
 func (v *FrameServiceCustomValidator) ValidateCreate(
-	_ context.Context, svc *servicesv1alpha1.FrameService,
+	_ context.Context, svc *servicesv1beta1.FrameService,
 ) (admission.Warnings, error) {
 	return nil, v.validate(svc)
 }
 
 func (v *FrameServiceCustomValidator) ValidateUpdate(
-	_ context.Context, oldObj, newObj *servicesv1alpha1.FrameService,
+	_ context.Context, oldObj, newObj *servicesv1beta1.FrameService,
 ) (admission.Warnings, error) {
 	// The provisioned workload belongs to the provider that made it. Switching
 	// type would orphan it: the new provider does not recognise it, and the old
@@ -94,22 +94,23 @@ func (v *FrameServiceCustomValidator) ValidateUpdate(
 }
 
 func (v *FrameServiceCustomValidator) ValidateDelete(
-	_ context.Context, _ *servicesv1alpha1.FrameService,
+	_ context.Context, _ *servicesv1beta1.FrameService,
 ) (admission.Warnings, error) {
 	return nil, nil
 }
 
-func (v *FrameServiceCustomValidator) validate(svc *servicesv1alpha1.FrameService) error {
+func (v *FrameServiceCustomValidator) validate(svc *servicesv1beta1.FrameService) error {
 	p, err := v.Registry.Get(svc.Spec.Type)
 	if err != nil {
 		return fmt.Errorf("spec.type: %w", err)
 	}
 
-	if err := validateAgainstSchema(p.ParameterSchema(), svc.Spec.Parameters); err != nil {
+	params := provider.Params(svc.Spec.Parameters)
+	if err := validateAgainstSchema(p.ParameterSchema(), params); err != nil {
 		return fmt.Errorf("spec.parameters: %w", err)
 	}
 
-	if _, err := p.Size(svc.Spec.Parameters); err != nil {
+	if _, err := p.Size(params); err != nil {
 		return fmt.Errorf("spec.parameters: %w", err)
 	}
 

@@ -9,11 +9,33 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 )
 
 // Schema is the JSON Schema a provider validates its parameters against.
 type Schema = apiextensionsv1.JSONSchemaProps
+
+// Params widens a FrameService's spec.parameters into the plain
+// map[string]string this seam works in.
+//
+// v1beta1 types the map's values as framev1beta1.ParameterValue, and that
+// named type exists for exactly one reason: controller-gen emits
+// additionalProperties.maxLength only from a map's value *type*. It is a
+// schema bound, not a distinction any provider has an opinion about, so the
+// widening happens here, once, instead of in every Size, Reconcile and
+// admission path. nil stays nil: a provider that distinguishes "no
+// parameters" from "an empty map" keeps doing so.
+func Params(in map[string]framev1beta1.ParameterValue) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = string(v)
+	}
+	return out
+}
 
 // Sizing is the resource footprint a provider derived from an instance's
 // parameters. Quantities are strings so they can be surfaced in status without
@@ -41,7 +63,7 @@ type Result struct {
 	Reason  string
 	Message string
 	// Provisioned lists the objects that now exist, for status.
-	Provisioned []servicesv1alpha1.ProvisionedRef
+	Provisioned []servicesv1beta1.ProvisionedRef
 }
 
 // Provider provisions one service type.
@@ -101,9 +123,9 @@ type Provisioner interface {
 	// — typically the data objects above, which by design outlive owner-reference
 	// GC — belong in Result.Provisioned: it is the only handle the generic
 	// reconcileDelete has on them, since Provisioner exposes no teardown hook.
-	Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameService) (Result, error)
+	Reconcile(ctx context.Context, svc *servicesv1beta1.FrameService) (Result, error)
 
 	// Bind returns what a consumer needs to reach the instance once Reconcile
 	// reports Ready.
-	Bind(ctx context.Context, svc *servicesv1alpha1.FrameService) (Binding, error)
+	Bind(ctx context.Context, svc *servicesv1beta1.FrameService) (Binding, error)
 }

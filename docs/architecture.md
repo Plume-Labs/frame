@@ -107,7 +107,7 @@ Frame is three cooperating layers in one repo.
 
 All controllers follow the same pattern: add finalizer on create, reconcile desired → actual, sync `.status` + conditions, emit a Kubernetes Event, clean up on delete.
 
-**Webhooks** (`internal/webhook/frame/v1alpha1/` and `internal/webhook/services/v1alpha1/`): validation on all eight kinds; defaulting on FrameNode and FrameJob only. Cert-manager manages TLS; see `config/certmanager/`.
+**Webhooks** (`internal/webhook/frame/v1beta1/` and `internal/webhook/services/v1beta1/`): validation on all eight kinds; defaulting on FrameNode and FrameJob only. They register on `v1beta1` alone — `matchPolicy: Equivalent` converts a `v1alpha1` request to the storage version before dispatch, so one registration covers both. Cert-manager manages TLS; see `config/certmanager/`.
 
 ---
 

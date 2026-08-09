@@ -14,27 +14,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	// TODO (user): Add any additional imports if needed
 )
 
 var _ = Describe("FrameNode Webhook", func() {
 	var (
-		obj       *framev1alpha1.FrameNode
-		oldObj    *framev1alpha1.FrameNode
+		obj       *framev1beta1.FrameNode
+		oldObj    *framev1beta1.FrameNode
 		validator FrameNodeCustomValidator
 		defaulter FrameNodeCustomDefaulter
 	)
 
 	BeforeEach(func() {
-		obj = &framev1alpha1.FrameNode{}
-		oldObj = &framev1alpha1.FrameNode{}
+		obj = &framev1beta1.FrameNode{}
+		oldObj = &framev1beta1.FrameNode{}
 		validator = FrameNodeCustomValidator{}
 		Expect(validator).NotTo(BeNil(), "Expected validator to be initialized")
 		defaulter = FrameNodeCustomDefaulter{}
@@ -61,11 +61,11 @@ var _ = Describe("FrameNode Webhook", func() {
 	})
 
 	Context("When creating or updating FrameNode under Validating Webhook", func() {
-		provisioned := func() framev1alpha1.FrameNodeSpec {
-			return framev1alpha1.FrameNodeSpec{
+		provisioned := func() framev1beta1.FrameNodeSpec {
+			return framev1beta1.FrameNodeSpec{
 				IP:   "192.168.10.10",
 				Disk: "/dev/nvme0n1",
-				Network: framev1alpha1.NetworkSpec{
+				Network: framev1beta1.NetworkSpec{
 					Address: "192.168.10.10/24",
 					Gateway: "192.168.10.1",
 					DNS:     []string{"1.1.1.1"},
@@ -77,19 +77,19 @@ var _ = Describe("FrameNode Webhook", func() {
 			// This is the wizard's first call: create the CR so the controller
 			// can reach the maintenance API and report the disks back. Rejecting
 			// it makes every later step unreachable.
-			obj.Spec = framev1alpha1.FrameNodeSpec{IP: "192.168.10.10"}
+			obj.Spec = framev1beta1.FrameNodeSpec{IP: "192.168.10.10"}
 			Expect(validator.ValidateCreate(ctx, obj)).To(BeNil())
 		})
 
 		It("rejects a node whose IP is not an IP, in either phase", func() {
-			obj.Spec = framev1alpha1.FrameNodeSpec{IP: "worker-01"}
+			obj.Spec = framev1beta1.FrameNodeSpec{IP: "worker-01"}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
 		})
 
 		It("still checks the shape of network detail given during discovery", func() {
-			obj.Spec = framev1alpha1.FrameNodeSpec{
+			obj.Spec = framev1beta1.FrameNodeSpec{
 				IP:      "192.168.10.10",
-				Network: framev1alpha1.NetworkSpec{DNS: []string{"not-an-ip"}},
+				Network: framev1beta1.NetworkSpec{DNS: []string{"not-an-ip"}},
 			}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
 		})
@@ -100,20 +100,20 @@ var _ = Describe("FrameNode Webhook", func() {
 		})
 
 		DescribeTable("requires the network once a disk is chosen",
-			func(mutate func(*framev1alpha1.FrameNodeSpec)) {
+			func(mutate func(*framev1beta1.FrameNodeSpec)) {
 				spec := provisioned()
 				mutate(&spec)
 				obj.Spec = spec
 				Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
 			},
-			Entry("no address", func(s *framev1alpha1.FrameNodeSpec) { s.Network.Address = "" }),
-			Entry("no gateway", func(s *framev1alpha1.FrameNodeSpec) { s.Network.Gateway = "" }),
-			Entry("no DNS", func(s *framev1alpha1.FrameNodeSpec) { s.Network.DNS = nil }),
+			Entry("no address", func(s *framev1beta1.FrameNodeSpec) { s.Network.Address = "" }),
+			Entry("no gateway", func(s *framev1beta1.FrameNodeSpec) { s.Network.Gateway = "" }),
+			Entry("no DNS", func(s *framev1beta1.FrameNodeSpec) { s.Network.DNS = nil }),
 		)
 
 		It("applies the same rule on update, so patching in a disk pulls the network in with it", func() {
-			oldObj.Spec = framev1alpha1.FrameNodeSpec{IP: "192.168.10.10"}
-			obj.Spec = framev1alpha1.FrameNodeSpec{IP: "192.168.10.10", Disk: "/dev/nvme0n1"}
+			oldObj.Spec = framev1beta1.FrameNodeSpec{IP: "192.168.10.10"}
+			obj.Spec = framev1beta1.FrameNodeSpec{IP: "192.168.10.10", Disk: "/dev/nvme0n1"}
 			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).Error().To(HaveOccurred())
 
 			obj.Spec = provisioned()

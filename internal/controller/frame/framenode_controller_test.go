@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("FrameNode Controller", func() {
@@ -38,15 +38,15 @@ var _ = Describe("FrameNode Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	fn := &framev1alpha1.FrameNode{}
+	fn := &framev1beta1.FrameNode{}
 
 	BeforeEach(func() {
-		*fn = framev1alpha1.FrameNode{
+		*fn = framev1beta1.FrameNode{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: framev1alpha1.FrameNodeSpec{
+			Spec: framev1beta1.FrameNodeSpec{
 				IP: "10.0.0.1", Role: "worker", Disk: "/dev/nvme0n1",
 				Rack: "rack1", Zone: "zone-a", ServiceClass: "HIGH",
-				Network: framev1alpha1.NetworkSpec{
+				Network: framev1beta1.NetworkSpec{
 					Address: "10.0.0.1/24",
 					Gateway: "10.0.0.1",
 					DNS:     []string{"1.1.1.1"},
@@ -57,14 +57,14 @@ var _ = Describe("FrameNode Controller", func() {
 	})
 
 	AfterEach(func() {
-		fresh := &framev1alpha1.FrameNode{}
+		fresh := &framev1beta1.FrameNode{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameNode{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.FrameNode{}))
 		}, "5s").Should(BeTrue())
 	})
 
@@ -87,7 +87,7 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, fn)).To(Succeed())
-		Expect(fn.Status.Phase).To(Equal("Provisioning"))
+		Expect(nodePhaseFromStatus(fn)).To(Equal("Provisioning"))
 	})
 
 	It("sets Ready=False condition when Provisioning", func() {
@@ -118,9 +118,9 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(k8sClient.Create(ctx, node)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
 
-		fn := &framev1alpha1.FrameNode{
+		fn := &framev1beta1.FrameNode{
 			ObjectMeta: metav1.ObjectMeta{Name: "label-projection", Namespace: "default"},
-			Spec: framev1alpha1.FrameNodeSpec{
+			Spec: framev1beta1.FrameNodeSpec{
 				IP:           "127.0.0.1",
 				Role:         "worker",
 				Hostname:     "label-projection-node",

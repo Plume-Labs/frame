@@ -9,7 +9,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // keyID is stable because the apiserver caches the JWKS: a changing kid would
@@ -45,11 +45,11 @@ func NewIssuer(url, clientID string, key *ecdsa.PrivateKey) (*Issuer, error) {
 // its own `frame:` prefix, so these stay unprefixed here.
 func GroupForRole(role string) string {
 	switch role {
-	case framev1alpha1.RoleAdmin:
+	case framev1beta1.RoleAdmin:
 		return "admins"
-	case framev1alpha1.RoleOperator:
+	case framev1beta1.RoleOperator:
 		return "operators"
-	case framev1alpha1.RoleViewer:
+	case framev1beta1.RoleViewer:
 		return "viewers"
 	default:
 		return ""

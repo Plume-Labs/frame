@@ -14,26 +14,26 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	// TODO (user): Add any additional imports if needed
 )
 
 var _ = Describe("SchedulingPolicy Webhook", func() {
 	var (
-		obj       *framev1alpha1.SchedulingPolicy
-		oldObj    *framev1alpha1.SchedulingPolicy
+		obj       *framev1beta1.SchedulingPolicy
+		oldObj    *framev1beta1.SchedulingPolicy
 		validator SchedulingPolicyCustomValidator
 	)
 
 	BeforeEach(func() {
-		obj = &framev1alpha1.SchedulingPolicy{}
-		oldObj = &framev1alpha1.SchedulingPolicy{}
+		obj = &framev1beta1.SchedulingPolicy{}
+		oldObj = &framev1beta1.SchedulingPolicy{}
 		validator = SchedulingPolicyCustomValidator{}
 		Expect(validator).NotTo(BeNil(), "Expected validator to be initialized")
 		Expect(oldObj).NotTo(BeNil(), "Expected oldObj to be initialized")

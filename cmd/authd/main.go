@@ -42,7 +42,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	"github.com/rmocq/frame/internal/authd"
 )
 
@@ -80,7 +80,7 @@ func run() error {
 	}
 
 	scheme := clientgoscheme.Scheme
-	if err := framev1alpha1.AddToScheme(scheme); err != nil {
+	if err := framev1beta1.AddToScheme(scheme); err != nil {
 		return fmt.Errorf("registering scheme: %w", err)
 	}
 	restCfg, err := ctrl.GetConfig()

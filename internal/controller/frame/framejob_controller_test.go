@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("FrameJob Controller", func() {
@@ -41,16 +41,15 @@ var _ = Describe("FrameJob Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	job := &framev1alpha1.FrameJob{}
+	job := &framev1beta1.FrameJob{}
 
 	BeforeEach(func() {
-		*job = framev1alpha1.FrameJob{
+		*job = framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: framev1alpha1.FrameJobSpec{
+			Spec: framev1beta1.FrameJobSpec{
 				Pipeline:     "neura-training-dag",
 				ServiceClass: "HIGH",
 				Priority:     "high",
-				Namespace:    "default",
 				GPUCount:     8,
 			},
 		}
@@ -58,14 +57,14 @@ var _ = Describe("FrameJob Controller", func() {
 	})
 
 	AfterEach(func() {
-		fresh := &framev1alpha1.FrameJob{}
+		fresh := &framev1beta1.FrameJob{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameJob{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.FrameJob{}))
 		}, "5s").Should(BeTrue())
 	})
 
@@ -130,7 +129,7 @@ var _ = Describe("FrameJob Controller", func() {
 			"reconcileDelete must delete the backing Workflow, not just drop the finalizer")
 
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameJob{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.FrameJob{}))
 		}, "5s").Should(BeTrue(), "removing the finalizer must let the FrameJob itself be garbage-collected")
 	})
 
@@ -138,9 +137,9 @@ var _ = Describe("FrameJob Controller", func() {
 		ctx := context.Background()
 		name := "cond-tracking"
 
-		job := &framev1alpha1.FrameJob{
+		job := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-			Spec:       framev1alpha1.FrameJobSpec{Pipeline: "neura-training-dag", Namespace: "default"},
+			Spec:       framev1beta1.FrameJobSpec{Pipeline: "neura-training-dag"},
 		}
 		Expect(k8sClient.Create(ctx, job)).To(Succeed())
 		DeferCleanup(func() {
@@ -160,7 +159,7 @@ var _ = Describe("FrameJob Controller", func() {
 		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
 
-		fetched := &framev1alpha1.FrameJob{}
+		fetched := &framev1beta1.FrameJob{}
 		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 		ready := meta.FindStatusCondition(fetched.Status.Conditions, conditionTypeReady)
 		Expect(ready).NotTo(BeNil(), "a FrameJob must carry a Ready condition")
@@ -190,10 +189,10 @@ var _ = Describe("FrameJob Controller", func() {
 		ctx := context.Background()
 		name := "obsgen-quiet"
 
-		job := &framev1alpha1.FrameJob{
+		job := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-			Spec: framev1alpha1.FrameJobSpec{
-				Pipeline: "neura-training-dag", Namespace: "default", GPUCount: 1,
+			Spec: framev1beta1.FrameJobSpec{
+				Pipeline: "neura-training-dag", GPUCount: 1,
 			},
 		}
 		Expect(k8sClient.Create(ctx, job)).To(Succeed())
@@ -210,10 +209,10 @@ var _ = Describe("FrameJob Controller", func() {
 		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
 
-		fetched := &framev1alpha1.FrameJob{}
+		fetched := &framev1beta1.FrameJob{}
 		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation))
-		Expect(fetched.Status.Phase).To(Equal(jobPhaseSubmitted))
+		Expect(readyReason(fetched.Status.Conditions)).To(Equal(jobPhaseSubmitted))
 
 		// Drain whatever the creation reconcile already recorded (at least
 		// WorkflowCreated) so the assertion below is only about the next call.
@@ -242,7 +241,8 @@ var _ = Describe("FrameJob Controller", func() {
 		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation),
 			"observedGeneration must still catch up to the new generation")
-		Expect(fetched.Status.Phase).To(Equal(jobPhaseSubmitted), "the derived phase must not have moved")
+		Expect(readyReason(fetched.Status.Conditions)).To(Equal(jobPhaseSubmitted),
+			"the derived phase must not have moved")
 
 		Consistently(recorder.Events, "200ms").ShouldNot(Receive(),
 			"a spec-only edit with no phase change must not re-fire the phase-change event")
@@ -254,20 +254,27 @@ var _ = Describe("FrameJob Controller", func() {
 })
 
 var _ = Describe("buildWorkflow", func() {
-	makeJob := func(priority string, gpus int32, suspended bool, params map[string]string) *framev1alpha1.FrameJob {
-		return &framev1alpha1.FrameJob{
+	makeJob := func(priority string, gpus int32, suspended bool, params map[string]framev1beta1.ParameterValue) *framev1beta1.FrameJob {
+		return &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "myjob", Namespace: "ctrl-ns"},
-			Spec: framev1alpha1.FrameJobSpec{
+			Spec: framev1beta1.FrameJobSpec{
 				Pipeline:     "train-dag",
 				ServiceClass: "HIGH",
 				Priority:     priority,
-				Namespace:    "compute-ns",
 				GPUCount:     gpus,
 				Suspended:    suspended,
 				Parameters:   params,
 			},
 		}
 	}
+
+	// F5: the Workflow lands beside its FrameJob. spec.namespace used to name
+	// the target, which — with the operator holding cluster-wide workflow
+	// CRUD — let any caller direct creation into any namespace.
+	It("creates the Workflow in the FrameJob's own namespace", func() {
+		wf := buildWorkflow(makeJob("high", 1, false, nil))
+		Expect(wf.GetNamespace()).To(Equal("ctrl-ns"))
+	})
 
 	It("sets gpu-count and service-class parameters", func() {
 		wf := buildWorkflow(makeJob("high", 4, false, nil))
@@ -316,7 +323,7 @@ var _ = Describe("buildWorkflow", func() {
 	})
 
 	It("appends extra parameters from spec.parameters", func() {
-		wf := buildWorkflow(makeJob("high", 2, false, map[string]string{"dataset": "s3://bucket/ds"}))
+		wf := buildWorkflow(makeJob("high", 2, false, map[string]framev1beta1.ParameterValue{"dataset": "s3://bucket/ds"}))
 		params, _, _ := unstructured.NestedSlice(wf.Object, "spec", "arguments", "parameters")
 		Expect(params).To(ContainElement(map[string]any{"name": "dataset", "value": "s3://bucket/ds"}))
 	})

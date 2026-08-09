@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // nolint:unused
@@ -33,28 +33,28 @@ var talosupgradelog = logf.Log.WithName("talosupgrade-resource")
 
 // SetupTalosUpgradeWebhookWithManager registers the webhook for TalosUpgrade in the manager.
 func SetupTalosUpgradeWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr, &framev1alpha1.TalosUpgrade{}).
+	return ctrl.NewWebhookManagedBy(mgr, &framev1beta1.TalosUpgrade{}).
 		WithValidator(&TalosUpgradeCustomValidator{}).
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1alpha1-talosupgrade,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=talosupgrades,verbs=create;update,versions=v1alpha1,name=vtalosupgrade-v1alpha1.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1beta1-talosupgrade,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=talosupgrades,verbs=create;update,versions=v1beta1,name=vtalosupgrade-v1beta1.kb.io,admissionReviewVersions=v1
 
 type TalosUpgradeCustomValidator struct{}
 
-func (v *TalosUpgradeCustomValidator) ValidateCreate(_ context.Context, obj *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
+func (v *TalosUpgradeCustomValidator) ValidateCreate(_ context.Context, obj *framev1beta1.TalosUpgrade) (admission.Warnings, error) {
 	return validateTalosUpgrade(obj)
 }
 
-func (v *TalosUpgradeCustomValidator) ValidateUpdate(_ context.Context, _, newObj *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
+func (v *TalosUpgradeCustomValidator) ValidateUpdate(_ context.Context, _, newObj *framev1beta1.TalosUpgrade) (admission.Warnings, error) {
 	return validateTalosUpgrade(newObj)
 }
 
-func (v *TalosUpgradeCustomValidator) ValidateDelete(_ context.Context, _ *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
+func (v *TalosUpgradeCustomValidator) ValidateDelete(_ context.Context, _ *framev1beta1.TalosUpgrade) (admission.Warnings, error) {
 	return nil, nil
 }
 
-func validateTalosUpgrade(tu *framev1alpha1.TalosUpgrade) (admission.Warnings, error) {
+func validateTalosUpgrade(tu *framev1beta1.TalosUpgrade) (admission.Warnings, error) {
 	if err := validateTalosEndpoint(tu.Spec.TalosEndpoint); err != nil {
 		return nil, err
 	}

@@ -38,7 +38,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	"github.com/rmocq/frame/internal/scheduling"
 )
 
@@ -46,7 +46,8 @@ const frameJobFinalizer = "frame.plume-labs.io/framejob"
 
 // FrameJob phases. They are the Reason on the Ready condition, and the value
 // api/frame/v1alpha1's conversion projects back out as the legacy
-// status.phase. Do not write a reason here that is not one of these.
+// status.phase for a v1alpha1 reader. Do not write a reason here that is not
+// one of these.
 const (
 	jobPhaseSubmitted = "Submitted"
 	jobPhaseRunning   = "Running"
@@ -58,7 +59,7 @@ const (
 // setJobReady writes the one condition a FrameJob carries. Ready is True only
 // on Completed: a job that failed an hour ago must not read as healthy, which
 // is precisely what the old write-once Submitted=True condition did (F3).
-func setJobReady(job *framev1alpha1.FrameJob, phase, message string) {
+func setJobReady(job *framev1beta1.FrameJob, phase, message string) {
 	meta.SetStatusCondition(&job.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             conditionStatus(phase == jobPhaseCompleted),
@@ -89,7 +90,7 @@ type FrameJobReconciler struct {
 func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var job framev1alpha1.FrameJob
+	var job framev1beta1.FrameJob
 	if err := r.Get(ctx, req.NamespacedName, &job); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -103,7 +104,10 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, r.Update(ctx, &job)
 	}
 
-	ns := job.Spec.Namespace
+	// The Workflow lives beside its FrameJob. spec.namespace is gone (F5):
+	// with the operator holding cluster-wide workflow CRUD it let a caller
+	// direct creation into any namespace.
+	ns := job.Namespace
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(argoWorkflowGVK)
@@ -122,7 +126,6 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 		patch := client.MergeFrom(job.DeepCopy())
 		job.Status.ObservedGeneration = job.Generation
-		job.Status.Phase = jobPhaseSubmitted
 		job.Status.ArgoWorkflowName = job.Name
 		now := metav1.Now()
 		job.Status.StartTime = &now
@@ -136,7 +139,7 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	phase := workflowPhase(existing, job.Spec.Suspended)
-	phaseChanged := readyReason(job.Status.Conditions) != phase || job.Status.Phase != phase
+	phaseChanged := readyReason(job.Status.Conditions) != phase
 	// Also patch on a bare generation bump with no phase change (e.g. a
 	// spec-only edit that doesn't affect the derived phase): otherwise
 	// status.observedGeneration would go stale exactly when a client most
@@ -146,7 +149,6 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		patch := client.MergeFrom(job.DeepCopy())
 		job.Status.ObservedGeneration = job.Generation
 		if phaseChanged {
-			job.Status.Phase = phase
 			job.Status.Message = workflowMessage(existing)
 			if phase == jobPhaseCompleted || phase == jobPhaseFailed {
 				now := metav1.Now()
@@ -192,8 +194,8 @@ func (r *FrameJobReconciler) syncSuspend(ctx context.Context, wf *unstructured.U
 	return r.Patch(ctx, wf, patch)
 }
 
-func (r *FrameJobReconciler) reconcileDelete(ctx context.Context, job *framev1alpha1.FrameJob) (ctrl.Result, error) {
-	ns := job.Spec.Namespace
+func (r *FrameJobReconciler) reconcileDelete(ctx context.Context, job *framev1beta1.FrameJob) (ctrl.Result, error) {
+	ns := job.Namespace
 	wf := &unstructured.Unstructured{}
 	wf.SetGroupVersionKind(argoWorkflowGVK)
 	wf.SetName(job.Name)
@@ -205,21 +207,25 @@ func (r *FrameJobReconciler) reconcileDelete(ctx context.Context, job *framev1al
 	return ctrl.Result{}, r.Update(ctx, job)
 }
 
-func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
+func buildWorkflow(job *framev1beta1.FrameJob) *unstructured.Unstructured {
 	params := make([]any, 0, 2+len(job.Spec.Parameters))
 	params = append(params,
 		map[string]any{"name": "gpu-count", "value": strconv.Itoa(int(job.Spec.GPUCount))},
-		map[string]any{"name": "service-class", "value": job.Spec.ServiceClass},
+		map[string]any{"name": "service-class", "value": string(job.Spec.ServiceClass)},
 	)
 	for k, v := range job.Spec.Parameters {
-		params = append(params, map[string]any{"name": k, "value": v})
+		// string(v), not v: ParameterValue is a named string type and an
+		// unstructured.Unstructured may only hold the handful of types
+		// runtime.DeepCopyJSONValue knows. Leaving it typed panics on the
+		// first DeepCopy the client makes — which is every write.
+		params = append(params, map[string]any{"name": k, "value": string(v)})
 	}
 
 	labels := map[string]any{
 		"frame.plume-labs.io/job":           job.Name,
 		"frame.plume-labs.io/job-namespace": job.Namespace,
 		"frame.plume-labs.io/pipeline":      job.Spec.Pipeline,
-		"frame.plume-labs.io/service-class": job.Spec.ServiceClass,
+		"frame.plume-labs.io/service-class": string(job.Spec.ServiceClass),
 	}
 
 	spec := map[string]any{
@@ -241,7 +247,7 @@ func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
 			"kind":       "Workflow",
 			"metadata": map[string]any{
 				"name":      job.Name,
-				"namespace": job.Spec.Namespace,
+				"namespace": job.Namespace,
 				"labels":    labels,
 			},
 			"spec": spec,
@@ -288,7 +294,7 @@ func (r *FrameJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	wfType.SetGroupVersionKind(argoWorkflowGVK)
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1alpha1.FrameJob{}).
+		For(&framev1beta1.FrameJob{}).
 		Watches(wfType, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob)).
 		Named("framejob").
 		Complete(r)

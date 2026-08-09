@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"context"
@@ -24,19 +24,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameusers,verbs=get;list;watch
 
 // SetupFrameUserWebhookWithManager registers the webhook for FrameUser.
 func SetupFrameUserWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr, &framev1alpha1.FrameUser{}).
+	return ctrl.NewWebhookManagedBy(mgr, &framev1beta1.FrameUser{}).
 		WithValidator(&FrameUserCustomValidator{Client: mgr.GetClient()}).
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1alpha1-frameuser,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=frameusers,verbs=create;update;delete,versions=v1alpha1,name=vframeuser-v1alpha1.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1beta1-frameuser,mutating=false,failurePolicy=fail,sideEffects=None,groups=frame.plume-labs.io,resources=frameusers,verbs=create;update;delete,versions=v1beta1,name=vframeuser-v1beta1.kb.io,admissionReviewVersions=v1
 
 // FrameUserCustomValidator keeps at least one admin in existence.
 //
@@ -48,20 +48,20 @@ type FrameUserCustomValidator struct {
 	Client client.Client
 }
 
-func (v *FrameUserCustomValidator) ValidateCreate(_ context.Context, _ *framev1alpha1.FrameUser) (admission.Warnings, error) {
+func (v *FrameUserCustomValidator) ValidateCreate(_ context.Context, _ *framev1beta1.FrameUser) (admission.Warnings, error) {
 	return nil, nil
 }
 
-func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *framev1alpha1.FrameUser) (admission.Warnings, error) {
+func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *framev1beta1.FrameUser) (admission.Warnings, error) {
 	// Only a demotion can remove an admin; anything else leaves the count alone.
-	if oldObj.Spec.Role != framev1alpha1.RoleAdmin || newObj.Spec.Role == framev1alpha1.RoleAdmin {
+	if oldObj.Spec.Role != framev1beta1.RoleAdmin || newObj.Spec.Role == framev1beta1.RoleAdmin {
 		return nil, nil
 	}
 	return nil, v.requireAnotherAdmin(ctx, oldObj.Name)
 }
 
-func (v *FrameUserCustomValidator) ValidateDelete(ctx context.Context, obj *framev1alpha1.FrameUser) (admission.Warnings, error) {
-	if obj.Spec.Role != framev1alpha1.RoleAdmin {
+func (v *FrameUserCustomValidator) ValidateDelete(ctx context.Context, obj *framev1beta1.FrameUser) (admission.Warnings, error) {
+	if obj.Spec.Role != framev1beta1.RoleAdmin {
 		return nil, nil
 	}
 	return nil, v.requireAnotherAdmin(ctx, obj.Name)
@@ -69,14 +69,14 @@ func (v *FrameUserCustomValidator) ValidateDelete(ctx context.Context, obj *fram
 
 // requireAnotherAdmin fails unless some admin other than `excluding` exists.
 func (v *FrameUserCustomValidator) requireAnotherAdmin(ctx context.Context, excluding string) error {
-	var users framev1alpha1.FrameUserList
+	var users framev1beta1.FrameUserList
 	if err := v.Client.List(ctx, &users); err != nil {
 		// Fail closed: an unreadable list is not evidence that another admin
 		// exists, and guessing wrong here locks everyone out of the UI.
 		return fmt.Errorf("cannot verify remaining admins: %w", err)
 	}
 	for _, u := range users.Items {
-		if u.Name != excluding && u.Spec.Role == framev1alpha1.RoleAdmin {
+		if u.Name != excluding && u.Spec.Role == framev1beta1.RoleAdmin {
 			return nil
 		}
 	}

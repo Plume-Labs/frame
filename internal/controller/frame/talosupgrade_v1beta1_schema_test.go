@@ -120,7 +120,11 @@ var _ = Describe("TalosUpgrade v1beta1 schema", func() {
 		Expect(found).To(BeFalse(), "v1beta1 must not carry talosSecretRef.namespace (F6)")
 	})
 
-	It("still accepts talosSecretRef.namespace on v1alpha1, so the removal is v1beta1's alone (F6)", func() {
+	It("still accepts talosSecretRef.namespace on v1alpha1, but storage no longer keeps it (F6)", func() {
+		// As on TalosMachineConfig: the field stays admissible on v1alpha1 so
+		// no existing manifest starts erroring, but v1beta1 is the storage
+		// version and has nowhere to put the value, so it does not survive
+		// the round trip.
 		old := &framev1alpha1.TalosUpgrade{
 			ObjectMeta: metav1.ObjectMeta{Name: "tu-f6-alpha-keeps-ns", Namespace: "default"},
 			Spec: framev1alpha1.TalosUpgradeSpec{
@@ -139,7 +143,10 @@ var _ = Describe("TalosUpgrade v1beta1 schema", func() {
 		back := &framev1alpha1.TalosUpgrade{}
 		Expect(k8sClient.Get(ctx,
 			types.NamespacedName{Name: "tu-f6-alpha-keeps-ns", Namespace: "default"}, back)).To(Succeed())
-		Expect(back.Spec.TalosSecretRef.Namespace).To(Equal("kube-system"))
+		Expect(back.Spec.TalosSecretRef.Name).To(Equal("talos-client-certs"),
+			"everything v1beta1 still models must survive the round trip")
+		Expect(back.Spec.TalosSecretRef.Namespace).To(BeEmpty(),
+			"the namespace has nowhere to live at the storage version, so it does not come back")
 	})
 
 	It("rejects a talosSecretRef with no name key at all, which is what Required buys (F7)", func() {

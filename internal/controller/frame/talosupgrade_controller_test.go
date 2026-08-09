@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("TalosUpgrade Controller", func() {
@@ -40,33 +40,30 @@ var _ = Describe("TalosUpgrade Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	tu := &framev1alpha1.TalosUpgrade{}
+	tu := &framev1beta1.TalosUpgrade{}
 
 	BeforeEach(func() {
-		*tu = framev1alpha1.TalosUpgrade{
+		*tu = framev1beta1.TalosUpgrade{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: framev1alpha1.TalosUpgradeSpec{
-				NodeName:      "worker-1",
-				TalosEndpoint: "10.0.0.1:50000",
-				TalosSecretRef: framev1alpha1.TalosSecretReference{
-					Name:      "talos-upgrade-creds",
-					Namespace: ns,
-				},
-				Image: "ghcr.io/siderolabs/installer:v1.8.0",
+			Spec: framev1beta1.TalosUpgradeSpec{
+				NodeName:       "worker-1",
+				TalosEndpoint:  "10.0.0.1:50000",
+				TalosSecretRef: framev1beta1.TalosSecretReference{Name: "talos-upgrade-creds"},
+				Image:          "ghcr.io/siderolabs/installer:v1.8.0",
 			},
 		}
 		Expect(k8sClient.Create(ctx, tu)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		fresh := &framev1alpha1.TalosUpgrade{}
+		fresh := &framev1beta1.TalosUpgrade{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.TalosUpgrade{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.TalosUpgrade{}))
 		}, "5s").Should(BeTrue())
 	})
 

@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("TalosMachineConfig Controller", func() {
@@ -40,33 +40,30 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	tmc := &framev1alpha1.TalosMachineConfig{}
+	tmc := &framev1beta1.TalosMachineConfig{}
 
 	BeforeEach(func() {
-		*tmc = framev1alpha1.TalosMachineConfig{
+		*tmc = framev1beta1.TalosMachineConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: framev1alpha1.TalosMachineConfigSpec{
-				NodeName:      "worker-1",
-				TalosEndpoint: "10.0.0.1:50000",
-				TalosSecretRef: framev1alpha1.TalosSecretReference{
-					Name:      "talos-creds",
-					Namespace: ns,
-				},
-				ConfigPatch: "machine:\n  network:\n    hostname: worker-1\n",
+			Spec: framev1beta1.TalosMachineConfigSpec{
+				NodeName:       "worker-1",
+				TalosEndpoint:  "10.0.0.1:50000",
+				TalosSecretRef: framev1beta1.TalosSecretReference{Name: "talos-creds"},
+				ConfigPatch:    "machine:\n  network:\n    hostname: worker-1\n",
 			},
 		}
 		Expect(k8sClient.Create(ctx, tmc)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		fresh := &framev1alpha1.TalosMachineConfig{}
+		fresh := &framev1beta1.TalosMachineConfig{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.TalosMachineConfig{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.TalosMachineConfig{}))
 		}, "5s").Should(BeTrue())
 	})
 
@@ -96,12 +93,12 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 	})
 
 	It("sets PatchResolveFailed condition when configPatchRef ConfigMap is missing", func() {
-		tmcCM := &framev1alpha1.TalosMachineConfig{
+		tmcCM := &framev1beta1.TalosMachineConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "tmc-cm", Namespace: ns},
-			Spec: framev1alpha1.TalosMachineConfigSpec{
+			Spec: framev1beta1.TalosMachineConfigSpec{
 				NodeName:       "worker-2",
 				TalosEndpoint:  "10.0.0.2:50000",
-				TalosSecretRef: framev1alpha1.TalosSecretReference{Name: "talos-creds", Namespace: ns},
+				TalosSecretRef: framev1beta1.TalosSecretReference{Name: "talos-creds"},
 				ConfigPatchRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "nonexistent-cm"},
 					Key:                  "patch.yaml",
@@ -112,7 +109,7 @@ var _ = Describe("TalosMachineConfig Controller", func() {
 		cmKey := types.NamespacedName{Name: "tmc-cm", Namespace: ns}
 		cmReq := reconcile.Request{NamespacedName: cmKey}
 		defer func() {
-			fresh := &framev1alpha1.TalosMachineConfig{}
+			fresh := &framev1beta1.TalosMachineConfig{}
 			if err := k8sClient.Get(ctx, cmKey, fresh); err == nil {
 				fresh.Finalizers = nil
 				_ = k8sClient.Update(ctx, fresh)

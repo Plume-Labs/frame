@@ -14,27 +14,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/services/provider"
 	"github.com/rmocq/frame/internal/services/provider/inference"
 )
 
 var _ = Describe("FrameService Webhook", func() {
 	var (
-		obj       *servicesv1alpha1.FrameService
-		oldObj    *servicesv1alpha1.FrameService
+		obj       *servicesv1beta1.FrameService
+		oldObj    *servicesv1beta1.FrameService
 		validator FrameServiceCustomValidator
 	)
 
 	BeforeEach(func() {
-		obj = &servicesv1alpha1.FrameService{}
-		oldObj = &servicesv1alpha1.FrameService{}
+		obj = &servicesv1beta1.FrameService{}
+		oldObj = &servicesv1beta1.FrameService{}
 		validator = FrameServiceCustomValidator{
 			// nil client, nil apiReader: the validator only calls Size and
 			// ParameterSchema, never Reconcile or Bind, so nothing here
@@ -43,10 +44,10 @@ var _ = Describe("FrameService Webhook", func() {
 		}
 	})
 
-	valid := func() servicesv1alpha1.FrameServiceSpec {
-		return servicesv1alpha1.FrameServiceSpec{
+	valid := func() servicesv1beta1.FrameServiceSpec {
+		return servicesv1beta1.FrameServiceSpec{
 			Type: "inference",
-			Parameters: map[string]string{
+			Parameters: map[string]framev1beta1.ParameterValue{
 				"model":         "llama-3.1-8b-instruct",
 				"contextLength": "8192",
 			},

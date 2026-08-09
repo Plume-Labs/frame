@@ -37,16 +37,14 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	controller "github.com/rmocq/frame/internal/controller/frame"
 	servicescontroller "github.com/rmocq/frame/internal/controller/services"
 	"github.com/rmocq/frame/internal/services/provider"
 	"github.com/rmocq/frame/internal/services/provider/inference"
-	webhookv1alpha1 "github.com/rmocq/frame/internal/webhook/frame/v1alpha1"
-	webhookservicesv1alpha1 "github.com/rmocq/frame/internal/webhook/services/v1alpha1"
+	webhookv1beta1 "github.com/rmocq/frame/internal/webhook/frame/v1beta1"
+	webhookservicesv1beta1 "github.com/rmocq/frame/internal/webhook/services/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -63,8 +61,8 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(framev1alpha1.AddToScheme(scheme))
-	utilruntime.Must(servicesv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(framev1beta1.AddToScheme(scheme))
+	utilruntime.Must(servicesv1beta1.AddToScheme(scheme))
 	utilruntime.Must(framev1beta1.AddToScheme(scheme))
 	utilruntime.Must(servicesv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
@@ -289,43 +287,43 @@ func main() {
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameNode")
 			os.Exit(1)
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupFrameJobWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupFrameJobWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameJob")
 			os.Exit(1)
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupSchedulingPolicyWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupSchedulingPolicyWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "SchedulingPolicy")
 			os.Exit(1)
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupFrameUserWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupFrameUserWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameUser")
 			os.Exit(1)
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupFrameResourceQuotaWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupFrameResourceQuotaWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameResourceQuota")
 			os.Exit(1)
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupTalosMachineConfigWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupTalosMachineConfigWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosMachineConfig")
 			os.Exit(1)
 		}
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1alpha1.SetupTalosUpgradeWebhookWithManager(mgr); err != nil {
+		if err := webhookv1beta1.SetupTalosUpgradeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosUpgrade")
 			os.Exit(1)
 		}
@@ -340,7 +338,7 @@ func main() {
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookservicesv1alpha1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
+		if err := webhookservicesv1beta1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
 			os.Exit(1)
 		}

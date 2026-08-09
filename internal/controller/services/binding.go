@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/services/provider"
 )
 
@@ -60,13 +60,13 @@ func (e *bindingDegradation) Error() string { return e.Message }
 
 // ownedByValue is the ownedByLabel value written onto every Secret this
 // FrameService's controller creates. Display-only — see ownedByLabel.
-func ownedByValue(svc *servicesv1alpha1.FrameService) string {
+func ownedByValue(svc *servicesv1beta1.FrameService) string {
 	return svc.Namespace + "." + svc.Name
 }
 
 // secretName resolves spec.binding.secretName, defaulting to the
 // FrameService's own name.
-func secretName(svc *servicesv1alpha1.FrameService) string {
+func secretName(svc *servicesv1beta1.FrameService) string {
 	if svc.Spec.Binding.SecretName != "" {
 		return svc.Spec.Binding.SecretName
 	}
@@ -136,12 +136,12 @@ func secretName(svc *servicesv1alpha1.FrameService) string {
 // mechanism that could ever have worked.
 func (r *FrameServiceReconciler) reconcileBinding(
 	ctx context.Context,
-	svc *servicesv1alpha1.FrameService,
+	svc *servicesv1beta1.FrameService,
 	binding provider.Binding,
 ) (string, error) {
 	name := secretName(svc)
 
-	desired := []servicesv1alpha1.ProjectedSecretRef{{Namespace: svc.Namespace, Name: name}}
+	desired := []servicesv1beta1.ProjectedSecretRef{{Namespace: svc.Namespace, Name: name}}
 	for _, ns := range svc.Spec.Binding.ProjectTo {
 		if ns == svc.Namespace {
 			// Projecting into the service's own namespace would just be the
@@ -153,7 +153,7 @@ func (r *FrameServiceReconciler) reconcileBinding(
 		if err := r.checkNamespaceExists(ctx, ns); err != nil {
 			return "", err
 		}
-		desired = append(desired, servicesv1alpha1.ProjectedSecretRef{Namespace: ns, Name: name})
+		desired = append(desired, servicesv1beta1.ProjectedSecretRef{Namespace: ns, Name: name})
 	}
 
 	oldRecorded := svc.Status.Binding.Projected
@@ -163,7 +163,7 @@ func (r *FrameServiceReconciler) reconcileBinding(
 			return "", err
 		}
 		svc.Status.Binding.Projected = append(
-			append([]servicesv1alpha1.ProjectedSecretRef{}, oldRecorded...), toAdd...)
+			append([]servicesv1beta1.ProjectedSecretRef{}, oldRecorded...), toAdd...)
 		if err := r.persistBindingStatus(ctx, svc); err != nil {
 			return "", err
 		}
@@ -192,8 +192,8 @@ func (r *FrameServiceReconciler) reconcileBinding(
 // re-checking, because that record is what ownership means now, not a label.
 func (r *FrameServiceReconciler) claimNewCoordinates(
 	ctx context.Context,
-	svc *servicesv1alpha1.FrameService,
-	toAdd []servicesv1alpha1.ProjectedSecretRef,
+	svc *servicesv1beta1.FrameService,
+	toAdd []servicesv1beta1.ProjectedSecretRef,
 ) error {
 	for _, coord := range toAdd {
 		var existing corev1.Secret
@@ -219,8 +219,8 @@ func (r *FrameServiceReconciler) claimNewCoordinates(
 // Secret named in it is written. See the "Recording before writing" section
 // on reconcileBinding for exactly what this ordering buys and what it leaves
 // possible.
-func (r *FrameServiceReconciler) persistBindingStatus(ctx context.Context, svc *servicesv1alpha1.FrameService) error {
-	var fresh servicesv1alpha1.FrameService
+func (r *FrameServiceReconciler) persistBindingStatus(ctx context.Context, svc *servicesv1beta1.FrameService) error {
+	var fresh servicesv1beta1.FrameService
 	if err := r.Get(ctx, client.ObjectKeyFromObject(svc), &fresh); err != nil {
 		return fmt.Errorf("re-fetching FrameService %s/%s before recording binding: %w", svc.Namespace, svc.Name, err)
 	}
@@ -291,8 +291,8 @@ func (r *FrameServiceReconciler) checkNamespaceExists(ctx context.Context, ns st
 // conflicting Secret already is.
 func (r *FrameServiceReconciler) writeSecret(
 	ctx context.Context,
-	svc *servicesv1alpha1.FrameService,
-	coord servicesv1alpha1.ProjectedSecretRef,
+	svc *servicesv1beta1.FrameService,
+	coord servicesv1beta1.ProjectedSecretRef,
 	data map[string][]byte,
 ) error {
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: coord.Name, Namespace: coord.Namespace}}
@@ -321,7 +321,7 @@ func (r *FrameServiceReconciler) writeSecret(
 // this FrameService had recorded as its own but no longer desires, because a
 // namespace left projectTo or spec.binding.secretName changed. Driven by an
 // explicit list rather than a cluster-wide label lookup: see reconcileBinding.
-func (r *FrameServiceReconciler) deleteSecrets(ctx context.Context, stale []servicesv1alpha1.ProjectedSecretRef) error {
+func (r *FrameServiceReconciler) deleteSecrets(ctx context.Context, stale []servicesv1beta1.ProjectedSecretRef) error {
 	for _, coord := range stale {
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: coord.Name, Namespace: coord.Namespace}}
 		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
@@ -337,8 +337,8 @@ func (r *FrameServiceReconciler) deleteSecrets(ctx context.Context, stale []serv
 // reference (owner references do not cross namespaces), so this explicit
 // delete, driven by the controller's own record rather than a cluster-wide
 // label lookup, is the only thing that will ever remove them.
-func (r *FrameServiceReconciler) deleteAllProjections(ctx context.Context, svc *servicesv1alpha1.FrameService) error {
-	var stale []servicesv1alpha1.ProjectedSecretRef
+func (r *FrameServiceReconciler) deleteAllProjections(ctx context.Context, svc *servicesv1beta1.FrameService) error {
+	var stale []servicesv1beta1.ProjectedSecretRef
 	for _, coord := range svc.Status.Binding.Projected {
 		if coord.Namespace != svc.Namespace {
 			stale = append(stale, coord)
@@ -349,14 +349,14 @@ func (r *FrameServiceReconciler) deleteAllProjections(ctx context.Context, svc *
 
 // coordsMissingFrom returns the entries of coords not present in other.
 func coordsMissingFrom(
-	coords []servicesv1alpha1.ProjectedSecretRef,
-	other []servicesv1alpha1.ProjectedSecretRef,
-) []servicesv1alpha1.ProjectedSecretRef {
-	have := make(map[servicesv1alpha1.ProjectedSecretRef]bool, len(other))
+	coords []servicesv1beta1.ProjectedSecretRef,
+	other []servicesv1beta1.ProjectedSecretRef,
+) []servicesv1beta1.ProjectedSecretRef {
+	have := make(map[servicesv1beta1.ProjectedSecretRef]bool, len(other))
 	for _, c := range other {
 		have[c] = true
 	}
-	var missing []servicesv1alpha1.ProjectedSecretRef
+	var missing []servicesv1beta1.ProjectedSecretRef
 	for _, c := range coords {
 		if !have[c] {
 			missing = append(missing, c)

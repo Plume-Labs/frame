@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	"context"
@@ -39,9 +39,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
-	"github.com/rmocq/frame/internal/services/provider"
-	"github.com/rmocq/frame/internal/services/provider/inference"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -86,7 +84,7 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	var err error
-	err = servicesv1alpha1.AddToScheme(scheme.Scheme)
+	err = framev1beta1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
@@ -134,11 +132,25 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	// nil client, nil apiReader: the webhook only ever calls Size and
-	// ParameterSchema through this registry, neither of which dereferences
-	// either — Reconcile and Bind are the only methods that do, and
-	// admission never reaches them.
-	err = SetupFrameServiceWebhookWithManager(mgr, provider.NewRegistry(inference.New(7680, nil, nil)))
+	err = SetupFrameNodeWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupFrameJobWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupSchedulingPolicyWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupFrameUserWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupFrameResourceQuotaWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupTalosMachineConfigWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupTalosUpgradeWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

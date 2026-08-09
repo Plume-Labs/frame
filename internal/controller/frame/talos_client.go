@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // buildTalosClient creates an authenticated Talos gRPC client from a K8s Secret.
@@ -37,11 +37,13 @@ import (
 //   - "ca"  or "ca.crt"  — PEM-encoded CA certificate
 //   - "crt" or "tls.crt" — PEM-encoded client certificate
 //   - "key" or "tls.key" — PEM-encoded client private key
-func buildTalosClient(ctx context.Context, kube client.Client, namespace, endpoint string, ref framev1alpha1.TalosSecretReference) (*talosclient.Client, error) {
-	ns := ref.Namespace
-	if ns == "" {
-		ns = namespace
-	}
+func buildTalosClient(ctx context.Context, kube client.Client, namespace, endpoint string, ref framev1beta1.TalosSecretReference) (*talosclient.Client, error) {
+	// The Secret is always in the CR's own namespace. v1beta1 removed the
+	// namespace field from TalosSecretReference (F6): the manager holds
+	// cluster-wide `get secrets`, so a caller could otherwise make the
+	// operator read Talos client certificates — node root credentials — out
+	// of any namespace.
+	ns := namespace
 
 	var secret corev1.Secret
 	if err := kube.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: ns}, &secret); err != nil {
