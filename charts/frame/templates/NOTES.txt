@@ -1,0 +1,52 @@
+Frame operator installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+1. Watch the controller-manager come up:
+
+     kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "frame.name" . }}-controller-manager
+
+{{- if gt (.Values.replicaCount | int) 1 }}
+   {{ .Values.replicaCount }} replicas requested — leader election picks exactly one active
+   manager. Confirm with:
+
+     kubectl -n {{ .Release.Namespace }} get lease
+{{- end }}
+
+2. CRDs installed by this chart carry `helm.sh/resource-policy: keep`, so
+   `helm uninstall` leaves them (and any CRs) in place:
+
+     kubectl get crd -l app.kubernetes.io/name=frame
+
+{{- if .Values.webhooks.enabled }}
+
+3. Webhook TLS: {{ if .Values.certManager.enabled }}cert-manager (Issuer "{{ include "frame.name" . }}-selfsigned-issuer") is issuing the
+   serving certificate into Secret "{{ .Values.webhooks.certSecretName }}" and injecting the CA
+   into both WebhookConfigurations. Confirm cert-manager has caught up before
+   applying CRs:
+
+     kubectl -n {{ .Release.Namespace }} get certificate {{ include "frame.name" . }}-serving-cert
+{{- else }}
+   certManager.enabled is false — this chart expects the Secret
+   "{{ .Values.webhooks.certSecretName }}" (keys tls.crt, tls.key) to already exist in
+   {{ .Release.Namespace }}, and webhooks.caBundle to hold the matching CA bundle.
+   See charts/frame/README.md for the exact requirements before applying any CRs.
+{{- end }}
+
+   Once the manager is Ready and (if applicable) the CA is injected, a sample
+   CR should be admitted, e.g.:
+
+     kubectl apply -f config/samples/frame_v1alpha1_framejob.yaml
+{{- else }}
+
+3. webhooks.enabled is false: CRs are accepted without defaulting or
+   validation. Re-enable webhooks.enabled before relying on either.
+{{- end }}
+{{- if .Values.metrics.enabled }}
+
+4. Metrics are served on :8443 of {{ include "frame.name" . }}-controller-manager-metrics-service.
+{{- if .Values.metrics.serviceMonitor.enabled }}
+   A ServiceMonitor is installed for Prometheus Operator to pick up.
+{{- else }}
+   Set metrics.serviceMonitor.enabled=true if Prometheus Operator is present
+   in this cluster and should scrape it.
+{{- end }}
+{{- end }}

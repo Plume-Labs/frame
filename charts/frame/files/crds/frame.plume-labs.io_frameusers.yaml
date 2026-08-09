@@ -1,0 +1,131 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: frameusers.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: FrameUser
+    listKind: FrameUserList
+    plural: frameusers
+    singular: frameuser
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.email
+      name: Email
+      type: string
+    - jsonPath: .spec.role
+      name: Role
+      type: string
+    - jsonPath: .spec.passwordAuth
+      name: Password
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FrameUser is a person who can sign in to the Cluster Control
+          UI.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              email:
+                description: Email identifies the account and becomes the Kubernetes
+                  username.
+                pattern: ^[^@[:space:]]+@[^@[:space:]]+$
+                type: string
+              passwordAuth:
+                default: disabled
+                description: |-
+                  PasswordAuth controls whether this account may sign in with a password
+                  at all. Defaults to disabled: an account is passkey-only unless someone
+                  deliberately opens the other door.
+                enum:
+                - enabled
+                - disabled
+                type: string
+              passwordHash:
+                description: |-
+                  PasswordHash is an argon2id PHC string, written only by authd. It is
+                  meaningless while PasswordAuth is disabled.
+                type: string
+              role:
+                description: Role decides which group the issued token carries.
+                enum:
+                - admin
+                - operator
+                - viewer
+                type: string
+            required:
+            - email
+            - role
+            type: object
+          status:
+            properties:
+              credentials:
+                description: |-
+                  Credentials are owned by authd, which is why they live in status: an
+                  admin editing an account cannot corrupt a key by hand.
+                items:
+                  description: |-
+                    WebAuthnCredential is one enrolled authenticator (a YubiKey, a phone
+                    passkey). Public data only: the private key never leaves the device.
+                  properties:
+                    addedAt:
+                      description: AddedAt records enrolment time, so a user can tell
+                        two keys apart.
+                      format: date-time
+                      type: string
+                    id:
+                      description: ID is the base64url credential ID reported by the
+                        authenticator.
+                      type: string
+                    label:
+                      description: Label is a human name for the key, e.g. "YubiKey
+                        5C".
+                      type: string
+                    publicKey:
+                      description: PublicKey is the base64-encoded COSE public key.
+                      type: string
+                    signCount:
+                      description: |-
+                        SignCount is the authenticator's counter as of the last successful
+                        assertion. A value that fails to advance signals a cloned credential.
+                      format: int32
+                      type: integer
+                  required:
+                  - addedAt
+                  - id
+                  - publicKey
+                  - signCount
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -50,6 +50,7 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(MAKE) helm-sync-crds
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -206,6 +207,37 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+
+##@ Helm
+
+HELM ?= helm
+CHART_DIR := charts/frame
+CRD_SRC_DIR := config/crd/bases
+CRD_DST_DIR := $(CHART_DIR)/files/crds
+
+.PHONY: helm-sync-crds
+helm-sync-crds: ## Copy config/crd/bases/*.yaml into the Helm chart verbatim.
+	@mkdir -p "$(CRD_DST_DIR)"
+	@rm -f "$(CRD_DST_DIR)"/*.yaml
+	@cp "$(CRD_SRC_DIR)"/*.yaml "$(CRD_DST_DIR)"/
+
+.PHONY: helm-crds-check
+helm-crds-check: ## Fail if the chart's CRD copies have drifted from config/crd/bases.
+	@$(MAKE) helm-sync-crds
+	@git diff --exit-code -- "$(CRD_DST_DIR)" || { \
+		echo ""; \
+		echo "Helm chart CRDs are stale relative to config/crd/bases."; \
+		echo "Run 'make manifests' (or 'make helm-sync-crds') and commit the result."; \
+		exit 1; \
+	}
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart.
+	"$(HELM)" lint "$(CHART_DIR)"
+
+.PHONY: helm-parity
+helm-parity: kustomize ## Diff `helm template` against `kustomize build config/default` to catch drift between the two install paths.
+	KUSTOMIZE="$(KUSTOMIZE)" HELM="$(HELM)" ./hack/helm-parity.sh
 
 ##@ Dependencies
 

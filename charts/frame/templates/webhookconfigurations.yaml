@@ -1,0 +1,258 @@
+{{- if .Values.webhooks.enabled }}
+{{- $svc := printf "%s-webhook-service" (include "frame.name" .) }}
+{{- $ns := .Release.Namespace }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "frame.name" . }}-mutating-webhook-configuration
+  {{- if .Values.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ $ns }}/{{ include "frame.name" . }}-serving-cert
+  {{- end }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /mutate-frame-plume-labs-io-v1alpha1-framejob
+  failurePolicy: Fail
+  name: mframejob-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framejobs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /mutate-frame-plume-labs-io-v1alpha1-framenode
+  failurePolicy: Fail
+  name: mframenode-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framenodes
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "frame.name" . }}-validating-webhook-configuration
+  {{- if .Values.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ $ns }}/{{ include "frame.name" . }}-serving-cert
+  {{- end }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-framejob
+  failurePolicy: Fail
+  name: vframejob-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framejobs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-framenode
+  failurePolicy: Fail
+  name: vframenode-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framenodes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-frameresourcequota
+  failurePolicy: Fail
+  name: vframeresourcequota-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - frameresourcequotas
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-services-plume-labs-io-v1alpha1-frameservice
+  failurePolicy: Fail
+  name: vframeservice-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - services.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - frameservices
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-frameuser
+  failurePolicy: Fail
+  name: vframeuser-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - frameusers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-schedulingpolicy
+  failurePolicy: Fail
+  name: vschedulingpolicy-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - schedulingpolicies
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-talosmachineconfig
+  failurePolicy: Fail
+  name: vtalosmachineconfig-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - talosmachineconfigs
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
+      path: /validate-frame-plume-labs-io-v1alpha1-talosupgrade
+  failurePolicy: Fail
+  name: vtalosupgrade-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - talosupgrades
+  sideEffects: None
+{{- end }}
