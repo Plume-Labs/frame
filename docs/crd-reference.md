@@ -14,6 +14,18 @@ CRs in `config/samples/`. Each kind has a controller
 
 ---
 
+### `status.observedGeneration`
+
+Every kind carries a top-level `status.observedGeneration`: the
+`metadata.generation` its status was computed from. Compare it to
+`metadata.generation` to tell whether the controller has seen the current
+spec. Conditions carry their own per-condition `observedGeneration` as well;
+the top-level field is the one a client can read without knowing which
+condition types this kind writes. `FrameUser` has the field and no writer —
+it has no controller.
+
+---
+
 ## FrameNode
 
 A bare-metal machine Frame manages. Bridges a physical/Talos node to its
@@ -307,6 +319,27 @@ provider registry), `parameters` (map[string]string, provider-owned),
 tier, never a node), `binding.secretName` (defaults to the FrameService's own
 name), `binding.projectTo` (namespaces to copy the credentials Secret into,
 default none), `deletionPolicy` (`Retain` default | `Delete`).
+
+`serviceClass` carries two meanings, deliberately. It selects the node pool
+and the `FrameResourceQuota` the instance's workloads belong to, **and** it
+determines the instance's scheduling priority: `HIGH`/`MEDIUM`/`LOW` map onto
+the `frame-high`/`frame-medium`/`frame-low` PriorityClasses that
+`SchedulingPolicy`'s controller creates. There is no `spec.priority` on a
+FrameService and no `spec.priorityClassName`: a long-lived instance's tier is
+its urgency, and letting a user name an arbitrary PriorityClass would break
+the invariant that Frame owns placement. If a HIGH-tier instance ever needs
+to be evicted before a MEDIUM one, that is a `v1beta2` problem (F10).
+
+This mapping only *names* a PriorityClass — it does not create one. Unless a
+`SchedulingPolicy` object exists with `spec.priorityClass` set to exactly
+`frame-high`, `frame-medium` or `frame-low` (see
+`config/samples/frame_v1alpha1_schedulingpolicy.yaml`), the named
+PriorityClass does not exist on the cluster, and the apiserver rejects every
+pod naming a PriorityClass it cannot find — the instance becomes
+unschedulable outright, not merely unprioritised. `FrameJob.spec.priority`
+maps onto the same names through the same failure mode; provisioning
+`SchedulingPolicy` objects for all four tiers is an operational
+prerequisite this API does not enforce.
 
 **Status:** `phase` (Pending/Provisioning/Ready/Degraded/Deleting),
 `conditions[]`, `binding.secretRef` + `binding.endpoint` (never a credential)

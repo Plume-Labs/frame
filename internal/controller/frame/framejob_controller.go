@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	"github.com/rmocq/frame/internal/scheduling"
 )
 
 const frameJobFinalizer = "frame.plume-labs.io/framejob"
@@ -120,6 +121,7 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		log.Info("Created ArgoWorkflow", "name", job.Name, "namespace", ns)
 
 		patch := client.MergeFrom(job.DeepCopy())
+		job.Status.ObservedGeneration = job.Generation
 		job.Status.Phase = jobPhaseSubmitted
 		job.Status.ArgoWorkflowName = job.Name
 		now := metav1.Now()
@@ -134,28 +136,39 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	phase := workflowPhase(existing, job.Spec.Suspended)
-	if readyReason(job.Status.Conditions) != phase || job.Status.Phase != phase {
+	phaseChanged := readyReason(job.Status.Conditions) != phase || job.Status.Phase != phase
+	// Also patch on a bare generation bump with no phase change (e.g. a
+	// spec-only edit that doesn't affect the derived phase): otherwise
+	// status.observedGeneration would go stale exactly when a client most
+	// needs it — to tell whether the controller has caught up with the spec
+	// it is looking at right now.
+	if phaseChanged || job.Status.ObservedGeneration != job.Generation {
 		patch := client.MergeFrom(job.DeepCopy())
-		job.Status.Phase = phase
-		job.Status.Message = workflowMessage(existing)
-		if phase == jobPhaseCompleted || phase == jobPhaseFailed {
-			now := metav1.Now()
-			job.Status.CompletionTime = &now
+		job.Status.ObservedGeneration = job.Generation
+		if phaseChanged {
+			job.Status.Phase = phase
+			job.Status.Message = workflowMessage(existing)
+			if phase == jobPhaseCompleted || phase == jobPhaseFailed {
+				now := metav1.Now()
+				job.Status.CompletionTime = &now
+			}
+			setJobReady(&job, phase, job.Status.Message)
 		}
-		setJobReady(&job, phase, job.Status.Message)
 		if err := r.Status().Patch(ctx, &job, patch); err != nil {
 			return ctrl.Result{}, err
 		}
-		eventType := corev1.EventTypeNormal
-		if phase == jobPhaseFailed {
-			eventType = corev1.EventTypeWarning
-		}
-		r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
-		switch phase {
-		case jobPhaseCompleted:
-			frameJobCompleted.Inc()
-		case jobPhaseFailed:
-			frameJobFailed.Inc()
+		if phaseChanged {
+			eventType := corev1.EventTypeNormal
+			if phase == jobPhaseFailed {
+				eventType = corev1.EventTypeWarning
+			}
+			r.Recorder.Event(&job, eventType, "Phase"+phase, fmt.Sprintf("Job phase changed to %s", phase))
+			switch phase {
+			case jobPhaseCompleted:
+				frameJobCompleted.Inc()
+			case jobPhaseFailed:
+				frameJobFailed.Inc()
+			}
 		}
 	}
 
@@ -218,7 +231,7 @@ func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
 		},
 		"suspend": job.Spec.Suspended,
 	}
-	if pc := jobPriorityClass(job.Spec.Priority); pc != "" {
+	if pc := scheduling.PriorityClassForJobPriority(job.Spec.Priority); pc != "" {
 		spec["priorityClassName"] = pc
 	}
 
@@ -233,22 +246,6 @@ func buildWorkflow(job *framev1alpha1.FrameJob) *unstructured.Unstructured {
 			},
 			"spec": spec,
 		},
-	}
-}
-
-// jobPriorityClass maps FrameJob priority to the Frame-managed PriorityClass name.
-func jobPriorityClass(priority string) string {
-	switch priority {
-	case "critical":
-		return "frame-critical"
-	case "high":
-		return "frame-high"
-	case "medium":
-		return "frame-medium"
-	case "low":
-		return "frame-low"
-	default:
-		return ""
 	}
 }
 

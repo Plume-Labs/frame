@@ -1171,3 +1171,62 @@ func TestReconcilePreservesSecurityContextFieldsItDoesNotOwn(t *testing.T) {
 			pod.SecurityContext.RunAsUser, hardenedRunAsUser)
 	}
 }
+
+// TestReconcileSetsPriorityClassFromServiceClass pins F10: a FrameService's
+// scheduling priority is derived from spec.serviceClass through the same
+// mapping the FrameJob controller uses, not from a field of its own.
+func TestReconcileSetsPriorityClassFromServiceClass(t *testing.T) {
+	for serviceClass, want := range map[string]string{
+		"HIGH":   "frame-high",
+		"MEDIUM": "frame-medium",
+		"LOW":    "frame-low",
+	} {
+		t.Run(serviceClass, func(t *testing.T) {
+			// newReconcileFixture and newFixture are the helpers this file
+			// already uses for every other Deployment assertion; reuse them
+			// rather than building a second fixture shape.
+			p, c, svc := newReconcileFixture(t)
+			svc.Spec.ServiceClass = serviceClass
+
+			if _, err := p.Reconcile(context.Background(), svc); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+
+			var d appsv1.Deployment
+			key := types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}
+			if err := c.Get(context.Background(), key, &d); err != nil {
+				t.Fatalf("get Deployment: %v", err)
+			}
+			if got := d.Spec.Template.Spec.PriorityClassName; got != want {
+				t.Fatalf("priorityClassName = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestReconcileOmitsPriorityClassForAnUnrecognisedServiceClass pins the other
+// half of PriorityClassForServiceClass's contract: an unrecognised
+// serviceClass must not propagate a garbage priorityClassName onto the pod
+// spec, which the apiserver would reject outright (a pod naming a
+// PriorityClass that does not exist fails admission — unlike an empty
+// priorityClassName, which just leaves the pod at the cluster's implicit
+// default). The webhook layer is expected to reject an unrecognised
+// serviceClass before this is ever reached; this test pins Reconcile's own
+// behaviour in isolation, independent of that layer.
+func TestReconcileOmitsPriorityClassForAnUnrecognisedServiceClass(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	svc.Spec.ServiceClass = "NOT-A-REAL-CLASS"
+
+	if _, err := p.Reconcile(context.Background(), svc); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var d appsv1.Deployment
+	key := types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}
+	if err := c.Get(context.Background(), key, &d); err != nil {
+		t.Fatalf("get Deployment: %v", err)
+	}
+	if got := d.Spec.Template.Spec.PriorityClassName; got != "" {
+		t.Fatalf("priorityClassName = %q, want empty for an unrecognised serviceClass", got)
+	}
+}
