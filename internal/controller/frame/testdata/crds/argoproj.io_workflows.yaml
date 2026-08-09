@@ -5,10 +5,23 @@
 # envtest's apiserver knows the "argoproj.io/v1alpha1 Workflow" kind: without
 # it, framejob_controller's r.Create/r.Get/r.Patch against an unstructured
 # Workflow fail client-side with meta.NoKindMatchError before any HTTP call is
-# made, because there is nothing for discovery to find. The schema is
-# deliberately wide open (no status subresource) so tests can read/write
-# spec and status through a single plain Update, matching what
-# framejob_controller.go and its tests do against the real Workflow CRD.
+# made, because there is nothing for discovery to find.
+#
+# The schema is wide open (type: object, x-kubernetes-preserve-unknown-fields,
+# no status subresource) rather than a trimmed copy of the real CRD. That is
+# only safe because Frame never touches a Workflow through a typed client —
+# grep for "argoproj" under internal/ turns up exactly one file,
+# framejob_controller.go, and every read/write there goes through
+# unstructured.NestedString/NestedBool/NestedSlice/SetNestedField against
+# spec.suspend, spec.workflowTemplateRef.name, spec.arguments.parameters[],
+# spec.priorityClassName, status.phase and status.message — plain scalar
+# paths that exist unchanged in the real Argo CRD. No status subresource
+# means a plain Update can set status.phase, matching what both the
+# controller (via r.Status().Patch on the FrameJob, not the Workflow) and
+# this package's tests do. What this fixture cannot catch: the real CRD's
+# own validation, defaulting, or enum constraints rejecting a value Frame
+# sends — that risk lives with the webhook path that talks to the real
+# Argo installation, not with this test double.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
