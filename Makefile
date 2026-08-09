@@ -214,15 +214,22 @@ sbom: syft docker-images ## Write a CycloneDX SBOM for each of the three images 
 # image is the upstream-supported distribution, and it is what the CI action
 # runs too. The docker socket is mounted because the images being scanned live
 # in the local daemon, not a registry.
+#
+# Same severities, same .trivyignore and the same blocking --exit-code 1 as the
+# scan job in .github/workflows/build.yml, so a finding that fails CI fails
+# here first. Divergence between the two would make this target worse than
+# useless: it would say "clean" about a build CI is about to reject.
 .PHONY: scan
-scan: docker-images ## Scan all three images for CRITICAL/HIGH vulnerabilities.
+scan: docker-images ## Scan all three images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
 	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "=== $${name} ($${image}) ==="; \
 		$(CONTAINER_TOOL) run --rm \
 			-v /var/run/docker.sock:/var/run/docker.sock \
+			-v "$(PWD)/.trivyignore:/.trivyignore:ro" \
+			-e TRIVY_IGNOREFILE=/.trivyignore \
 			ghcr.io/aquasecurity/trivy:$(TRIVY_VERSION_BARE) \
-			image --severity CRITICAL,HIGH --ignore-unfixed "$${image}"; \
+			image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 "$${image}"; \
 	done
 
 ##@ Deployment
