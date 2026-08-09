@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -106,7 +107,7 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		job.Status.ArgoWorkflowName = job.Name
 		now := metav1.Now()
 		job.Status.StartTime = &now
-		setCondition(&job.Status.Conditions, metav1.Condition{
+		meta.SetStatusCondition(&job.Status.Conditions, metav1.Condition{
 			Type:               "Submitted",
 			Status:             metav1.ConditionTrue,
 			Reason:             "WorkflowCreated",

@@ -23,6 +23,7 @@ import (
 
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -132,7 +133,7 @@ func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *fr
 
 func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tmc.DeepCopy())
-	setCondition(&tmc.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&tmc.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             status,
 		Reason:             reason,

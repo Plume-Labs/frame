@@ -23,6 +23,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -138,7 +139,7 @@ func isAlreadyAtVersion(err error) bool {
 
 func (r *TalosUpgradeReconciler) setCondition(ctx context.Context, tu *framev1alpha1.TalosUpgrade, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tu.DeepCopy())
-	setCondition(&tu.Status.Conditions, metav1.Condition{
+	meta.SetStatusCondition(&tu.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             status,
 		Reason:             reason,
