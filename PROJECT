@@ -139,4 +139,20 @@ resources:
   kind: SchedulingPolicy
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: plume-labs.io
+  group: frame
+  kind: TalosMachineConfig
+  path: github.com/rmocq/frame/api/frame/v1beta1
+  version: v1beta1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: plume-labs.io
+  group: frame
+  kind: TalosUpgrade
+  path: github.com/rmocq/frame/api/frame/v1beta1
+  version: v1beta1
 version: "3"

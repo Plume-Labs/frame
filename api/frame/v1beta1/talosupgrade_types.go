@@ -14,16 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// TalosUpgradeSpec defines the desired state of TalosUpgrade
+// TalosUpgradeSpec defines the desired state of TalosUpgrade.
+//
+// No spec-level XValidation, on either version: the one rule this kind has
+// bounds a single field and is expressed on that field, where ratcheting can
+// reach it.
 type TalosUpgradeSpec struct {
 	// NodeName is the Kubernetes node name to upgrade.
 	// +kubebuilder:validation:Required
@@ -31,19 +32,21 @@ type TalosUpgradeSpec struct {
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 	NodeName string `json:"nodeName"`
 
-	// TalosEndpoint is the Talos API endpoint (host:port) for this node.
-	// The bracketed form (e.g. [fd00::1]:50000) is accepted for IPv6, same
-	// as net.SplitHostPort in the webhook check this mirrors.
+	// TalosEndpoint is the Talos API endpoint (host:port) for this node. The
+	// bracketed form (e.g. [fd00::1]:50000) is accepted for IPv6, same as
+	// net.SplitHostPort in the webhook check this mirrors.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern="^(\\[[0-9a-fA-F:]+\\]|[a-zA-Z0-9.-]+):[0-9]+$"
 	TalosEndpoint string `json:"talosEndpoint"`
 
-	// TalosSecretRef references the Secret containing Talos client certificates
-	// (keys: ca.crt, client.crt, client.key).
+	// TalosSecretRef references the Secret containing Talos client
+	// certificates, in this CR's own namespace. See TalosSecretReference in
+	// talosmachineconfig_types.go for why it no longer names one.
 	// +kubebuilder:validation:Required
 	TalosSecretRef TalosSecretReference `json:"talosSecretRef"`
 
-	// Image is the Talos installer image to upgrade to (e.g. ghcr.io/siderolabs/installer:v1.8.0).
+	// Image is the Talos installer image to upgrade to
+	// (e.g. ghcr.io/siderolabs/installer:v1.8.0).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=255
 	// +kubebuilder:validation:XValidation:rule="self.split('/')[self.split('/').size()-1].contains(':')",message="image must include a tag (e.g. installer:v1.8.0)"
@@ -51,6 +54,11 @@ type TalosUpgradeSpec struct {
 }
 
 // TalosUpgradeStatus defines the observed state of TalosUpgrade.
+//
+// No status.phase (F2): this kind never had one. Every field here already
+// exists on v1alpha1 — Part 0's Task 6 added observedGeneration there first,
+// deliberately, so that v1beta1 has no field v1alpha1 lacks and Task 18's
+// conversion functions need no annotation escape hatch.
 type TalosUpgradeStatus struct {
 	// ObservedGeneration is the metadata.generation this status was computed
 	// from. A client can compare it to metadata.generation to tell whether
@@ -59,39 +67,19 @@ type TalosUpgradeStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the TalosUpgrade resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the current state of the TalosUpgrade resource.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// This version is deprecated and yet it is still the storage version, for the
-// reason set out at length on the v1alpha1 FrameJob: with conversion still at
-// strategy None the apiserver prunes writes against the *storage* version's
-// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
-// every v1alpha1 write, in the create response itself. TalosUpgrade has
-// exactly one such field — talosSecretRef.namespace, removed by F6 — so the
-// marker staying here is not merely tidy, it is what keeps a v1alpha1 write
-// of that field from coming back empty. Task 19 moves the marker.
+// This is the conversion hub, but it is deliberately *not* the storage
+// version yet — v1alpha1 still carries +kubebuilder:storageversion, and
+// Task 19 moves the marker here when the conversion webhook starts serving.
+// See the note on the v1alpha1 FrameJob for the full reasoning.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
-// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 TalosUpgrade is deprecated; use frame.plume-labs.io/v1beta1. talosSecretRef.namespace is ignored — the Secret is read from this CR's own namespace — and talosSecretRef.name is now required."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="NodeName",type=string,JSONPath=".spec.nodeName"
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=".spec.image"
