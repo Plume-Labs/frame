@@ -1,4 +1,4 @@
-import { NodePlacement, createFrameClient } from '@/lib/frame-sdk'
+import { NodePlacement, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,11 @@ const phaseTone = (p: string) =>
   p === 'Running' ? 'text-accent' : p === 'Pending' ? 'text-warning' : 'text-destructive'
 
 export function WorkloadPlacementView() {
-  const { state, reload } = useLiveResource<NodePlacement[]>(() => frame.cluster.placement())
+  const { state, reload } = useLiveResource<NodePlacement[]>(
+    () => frame.cluster.placement(),
+    [],
+    [coreListPath('pods')],
+  )
   const nodes = state.phase === 'ready' ? state.data : []
   const totalPods = nodes.reduce((s, n) => s + n.total, 0)
 

@@ -1,4 +1,4 @@
-import { PostureStatus, SecurityStatus, TetragonActivity, createFrameClient } from '@/lib/frame-sdk'
+import { PostureStatus, SecurityStatus, TetragonActivity, createFrameClient, crdListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,14 +28,27 @@ const TONE: Record<string, string> = {
 }
 
 export function SecurityView() {
-  const { state, reload } = useLiveResource<SecurityStatus | null>(() => frame.cluster.security())
+  // Falco's Prometheus metrics, not a Kubernetes object — nothing to watch.
+  // Runtime detections are worth surfacing faster than a passive storage
+  // gauge, so this sits below the 30s default.
+  const { state, reload } = useLiveResource<SecurityStatus | null>(() => frame.cluster.security(), [], [], 20_000)
   const sec = state.phase === 'ready' ? state.data : null
-  const { state: postureState, reload: reloadPosture } = useLiveResource<PostureStatus | null>(() =>
-    frame.cluster.posture(),
+  // trivy-operator's VulnerabilityReport/ConfigAuditReport are real CRs.
+  const { state: postureState, reload: reloadPosture } = useLiveResource<PostureStatus | null>(
+    () => frame.cluster.posture(),
+    [],
+    [
+      crdListPath('aquasecurity.github.io', 'v1alpha1', 'vulnerabilityreports'),
+      crdListPath('aquasecurity.github.io', 'v1alpha1', 'configauditreports'),
+    ],
   )
   const posture = postureState.phase === 'ready' ? postureState.data : null
-  const { state: tetraState, reload: reloadTetra } = useLiveResource<TetragonActivity | null>(() =>
-    frame.cluster.tetragon(),
+  // Tetragon's own Prometheus metrics — nothing to watch, same cadence as Falco.
+  const { state: tetraState, reload: reloadTetra } = useLiveResource<TetragonActivity | null>(
+    () => frame.cluster.tetragon(),
+    [],
+    [],
+    20_000,
   )
   const tetra = tetraState.phase === 'ready' ? tetraState.data : null
 

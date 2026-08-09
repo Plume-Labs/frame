@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-import { watchPaths } from './k8s-watch'
+import { pollInterval, watchPaths } from './k8s-watch'
 
 const PATH = '/apis/frame.plume-labs.io/v1alpha1/namespaces/frame-system/framejobs'
 
@@ -146,4 +146,66 @@ describe('watchPaths', () => {
     await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 25_000 })
     stop()
   }, 30_000)
+})
+
+describe('pollInterval', () => {
+  // The 5s floor makes a real-time wait impractically slow for a unit test,
+  // so these three drive fake timers instead — the one deliberate exception
+  // to this file's real-timer style. `afterEach` above already restores real
+  // timers, so nothing extra to clean up.
+
+  it('fires repeatedly on the given interval', () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    const stop = pollInterval(5_000, onChange)
+
+    vi.advanceTimersByTime(4_999)
+    expect(onChange).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(15_000)
+    expect(onChange).toHaveBeenCalledTimes(4)
+
+    stop()
+  })
+
+  it('never fires before the first interval elapses', () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    const stop = pollInterval(30_000, onChange)
+
+    vi.advanceTimersByTime(29_999)
+    stop()
+
+    // Mirrors watchPaths, which never calls back synchronously on subscribe
+    // either: starting a poll must not itself produce an extra refresh on top
+    // of the initial fetch a screen already did on mount. This is a distinct
+    // property from "a refresh does not flash the loading skeleton" — that
+    // one lives in useLiveResource's `run(true)` path and is covered in
+    // useLiveResource.test.ts, not here.
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('stops firing once stopped, even for a tick already scheduled', () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    const stop = pollInterval(5_000, onChange)
+
+    vi.advanceTimersByTime(5_000)
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    stop()
+    vi.advanceTimersByTime(20_000)
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('clamps an interval below the 5s floor instead of honouring it', () => {
+    const setIntervalSpy = vi.spyOn(global, 'setInterval')
+    const stop = pollInterval(100, () => {})
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 5_000)
+    stop()
+  })
 })

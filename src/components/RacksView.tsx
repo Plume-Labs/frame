@@ -1,4 +1,4 @@
-import { Rack, createFrameClient } from '@/lib/frame-sdk'
+import { Rack, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,13 @@ import { Stack, ArrowClockwise, Cpu, CheckCircle, XCircle, HardDrives } from '@p
 const frame = createFrameClient()
 
 export function RacksView() {
-  const { state, reload } = useLiveResource<Rack[]>(() => frame.cluster.racks())
+  const { state, reload } = useLiveResource<Rack[]>(
+    () => frame.cluster.racks(),
+    [],
+    // racks() reads FrameNode CRs for the rack label, real Nodes for physical
+    // topology + readiness, and Pods for the per-node pod count.
+    [frameListPath('framenodes'), coreListPath('nodes'), coreListPath('pods')],
+  )
   const racks = state.phase === 'ready' ? state.data : []
 
   return (

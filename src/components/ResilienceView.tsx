@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { BackupStatus, Resilience, createFrameClient } from '@/lib/frame-sdk'
+import { BackupStatus, Resilience, createFrameClient, coreListPath, crdListPath } from '@/lib/frame-sdk'
+import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,9 +13,31 @@ import { ShieldWarning, ArrowClockwise, Database, ShieldCheck, Archive, Play } f
 const frame = createFrameClient()
 
 export function ResilienceView() {
-  const { state, reload } = useLiveResource<Resilience>(() => frame.cluster.resilience())
+  const cephNs = config().namespaces.ceph
+  const veleroNs = config().namespaces.velero
+  // resilience() reads PodDisruptionBudgets, Pods (for restart hotspots), and
+  // — via ceph() — the CephCluster/CephBlockPool CRs. All real objects; the
+  // cluster-wide Pod watch already covers the osd/mon pods ceph() also reads.
+  const { state, reload } = useLiveResource<Resilience>(
+    () => frame.cluster.resilience(),
+    [],
+    [
+      crdListPath('policy', 'v1', 'poddisruptionbudgets'),
+      coreListPath('pods'),
+      crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
+      crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
+    ],
+  )
   const r = state.phase === 'ready' ? state.data : null
-  const { state: bkState, reload: reloadBk } = useLiveResource<BackupStatus | null>(() => frame.cluster.backups())
+  const { state: bkState, reload: reloadBk } = useLiveResource<BackupStatus | null>(
+    () => frame.cluster.backups(),
+    [],
+    [
+      crdListPath('velero.io', 'v1', 'backups', veleroNs),
+      crdListPath('velero.io', 'v1', 'backupstoragelocations', veleroNs),
+      crdListPath('velero.io', 'v1', 'schedules', veleroNs),
+    ],
+  )
   const bk = bkState.phase === 'ready' ? bkState.data : null
   const [triggering, setTriggering] = useState(false)
 

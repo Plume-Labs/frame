@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Job, createFrameClient, frameListPath } from '@/lib/frame-sdk'
+import { Job, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,7 +34,15 @@ export function FrameJobsView() {
     [frameListPath('framejobs')],
   )
   const jobs = state.phase === 'ready' ? state.data.items : []
-  const { state: nsState } = useLiveResource(() => frame.cluster.neuraSandboxJobs())
+  // neuraSandboxJobs() lists real Pods (sandbox pods, cluster-wide by
+  // selector) through k8sFetch — the same kind of read jobs.list() above
+  // watches, and it predates this mechanism only because it predates the
+  // branch that added one.
+  const { state: nsState } = useLiveResource(
+    () => frame.cluster.neuraSandboxJobs(),
+    [],
+    [coreListPath('pods')],
+  )
   const ns = nsState.phase === 'ready' ? nsState.data : null
   const [cancelTarget, setCancelTarget] = useState<Job | null>(null)
   const [busy, setBusy] = useState<string | null>(null)

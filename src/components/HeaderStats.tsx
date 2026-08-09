@@ -1,4 +1,4 @@
-import { CapacityResource, ClusterNodeInfo, createFrameClient } from '@/lib/frame-sdk'
+import { CapacityResource, ClusterNodeInfo, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { useLiveResource } from '@/hooks/useLiveResource'
 
 const frame = createFrameClient()
@@ -10,6 +10,15 @@ export function HeaderStats() {
       const [nodes, cap] = await Promise.all([frame.cluster.nodes(), frame.cluster.capacity()])
       return { nodes, cap }
     },
+    [],
+    // Both calls read real Node/Pod objects underneath — watched.
+    [coreListPath('nodes'), coreListPath('pods')],
+    // The cpu/mem percentages layer metrics-server usage on top, best-effort,
+    // with no watch support and continuous drift the object watch can't see.
+    // Slow poll: the watch already covers every discrete change (a node
+    // joining, a pod scheduled), this only tops up the number that moves on
+    // its own between them.
+    30_000,
   )
   if (state.phase !== 'ready') return null
 
