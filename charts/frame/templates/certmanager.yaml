@@ -1,0 +1,55 @@
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "frame.name" . }}-selfsigned-issuer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- if .Values.webhooks.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "frame.name" . }}-serving-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+spec:
+  dnsNames:
+  - {{ include "frame.name" . }}-webhook-service.{{ .Release.Namespace }}.svc
+  - {{ include "frame.name" . }}-webhook-service.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "frame.name" . }}-selfsigned-issuer
+  secretName: {{ .Values.webhooks.certSecretName }}
+{{- end }}
+{{- if .Values.metrics.enabled }}
+---
+# Unlike config/certmanager/certificate-metrics.yaml (rendered unconditionally
+# by kustomize, but never mounted into the Deployment — see
+# templates/servicemonitor.yaml), this chart only renders the metrics
+# Certificate when metrics is actually on, to avoid shipping a cert nothing
+# consumes. Its DNS names are otherwise unresolved in kustomize's own output
+# too (the SERVICE_NAME/SERVICE_NAMESPACE replacement that fills them in only
+# fires for the webhook Certificate); this chart fills them in correctly
+# since it isn't relying on kustomize's replacements mechanism.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "frame.name" . }}-metrics-certs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+spec:
+  dnsNames:
+  - {{ include "frame.name" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc
+  - {{ include "frame.name" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "frame.name" . }}-selfsigned-issuer
+  secretName: metrics-server-cert
+{{- end }}
+{{- end }}

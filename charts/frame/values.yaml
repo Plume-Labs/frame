@@ -1,0 +1,86 @@
+# Default values for the frame chart.
+# See charts/frame/README.md for the two load-bearing decisions this chart
+# makes (templated CRDs, fixed resource names) before changing either.
+
+image:
+  repository: example.com/frame
+  # Defaults to .Chart.AppVersion when empty — see charts/frame/README.md.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Leader election is always on (cmd/main.go always gets --leader-elect); with
+# replicaCount > 1 the extra pods sit hot-standby behind the Lease in
+# frame-system, and this is a supported, tested configuration.
+replicaCount: 1
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# CRDs are rendered from templates/ (not Helm's magic crds/ directory) so
+# `helm upgrade` can evolve schemas — see charts/frame/README.md. Each CRD
+# still carries helm.sh/resource-policy: keep, so `helm uninstall` never
+# takes a user's CRs (or the CRDs themselves) down with it.
+crds:
+  install: true
+
+metrics:
+  # Controls both the :8443 metrics port on the manager and the RBAC
+  # (metrics-auth-role / metrics-reader) and Service that expose it.
+  enabled: true
+  # Serve metrics over HTTPS with authn/authz (matches config/default).
+  # Set to false only for local debugging — never in a shared cluster.
+  secure: true
+  serviceMonitor:
+    # Off by default: kustomize's config/prometheus is commented out of
+    # config/default too, so this keeps the chart's default rendering
+    # identical to `kustomize build config/default` (see hack/helm-parity.sh).
+    enabled: false
+    interval: ""
+    labels: {}
+
+webhooks:
+  enabled: true
+  # Secret the manager reads its serving certificate from
+  # (tls.crt / tls.key), mounted at /tmp/k8s-webhook-server/serving-certs.
+  # With certManager.enabled: true, cert-manager owns and rotates this
+  # Secret. With it false, you must create the Secret yourself before
+  # installing — see charts/frame/README.md.
+  certSecretName: webhook-server-cert
+  # Only used when certManager.enabled is false: a PEM CA bundle (base64,
+  # as Kubernetes expects for admission webhook clientConfig.caBundle)
+  # injected into both WebhookConfigurations so the API server trusts the
+  # externally-provisioned certificate above. Leave empty when certManager
+  # is enabled — cert-manager's CA injector fills this in instead.
+  caBundle: ""
+
+certManager:
+  # When true (default), cert-manager issues and rotates the webhook (and,
+  # if metrics.enabled, metrics) serving certificates via a self-signed
+  # Issuer, exactly like config/certmanager does today. When false, the
+  # chart renders no Issuer/Certificate objects and expects the Secrets
+  # named above to already exist — see charts/frame/README.md.
+  enabled: true
+
+networkPolicy:
+  # Matches today's kustomize behaviour: config/network-policy exists but is
+  # commented out of config/default, so it's off by default here too.
+  enabled: false
+
+rbac:
+  # The viewer/editor/admin ClusterRoles scaffolded per CRD (framejob,
+  # framenode, frameresourcequota, schedulingpolicy, talosmachineconfig,
+  # talosupgrade, frameservice). Not used by the manager itself — they're
+  # convenience roles for cluster admins to bind to real users/groups.
+  tierRoles:
+    install: true

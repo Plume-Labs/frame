@@ -1,0 +1,80 @@
+{{- if .Values.rbac.tierRoles.install }}
+{{- $labels := include "frame.chartLabels" . }}
+{{- range (fromYamlArray (include "frame.tierRoleCRDs" .)) }}
+# This rule is not used by the project frame itself. It is provided to allow
+# the cluster admin to help manage permissions for users.
+#
+# Grants full permissions ('*') over {{ .apiGroup }}/{{ .resource }}.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-{{ .roleBase }}-admin-role
+  labels:
+    {{- $labels | nindent 4 }}
+rules:
+- apiGroups:
+  - {{ .apiGroup }}
+  resources:
+  - {{ .resource }}
+  verbs:
+  - '*'
+- apiGroups:
+  - {{ .apiGroup }}
+  resources:
+  - {{ .resource }}/status
+  verbs:
+  - get
+---
+# Grants create/update/delete over {{ .apiGroup }}/{{ .resource }}, without
+# permission to manage RBAC for others.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-{{ .roleBase }}-editor-role
+  labels:
+    {{- $labels | nindent 4 }}
+rules:
+- apiGroups:
+  - {{ .apiGroup }}
+  resources:
+  - {{ .resource }}
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - {{ .apiGroup }}
+  resources:
+  - {{ .resource }}/status
+  verbs:
+  - get
+---
+# Grants read-only access to {{ .apiGroup }}/{{ .resource }}.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-{{ .roleBase }}-viewer-role
+  labels:
+    {{- $labels | nindent 4 }}
+rules:
+- apiGroups:
+  - {{ .apiGroup }}
+  resources:
+  - {{ .resource }}
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - {{ .apiGroup }}
+  resources:
+  - {{ .resource }}/status
+  verbs:
+  - get
+---
+{{- end }}
+{{- end }}

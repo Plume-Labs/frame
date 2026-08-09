@@ -1,0 +1,20 @@
+{{/*
+Deliberately not Helm's magic `crds/` directory: Helm installs that directory
+once on `helm install` and never touches it again on upgrade, but Frame's
+whole Phase B is CRD schema evolution — new printer columns, new versions,
+tightened validation. Rendering from templates/ (reading the synced files
+from files/crds/, which carries no special Helm meaning) means `helm upgrade`
+actually applies CRD changes. See charts/frame/README.md.
+
+files/crds/*.yaml are verbatim copies of config/crd/bases/*.yaml, kept in
+sync by `make helm-sync-crds` (wired into `make manifests` and checked in CI
+by `make helm-crds-check`) — never hand-edit them here.
+*/}}
+{{- if .Values.crds.install }}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{- $crd := $.Files.Get $path | fromYaml }}
+{{- $_ := set $crd.metadata "annotations" (merge (default (dict) $crd.metadata.annotations) (dict "helm.sh/resource-policy" "keep")) }}
+---
+{{ toYaml $crd }}
+{{- end }}
+{{- end }}

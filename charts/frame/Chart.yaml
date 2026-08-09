@@ -1,0 +1,22 @@
+apiVersion: v2
+name: frame
+description: |
+  Frame Kubernetes platform operator: Talos node lifecycle, workload
+  scheduling, resource quotas, and service provisioning, driven by CRDs with
+  validating/defaulting webhooks. Packages the operator only — the React
+  control-plane UI and authd are out of scope for this chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/rmocq/frame
+sources:
+  - https://github.com/rmocq/frame
+keywords:
+  - frame
+  - kubebuilder
+  - operator
+  - talos
+  - kubernetes
+maintainers:
+  - name: Frame maintainers
