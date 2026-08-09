@@ -1,16 +1,20 @@
 # CRD Reference
 
-Eight CRDs across two API groups, both at `v1alpha1` and all namespaced:
-seven in `frame.plume-labs.io` (this page's first seven sections) and
-`FrameService` in `services.plume-labs.io` — a separate group so the service
-catalog can move without blocking the `frame.plume-labs.io` freeze (see
-[roadmap.md](roadmap.md)). Generated CRDs live in `config/crd/bases/`; sample
-CRs in `config/samples/`. Each kind has a controller
-(`internal/controller/<group>/`) except FrameUser, and a webhook
-(`internal/webhook/<group>/v1alpha1/`).
+Eight CRDs across two API groups, all namespaced, all at **`v1beta1`** with
+`v1alpha1` still served and deprecated: seven in `frame.plume-labs.io` (this
+page's first seven sections) and `FrameService` in `services.plume-labs.io` —
+a separate group so the service catalog can move without blocking the
+`frame.plume-labs.io` freeze (see [roadmap.md](roadmap.md)). Generated CRDs
+live in `config/crd/bases/`; sample CRs in `config/samples/`. Each kind has a
+controller (`internal/controller/<group>/`) except FrameUser, and a webhook
+(`internal/webhook/<group>/v1beta1/`).
 
-> `v1alpha1` means the schema may change without conversion guarantees. See
-> [roadmap.md](roadmap.md) for the path to a stable API.
+> This page documents **`v1beta1`**, the storage version and the conversion
+> hub. What the freeze does and does not promise, the nine differences from
+> `v1alpha1`, and the deprecation policy are in
+> [upgrading.md](upgrading.md), "API versions and the migration path". A
+> `v1alpha1` client is still served and still correct; it gets a deprecation
+> warning naming what changed for that kind.
 
 ---
 
@@ -23,6 +27,53 @@ spec. Conditions carry their own per-condition `observedGeneration` as well;
 the top-level field is the one a client can read without knowing which
 condition types this kind writes. `FrameUser` has the field and no writer —
 it has no controller.
+
+### No `status.phase`
+
+No Frame kind has one. Health is reported through `status.conditions`, and
+every kind with a controller writes a `Ready` condition.
+
+This is a rule, not a drift. A single enum forces the API to pick one
+dimension of health out of several and cannot express "provisioned but
+degraded", which is why the Kubernetes API conventions have called `phase`
+strongly discouraged for new APIs since 2019. **Do not add a `phase` field to
+a Frame kind.** If a lifecycle needs more than `Ready`, add a second
+condition type and document its reason vocabulary here.
+
+Three kinds — FrameJob, FrameNode, FrameService — had one at `v1alpha1`, and
+that version still serves it: it is computed out of the conditions on the way
+down and is never stored. The `PHASE` column in `kubectl get framejobs` and
+`kubectl get framenodes` survives on `v1beta1` by reading the `Ready`
+condition's `reason` directly.
+
+`Ready.reason` is therefore part of the frozen contract, because clients
+branch on it:
+
+| Kind | `Ready.reason` vocabulary |
+|---|---|
+| FrameJob | `Submitted`, `Running`, `Suspended`, `Completed`, `Failed`. `status` is `True` only on `Completed`. |
+| FrameNode | `Discovered`, `Provisioning`, `Online`, `Degraded`, `Offline`. `status` is `True` only on `Online`. |
+| FrameResourceQuota | `Reconciled` on success. A reconcile that fails returns an error and requeues rather than writing a failure reason. |
+| SchedulingPolicy | `Applied` on success, `ReconcileError` otherwise (a missing scheduler Queue CRD degrades here rather than hard-failing, and also emits a `QueueCRDMissing` Event). |
+| TalosMachineConfig | `Applied`; failures `PatchResolveFailed`, `ClientBuildFailed`, `ApplyFailed`. |
+| TalosUpgrade | `UpgradeRequested`, `AlreadyAtVersion`; failures `ClientBuildFailed`, `UpgradeFailed`. |
+| FrameService | diagnostic, not a lifecycle: `Reconciled`, `UnknownType`, `NotProvisionable`, `SizeRefused`, `ModelCacheMissing`, and whatever else the provider returns. Read `status`, not `reason`. |
+| FrameUser | none — it has no controller. |
+
+> **Enum members no controller ever wrote (R6).** `v1alpha1`'s `phase` enums
+> were wider than anything that ever populated them. FrameJob's `Pending` is
+> now *reachable* — it is what an object with no conditions at all projects
+> to. FrameNode's `Discovering` and `Failed`, and FrameService's
+> `Provisioning`, are not: nothing ever wrote them, so the projection
+> declines to invent a source. FrameNode projects an unrecognised or absent
+> reason to the empty string (an absent field, which is what an unreconciled
+> node always looked like) rather than guessing `Degraded`, which is an
+> actionable hardware claim that invites draining a healthy node.
+>
+> That is *missing controller behaviour, not dead schema*. Adding those
+> states later is a controller change with no API impact at all, because a
+> condition `reason` is a free string — which is exactly the property the
+> enum did not have.
 
 ---
 
@@ -37,14 +88,35 @@ Kubernetes `v1.Node`.
 least one `network.dns` entry become required once `disk` is set (CEL),
 mirroring what the webhook already enforced.
 
-**Status:** `phase`, `conditions[]`, `kubeletVersion`, `capacity`,
-`allocatable`, `nodeName`. `talosVersion`, `lastHeartbeat`, and `providerID`
-were removed pre-freeze: none had a writer or a reader anywhere in the
-controller, SDK, or UI (`serverClassRef` was already dead and documented as
-such before this cleanup, and is removed with the same evidence).
+`spec.ip` is capped at 45 characters and validated by CEL `isIP()`. That is
+*stricter* than the `net.ParseIP` the `v1alpha1` webhook used: it rejects
+IPv4-mapped IPv6 (`::ffff:1.2.3.4`) and zoned addresses (`fe80::1%eth0`),
+both of which used to be accepted. No stored node is affected.
+`spec.rack` and `spec.zone` carry a 63-character cap and a label-value
+pattern that also admits the empty string — `rack` was previously unbounded
+and is projected onto a Node label, where an over-long value fails at label
+write time with no admission error to explain it.
+`spec.serviceClass` no longer admits `""`; omit the field instead.
+`network.address` is length-bounded and documented as free-form: the name
+says address, every stored value is a CIDR, and nothing enforces either — so
+the freeze bounds the length and declines to guess a semantic pattern. It is
+the one node field written verbatim into a Talos machine config.
 
-**Controller:** finalizer-guarded; secondary-watches core `v1.Node` and maps it
-back to its FrameNode (`nodeToFrameNode`) to keep phase/versions in sync.
+**Status:** `conditions[]`, `kubeletVersion`, `capacity`, `allocatable`,
+`nodeName`, `observedGeneration`. There is no `status.phase` — see "No
+`status.phase`" above; `v1alpha1` still serves one, projected from
+`Ready.reason`. `talosVersion`, `lastHeartbeat`, and `providerID` were
+removed pre-freeze: none had a writer or a reader anywhere in the controller,
+SDK, or UI (`serverClassRef` was already dead and documented as such before
+this cleanup, and is removed with the same evidence).
+
+**Printer columns:** `Phase` (the `Ready` condition's `reason`), `Ready`,
+`Role`, `ServiceClass`, `Zone`, `Age`.
+
+**Controller:** finalizer-guarded; secondary-watches core `v1.Node` and maps
+it back to its FrameNode (`nodeToFrameNode`) to keep the `Ready` condition and
+versions in sync. It branches on the `Ready` condition's `reason` directly,
+not on the `v1alpha1` projection.
 
 ### Node labels Frame writes
 
@@ -82,9 +154,26 @@ because renaming either breaks the other's readers silently.
 
 A workload submitted to the cluster, realized as an Argo `Workflow`.
 
-**Spec:** `pipeline`, optional `serviceClass`, `priority`
-(critical/high/medium/low), `namespace`, `gpuCount`, `parameters` (map),
-`suspended` (bool, default false). `spec.name` was removed pre-freeze: it
+**Spec:** `pipeline`, `serviceClass` (default `LOW`), `priority`
+(critical/high/medium/low, default `medium`), `gpuCount` (0–1024, default 0),
+`parameters` (map, at most 64 keys, each value at most 1024 characters),
+`suspended` (bool, default false). `pipeline` stays an open string — it names
+an Argo `WorkflowTemplate` Frame does not own — but carries DNS-subdomain
+form bounds (253 characters, `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.…)*$`) so a
+malformed value is refused at admission. `serviceClass` and `priority` now
+default in the schema as well as in the defaulting webhook, which means the
+default is applied *before* CEL evaluates rather than after.
+
+`spec.namespace` was removed in `v1beta1` (F5). The Argo Workflow is created
+in the FrameJob's own namespace. A `v1alpha1` read returns the object's own
+namespace, not whatever was set. Removal, rather than a
+`SubjectAccessReview` on the caller, is what closed the cross-namespace
+reach: the SAR is the correct multi-tenant answer and needs
+`AdmissionRequest.UserInfo` plumbed into a raw `admission.Handler`, a
+`create subjectaccessreviews` grant and a fail-closed story; removal got
+there first and is strictly safer.
+
+`spec.name` was removed pre-freeze: it
 was `Required` and pattern-validated, but no controller ever read it
 (`metadata.name` is used throughout) and the SDK's submit path never sent
 it. There is no rule coupling `gpuCount` to `serviceClass`. One used to be
@@ -100,28 +189,31 @@ warning when `pipeline` is outside `knownPipelines`, on the grounds that
 enumerating other people's templates isn't Frame's business. See
 `docs/roadmap.md` and
 `docs/superpowers/specs/2026-08-09-frame-api-freeze-inventory.md`.
-`namespace` carries a DNS-1123 label
-pattern so a malformed value is refused at admission, but is deliberately
-*not* constrained to match this FrameJob's own namespace — the controller
-creates the backing Argo `Workflow` there with cluster-wide RBAC, and
-whether that cross-namespace reach should be narrowed is Phase B's
-RBAC-tier lock-down to decide, not this pre-freeze pass.
 
-**Status:** `phase` (Pending/Submitted/Running/Suspended/Completed/Failed),
-`conditions[]`, `argoWorkflowName`, `startTime`, `completionTime`, `message`.
+**Status:** `conditions[]`, `argoWorkflowName`, `startTime`,
+`completionTime`, `message`, `observedGeneration`. There is no
+`status.phase` — see "No `status.phase`" above.
 
 **Conditions:** `Ready` only. Its `reason` is the job phase — one of
 `Submitted`, `Running`, `Suspended`, `Completed`, `Failed` — and its `status`
 is `True` only for `Completed`. The `Submitted` condition type this kind used
-to write once and never update is gone (F3).
+to write once and never update is gone (F3). An object still carrying only
+that legacy condition projects to `Submitted` at `v1alpha1`, and an object
+with no conditions at all projects to `Pending`; neither is inferred from
+`completionTime`, which the controller sets on failure too.
+
+**Printer columns:** `Phase` (the `Ready` condition's `reason`), `Ready`,
+`Pipeline`, `ServiceClass`, `GPUs`, `Age`.
 
 **Controller:**
-- On create: builds an Argo `Workflow` with `spec.suspend`, `priorityClassName`
-  (mapped from `priority` → `frame-{priority}`), and arguments `gpu-count` +
-  `service-class`; sets `Ready` to `Submitted`.
+- On create: builds an Argo `Workflow` in the FrameJob's own namespace, with
+  `spec.suspend`, `priorityClassName` (mapped from `priority` →
+  `frame-{priority}`), and arguments `gpu-count` + `service-class`; sets
+  `Ready` to `Submitted`.
 - On update: syncs `spec.suspended` → `Workflow.spec.suspend` via patch;
-  derives `phase` from workflow status (Argo `Succeeded` → `Completed`, etc.);
-  surfaces `Suspended` when `spec.suspended=true` and workflow isn't terminal.
+  derives the `Ready` reason from workflow status (Argo `Succeeded` →
+  `Completed`, etc.); surfaces `Suspended` when `spec.suspended=true` and the
+  workflow isn't terminal.
 - Secondary watch on Argo `Workflow` objects (label `frame.plume-labs.io/job` +
   `frame.plume-labs.io/job-namespace`) — reacts to Workflow changes instead of
   polling every 30 s.
@@ -135,10 +227,18 @@ Queue / priority configuration for the HPC scheduler.
 
 **Spec:** `scheduler` (volcano/yunikorn/…), optional `queueName`,
 `priorityClass`, `preemption`, `priorityValue` (int32, default 0),
-`queueWeight` (int32, min 1, default 1). `queueName` and `priorityClass`
+`queueWeight` (int32, 1–10000, default 1). `queueName` and `priorityClass`
 carry a Kubernetes-object-name pattern (not an enum — they name objects
 created outside this CR). `preemption: true` requires `priorityClass` to be
 set (CEL, mirroring the existing webhook check).
+
+> The `preemption` CEL rule is `has()`-guarded on both versions. It has to
+> be: `preemption` is `bool,omitempty`, the apiserver defaults on a write at
+> the *request* version, and **conversion-webhook output is not re-defaulted**
+> — so a `v1alpha1` status patch reached the rule with no `preemption` key at
+> all and failed every reconcile with `no such key`. Every `XValidation` in
+> `api/` was surveyed for the same shape; this was the only unguarded scalar
+> dereference.
 
 `gangScheduling` was removed pre-freeze: it was validated (required
 `queueName` alongside it) and shown in the UI, but no controller ever
@@ -148,7 +248,7 @@ unimplemented; see `docs/roadmap.md`'s V1 path, which records that it
 belongs on `FrameJob` (a property of the job being scheduled, not the
 policy) if someone builds it.
 
-**Status:** `conditions[]`.
+**Status:** `conditions[]`, `observedGeneration`.
 
 **Printer columns:** `Scheduler`, `Queue`, `Ready`, `Reason` (hidden by
 default, `-o wide`), `Age` — previously none; `kubectl get
@@ -163,8 +263,9 @@ schedulingpolicy` showed only `NAME`/`AGE`.
   with `weight` and `reclaimable`.
 - When `scheduler=yunikorn`: reconciles a `yunikorn.apache.org/v1alpha1/Queue`
   with `weight` and `preemption.allowPreemptSelf`.
-- Missing scheduler CRD → `Ready=False` with reason `QueueCRDMissing` (graceful
-  degrade, no retry storm). Missing PriorityClass CRD → hard fail + retry.
+- Missing scheduler CRD → `Ready=False` with reason `ReconcileError` and a
+  `QueueCRDMissing` Event carrying the detail (graceful degrade, no retry
+  storm). Missing PriorityClass CRD → hard fail + retry.
 - Cleanup on delete via finalizer (removes PriorityClass + queue).
 
 ---
@@ -175,7 +276,7 @@ Per-service-class resource ceiling. The controller projects it as a
 `ResourceQuota` named `frame-<serviceclass>` into every namespace labelled
 `frame.plume-labs.io/service-class` with the matching value.
 
-**Spec:** `serviceClass`, optional `maxGPUs`, `maxCPU` (Quantity),
+**Spec:** `serviceClass`, optional `maxGPUs` (0–1024), `maxCPU` (Quantity),
 `maxMemory` (Quantity), `maxJobs`. At least one of the four limits must be
 set (CEL, mirroring the existing webhook check).
 
@@ -214,21 +315,21 @@ e.g. `[fd00::1]:50000`, matching what `net.SplitHostPort` in the webhook
 accepts), pushed down from the webhook. `nodeName` carries a DNS-1123
 subdomain pattern — net-new validation; no webhook ever checked
 `nodeName`'s shape. `talosSecretRef` is a local
-`TalosSecretReference {name, namespace}` type — not `corev1.SecretReference`
-directly, because a kubebuilder marker can't be attached to a subfield of
-an external type, and the CEL equivalent for the namespace pattern
-exceeded the per-schema CEL cost budget (no declared `maxLength` for the
-estimator to bound the regex against). `name` stays optional, matching
-`corev1.SecretReference` (an early version wrongly made it `Required`).
-`namespace` carries a DNS-1123 label pattern that also accepts empty —
-`buildTalosClient` treats `""` as "use this CR's own namespace," a
-fallback the pattern must not block — but is deliberately *not*
-constrained to match this CR's own namespace when non-empty, since the
-controller's Secret RBAC is cluster-wide already; narrowing that is
-Phase B's RBAC-tier lock-down to decide.
+`TalosSecretReference { name }` type — one **required** field (F7), and no
+`namespace` (F6). The Secret is always read from this CR's own namespace,
+which is what an empty `namespace` always meant; the cross-namespace reach
+is gone rather than narrowed by RBAC. A `v1alpha1` client may still set
+`talosSecretRef.namespace`; it is ignored, and a read returns it empty.
 
-**Status:** `conditions[]` (Ready=True reason `Applied`; False reasons:
-`PatchResolveFailed`, `ClientBuildFailed`, `ApplyFailed`).
+The type stays local rather than becoming `corev1.LocalObjectReference`,
+because `LocalObjectReference.Name` is `+optional` and a kubebuilder marker
+cannot be attached to a subfield of an external `k8s.io/api` type — the same
+limitation that created the local type in the first place. Making `name`
+required and reusing the external type were mutually exclusive.
+
+**Status:** `conditions[]`, `observedGeneration` (Ready=True reason
+`Applied`; False reasons: `PatchResolveFailed`, `ClientBuildFailed`,
+`ApplyFailed`).
 
 **Printer columns:** `NodeName`, `Ready`, `Reason` (hidden by default,
 `-o wide`), `Age` — previously none.
@@ -246,7 +347,8 @@ A Talos OS upgrade for a single node.
 
 **Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, `image`. `nodeName`
 and `talosEndpoint` carry the same patterns as `TalosMachineConfig`;
-`talosSecretRef` is the same local `TalosSecretReference` type; `image`
+`talosSecretRef` is the same local `TalosSecretReference { name }` type, with
+the same required `name` and the same absent `namespace`; `image`
 must include a tag (CEL, mirroring the existing webhook check) and is
 capped at 255 characters (`MaxLength`, a new limit added solely to keep
 that CEL rule's cost bounded, not a mirror of anything the webhook checks).
@@ -258,8 +360,9 @@ without first migrating that call to `LifecycleClient` (out of scope here;
 see the deferred-migration note already in
 `internal/controller/frame/talosupgrade_controller.go`).
 
-**Status:** `conditions[]` (Ready=True reasons: `UpgradeRequested`,
-`AlreadyAtVersion`; False reasons: `ClientBuildFailed`, `UpgradeFailed`).
+**Status:** `conditions[]`, `observedGeneration` (Ready=True reasons:
+`UpgradeRequested`, `AlreadyAtVersion`; False reasons: `ClientBuildFailed`,
+`UpgradeFailed`).
 
 **Printer columns:** `NodeName`, `Image`, `Ready`, `Reason` (hidden by
 default, `-o wide`), `Age` — previously none.
@@ -278,7 +381,8 @@ A person who can sign in to the Cluster Control UI. Written by admins and by
 state. It is a record that `authd` reads at sign-in, which is why it is the one
 CRD with no entry in the controller table.
 
-**Spec:** `email` (becomes the Kubernetes username), `role`
+**Spec:** `email` (becomes the Kubernetes username, capped at 254
+characters), `role`
 (`admin` | `operator` | `viewer`, decides the group the issued token carries),
 `passwordAuth` (`enabled` | `disabled`, **defaults to `disabled`** — an account
 is passkey-only unless someone deliberately opens the other door). On
@@ -318,10 +422,10 @@ by demotion, and **fails closed** — if the admin list cannot be read, the requ
 is denied rather than assumed safe.
 
 **Deployment status:** `authd` runs in the `cluster-control` namespace but is
-consumed by nothing, and on the current test cluster the
-`frameusers.frame.plume-labs.io` CRD is **not installed** — the operator there
-predates the type. Until it is applied, every FrameUser read or write returns
-NotFound. See the roadmap for the authd stages that switch this on.
+consumed by nothing. The `frameusers.frame.plume-labs.io` CRD is installed on
+the test cluster and holds **zero objects**, so the `spec` → `status` move
+had nothing to migrate. See the roadmap for the authd stages that switch this
+on.
 
 ---
 
@@ -343,8 +447,12 @@ not the CRD's OpenAPI, owns and validates `spec.parameters`.
 > `type` value rather than redefining an existing one's parameters.
 
 **Spec:** `type` (required, closed set enforced by the webhook against the
-provider registry), `parameters` (map[string]string, provider-owned),
-`serviceClass` (`HIGH`/`MEDIUM`/`LOW`, default `MEDIUM` — decides scheduling
+provider registry, plus schema form bounds in `v1beta1`: 1–63 characters,
+`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` — which permanently rules out provider
+names like `vector_db` or `openWebUI`, and is only ever relaxable, never
+re-tightenable), `parameters` (map, provider-owned; at most 64 keys,
+each value at most 1024 characters), `serviceClass` (`HIGH`/`MEDIUM`/`LOW`,
+default `MEDIUM` — decides scheduling
 tier, never a node), `binding.secretName` (defaults to the FrameService's own
 name), `binding.projectTo` (namespaces to copy the credentials Secret into,
 default none), `deletionPolicy` (`Retain` default | `Delete`).
@@ -370,17 +478,23 @@ maps onto the same names through the same failure mode; provisioning
 `SchedulingPolicy` objects for all four tiers is an operational
 prerequisite this API does not enforce.
 
-**Status:** `phase` (Pending/Provisioning/Ready/Degraded/Deleting),
-`conditions[]`, `binding.secretRef` + `binding.endpoint` (never a credential)
+**Status:** `conditions[]`, `binding.secretRef` + `binding.endpoint` (never a credential)
 + `binding.projected[]` (every Secret coordinate the controller has actually
 written — the sole record it consults for what it may write to or must
 delete, never a label on the Secret itself), `sizing` (`gpu`, `gpuMemory`,
 `cpu`, `memory` — what the provider derived, reported because nothing in the
 spec states it), `provisioned[]` (objects the provider created, so
 `kubectl describe` explains an instance without knowing the provider's
-internals), `observedGeneration`.
+internals), `observedGeneration`. There is no `status.phase` — see "No
+`status.phase`" above. `v1alpha1` still serves one, and it is the one
+projection computed from `Ready.status` and the deletion timestamp rather
+than from `Ready.reason`: this kind's reasons are diagnostic
+(`UnknownType`, `SizeRefused`, `ModelCacheMissing`, …) and none of them is a
+member of the old phase enum.
 
-**Printer columns:** `TYPE`, `PHASE`, `ENDPOINT`, `AGE`.
+**Printer columns:** `Type`, `Ready`, `Reason` (hidden by default, `-o
+wide`), `Endpoint`, `Age`. `PHASE` is gone with the field; `Ready` replaced
+it (R7).
 
 **Controller:** dispatches to the registered provider for `spec.type`;
 generic reconcile drives create → status → delete through the `Provisioner`
