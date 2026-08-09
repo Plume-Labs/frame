@@ -93,6 +93,14 @@ const LATENCY_OK_MS = 100
 
 export function ClusterStorageView() {
   const cephNs = config().namespaces.ceph
+  // Pod namespaces come from the same integration config ceph() itself reads
+  // them from — cephOsd/cephMon, not namespaces.ceph — so a Settings edit to
+  // either can never make the watch diverge from the fetch. Both default to
+  // rook-ceph and usually match, hence the dedupe.
+  const cephPodNamespaces = [...new Set([
+    config().integrations.cephOsd.namespace,
+    config().integrations.cephMon.namespace,
+  ])]
   // ceph() reads the CephCluster/CephBlockPool CRs plus the osd/mon pods —
   // all real objects, so this watches rather than polls.
   const { state, reload } = useLiveResource<CephStatus>(
@@ -101,7 +109,7 @@ export function ClusterStorageView() {
     [
       crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
       crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
-      coreListPath('pods', cephNs),
+      ...cephPodNamespaces.map((ns) => coreListPath('pods', ns)),
     ],
   )
   // Prometheus/ceph-mgr history — nothing to watch there.
