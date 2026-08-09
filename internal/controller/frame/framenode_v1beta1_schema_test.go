@@ -184,6 +184,10 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 			func(s *framev1beta1.FrameNodeSpec) { s.Hostname = "Neura-K3s-CP" }),
 		Entry("a dns entry that is not an IP", "reject-dns",
 			func(s *framev1beta1.FrameNodeSpec) { s.Network.DNS = []string{"resolver.local"} }),
+		// Fix Round 1: network.address is the one node field written into a
+		// Talos machine config. Length is the only thing bounding it.
+		Entry("a network.address longer than 45 characters", "reject-address-length",
+			func(s *framev1beta1.FrameNodeSpec) { s.Network.Address = strings.Repeat("a", 46) }),
 		// The inherited object-level rule, which the freeze makes permanent.
 		// It is pinned here so a later task cannot loosen or drop it without
 		// noticing.
@@ -245,6 +249,30 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 		Expect(node.Spec.IP).To(HaveLen(39))
 		Expect(k8sClient.Create(ctx, node)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+	})
+
+	It("bounds network.address by length only, deliberately not by format", func() {
+		// Fix Round 1. The bound exists because this field is written into a
+		// Talos machine config and an unbounded string had to not survive the
+		// freeze. The *absence* of a pattern is equally deliberate: the field
+		// is named "address" while every stored value is a prefix, and
+		// guessing at freeze time is worse than documenting the format and
+		// leaving it unenforced. Both halves are asserted, so a later reader
+		// who adds a pattern breaks a spec that says why it was declined.
+		longestRealPrefix := "2001:0db8:85a3:0000:0000:8a2e:0370:7334/128"
+		Expect(longestRealPrefix).To(HaveLen(43), "the longest expanded IPv6 prefix")
+
+		node := liveShapedNode("address-longest-prefix")
+		node.Spec.Network.Address = longestRealPrefix
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		// Exactly on the bound, and not a CIDR at all: no pattern is enforced
+		// here, and that is the documented decision rather than an oversight.
+		unformatted := liveShapedNode("address-unformatted")
+		unformatted.Spec.Network.Address = strings.Repeat("a", 45)
+		Expect(k8sClient.Create(ctx, unformatted)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, unformatted) })
 	})
 
 	It("rejects the IP forms isIP() does not accept but net.ParseIP does", func() {

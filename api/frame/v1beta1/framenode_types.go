@@ -23,9 +23,27 @@ import (
 
 // NetworkSpec defines network configuration for a node.
 type NetworkSpec struct {
-	// Address is the node's post-provisioning address, in CIDR form on every
-	// stored object (192.168.2.201/24), which is why it carries no isIP rule.
+	// Address is the node's post-provisioning address. It is expected in CIDR
+	// form — every stored object holds one (192.168.2.201/24) — which is why
+	// it carries no isIP rule, in either direction: a conversion or a later
+	// tightening that applies isIP here would strand all three.
+	//
+	// The format is *documented and deliberately not validated*, and the
+	// MaxLength is deliberately the only bound. This field is the one node
+	// field written into a Talos machine config, so leaving it wholly
+	// unbounded was not acceptable past the freeze; but the field is named
+	// "address" while every value is a prefix, nothing in the code enforces
+	// either reading, and a pattern would freeze a decision nobody has taken.
+	// A bound cannot strand anything and can be raised later; a pattern could
+	// do neither. This note exists so the next reader does not add the
+	// pattern believing it was merely overlooked — it was considered and
+	// declined (Fix Round 1).
+	//
+	// 45 matches spec.ip and the network.dns items for no reason beyond
+	// consistency; the longest expanded IPv6 prefix is 43 characters and the
+	// stored values are 18.
 	// +optional
+	// +kubebuilder:validation:MaxLength=45
 	Address string `json:"address,omitempty"`
 
 	// Gateway is the default gateway for the node.
