@@ -18,6 +18,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -127,6 +128,31 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(svc.Status.Sizing.GPUMemory).To(Equal("512Mi"))
 		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionTrue))
 		Expect(readyCondition(svc).Reason).To(Equal("Provisioned"))
+	})
+
+	// A Ready instance must still be requeued on a timer. This controller
+	// deliberately does not watch Secrets (see SetupWithManager), so this
+	// requeue is the only thing that converges a binding Secret deleted or
+	// overwritten out of band. Returning a bare ctrl.Result{} here would not
+	// mean "never" — it would silently fall back to the informer resync, which
+	// is controller-runtime's 10h default because cmd/main.go sets no
+	// SyncPeriod. That is a repair window three orders of magnitude wider than
+	// intended, and it would not fail any other test in this file.
+	It("requeues even when Ready, so an out-of-band Secret edit is converged", func() {
+		_, _ = r().Reconcile(ctx, req)
+		res, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
+		Expect(svc.Status.Phase).To(Equal("Ready"))
+
+		Expect(res.RequeueAfter).To(Equal(readyRequeue))
+		// Bounded on both sides rather than just asserted equal to the
+		// constant: the point is the magnitude, and a future edit that made
+		// this an hour would still pass an equality-only check after the
+		// constant moved with it.
+		Expect(res.RequeueAfter).To(BeNumerically(">=", 5*time.Minute))
+		Expect(res.RequeueAfter).To(BeNumerically("<=", 15*time.Minute))
 	})
 
 	It("reports Degraded without wedging when the provider cannot finish", func() {
