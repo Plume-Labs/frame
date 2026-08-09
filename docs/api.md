@@ -100,9 +100,9 @@ await frame.scheduler.applyPolicy({
   queue:      'hpc',
   priority:   100,
   preemption: true,
-  maxGPUs:    64,
-  maxCPUs:    512,
 })
+// SchedulingPolicySpec has no maxGPUs/maxCPUs — resource ceilings live on
+// FrameResourceQuota, not the scheduling policy.
 
 // Delete
 await frame.scheduler.deletePolicy('hpc-critical')
@@ -111,7 +111,12 @@ await frame.scheduler.deletePolicy('hpc-critical')
 ### Resource quotas
 
 ```typescript
-// List FrameResourceQuota CRs
+// List FrameResourceQuota CRs — usedCPU/usedMemory/usedGPUs and namespaces
+// come from status.used / status.namespaces, the controller's real
+// aggregation across every projected corev1.ResourceQuota. A field the
+// controller hasn't measured yet (or that no namespace reported) reads back
+// as '0'/0, which is indistinguishable from a measured zero without also
+// checking status.observedGeneration and the Ready condition.
 const { items } = await frame.resources.listQuotas()
 
 // Set a namespace quota
