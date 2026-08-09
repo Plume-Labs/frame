@@ -22,10 +22,21 @@ export type LiveState<T> =
  * query, a DCGM/node-exporter scrape, or anything else read through
  * `integrationProxy`. A metric is not a Kubernetes object, so the apiserver
  * has no change stream for it. Polling refreshes the same silent way watching
- * does. A resource should get one mechanism or the other, never both — pick
- * `watch` when the fetcher reads real objects and `pollMs` when it reads a
- * metric, and keep `pollMs` at 5000 or above (most screens want 30000+; only
- * something that visibly changes second to second earns a faster rate).
+ * does. `pollMs` is floored at 5000ms by `pollInterval` itself; most screens
+ * want 30000+, and only something that visibly changes second to second earns
+ * a faster rate.
+ *
+ * Pick one or the other when the fetcher reads only one kind of thing — watch
+ * for real objects, poll for a metric. Passing both is legitimate, not a
+ * "just in case," for a fetcher that genuinely reads both: `nodes()` and
+ * `capacity()` return real Node/Pod state (readiness, roles, allocatable)
+ * *and* metrics-server usage layered on top, and metrics-server has no watch
+ * support of its own. Watching alone would leave the usage numbers frozen
+ * between object-level events, which on a quiet cluster can be a long time —
+ * exactly the staleness this hook exists to fix. In that case keep the watch
+ * for the object half and add a *slow* poll (30000ms+) for the metric half:
+ * slow, because the watch already catches everything that changes discretely,
+ * so the poll only needs to catch the one thing that drifts continuously.
  */
 export function useLiveResource<T>(
   fetcher: () => Promise<T>,
