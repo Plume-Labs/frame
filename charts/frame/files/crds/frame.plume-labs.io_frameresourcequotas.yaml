@@ -175,7 +175,10 @@ spec:
                   Namespaces is how many namespaces this quota currently projects into.
                   It is what makes Used interpretable: a zero Used with zero namespaces
                   means "nothing selected this quota", which is a different problem from
-                  "selected, and idle".
+                  "selected, and idle". Unlike Used, this is a count rather than a set,
+                  so 0 is a real measurement and is serialized rather than omitted:
+                  absent means "not yet reconciled", 0 means "reconciled, matched
+                  nothing".
                 format: int32
                 type: integer
               observedGeneration:

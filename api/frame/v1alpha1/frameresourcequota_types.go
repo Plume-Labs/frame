@@ -76,9 +76,12 @@ type FrameResourceQuotaStatus struct {
 	// Namespaces is how many namespaces this quota currently projects into.
 	// It is what makes Used interpretable: a zero Used with zero namespaces
 	// means "nothing selected this quota", which is a different problem from
-	// "selected, and idle".
+	// "selected, and idle". Unlike Used, this is a count rather than a set,
+	// so 0 is a real measurement and is serialized rather than omitted:
+	// absent means "not yet reconciled", 0 means "reconciled, matched
+	// nothing".
 	// +optional
-	Namespaces int32 `json:"namespaces,omitempty"`
+	Namespaces int32 `json:"namespaces"`
 
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
