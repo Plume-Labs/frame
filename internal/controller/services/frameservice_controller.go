@@ -45,6 +45,31 @@ const frameServiceFinalizer = "services.plume-labs.io/finalizer"
 // installing one is noticed without a restart.
 const degradedRequeue = 2 * time.Minute
 
+// readyRequeue is how long a *healthy* instance waits before being reconciled
+// again. Without it a Ready FrameService returns a bare ctrl.Result{} and is
+// never requeued on a timer at all: the only thing that would look at it again
+// is the informer resync, and because cmd/main.go sets no Cache.SyncPeriod
+// that is controller-runtime's default of 10 hours, jittered — a real worst
+// case of roughly 9 to 11 hours.
+//
+// That matters because this controller deliberately does not watch Secrets
+// (see SetupWithManager). This requeue is what bounds the repair window for
+// the binding Secret: delete it, or overwrite it with a substituted endpoint
+// or credential, and CreateOrUpdate converges it back within this interval
+// instead of within half a day.
+//
+// Why 10 minutes. The floor is cost: Secrets are read uncached now (see the
+// Cache.DisableFor comment in cmd/main.go), so every pass costs one live
+// apiserver Get per projected coordinate plus one for the API-key Secret.
+// At 10 minutes that is a handful of reads per instance per 10 minutes, which
+// is nothing; below about 5 minutes it starts being real traffic for no gain.
+// The ceiling is the exposure window itself — an hour of serving a substituted
+// credential is not meaningfully better than two. 10 minutes sits an order of
+// magnitude below the point where cost matters and two orders below the resync
+// it replaces. It is deliberately *not* set through Cache.SyncPeriod, which
+// would re-reconcile every controller in the manager rather than this one.
+const readyRequeue = 10 * time.Minute
+
 type FrameServiceReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
@@ -182,7 +207,10 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	svc.Status.Binding.SecretRef = &corev1.LocalObjectReference{Name: secretRefName}
 	frameServiceReady.Inc()
 	log.Info("Reconciled FrameService", "type", svc.Spec.Type, "endpoint", binding.Endpoint)
-	return ctrl.Result{}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
+	// Ready still requeues: see readyRequeue. This is the only thing that
+	// converges a binding Secret someone deleted or overwrote out of band,
+	// because this controller does not watch Secrets.
+	return ctrl.Result{RequeueAfter: readyRequeue}, r.setStatus(ctx, &svc, "Ready", metav1.ConditionTrue,
 		result.Reason, result.Message, &sizing, result.Provisioned)
 }
 
@@ -301,13 +329,25 @@ func (r *FrameServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Deliberately no Owns(&corev1.Secret{}). An Owns watch is a
 		// cluster-wide informer over the type, which is list+watch on Secrets
 		// in every namespace — the exact enumeration grant the rbac marker
-		// above exists to avoid. What it bought was small: owner references do
-		// not cross namespaces (see deleteAllProjections), so it never covered
-		// the projected Secrets at all, only the single same-namespace binding
-		// Secret, and only to re-reconcile if something else edited it. Drift
-		// on that Secret is still corrected, just on the next reconcile of the
-		// FrameService rather than instantly. That is not worth the right to
-		// read every Secret in the cluster.
+		// above exists to avoid.
+		//
+		// What it bought was narrow. Owner references do not cross namespaces
+		// (see deleteAllProjections), so it never covered the projected
+		// Secrets at all — their repair window was already the requeue
+		// interval before this. Nor did it cover the inference provider's
+		// API-key Secret, which self-heals through the Owns(Deployment) watch:
+		// delete it and the pod wedges in CreateContainerConfigError,
+		// availableReplicas drops, this controller wakes on the Deployment
+		// event and ensureAPIKey mints a new one within seconds.
+		//
+		// The one thing it did cover is the single same-namespace binding
+		// Secret, and for that one the repair window goes from ~instant to
+		// readyRequeue — 10 minutes, bounded by the RequeueAfter on the Ready
+		// path, NOT by the informer resync, which would be ~10 hours. Stating
+		// the real number because it is the whole trade: 10 minutes of a
+		// deleted or substituted binding Secret, against the standing right to
+		// read every Secret in the cluster. If you remove the Ready-path
+		// RequeueAfter, you silently turn that 10 minutes back into 10 hours.
 		Named("services-frameservice").
 		Complete(r)
 }
