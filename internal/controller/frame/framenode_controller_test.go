@@ -137,10 +137,8 @@ var _ = Describe("FrameNode Controller", func() {
 			Scheme:   k8sClient.Scheme(),
 			Recorder: record.NewFakeRecorder(20),
 		}
-		key := types.NamespacedName{Name: "label-projection", Namespace: "default"}
 		_, err := reconciler.reconcileOnline(ctx, fn)
 		Expect(err).NotTo(HaveOccurred())
-		_ = key
 
 		fetched := &corev1.Node{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "label-projection-node"}, fetched)).To(Succeed())
