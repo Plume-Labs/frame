@@ -142,6 +142,110 @@ kubectl apply -k config/default
 
 ---
 
+## Installing the operator via Helm
+
+Alternative to step 2 above, for the operator only. The chart at
+`charts/frame/` packages the CRDs, the controller Deployment, RBAC, the
+webhook configuration, and (optionally) the cert-manager `Issuer`/
+`Certificate` that issues the webhook's TLS. **It does not install the UI or
+authd** — those still come from `deploy/kubernetes/` via kustomize (steps 3-5
+above). Read `charts/frame/README.md` before changing anything in the chart:
+it documents two decisions (fixed `frame-` resource names instead of the
+usual release-name-derived ones, and CRDs rendered from `templates/` instead
+of Helm's `crds/` directory) that look like bugs and are not.
+
+If you already have the operator running from `kubectl apply -k config/default`
+and want to move it onto this chart instead of doing a fresh install, see
+[upgrading.md](upgrading.md) — that migration has its own procedure and its
+own caveats.
+
+### Prerequisites
+
+- A Kubernetes cluster, 1.29+ (`Chart.yaml`'s `kubeVersion` gate). Verified
+  in this session against a kind `v1.34.0` cluster and (read-only, via
+  `helm template`/`--dry-run`) against the k3s `v1.36.2+k3s1` test cluster.
+- Helm — verified with v4.2.3 locally; the chart pins no minimum Helm
+  version.
+- cert-manager installed on the target cluster. The chart's webhooks depend
+  on it by default (`certManager.enabled: true`): it issues the webhook
+  serving certificate and injects the CA into both `WebhookConfiguration`s.
+  See the "Cert-manager" section above for the install command. Running
+  without cert-manager is possible (`certManager.enabled: false`) but shifts
+  certificate issuance onto you — see "Installing without cert-manager" in
+  `charts/frame/README.md` before choosing that path.
+- A built operator image (`Dockerfile.controller`, **not** the root
+  `Dockerfile`, which builds the UI). There is no published image yet, so
+  `image.repository` has no default — the chart's `required` guard fails the
+  install with an actionable message rather than installing into
+  `ImagePullBackOff`.
+
+### Install
+
+```bash
+helm install frame charts/frame \
+  --namespace frame-system --create-namespace \
+  --set image.repository=<your-registry>/frame-controller \
+  --set image.tag=<tag>
+```
+
+The release name (`frame` above) is cosmetic — every object this chart
+renders uses a fixed `frame-` prefix regardless of it, so any release name
+produces the same `frame-controller-manager`, `frame-webhook-service`, etc.
+(`charts/frame/README.md` explains why this is deliberate). This exact
+invocation, with a real image swapped in, is what was run end-to-end
+(install → CRDs present → cert-manager issues the cert → `helm upgrade` →
+`helm uninstall`) against a disposable local kind cluster while writing this
+guide.
+
+### Values worth knowing on a first install
+
+| Value | Default | Why it matters here |
+|---|---|---|
+| `image.repository` | `""`, **required** | No published image exists yet; must point at an image built from `Dockerfile.controller`. |
+| `replicaCount` | `1` | `2` is a supported HA configuration (leader election is always on) — see the runbook's "Failover" section for measured takeover behaviour. |
+| `crds.install` | `true` | Set `false` only if CRDs are managed some other way; the chart fails the render if `true` and no CRD files are found, so this is not a silent no-op. |
+| `certManager.enabled` | `true` | `false` means you provision `webhooks.certSecretName` and `webhooks.caBundle` yourself — see "Installing without cert-manager" in `charts/frame/README.md`. |
+| `metrics.serviceMonitor.enabled` | `false` | Turn on only if the Prometheus Operator CRDs are already installed. |
+| `networkPolicy.enabled` | `false` | Off by default, matching kustomize. If enabled, the webhook rule is intentionally open on port 9443 to any source — `charts/frame/README.md` explains why a source-restricted rule breaks admission on real clusters. |
+| `rbac.tierRoles.install` | `true` | The 21 viewer/editor/admin convenience `ClusterRole`s per CRD; not required by the manager itself. |
+
+The full, commented list is in `charts/frame/values.yaml`; `charts/frame/README.md`
+has the complete table with the reasoning behind each default.
+
+### Verifying the install
+
+```bash
+kubectl -n frame-system rollout status deployment/frame-controller-manager
+kubectl get crd | grep plume-labs.io
+kubectl -n frame-system get certificate frame-serving-cert   # if certManager.enabled
+```
+
+All three are printed by the chart's own `NOTES.txt` after `helm install`
+completes. For anything beyond "did the install come up" — leader lease,
+certificate expiry, webhook CA match, the single dry-run command that
+exercises the whole admission path — see the "Is it healthy?" section of
+[runbook.md](runbook.md), which was written and measured against a running
+cluster and is not repeated here.
+
+### Uninstalling
+
+```bash
+helm uninstall frame -n frame-system
+```
+
+Every CRD this chart installs carries `helm.sh/resource-policy: keep`, so
+`helm uninstall` removes the Deployment, RBAC and webhook configuration but
+**leaves the CRDs (and any CRs) in place** — verified in this session: after
+`helm uninstall` on a disposable kind cluster, all eight `plume-labs.io` CRDs
+were still present and `helm uninstall` printed each one under "kept due to
+the resource policy." Removing the CRDs themselves is a deliberate, separate,
+manual step (`kubectl delete crd <name>`) — not exercised here, since on a
+real cluster it cascade-deletes every CR of that kind. See "CRDs are
+rendered from `templates/`, not Helm's `crds/` directory" in
+`charts/frame/README.md` for why the chart is built this way.
+
+---
+
 ## Kustomize overlay reference
 
 ```
