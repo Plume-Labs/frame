@@ -53,7 +53,8 @@ rules:
   - watch
 # No list or watch on secrets: every Secret the manager touches is reached by
 # name, so enumeration is not needed and would mean the right to read every
-# Secret in the cluster. See the marker comment on
+# Secret in the cluster. No patch either — every write goes through
+# CreateOrUpdate or Delete. See the marker comment on
 # internal/controller/services/frameservice_controller.go, which is the source
 # this rule is kept in parity with.
 - apiGroups:
@@ -64,7 +65,6 @@ rules:
   - create
   - delete
   - get
-  - patch
   - update
 - apiGroups:
   - apps

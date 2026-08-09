@@ -101,9 +101,12 @@ type FrameServiceReconciler struct {
 //     opens the same informer to serve a by-name Get. See the Cache
 //     DisableFor entry in cmd/main.go.
 //
-// update is kept alongside patch and create because controllerutil.
-// CreateOrUpdate issues a real Update, not a patch.
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch;delete
+// update is kept because controllerutil.CreateOrUpdate issues a real Update,
+// not a patch. patch is deliberately absent: every Secret write here goes
+// through CreateOrUpdate or Delete, and nothing in the tree ever issues a
+// Patch against a Secret — granting it would be a gratuitous extra verb on
+// precisely the resource this whole grant exists to keep narrow.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // The inference provider inspects pods to explain a stuck rollout (a pod

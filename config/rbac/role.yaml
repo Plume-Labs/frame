@@ -58,7 +58,6 @@ rules:
   - create
   - delete
   - get
-  - patch
   - update
 - apiGroups:
   - apps
