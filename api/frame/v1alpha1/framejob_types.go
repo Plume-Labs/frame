@@ -111,6 +111,28 @@ type FrameJobStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// This version is deprecated and yet it is still the storage version. That
+// is deliberate, and temporary.
+//
+// Until the conversion webhook is serving, a CRD's conversion strategy is
+// None, and None does not mean "keep everything": the apiserver prunes the
+// object against the *storage* version's schema on write. Making v1beta1 the
+// storage version before the webhook exists would therefore delete
+// spec.namespace and status.phase from every v1alpha1 write — the create
+// response itself comes back with them empty — and a v1alpha1 client would
+// silently lose two fields with no conversion code anywhere to blame.
+//
+// The reverse direction is free, which is why the marker sits here: v1beta1
+// has no field v1alpha1 lacks (Part 0 made sure of that so the conversion
+// functions need no annotation escape hatch), so storing a v1beta1 object at
+// v1alpha1 prunes nothing. Both versions are served losslessly in the
+// meantime.
+//
+// **Task 19 moves +kubebuilder:storageversion to the v1beta1 FrameJob**, in
+// the same change that turns the conversion webhook on, and does the same
+// for the other six kinds. Until then this marker stays put.
+//
+// +kubebuilder:storageversion
 // +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameJob is deprecated; use frame.plume-labs.io/v1beta1. spec.namespace is ignored — the Argo Workflow is created in the FrameJob's own namespace. status.phase is computed from status.conditions and is not stored."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
