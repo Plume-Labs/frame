@@ -121,11 +121,22 @@ resource's *full body* (not just its name), because a name-only check cannot
 see a dropped ClusterRole verb, a dropped `--leader-elect`, or a changed
 probe port — all of which would break a `--take-ownership` migration
 silently. Three narrow, permanent exceptions are allow-listed explicitly in
-the script: `CustomResourceDefinition` (verified separately, see decision #2
-and `make helm-crds-check`), and on the `frame-controller-manager` Deployment
-and `frame-metrics-certs` Certificate, the specific fields already documented
-above and in `values.yaml` (`image`/`imagePullPolicy`, the default
-`affinity`, and `dnsNames`).
+the script:
+
+- **CustomResourceDefinition bodies** are skipped from the content diff:
+  their OpenAPI schemas are large, and `make helm-crds-check` already keeps
+  `files/crds/` byte-identical to `config/crd/bases/`. Their **version
+  topology and conversion wiring are not skipped** — `hack/helm-parity.sh`
+  compares those separately, because they are added on one side only
+  (kustomize patches the conversion stanza in; the chart's
+  `templates/crds.yaml` has to inject the equivalent itself) and are
+  therefore invisible to `helm-crds-check`. A chart shipping
+  `conversion.strategy: None` against a multi-version operator is a silent
+  data-interpretation failure with green CI; this check is what stops it.
+- The `frame-controller-manager` Deployment and `frame-metrics-certs`
+  Certificate: the specific fields already documented above and in
+  `values.yaml` (`image`/`imagePullPolicy`, the default `affinity`, and
+  `dnsNames`).
 
 A third pass turns on `networkPolicy.enabled`, `metrics.serviceMonitor.enabled`
 and `podDisruptionBudget.enabled`, and asserts that *exactly* the four

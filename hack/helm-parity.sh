@@ -110,6 +110,53 @@ triples() {
   jq -r '"\(.kind)|\(.metadata.namespace // "")|\(.metadata.name // "")"' "$1" | sort -u
 }
 
+# crd_shape extracts, for every CustomResourceDefinition in a JSONL stream,
+# the parts of the CRD that the two install paths can legitimately disagree
+# on *without* helm-crds-check noticing:
+#
+#   - the version topology (name / served / storage per version), and
+#   - the conversion wiring (strategy, review versions, service coordinate,
+#     and whether a CA-injection annotation is present).
+#
+# helm-crds-check keeps charts/frame/files/crds/ byte-identical to
+# config/crd/bases/, so anything present in the bases is verified already.
+# What it cannot see is anything *added on one side only* — and the
+# conversion stanza is exactly that: kustomize adds it via
+# config/crd/patches/, and the chart has to add it in templates/crds.yaml.
+# Before this check existed, a chart install would have shipped eight CRDs
+# with conversion.strategy: None against a two-version operator, silently,
+# with CI green (F13).
+#
+# The caBundle itself is deliberately NOT compared: cert-manager writes it at
+# runtime on both paths and kustomize leaves a placeholder. Only the presence
+# of the inject-ca-from annotation is compared, which is what causes it to be
+# written at all.
+crd_shape() {
+  jq -S -r '
+    .[]
+    | select(.kind == "CustomResourceDefinition")
+    | {
+        name: .metadata.name,
+        injectCA: ((.metadata.annotations // {})["cert-manager.io/inject-ca-from"] != null),
+        versions: [.spec.versions[] | {name, served, storage, deprecated: (.deprecated // false)}],
+        conversion: (
+          if .spec.conversion == null then {strategy: "None"}
+          else {
+            strategy: .spec.conversion.strategy,
+            reviewVersions: (.spec.conversion.webhook.conversionReviewVersions // []),
+            service: {
+              namespace: (.spec.conversion.webhook.clientConfig.service.namespace // ""),
+              name: (.spec.conversion.webhook.clientConfig.service.name // ""),
+              path: (.spec.conversion.webhook.clientConfig.service.path // "")
+            }
+          }
+          end
+        )
+      }
+    | "\(.name)\t\(. | @json)"
+  ' -s "$1" | sort
+}
+
 # --- kustomize side ---------------------------------------------------------
 "$KUSTOMIZE" build "$ROOT_DIR/config/default" > "$tmpdir/kustomize.yaml"
 extract_jsonl "$tmpdir/kustomize.yaml" > "$tmpdir/kustomize.jsonl"
@@ -177,6 +224,11 @@ while IFS= read -r triple; do
   name="${rest#*|}"
 
   if [ "$kind" = "CustomResourceDefinition" ]; then
+    # Body diff still skipped: the OpenAPI schemas are large, and
+    # helm-crds-check already keeps files/crds/ byte-identical to
+    # config/crd/bases/. The parts that check cannot see — version topology
+    # and conversion wiring, both added on one side only — are compared
+    # separately below.
     continue
   fi
 
@@ -205,6 +257,33 @@ if [ "$body_fail" -ne 0 ]; then
   exit 1
 fi
 echo "OK: every shared resource's body matches (CRDs verified separately; Deployment image/imagePullPolicy/affinity and the metrics Certificate's dnsNames are the only documented exceptions)."
+echo
+
+# --- CRD shape diff: version topology and conversion wiring ------------------
+# See crd_shape() for why this is a separate, narrow comparison rather than a
+# full body diff, and for what it is guarding against (F13).
+echo "== CRD shape: version topology and conversion wiring, helm vs kustomize =="
+crd_shape "$tmpdir/kustomize.jsonl"    > "$tmpdir/kustomize.crdshape"
+crd_shape "$tmpdir/helm-default.jsonl" > "$tmpdir/helm-default.crdshape"
+
+if ! diff -u "$tmpdir/kustomize.crdshape" "$tmpdir/helm-default.crdshape"; then
+  cat >&2 <<'MSG'
+FAIL: the chart and kustomize disagree on CRD version topology or conversion wiring.
+
+This is the failure make helm-crds-check cannot see. The conversion stanza is
+a kustomize patch (config/crd/patches/webhook_in_*.yaml); the chart copies
+config/crd/bases/ verbatim and must add the same stanza itself in
+charts/frame/templates/crds.yaml. If they diverge, a chart install ships CRDs
+with conversion.strategy: None against a multi-version operator, and every
+read at the non-storage version silently returns the stored object
+uninterpreted.
+
+Fix charts/frame/templates/crds.yaml (or the kustomize patches) so both sides
+agree. Do not allow-list this.
+MSG
+  exit 1
+fi
+echo "OK: identical CRD version topology and conversion wiring."
 echo
 
 # --- helm side: opt-in extras ------------------------------------------------
