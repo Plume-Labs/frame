@@ -149,38 +149,63 @@ describe('watchPaths', () => {
 })
 
 describe('pollInterval', () => {
-  it('fires repeatedly on the given interval', async () => {
-    const onChange = vi.fn()
-    const stop = pollInterval(20, onChange)
-    await new Promise((r) => setTimeout(r, 90))
-    stop()
+  // The 5s floor makes a real-time wait impractically slow for a unit test,
+  // so these three drive fake timers instead — the one deliberate exception
+  // to this file's real-timer style. `afterEach` above already restores real
+  // timers, so nothing extra to clean up.
 
-    // ~4 ticks in 90ms at 20ms each; allow slack for CI jitter.
-    expect(onChange.mock.calls.length).toBeGreaterThanOrEqual(2)
+  it('fires repeatedly on the given interval', () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    const stop = pollInterval(5_000, onChange)
+
+    vi.advanceTimersByTime(4_999)
+    expect(onChange).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(15_000)
+    expect(onChange).toHaveBeenCalledTimes(4)
+
+    stop()
   })
 
-  it('never fires before the first interval elapses', async () => {
+  it('never fires before the first interval elapses', () => {
+    vi.useFakeTimers()
     const onChange = vi.fn()
-    const stop = pollInterval(1_000, onChange)
-    await new Promise((r) => setTimeout(r, 50))
+    const stop = pollInterval(30_000, onChange)
+
+    vi.advanceTimersByTime(29_999)
     stop()
 
-    // The silent contract polling shares with watchPaths: subscribing must not
-    // itself trigger a refresh on top of the initial (non-silent) fetch a
-    // screen already did on mount — that would flash the loading skeleton a
-    // second time for nothing.
+    // Mirrors watchPaths, which never calls back synchronously on subscribe
+    // either: starting a poll must not itself produce an extra refresh on top
+    // of the initial fetch a screen already did on mount. This is a distinct
+    // property from "a refresh does not flash the loading skeleton" — that
+    // one lives in useLiveResource's `run(true)` path and is covered in
+    // useLiveResource.test.ts, not here.
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('stops firing once stopped, even for a tick already scheduled', async () => {
+  it('stops firing once stopped, even for a tick already scheduled', () => {
+    vi.useFakeTimers()
     const onChange = vi.fn()
-    const stop = pollInterval(20, onChange)
-    await new Promise((r) => setTimeout(r, 30))
-    stop()
-    const callsAtStop = onChange.mock.calls.length
-    expect(callsAtStop).toBeGreaterThan(0)
+    const stop = pollInterval(5_000, onChange)
 
-    await new Promise((r) => setTimeout(r, 80))
-    expect(onChange.mock.calls.length).toBe(callsAtStop)
+    vi.advanceTimersByTime(5_000)
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    stop()
+    vi.advanceTimersByTime(20_000)
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('clamps an interval below the 5s floor instead of honouring it', () => {
+    const setIntervalSpy = vi.spyOn(global, 'setInterval')
+    const stop = pollInterval(100, () => {})
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 5_000)
+    stop()
   })
 })

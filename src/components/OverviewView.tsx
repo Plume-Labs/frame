@@ -57,6 +57,13 @@ const TREND_QUERIES = [
 export function OverviewView() {
   const cephNs = config().namespaces.ceph
   const veleroNs = config().namespaces.velero
+  // Sourced from the same integration config ceph() itself reads osd/mon pods
+  // from, so a Settings edit to either can never make the watch diverge from
+  // the fetch. Both default to rook-ceph and usually match, hence the dedupe.
+  const cephPodNamespaces = [...new Set([
+    config().integrations.cephOsd.namespace,
+    config().integrations.cephMon.namespace,
+  ])]
 
   // A mix, call by call: some read real objects (watch), some read a proxied
   // metric with nothing to watch (poll).
@@ -65,7 +72,7 @@ export function OverviewView() {
   const ceph = useLiveResource<CephStatus>(() => frame.cluster.ceph(), [], [
     crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
     crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
-    coreListPath('pods', cephNs),
+    ...cephPodNamespaces.map((ns) => coreListPath('pods', ns)),
   ])
   const backups = useLiveResource<BackupStatus | null>(() => frame.cluster.backups(), [], [
     crdListPath('velero.io', 'v1', 'backups', veleroNs),
