@@ -171,6 +171,10 @@ jobs:
     needs: [quality, iac]
     permissions:
       contents: read
+      # Findings go to the repository's Security tab as SARIF, which is the
+      # only place they are durable and diffable across runs. GitHub does not
+      # grant this to fork PRs, which is why the upload step tolerates failure.
+      security-events: write
     strategy:
       # One image failing its scan should not hide the other two.
       fail-fast: false
@@ -210,24 +214,90 @@ jobs:
           artifact-name: sbom-${{ matrix.name }}.cyclonedx.json
           output-file: ${{ runner.temp }}/sbom-${{ matrix.name }}.cyclonedx.json
 
-      - name: Scan image for vulnerabilities
+      # Two Trivy passes over the same image, because one invocation emits one
+      # format and the findings need to reach two different audiences: SARIF
+      # for the Security tab (durable, deduplicated, diffable run to run) and a
+      # table for the run's own summary page (readable without leaving the PR).
+      # The DB is downloaded once and cached by the action, so the second pass
+      # is cheap.
+      #
+      # The gate itself is the table pass. Everything that has to be visible
+      # even when the gate fails runs with `if: always()`.
+      - name: Scan image for vulnerabilities (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: frame-${{ matrix.name }}:scan
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          # Never the gate — this pass exists to produce the file.
+          exit-code: '0'
+        env:
+          # Trivy's default DB registry is rate-limited for anonymous pulls.
+          # These are the AWS public ECR mirrors Trivy documents as the
+          # alternative — public ECR, not GHCR, whatever the hostname pattern
+          # suggests.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
+
+      - name: Upload findings to the Security tab
+        if: always()
+        # A fork PR's token has no security-events: write, so this cannot
+        # succeed there and must not fail the scan when it does not. The gate
+        # below is what enforces; this step only publishes.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          # Without a distinct category the three matrix legs overwrite each
+          # other's results and only the last image scanned stays visible.
+          category: trivy-${{ matrix.name }}
+
+      # The gate. Fails on any CRITICAL or HIGH that is fixed upstream and is
+      # not listed in .trivyignore.
+      #
+      # This is a real gate, not a placeholder: .trivyignore enumerates the
+      # six advisories that existed when scanning was introduced, each with a
+      # note saying what would remove it. Verified before enabling — with the
+      # ignore file all three images exit 0, without it all three exit 1, so
+      # the gate bites rather than passing vacuously.
+      #
+      # The exit condition is therefore finite and legible: empty
+      # .trivyignore. Two of its entries are the same dependency bumps that
+      # close test.yml's govulncheck note, and four clear when the UI's
+      # unpinned nginx:alpine base is pinned and bumped (review finding I11).
+      - name: Scan image for vulnerabilities (gate)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: frame-${{ matrix.name }}:scan
           format: table
+          output: trivy-${{ matrix.name }}.txt
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          # Report-only for now, deliberately. nginx:alpine and the Go base
-          # images carry a standing backlog of HIGH findings that nobody has
-          # triaged yet, and a gate that fails on day one is a gate somebody
-          # disables in week one. Tighten to exit-code 1 on CRITICAL once the
-          # first clean run establishes the baseline.
-          exit-code: '0'
+          trivyignores: .trivyignore
+          exit-code: '1'
         env:
-          # Trivy's default DB registry is rate-limited for anonymous pulls;
-          # these are the documented GHCR mirrors.
           TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
           TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
+
+      - name: Publish scan table to the run summary
+        if: always()
+        env:
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          {
+            echo "## Trivy — ${IMAGE_NAME}"
+            echo
+            if [ -s "trivy-${IMAGE_NAME}.txt" ]; then
+              echo '```'
+              cat "trivy-${IMAGE_NAME}.txt"
+              echo '```'
+            else
+              echo "No CRITICAL/HIGH findings outside \`.trivyignore\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── 5. Integration test on a kind virtual cluster ─────────────────────────
   integration:
@@ -288,7 +358,11 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build, integration]
+    # scan is in this list deliberately. Without it the vulnerability gate
+    # would block PR merges but wave every tagged release straight through —
+    # exactly backwards, since a release is the artifact that leaves the
+    # building.
+    needs: [build, integration, scan]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
