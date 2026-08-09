@@ -60,6 +60,22 @@ make test-e2e       # Kind-based e2e (requires make setup-test-e2e first)
 
 The CI enforces ≥ 45% envtest coverage on `internal/controller` (tracked in `.github/workflows/test.yml`).
 
+### Why envtest reads `bin/crd-render`, not `config/crd/bases`
+
+`config/crd/bases/` is controller-gen's output. It has no `spec.conversion`
+stanza, because controller-gen has no marker that emits one — the conversion
+webhook is wired by a kustomize patch under `config/crd/patches/`.
+
+envtest can drive a conversion webhook: `WebhookInstallOptions` rewrites each
+CRD's `clientConfig` to the locally-served webhook and injects the CA it
+generated. But it only does that for a CRD that already declares
+`strategy: Webhook`. Reading the bases would therefore have made every
+conversion test pass while exercising no conversion at all.
+
+`make crd-render` runs `kustomize build config/crd` into `bin/crd-render/`
+(gitignored) and `make test` depends on it. If a suite fails with
+"bin/crd-render is missing", run `make crd-render`.
+
 ---
 
 ## React UI
