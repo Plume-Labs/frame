@@ -142,6 +142,75 @@ kubectl apply -k config/default
 
 ---
 
+## RBAC
+
+### The viewer / editor / admin tiers
+
+Twenty-four `ClusterRole`s, three per kind, across both API groups
+(`frame.plume-labs.io` and `services.plume-labs.io`). They are **not bound to
+anything** — no `RoleBinding` or `ClusterRoleBinding` in `config/`, `charts/`
+or `deploy/` references any of them, and the UI authenticates with a single
+ServiceAccount token, so the tiers are not currently enforced against any
+human. V1 delivers correct, frozen, tested tiers; enforcing them per user
+needs authd Stages 2 and 3, which are post-V1. Installing or upgrading the
+chart therefore grants nobody anything new; the tiers are manifests an
+administrator binds.
+
+Bind one like this:
+
+```bash
+kubectl create clusterrolebinding alice-frame-editor \
+  --clusterrole=frame-framejob-editor-role --user=alice@example.com
+```
+
+(`rbac.tierRoles.install=false` on the chart if you manage them yourself.)
+
+Their verbs are enumerated explicitly rather than `'*'`. A wildcard also
+covers verbs and subresources that do not exist yet, so an admin tier granted
+`'*'` silently acquires whatever a future API version adds — which is not a
+frozen tier. Admin is `create, delete, deletecollection, get, list, patch,
+update, watch`; editor is the same minus `deletecollection`; viewer is `get,
+list, watch`.
+
+**`frameusers/status` is admin-only.** It carries an argon2id password hash.
+`frameuser-editor-role` and `frameuser-viewer-role` carry **no `/status` rule
+at all** — the only two tier roles of the twenty-four that do not — and
+`frameuser-admin-role` is the only admin tier with `patch`/`update` on a
+`/status`, because setting or resetting a password is now only reachable
+through the subresource.
+
+**Know exactly what that buys, because it is less than it looks.** Both
+halves below were measured against a real apiserver, not assumed:
+
+- **Write protection: real.** An editor's `patch frameusers` cannot alter
+  `status.passwordHash`. A merge patch carrying a spec change *and* a status
+  change applies the spec half and the apiserver drops the status half
+  silently. Before `v1beta1` the hash was in `spec`, where that same patch
+  overwrote it. This is what moving the hash actually bought.
+- **Confidentiality: not real.** A plain `GET frameusers` returns the whole
+  object, status included. **A viewer or editor can still read the hash.** The
+  Kubernetes status subresource splits *writes*, not reads; denying it removes
+  the dedicated `/status` endpoint and nothing else.
+
+So **treat `get frameusers` as equivalent to holding every password hash.**
+Do not bind `frameuser-viewer-role` to anyone you would not hand the hashes
+to. Moving the hash into a `Secret` is the only change that fixes this; it is
+recorded as the destination in the CRD reference and is not part of the
+freeze. The tiers are written in the shape they will need when it happens.
+
+### Running the storage-version migration
+
+`hack/migrate-storage-version.sh` is **not** runnable under any of these
+tiers, deliberately. It needs `patch` on every Frame resource *and* `patch` on
+`customresourcedefinitions/status` in `apiextensions.k8s.io` — a group no
+Frame tier mentions, and one where that single verb means "change which
+version is stored for any CRD in the cluster", for any operator, not just
+this one. That is cluster-admin power wearing a narrow name, and shipping a
+bindable `ClusterRole` for it would invite exactly the mistake this section
+is otherwise arguing against. Run the migration as a cluster administrator.
+
+---
+
 ## Installing the operator via Helm
 
 Alternative to step 2 above, for the operator only. The chart at
@@ -207,7 +276,7 @@ guide.
 | `certManager.enabled` | `true` | `false` means you provision `webhooks.certSecretName` and `webhooks.caBundle` yourself — see "Installing without cert-manager" in `charts/frame/README.md`. |
 | `metrics.serviceMonitor.enabled` | `false` | Turn on only if the Prometheus Operator CRDs are already installed. |
 | `networkPolicy.enabled` | `false` | Off by default, matching kustomize. If enabled, the webhook rule is intentionally open on port 9443 to any source — `charts/frame/README.md` explains why a source-restricted rule breaks admission on real clusters. |
-| `rbac.tierRoles.install` | `true` | The 21 viewer/editor/admin convenience `ClusterRole`s per CRD; not required by the manager itself. |
+| `rbac.tierRoles.install` | `true` | The 24 viewer/editor/admin convenience `ClusterRole`s (three per CRD); not required by the manager itself, and bound to nobody — see "RBAC" above. |
 
 The full, commented list is in `charts/frame/values.yaml`; `charts/frame/README.md`
 has the complete table with the reasoning behind each default.
