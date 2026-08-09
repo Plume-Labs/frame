@@ -11,7 +11,8 @@ Engineering documentation for the Frame operator and control plane. For the prod
 | [api.md](api.md) | CRD API, TypeScript SDK (`FrameClient`), authentication |
 | [crd-reference.md](crd-reference.md) | All eight CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — fields, controllers, webhooks |
 | [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
-| [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager |
+| [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm |
+| [upgrading.md](upgrading.md) | Migrating a kustomize install to Helm, chart-to-chart upgrades, what schema stability to expect pre-Phase B |
 | [roadmap.md](roadmap.md) | Path from `v1alpha1` preview to stable V1, plus the new API groups building alongside it |
 
 ## 30-second model
