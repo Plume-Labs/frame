@@ -25,11 +25,16 @@ export function ClusterNodesView() {
   const { state, reload } = useLiveResource<ClusterNodeInfo[]>(
     () => frame.cluster.nodes(),
     [],
-    // The cpu/mem usage columns come from metrics-server, which has no watch
-    // support — but the Node objects driving readiness/roles/capacity do, and
-    // a node joining, leaving, or changing Ready is the event this screen
-    // actually needs to catch.
+    // The Node objects driving readiness/roles/capacity are watched, so a
+    // node joining, leaving, or changing Ready refreshes immediately.
     [coreListPath('nodes')],
+    // The cpu/mem usage columns come from metrics-server, which has no watch
+    // support of its own and drifts continuously rather than on a discrete
+    // event — the watch above would leave them frozen between Node changes,
+    // which can be a long time on a quiet cluster. Slow poll because the
+    // watch already covers everything else; this only needs to catch the
+    // one thing that moves on its own.
+    30_000,
   )
   const [cordonTarget, setCordonTarget] = useState<ClusterNodeInfo | null>(null)
   const [drainTarget, setDrainTarget] = useState<ClusterNodeInfo | null>(null)

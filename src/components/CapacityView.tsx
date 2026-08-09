@@ -20,9 +20,13 @@ export function CapacityView() {
   const { state, reload } = useLiveResource<CapacityResource[]>(
     () => frame.cluster.capacity(),
     [],
-    // Allocatable/requested come straight from Node and Pod objects; "used"
-    // layers metrics-server on top best-effort, same as the header stats.
+    // Allocatable/requested come straight from Node and Pod objects, watched.
     [coreListPath('nodes'), coreListPath('pods')],
+    // "Used (live)" layers metrics-server on top, best-effort, with no watch
+    // support and continuous drift the object watch above cannot see. Slow
+    // poll: the watch already covers every discrete change, this only tops
+    // up the one number that moves on its own.
+    30_000,
   )
   const res = state.phase === 'ready' ? state.data : []
 

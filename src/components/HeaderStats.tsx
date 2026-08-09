@@ -11,9 +11,14 @@ export function HeaderStats() {
       return { nodes, cap }
     },
     [],
-    // Both calls are real Node/Pod objects underneath, with metrics-server
-    // usage layered on top best-effort (no watch support of its own).
+    // Both calls read real Node/Pod objects underneath — watched.
     [coreListPath('nodes'), coreListPath('pods')],
+    // The cpu/mem percentages layer metrics-server usage on top, best-effort,
+    // with no watch support and continuous drift the object watch can't see.
+    // Slow poll: the watch already covers every discrete change (a node
+    // joining, a pod scheduled), this only tops up the number that moves on
+    // its own between them.
+    30_000,
   )
   if (state.phase !== 'ready') return null
 
