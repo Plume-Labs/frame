@@ -27,6 +27,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use
+      frame.plume-labs.io/v1beta1. spec.passwordHash has moved to status.passwordHash
+      — writing it through v1alpha1 requires the frameusers/status subresource.
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -140,5 +144,160 @@ spec:
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.email
+      name: Email
+      type: string
+    - jsonPath: .spec.role
+      name: Role
+      type: string
+    - jsonPath: .spec.passwordAuth
+      name: Password
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameUser is a person who can sign in to the Cluster Control
+          UI.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FrameUser
+            properties:
+              email:
+                description: |-
+                  Email identifies the account and becomes the Kubernetes username in the
+                  token authd issues.
+
+                  The pattern is deliberately loose, which is right for email — the
+                  grammar RFC 5322 actually specifies is not something a CRD should try
+                  to enforce. The length is not: this value ends up as an RBAC subject
+                  and in every audit-log entry, and an unbounded username there is a
+                  poor idea. 254 is the RFC 5321 limit (T6).
+
+                  MaxLength and Pattern are each load-bearing and neither subsumes the
+                  other: the pattern alone accepts an arbitrarily long address, and
+                  MaxLength alone accepts a string with no "@" in it. The pattern is also
+                  what rejects "" — no MinLength is needed, and adding one would only
+                  duplicate it.
+                maxLength: 254
+                pattern: ^[^@[:space:]]+@[^@[:space:]]+$
+                type: string
+              passwordAuth:
+                default: disabled
+                description: |-
+                  PasswordAuth controls whether this account may sign in with a password
+                  at all. Defaults to disabled: an account is passkey-only unless someone
+                  deliberately opens the other door.
+                enum:
+                - enabled
+                - disabled
+                type: string
+              role:
+                description: Role decides which group the issued token carries.
+                enum:
+                - admin
+                - operator
+                - viewer
+                type: string
+            required:
+            - email
+            - role
+            type: object
+          status:
+            description: status defines the observed state of FrameUser
+            properties:
+              credentials:
+                description: |-
+                  Credentials are the enrolled authenticators. They live in status for
+                  the same reason the hash now does: authd owns them, and an admin
+                  editing an account must not be able to corrupt a key by hand.
+                items:
+                  description: |-
+                    WebAuthnCredential is one enrolled authenticator (a YubiKey, a phone
+                    passkey). Public data only: the private key never leaves the device.
+                  properties:
+                    addedAt:
+                      description: AddedAt records enrolment time, so a user can tell
+                        two keys apart.
+                      format: date-time
+                      type: string
+                    id:
+                      description: ID is the base64url credential ID reported by the
+                        authenticator.
+                      type: string
+                    label:
+                      description: Label is a human name for the key, e.g. "YubiKey
+                        5C".
+                      type: string
+                    publicKey:
+                      description: PublicKey is the base64-encoded COSE public key.
+                      type: string
+                    signCount:
+                      description: |-
+                        SignCount is the authenticator's counter as of the last successful
+                        assertion. A value that fails to advance signals a cloned credential.
+                      format: int32
+                      type: integer
+                  required:
+                  - addedAt
+                  - id
+                  - publicKey
+                  - signCount
+                  type: object
+                type: array
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from. A client can compare it to metadata.generation to tell whether
+                  the writer has seen the current spec yet, without knowing anything
+                  about this kind's condition vocabulary.
+
+                  FrameUser has no controller — authd is its store — so nothing writes
+                  this field today, and under the current architecture nothing ever
+                  will. It is present anyway because it is part of the frozen shape: a
+                  future writer must not have to add a status field to an already-frozen
+                  version. Part 0's Task 6 put it on v1alpha1 for the same reason, which
+                  is also what keeps v1beta1 from having a field v1alpha1 lacks.
+                format: int64
+                type: integer
+              passwordHash:
+                description: |-
+                  PasswordHash is an argon2id PHC string, written only by authd. It is
+                  meaningless while spec.passwordAuth is disabled.
+
+                  Deliberately unvalidated: a length or pattern bound here would be a
+                  schema-level statement about a credential format, and getting it wrong
+                  would lock out every account at once. internal/authd parses it and
+                  treats an unparseable value as "no password", which is the safe
+                  failure.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
     subresources:
       status: {}
