@@ -155,21 +155,16 @@ spec:
       port: 80
       targetPort: http
   type: ClusterIP
----
-# ── Frame InferenceRoute — route HIGH service-class to pipeline PP engine ─────
-apiVersion: frame.plume-labs.io/v1alpha1
-kind: InferenceRoute
-metadata:
-  name: pipeline-pp-route
-  namespace: neura-inference
-spec:
-  routes:
-    - path: /v1/chat/completions
-      backend: vllm-pipeline-pp
-      serviceClasses: [HIGH]
-      weight: 100
-    - path: /v1/completions
-      backend: vllm-pipeline-pp
-      serviceClasses: [HIGH]
-      weight: 100
-  fallbackBackend: vllm-baseline
+# ── Routing ───────────────────────────────────────────────────────────────
+# There is deliberately no Frame routing resource here.
+#
+# This file used to declare an `InferenceRoute` in
+# frame.plume-labs.io/v1alpha1. That kind has never existed: no Go type, no
+# CRD, no controller, no PROJECT entry — applying this file failed with
+# "no matches for kind". It was not added to satisfy the manifest, because
+# adding a kind to a group being frozen in order to make a stale manifest
+# parse is backwards. A routing CRD is S2 (SDN) territory and adding a kind
+# later is additive.
+#
+# Until then, route to the Service above by whatever ingress the cluster
+# already runs.
