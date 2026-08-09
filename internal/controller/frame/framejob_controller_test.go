@@ -81,13 +81,56 @@ var _ = Describe("FrameJob Controller", func() {
 		Expect(controllerutil.ContainsFinalizer(job, frameJobFinalizer)).To(BeTrue())
 	})
 
-	It("attempts ArgoWorkflow creation on second reconcile", func() {
-		_, _ = r().Reconcile(ctx, req) // add finalizer
-		_, _ = r().Reconcile(ctx, req) // creates the backing ArgoWorkflow
+	It("creates the backing ArgoWorkflow with the job's spec on second reconcile", func() {
+		_, err := r().Reconcile(ctx, req) // add finalizer
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r().Reconcile(ctx, req) // creates the backing ArgoWorkflow
+		Expect(err).NotTo(HaveOccurred())
 
-		// Object still exists and retains finalizer.
+		// The Workflow must actually exist, not merely have avoided an error.
+		wf := &unstructured.Unstructured{}
+		wf.SetGroupVersionKind(argoWorkflowGVK)
+		Expect(k8sClient.Get(ctx, key, wf)).To(Succeed())
+
+		priorityClassName, _, _ := unstructured.NestedString(wf.Object, "spec", "priorityClassName")
+		Expect(priorityClassName).To(Equal("frame-high"), "priority=high must map to the frame-high PriorityClass")
+		params, _, _ := unstructured.NestedSlice(wf.Object, "spec", "arguments", "parameters")
+		Expect(params).To(ContainElement(map[string]any{"name": "gpu-count", "value": "8"}))
+		Expect(params).To(ContainElement(map[string]any{"name": "service-class", "value": "HIGH"}))
+		Expect(wf.GetLabels()["frame.plume-labs.io/job"]).To(Equal(name))
+		Expect(wf.GetLabels()["frame.plume-labs.io/job-namespace"]).To(Equal(ns))
+
+		// The FrameJob side of the same reconcile: finalizer retained, and the
+		// fields the create branch is supposed to have written are present.
 		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
 		Expect(controllerutil.ContainsFinalizer(job, frameJobFinalizer)).To(BeTrue())
+		Expect(job.Status.ArgoWorkflowName).To(Equal(name))
+		Expect(job.Status.StartTime).NotTo(BeNil())
+	})
+
+	It("deletes the backing Workflow when the FrameJob is deleted through the reconciler", func() {
+		_, err := r().Reconcile(ctx, req) // add finalizer
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r().Reconcile(ctx, req) // creates the backing ArgoWorkflow
+		Expect(err).NotTo(HaveOccurred())
+
+		wfKey := &unstructured.Unstructured{}
+		wfKey.SetGroupVersionKind(argoWorkflowGVK)
+		Expect(k8sClient.Get(ctx, key, wfKey)).To(Succeed(), "the Workflow must exist before we can prove it gets deleted")
+
+		Expect(k8sClient.Delete(ctx, job)).To(Succeed())
+
+		_, err = r().Reconcile(ctx, req) // runs reconcileDelete
+		Expect(err).NotTo(HaveOccurred())
+
+		wfAfter := &unstructured.Unstructured{}
+		wfAfter.SetGroupVersionKind(argoWorkflowGVK)
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, key, wfAfter))).To(BeTrue(),
+			"reconcileDelete must delete the backing Workflow, not just drop the finalizer")
+
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameJob{}))
+		}, "5s").Should(BeTrue(), "removing the finalizer must let the FrameJob itself be garbage-collected")
 	})
 
 	It("writes a Ready condition that tracks the workflow, not a write-once Submitted", func() {
