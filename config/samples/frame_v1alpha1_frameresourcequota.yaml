@@ -1,4 +1,4 @@
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameResourceQuota
 metadata:
   labels:

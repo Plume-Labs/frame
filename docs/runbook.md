@@ -111,6 +111,59 @@ kubelet's Secret refresh is not immediate.
 > controller-runtime's own self-signed cert. The Certificate is currently dead
 > weight rather than a misconfiguration, but it looks load-bearing and is not.
 
+## Migrating the storage version
+
+`.status.storedVersions` on a CRD only grows. The apiserver appends the new
+storage version the moment an apply makes it the storage version — whether or
+not anything is ever stored at it — and **never removes an entry**: not on its
+own, not once the last object at the old version has been rewritten, not ever.
+A version cannot be dropped from `spec.versions` while it appears in
+`storedVersions`, so the list has to be pruned by hand, and that patch is a
+*claim* that nothing is stored at the old version any more. Objects are
+rewritten at the storage version on any write, so a no-op annotation patch is
+enough; a kind with **zero** objects has nothing to rewrite and the status
+patch is its whole migration.
+
+Order matters. Apply the CRDs and roll out the manager that serves `/convert`
+**first**: a two-version CRD with `strategy: Webhook` and nothing answering
+`/convert` fails every read and write of that kind.
+
+```bash
+./hack/migrate-storage-version.sh            # dry run, changes nothing
+./hack/migrate-storage-version.sh --apply
+```
+
+The script fails loudly rather than half-finishing: it refuses to touch a CRD
+whose storage version is not the one it is migrating to, it aborts rather than
+treat a failed listing as "no objects", and it exits non-zero if a CRD does not
+end at a single stored version — in which case that CRD's old version must not
+be removed.
+
+**Check the Argo Workflows before running it against a cluster with completed
+FrameJobs on it.** Rewriting a FrameJob re-triggers its controller, which is
+wanted — the legacy stored `status.phase` does not survive conversion, and only
+a reconcile puts a real `Ready` condition in its place — but if a job's Workflow
+has been garbage-collected the controller's `IsNotFound` branch creates a new
+one and silently re-runs a completed job.
+
+```bash
+kubectl get framejobs -A \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,WF:.status.argoWorkflowName
+kubectl get workflows.argoproj.io -A
+```
+
+Afterwards, confirm the objects still read correctly through both versions and
+that the projected phases came back:
+
+```bash
+kubectl get framejobs -A -o wide     # PHASE from the Ready condition's reason
+kubectl get framenodes -A -o wide
+```
+
+A blank `PHASE` means the `Ready` condition carries a reason outside the
+projection's vocabulary — compare what the controller wrote against the
+`…PhaseFromConditions` helper for that kind.
+
 ## Backup and restore
 
 The operator is stateless. Everything worth restoring is CRs in etcd, which

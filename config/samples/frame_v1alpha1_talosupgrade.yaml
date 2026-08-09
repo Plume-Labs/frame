@@ -1,4 +1,4 @@
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: TalosUpgrade
 metadata:
   labels:
@@ -9,7 +9,8 @@ metadata:
 spec:
   nodeName: worker-01
   talosEndpoint: "192.168.10.10:50000"
+  # Read from this CR's own namespace. v1alpha1 had a talosSecretRef.namespace
+  # naming another one; it is gone (F6).
   talosSecretRef:
     name: talos-client-certs
-    namespace: frame-system
   image: ghcr.io/siderolabs/talos:v1.9.0
