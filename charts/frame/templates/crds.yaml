@@ -35,6 +35,67 @@ being swallowed.
 {{ fail (printf "%s: expected kind CustomResourceDefinition, got %q — files/crds/ must only contain CRDs synced from config/crd/bases." $path $crd.kind) }}
 {{- end }}
 {{- $_ := set $crd.metadata "annotations" (merge (default (dict) $crd.metadata.annotations) (dict "helm.sh/resource-policy" "keep")) }}
+{{/*
+The conversion stanza, injected here rather than synced.
+
+files/crds/*.yaml are verbatim copies of config/crd/bases/*.yaml, which is
+controller-gen's output — and controller-gen has no marker that emits
+spec.conversion. On the kustomize path the stanza arrives from
+config/crd/patches/. Nothing carries it onto this path, so the chart has to
+add the equivalent itself. Without this block a chart install shipped CRDs
+with conversion.strategy: None against a multi-version operator: every read
+at the non-storage version silently returning the stored object
+uninterpreted, with make helm-crds-check and CI both green (F13).
+
+hack/helm-parity.sh compares this against the kustomize rendering, which is
+what stops the two drifting again. If you change the service name, the path
+or the review versions here, change config/crd/patches/ to match — the
+parity check will tell you if you forget.
+
+Only multi-version CRDs get it: a single-version CRD needs no conversion,
+and declaring a webhook for one would make the apiserver call /convert for
+nothing.
+*/}}
+{{- if gt (len $crd.spec.versions) 1 }}
+{{- if not $.Values.webhooks.enabled }}
+{{/*
+webhooks.enabled: false sets ENABLE_WEBHOOKS=false on the container, and that
+switch is what registers /convert as well as the admission handlers —
+controller-runtime's webhook builder registers the conversion handler as a
+side effect of each SetupXWebhookWithManager call, so with the switch off
+there is no /convert. A two-version CRD with nowhere to convert has no safe
+rendering: strategy Webhook makes every read at the non-storage version fail,
+and strategy None makes it silently return the stored object uninterpreted —
+which for FrameUser means a password hash that is simply absent, answered
+with a 200. Fail the render instead, the same way the missing-caBundle case
+in templates/webhookconfigurations.yaml does.
+*/}}
+{{ fail (printf "%s declares more than one version, but webhooks.enabled is false. Conversion is served by the same webhook server as admission, so with it off the apiserver has nobody to call for /convert, and reads at the non-storage version are either an error or silently wrong. Multi-version CRDs and webhooks.enabled: false are not a supported combination — set webhooks.enabled: true, or crds.install: false if the CRDs are managed outside this release." $path) }}
+{{- end }}
+{{- $clientConfig := dict "service" (dict
+      "namespace" $.Release.Namespace
+      "name" (printf "%s-webhook-service" (include "frame.name" $))
+      "path" "/convert") }}
+{{- if $.Values.certManager.enabled }}
+{{- $_ := set $crd.metadata.annotations "cert-manager.io/inject-ca-from" (printf "%s/%s-serving-cert" $.Release.Namespace (include "frame.name" $)) }}
+{{- else }}
+{{/*
+Same split as templates/webhookconfigurations.yaml: with cert-manager the CA
+injector fills the bundle in from the annotation, without it the operator
+supplies webhooks.caBundle by hand. That file already fails the render when
+the value is empty and webhooks are on, so by the time this executes it is
+non-empty. The kustomize path has no equivalent of this branch — it always
+uses cert-manager — which is why hack/helm-parity.sh compares only the
+presence of the annotation and never the bundle itself.
+*/}}
+{{- $_ := set $clientConfig "caBundle" $.Values.webhooks.caBundle }}
+{{- end }}
+{{- $_ := set $crd.spec "conversion" (dict
+      "strategy" "Webhook"
+      "webhook" (dict
+        "conversionReviewVersions" (list "v1")
+        "clientConfig" $clientConfig)) }}
+{{- end }}
 ---
 {{ toYaml $crd }}
 {{- end }}

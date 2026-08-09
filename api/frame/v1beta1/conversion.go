@@ -25,12 +25,12 @@ package v1beta1
 // v1beta1 <-> v1beta2 alongside the existing v1alpha1 pair. It does not mean
 // touching v1alpha1's functions.
 //
-// "and they are the storage version" is the destination, not today's state:
-// +kubebuilder:storageversion still sits on the v1alpha1 kinds and Task 19
-// moves all eight atomically with the webhook. A hub that is not yet the
-// storage version is harmless — Hub() only decides which side of a conversion
-// is which — and moving the marker early is not, which is why it has not
-// moved. See the note on the v1alpha1 FrameJob.
+// Being the hub and being the storage version are independent facts that
+// happen to coincide here. Hub() only decides which side of a conversion is
+// which; the storage version is a marker on each type. They were made to
+// coincide in the same change that turned the conversion webhook on, because
+// under strategy None the apiserver prunes writes against the storage
+// version's schema — see the note on the v1alpha1 FrameJob.
 
 func (*FrameJob) Hub()           {}
 func (*FrameNode) Hub()          {}

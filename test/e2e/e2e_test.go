@@ -355,6 +355,118 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyCAInjection).Should(Succeed())
 		})
 
+		It("should have CA injection for FrameNode conversion webhook", func() {
+			By("checking CA injection for FrameNode conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"framenodes.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for FrameJob conversion webhook", func() {
+			By("checking CA injection for FrameJob conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"framejobs.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for SchedulingPolicy conversion webhook", func() {
+			By("checking CA injection for SchedulingPolicy conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"schedulingpolicies.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for FrameResourceQuota conversion webhook", func() {
+			By("checking CA injection for FrameResourceQuota conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"frameresourcequotas.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for TalosMachineConfig conversion webhook", func() {
+			By("checking CA injection for TalosMachineConfig conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"talosmachineconfigs.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for TalosUpgrade conversion webhook", func() {
+			By("checking CA injection for TalosUpgrade conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"talosupgrades.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for FrameUser conversion webhook", func() {
+			By("checking CA injection for FrameUser conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"frameusers.frame.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
+		It("should have CA injection for FrameService conversion webhook", func() {
+			By("checking CA injection for FrameService conversion webhook")
+			verifyCAInjection := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get",
+					"customresourcedefinitions.apiextensions.k8s.io",
+					"frameservices.services.plume-labs.io",
+					"-o", "go-template={{ .spec.conversion.webhook.clientConfig.caBundle }}")
+				vwhOutput, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(len(vwhOutput)).To(BeNumerically(">", 10))
+			}
+			Eventually(verifyCAInjection).Should(Succeed())
+		})
+
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 	})
 

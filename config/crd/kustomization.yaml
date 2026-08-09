@@ -15,9 +15,17 @@ resources:
 patches:
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
 # patches here are for enabling the conversion webhook for each CRD
+- path: patches/webhook_in_frame_framenodes.yaml
+- path: patches/webhook_in_frame_framejobs.yaml
+- path: patches/webhook_in_frame_schedulingpolicies.yaml
+- path: patches/webhook_in_frame_frameresourcequotas.yaml
+- path: patches/webhook_in_frame_talosmachineconfigs.yaml
+- path: patches/webhook_in_frame_talosupgrades.yaml
+- path: patches/webhook_in_frame_frameusers.yaml
+- path: patches/webhook_in_services_frameservices.yaml
 # +kubebuilder:scaffold:crdkustomizewebhookpatch
 
 # [WEBHOOK] To enable webhook, uncomment the following section
 # the following config is for teaching kustomize how to do kustomization for CRDs.
-#configurations:
-#- kustomizeconfig.yaml
+configurations:
+- kustomizeconfig.yaml

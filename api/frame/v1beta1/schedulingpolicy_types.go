@@ -29,7 +29,18 @@ import (
 // Verified against the live cluster: the one stored policy sets
 // preemption: true with priorityClass: neura-high, which satisfies it.
 //
-// +kubebuilder:validation:XValidation:rule="!self.preemption || (has(self.priorityClass) && size(self.priorityClass) > 0)",message="priorityClass is required when preemption is true"
+// The has() guard is not decoration. preemption is `bool json:",omitempty"`
+// with `default: false`, so an object that never set it has no preemption key
+// on the wire. The apiserver defaults it on a full write at the request
+// version — but the conversion webhook's output is not re-defaulted, so once
+// v1beta1 became the storage version, `kubectl patch`/`client.Status().Patch`
+// through a v1alpha1 client evaluated this rule against a key-less object and
+// was rejected with `no such key: preemption`. That is every reconcile of the
+// SchedulingPolicy controller. Reproduced in envtest before the guard was
+// added. The guard only widens what the rule admits: an absent key means
+// false, which the rule already permitted when the key was present.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.preemption) || !self.preemption || (has(self.priorityClass) && size(self.priorityClass) > 0)",message="priorityClass is required when preemption is true"
 type SchedulingPolicySpec struct {
 	// Scheduler selects the scheduler implementation.
 	// +kubebuilder:validation:Required
@@ -102,12 +113,12 @@ type SchedulingPolicyStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// This is the conversion hub, but it is deliberately *not* the storage
-// version yet — v1alpha1 still carries +kubebuilder:storageversion, and
-// Task 19 moves the marker here when the conversion webhook starts serving.
-// See the note on the v1alpha1 FrameJob for the full reasoning.
+// This is the conversion hub and the storage version. The marker arrived here
+// in the same change that turned the conversion webhook on; see the note on
+// the v1alpha1 FrameJob for why the two could not be separated.
 //
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Scheduler",type=string,JSONPath=".spec.scheduler"
 // +kubebuilder:printcolumn:name="Queue",type=string,JSONPath=".spec.queueName"

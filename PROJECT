@@ -115,6 +115,11 @@ resources:
   kind: FrameJob
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -123,6 +128,11 @@ resources:
   kind: FrameNode
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -131,6 +141,11 @@ resources:
   kind: FrameResourceQuota
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -139,6 +154,11 @@ resources:
   kind: SchedulingPolicy
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -147,6 +167,11 @@ resources:
   kind: TalosMachineConfig
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -155,6 +180,11 @@ resources:
   kind: TalosUpgrade
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -163,6 +193,11 @@ resources:
   kind: FrameUser
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -171,4 +206,9 @@ resources:
   kind: FrameService
   path: github.com/rmocq/frame/api/services/v1beta1
   version: v1beta1
+  webhooks:
+    conversion: true
+    spoke:
+    - v1alpha1
+    webhookVersion: v1
 version: "3"

@@ -80,17 +80,21 @@ type TalosUpgradeStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// This version is deprecated and yet it is still the storage version, for the
-// reason set out at length on the v1alpha1 FrameJob: with conversion still at
-// strategy None the apiserver prunes writes against the *storage* version's
-// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
-// every v1alpha1 write, in the create response itself. TalosUpgrade has
-// exactly one such field — talosSecretRef.namespace, removed by F6 — so the
-// marker staying here is not merely tidy, it is what keeps a v1alpha1 write
-// of that field from coming back empty. Task 19 moves the marker.
+// This version is served and deprecated; v1beta1 is the storage version. The
+// marker moved there in the same change that turned the conversion webhook on
+// — see the note on the v1alpha1 FrameJob for the general reasoning.
+//
+// This kind has one field v1beta1 lacks: talosSecretRef.namespace, removed by
+// F6. Conversion does not stash it, deliberately — ConvertFrom returns it
+// empty because empty already meant "this CR's own namespace", which is what
+// the controller has always done, so the normalised value is the truth rather
+// than a placeholder. The consequence of the storage version moving is
+// therefore real and intended: a v1alpha1 client may still *write*
+// talosSecretRef.namespace, but no longer reads it back. That is what the
+// deprecation warning on this version has said all along — the field is
+// ignored — now made literal.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
 // +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 TalosUpgrade is deprecated; use frame.plume-labs.io/v1beta1. talosSecretRef.namespace is ignored — the Secret is read from this CR's own namespace — and talosSecretRef.name is now required."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="NodeName",type=string,JSONPath=".spec.nodeName"
