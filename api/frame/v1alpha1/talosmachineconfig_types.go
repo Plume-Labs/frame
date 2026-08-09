@@ -115,7 +115,18 @@ type TalosMachineConfigStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// This version is deprecated and yet it is still the storage version, for the
+// reason set out at length on the v1alpha1 FrameJob: with conversion still at
+// strategy None the apiserver prunes writes against the *storage* version's
+// schema, so promoting v1beta1 early would empty v1alpha1-only fields out of
+// every v1alpha1 write, in the create response itself. TalosMachineConfig has
+// exactly one such field — talosSecretRef.namespace, removed by F6 — so the
+// marker staying here is not merely tidy, it is what keeps a v1alpha1 write
+// of that field from coming back empty. Task 19 moves the marker.
+//
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 TalosMachineConfig is deprecated; use frame.plume-labs.io/v1beta1. talosSecretRef.namespace is ignored — the Secret is read from this CR's own namespace — and talosSecretRef.name is now required."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="NodeName",type=string,JSONPath=".spec.nodeName"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`

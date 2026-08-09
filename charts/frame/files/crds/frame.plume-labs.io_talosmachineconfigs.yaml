@@ -28,6 +28,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: frame.plume-labs.io/v1alpha1 TalosMachineConfig is deprecated;
+      use frame.plume-labs.io/v1beta1. talosSecretRef.namespace is ignored — the Secret
+      is read from this CR's own namespace — and talosSecretRef.name is now required.
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -215,5 +219,204 @@ spec:
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeName
+      name: NodeName
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: TalosMachineConfig is the Schema for the talosmachineconfigs
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of TalosMachineConfig
+            properties:
+              configPatch:
+                description: ConfigPatch is an inline Talos config patch document
+                  (YAML).
+                type: string
+              configPatchRef:
+                description: |-
+                  ConfigPatchRef references a ConfigMap containing the patch under key
+                  "patch.yaml".
+                properties:
+                  key:
+                    description: The key to select.
+                    type: string
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  optional:
+                    description: Specify whether the ConfigMap or its key must be
+                      defined
+                    type: boolean
+                required:
+                - key
+                type: object
+                x-kubernetes-map-type: atomic
+              nodeName:
+                description: NodeName is the Kubernetes node name to apply the config
+                  patch to.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                type: string
+              talosEndpoint:
+                description: |-
+                  TalosEndpoint is the Talos API endpoint (host:port) for this node. The
+                  bracketed form (e.g. [fd00::1]:50000) is accepted for IPv6, same as
+                  net.SplitHostPort in the webhook check this mirrors.
+                pattern: ^(\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+):[0-9]+$
+                type: string
+              talosSecretRef:
+                description: |-
+                  TalosSecretRef references the Secret containing Talos client
+                  certificates, in this CR's own namespace.
+                properties:
+                  name:
+                    description: |-
+                      Name of the referenced Secret, in this CR's own namespace.
+
+                      Two of the three markers below are belt and braces, measured rather
+                      than assumed. Required restates controller-gen's default — in this
+                      version a field is required unless it carries +optional, and the json
+                      tag's omitempty has no bearing on it — so stripping Required changes no
+                      byte of the generated schema; the mutation that moves requiredness is
+                      Required -> +optional. MinLength=1 and Pattern each reject the empty
+                      string on their own, so removing either alone changes nothing
+                      observable; removing both does. Both are kept because each states an
+                      intent the other does not, and either could outlive the other.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
+                x-kubernetes-map-type: atomic
+            required:
+            - nodeName
+            - talosEndpoint
+            - talosSecretRef
+            type: object
+            x-kubernetes-validations:
+            - message: exactly one of configPatch or configPatchRef must be set
+              rule: (has(self.configPatch) && size(self.configPatch) > 0) != has(self.configPatchRef)
+          status:
+            description: status defines the observed state of TalosMachineConfig
+            properties:
+              conditions:
+                description: |-
+                  Conditions represent the current state of the TalosMachineConfig
+                  resource.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from. A client can compare it to metadata.generation to tell whether
+                  the controller has seen the current spec yet, without knowing anything
+                  about this kind's condition vocabulary. The controller also guards its
+                  success path on it (Part 0's Task 2): without that guard the first
+                  successful reconcile re-ran ApplyConfiguration against a live machine.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
     subresources:
       status: {}
