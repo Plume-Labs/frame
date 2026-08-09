@@ -88,8 +88,21 @@ const (
 	//
 	// One deployment precondition follows from this and is worth knowing
 	// before it bites: the model cache PVC must be readable by uid 65532.
-	// Weights fetched with a normal umask are world-readable and fine. No
-	// fsGroup is set to force the issue, deliberately — fsGroup triggers a
+	// Weights fetched with a normal umask are world-readable and fine, and
+	// hostPath-style provisioners (local-path among them) create the volume
+	// root 0777. A cache populated by a job with a restrictive umask, or a
+	// CSI driver that creates the root 0700, is not.
+	//
+	// The symptom when it is not: llama-server takes EACCES opening the GGUF
+	// and exits non-zero, so the pod goes CrashLoopBackOff rather than
+	// failing to start. That reason is in blockedWaitingReasons and the
+	// underlying exit is surfaced by containerBlockedMessage, so the
+	// FrameService reports it in status instead of sitting at
+	// RolloutInProgress forever — which is what it did before that was
+	// handled, and is the only reason this precondition was ever hard to
+	// diagnose.
+	//
+	// No fsGroup is set to force the issue, deliberately — fsGroup triggers a
 	// recursive chown, and this volume is a large cache shared read-only
 	// between instances, which is the wrong thing to rewrite the ownership of.
 	runAsUser = int64(65532)
@@ -623,27 +636,48 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		//
 		// ensureAPIKey closes the ordinary Deployment-before-Secret deadlock
 		// — the Secret exists before this Deployment does — but it cannot
-		// cover every way a pod can still end up unable to read it (an
-		// operator deleting the Secret by hand, RBAC narrowed after the
-		// fact). That failure surfaces as CreateContainerConfigError on the
-		// pod, not as a Deployment condition, and left unchecked it would
-		// just read as an ordinary, permanent RolloutInProgress: a degrade
-		// that never explains itself and never clears. Naming it here turns
-		// a silent crash loop into a status message an operator can act on.
+		// cover every way a pod can still end up unable to start. Those
+		// failures surface on the pod, not as a Deployment condition, and
+		// left unchecked they would all read as an ordinary, permanent
+		// RolloutInProgress: a degrade that never explains itself and never
+		// clears. Naming them here turns a silent crash loop into a status
+		// message an operator can act on.
+		//
+		// Two distinct shapes have to be recognised, because they present
+		// differently and only one of them was originally handled:
+		//
+		//   - The container never starts at all — a missing or unreadable
+		//     Secret gives CreateContainerConfigError, which sits in
+		//     State.Waiting with the cause in Waiting.Message.
+		//   - The container starts and then exits — which is what an
+		//     unreadable model cache does. llama-server gets EACCES opening
+		//     the GGUF and exits non-zero, so the pod lands in
+		//     CrashLoopBackOff. Waiting.Message for CrashLoopBackOff says
+		//     only "back-off 5m0s restarting failed container", which names
+		//     no cause at all; the actual cause is in the *previous*
+		//     container's termination record. That is why
+		//     LastTerminationState is read below rather than trusting
+		//     Waiting.Message.
+		//
+		// This second case is the one failure mode the pod hardening above
+		// can itself introduce (runAsUser 65532 against a model cache that
+		// is not world-readable), so leaving it undiagnosable would mean
+		// shipping a change whose one plausible breakage is invisible in the
+		// place an operator looks first.
 		var pods corev1.PodList
 		if err := p.client.List(ctx, &pods, client.InNamespace(svc.Namespace), client.MatchingLabels(labels)); err != nil {
 			return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
 		}
 		for i := range pods.Items {
 			for _, cs := range pods.Items[i].Status.ContainerStatuses {
-				if cs.State.Waiting == nil || cs.State.Waiting.Reason != "CreateContainerConfigError" {
+				if cs.State.Waiting == nil || !blockedWaitingReasons[cs.State.Waiting.Reason] {
 					continue
 				}
 				return provider.Result{
 					Ready:  false,
-					Reason: "CreateContainerConfigError",
+					Reason: cs.State.Waiting.Reason,
 					Message: fmt.Sprintf("Pod %s container %s cannot start: %s",
-						pods.Items[i].Name, cs.Name, cs.State.Waiting.Message),
+						pods.Items[i].Name, cs.Name, containerBlockedMessage(cs)),
 					Provisioned: provisioned,
 				}, nil
 			}
@@ -663,6 +697,70 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		Message:     "Deployment and Service created",
 		Provisioned: provisioned,
 	}, nil
+}
+
+// blockedWaitingReasons are the pod waiting reasons that mean "this container
+// is not going to start on its own, and an operator needs to know why" — as
+// opposed to the ordinary transient ones (ContainerCreating, PodInitializing)
+// that a rollout passes through and that must keep reading as
+// RolloutInProgress rather than as a named degrade.
+//
+// CrashLoopBackOff and Error cover the container-started-then-exited shape;
+// CreateContainerConfigError and CreateContainerError cover
+// never-started. ImagePullBackOff and ErrImagePull are included because they
+// are the same class of permanent, operator-actionable stall: a bad image
+// reference or a missing pull secret will never resolve by waiting.
+var blockedWaitingReasons = map[string]bool{
+	"CreateContainerConfigError": true,
+	"CreateContainerError":       true,
+	"CrashLoopBackOff":           true,
+	"Error":                      true,
+	"ImagePullBackOff":           true,
+	"ErrImagePull":               true,
+}
+
+// terminationMessageLimit caps how much of a dead container's output reaches
+// the FrameService's status. Status is displayed by kubectl describe and
+// carried in every watch event for the object, so an unbounded stack trace
+// there is both unreadable and a real payload on every consumer of the CR.
+const terminationMessageLimit = 512
+
+// containerBlockedMessage explains why a container is stuck, preferring the
+// most specific evidence available.
+//
+// For a container that never started, Waiting.Message carries the cause
+// directly. For CrashLoopBackOff it does not — it says only "back-off 5m0s
+// restarting failed container", naming nothing — so the useful information is
+// in the previous run's termination record: its exit code, and whatever the
+// process wrote to the termination message path. Both are reported when
+// present, because an exit code alone ("exited with code 1") is rarely enough
+// and the message alone loses the distinction between a clean refusal and a
+// signal.
+func containerBlockedMessage(cs corev1.ContainerStatus) string {
+	waiting := ""
+	if cs.State.Waiting != nil {
+		waiting = cs.State.Waiting.Message
+	}
+
+	term := cs.LastTerminationState.Terminated
+	if term == nil {
+		return waiting
+	}
+
+	detail := fmt.Sprintf("previous run exited with code %d", term.ExitCode)
+	if term.Reason != "" {
+		detail += " (" + term.Reason + ")"
+	}
+	if msg := strings.TrimSpace(term.Message); msg != "" {
+		if len(msg) > terminationMessageLimit {
+			msg = msg[:terminationMessageLimit] + "…"
+		}
+		detail += ": " + msg
+	}
+	if waiting == "" {
+		return detail
+	}
+	return waiting + "; " + detail
 }
 
 // setContainer finds the container named name inside spec and overwrites

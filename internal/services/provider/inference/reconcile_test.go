@@ -29,6 +29,12 @@ const defaultModelCachePVC = "model-cache-pvc"
 // creates must carry, asserted by every ownership test in this file.
 const frameServiceKind = "FrameService"
 
+// rolloutInProgress is the provider's fallback degrade reason — the one that
+// means "a replica is missing and nothing more specific was found". Several
+// tests turn on whether a failure reports this or something that actually
+// explains itself, so it is named once.
+const rolloutInProgress = "RolloutInProgress"
+
 // argsContain reports whether args holds flag immediately followed by value,
 // the way a []string of CLI arguments carries a "-c 8192" pair.
 func argsContain(args []string, flag, value string) bool {
@@ -296,7 +302,7 @@ func TestReconcileReportsNotReadyUntilThePodIsServing(t *testing.T) {
 	if result.Ready {
 		t.Fatal("Ready = true immediately after creating the Deployment, want false until it has a ready replica")
 	}
-	if result.Reason != "RolloutInProgress" {
+	if result.Reason != rolloutInProgress {
 		t.Fatalf("Reason = %q, want RolloutInProgress", result.Reason)
 	}
 	if len(result.Provisioned) != 2 {
@@ -737,6 +743,157 @@ func TestReconcileDegradesOnCreateContainerConfigError(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "llama-pod") || !strings.Contains(result.Message, "llama-cpp") {
 		t.Fatalf("Message %q does not name the pod and container", result.Message)
+	}
+}
+
+// seedFailingPod creates a Pod carrying containerStatus and returns it, so the
+// crash-loop tests below differ only in the status they are proving.
+func seedFailingPod(t *testing.T, ctx context.Context, c client.Client,
+	svc *servicesv1alpha1.FrameService, name string, cs corev1.ContainerStatus) {
+	t.Helper()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: svc.Namespace,
+			Labels:    map[string]string{"app": svc.Name},
+		},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{cs}},
+	}
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatalf("seeding the failing Pod: %v", err)
+	}
+	if err := c.Status().Update(ctx, pod); err != nil {
+		t.Fatalf("setting Pod status: %v", err)
+	}
+}
+
+// TestReconcileDegradesOnCrashLoopWithTheTerminationReason is the test for the
+// one way the pod hardening can itself break a user.
+//
+// runAsUser 65532 against a model cache that is not world-readable makes
+// llama-server take EACCES on the GGUF and exit non-zero, so the pod goes
+// CrashLoopBackOff — it starts and dies, rather than failing to start. Before
+// this was handled, the pod-inspection loop matched only
+// CreateContainerConfigError, so a crash loop fell through to the generic
+// fallback and the FrameService sat at Degraded/RolloutInProgress forever
+// while the pod restarted behind it. The cause was only ever in kubectl logs.
+//
+// The specific trap this pins: CrashLoopBackOff's own Waiting.Message says
+// nothing useful ("back-off 5m0s restarting failed container"). Reporting only
+// that would technically name the reason while still explaining nothing, so
+// the assertion below requires the *termination* detail to reach status too.
+func TestReconcileDegradesOnCrashLoopWithTheTerminationReason(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	seedFailingPod(t, ctx, c, svc, "llama-pod", corev1.ContainerStatus{
+		Name: "llama-cpp",
+		State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{
+				Reason:  "CrashLoopBackOff",
+				Message: "back-off 5m0s restarting failed container=llama-cpp",
+			},
+		},
+		LastTerminationState: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{
+				Reason:   "Error",
+				ExitCode: 1,
+				Message:  "error loading model /models/llama-3.1-8b-instruct.gguf: permission denied",
+			},
+		},
+	})
+
+	result, err := p.Reconcile(ctx, svc)
+	if err != nil {
+		t.Fatalf("Reconcile returned an error %v, want a degraded Result instead", err)
+	}
+	if result.Ready {
+		t.Fatal("Ready = true with a pod in CrashLoopBackOff")
+	}
+	if result.Reason == rolloutInProgress {
+		t.Fatal("a crash-looping pod reported as RolloutInProgress: this is the undiagnosable state the pod List exists to prevent")
+	}
+	if result.Reason != "CrashLoopBackOff" {
+		t.Fatalf("Reason = %q, want CrashLoopBackOff", result.Reason)
+	}
+	if !strings.Contains(result.Message, "llama-pod") || !strings.Contains(result.Message, "llama-cpp") {
+		t.Fatalf("Message %q does not name the pod and container", result.Message)
+	}
+	// The whole point: the actual cause, not just the back-off notice.
+	if !strings.Contains(result.Message, "permission denied") {
+		t.Fatalf("Message %q does not carry the termination message, so status still does not explain the failure", result.Message)
+	}
+	if !strings.Contains(result.Message, "exited with code 1") {
+		t.Fatalf("Message %q does not carry the exit code", result.Message)
+	}
+}
+
+// TestReconcileTruncatesARunawayTerminationMessage guards the other direction.
+// A container's termination message is attacker- and accident-influenced
+// output that lands in the CR's status, which kubectl describe prints and
+// every watcher of the object receives on every event. It has to be bounded.
+func TestReconcileTruncatesARunawayTerminationMessage(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	seedFailingPod(t, ctx, c, svc, "llama-pod", corev1.ContainerStatus{
+		Name: "llama-cpp",
+		State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+		},
+		LastTerminationState: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 2,
+				Message:  strings.Repeat("stack trace line\n", 4000),
+			},
+		},
+	})
+
+	result, err := p.Reconcile(ctx, svc)
+	if err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+	if len(result.Message) > 1024 {
+		t.Fatalf("degrade message is %d bytes; an unbounded termination message reaches every watcher of the CR", len(result.Message))
+	}
+	if !strings.Contains(result.Message, "stack trace line") {
+		t.Fatalf("Message %q truncated away all of the cause", result.Message)
+	}
+}
+
+// TestReconcileStillReportsRolloutInProgressWhileStarting keeps the widened
+// reason list from swallowing an ordinary rollout. ContainerCreating is what a
+// healthy pod passes through on its way up; reporting that as a named degrade
+// would make every fresh instance look broken for its first few seconds.
+func TestReconcileStillReportsRolloutInProgressWhileStarting(t *testing.T) {
+	p, c, svc := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+
+	seedFailingPod(t, ctx, c, svc, "llama-pod", corev1.ContainerStatus{
+		Name: "llama-cpp",
+		State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"},
+		},
+	})
+
+	result, err := p.Reconcile(ctx, svc)
+	if err != nil {
+		t.Fatalf("Reconcile returned %v", err)
+	}
+	if result.Reason != rolloutInProgress {
+		t.Fatalf("Reason = %q for a pod that is merely still starting, want RolloutInProgress", result.Reason)
 	}
 }
 
