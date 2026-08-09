@@ -133,6 +133,13 @@ Order matters. Apply the CRDs and roll out the manager that serves `/convert`
 ./hack/migrate-storage-version.sh --apply
 ```
 
+**Run it as a cluster administrator.** It needs `patch` on every Frame
+resource *and* `patch` on `customresourcedefinitions/status` — none of the
+`*-admin-role` tiers grant the latter, and none should: that one verb changes
+which version is stored for *any* CRD in the cluster, for any operator. There
+is deliberately no narrow, bindable role for this; see "Running the
+storage-version migration" in [deployment.md](deployment.md).
+
 The script fails loudly rather than half-finishing: it refuses to touch a CRD
 whose storage version is not the one it is migrating to, it aborts rather than
 treat a failed listing as "no objects", and it exits non-zero if a CRD does not

@@ -1,0 +1,57 @@
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants the full set of verbs over frame.plume-labs.io/frameusers, enumerated explicitly.
+# This role is intended for users authorized to modify roles and bindings within the cluster,
+# enabling them to delegate specific permissions to other users or groups as needed.
+#
+# frameusers/status is admin-only, and deliberately so: status.passwordHash is
+# an argon2id credential (F11). Before the freeze it was in spec, where
+# anything holding `patch frameusers` could overwrite it; on status, only this
+# tier and authd can.
+#
+# What that denial is worth, measured against a real apiserver rather than
+# assumed: it stops the *write* path and the dedicated /status read endpoint.
+# It does NOT hide the hash — a plain `GET frameusers` returns the whole
+# object, status included, so the viewer and editor tiers can still read it.
+# The status subresource splits writes, not reads. Moving the hash to a Secret
+# is the only change that makes it unreadable to a tier that can read the
+# account at all, and that is recorded as the destination in the CRD
+# reference.
+#
+# This is also the one admin tier that gets write on /status. Setting or
+# resetting a password is only reachable through the subresource now, so an
+# admin tier without `patch`/`update` here could create an account it could
+# never give a credential to. Every other kind's admin tier keeps `get` alone,
+# which is exactly what the '*' it replaced granted — status on those kinds is
+# the controller's to write, and a hardening pass is no place to widen it.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: frameuser-admin-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameusers
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameusers/status
+  verbs:
+  - get
+  - patch
+  - update

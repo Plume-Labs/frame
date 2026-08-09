@@ -52,9 +52,14 @@ whenever metrics.secure was set to false).
 {{- end -}}
 
 {{/*
-The seven CRD-tier RBAC sets kubebuilder scaffolds (viewer/editor/admin per
-CRD). Kept as a fixed list because it mirrors the actual CRDs in api/ — not
-meant to be user-editable; the toggle is rbac.tierRoles.install, not this.
+The eight CRD-tier RBAC sets (viewer/editor/admin per CRD). Kept as a fixed
+list because it mirrors the actual CRDs in api/ — not meant to be
+user-editable; the toggle is rbac.tierRoles.install, not this.
+
+Seven of the eight were scaffolded by kubebuilder. `frameuser` was not, and
+had no tier at all until the API freeze — the one kind holding credential
+material was the one kind nobody could be scoped to. It is also the one entry
+that renders a different shape; see rbac-tier-roles.yaml.
 */}}
 {{- define "frame.tierRoleCRDs" -}}
 - roleBase: framejob
@@ -66,6 +71,9 @@ meant to be user-editable; the toggle is rbac.tierRoles.install, not this.
 - roleBase: frameresourcequota
   apiGroup: frame.plume-labs.io
   resource: frameresourcequotas
+- roleBase: frameuser
+  apiGroup: frame.plume-labs.io
+  resource: frameusers
 - roleBase: schedulingpolicy
   apiGroup: frame.plume-labs.io
   resource: schedulingpolicies

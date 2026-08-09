@@ -296,6 +296,23 @@ the password hash sat in a widely-readable spec field. A `v1alpha1` client
 still spells it `spec.passwordHash`; the conversion webhook moves it both ways,
 so it is the one genuine bijection in the freeze.
 
+**What the move to status protects, precisely.** Writes, not reads — measured
+against a real apiserver while writing the RBAC tiers, not assumed. A
+principal with `patch frameusers` but no `frameusers/status` cannot alter the
+hash: a merge patch carrying both a spec change and a status change applies
+the spec half and the apiserver drops the status half silently. But a plain
+`GET frameusers` returns the whole object, status included, so **anyone who
+can read a FrameUser at all can read its password hash** — the status
+subresource splits writes, not reads. `frameuser-viewer-role` and
+`frameuser-editor-role` are still written with no `/status` rule (see
+[deployment.md](deployment.md), "RBAC"), but binding either of them is still
+handing over the hashes. The destination is a `Secret` — at-rest encryption
+and audit treatment a CR field does not have — and that is the only change
+that closes the read side. It is recorded here rather than done in the
+freeze, because it is a real design change: `authd`'s store gains a second
+object to keep consistent, and the last-admin guard would have to survive a
+partially-written pair.
+
 **Webhook:** validation refuses to remove the last admin, whether by deletion or
 by demotion, and **fails closed** — if the admin list cannot be read, the request
 is denied rather than assumed safe.

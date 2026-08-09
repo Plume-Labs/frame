@@ -94,6 +94,15 @@ type FrameUserSpec struct {
 // grant can write it, and the viewer and editor tiers can be denied the
 // subresource entirely.
 //
+// **The move buys write protection, not confidentiality.** Measured against a
+// real apiserver while writing the tier roles: a plain `GET frameusers`
+// returns the whole object, status included, so anyone who can read the
+// account can still read the hash — the status subresource splits writes, not
+// reads. What denying frameusers/status actually stops is the write path (a
+// tier with `patch frameusers` cannot alter status; the apiserver drops it
+// silently) and the dedicated /status read endpoint. Treat `get frameusers`
+// as equivalent to holding every password hash until the Secret below exists.
+//
 // The destination is a Secret, not a status field — at-rest encryption and
 // audit treatment a CR field does not have. That is a real design change
 // (authd's store gains a second object to keep consistent, and the
