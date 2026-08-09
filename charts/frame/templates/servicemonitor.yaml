@@ -13,12 +13,13 @@ metadata:
 spec:
   endpoints:
   - path: /metrics
-    port: https
-    scheme: https
+    port: {{ include "frame.metricsPortName" . }}
+    scheme: {{ include "frame.metricsPortName" . }}
     {{- with .Values.metrics.serviceMonitor.interval }}
     interval: {{ . }}
     {{- end }}
     bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    {{- if .Values.metrics.secure }}
     tlsConfig:
       # The manager's metrics server uses controller-runtime's own
       # self-signed cert (nothing mounts the metrics-server-cert Secret into
@@ -27,6 +28,7 @@ spec:
       # cert-manager CA to verify against here either. Matches
       # config/prometheus/monitor.yaml's default exactly.
       insecureSkipVerify: true
+    {{- end }}
   selector:
     matchLabels:
       {{- include "frame.selectorLabels" . | nindent 6 }}

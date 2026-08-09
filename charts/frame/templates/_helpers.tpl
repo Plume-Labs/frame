@@ -37,6 +37,21 @@ control-plane: controller-manager
 {{- end -}}
 
 {{/*
+Metrics port/scheme, derived from metrics.secure so the container's
+--metrics-bind-address, the metrics Service, the NetworkPolicy ingress rule
+and the ServiceMonitor endpoint can never point at four different ports (I-2:
+they used to be independently hardcoded to 8443/https and silently broke
+whenever metrics.secure was set to false).
+*/}}
+{{- define "frame.metricsPort" -}}
+{{- if .Values.metrics.secure -}}8443{{- else -}}8080{{- end -}}
+{{- end -}}
+
+{{- define "frame.metricsPortName" -}}
+{{- if .Values.metrics.secure -}}https{{- else -}}http{{- end -}}
+{{- end -}}
+
+{{/*
 The seven CRD-tier RBAC sets kubebuilder scaffolds (viewer/editor/admin per
 CRD). Kept as a fixed list because it mirrors the actual CRDs in api/ — not
 meant to be user-editable; the toggle is rbac.tierRoles.install, not this.

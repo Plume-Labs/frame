@@ -3,7 +3,15 @@
 # makes (templated CRDs, fixed resource names) before changing either.
 
 image:
-  repository: example.com/frame
+  # No default: there is no published operator image yet (publishing is out
+  # of scope for this chart — see charts/frame/README.md). Leaving this
+  # unset used to install cleanly and land in ImagePullBackOff with
+  # example.com/frame; the Deployment template now wraps it in `required` so
+  # a missing value fails at install time with an actionable message instead.
+  # `make helm-lint` / `hack/helm-parity.sh` pass --set image.repository=... explicitly
+  # for this reason — that isn't this chart's real default, just how the
+  # render-only checks get past the guard.
+  repository: ""
   # Defaults to .Chart.AppVersion when empty — see charts/frame/README.md.
   tag: ""
   pullPolicy: IfNotPresent
@@ -25,7 +33,30 @@ resources:
 
 nodeSelector: {}
 tolerations: []
-affinity: {}
+# Soft (preferred, not required) anti-affinity so replicaCount: 2 actually
+# buys availability instead of two pods that can both land on one node — but
+# never blocks scheduling outright, so this is also safe on a single-node
+# cluster (e.g. Kind) with replicaCount: 1. Override wholesale if you need
+# something stricter (e.g. `requiredDuringScheduling...` once you know you
+# always have >=2 nodes).
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: frame
+            control-plane: controller-manager
+        topologyKey: kubernetes.io/hostname
+
+# Off by default deliberately: a PodDisruptionBudget with replicaCount: 1
+# (the chart's own default) would block voluntary node drains/evictions
+# forever, since minAvailable: 1 can never be satisfied while evicting the
+# only pod. Only turn this on once replicaCount > 1.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
 
 # CRDs are rendered from templates/ (not Helm's magic crds/ directory) so
 # `helm upgrade` can evolve schemas — see charts/frame/README.md. Each CRD
@@ -35,11 +66,15 @@ crds:
   install: true
 
 metrics:
-  # Controls both the :8443 metrics port on the manager and the RBAC
+  # Controls both the metrics port on the manager and the RBAC
   # (metrics-auth-role / metrics-reader) and Service that expose it.
   enabled: true
-  # Serve metrics over HTTPS with authn/authz (matches config/default).
-  # Set to false only for local debugging — never in a shared cluster.
+  # Serve metrics over HTTPS with authn/authz (matches config/default), on
+  # :8443. Setting this to false switches the manager to plain HTTP on :8080
+  # instead — the metrics Service, NetworkPolicy and ServiceMonitor all
+  # derive their port/scheme from this value (see templates/_helpers.tpl's
+  # frame.metricsPort/frame.metricsPortName) so they can't drift out of sync
+  # with it. Only for local debugging — never in a shared cluster.
   secure: true
   serviceMonitor:
     # Off by default: kustomize's config/prometheus is commented out of

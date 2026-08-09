@@ -78,16 +78,19 @@ See `values.yaml` for the full, commented list. Highlights:
 
 | Value | Default | Notes |
 |---|---|---|
-| `image.repository` / `image.tag` / `image.pullPolicy` | `example.com/frame` / `""` (→ `.Chart.AppVersion`) / `IfNotPresent` | Build with `Dockerfile.controller`, **not** the root `Dockerfile` (that's the React UI). |
-| `replicaCount` | `1` | `cmd/main.go` always runs with `--leader-elect`; `2` is a supported, tested configuration — exactly one replica holds the Lease at a time. |
+| `image.repository` | `""` | **Required — no default.** There is no published operator image yet; the Deployment template wraps this in `required` so a missing value fails at install time with an actionable message instead of installing and sitting in `ImagePullBackOff`. Build with `Dockerfile.controller`, **not** the root `Dockerfile` (that's the React UI). |
+| `image.tag` / `image.pullPolicy` | `""` (→ `.Chart.AppVersion`) / `IfNotPresent` | |
+| `replicaCount` | `1` | `cmd/main.go` always runs with `--leader-elect`; `2` is a supported, tested configuration — exactly one replica holds the Lease at a time. Ships with soft (`preferred`) pod anti-affinity by default so 2 replicas actually spread across nodes when possible, without blocking scheduling on a single-node cluster. |
+| `podDisruptionBudget.enabled` / `.minAvailable` | `false` / `1` | Opt-in only: with the chart's own default `replicaCount: 1`, a PDB requiring `minAvailable: 1` can never be satisfied while evicting the only pod, which would block node drains/upgrades forever. Only turn this on alongside `replicaCount > 1`. |
 | `crds.install` | `true` | See decision #2 above. |
-| `metrics.enabled` | `true` | Gates the `:8443` metrics port, its Service, its RBAC (`metrics-auth-role`/`metrics-reader`), and (with `certManager.enabled`) the metrics Certificate. |
+| `metrics.enabled` | `true` | Gates the metrics port, its Service, its RBAC (`metrics-auth-role`/`metrics-reader`), and (with `certManager.enabled`) the metrics Certificate. |
+| `metrics.secure` | `true` | `true` = HTTPS+authn/authz on `:8443` (matches kustomize); `false` = plain HTTP on `:8080`, for local debugging only. The metrics Service, the metrics NetworkPolicy rule and the ServiceMonitor endpoint all derive their port/scheme from this value (`templates/_helpers.tpl`'s `frame.metricsPort`/`frame.metricsPortName`) so they can't drift out of sync with the container's actual `--metrics-bind-address`. |
 | `metrics.serviceMonitor.enabled` | `false` | Off by default to match kustomize (`config/prometheus` is commented out of `config/default`). Requires the Prometheus Operator CRDs in-cluster. |
-| `webhooks.enabled` | `true` | Disabling it means CRs are accepted with no defaulting or validation — only meant for constrained debugging. |
+| `webhooks.enabled` | `true` | Disabling it sets `ENABLE_WEBHOOKS=false` on the container (the actual switch `cmd/main.go` checks — `webhooks.enabled: false` used to only drop the cert mount/volume/port and leave webhook registration itself on, which crash-looped the manager on the now-missing `tls.crt`). With it `false`, CRs are accepted with no defaulting or validation — only meant for constrained debugging. |
 | `webhooks.certSecretName` | `webhook-server-cert` | The Secret the manager mounts at `/tmp/k8s-webhook-server/serving-certs`, keys `tls.crt` / `tls.key`. |
-| `webhooks.caBundle` | `""` | Only used when `certManager.enabled: false` — base64 PEM CA bundle injected into both WebhookConfigurations' `clientConfig.caBundle`. |
+| `webhooks.caBundle` | `""` | Only used when `certManager.enabled: false` — base64 PEM CA bundle injected into both WebhookConfigurations' `clientConfig.caBundle`. **Required whenever `certManager.enabled: false` and `webhooks.enabled: true`**: `templates/webhookconfigurations.yaml` fails the render if it's left empty, because an empty `caBundle` installs cleanly and then fails every CR create/update cluster-wide with an x509 error (`failurePolicy: Fail` on all 10 webhooks) — a silent, fail-closed outage is exactly what this guard turns into a loud, install-time one. |
 | `certManager.enabled` | `true` | When `false`, the chart renders no Issuer/Certificate and expects `webhooks.certSecretName` to already exist with a cert whose CA matches `webhooks.caBundle`, provisioned by whatever your cluster uses instead (manual, `openssl`, a different PKI operator, …). |
-| `networkPolicy.enabled` | `false` | Matches kustomize (`config/network-policy` is commented out of `config/default`). |
+| `networkPolicy.enabled` | `false` | Matches kustomize (`config/network-policy` is commented out of `config/default`), with one fix: the webhook rule's ingress port is `9443` (the webhook server's actual pod port), not kustomize's `443` (the *Service* port — NetworkPolicy `ingress.ports[].port` is a pod port, so kustomize's copy of this rule blocks admission the moment it's enabled; verified with Calico on Kind, see the round-2 fix report). |
 | `rbac.tierRoles.install` | `true` | The 21 viewer/editor/admin ClusterRoles kubebuilder scaffolds per CRD — not used by the manager itself, convenience roles for cluster admins. |
 
 ## Installing without cert-manager
@@ -101,15 +104,40 @@ If `certManager.enabled: false`, before `helm install`:
    `frame-webhook-service.<namespace>.svc.cluster.local`.
 2. Set `webhooks.caBundle` to the base64-encoded PEM CA bundle that signed
    that certificate, so the API server trusts the manager's webhook
-   endpoint.
+   endpoint. **This is enforced, not just documented**: leaving it empty
+   fails the `helm install`/`helm template` render outright rather than
+   installing into a cluster-wide admission outage.
 
 ## Anti-drift check
 
 `hack/helm-parity.sh` renders both `helm template` and
 `kustomize build config/default`, and diffs the sorted `kind|namespace|name`
 sets. It fails if either side grows a resource the other one lacks. The only
-allowed one-directional differences are documented inline in the script:
-the chart's `Namespace` omission (decision #1's namespace-supplied-externally
-model) and the opt-in `ServiceMonitor`/`NetworkPolicy` resources kustomize
-has commented out of `config/default`. Run it locally with
-`make helm-parity`; CI runs it via `.github/workflows/lint.yml`.
+allowed one-directional difference in that pass is the chart's `Namespace`
+omission (decision #1's namespace-supplied-externally model).
+
+A second pass turns on `networkPolicy.enabled` and
+`metrics.serviceMonitor.enabled` and asserts that *exactly* the three expected
+extra resources (`frame-allow-metrics-traffic`, `frame-allow-webhook-traffic`,
+`frame-controller-manager-metrics-monitor` — allow-listed by full
+`kind|namespace|name`, not just kind) appear, then diffs their bodies against
+`kustomize build config/network-policy` / `config/prometheus` (both build
+standalone). Allow-listing by kind alone used to mean the chart could rename,
+mis-namespace or stop rendering these three entirely and the script would
+still print `OK`; allow-listing by exact identity plus a presence assertion
+closes both holes, and the content diff catches anything that renders but
+drifts semantically (the one expected exception, the webhook rule's port,
+is asserted explicitly — see the `networkPolicy.enabled` row above).
+
+The extractor (`kind`/`namespace`/`name` and full-body JSON) is a small Go
+program the script writes to a temp file and runs with `go run` — deliberately
+not PyYAML: this repo already needs the Go toolchain to build anything, and
+`k8s.io/apimachinery` + `sigs.k8s.io/yaml` are already `go.sum` dependencies,
+so there's no new dependency and no `pip install` running under `set -e` in a
+CI gate.
+
+Run it locally with `make helm-parity`; CI runs it via
+`.github/workflows/lint.yml`, alongside `make helm-crds-check` (which uses
+`git status --porcelain`, not `git diff`, specifically so a newly *added*
+CRD file — not just a modified or deleted one — fails the build if it isn't
+also synced into the chart).

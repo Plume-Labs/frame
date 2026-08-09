@@ -12,9 +12,11 @@ Frame operator installed as release "{{ .Release.Name }}" in namespace "{{ .Rele
 {{- end }}
 
 2. CRDs installed by this chart carry `helm.sh/resource-policy: keep`, so
-   `helm uninstall` leaves them (and any CRs) in place:
+   `helm uninstall` leaves them (and any CRs) in place. They're synced
+   verbatim from config/crd/bases/ and carry no chart labels of their own
+   (see charts/frame/README.md), so list them by group instead:
 
-     kubectl get crd -l app.kubernetes.io/name=frame
+     kubectl get crd | grep plume-labs.io
 
 {{- if .Values.webhooks.enabled }}
 
@@ -42,7 +44,7 @@ Frame operator installed as release "{{ .Release.Name }}" in namespace "{{ .Rele
 {{- end }}
 {{- if .Values.metrics.enabled }}
 
-4. Metrics are served on :8443 of {{ include "frame.name" . }}-controller-manager-metrics-service.
+4. Metrics are served on :{{ include "frame.metricsPort" . }} of {{ include "frame.name" . }}-controller-manager-metrics-service.
 {{- if .Values.metrics.serviceMonitor.enabled }}
    A ServiceMonitor is installed for Prometheus Operator to pick up.
 {{- else }}

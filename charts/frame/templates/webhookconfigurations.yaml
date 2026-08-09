@@ -1,4 +1,7 @@
 {{- if .Values.webhooks.enabled }}
+{{- if and (not .Values.certManager.enabled) (not .Values.webhooks.caBundle) }}
+{{ fail "certManager.enabled is false and webhooks.caBundle is empty: every FrameJob/FrameNode/FrameService/... create and update would fail cluster-wide with an x509 error the moment the manager comes up (failurePolicy: Fail on all 10 webhooks), because the API server has no CA to trust the manager's serving cert. Set webhooks.caBundle to the base64 PEM CA bundle that signed webhooks.certSecretName's certificate — see charts/frame/README.md, \"Installing without cert-manager\" — or leave certManager.enabled: true." }}
+{{- end }}
 {{- $svc := printf "%s-webhook-service" (include "frame.name" .) }}
 {{- $ns := .Release.Namespace }}
 apiVersion: admissionregistration.k8s.io/v1
