@@ -115,4 +115,12 @@ resources:
   kind: FrameJob
   path: github.com/rmocq/frame/api/frame/v1beta1
   version: v1beta1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: plume-labs.io
+  group: frame
+  kind: FrameNode
+  path: github.com/rmocq/frame/api/frame/v1beta1
+  version: v1beta1
 version: "3"
