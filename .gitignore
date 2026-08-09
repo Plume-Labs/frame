@@ -45,3 +45,4 @@ cover.out
 
 # Superpowers scratch: plans workspaces, ledgers, review packages, reports.
 .superpowers/
+.claude/
