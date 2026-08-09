@@ -388,10 +388,22 @@ jobs:
       - name: Install kustomize
         run: go install sigs.k8s.io/kustomize/kustomize/v5@${{ env.KUSTOMIZE_VERSION }}
 
+      # REF_NAME goes through env, never straight into the shell. A git tag may
+      # contain $, backticks, parentheses, semicolons, ampersands and pipes —
+      # only whitespace and ~^:?*[\ are forbidden — so a tag named
+      # v1.0.0$(...) interpolated by ${{ }} would execute inside this job,
+      # which holds contents: write. Referencing "$REF_NAME" makes it data.
+      # (Pre-existing; fixed here because leaving an injection in the same job
+      # this branch just removed a curl|bash from is the wrong place to stop.)
       - name: Render production manifest
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          kustomize build deploy/kubernetes/overlays/production/ > cluster-control-${{ github.ref_name }}.yaml
+          kustomize build deploy/kubernetes/overlays/production/ > "cluster-control-${REF_NAME}.yaml"
 
+      # Left as a direct interpolation: `files` is an action input, not a shell
+      # string, so nothing evaluates it. Git also forbids *, ?, [ and \ in ref
+      # names, so it cannot glob into something unintended either.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
