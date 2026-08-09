@@ -138,6 +138,75 @@ fi
 echo "OK: identical resource sets."
 echo
 
+# --- default content diff: body-level, not just kind/namespace/name --------
+# A name-only diff was the pre-existing weak spot: a dropped ClusterRole
+# verb, a dropped --leader-elect, or a changed probe port would all pass the
+# check above unnoticed, and every one of those would break a
+# `--take-ownership` migration silently. Since the resource sets are now
+# known identical, diff every shared object's full body (minus .metadata,
+# which legitimately differs — Helm's standard labels vs kustomize's, plus
+# Release.Namespace bookkeeping already covered by the triple key).
+#
+# Two documented, permanent exceptions (both already called out in
+# charts/frame/README.md's decisions/values doc):
+#  - CustomResourceDefinition: skipped entirely. These aren't hand-templated
+#    like everything else — templates/crds.yaml reads files/crds/*.yaml
+#    verbatim via .Files.Glob and only ever adds one annotation, and that
+#    sync is already verified by make helm-crds-check / helm-sync-crds
+#    keeping files/crds/ byte-identical to config/crd/bases/. Diffing their
+#    (large) OpenAPI schemas here would be slow and redundant.
+#  - Deployment frame-controller-manager: `.image`/`.imagePullPolicy` differ
+#    because this run and kustomize's default point at different
+#    placeholders (expected — nobody ships the same image reference by
+#    coincidence); `.spec.template.spec.affinity` differs because the chart
+#    ships default soft pod anti-affinity that kustomize's manager.yaml does
+#    not (N-3 — see values.yaml's podAntiAffinity/affinity comments).
+#  - Certificate frame-metrics-certs: `.spec.dnsNames` differs because
+#    kustomize leaves its copy as the literal, unsubstituted
+#    "SERVICE_NAME.SERVICE_NAMESPACE.svc" placeholder (its own replacements
+#    wiring for this Certificate is commented out) while the chart fills in
+#    the real Service name — see templates/certmanager.yaml.
+echo "== default content diff: helm vs kustomize, full body (documented exceptions only) =="
+body_fail=0
+
+while IFS= read -r triple; do
+  [ -z "$triple" ] && continue
+  kind="${triple%%|*}"
+  rest="${triple#*|}"
+  ns="${rest%%|*}"
+  name="${rest#*|}"
+
+  if [ "$kind" = "CustomResourceDefinition" ]; then
+    continue
+  fi
+
+  redact='.'
+  if [ "$kind" = "Deployment" ] && [ "$name" = "frame-controller-manager" ]; then
+    redact='.spec.template.spec.containers[0].image = "IGNORED (different placeholder images — see hack/helm-parity.sh)" | .spec.template.spec.containers[0].imagePullPolicy = "IGNORED" | .spec.template.spec.affinity = "IGNORED (N-3: chart default soft anti-affinity — see values.yaml)"'
+  elif [ "$kind" = "Certificate" ] && [ "$name" = "frame-metrics-certs" ]; then
+    redact='.spec.dnsNames = "IGNORED (kustomize leaves this Certificate'"'"'s dnsNames as unsubstituted placeholders — see templates/certmanager.yaml)"'
+  fi
+
+  a="$(jq -S --arg kind "$kind" --arg ns "$ns" --arg name "$name" \
+    ".[] | select(.kind==\$kind and ((.metadata.namespace // \"\")==\$ns) and .metadata.name==\$name) | del(.metadata) | $redact" \
+    -s "$tmpdir/helm-default.jsonl")"
+  b="$(jq -S --arg kind "$kind" --arg ns "$ns" --arg name "$name" \
+    ".[] | select(.kind==\$kind and ((.metadata.namespace // \"\")==\$ns) and .metadata.name==\$name) | del(.metadata) | $redact" \
+    -s "$tmpdir/kustomize.jsonl")"
+
+  if [ "$a" != "$b" ]; then
+    echo "FAIL: $triple content differs between helm and kustomize (beyond the documented exceptions above):" >&2
+    diff <(echo "$a") <(echo "$b") >&2 || true
+    body_fail=1
+  fi
+done < "$tmpdir/kustomize.set.filtered"
+
+if [ "$body_fail" -ne 0 ]; then
+  exit 1
+fi
+echo "OK: every shared resource's body matches (CRDs verified separately; Deployment image/imagePullPolicy/affinity and the metrics Certificate's dnsNames are the only documented exceptions)."
+echo
+
 # --- helm side: opt-in extras ------------------------------------------------
 # ServiceMonitor and the two NetworkPolicies live in config/ (config/prometheus,
 # config/network-policy) but are commented out of config/default's
@@ -153,16 +222,25 @@ echo
 # nothing kustomize-only). Allow-listing exact identities plus asserting their
 # presence closes both holes — anything else appearing only on one side still
 # fails the script.
+# PodDisruptionBudget is in this list too (N-2): it's a fourth helm-only
+# resource behind its own value (podDisruptionBudget.enabled), and the first
+# version of this fix rendered the extras pass without ever turning it on —
+# exactly the "stopped rendering it entirely, script stays green" gap I-4 was
+# about, reintroduced by the same commit that fixed I-4. It has no kustomize
+# counterpart at all (no config/pdb/ anywhere), so it gets a presence +
+# minimal shape assertion below rather than a content diff against config/.
 EXPECTED_EXTRAS=(
   "NetworkPolicy|frame-system|frame-allow-metrics-traffic"
   "NetworkPolicy|frame-system|frame-allow-webhook-traffic"
   "ServiceMonitor|frame-system|frame-controller-manager-metrics-monitor"
+  "PodDisruptionBudget|frame-system|frame-controller-manager"
 )
 
 "$HELM" template frame "$CHART_DIR" --namespace frame-system \
   --set image.repository="$CI_PLACEHOLDER_IMAGE" \
   --set networkPolicy.enabled=true \
   --set metrics.serviceMonitor.enabled=true \
+  --set podDisruptionBudget.enabled=true \
   > "$tmpdir/helm-extras.yaml"
 extract_jsonl "$tmpdir/helm-extras.yaml" > "$tmpdir/helm-extras.jsonl"
 triples "$tmpdir/helm-extras.jsonl" > "$tmpdir/helm-extras.set"
@@ -238,20 +316,32 @@ if [ "$a_metrics" != "$b_metrics" ]; then
   content_fail=1
 fi
 
-# allow-webhook-traffic: compare everything except .spec.ingress[0].ports,
-# which is the intended, documented I-3 fix (9443 pod port vs kustomize's
-# buggy 443 service port) — then separately assert the fix is actually in
-# place, so this exception can't silently mask a real regression either.
-a_webhook="$(jq -S 'select(.kind=="NetworkPolicy" and (.metadata.name | endswith("allow-webhook-traffic"))) | .spec | .ingress[0].ports = "IGNORED (see I-3)"' "$tmpdir/helm-extras.jsonl")"
-b_webhook="$(jq -S 'select(.kind=="NetworkPolicy" and .metadata.name=="allow-webhook-traffic") | .spec | .ingress[0].ports = "IGNORED (see I-3)"' "$tmpdir/np-standalone.jsonl")"
+# allow-webhook-traffic: two documented, permanent exceptions, both already
+# explained at length in templates/networkpolicy.yaml and values.yaml:
+#  - .spec.ingress[0].ports (I-3): 9443, the real pod port, vs kustomize's
+#    buggy 443 (the Service port).
+#  - .spec.ingress[0].from (N-1): the chart's rule has none (open to any
+#    source on 9443) where kustomize's has a namespaceSelector that can never
+#    match a host-process apiserver (k3s, kubeadm, ...) — see the long
+#    comment on networkPolicy.webhookSourceCIDRs in values.yaml for why an
+#    unconditional source restriction here is an outage, not a fix.
+# Both exceptions are asserted explicitly below so neither can silently mask
+# an unrelated regression.
+a_webhook="$(jq -S 'select(.kind=="NetworkPolicy" and (.metadata.name | endswith("allow-webhook-traffic"))) | .spec | .ingress[0].ports = "IGNORED (see I-3)" | .ingress[0].from = "IGNORED (see N-1)"' "$tmpdir/helm-extras.jsonl")"
+b_webhook="$(jq -S 'select(.kind=="NetworkPolicy" and .metadata.name=="allow-webhook-traffic") | .spec | .ingress[0].ports = "IGNORED (see I-3)" | .ingress[0].from = "IGNORED (see N-1)"' "$tmpdir/np-standalone.jsonl")"
 if [ "$a_webhook" != "$b_webhook" ]; then
-  echo "FAIL: allow-webhook-traffic NetworkPolicy content differs from config/network-policy (beyond the documented I-3 ports fix):" >&2
+  echo "FAIL: allow-webhook-traffic NetworkPolicy content differs from config/network-policy (beyond the documented I-3/N-1 exceptions):" >&2
   diff <(echo "$a_webhook") <(echo "$b_webhook") >&2 || true
   content_fail=1
 fi
 webhook_port="$(jq -r 'select(.kind=="NetworkPolicy" and (.metadata.name | endswith("allow-webhook-traffic"))) | .spec.ingress[0].ports[0].port' "$tmpdir/helm-extras.jsonl")"
 if [ "$webhook_port" != "9443" ]; then
   echo "FAIL: chart's allow-webhook-traffic NetworkPolicy ingress port is $webhook_port, expected 9443 (the webhook server's actual pod port — see templates/networkpolicy.yaml)." >&2
+  content_fail=1
+fi
+webhook_from="$(jq -r 'select(.kind=="NetworkPolicy" and (.metadata.name | endswith("allow-webhook-traffic"))) | .spec.ingress[0] | has("from")' "$tmpdir/helm-extras.jsonl")"
+if [ "$webhook_from" != "false" ]; then
+  echo "FAIL: with webhookSourceCIDRs unset, the allow-webhook-traffic NetworkPolicy must have no 'from' restriction (open to any source on 9443 — see N-1 in values.yaml); found one anyway." >&2
   content_fail=1
 fi
 
@@ -264,7 +354,23 @@ if [ "$a_sm" != "$b_sm" ]; then
   content_fail=1
 fi
 
+# PodDisruptionBudget (N-2): no kustomize counterpart exists at all (no
+# config/pdb/ anywhere), so there's nothing to content-diff against — this is
+# a shape assertion instead, checking the render actually did what
+# podDisruptionBudget.enabled=true/minAvailable are documented to do.
+pdb_min="$(jq -r 'select(.kind=="PodDisruptionBudget") | .spec.minAvailable' "$tmpdir/helm-extras.jsonl")"
+if [ "$pdb_min" != "1" ]; then
+  echo "FAIL: PodDisruptionBudget minAvailable is '$pdb_min', expected 1 (values.yaml's podDisruptionBudget.minAvailable default)." >&2
+  content_fail=1
+fi
+pdb_selector="$(jq -S 'select(.kind=="PodDisruptionBudget") | .spec.selector.matchLabels' "$tmpdir/helm-extras.jsonl")"
+expected_selector='{"app.kubernetes.io/name":"frame","control-plane":"controller-manager"}'
+if [ "$pdb_selector" != "$(echo "$expected_selector" | jq -S .)" ]; then
+  echo "FAIL: PodDisruptionBudget selector is $pdb_selector, expected it to match frame.selectorLabels ($expected_selector)." >&2
+  content_fail=1
+fi
+
 if [ "$content_fail" -ne 0 ]; then
   exit 1
 fi
-echo "OK: extras' content matches their config/ source, modulo the documented I-3 port fix."
+echo "OK: extras' content matches their config/ source (modulo the documented I-3/N-1 exceptions), and the PodDisruptionBudget's shape matches values.yaml's defaults."

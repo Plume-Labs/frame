@@ -36,19 +36,16 @@ tolerations: []
 # Soft (preferred, not required) anti-affinity so replicaCount: 2 actually
 # buys availability instead of two pods that can both land on one node — but
 # never blocks scheduling outright, so this is also safe on a single-node
-# cluster (e.g. Kind) with replicaCount: 1. Override wholesale if you need
-# something stricter (e.g. `requiredDuringScheduling...` once you know you
-# always have >=2 nodes).
-affinity:
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-    - weight: 100
-      podAffinityTerm:
-        labelSelector:
-          matchLabels:
-            app.kubernetes.io/name: frame
-            control-plane: controller-manager
-        topologyKey: kubernetes.io/hostname
+# cluster (e.g. Kind) with replicaCount: 1. Built in templates/deployment.yaml
+# from frame.selectorLabels (not hardcoded here — a values.yaml literal can't
+# call that helper, and a second hand-copied set of labels would silently
+# stop matching if the helper ever changed — see _helpers.tpl and N-4 in the
+# delivery report). Set affinity below to anything non-empty to replace this
+# default entirely; set podAntiAffinity.enabled: false to drop it with no
+# replacement.
+affinity: {}
+podAntiAffinity:
+  enabled: true
 
 # Off by default deliberately: a PodDisruptionBudget with replicaCount: 1
 # (the chart's own default) would block voluntary node drains/evictions
@@ -110,7 +107,29 @@ certManager:
 networkPolicy:
   # Matches today's kustomize behaviour: config/network-policy exists but is
   # commented out of config/default, so it's off by default here too.
+  #
+  # IMPORTANT (N-1): the webhook rule intentionally does NOT restrict *who*
+  # can reach port 9443, only that nothing else can. On a real cluster
+  # (k3s, kubeadm, EKS with self-managed control plane, …) kube-apiserver is
+  # a HOST PROCESS, not a pod — it has no namespace, so a `namespaceSelector`
+  # can never match it (kustomize's own config/network-policy/
+  # allow-webhook-traffic.yaml has exactly this problem, on top of the port
+  # bug this chart already fixes — see templates/networkpolicy.yaml).
+  # `failurePolicy: Fail` is set on all 10 admission webhooks, so a policy
+  # the apiserver can't satisfy is not a source restriction, it is a
+  # cluster-wide CR write outage the moment this value is turned on. Verified
+  # cross-node on Kind+Calico: a `namespaceSelector`-restricted rule dropped
+  # host->pod webhook traffic even with the port fixed; the open rule below
+  # did not.
+  #
+  # The webhook server's real authentication is mTLS (cert-manager-issued,
+  # or your own PKI — see certManager.enabled), so leaving 9443 open to any
+  # source and relying on that is the honest default. If you want to
+  # additionally restrict *where* admission calls may originate, set
+  # webhookSourceCIDRs to your control-plane node IPs/CIDR — those are
+  # cluster-specific and cannot be a chart default.
   enabled: false
+  webhookSourceCIDRs: []
 
 rbac:
   # The viewer/editor/admin ClusterRoles scaffolded per CRD (framejob,

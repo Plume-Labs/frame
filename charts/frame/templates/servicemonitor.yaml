@@ -18,8 +18,13 @@ spec:
     {{- with .Values.metrics.serviceMonitor.interval }}
     interval: {{ . }}
     {{- end }}
-    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     {{- if .Values.metrics.secure }}
+    # bearerTokenFile only makes sense (and is only sent) when metrics.secure
+    # is true: with it false, cmd/main.go never installs the FilterProvider
+    # that checks the token server-side (see deployment.yaml's
+    # --metrics-secure=false), so serving it here would just leak the
+    # ServiceAccount token in cleartext for no benefit (N-5).
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     tlsConfig:
       # The manager's metrics server uses controller-runtime's own
       # self-signed cert (nothing mounts the metrics-server-cert Secret into
