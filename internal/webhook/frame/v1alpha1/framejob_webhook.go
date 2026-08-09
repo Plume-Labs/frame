@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -74,16 +75,25 @@ func (v *FrameJobCustomValidator) ValidateDelete(_ context.Context, _ *framev1al
 	return nil, nil
 }
 
+// validateFrameJob warns when the pipeline is not one Frame knows about. It
+// deliberately does not hard-reject: `pipeline` names an Argo
+// WorkflowTemplate that lives in the cluster and that Frame does not own, so
+// enumerating other people's templates is not Frame's business (F9).
+//
+// The GPU/serviceClass:LOW rule that used to live here is gone (F8). It
+// coupled two orthogonal properties — how much hardware a job wants, and how
+// preemptible it is — and rested on a hardware fact with an expiry date (one
+// Pascal P4). It was also only ever reachable for the three pipelines in
+// knownPipelines, so it constrained nothing anyone had hit. Scheduling
+// priority is SchedulingPolicy's and the frame-* PriorityClasses' job.
 func validateFrameJob(job *framev1alpha1.FrameJob) (admission.Warnings, error) {
 	if !knownPipelines[job.Spec.Pipeline] {
 		known := make([]string, 0, len(knownPipelines))
 		for k := range knownPipelines {
 			known = append(known, k)
 		}
+		sort.Strings(known)
 		return admission.Warnings{fmt.Sprintf("pipeline %q not in known list %v; ensure WorkflowTemplate exists", job.Spec.Pipeline, known)}, nil
-	}
-	if job.Spec.GPUCount > 0 && job.Spec.ServiceClass == "LOW" {
-		return nil, fmt.Errorf("jobs requesting GPUs must use serviceClass HIGH or MEDIUM, got LOW")
 	}
 	return nil, nil
 }

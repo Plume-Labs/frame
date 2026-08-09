@@ -23,18 +23,14 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// FrameJobSpec defines the desired state of FrameJob
+// FrameJobSpec defines the desired state of FrameJob.
 //
-// The GPU/serviceClass:LOW conflict the webhook enforces (validateFrameJob
-// in framejob_webhook.go) is deliberately NOT mirrored here as CEL. The
-// webhook returns early with just a warning for any pipeline outside
-// knownPipelines, so the GPU/LOW check never runs for most real jobs
-// (including "training", used by this project's own sample and e2e
-// suite). A CEL rule has no such bypass and runs unconditionally, which
-// would (a) reject objects the webhook has always accepted, and (b)
-// permanently strand any already-stored object shaped that way, since
-// the rule is spec-level and re-evaluates on every update including one
-// that only flips spec.suspended. See docs/roadmap.md's Phase B note.
+// There is deliberately no rule coupling gpuCount to serviceClass. One was
+// once enforced in the validating webhook for three pipeline names and
+// nowhere else; it was removed in the v1beta1 freeze (F8) because it tied
+// how much hardware a job wants to how preemptible it is, two orthogonal
+// properties. Scheduling priority is spec.priority's, projected onto a
+// frame-* PriorityClass by the controller.
 type FrameJobSpec struct {
 	// Pipeline template to use (training, inference, batch)
 	// +kubebuilder:validation:Required
