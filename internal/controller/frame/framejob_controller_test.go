@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -183,6 +184,72 @@ var _ = Describe("FrameJob Controller", func() {
 		Expect(ready.Reason).To(Equal(jobPhaseFailed),
 			"the Ready condition must follow the workflow, not stay at its first value")
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+	})
+
+	It("advances observedGeneration alone on a spec-only edit, firing no event and no metric", func() {
+		ctx := context.Background()
+		name := "obsgen-quiet"
+
+		job := &framev1alpha1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: framev1alpha1.FrameJobSpec{
+				Pipeline: "neura-training-dag", Namespace: "default", GPUCount: 1,
+			},
+		}
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, job) })
+
+		recorder := record.NewFakeRecorder(20)
+		reconciler := &FrameJobReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: recorder}
+		key := types.NamespacedName{Name: name, Namespace: "default"}
+
+		// Pass 1 adds the finalizer, pass 2 creates the Workflow (phase
+		// Submitted) and sets observedGeneration for the first time.
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &framev1alpha1.FrameJob{}
+		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation))
+		Expect(fetched.Status.Phase).To(Equal(jobPhaseSubmitted))
+
+		// Drain whatever the creation reconcile already recorded (at least
+		// WorkflowCreated) so the assertion below is only about the next call.
+		for drained := true; drained; {
+			select {
+			case <-recorder.Events:
+			default:
+				drained = false
+			}
+		}
+		completedBefore := testutil.ToFloat64(frameJobCompleted)
+		failedBefore := testutil.ToFloat64(frameJobFailed)
+
+		// A spec-only edit that does not affect workflowPhase (which is
+		// derived solely from the backing Workflow's own status.phase and
+		// spec.suspended): the derived phase stays Submitted, so this must
+		// not re-fire the "Phase changed" event or touch either counter —
+		// only observedGeneration should move.
+		fetched.Spec.GPUCount = 4
+		Expect(k8sClient.Update(ctx, fetched)).To(Succeed())
+		Expect(fetched.Generation).To(BeNumerically(">", 1))
+
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
+		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation),
+			"observedGeneration must still catch up to the new generation")
+		Expect(fetched.Status.Phase).To(Equal(jobPhaseSubmitted), "the derived phase must not have moved")
+
+		Consistently(recorder.Events, "200ms").ShouldNot(Receive(),
+			"a spec-only edit with no phase change must not re-fire the phase-change event")
+		Expect(testutil.ToFloat64(frameJobCompleted)).To(Equal(completedBefore),
+			"frame_framejob_completed_total must not move when the phase does not change")
+		Expect(testutil.ToFloat64(frameJobFailed)).To(Equal(failedBefore),
+			"frame_framejob_failed_total must not move when the phase does not change")
 	})
 })
 
