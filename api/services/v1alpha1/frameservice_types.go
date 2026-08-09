@@ -144,7 +144,13 @@ type FrameServiceStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
+// v1alpha1 keeps +kubebuilder:storageversion until the conversion webhook
+// serves; Task 19 moves the marker to v1beta1 atomically with it. See the
+// note on the v1alpha1 FrameJob for the full reasoning.
+//
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="services.plume-labs.io/v1alpha1 FrameService is deprecated; use services.plume-labs.io/v1beta1. status.phase is computed from status.conditions and is not stored."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
@@ -157,7 +163,7 @@ type FrameService struct {
 
 	// metadata is a standard object metadata
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// spec defines the desired state of FrameService
 	// +required
@@ -165,7 +171,7 @@ type FrameService struct {
 
 	// status defines the observed state of FrameService
 	// +optional
-	Status FrameServiceStatus `json:"status,omitzero"`
+	Status FrameServiceStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -173,7 +179,7 @@ type FrameService struct {
 // FrameServiceList contains a list of FrameService
 type FrameServiceList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []FrameService `json:"items"`
 }
 
