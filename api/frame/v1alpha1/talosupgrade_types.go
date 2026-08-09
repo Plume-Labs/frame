@@ -52,6 +52,13 @@ type TalosUpgradeSpec struct {
 
 // TalosUpgradeStatus defines the observed state of TalosUpgrade.
 type TalosUpgradeStatus struct {
+	// ObservedGeneration is the metadata.generation this status was computed
+	// from. A client can compare it to metadata.generation to tell whether
+	// the controller has seen the current spec yet, without knowing anything
+	// about this kind's condition vocabulary.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 

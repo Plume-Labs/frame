@@ -91,6 +91,7 @@ func (r *SchedulingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	patch := client.MergeFrom(sp.DeepCopy())
+	sp.Status.ObservedGeneration = sp.Generation
 	if len(errs) > 0 {
 		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,

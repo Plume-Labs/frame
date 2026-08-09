@@ -147,4 +147,39 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 		))
 		Expect(quota.Spec.Hard).NotTo(HaveKey(corev1.ResourcePods))
 	})
+
+	It("records the generation its status was computed from", func() {
+		frq := &framev1alpha1.FrameResourceQuota{
+			ObjectMeta: metav1.ObjectMeta{Name: "obsgen", Namespace: "default"},
+			Spec:       framev1alpha1.FrameResourceQuotaSpec{ServiceClass: "HIGH", MaxJobs: 5},
+		}
+		Expect(k8sClient.Create(ctx, frq)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, frq) })
+
+		reconciler := &FrameResourceQuotaReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(20),
+		}
+		obsgenKey := types.NamespacedName{Name: "obsgen", Namespace: "default"}
+		// Pass 1 adds the finalizer, pass 2 reconciles.
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: obsgenKey})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: obsgenKey})
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &framev1alpha1.FrameResourceQuota{}
+		Expect(k8sClient.Get(ctx, obsgenKey, fetched)).To(Succeed())
+		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation),
+			"status.observedGeneration must track metadata.generation")
+
+		// Change the spec and confirm the field moves with it.
+		fetched.Spec.MaxJobs = 9
+		Expect(k8sClient.Update(ctx, fetched)).To(Succeed())
+		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: obsgenKey})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, obsgenKey, fetched)).To(Succeed())
+		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation))
+	})
 })

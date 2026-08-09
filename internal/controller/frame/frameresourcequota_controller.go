@@ -99,6 +99,7 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	patch := client.MergeFrom(frq.DeepCopy())
+	frq.Status.ObservedGeneration = frq.Generation
 	meta.SetStatusCondition(&frq.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionTrue,
