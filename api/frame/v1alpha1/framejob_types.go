@@ -111,6 +111,7 @@ type FrameJobStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameJob is deprecated; use frame.plume-labs.io/v1beta1. spec.namespace is ignored — the Argo Workflow is created in the FrameJob's own namespace. status.phase is computed from status.conditions and is not stored."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=fj

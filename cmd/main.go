@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	controller "github.com/rmocq/frame/internal/controller/frame"
 	servicescontroller "github.com/rmocq/frame/internal/controller/services"
@@ -63,6 +64,7 @@ func init() {
 
 	utilruntime.Must(framev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(servicesv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(framev1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

@@ -32,6 +32,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: frame.plume-labs.io/v1alpha1 FrameJob is deprecated; use frame.plume-labs.io/v1beta1.
+      spec.namespace is ignored — the Argo Workflow is created in the FrameJob's own
+      namespace. status.phase is computed from status.conditions and is not stored.
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -202,6 +206,231 @@ spec:
                 type: string
               startTime:
                 description: StartTime is when the job started running
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Phase
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.pipeline
+      name: Pipeline
+      type: string
+    - jsonPath: .spec.serviceClass
+      name: ServiceClass
+      type: string
+    - jsonPath: .spec.gpuCount
+      name: GPUs
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameJob is the Schema for the framejobs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FrameJob
+            properties:
+              gpuCount:
+                default: 0
+                description: |-
+                  GPUCount is how many GPUs the job asks for.
+
+                  The ceiling is three orders of magnitude above the one physical GPU
+                  this cluster has, so it constrains nothing real — it turns an
+                  accidental gpuCount: 100000 into a validation error rather than an
+                  unschedulable pod (T5). A ceiling can only ever be raised after the
+                  freeze, never introduced.
+                format: int32
+                maximum: 1024
+                minimum: 0
+                type: integer
+              parameters:
+                additionalProperties:
+                  description: |-
+                    ParameterValue bounds a value in one of the free-form parameter maps.
+                    Declared as a named type rather than as a marker on the map, because
+                    controller-gen emits a value bound only from the map's value *type* —
+                    verified with controller-gen v0.20.1, which emits
+                    additionalProperties.maxLength from a named value type and silently drops
+                    markers on a named key type.
+                  maxLength: 1024
+                  type: string
+                description: |-
+                  Parameters are passed straight into the Argo Workflow's arguments.
+
+                  Bounded as an envelope (T3): 64 entries, 1024 characters per value. Key
+                  form is not constrained — see the note on ParameterValue and the plan's
+                  "Open disagreements" for why a key pattern is not expressible here
+                  without an unbounded-cost CEL rule.
+                maxProperties: 64
+                type: object
+              pipeline:
+                description: |-
+                  Pipeline names the Argo WorkflowTemplate to run.
+
+                  Deliberately an open string with only form validation (F9). It names an
+                  object that lives in the cluster and that Frame does not own; a closed
+                  enum would make Frame's API the gatekeeper for a namespace of objects
+                  someone else creates. The validating webhook warns — and only warns —
+                  when the value is outside the list Frame knows about.
+                maxLength: 253
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                type: string
+              priority:
+                default: medium
+                description: |-
+                  Priority is the scheduling urgency, separate from the resource tier: a
+                  HIGH-tier nightly batch can legitimately be low-priority. It maps onto
+                  a frame-* PriorityClass through internal/scheduling.
+                enum:
+                - critical
+                - high
+                - medium
+                - low
+                type: string
+              serviceClass:
+                default: LOW
+                description: |-
+                  ServiceClass is the resource tier this job's workloads run at.
+
+                  The default is in the schema, not in the mutating webhook where
+                  v1alpha1 kept it. A CRD default applies before CEL and before
+                  webhooks; a mutating-webhook default applies after CRD defaults, and
+                  having one kind default at each stage is the ordering subtlety that
+                  produced the has()-guard bug in the pre-freeze cleanup. It also means
+                  kubectl and the UI now agree on what "unspecified" is: they did not
+                  before — the webhook filled LOW, the SDK sent MEDIUM.
+                enum:
+                - HIGH
+                - MEDIUM
+                - LOW
+                type: string
+              suspended:
+                default: false
+                description: |-
+                  Suspended pauses the underlying Argo Workflow when true. Set to false
+                  to resume.
+                type: boolean
+            required:
+            - pipeline
+            type: object
+          status:
+            description: status defines the observed state of FrameJob
+            properties:
+              argoWorkflowName:
+                description: |-
+                  ArgoWorkflowName is the name of the created Argo Workflow. It always
+                  lives in the FrameJob's own namespace.
+                type: string
+              completionTime:
+                description: CompletionTime is when the job completed.
+                format: date-time
+                type: string
+              conditions:
+                description: |-
+                  Conditions represent the current state of the FrameJob resource.
+                  Ready's reason is one of Submitted, Running, Suspended, Completed,
+                  Failed.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              message:
+                description: Message provides additional information about the current
+                  status.
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from.
+                format: int64
+                type: integer
+              startTime:
+                description: StartTime is when the job started running.
                 format: date-time
                 type: string
             type: object
