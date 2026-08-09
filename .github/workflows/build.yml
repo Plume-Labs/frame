@@ -7,23 +7,37 @@ on:
   pull_request:
     branches: [main]
 
+# Deny by default, re-grant per job — the pattern lint.yml, test.yml and
+# test-e2e.yml already use. Without this, quality/iac/integration inherit the
+# repository default token, which is write-all unless the org narrows it, while
+# running untrusted PR code (npm ci runs install scripts; docker build runs the
+# PR's own Dockerfile).
+permissions: {}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   NODE_VERSION: '20'
   SMOKE_RETRIES: '15'
   SMOKE_RETRY_DELAY_SECONDS: '2'
+  # Pinned rather than resolved at run time: see the Install kustomize step.
+  KUSTOMIZE_VERSION: v5.8.1
 
 jobs:
   # ── 1. Quality gate: lint + typecheck + unit tests ────────────────────────
   quality:
     name: Quality
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -47,16 +61,29 @@ jobs:
   iac:
     name: IaC Validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
 
       - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+          # Published SHA-256 of kubeconform-linux-amd64.tar.gz for the version
+          # above. The download was already version-pinned; without a checksum
+          # the pin only says which URL to fetch, not what may come back from it.
+          KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
         run: |
-          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
-            | tar -xzC /tmp kubeconform
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum --check --strict
+          tar -xzC /tmp -f /tmp/kubeconform.tar.gz kubeconform
           sudo install /tmp/kubeconform /usr/local/bin/kubeconform
 
       - name: Validate Kubernetes manifests (base + overlays)
@@ -88,14 +115,17 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -103,7 +133,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -114,7 +144,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
@@ -128,14 +158,19 @@ jobs:
     name: Integration (kind)
     runs-on: ubuntu-latest
     needs: [quality, iac]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Build image for kind
         run: docker build -t cluster-control:ci .
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           cluster_name: cluster-control-ci
 
@@ -182,19 +217,33 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # Was: curl -sL .../kustomize/master/hack/install_kustomize.sh | bash
+      #
+      # That piped a script fetched from a moving `master` ref into a shell,
+      # inside the one job in this file holding `contents: write`. Whoever
+      # controlled that file at run time had code execution against a
+      # repo-write token. `go install` at a pinned version goes through the Go
+      # module checksum database instead, which is what the Makefile already
+      # does for every other tool it installs.
       - name: Install kustomize
-        run: |
-          curl -sL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-          sudo mv kustomize /usr/local/bin/kustomize
+        run: go install sigs.k8s.io/kustomize/kustomize/v5@${{ env.KUSTOMIZE_VERSION }}
 
       - name: Render production manifest
         run: |
           kustomize build deploy/kubernetes/overlays/production/ > cluster-control-${{ github.ref_name }}.yaml
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: cluster-control-${{ github.ref_name }}.yaml
           generate_release_notes: true
