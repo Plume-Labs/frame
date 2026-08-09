@@ -214,6 +214,11 @@ HELM ?= helm
 CHART_DIR := charts/frame
 CRD_SRC_DIR := config/crd/bases
 CRD_DST_DIR := $(CHART_DIR)/files/crds
+# image.repository has no real default (see charts/frame/values.yaml) and the
+# Deployment template `required`s it, so render-only checks (helm lint,
+# helm template in hack/helm-parity.sh) need a stand-in value to get past
+# that guard. Not a real image, never used to actually run anything.
+CI_PLACEHOLDER_IMAGE := ci-placeholder.invalid/frame
 
 .PHONY: helm-sync-crds
 helm-sync-crds: ## Copy config/crd/bases/*.yaml into the Helm chart verbatim.
@@ -222,22 +227,26 @@ helm-sync-crds: ## Copy config/crd/bases/*.yaml into the Helm chart verbatim.
 	@cp "$(CRD_SRC_DIR)"/*.yaml "$(CRD_DST_DIR)"/
 
 .PHONY: helm-crds-check
-helm-crds-check: ## Fail if the chart's CRD copies have drifted from config/crd/bases.
+helm-crds-check: ## Fail if the chart's CRD copies have drifted from config/crd/bases (including newly added ones).
 	@$(MAKE) helm-sync-crds
-	@git diff --exit-code -- "$(CRD_DST_DIR)" || { \
+	@drift="$$(git status --porcelain -- "$(CRD_DST_DIR)")"; \
+	if [ -n "$$drift" ]; then \
 		echo ""; \
-		echo "Helm chart CRDs are stale relative to config/crd/bases."; \
+		echo "Helm chart CRDs are stale relative to config/crd/bases:"; \
+		echo "$$drift"; \
 		echo "Run 'make manifests' (or 'make helm-sync-crds') and commit the result."; \
 		exit 1; \
-	}
+	fi
+	@# `git diff` alone is blind to untracked (newly added) files; `git status
+	@# --porcelain` catches additions, modifications and deletions alike.
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart.
-	"$(HELM)" lint "$(CHART_DIR)"
+	"$(HELM)" lint "$(CHART_DIR)" --set image.repository=$(CI_PLACEHOLDER_IMAGE)
 
 .PHONY: helm-parity
 helm-parity: kustomize ## Diff `helm template` against `kustomize build config/default` to catch drift between the two install paths.
-	KUSTOMIZE="$(KUSTOMIZE)" HELM="$(HELM)" ./hack/helm-parity.sh
+	KUSTOMIZE="$(KUSTOMIZE)" HELM="$(HELM)" CI_PLACEHOLDER_IMAGE="$(CI_PLACEHOLDER_IMAGE)" ./hack/helm-parity.sh
 
 ##@ Dependencies
 

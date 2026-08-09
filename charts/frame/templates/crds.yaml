@@ -11,10 +11,33 @@ sync by `make helm-sync-crds` (wired into `make manifests` and checked in CI
 by `make helm-crds-check`) — never hand-edit them here.
 */}}
 {{- if .Values.crds.install }}
-{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
-{{- $crd := $.Files.Get $path | fromYaml }}
+{{- $files := .Files.Glob "files/crds/*.yaml" }}
+{{- if not $files }}
+{{ fail "crds.install is true but no CRD files were found under files/crds/ — run `make helm-sync-crds` (or `make manifests`, which now calls it) and commit the result." }}
+{{- end }}
+{{- range $path, $_ := $files }}
+{{/*
+fromYaml only parses a single document, so a file with a stray "---" would
+otherwise silently drop every document after the first (M-5) — split on doc
+separators ourselves instead of assuming one-CRD-per-file forever. It also
+returns {"Error": "..."} rather than erroring on bad YAML, which toYaml would
+then happily render as a bogus object into the release manifest; both cases
+are caught by the same "does this look like a CRD" check below instead of
+being swallowed.
+*/}}
+{{- range $doc := regexSplit "(?m)^---[ \t]*$" ($.Files.Get $path) -1 }}
+{{- if trim $doc }}
+{{- $crd := fromYaml $doc }}
+{{- if not (hasKey $crd "kind") }}
+{{ fail (printf "%s: failed to parse as YAML, or has no 'kind' field — files/crds/ must only contain valid CustomResourceDefinitions synced from config/crd/bases." $path) }}
+{{- end }}
+{{- if ne $crd.kind "CustomResourceDefinition" }}
+{{ fail (printf "%s: expected kind CustomResourceDefinition, got %q — files/crds/ must only contain CRDs synced from config/crd/bases." $path $crd.kind) }}
+{{- end }}
 {{- $_ := set $crd.metadata "annotations" (merge (default (dict) $crd.metadata.annotations) (dict "helm.sh/resource-policy" "keep")) }}
 ---
 {{ toYaml $crd }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

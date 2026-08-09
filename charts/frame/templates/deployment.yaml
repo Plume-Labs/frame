@@ -28,13 +28,13 @@ spec:
           type: RuntimeDefault
       containers:
       - name: manager
-        image: "{{ .Values.image.repository }}:{{ include "frame.imageTag" . }}"
+        image: "{{ required "image.repository is required: set it to wherever you pushed the operator image built from Dockerfile.controller (NOT the root Dockerfile, which is the UI) — there is no default published image yet, so leaving this unset would otherwise install cleanly and then sit in ImagePullBackOff." .Values.image.repository }}:{{ include "frame.imageTag" . }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         command:
         - /manager
         args:
         {{- if .Values.metrics.enabled }}
-        - --metrics-bind-address={{ if .Values.metrics.secure }}:8443{{ else }}:8080{{ end }}
+        - --metrics-bind-address=:{{ include "frame.metricsPort" . }}
         {{- end }}
         - --leader-elect
         - --health-probe-bind-address=:8081
@@ -43,6 +43,16 @@ spec:
         {{- end }}
         {{- if .Values.webhooks.enabled }}
         - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+        {{- end }}
+        {{- if not .Values.webhooks.enabled }}
+        env:
+        # cmd/main.go only skips webhook *registration* when this is exactly
+        # "false" (it checks os.Getenv, not this chart's flag) — dropping just
+        # the cert mount/volume/port below still leaves the manager trying to
+        # register all 10 webhooks and crash-looping on the now-missing
+        # tls.crt (C-1). This is the actual switch that turns them off.
+        - name: ENABLE_WEBHOOKS
+          value: "false"
         {{- end }}
         ports:
         - containerPort: 8081

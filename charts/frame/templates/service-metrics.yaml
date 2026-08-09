@@ -9,10 +9,10 @@ metadata:
     control-plane: controller-manager
 spec:
   ports:
-  - name: https
-    port: 8443
+  - name: {{ include "frame.metricsPortName" . }}
+    port: {{ include "frame.metricsPort" . }}
     protocol: TCP
-    targetPort: 8443
+    targetPort: {{ include "frame.metricsPort" . }}
   selector:
     {{- include "frame.selectorLabels" . | nindent 4 }}
 {{- end }}

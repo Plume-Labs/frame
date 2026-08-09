@@ -1,0 +1,18 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# Opt-in only (default false) — see values.yaml: with the chart's own default
+# replicaCount: 1, a PDB requiring minAvailable: 1 can never be satisfied
+# while evicting the only pod, which would block node drains/upgrades
+# forever. Only turn this on alongside replicaCount > 1.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "frame.name" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "frame.selectorLabels" . | nindent 6 }}
+{{- end }}

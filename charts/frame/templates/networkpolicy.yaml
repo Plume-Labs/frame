@@ -23,14 +23,22 @@ spec:
           matchLabels:
             metrics: enabled
       ports:
-        - port: 8443
+        - port: {{ include "frame.metricsPort" . }}
           protocol: TCP
 {{- end }}
 {{- if .Values.webhooks.enabled }}
 ---
 # Allows ingress to the webhook server only from namespaces labeled
-# `webhook: enabled`. Mirrors
-# config/network-policy/allow-webhook-traffic.yaml.
+# `webhook: enabled`. Loosely mirrors
+# config/network-policy/allow-webhook-traffic.yaml, with one deliberate fix
+# (I-3): NetworkPolicy ingress ports are *pod* ports, not Service ports. The
+# webhook Service is 443 -> 9443, so the pod itself only ever receives
+# traffic on 9443 — kustomize's copy of this file says `port: 443`, which
+# means enabling it there blocks every admission request instead of allowing
+# it (a pre-existing upstream kubebuilder scaffold bug, not something this
+# chart introduced). This chart uses the correct pod port; fixing
+# config/network-policy/allow-webhook-traffic.yaml itself is out of this
+# task's scope ("do not modify config/") and left as a follow-up.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -50,7 +58,7 @@ spec:
           matchLabels:
             webhook: enabled
       ports:
-        - port: 443
+        - port: 9443
           protocol: TCP
 {{- end }}
 {{- end }}
