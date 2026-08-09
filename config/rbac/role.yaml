@@ -35,7 +35,6 @@ rules:
   - ""
   resources:
   - persistentvolumeclaims
-  - resourcequotas/status
   verbs:
   - get
 - apiGroups:

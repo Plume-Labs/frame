@@ -219,6 +219,43 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 			"both labelled namespaces must be counted")
 	})
 
+	It("persists the sum of a projected ResourceQuota's status.used onto its own status", func() {
+		// This is the wiring sumQuotaUsage's unit test cannot cover: that the
+		// reconciler actually reads the child's status.used back and assigns
+		// it to the right field on the parent, rather than e.g. computing it
+		// and dropping it, or writing it somewhere the status patch never sees.
+		labeledNS := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "quota-used-projection",
+				Labels: map[string]string{"frame.plume-labs.io/service-class": "HIGH"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, labeledNS)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, labeledNS) })
+
+		_, _ = r().Reconcile(ctx, req)
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		childQuota := &corev1.ResourceQuota{}
+		childKey := types.NamespacedName{Name: "frame-high", Namespace: "quota-used-projection"}
+		Expect(k8sClient.Get(ctx, childKey, childQuota)).To(Succeed())
+
+		// A real apiserver's quota controller computes this; envtest runs
+		// none, so set it directly to stand in for that computation.
+		childQuota.Status.Used = corev1.ResourceList{
+			corev1.ResourceLimitsCPU: resource.MustParse("3"),
+		}
+		Expect(k8sClient.Status().Update(ctx, childQuota)).To(Succeed())
+
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, key, frq)).To(Succeed())
+		Expect(frq.Status.Used).To(HaveKeyWithValue(corev1.ResourceLimitsCPU, resource.MustParse("3")),
+			"status.used must reflect what the child ResourceQuota reports, not just be assigned in code nothing exercises")
+	})
+
 	It("sums usage across quotas without inventing keys nobody reported", func() {
 		a := corev1.ResourceQuota{Status: corev1.ResourceQuotaStatus{
 			Used: corev1.ResourceList{
@@ -242,5 +279,26 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 
 		Expect(sumQuotaUsage(nil)).To(BeNil(),
 			"no projected quotas means no usage measured, not usage of zero")
+	})
+
+	It("sums fractional and whole CPU quantities correctly, not as integers", func() {
+		// 500m + 2 is the brief's own motivating case: naive integer addition
+		// of the underlying millivalue would get this wrong in a way that
+		// looks plausible (e.g. treating "2" as 2m instead of 2000m).
+		// resource.Quantity.Add normalizes it to 2500m.
+		a := corev1.ResourceQuota{Status: corev1.ResourceQuotaStatus{
+			Used: corev1.ResourceList{
+				corev1.ResourceLimitsCPU: resource.MustParse("500m"),
+			},
+		}}
+		b := corev1.ResourceQuota{Status: corev1.ResourceQuotaStatus{
+			Used: corev1.ResourceList{
+				corev1.ResourceLimitsCPU: resource.MustParse("2"),
+			},
+		}}
+
+		total := sumQuotaUsage([]corev1.ResourceQuota{a, b})
+		cpu := total[corev1.ResourceLimitsCPU]
+		Expect(cpu.Cmp(resource.MustParse("2500m"))).To(Equal(0))
 	})
 })
