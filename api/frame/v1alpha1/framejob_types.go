@@ -77,6 +77,13 @@ type FrameJobSpec struct {
 
 // FrameJobStatus defines the observed state of FrameJob.
 type FrameJobStatus struct {
+	// ObservedGeneration is the metadata.generation this status was computed
+	// from. A client can compare it to metadata.generation to tell whether
+	// the controller has seen the current spec yet, without knowing anything
+	// about this kind's condition vocabulary.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Current phase of the job
 	// +kubebuilder:validation:Enum=Pending;Submitted;Running;Suspended;Completed;Failed
 	Phase string `json:"phase,omitempty"`

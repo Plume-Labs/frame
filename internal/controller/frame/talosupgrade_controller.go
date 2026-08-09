@@ -139,6 +139,7 @@ func isAlreadyAtVersion(err error) bool {
 
 func (r *TalosUpgradeReconciler) setCondition(ctx context.Context, tu *framev1alpha1.TalosUpgrade, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tu.DeepCopy())
+	tu.Status.ObservedGeneration = tu.Generation
 	meta.SetStatusCondition(&tu.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             status,

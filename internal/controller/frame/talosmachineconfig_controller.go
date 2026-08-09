@@ -145,6 +145,7 @@ func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *fr
 
 func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tmc.DeepCopy())
+	tmc.Status.ObservedGeneration = tmc.Generation
 	meta.SetStatusCondition(&tmc.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             status,

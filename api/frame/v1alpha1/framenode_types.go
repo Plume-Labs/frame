@@ -103,6 +103,13 @@ type FrameNodeSpec struct {
 
 // FrameNodeStatus defines the observed state of FrameNode.
 type FrameNodeStatus struct {
+	// ObservedGeneration is the metadata.generation this status was computed
+	// from. A client can compare it to metadata.generation to tell whether
+	// the controller has seen the current spec yet, without knowing anything
+	// about this kind's condition vocabulary.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Current phase of the node
 	// +kubebuilder:validation:Enum=Discovering;Discovered;Provisioning;Online;Degraded;Offline;Failed
 	Phase string `json:"phase,omitempty"`

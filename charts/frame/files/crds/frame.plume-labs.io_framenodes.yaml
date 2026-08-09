@@ -262,6 +262,14 @@ spec:
               nodeName:
                 description: NodeName is the Kubernetes node name
                 type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from. A client can compare it to metadata.generation to tell whether
+                  the controller has seen the current spec yet, without knowing anything
+                  about this kind's condition vocabulary.
+                format: int64
+                type: integer
               phase:
                 description: Current phase of the node
                 enum:

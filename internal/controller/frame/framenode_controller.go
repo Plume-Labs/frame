@@ -104,10 +104,20 @@ func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev
 
 	if fn.Status.Phase == nodePhaseDiscovered {
 		// Waiting for user to patch spec with full disk/network/role info.
+		// The controller has still looked at this generation even though
+		// there's nothing else to do with it, so observedGeneration must
+		// still catch up — otherwise a spec-only edit that never sets Disk
+		// leaves it stuck behind metadata.generation indefinitely.
+		if fn.Status.ObservedGeneration != fn.Generation {
+			patch := client.MergeFrom(fn.DeepCopy())
+			fn.Status.ObservedGeneration = fn.Generation
+			return ctrl.Result{}, r.Status().Patch(ctx, fn, patch)
+		}
 		return ctrl.Result{}, nil
 	}
 
 	patch := client.MergeFrom(fn.DeepCopy())
+	fn.Status.ObservedGeneration = fn.Generation
 	fn.Status.Phase = nodePhaseDiscovered
 	fn.Status.DiscoveredDisks = nil
 	fn.Status.DiscoveredNICs = nil
@@ -283,6 +293,7 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1al
 
 	phase := nodePhase(&node)
 	patch := client.MergeFrom(fn.DeepCopy())
+	fn.Status.ObservedGeneration = fn.Generation
 	fn.Status.Phase = phase
 	fn.Status.NodeName = node.Name
 	fn.Status.Capacity = node.Status.Capacity
@@ -333,6 +344,7 @@ func (r *FrameNodeReconciler) reconcileDelete(ctx context.Context, fn *framev1al
 
 func (r *FrameNodeReconciler) setPhase(ctx context.Context, fn *framev1alpha1.FrameNode, phase, msg string) error {
 	patch := client.MergeFrom(fn.DeepCopy())
+	fn.Status.ObservedGeneration = fn.Generation
 	fn.Status.Phase = phase
 	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
