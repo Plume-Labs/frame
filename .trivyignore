@@ -14,22 +14,6 @@
 #   make scan
 #
 # ---------------------------------------------------------------------------
-# Go dependencies — controller and authd
-# ---------------------------------------------------------------------------
-# Both are reachable (govulncheck agrees, not just Trivy), and both are fixed
-# by a dependency bump rather than a code change. They were out of scope for
-# the change that added scanning. Removing these two lines is the same edit as
-# flipping `continue-on-error` off on test.yml's govulncheck step — do all
-# three together.
-#
-# golang.org/x/text v0.37.0 -> v0.39.0 (GO-2026-5970, infinite loop on invalid
-# UTF-8). Reached from FrameJobReconciler.Reconcile via norm.Form.
-CVE-2026-56852
-# google.golang.org/grpc v1.81.0 -> v1.82.1 (GO-2026-6061, xDS RBAC and HTTP/2
-# transport). Reached from the Talos client's gRPC transport.
-GHSA-hrxh-6v49-42gf
-
-# ---------------------------------------------------------------------------
 # UI image base layer — nginx:alpine
 # ---------------------------------------------------------------------------
 # All four are Alpine package CVEs in the nginx:alpine base, not in anything
