@@ -27,6 +27,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: services.plume-labs.io/v1alpha1 FrameService is deprecated;
+      use services.plume-labs.io/v1beta1. status.phase is computed from status.conditions
+      and is not stored.
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -269,5 +273,333 @@ spec:
         type: object
     served: true
     storage: true
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .status.binding.endpoint
+      name: Endpoint
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameService is the Schema for the frameservices API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FrameService
+            properties:
+              binding:
+                description: BindingSpec is how the credentials Secret is named and
+                  where it is copied.
+                properties:
+                  projectTo:
+                    description: |-
+                      ProjectTo copies the credentials Secret into these namespaces. Opt-in
+                      and explicit: a catalog that writes Secrets into namespaces nobody
+                      listed is a cross-tenant leak dressed as convenience.
+
+                      This is the one place a Frame spec may name a namespace the CR does not
+                      live in, and it earns it: the controller only ever writes at a
+                      coordinate it has itself recorded in status.binding.projected, and
+                      refuses to claim a coordinate where an object already exists. Authority
+                      comes from a record only the controller can write, never from data the
+                      requester supplied. See internal/controller/services/binding.go.
+
+                      It is opt-in by the *producer* and never by the receiving namespace.
+                      That is safe while Frame is single-tenant and is recorded rather than
+                      fixed here; widening it is not a schema change.
+                    items:
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    maxItems: 64
+                    type: array
+                  secretName:
+                    description: SecretName defaults to the FrameService's own name.
+                    maxLength: 253
+                    type: string
+                type: object
+              deletionPolicy:
+                default: Retain
+                description: |-
+                  DeletionPolicy decides what happens to the instance's data when this
+                  object is deleted. Retain is the default because the failure modes are
+                  not symmetric: a retained volume costs disk and is visible, a deleted
+                  one costs the data at the moment someone meant to redeploy.
+                enum:
+                - Retain
+                - Delete
+                type: string
+              parameters:
+                additionalProperties:
+                  description: |-
+                    ParameterValue bounds a value in one of the free-form parameter maps.
+                    Declared as a named type rather than as a marker on the map, because
+                    controller-gen emits a value bound only from the map's value *type* —
+                    verified with controller-gen v0.20.1, which emits
+                    additionalProperties.maxLength from a named value type and silently drops
+                    markers on a named key type.
+                  maxLength: 1024
+                  type: string
+                description: |-
+                  Parameters are provider-owned and validated at admission against the
+                  JSON Schema that provider registers — not by this CRD's own OpenAPI.
+                  They are deliberately outside the API compatibility guarantee: a
+                  breaking parameter change ships as a new Type value rather than
+                  redefining this one.
+
+                  The envelope is bounded anyway (T4): 64 entries, 1024 characters per
+                  value. That carve-out is about parameter *meaning*; an unbounded map is
+                  a resource concern regardless of who owns the keys.
+
+                  Key form is deliberately not constrained here. controller-gen emits a
+                  bound only from the map's value type — see the note on
+                  framev1beta1.ParameterValue — and the CEL alternative has no key
+                  maxLength for the cost estimator to bound against, so it ships a CRD
+                  the apiserver refuses to install. Each provider's ParameterSchema
+                  already validates keys at admission, which is the only place they mean
+                  anything.
+                maxProperties: 64
+                type: object
+              serviceClass:
+                default: MEDIUM
+                description: |-
+                  ServiceClass is the tier the instance's workloads run at, so the
+                  existing FrameResourceQuota and SchedulingPolicy apply to it like any
+                  other workload. It never names a node: Frame decides placement.
+
+                  It carries a second meaning, deliberately (F10): it is also the
+                  instance's scheduling priority, mapped onto a frame-* PriorityClass by
+                  internal/scheduling.PriorityClassForServiceClass. There is no
+                  spec.priority and no spec.priorityClassName. A long-lived instance's
+                  tier is its urgency — unlike a job's, where a HIGH-tier nightly batch
+                  can legitimately be low-priority — so a second field would duplicate
+                  this one with no case where they differ, and then they could disagree.
+                  Naming a PriorityClass directly would break the invariant above by
+                  letting a user reach a class Frame did not create, including a system
+                  one. If a HIGH-tier instance ever needs to be evicted before a MEDIUM
+                  one, that is a v1beta2 problem.
+
+                  MEDIUM, not FrameJob's LOW. The type is shared; the default is not.
+                  An unspecified batch job should be preemptible; an unspecified
+                  long-lived service instance should not be the first thing evicted.
+                enum:
+                - HIGH
+                - MEDIUM
+                - LOW
+                type: string
+              type:
+                description: |-
+                  Type selects the provider. The valid set is closed and enforced by the
+                  webhook against the provider registry, so a typo is refused at
+                  admission rather than leaving an instance Pending forever.
+
+                  The schema bounds only the *form* (T8). The closed set genuinely is
+                  compiled-in here, unlike FrameJob.pipeline, so the registry is the
+                  right authority — but a malformed value should fail on shape before it
+                  reaches a registry lookup at all.
+
+                  MinLength=1 is carried over from v1alpha1 and is now redundant: the
+                  pattern below already rejects the empty string, and stripping MinLength
+                  alone fails no spec. It stays because dropping it would make the two
+                  versions differ for no reason, and a bound can only be relaxed after
+                  the freeze, never re-added.
+                maxLength: 63
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+            required:
+            - type
+            type: object
+          status:
+            description: status defines the observed state of FrameService
+            properties:
+              binding:
+                description: |-
+                  BindingStatus is the credential-free half of the binding: what a consumer
+                  needs to find the Secret, plus the record of every copy that exists.
+                properties:
+                  endpoint:
+                    description: Endpoint is what a consumer connects to. Never contains
+                      credentials.
+                    type: string
+                  projected:
+                    description: |-
+                      Projected records every Secret coordinate this controller has actually
+                      written: the primary Secret beside the FrameService and every copy
+                      spec.binding.projectTo asked for. It is the sole record the controller
+                      consults to decide what it may write to and what it must delete when a
+                      namespace leaves projectTo or secretName changes — never a label on the
+                      Secret itself, which is data anyone with patch rights on Secrets can
+                      set. See the comment on reconcileBinding in
+                      internal/controller/services/binding.go for why that distinction is
+                      load-bearing.
+                    items:
+                      description: ProjectedSecretRef names one Secret coordinate
+                        this controller has written.
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
+                    type: array
+                  secretRef:
+                    description: |-
+                      SecretRef names the credentials Secret in this FrameService's own
+                      namespace. A LocalObjectReference, not an ObjectReference: a consumer
+                      that could be pointed at an arbitrary namespace is a confused deputy.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                type: object
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from, so a client can tell whether the controller has seen the current
+                  spec without knowing this kind's condition vocabulary.
+                format: int64
+                type: integer
+              provisioned:
+                items:
+                  description: |-
+                    ProvisionedRef names one object the provider created, so kubectl describe
+                    explains an instance without anyone knowing the provider's internals.
+                  properties:
+                    apiVersion:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                type: array
+              sizing:
+                description: |-
+                  Sizing is what the provider derived from the parameters. It is reported
+                  rather than requested — nothing in the spec states it, and an operator has
+                  to be able to see what an instance costs.
+                properties:
+                  cpu:
+                    type: string
+                  gpu:
+                    type: string
+                  gpuMemory:
+                    type: string
+                  memory:
+                    type: string
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
     subresources:
       status: {}

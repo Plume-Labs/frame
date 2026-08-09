@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -80,6 +81,8 @@ var _ = BeforeSuite(func() {
 
 	var err error
 	err = servicesv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = servicesv1beta1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
