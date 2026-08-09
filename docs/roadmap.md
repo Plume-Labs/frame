@@ -75,7 +75,7 @@ It also called the current behaviour polling. It was not: `useLiveResource` fetc
 - [x] Watch streams in `src/lib/k8s-watch.ts`, read straight off the apiserver
 - [x] Handle `resourceVersion` expiry with a re-list, reconnect with backoff, and fall back to an interval when a watch cannot be established at all
 - [x] Convert the screens that change fastest first: FrameJobs (phase transitions), FrameNodes (plus the core `Node` its status mirrors), Events
-- [ ] Convert the remaining screens that read live cluster state
+- [x] Convert the remaining screens that read live cluster state. Twenty-two views, each given the mechanism its data actually supports: a watch for Kubernetes objects, an interval for metrics and proxied third parties, chosen per screen from how fast the thing moves. The split needed one correction — a fetcher reading both an object and a metric needs both, or its gauges freeze until an object changes, which is the failure the split existed to prevent.
 
 A watch here is a change signal, not a data source: an event re-runs the fetch the view would have run anyway, rather than applying deltas to a local cache. Every view keeps its existing mapping code, at the cost of one list per change — free at this scale, and the note in `k8s-watch.ts` says what to do if a screen ever watches something that churns per second.
 
