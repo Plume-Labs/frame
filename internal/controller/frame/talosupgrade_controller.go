@@ -46,7 +46,12 @@ type TalosUpgradeReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosupgrades,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosupgrades/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosupgrades/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// get only: the sole Secret access this controller makes is buildTalosClient's
+// single by-name Get of spec.talosSecretRef. It never enumerates, and the
+// Secret it reads holds the Talos PKI — the credential that administers every
+// node — so list/watch here would have been a cluster-wide read of exactly the
+// material least worth exposing. Served uncached; see cmd/main.go.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
 func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)

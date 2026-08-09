@@ -7,23 +7,37 @@ on:
   pull_request:
     branches: [main]
 
+# Deny by default, re-grant per job — the pattern lint.yml, test.yml and
+# test-e2e.yml already use. Without this, quality/iac/integration inherit the
+# repository default token, which is write-all unless the org narrows it, while
+# running untrusted PR code (npm ci runs install scripts; docker build runs the
+# PR's own Dockerfile).
+permissions: {}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   NODE_VERSION: '20'
   SMOKE_RETRIES: '15'
   SMOKE_RETRY_DELAY_SECONDS: '2'
+  # Pinned rather than resolved at run time: see the Install kustomize step.
+  KUSTOMIZE_VERSION: v5.8.1
 
 jobs:
   # ── 1. Quality gate: lint + typecheck + unit tests ────────────────────────
   quality:
     name: Quality
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -47,16 +61,29 @@ jobs:
   iac:
     name: IaC Validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
 
       - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+          # Published SHA-256 of kubeconform-linux-amd64.tar.gz for the version
+          # above. The download was already version-pinned; without a checksum
+          # the pin only says which URL to fetch, not what may come back from it.
+          KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
         run: |
-          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
-            | tar -xzC /tmp kubeconform
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum --check --strict
+          tar -xzC /tmp -f /tmp/kubeconform.tar.gz kubeconform
           sudo install /tmp/kubeconform /usr/local/bin/kubeconform
 
       - name: Validate Kubernetes manifests (base + overlays)
@@ -88,14 +115,17 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -103,7 +133,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -114,7 +144,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
@@ -122,20 +152,171 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Buildx attaches both as OCI referrers beside the pushed image, so
+          # the SBOM travels with the artifact instead of living in a CI
+          # artifact nobody correlates back to a digest. No extra action needed.
+          sbom: true
+          provenance: mode=max
 
-  # ── 4. Integration test on a kind virtual cluster ─────────────────────────
+  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all three images ─────
+  #
+  # Frame builds three images, and only one of them is pushed by this workflow
+  # today. Scanning still covers all three, because a CVE in the operator is a
+  # CVE whether or not this workflow is what publishes it. The matrix names
+  # each Dockerfile explicitly rather than deriving anything, so a fourth image
+  # cannot be added without also being listed here.
+  scan:
+    name: Scan (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    needs: [quality, iac]
+    permissions:
+      contents: read
+      # Findings go to the repository's Security tab as SARIF, which is the
+      # only place they are durable and diffable across runs. GitHub does not
+      # grant this to fork PRs, which is why the upload step tolerates failure.
+      security-events: write
+    strategy:
+      # One image failing its scan should not hide the other two.
+      fail-fast: false
+      matrix:
+        include:
+          - name: controller
+            dockerfile: Dockerfile.controller
+          - name: ui
+            dockerfile: Dockerfile
+          - name: authd
+            dockerfile: Dockerfile.authd
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build image locally
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: frame-${{ matrix.name }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: frame-${{ matrix.name }}:scan
+          format: cyclonedx-json
+          artifact-name: sbom-${{ matrix.name }}.cyclonedx.json
+          output-file: ${{ runner.temp }}/sbom-${{ matrix.name }}.cyclonedx.json
+
+      # Two Trivy passes over the same image, because one invocation emits one
+      # format and the findings need to reach two different audiences: SARIF
+      # for the Security tab (durable, deduplicated, diffable run to run) and a
+      # table for the run's own summary page (readable without leaving the PR).
+      # The DB is downloaded once and cached by the action, so the second pass
+      # is cheap.
+      #
+      # The gate itself is the table pass. Everything that has to be visible
+      # even when the gate fails runs with `if: always()`.
+      - name: Scan image for vulnerabilities (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: frame-${{ matrix.name }}:scan
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          # Never the gate — this pass exists to produce the file.
+          exit-code: '0'
+        env:
+          # Trivy's default DB registry is rate-limited for anonymous pulls.
+          # These are the AWS public ECR mirrors Trivy documents as the
+          # alternative — public ECR, not GHCR, whatever the hostname pattern
+          # suggests.
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
+
+      - name: Upload findings to the Security tab
+        if: always()
+        # A fork PR's token has no security-events: write, so this cannot
+        # succeed there and must not fail the scan when it does not. The gate
+        # below is what enforces; this step only publishes.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          # Without a distinct category the three matrix legs overwrite each
+          # other's results and only the last image scanned stays visible.
+          category: trivy-${{ matrix.name }}
+
+      # The gate. Fails on any CRITICAL or HIGH that is fixed upstream and is
+      # not listed in .trivyignore.
+      #
+      # This is a real gate, not a placeholder: .trivyignore enumerates the
+      # six advisories that existed when scanning was introduced, each with a
+      # note saying what would remove it. Verified before enabling — with the
+      # ignore file all three images exit 0, without it all three exit 1, so
+      # the gate bites rather than passing vacuously.
+      #
+      # The exit condition is therefore finite and legible: empty
+      # .trivyignore. Two of its entries are the same dependency bumps that
+      # close test.yml's govulncheck note, and four clear when the UI's
+      # unpinned nginx:alpine base is pinned and bumped (review finding I11).
+      - name: Scan image for vulnerabilities (gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: frame-${{ matrix.name }}:scan
+          format: table
+          output: trivy-${{ matrix.name }}.txt
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
+
+      - name: Publish scan table to the run summary
+        if: always()
+        env:
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          {
+            echo "## Trivy — ${IMAGE_NAME}"
+            echo
+            if [ -s "trivy-${IMAGE_NAME}.txt" ]; then
+              echo '```'
+              cat "trivy-${IMAGE_NAME}.txt"
+              echo '```'
+            else
+              echo "No CRITICAL/HIGH findings outside \`.trivyignore\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 5. Integration test on a kind virtual cluster ─────────────────────────
   integration:
     name: Integration (kind)
     runs-on: ubuntu-latest
     needs: [quality, iac]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Build image for kind
         run: docker build -t cluster-control:ci .
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           cluster_name: cluster-control-ci
 
@@ -173,28 +354,58 @@ jobs:
           echo "Smoke test failed: service did not become reachable" >&2
           exit 1
 
-  # ── 5. Create a versioned release package on tags ─────────────────────────
+  # ── 6. Create a versioned release package on tags ─────────────────────────
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build, integration]
+    # scan is in this list deliberately. Without it the vulnerability gate
+    # would block PR merges but wave every tagged release straight through —
+    # exactly backwards, since a release is the artifact that leaves the
+    # building.
+    needs: [build, integration, scan]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      # Was: curl -sL .../kustomize/master/hack/install_kustomize.sh | bash
+      #
+      # That piped a script fetched from a moving `master` ref into a shell,
+      # inside the one job in this file holding `contents: write`. Whoever
+      # controlled that file at run time had code execution against a
+      # repo-write token. `go install` at a pinned version goes through the Go
+      # module checksum database instead, which is what the Makefile already
+      # does for every other tool it installs.
       - name: Install kustomize
-        run: |
-          curl -sL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-          sudo mv kustomize /usr/local/bin/kustomize
+        run: go install sigs.k8s.io/kustomize/kustomize/v5@${{ env.KUSTOMIZE_VERSION }}
 
+      # REF_NAME goes through env, never straight into the shell. A git tag may
+      # contain $, backticks, parentheses, semicolons, ampersands and pipes —
+      # only whitespace and ~^:?*[\ are forbidden — so a tag named
+      # v1.0.0$(...) interpolated by ${{ }} would execute inside this job,
+      # which holds contents: write. Referencing "$REF_NAME" makes it data.
+      # (Pre-existing; fixed here because leaving an injection in the same job
+      # this branch just removed a curl|bash from is the wrong place to stop.)
       - name: Render production manifest
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          kustomize build deploy/kubernetes/overlays/production/ > cluster-control-${{ github.ref_name }}.yaml
+          kustomize build deploy/kubernetes/overlays/production/ > "cluster-control-${REF_NAME}.yaml"
 
+      # Left as a direct interpolation: `files` is an action input, not a shell
+      # string, so nothing evaluates it. Git also forbids *, ?, [ and \ in ref
+      # names, so it cannot glob into something unintended either.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: cluster-control-${{ github.ref_name }}.yaml
           generate_release_notes: true

@@ -47,7 +47,10 @@ type TalosMachineConfigReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosmachineconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosmachineconfigs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=talosmachineconfigs/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// get only, for the same reason as talosupgrade_controller.go: the only Secret
+// access is buildTalosClient's single by-name Get of spec.talosSecretRef.
+// Served uncached; see cmd/main.go.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
