@@ -52,7 +52,6 @@ type FrameResourceQuotaReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameresourcequotas/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameresourcequotas/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=resourcequotas/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
