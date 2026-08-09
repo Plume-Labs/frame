@@ -49,7 +49,7 @@ make install
 make run
 
 # In another terminal, apply a sample CR
-kubectl apply -f config/samples/frame_v1alpha1_framejob.yaml
+kubectl apply -f config/samples/frame_v1beta1_framejob.yaml
 kubectl describe framejob <name>
 ```
 

@@ -175,7 +175,7 @@ kubectl get framejobs -n neura-prod
 kubectl describe framejob llm-finetune-v4 -n neura-prod
 
 # Create from a manifest
-kubectl apply -f config/samples/frame_v1alpha1_framejob.yaml
+kubectl apply -f config/samples/frame_v1beta1_framejob.yaml
 
 # Watch status
 kubectl get framejobs -n neura-prod -w

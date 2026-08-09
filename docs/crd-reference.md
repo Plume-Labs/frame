@@ -470,7 +470,7 @@ to be evicted before a MEDIUM one, that is a `v1beta2` problem (F10).
 This mapping only *names* a PriorityClass — it does not create one. Unless a
 `SchedulingPolicy` object exists with `spec.priorityClass` set to exactly
 `frame-high`, `frame-medium` or `frame-low` (see
-`config/samples/frame_v1alpha1_schedulingpolicy.yaml`), the named
+`config/samples/frame_v1beta1_schedulingpolicy.yaml`), the named
 PriorityClass does not exist on the cluster, and the apiserver rejects every
 pod naming a PriorityClass it cannot find — the instance becomes
 unschedulable outright, not merely unprioritised. `FrameJob.spec.priority`

@@ -37,7 +37,7 @@ The single check that covers all four at once, because it exercises the whole
 path — apiserver to webhook over TLS, with `failurePolicy: Fail` behind it:
 
 ```bash
-kubectl apply --dry-run=server -f config/samples/frame_v1alpha1_framejob.yaml
+kubectl apply --dry-run=server -f config/samples/frame_v1beta1_framejob.yaml
 ```
 
 A success means the apiserver reached both the mutating and the validating

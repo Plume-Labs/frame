@@ -49,7 +49,7 @@ import (
 // converts, so the shapes below are the sample and e2e shapes instead.
 var _ = Describe("TalosMachineConfig v1beta1 schema", func() {
 	// sampleShaped is modelled field-for-field on
-	// config/samples/frame_v1alpha1_talosmachineconfig.yaml, which is the
+	// config/samples/frame_v1beta1_talosmachineconfig.yaml, which is the
 	// closest thing to a real object this kind has.
 	sampleShaped := func(name string) *framev1beta1.TalosMachineConfig {
 		return &framev1beta1.TalosMachineConfig{
