@@ -23,11 +23,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// The old setCondition replaced an existing condition only when Status
-// differed, so a FrameNode going Provisioning -> Degraded -> Offline (all
-// Ready=False) kept the first Reason forever. That is what projects the
-// legacy v1alpha1 status.phase, so a frozen Reason is a frozen phase.
-func TestReasonUpdateReachesTheConditionEvenWhenStatusIsUnchanged(t *testing.T) {
+// TestReadyReasonReturnsTheReadyConditionsReason documents readyReason()'s
+// own contract: it reads whatever meta.SetStatusCondition last wrote,
+// including a reason-only update that leaves Status unchanged. This is new
+// code exercising new code — readyReason doesn't exist before this task, so
+// it cannot be the regression proof. That proof is
+// TestSetConditionReasonRegression in setcondition_regression_test.go, which
+// goes through the pre-existing call path (TalosMachineConfigReconciler.setCondition)
+// instead and is verified to fail against the pre-fix helpers.go.
+func TestReadyReasonReturnsTheReadyConditionsReason(t *testing.T) {
 	var conds []metav1.Condition
 
 	meta.SetStatusCondition(&conds, metav1.Condition{

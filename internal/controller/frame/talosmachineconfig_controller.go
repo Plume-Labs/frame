@@ -72,6 +72,18 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, r.Update(ctx, &tmc)
 	}
 
+	// ApplyConfiguration is not idempotent-safe to call on every reconcile
+	// trigger: a successful apply's own status patch re-enters the work queue
+	// (the same self-triggering effect TalosUpgradeReconciler guards below),
+	// and without this guard that second pass re-applies the patch to a live
+	// machine for no reason. Guard by ObservedGeneration — only apply again
+	// when spec.generation changes.
+	for _, cond := range tmc.Status.Conditions {
+		if cond.Type == conditionTypeReady && cond.ObservedGeneration == tmc.Generation && cond.Reason == "Applied" {
+			return ctrl.Result{}, nil
+		}
+	}
+
 	patch, err := r.resolvePatch(ctx, &tmc)
 	if err != nil {
 		r.Recorder.Event(&tmc, corev1.EventTypeWarning, "PatchResolveFailed", err.Error())
