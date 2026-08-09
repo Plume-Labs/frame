@@ -1,0 +1,50 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "frame.name" . }}-metrics-auth-role
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "frame.name" . }}-metrics-auth-rolebinding
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "frame.name" . }}-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "frame.name" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
+# Not used by the manager itself — a convenience role so an operator can grant
+# `kubectl auth can-i --as=...` style read access to the /metrics endpoint.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "frame.name" . }}-metrics-reader
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+rules:
+- nonResourceURLs:
+  - "/metrics"
+  verbs:
+  - get
+{{- end }}

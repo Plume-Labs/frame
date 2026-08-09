@@ -1,0 +1,193 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "frame.name" . }}-manager-role
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - namespaces
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - resourcequotas
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - argoproj.io
+  resources:
+  - workflows
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framejobs
+  - framenodes
+  - frameresourcequotas
+  - schedulingpolicies
+  - talosmachineconfigs
+  - talosupgrades
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framejobs/finalizers
+  - framenodes/finalizers
+  - frameresourcequotas/finalizers
+  - schedulingpolicies/finalizers
+  - talosmachineconfigs/finalizers
+  - talosupgrades/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framejobs/status
+  - framenodes/status
+  - frameresourcequotas/status
+  - schedulingpolicies/status
+  - talosmachineconfigs/status
+  - talosupgrades/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameusers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - scheduling.k8s.io
+  resources:
+  - priorityclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - scheduling.volcano.sh
+  - yunikorn.apache.org
+  resources:
+  - queues
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - services.plume-labs.io
+  resources:
+  - frameservices/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "frame.name" . }}-manager-rolebinding
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "frame.name" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "frame.name" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
