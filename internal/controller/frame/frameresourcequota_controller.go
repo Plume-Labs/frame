@@ -52,6 +52,7 @@ type FrameResourceQuotaReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameresourcequotas/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameresourcequotas/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=resourcequotas/status,verbs=get
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -82,6 +83,7 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 	hard := buildResourceList(&frq)
 	quotaName := "frame-" + strings.ToLower(frq.Spec.ServiceClass)
 
+	projected := make([]corev1.ResourceQuota, 0, len(nsList.Items))
 	for _, ns := range nsList.Items {
 		quota := &corev1.ResourceQuota{
 			ObjectMeta: metav1.ObjectMeta{
@@ -96,10 +98,16 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 			log.Error(err, "Failed to reconcile ResourceQuota", "namespace", ns.Name)
 			return ctrl.Result{}, err
 		}
+		// CreateOrUpdate returns the object as written, which carries the
+		// status the apiserver last computed. Reading it here rather than
+		// issuing a second Get keeps this to one round trip per namespace.
+		projected = append(projected, *quota)
 	}
 
 	patch := client.MergeFrom(frq.DeepCopy())
 	frq.Status.ObservedGeneration = frq.Generation
+	frq.Status.Namespaces = int32(len(nsList.Items))
+	frq.Status.Used = sumQuotaUsage(projected)
 	meta.SetStatusCondition(&frq.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionTrue,
@@ -132,6 +140,28 @@ func buildResourceList(frq *framev1alpha1.FrameResourceQuota) corev1.ResourceLis
 			*resource.NewQuantity(int64(frq.Spec.MaxJobs), resource.DecimalSI)
 	}
 	return hard
+}
+
+// sumQuotaUsage adds up status.used across every projected ResourceQuota.
+// The apiserver computes each one; Frame only aggregates, so a key that no
+// namespace reports is absent rather than zero — "not measured" and "measured
+// as nothing" are different answers and the UI shows them differently.
+func sumQuotaUsage(quotas []corev1.ResourceQuota) corev1.ResourceList {
+	total := corev1.ResourceList{}
+	for _, q := range quotas {
+		for name, qty := range q.Status.Used {
+			if existing, ok := total[name]; ok {
+				existing.Add(qty)
+				total[name] = existing
+				continue
+			}
+			total[name] = qty.DeepCopy()
+		}
+	}
+	if len(total) == 0 {
+		return nil
+	}
+	return total
 }
 
 // SetupWithManager sets up the controller with the Manager.

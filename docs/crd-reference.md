@@ -179,7 +179,13 @@ Per-service-class resource ceiling. The controller projects it as a
 `maxMemory` (Quantity), `maxJobs`. At least one of the four limits must be
 set (CEL, mirroring the existing webhook check).
 
-**Status:** `conditions[]`.
+**Status:** `observedGeneration`, `conditions[]`, `namespaces` (how many
+namespaces this quota projects into) and `used` — the sum of `status.used`
+across every projected `corev1.ResourceQuota`, keyed exactly as
+`buildResourceList` writes them (`limits.cpu`, `limits.memory`,
+`requests.nvidia.com/gpu`, `count/framejobs.frame.plume-labs.io`). A key no
+namespace reported is absent rather than zero: "not measured" and "measured
+as nothing" are different answers.
 
 **Printer columns:** `ServiceClass`, `Ready`, `Reason` (hidden by default,
 `-o wide`), `Age` — previously none.
