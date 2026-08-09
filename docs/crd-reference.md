@@ -45,17 +45,19 @@ A workload submitted to the cluster, realized as an Argo `Workflow`.
 `suspended` (bool, default false). `spec.name` was removed pre-freeze: it
 was `Required` and pattern-validated, but no controller ever read it
 (`metadata.name` is used throughout) and the SDK's submit path never sent
-it. GPU jobs (`gpuCount > 0`) may not use `serviceClass: LOW` — enforced
-only by the webhook (`framejob_webhook.go`'s `validateFrameJob`), which
-returns early with a warning (not this check) for any `pipeline` outside
-`knownPipelines`, so the constraint silently doesn't apply to `training`
-and most other real pipelines today. A CEL mirror of this rule was tried
-and reverted: CEL has no such bypass and runs before webhooks, so it
-rejected objects the webhook has always accepted and, being spec-level,
-would have permanently refused even an unrelated update (e.g. flipping
-`spec.suspended`) on any already-stored object shaped that way. Whether
-the webhook's bypass is itself intended is Phase B's to decide before
-this constraint is expressed any more strictly than it is now.
+it. There is no rule coupling `gpuCount` to `serviceClass`. One used to be
+enforced by the webhook (`framejob_webhook.go`'s `validateFrameJob`) for
+`gpuCount > 0` jobs at `serviceClass: LOW`, but it only ever ran for the
+three pipelines in `knownPipelines` — it silently didn't apply to
+`training` or most other real pipelines — and it was deleted outright in
+the v1beta1 freeze (F8) rather than repaired, because it coupled two
+orthogonal properties: how much hardware a job wants and how preemptible
+it is. `validateFrameJob` today only warns, never rejects: it returns a
+warning when `pipeline` is outside `knownPipelines`, on the grounds that
+`pipeline` names an Argo `WorkflowTemplate` Frame does not own, so
+enumerating other people's templates isn't Frame's business. See
+`docs/roadmap.md` and
+`docs/superpowers/specs/2026-08-09-frame-api-freeze-inventory.md`.
 `namespace` carries a DNS-1123 label
 pattern so a malformed value is refused at admission, but is deliberately
 *not* constrained to match this FrameJob's own namespace — the controller
