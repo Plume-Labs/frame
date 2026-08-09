@@ -25,10 +25,12 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -171,8 +173,32 @@ func main() {
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
+		Scheme:  scheme,
+		Metrics: metricsServerOptions,
+		// Secrets are read through the live apiserver, never the cache. By
+		// default controller-runtime serves a client Get from an informer, and
+		// starting an informer over a type is a cluster-wide List+Watch of it —
+		// so a single by-name Get of one Secret would silently require, and
+		// then continuously exercise, the right to read every Secret in the
+		// cluster, holding them all in memory besides.
+		//
+		// Every Secret this manager touches is named: the Talos PKI Secret in
+		// buildTalosClient, the API-key Secret the inference provider owns, and
+		// the binding coordinates in internal/controller/services/binding.go.
+		// None of them is enumerated, so none of them needs a cache. Disabling
+		// it here is what lets the rbac markers on those controllers drop
+		// list and watch on secrets; putting Secrets back in the cache would
+		// break the manager at startup with a Forbidden on the initial List,
+		// not silently degrade.
+		//
+		// This is the same reasoning already applied one level down to
+		// PersistentVolumeClaims, which the inference provider reaches through
+		// mgr.GetAPIReader() for exactly this reason.
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{&corev1.Secret{}},
+			},
+		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
