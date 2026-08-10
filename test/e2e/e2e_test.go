@@ -820,6 +820,135 @@ spec:
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
 		})
 
+		// C1. The one place the whole chain is exercised as an operator gets
+		// it: the shipped ValidatingWebhookConfiguration (matchPolicy included,
+		// with a cert-manager-issued CA), the shipped frameuser-editor-role,
+		// and a request made under that role's identity rather than as
+		// cluster-admin.
+		//
+		// The envtest twin in internal/webhook/frame/v1beta1 covers the
+		// admission decision. What it cannot cover is the premise: that a
+		// principal with nothing but this tier's grants reaches the field at
+		// all. RBAC resource names carry no version, so `patch frameusers`
+		// covers spec.passwordHash at v1alpha1 too, and that is the whole
+		// finding.
+		It("refuses an editor's v1alpha1 write of the FrameUser password hash", func() {
+			const editorSA = "e2e-hash-editor"
+			editor := fmt.Sprintf("system:serviceaccount:%s:%s", crNamespace, editorSA)
+
+			By("granting exactly the shipped editor tier and nothing else")
+			_, err := utils.Run(exec.Command("kubectl", "create", "serviceaccount",
+				editorSA, "-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = utils.Run(exec.Command("kubectl", "create", "clusterrolebinding",
+				"e2e-hash-editor-binding",
+				"--clusterrole=frame-frameuser-editor-role",
+				"--serviceaccount="+crNamespace+":"+editorSA))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "clusterrolebinding",
+					"e2e-hash-editor-binding", "--ignore-not-found"))
+			})
+
+			// The tier's own probe: it can patch the resource and cannot touch
+			// the subresource. If this ever inverts, the spec below stops
+			// meaning what it says.
+			out, err := utils.Run(exec.Command("kubectl", "auth", "can-i", "patch",
+				"frameusers", "--as="+editor, "-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(out)).To(Equal("yes"))
+			out, _ = utils.Run(exec.Command("kubectl", "auth", "can-i", "patch",
+				"frameusers", "--subresource=status", "--as="+editor, "-n", crNamespace))
+			Expect(strings.TrimSpace(out)).To(Equal("no"),
+				"the editor tier must not hold the subresource, or this spec proves nothing")
+
+			By("seeding an account the way authd does: v1beta1, through /status")
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameUser
+metadata:
+  name: e2e-hash-victim
+  namespace: %s
+spec:
+  email: victim@example.test
+  role: operator
+  passwordAuth: enabled
+`, crNamespace))
+			_, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+				"e2e-hash-victim", "-n", crNamespace, "--subresource=status",
+				"--type=merge", "-p", `{"status":{"passwordHash":"argon2id$LEGIT"}}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			storedHash := func() string {
+				GinkgoHelper()
+				v, err := kubectlGet(nil, "frameusers.v1beta1.frame.plume-labs.io",
+					"e2e-hash-victim", crNamespace, "{.status.passwordHash}")
+				Expect(err).NotTo(HaveOccurred())
+				return v
+			}
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("refusing the overwrite: one merge patch at the deprecated version")
+			out, err = utils.Run(exec.Command("kubectl", "patch",
+				"frameusers.v1alpha1.frame.plume-labs.io", "e2e-hash-victim",
+				"-n", crNamespace, "--type=merge", "--as="+editor,
+				"-p", `{"spec":{"passwordHash":"argon2id$ATTACKER"}}`))
+			Expect(err).To(HaveOccurred(), "an editor must not be able to set a password")
+			Expect(out).To(ContainSubstring("refusing to change status.passwordHash"))
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("refusing the silent wipe: a replace that simply omits the field")
+			replace := exec.Command("kubectl", "replace", "-f", "-", "--as="+editor)
+			replace.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  name: e2e-hash-victim
+  namespace: %s
+spec:
+  email: victim@example.test
+  role: operator
+  passwordAuth: enabled
+`, crNamespace))
+			out, err = utils.Run(replace)
+			Expect(err).To(HaveOccurred(), "omitting the hash on a replace must not erase it")
+			Expect(out).To(ContainSubstring("refusing to clear status.passwordHash"))
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("refusing a create that arrives carrying a hash")
+			create := exec.Command("kubectl", "create", "-f", "-", "--as="+editor)
+			create.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  name: e2e-hash-mallory
+  namespace: %s
+spec:
+  email: mallory@example.test
+  role: operator
+  passwordAuth: enabled
+  passwordHash: argon2id$ATTACKER
+`, crNamespace))
+			out, err = utils.Run(create)
+			Expect(err).To(HaveOccurred(), "an editor must not be able to mint an account with a known password")
+			Expect(out).To(ContainSubstring("status.passwordHash"))
+
+			By("still letting the editor edit everything else at v1alpha1")
+			_, err = utils.Run(exec.Command("kubectl", "patch",
+				"frameusers.v1alpha1.frame.plume-labs.io", "e2e-hash-victim",
+				"-n", crNamespace, "--type=merge", "--as="+editor,
+				"-p", `{"spec":{"email":"renamed@example.test"}}`))
+			Expect(err).NotTo(HaveOccurred(), "the guard must be narrow, or it breaks the deprecation window")
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("still letting the /status subresource rotate it")
+			_, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+				"e2e-hash-victim", "-n", crNamespace, "--subresource=status",
+				"--type=merge", "-p", `{"status":{"passwordHash":"argon2id$ROTATED"}}`))
+			Expect(err).NotTo(HaveOccurred(), "authd's own write path must stay open")
+			Expect(storedHash()).To(Equal("argon2id$ROTATED"))
+		})
+
 		It("provisions a FrameService through its inference provider", func() {
 			// The inference provider requires a PersistentVolumeClaim for model
 			// weights, named by parameters.modelCache and defaulting to
