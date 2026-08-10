@@ -1,0 +1,244 @@
+# Namespace-scoped replacement for the UI's cluster-wide `pods/proxy` grant.
+#
+# What was there before (`base/rbac.yaml`, removed by the same change that adds
+# this file): `pods/proxy` with `get` on the viewer ClusterRole and
+# `get`+`create`+`delete` on the operator ClusterRole, both cluster-wide with no
+# `resourceNames`. That is authenticated GET/POST/DELETE against every HTTP port
+# of every pod in the cluster — finding C2 of the 2026-08-09 security review, and
+# a primitive that survives fixing the front door if the RBAC is left alone.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY NOT `services/proxy` WITH `resourceNames`, AS C2's "smallest fix" SUGGESTS
+#
+# Because it does not fit six of the eight consumers, and swapping it in would
+# be an RBAC change that silently breaks screens. Every proxy URL the UI builds
+# comes from one function:
+#
+#   frame-sdk.ts:617
+#   integrationProxy(i, pod, path) =>
+#     `/api/v1/namespaces/${i.namespace}/pods/${pod}:${i.port}/proxy${path}`
+#
+# and its callers first LIST the pods behind a label selector and then proxy to
+# each one individually, because the value is per-pod:
+#
+#   frame-sdk.ts:1228-1240  node-exporter  — one call per pod, per-NODE metrics
+#   frame-sdk.ts:1664-1670  DCGM           — one call per pod, per-GPU metrics
+#   frame-sdk.ts:1928-1934  Tetragon       — per-node agent
+#   frame-sdk.ts:1197-1204  Alluxio        — per-worker
+#   frame-sdk.ts:1716-1723  llama.cpp      — keyed by `spec.nodeName`
+#   frame-sdk.ts:1766-1773  TEI            — keyed by `spec.nodeName`
+#
+# A `services/proxy` call load-balances across endpoints, so it cannot address
+# "the node-exporter on node w2". These six genuinely need `pods/proxy` `get`.
+# Pod names are generated, so `resourceNames` cannot narrow them either — but
+# the NAMESPACE is stable, and that is the axis used below.
+#
+# The two that COULD move to `services/proxy` are Prometheus
+# (frame-sdk.ts:2080-2086) and Alertmanager (:2133-2140, :2176-2182), which are
+# addressed as a single arbitrary pod anyway. Moving them is the right next
+# step and would let `create`/`delete` be pinned to one `resourceNames` entry —
+# but it is a CODE change (`integrationProxy` builds a pods path) requiring a
+# rebuilt image, not something a manifest can do. It is written up as follow-up
+# work in .superpowers/ui-containment-report.md rather than half-done here.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# NET EFFECT OF THIS FILE
+#
+#   get    pods/proxy : every namespace  ->  6 observability namespaces
+#   create pods/proxy : every namespace  ->  `monitoring` only
+#   delete pods/proxy : every namespace  ->  `monitoring` only
+#
+# TRADE-OFF, stated rather than buried: the six namespaces are hard-coded here,
+# while the UI reads them at runtime from the `cluster-control-config` ConfigMap
+# (`src/lib/frame-config.ts` DEFAULT_CONFIG). Repointing an integration at a
+# different namespace on the Settings screen will now yield a 403 until a Role
+# and RoleBinding are added for it. That coupling is the containment doing its
+# job, but it is a new way to be surprised, so it belongs in the runbook.
+#
+# The namespaces below match DEFAULT_CONFIG and all six exist on the cluster
+# (verified with `kubectl get ns`). `rook-ceph` is absent on purpose: the Ceph
+# integrations have no `port` in DEFAULT_CONFIG and are only ever pod-LISTED,
+# never proxied. `neura-sandbox` likewise — listed, never proxied.
+---
+# Read-only pod proxy — the five namespaces whose exporters are scraped per-pod.
+# `monitoring` is handled separately below because it also needs write verbs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: alluxio
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: alluxio
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: gpu-operator
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: gpu-operator
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: inference
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: inference
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: falco
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: falco
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: tetragon
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: tetragon
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
+---
+# `monitoring` — the only namespace that keeps write verbs, and the only place
+# the UI ever POSTs or DELETEs through a proxy.
+#
+#   create : POST /api/v2/silences        — silence an alert (frame-sdk.ts:2228)
+#   delete : DELETE /api/v2/silence/{id}  — end one early   (frame-sdk.ts:2221)
+#   get    : Prometheus query_range (:2085), Alertmanager alerts (:2139) and
+#            silences (:2181), plus node-exporter's per-pod /metrics (:1234)
+#
+# The residual risk is honest and much smaller than what it replaces: POST and
+# DELETE to any pod in `monitoring` (Prometheus, Alertmanager, Grafana), rather
+# than to any pod in the cluster. Prometheus exposes no write API by default and
+# Grafana requires its own credentials, so the reachable primitive is roughly
+# "manipulate alerting" — which is what the feature is for.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-alerting
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-alerting
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-alerting
+subjects:
+  - kind: ServiceAccount
+    name: cluster-control-ui
+    namespace: cluster-control
