@@ -5,46 +5,75 @@ metadata:
   namespace: cluster-control
 ---
 # Role 1: read-only — for operators who want to grant a viewer token
+#
+# 2026-08-10: every rule below is tied to a call site in `src/`. Anything that
+# could not be tied to one was deleted rather than kept defensively — the
+# removals are listed at the end of this block so the audit trail survives.
+# `pods/proxy` moved out of here entirely; see
+# `deploy/kubernetes/containment/rbac-integration-proxy.yaml`.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-control-viewer
 rules:
+  # nodes  — frame-sdk.ts:996, :1315, :1611  (cluster.nodes, capacity, racks)
+  # pods   — frame-sdk.ts:1167, :1322, :1523 and every `integrationPods()` call
+  # events — frame-sdk.ts:2250  (ClusterEventsView)
+  # `watch` is load-bearing, not habit: useLiveResource streams these paths
+  # (coreListPath('nodes'/'pods'/'events') across 12 views).
   - apiGroups: [""]
-    resources: [nodes, pods, services, namespaces, resourcequotas, events]
+    resources: [nodes, pods, events]
     verbs: [get, list, watch]
-  - apiGroups: [""]
-    resources: [pods/proxy]
-    verbs: [get]
+  # frame-sdk.ts:2275-2276 — ApplicationClient.list() reads exactly these two.
   - apiGroups: [apps]
-    resources: [deployments, daemonsets, statefulsets]
+    resources: [deployments, statefulsets]
     verbs: [get, list, watch]
+  # frame-sdk.ts:1123, :1125 — ClusterStorageView / OverviewView / ResilienceView
   - apiGroups: [ceph.rook.io]
-    resources: [cephclusters, cephblockpools, cephfilesystems]
+    resources: [cephclusters, cephblockpools]
     verbs: [get, list, watch]
+  # frame-sdk.ts:1430 (queue read), :1378 (podgroups) — VolcanoPoolsView
   - apiGroups: [scheduling.volcano.sh]
     resources: [queues, podgroups]
     verbs: [get, list, watch]
+  # frame-sdk.ts:1478 — LineageView
   - apiGroups: [argoproj.io]
     resources: [workflows]
     verbs: [get, list, watch]
+  # frame-sdk.ts:1517 — ResilienceView
   - apiGroups: [policy]
     resources: [poddisruptionbudgets]
     verbs: [get, list, watch]
+  # frame-sdk.ts:1000, :1345 — node/pod metrics
   - apiGroups: [metrics.k8s.io]
     resources: [nodes, pods]
     verbs: [get, list]
   - apiGroups: [frame.plume-labs.io]
     resources: [framejobs, framenodes, schedulingpolicies, frameresourcequotas, talosmachineconfigs, talosupgrades]
     verbs: [get, list, watch]
-  # trivy-operator security posture (vulnerabilities + misconfigs) for the Security screen
+  # trivy-operator security posture for the Security screen.
+  # frame-sdk.ts:1860-1861 and SecurityView.tsx:41-42 read these two kinds and
+  # no others.
   - apiGroups: [aquasecurity.github.io]
-    resources: [vulnerabilityreports, configauditreports, rbacassessmentreports, exposedsecretreports, infraassessmentreports]
+    resources: [vulnerabilityreports, configauditreports]
     verbs: [get, list, watch]
-  # Velero backups (DR status) for the Resilience screen
+  # Velero DR status for the Resilience screen — frame-sdk.ts:2016-2018.
   - apiGroups: [velero.io]
-    resources: [backups, schedules, backupstoragelocations, restores]
+    resources: [backups, schedules, backupstoragelocations]
     verbs: [get, list, watch]
+  #
+  # REMOVED 2026-08-10, no call site anywhere in `src/`:
+  #   core `services`, `namespaces`, `resourcequotas` — the UI reads Frame's
+  #     own FrameResourceQuota CRs, never the core kind, and never enumerates
+  #     Services or Namespaces.
+  #   apps `daemonsets` — ApplicationClient reads Deployments and StatefulSets
+  #     only; the only "DaemonSet" strings in `src/` are drain-skip logic
+  #     reading pod ownerReferences (frame-sdk.ts:1074), which needs no verb.
+  #   ceph.rook.io `cephfilesystems` — zero references.
+  #   aquasecurity `rbacassessmentreports`, `exposedsecretreports`,
+  #     `infraassessmentreports` — zero references.
+  #   velero `restores` — zero references (the UI shows backups, never restores).
+  #   core `pods/proxy` — relocated to namespaced Roles, see containment/.
 ---
 # cluster-control-operator: write access to Frame CRDs + node cordon.
 #
@@ -58,6 +87,15 @@ rules:
 # instead, the same way `kubectl create clusterrolebinding <user>-operator
 # --clusterrole=cluster-control-operator --user=<user@domain>` would.
 #
+# 2026-08-10 (UI containment): the accepted risk above stopped being bounded
+# when `cluster-control-ui-lan` (NodePort 30379) put this SA's credential in
+# front of the whole LAN with no authentication in the path. This role was
+# re-derived from the call sites rather than trimmed by eye: every rule now
+# names the `src/` line that needs it, `pods/proxy` moved to namespaced Roles
+# in `deploy/kubernetes/containment/rbac-integration-proxy.yaml`, and the
+# cluster-wide `patch` on workloads is gone. Full rationale and the list of
+# what was cut: `.superpowers/ui-containment-report.md`.
+#
 # Role 2: operator — write on safe Frame CRDs (not Talos, not /status),
 # plus core node cordon/uncordon (patch only — no node delete/create).
 apiVersion: rbac.authorization.k8s.io/v1
@@ -66,52 +104,76 @@ metadata:
   name: cluster-control-operator
 rules:
   - apiGroups: [""]
-    resources: [nodes, pods, services, namespaces, resourcequotas, events]
+    resources: [nodes, pods, events]
     verbs: [get, list, watch]
+  # Cordon/uncordon (ClusterNodesView) — frame-sdk.ts:1036.
+  # Kept: patching a Node changes labels, taints and unschedulability. It does
+  # not mint a privileged pod, so unlike the Deployment patch below it is not a
+  # path to node root.
   - apiGroups: [""]
     resources: [nodes]
     verbs: [patch]
-  - apiGroups: [""]
-    resources: [pods/proxy]
-    verbs: [get]
-  # POST- and DELETE-through-proxy, for the Alertmanager silence actions
-  # (Alerts screen): create a silence, and end one early. Same blast radius as
-  # the get above (any pod's HTTP endpoint, not just Alertmanager's — pod names
-  # are dynamic so a resourceNames restriction would be fragile) — consistent
-  # with the accepted-risk posture already documented above, not a new trust
-  # boundary.
-  - apiGroups: [""]
-    resources: [pods/proxy]
-    verbs: [create, delete]
-  # Node drain (Nodes screen). Eviction, not pod delete: it is the API that
-  # honours PodDisruptionBudgets, so a drain that would breach a budget is
-  # refused by the apiserver rather than by us remembering to check.
+  # Node drain (Nodes screen) — frame-sdk.ts:1082. Eviction, not pod delete: it
+  # is the API that honours PodDisruptionBudgets, so a drain that would breach a
+  # budget is refused by the apiserver rather than by us remembering to check.
   - apiGroups: [""]
     resources: [pods/eviction]
     verbs: [create]
+  # frame-sdk.ts:2275-2276 — ApplicationClient.list().
+  #
+  # `patch` REMOVED 2026-08-10. It is the single grant that turned the
+  # unauthenticated UI into cluster-admin: patch any Deployment's pod template
+  # to add `securityContext.privileged: true` and a `hostPath: /` volume and you
+  # have root on the node, and no namespace on this cluster carries a
+  # `pod-security.kubernetes.io/enforce` label to stop it. That mattered less
+  # while reaching the UI meant already running in the cluster; the
+  # `cluster-control-ui-lan` NodePort (30379) made it reachable from the LAN.
+  #
+  # It was NOT an unused grant — contrary to the assumption that only the
+  # unbuilt update screen would need it, `ApplicationClient.restart()`
+  # (frame-sdk.ts:2311-2327) uses it today, wired to the Restart button in
+  # ApplicationsView.tsx:142. So this cut has a visible cost: that button now
+  # returns 403. There is no way to keep it and keep the containment — RBAC
+  # cannot restrict a patch to one JSON path, so "may set the restartedAt
+  # annotation" and "may make the pod privileged" are the same grant.
+  # `kubectl rollout restart` still works for anyone with a real kubeconfig.
+  #
+  # To put it back deliberately (and accept the escalation), re-add:
+  #   - apiGroups: [apps]
+  #     resources: [deployments, statefulsets]
+  #     verbs: [patch]
+  # The safe way to earn it back instead is PodSecurity `baseline` or
+  # `restricted` enforced on every namespace, which blocks the privileged-pod
+  # payload — see the 2026-08-09 security review, C1 fix 4.
   - apiGroups: [apps]
-    resources: [deployments, daemonsets, statefulsets]
-    verbs: [get, list, watch, patch]
+    resources: [deployments, statefulsets]
+    verbs: [get, list, watch]
+  # Scale button — frame-sdk.ts:2332-2339. The `/scale` subresource can only
+  # change the replica count, so unlike a full patch it cannot touch the pod
+  # template. This is the reason the two are split.
   - apiGroups: [apps]
     resources: [deployments/scale, statefulsets/scale]
     verbs: [patch]
   - apiGroups: [ceph.rook.io]
-    resources: [cephclusters, cephblockpools, cephfilesystems]
+    resources: [cephclusters, cephblockpools]
     verbs: [get, list, watch]
   - apiGroups: [scheduling.volcano.sh]
     resources: [podgroups]
     verbs: [get, list, watch]
-  # Share-weight tuning (Elastic Pools screen). No delete: removing a queue
-  # orphans the PodGroups scheduled into it.
+  # Share-weight tuning (Elastic Pools screen) — frame-sdk.ts:1406. No delete:
+  # removing a queue orphans the PodGroups scheduled into it.
   - apiGroups: [scheduling.volcano.sh]
     resources: [queues]
     verbs: [get, list, watch, patch]
-  # Queue open/close on the same screen. Volcano has no settable spec.state —
-  # the state change is a Command the queue controller consumes and then
-  # deletes, so this is a create-only grant on a self-cleaning resource.
+  # Queue open/close on the same screen — frame-sdk.ts:1433. Volcano has no
+  # settable spec.state — the state change is a Command the queue controller
+  # consumes and then deletes, so this is a create-only grant on a
+  # self-cleaning resource. `get`/`list`/`watch` removed 2026-08-10: the UI
+  # POSTs a Command and never reads one back (the follow-up poll at
+  # frame-sdk.ts:1456 re-reads the *queue*, not the Command).
   - apiGroups: [bus.volcano.sh]
     resources: [commands]
-    verbs: [get, list, watch, create]
+    verbs: [create]
   - apiGroups: [argoproj.io]
     resources: [workflows]
     verbs: [get, list, watch]
@@ -141,6 +203,18 @@ rules:
   - apiGroups: [frame.plume-labs.io]
     resources: [talosmachineconfigs, talosupgrades]
     verbs: [get, list, watch]
+  #
+  # REMOVED 2026-08-10 — same audit as the viewer role above:
+  #   core `services`, `namespaces`, `resourcequotas`   — no call site
+  #   apps `daemonsets`                                  — no call site
+  #   ceph.rook.io `cephfilesystems`                     — no call site
+  #   bus.volcano.sh `commands` get/list/watch           — write-only in the UI
+  #   apps `deployments`/`statefulsets` `patch`          — see the long note
+  #     above; used by the Restart button, cut anyway because it is node root
+  #   core `pods/proxy` get/create/delete                — relocated to
+  #     namespaced Roles in `deploy/kubernetes/containment/`, cutting the
+  #     blast radius from every pod in the cluster to six observability
+  #     namespaces (read) and `monitoring` alone (POST/DELETE)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
