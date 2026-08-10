@@ -51,13 +51,28 @@ var crdRenderRelativeRoot = filepath.Join("..", "..", "..")
 // renderedCRDPath is bin/crd-render, where `make crd-render` writes the CRDs
 // as kustomize builds them — conversion stanza included.
 //
-// The suites used to read config/crd/bases directly. Those are the
-// controller-gen output, and controller-gen has no marker that emits
-// spec.conversion: the stanza is a kustomize patch. envtest can drive a
-// conversion webhook (WebhookInstallOptions rewrites clientConfig to the
-// local server and injects its CA) but only for a CRD that already declares
-// strategy: Webhook, so reading the bases would have made every conversion
-// test silently exercise nothing (F14 point 3).
+// The suites used to read config/crd/bases directly. Those are only
+// controller-gen's half: controller-gen has no marker that emits
+// spec.conversion, so the stanza exists solely as a kustomize patch, and the
+// bases are a shape no install ever applies. Reading the rendered output is
+// what keeps this suite pointed at the schema that ships — including any
+// future patch that changes one.
+//
+// It is NOT what makes conversion work here, and the earlier wording of this
+// comment said the inverse of the truth. envtest does not need a CRD to
+// declare strategy: Webhook. Environment.Start generates a serving CA
+// unconditionally (PrepWithoutInstalling, before InstallCRDs) and
+// modifyConversionWebhooks then *overwrites* spec.conversion on every CRD
+// whose GroupKind is convertible in the scheme, creating the stanza where the
+// manifest has none. It reads the Go types, not the manifests.
+//
+// The consequence is worth stating plainly, because it is a permanent hole in
+// `make test`: strip all eight conversion stanzas out of bin/crd-render and
+// both envtest suites stay 100% green. No envtest can notice a missing
+// shipped stanza, whichever directory it reads, because the field it would
+// assert on is the field envtest has already rewritten. hack/helm-parity.sh
+// (manifest-level, in CI) and test/e2e (a real apiserver, not in CI) are the
+// only guards on the shipped side.
 func renderedCRDPath() string {
 	// The number of ".." segments differs per suite; see crdRenderRelativeRoot above.
 	return filepath.Join(crdRenderRelativeRoot, "bin", "crd-render")
