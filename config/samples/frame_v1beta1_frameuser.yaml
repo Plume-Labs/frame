@@ -12,6 +12,8 @@ spec:
   # Passkey-only unless deliberately opened. authd writes the password hash
   # into status.passwordHash, not spec — it is credential material, and in
   # spec it was readable by anything holding `get frameusers`. Never set it
-  # here. The validating webhook refuses to delete or demote the last account
-  # holding the admin role.
+  # here — the validating webhook refuses any main-resource write that changes
+  # status.passwordHash, at v1beta1 and at v1alpha1 alike, including a replace
+  # that drops it. It also refuses to delete or demote the last account holding
+  # the admin role.
   passwordAuth: disabled

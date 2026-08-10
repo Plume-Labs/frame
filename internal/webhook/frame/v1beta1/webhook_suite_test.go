@@ -39,6 +39,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
@@ -49,13 +50,28 @@ var crdRenderRelativeRoot = filepath.Join("..", "..", "..", "..")
 // renderedCRDPath is bin/crd-render, where `make crd-render` writes the CRDs
 // as kustomize builds them — conversion stanza included.
 //
-// The suites used to read config/crd/bases directly. Those are the
-// controller-gen output, and controller-gen has no marker that emits
-// spec.conversion: the stanza is a kustomize patch. envtest can drive a
-// conversion webhook (WebhookInstallOptions rewrites clientConfig to the
-// local server and injects its CA) but only for a CRD that already declares
-// strategy: Webhook, so reading the bases would have made every conversion
-// test silently exercise nothing (F14 point 3).
+// The suites used to read config/crd/bases directly. Those are only
+// controller-gen's half: controller-gen has no marker that emits
+// spec.conversion, so the stanza exists solely as a kustomize patch, and the
+// bases are a shape no install ever applies. Reading the rendered output is
+// what keeps this suite pointed at the schema that ships — including any
+// future patch that changes one.
+//
+// It is NOT what makes conversion work here, and the earlier wording of this
+// comment said the inverse of the truth. envtest does not need a CRD to
+// declare strategy: Webhook. Environment.Start generates a serving CA
+// unconditionally (PrepWithoutInstalling, before InstallCRDs) and
+// modifyConversionWebhooks then *overwrites* spec.conversion on every CRD
+// whose GroupKind is convertible in the scheme, creating the stanza where the
+// manifest has none. It reads the Go types, not the manifests.
+//
+// The consequence is worth stating plainly, because it is a permanent hole in
+// `make test`: strip all eight conversion stanzas out of bin/crd-render and
+// both envtest suites stay 100% green. No envtest can notice a missing
+// shipped stanza, whichever directory it reads, because the field it would
+// assert on is the field envtest has already rewritten. hack/helm-parity.sh
+// (manifest-level, in CI) and test/e2e (a real apiserver, not in CI) are the
+// only guards on the shipped side.
 func renderedCRDPath() string {
 	// The number of ".." segments differs per suite; see crdRenderRelativeRoot above.
 	return filepath.Join(crdRenderRelativeRoot, "bin", "crd-render")
@@ -85,6 +101,20 @@ var _ = BeforeSuite(func() {
 
 	var err error
 	err = framev1beta1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	// v1alpha1 is registered so this suite can send a v1alpha1 admission
+	// request, which nothing else in `make test` does. Registering it is what
+	// turns conversion on here: modifyConversionWebhooks reads the scheme, and
+	// with one GVK per GroupKind it used to rewrite nothing, so every write had
+	// to be at the storage version and no conversion was ever attempted.
+	//
+	// That mattered more than a coverage line. The FrameUser password-hash
+	// guard is reachable only through a converted request — the webhook rule
+	// names versions: [v1beta1] and the apiserver's default matchPolicy
+	// Equivalent is what brings a v1alpha1 write to it. Without v1alpha1 in the
+	// scheme, that whole path is untestable here.
+	err = framev1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme

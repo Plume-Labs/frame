@@ -10,6 +10,13 @@
 # anything holding `patch frameusers` could overwrite it; on status, only this
 # tier and authd can.
 #
+# "Only this tier and authd" is true because of two things, and this role is
+# one of them. The other is the validating webhook: RBAC has no version
+# dimension, so while v1alpha1 is served the hash is also reachable as
+# spec.passwordHash on the main resource, which no /status rule governs.
+# guardPasswordHash in internal/webhook/frame/v1beta1 refuses that write at
+# both versions. See frameuser_editor_role.yaml.
+#
 # What that denial is worth, measured against a real apiserver rather than
 # assumed: it stops the *write* path and the dedicated /status read endpoint.
 # It does NOT hide the hash — a plain `GET frameusers` returns the whole

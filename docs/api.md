@@ -251,7 +251,10 @@ ServiceAccount token.
 
 > **`get frameusers` is equivalent to holding every password hash.** Moving
 > `passwordHash` from `spec` to `status` in `v1beta1` bought **write**
-> protection, not confidentiality: a status subresource splits writes, not
+> protection — and only in company with the FrameUser validating webhook,
+> which is what covers the `v1alpha1` spelling of the same field, RBAC having
+> no version dimension. It bought no confidentiality: a status subresource
+> splits writes, not
 > reads, and a plain `GET frameusers` returns the whole object including
 > `status`. A viewer with no `/status` rule at all still reads the hash —
 > measured, not assumed. The fix is moving the hash into a `Secret`, which is

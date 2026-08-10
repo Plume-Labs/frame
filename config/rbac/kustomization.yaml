@@ -46,8 +46,9 @@ resources:
 # FrameUser's triple is the odd one out: the editor and viewer roles carry no
 # frameusers/status rule, because status.passwordHash is an argon2id
 # credential (F11). Only the admin tier may touch that subresource — which
-# stops the lower tiers writing a hash, not reading one. See the header of
-# frameuser_admin_role.yaml.
+# stops the lower tiers writing a hash, not reading one, and only in company
+# with the validating webhook, since RBAC cannot distinguish the v1alpha1
+# spelling of the same field. See the header of frameuser_editor_role.yaml.
 - frameuser_admin_role.yaml
 - frameuser_editor_role.yaml
 - frameuser_viewer_role.yaml

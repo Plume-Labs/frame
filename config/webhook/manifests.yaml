@@ -138,6 +138,7 @@ webhooks:
       namespace: system
       path: /validate-frame-plume-labs-io-v1beta1-frameuser
   failurePolicy: Fail
+  matchPolicy: Equivalent
   name: vframeuser-v1beta1.kb.io
   rules:
   - apiGroups:

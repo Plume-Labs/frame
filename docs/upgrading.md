@@ -259,7 +259,7 @@ are leaving:
 | `FrameJob.spec.namespace` removed | Ignored. The Argo Workflow is created in the FrameJob's own namespace. A read at `v1alpha1` returns the object's own namespace, not the value you set. |
 | `TalosSecretReference.namespace` removed | Ignored. The Secret is read from the CR's own namespace, which is what an empty value always meant. A read returns empty. |
 | `TalosSecretReference.name` now required | A `v1beta1` write without it is rejected. |
-| `FrameUser.spec.passwordHash` moved to `status.passwordHash` | Writing it through `v1alpha1` requires the `frameusers/status` subresource. Reading it does not — see below. |
+| `FrameUser.spec.passwordHash` moved to `status.passwordHash` | Read-only at `v1alpha1`. A write that changes it is rejected by the validating webhook, and so is a full replace that omits it — omitting it would erase the credential. Set it through the `v1beta1` `frameusers/status` subresource. Reading it is unaffected — see below. |
 | `FrameNode.spec.serviceClass` no longer accepts `""` | Omit the field instead; absence means unclassified. |
 | `FrameJob.spec.serviceClass` and `spec.priority` default in the schema, not only in the webhook | Unchanged values (`LOW`, `medium`), but they are now applied before CEL rather than after. |
 | The GPU / `serviceClass: LOW` constraint deleted | A GPU job at `LOW` is admitted. It was only ever enforced for three pipeline names, so it never applied to `training` — this project's own sample. |
@@ -328,7 +328,34 @@ still land an object that a `v1beta1` write would refuse, and the controller
 will read it back through the hub as though it were valid.
 
 That is a property of the window, not a defect in it, and it argues for
-closing the window rather than for widening the rules. It is also why the
+closing the window rather than for widening the rules — **with one exception,
+and it is worth understanding why it had to be an exception.**
+
+`FrameUser.status.passwordHash` is a `v1beta1` guarantee that could not be
+left to the window. The field is credential material, and the whole point of
+moving it onto `status` (F11) was that `patch frameusers` should no longer set
+anyone's password. RBAC has no version dimension: `resources: [frameusers]`
+covers every served version. So the paragraph above applied to it exactly as
+it applies to a `maxLength` — a `v1alpha1` write of `spec.passwordHash`
+travelled through conversion into `status.passwordHash` and was stored — and
+the consequence was not an out-of-bounds string but any account's password,
+set by anyone holding the editor tier. Worse, a plain `kubectl replace` at
+`v1alpha1` that simply *omitted* the field erased the credential, needing no
+ill intent and surfacing as a 401 much later.
+
+The generic remedy — "move to `v1beta1`" — cannot work for a security
+property, because the attacker chooses the version. So this one is enforced at
+admission instead: the FrameUser validating webhook rejects any main-resource
+write, at either version, that changes `status.passwordHash`, and
+`matchPolicy: Equivalent` is what brings the `v1alpha1` request to it. Only
+the `v1beta1` `frameusers/status` subresource can write the field.
+
+The lesson generalises even if the mechanism does not: a bound that exists for
+tidiness can wait for the window to close; a bound that exists for safety
+needs a webhook, because schema validation is version-scoped and RBAC is not.
+Nothing else `v1beta1` added is in the second category today.
+
+It is also why the
 same asymmetry bit in the other direction during the freeze: the apiserver
 also declines to re-default conversion output, which made a `v1alpha1` status
 patch on SchedulingPolicy evaluate a CEL rule against an absent

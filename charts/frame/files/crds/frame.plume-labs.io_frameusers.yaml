@@ -28,9 +28,10 @@ spec:
       name: Age
       type: date
     deprecated: true
-    deprecationWarning: frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use
-      frame.plume-labs.io/v1beta1. spec.passwordHash has moved to status.passwordHash
-      — writing it through v1alpha1 requires the frameusers/status subresource.
+    deprecationWarning: 'frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use
+      frame.plume-labs.io/v1beta1. spec.passwordHash moved to status.passwordHash:
+      a write that changes it is rejected, and so is a replace that omits it. Use
+      the v1beta1 frameusers/status subresource.'
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -75,6 +76,15 @@ spec:
                 description: |-
                   PasswordHash is an argon2id PHC string, written only by authd. It is
                   meaningless while PasswordAuth is disabled.
+
+                  This field is readable at v1alpha1 and effectively read-only. v1beta1
+                  moved it to status.passwordHash (F11) so that `patch frameusers` could
+                  not set anyone's password; RBAC has no version dimension, so this field
+                  was a way around that, and the validating webhook now closes it. A write
+                  here that changes the stored value is rejected, and so is one that omits
+                  the field on a full replace — that is a credential deletion wearing an
+                  ordinary update's clothes. See guardPasswordHash in
+                  internal/webhook/frame/v1beta1.
                 type: string
               role:
                 description: Role decides which group the issued token carries.

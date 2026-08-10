@@ -142,8 +142,10 @@ rbac:
   # frameuser is the exception in shape as well as in origin (it is the one
   # kubebuilder never scaffolded): its editor and viewer roles carry no
   # frameusers/status rule, because status.passwordHash is an argon2id
-  # credential. That stops those tiers *writing* a password hash; it does not
-  # stop them reading one, since a plain `get frameusers` returns status too.
+  # credential. That stops those tiers *writing* a password hash — together
+  # with the validating webhook, which is what covers the v1alpha1 spelling of
+  # the same field, since RBAC has no version dimension. It does not stop them
+  # reading one, since a plain `get frameusers` returns status too.
   # Bind frameuser-viewer-role only to principals you would hand the hashes.
   # See docs/deployment.md, "RBAC".
   tierRoles:
