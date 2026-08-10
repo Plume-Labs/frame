@@ -37,7 +37,7 @@ The single check that covers all four at once, because it exercises the whole
 path — apiserver to webhook over TLS, with `failurePolicy: Fail` behind it:
 
 ```bash
-kubectl apply --dry-run=server -f config/samples/frame_v1alpha1_framejob.yaml
+kubectl apply --dry-run=server -f config/samples/frame_v1beta1_framejob.yaml
 ```
 
 A success means the apiserver reached both the mutating and the validating
@@ -64,6 +64,21 @@ make deploy            # or: helm upgrade, which recreates both
 Reach for this only when the alternative is worse. The defaulting webhook is
 what fills in fields the controllers assume are set, so an object written this
 way can be one the reconcile loop has never had to handle.
+
+**That escape hatch does not cover conversion, and conversion is worse.** Each
+CRD also declares `conversion.strategy: Webhook` pointing at the same
+manager's `/convert`, and CRD conversion is configured *on the CRD*, not in a
+`ValidatingWebhookConfiguration` you can delete. With the manager
+unreachable, every read and write of a Frame kind fails at **both** versions —
+including `kubectl get`, which the paragraph above says is unaffected. It is
+unaffected only for the single-version CRDs of the pre-freeze install.
+
+There is no safe local escape hatch for that: setting `strategy: None` on a
+live CRD makes the apiserver hand back stored `v1beta1` bytes to a `v1alpha1`
+client unconverted, which is how fields get silently dropped. Fix the manager
+instead; that is what `failurePolicy` and the leader lease's 16-second
+takeover are for, and it is the argument for `replicaCount: 2` restated in
+sharper terms.
 
 ## Failover
 
@@ -110,6 +125,66 @@ kubelet's Secret refresh is not immediate.
 > `config/default/kustomization.yaml`, so metrics are served with
 > controller-runtime's own self-signed cert. The Certificate is currently dead
 > weight rather than a misconfiguration, but it looks load-bearing and is not.
+
+## Migrating the storage version
+
+`.status.storedVersions` on a CRD only grows. The apiserver appends the new
+storage version the moment an apply makes it the storage version — whether or
+not anything is ever stored at it — and **never removes an entry**: not on its
+own, not once the last object at the old version has been rewritten, not ever.
+A version cannot be dropped from `spec.versions` while it appears in
+`storedVersions`, so the list has to be pruned by hand, and that patch is a
+*claim* that nothing is stored at the old version any more. Objects are
+rewritten at the storage version on any write, so a no-op annotation patch is
+enough; a kind with **zero** objects has nothing to rewrite and the status
+patch is its whole migration.
+
+Order matters. Apply the CRDs and roll out the manager that serves `/convert`
+**first**: a two-version CRD with `strategy: Webhook` and nothing answering
+`/convert` fails every read and write of that kind.
+
+```bash
+./hack/migrate-storage-version.sh            # dry run, changes nothing
+./hack/migrate-storage-version.sh --apply
+```
+
+**Run it as a cluster administrator.** It needs `patch` on every Frame
+resource *and* `patch` on `customresourcedefinitions/status` — none of the
+`*-admin-role` tiers grant the latter, and none should: that one verb changes
+which version is stored for *any* CRD in the cluster, for any operator. There
+is deliberately no narrow, bindable role for this; see "Running the
+storage-version migration" in [deployment.md](deployment.md).
+
+The script fails loudly rather than half-finishing: it refuses to touch a CRD
+whose storage version is not the one it is migrating to, it aborts rather than
+treat a failed listing as "no objects", and it exits non-zero if a CRD does not
+end at a single stored version — in which case that CRD's old version must not
+be removed.
+
+**Check the Argo Workflows before running it against a cluster with completed
+FrameJobs on it.** Rewriting a FrameJob re-triggers its controller, which is
+wanted — the legacy stored `status.phase` does not survive conversion, and only
+a reconcile puts a real `Ready` condition in its place — but if a job's Workflow
+has been garbage-collected the controller's `IsNotFound` branch creates a new
+one and silently re-runs a completed job.
+
+```bash
+kubectl get framejobs -A \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,WF:.status.argoWorkflowName
+kubectl get workflows.argoproj.io -A
+```
+
+Afterwards, confirm the objects still read correctly through both versions and
+that the projected phases came back:
+
+```bash
+kubectl get framejobs -A -o wide     # PHASE from the Ready condition's reason
+kubectl get framenodes -A -o wide
+```
+
+A blank `PHASE` means the `Ready` condition carries a reason outside the
+projection's vocabulary — compare what the controller wrote against the
+`…PhaseFromConditions` helper for that kind.
 
 ## Backup and restore
 

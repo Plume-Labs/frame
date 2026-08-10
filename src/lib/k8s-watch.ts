@@ -55,7 +55,7 @@ function authHeaders(): Record<string, string> {
  * Watch several list paths and call `onChange` when any of them changes.
  *
  * Each path is a Kubernetes list endpoint, e.g.
- * `/apis/frame.plume-labs.io/v1alpha1/namespaces/frame-system/framejobs` or
+ * `/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/framejobs` or
  * `/api/v1/nodes`. Returns a function that stops every stream it started.
  */
 export function watchPaths(paths: string[], onChange: () => void): () => void {

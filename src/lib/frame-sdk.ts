@@ -33,7 +33,12 @@ export interface FrameNode {
   id: string
   name: string
   status: NodeStatus
-  serviceClass: ServiceClass
+  /**
+   * Empty when the node has not been classified. FrameNode.spec.serviceClass
+   * has no CRD default (unlike FrameJob's LOW and FrameService's MEDIUM), so
+   * absence is a real, reachable state and not something to paper over.
+   */
+  serviceClass: ServiceClass | ''
   zone: string
   rackId: string
   cpu: number
@@ -86,8 +91,15 @@ export interface Job {
 export interface JobSpec {
   name: string
   pipeline: string
+  /** Omit to take the CRD default (LOW) rather than pinning a tier here. */
   serviceClass?: ServiceClass
+  /** Omit to take the CRD default (medium). */
   priority?: Priority
+  /**
+   * Where the FrameJob — and therefore its Workflow — is created. It used to
+   * name `spec.namespace`, a separate target the CR itself did not live in;
+   * v1beta1 removed that field (F5), so this now steers `metadata.namespace`.
+   */
   namespace?: string
   gpuCount?: number
 }
@@ -574,7 +586,17 @@ export class FrameAPIError extends Error {
 // ── K8s API config ────────────────────────────────────────────────────────────
 
 const GROUP   = 'frame.plume-labs.io'
-const VERSION = 'v1alpha1'
+/**
+ * The served Frame API version every path below is built from.
+ *
+ * v1alpha1 still works — the conversion webhook is proven end to end — but it
+ * is no longer the storage version, so every request through it pays a
+ * conversion round trip and comes back with a `Warning:
+ * frame.plume-labs.io/v1alpha1 ... is deprecated` header. The UI is the
+ * heaviest client of the Frame API, so leaving it on the spoke would make it
+ * the primary consumer of a code path nothing else exercises.
+ */
+const VERSION = 'v1beta1'
 
 function frameNs(override?: string): string {
   return override
@@ -668,20 +690,49 @@ async function k8sFetch<T>(
 
 // ── CR type shims ─────────────────────────────────────────────────────────────
 
+interface Condition {
+  type: string
+  status: 'True' | 'False' | 'Unknown'
+  reason?: string
+  message?: string
+  observedGeneration?: number
+  lastTransitionTime?: string
+}
+
+/**
+ * The Ready condition, which is where every Frame kind reports health.
+ *
+ * v1beta1 removed `status.phase` from every kind: a single enum forces the API
+ * to pick one dimension of health out of several and cannot express
+ * "provisioned but degraded". For FrameJob and FrameNode the Ready condition's
+ * `reason` carries exactly the string the old phase field held, so the mappers
+ * below read it from there.
+ */
+function readyCondition(conditions?: Condition[]): Condition | undefined {
+  return conditions?.find((c) => c.type === 'Ready')
+}
+
 interface FrameJobCR {
   metadata: { name: string; namespace?: string; creationTimestamp?: string }
   spec: {
     pipeline: string; serviceClass?: string; priority?: string
-    namespace?: string; gpuCount?: number; suspended?: boolean
+    gpuCount?: number; suspended?: boolean
   }
-  status?: { phase?: string; startTime?: string; completionTime?: string }
+  status?: {
+    conditions?: Condition[]
+    observedGeneration?: number
+    startTime?: string; completionTime?: string
+    argoWorkflowName?: string; message?: string
+  }
 }
 
 interface FrameNodeCR {
   metadata: { name: string; namespace?: string }
   spec: { ip: string; serviceClass?: string; zone?: string; rack?: string; rdmaInterface?: string; hostname?: string }
   status?: {
-    phase?: string; capacity?: Record<string, string>; allocatable?: Record<string, string>
+    conditions?: Condition[]
+    observedGeneration?: number
+    capacity?: Record<string, string>; allocatable?: Record<string, string>
     discoveredHostname?: string; discoveredTalosVersion?: string
     discoveredDisks?: Array<{ name: string; size: string; type: string }>
     discoveredNICs?: Array<{ name: string; mac: string; speed: string }>
@@ -703,8 +754,30 @@ interface ListResponse<T> { items: T[] }
 
 // ── CR → domain mappers ───────────────────────────────────────────────────────
 
-function mapJobPhase(phase?: string): JobStatus {
-  switch (phase) {
+/**
+ * A FrameJob's lifecycle, read off the Ready condition's reason.
+ *
+ * The controller writes exactly one condition and its reason is always one of
+ * Submitted, Running, Suspended, Completed, Failed, so this is a rename of the
+ * removed `status.phase`, not an inference.
+ *
+ * The interesting case is the one that is *not* a rename. Both FrameJobs
+ * stored on the cluster predate that invariant: they sit at generation 1 with
+ * a write-once `Submitted/WorkflowCreated` condition and no Ready condition at
+ * all. Reading `Ready.reason` on them yields undefined, so they land here on
+ * `queued` — the same place the server-side v1alpha1 projection puts them,
+ * which answers `Submitted` for a legacy Submitted condition and `Pending` for
+ * a conditionless object, both of which this narrower domain type spells
+ * `queued`.
+ *
+ * `status.completionTime` is deliberately not consulted, even though those two
+ * objects carry one. The controller sets it on Failed as well as on Completed,
+ * so it cannot tell the two apart, and guessing `completed` would make an old
+ * failure render as healthy — the exact bug the condition invariant exists to
+ * prevent. A re-reconcile is what restores their real outcome.
+ */
+function mapJobPhase(cr: FrameJobCR): JobStatus {
+  switch (readyCondition(cr.status?.conditions)?.reason) {
     case 'Running':   return 'running'
     case 'Completed': return 'completed'
     case 'Failed':    return 'failed'
@@ -717,10 +790,17 @@ function crToJob(cr: FrameJobCR): Job {
     id:           cr.metadata.name,
     name:         cr.metadata.name,
     pipeline:     cr.spec.pipeline,
-    status:       mapJobPhase(cr.status?.phase),
-    serviceClass: (cr.spec.serviceClass ?? 'MEDIUM') as ServiceClass,
+    status:       mapJobPhase(cr),
+    // LOW, not MEDIUM: the CRD defaults serviceClass to LOW, so a served
+    // object always carries one and this fallback is only reachable for a
+    // hand-built object. Answering MEDIUM here was half of the disagreement
+    // between what kubectl showed and what the UI showed (F4).
+    serviceClass: (cr.spec.serviceClass ?? 'LOW') as ServiceClass,
     priority:     (cr.spec.priority ?? 'medium') as Priority,
-    namespace:    cr.spec.namespace ?? cr.metadata.namespace ?? frameNs(),
+    // The FrameJob's own namespace is where its Workflow runs. spec.namespace
+    // is gone at v1beta1 (F5) — it let a caller direct workflow creation into
+    // any namespace the operator could reach.
+    namespace:    cr.metadata.namespace ?? frameNs(),
     gpuCount:     cr.spec.gpuCount ?? 0,
     createdAt:    cr.metadata.creationTimestamp ?? new Date().toISOString(),
     startedAt:    cr.status?.startTime,
@@ -728,12 +808,18 @@ function crToJob(cr: FrameJobCR): Job {
   }
 }
 
-function mapNodePhase(phase?: string): NodeStatus {
-  switch (phase) {
+/**
+ * A FrameNode's health, read off the Ready condition's reason.
+ *
+ * `Discovering` is gone from the switch. It was in v1alpha1's enum and no
+ * controller ever wrote it; keeping a case for a value that cannot occur
+ * invites someone to "fix" the controller into producing it.
+ */
+function mapNodePhase(cr: FrameNodeCR): NodeStatus {
+  switch (readyCondition(cr.status?.conditions)?.reason) {
     case 'Online':       return 'online'
     case 'Degraded':     return 'degraded'
     case 'Provisioning':
-    case 'Discovering':
     case 'Discovered':   return 'provisioning'
     default:             return 'offline'
   }
@@ -750,8 +836,13 @@ function crToNode(cr: FrameNodeCR): FrameNode {
   return {
     id:           cr.metadata.name,
     name:         cr.spec.hostname ?? cr.metadata.name,
-    status:       mapNodePhase(cr.status?.phase),
-    serviceClass: (cr.spec.serviceClass ?? 'LOW') as ServiceClass,
+    status:       mapNodePhase(cr),
+    // No fallback, unlike FrameJob and FrameService. FrameNode.spec
+    // .serviceClass is deliberately undefaulted at v1beta1 — a node is
+    // discovered before anyone classifies its hardware — so inventing LOW
+    // here would show a tier kubectl does not, which is the disagreement the
+    // freeze removed, pointed the other way.
+    serviceClass: (cr.spec.serviceClass ?? '') as ServiceClass | '',
     zone:         cr.spec.zone ?? '',
     rackId:       cr.spec.rack ?? '',
     cpu:          quantityToNum(alloc['cpu']),
@@ -2279,7 +2370,11 @@ class NodeClient {
   async getStatus(name: string): Promise<FrameNodeStatus> {
     const cr = await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${name}`)
     return {
-      phase:                  cr.status?.phase ?? '',
+      // v1beta1 has no status.phase. The Ready condition's reason is the same
+      // string the field used to hold — Discovered, Provisioning, Online,
+      // Degraded, Offline — so the wizard's polling contract is unchanged.
+      // Empty means unreconciled, which is what an absent phase meant before.
+      phase:                  readyCondition(cr.status?.conditions)?.reason ?? '',
       discoveredHostname:     cr.status?.discoveredHostname,
       discoveredTalosVersion: cr.status?.discoveredTalosVersion,
       discoveredDisks:        cr.status?.discoveredDisks,
@@ -2311,17 +2406,27 @@ class JobClient {
 
   async submit(spec: JobSpec): Promise<Job> {
     const crName = toK8sName(spec.name)
-    const cr = await k8sFetch<FrameJobCR>(apiBase('framejobs', this.ns), {
+    // spec.namespace is gone at v1beta1 (F5): the Workflow now runs in the
+    // FrameJob's own namespace, so JobSpec.namespace has to steer where the
+    // CR is created rather than what it points at. Directing a workflow into
+    // a namespace you cannot create a FrameJob in is precisely the privilege
+    // F5 withdrew. Keeping the field wired keeps the Jobs view's Retry
+    // resubmitting into the namespace the original ran in.
+    const ns = spec.namespace ?? this.ns
+    const cr = await k8sFetch<FrameJobCR>(apiBase('framejobs', ns), {
       method: 'POST',
       body: {
         apiVersion: `${GROUP}/${VERSION}`,
         kind: 'FrameJob',
-        metadata: { name: crName, namespace: frameNs(this.ns) },
+        metadata: { name: crName, namespace: frameNs(ns) },
         spec: {
           pipeline:     spec.pipeline,
-          serviceClass: spec.serviceClass ?? 'MEDIUM',
-          priority:     spec.priority ?? 'medium',
-          namespace:    spec.namespace ?? frameNs(this.ns),
+          // No fallback: the CRD defaults serviceClass to LOW and priority to
+          // medium now, so sending a value here is what made kubectl and the
+          // UI disagree about what "unspecified" means (F4). Send only what
+          // the user chose.
+          ...(spec.serviceClass ? { serviceClass: spec.serviceClass } : {}),
+          ...(spec.priority ? { priority: spec.priority } : {}),
           gpuCount:     spec.gpuCount ?? 0,
         },
       },
@@ -2508,7 +2613,11 @@ class TalosClient {
         spec: {
           nodeName: input.nodeName,
           talosEndpoint: input.talosEndpoint,
-          talosSecretRef: { name: input.secretName, namespace: frameNs(this.ns) },
+          // No namespace (F6): TalosSecretReference is name-only at v1beta1,
+          // and the Secret is always resolved in the CR's own namespace. The
+          // value sent here was already that same namespace, so this is a
+          // field the server would now prune, not a behaviour change.
+          talosSecretRef: { name: input.secretName },
           configPatch: input.configPatch,
         },
       },
@@ -2531,7 +2640,8 @@ class TalosClient {
         spec: {
           nodeName: input.nodeName,
           talosEndpoint: input.talosEndpoint,
-          talosSecretRef: { name: input.secretName, namespace: frameNs(this.ns) },
+          // Name-only at v1beta1, as above (F6).
+          talosSecretRef: { name: input.secretName },
           image: input.image,
         },
       },

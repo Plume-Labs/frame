@@ -1,0 +1,26 @@
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameNode
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: worker-01
+  namespace: frame-system
+spec:
+  # Address the node answers on while it sits in Talos maintenance mode.
+  # This is the only required field: leave the rest empty on first apply and
+  # the controller populates status.discoveredDisks / discoveredNICs from the
+  # maintenance API, so you can fill in disk and network from what it found.
+  ip: 192.168.10.10
+  role: worker
+  hostname: worker-01
+  disk: /dev/nvme0n1
+  rack: rack-a
+  zone: zone-1
+  serviceClass: HIGH
+  rdmaInterface: ib0
+  network:
+    address: 192.168.10.10/24
+    gateway: 192.168.10.1
+    dns:
+      - 1.1.1.1

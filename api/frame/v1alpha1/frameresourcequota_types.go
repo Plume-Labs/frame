@@ -104,6 +104,14 @@ type FrameResourceQuotaStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// This version is served and deprecated; v1beta1 is the storage version. The
+// marker moved there in the same change that turned the conversion webhook on
+// — see the note on the v1alpha1 FrameJob for why those two could not be
+// separated. FrameResourceQuota is the easy case: it has no field the other
+// version lacks in either direction (Part 0's Task 7 put observedGeneration,
+// used and namespaces here first), so neither placement ever pruned anything.
+//
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameResourceQuota is deprecated; use frame.plume-labs.io/v1beta1."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="ServiceClass",type=string,JSONPath=".spec.serviceClass"

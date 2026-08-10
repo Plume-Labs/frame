@@ -64,8 +64,20 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+CRD_RENDER_DIR := $(shell pwd)/bin/crd-render
+
+.PHONY: crd-render
+crd-render: manifests kustomize ## Render the CRDs as kustomize builds them (with conversion patches) into bin/crd-render for envtest.
+	@rm -rf "$(CRD_RENDER_DIR)"
+	@mkdir -p "$(CRD_RENDER_DIR)"
+	@"$(KUSTOMIZE)" build config/crd > "$(CRD_RENDER_DIR)/crds.yaml"
+	@# envtest reads every YAML document in the directory, so one multi-doc
+	@# file is enough and keeps the target trivially idempotent.
+	@test -s "$(CRD_RENDER_DIR)/crds.yaml" || { echo "kustomize build config/crd produced nothing"; exit 1; }
+	@echo "Rendered $$(grep -c '^kind: CustomResourceDefinition' "$(CRD_RENDER_DIR)/crds.yaml") CRDs into $(CRD_RENDER_DIR)"
+
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet crd-render setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
@@ -306,7 +318,11 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
-KIND ?= kind
+# Prefer a kind in ./bin, where every other tool this repo drives lives, and
+# fall back to one on PATH. Without this `make test-e2e` fails on a checkout
+# that has bin/kind but no kind installed system-wide, which is every developer
+# machine set up by following docs/development.md.
+KIND ?= $(shell test -x "$(LOCALBIN)/kind" && echo "$(LOCALBIN)/kind" || echo kind)
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest

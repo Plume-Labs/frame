@@ -24,14 +24,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /mutate-frame-plume-labs-io-v1alpha1-framejob
+      path: /mutate-frame-plume-labs-io-v1beta1-framejob
   failurePolicy: Fail
-  name: mframejob-v1alpha1.kb.io
+  name: mframejob-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -47,14 +47,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /mutate-frame-plume-labs-io-v1alpha1-framenode
+      path: /mutate-frame-plume-labs-io-v1beta1-framenode
   failurePolicy: Fail
-  name: mframenode-v1alpha1.kb.io
+  name: mframenode-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -82,14 +82,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-framejob
+      path: /validate-frame-plume-labs-io-v1beta1-framejob
   failurePolicy: Fail
-  name: vframejob-v1alpha1.kb.io
+  name: vframejob-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -105,14 +105,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-framenode
+      path: /validate-frame-plume-labs-io-v1beta1-framenode
   failurePolicy: Fail
-  name: vframenode-v1alpha1.kb.io
+  name: vframenode-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -128,14 +128,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-frameresourcequota
+      path: /validate-frame-plume-labs-io-v1beta1-frameresourcequota
   failurePolicy: Fail
-  name: vframeresourcequota-v1alpha1.kb.io
+  name: vframeresourcequota-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -151,14 +151,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-services-plume-labs-io-v1alpha1-frameservice
+      path: /validate-services-plume-labs-io-v1beta1-frameservice
   failurePolicy: Fail
-  name: vframeservice-v1alpha1.kb.io
+  name: vframeservice-v1beta1.kb.io
   rules:
   - apiGroups:
     - services.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -174,14 +174,21 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-frameuser
+      path: /validate-frame-plume-labs-io-v1beta1-frameuser
   failurePolicy: Fail
-  name: vframeuser-v1alpha1.kb.io
+  # Load-bearing, and the only entry here that carries it: the password-hash
+  # guard in this webhook exists to stop a write arriving at the deprecated
+  # v1alpha1 version, and only matchPolicy Equivalent makes the apiserver
+  # convert such a request to v1beta1 and dispatch it here. Equivalent is the
+  # apiserver default; stating it stops a later hand-edit from turning the
+  # guard off silently.
+  matchPolicy: Equivalent
+  name: vframeuser-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -198,14 +205,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-schedulingpolicy
+      path: /validate-frame-plume-labs-io-v1beta1-schedulingpolicy
   failurePolicy: Fail
-  name: vschedulingpolicy-v1alpha1.kb.io
+  name: vschedulingpolicy-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -221,14 +228,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-talosmachineconfig
+      path: /validate-frame-plume-labs-io-v1beta1-talosmachineconfig
   failurePolicy: Fail
-  name: vtalosmachineconfig-v1alpha1.kb.io
+  name: vtalosmachineconfig-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE
@@ -244,14 +251,14 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
-      path: /validate-frame-plume-labs-io-v1alpha1-talosupgrade
+      path: /validate-frame-plume-labs-io-v1beta1-talosupgrade
   failurePolicy: Fail
-  name: vtalosupgrade-v1alpha1.kb.io
+  name: vtalosupgrade-v1beta1.kb.io
   rules:
   - apiGroups:
     - frame.plume-labs.io
     apiVersions:
-    - v1alpha1
+    - v1beta1
     operations:
     - CREATE
     - UPDATE

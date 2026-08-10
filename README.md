@@ -1,6 +1,6 @@
 # Frame — Mainframe Framework for Kubernetes
 
-Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-grade computing platform: eight CRDs across two API groups, a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, and observability.
+Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-grade computing platform: eight CRDs across two API groups — frozen at `v1beta1`, with `v1alpha1` still served and deprecated — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, and observability.
 
 > Single physical location only — multi-site federation is out of scope.
 
@@ -10,7 +10,7 @@ Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe
 
 ```
 UI / SDK / CI
-    │  direct K8s API calls (/apis/frame.plume-labs.io/v1alpha1/…)
+    │  direct K8s API calls (/apis/frame.plume-labs.io/v1beta1/…)
     ▼
 Frame CRDs  →  Frame operator  →  cluster primitives (Argo, PriorityClasses, Talos gRPC, …)
 ```
@@ -44,7 +44,8 @@ make build && make run      # run the Go operator against your kubeconfig
 | [CRD Reference](docs/crd-reference.md) | All eight CRDs across two API groups — fields, controllers, webhooks |
 | [Development](docs/development.md) | Build, test, lint — Go operator and React UI |
 | [Deployment](docs/deployment.md) | Image build, kustomize overlays, cert-manager |
-| [Roadmap](docs/roadmap.md) | `v1alpha1` → stable V1 |
+| [Upgrading](docs/upgrading.md) | Chart adoption, chart upgrades, and the `v1alpha1` → `v1beta1` migration |
+| [Roadmap](docs/roadmap.md) | `v1beta1` beta → stable V1 |
 
 ---
 

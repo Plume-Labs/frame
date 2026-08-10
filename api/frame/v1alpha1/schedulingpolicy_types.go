@@ -25,7 +25,18 @@ import (
 
 // SchedulingPolicySpec defines the desired state of SchedulingPolicy
 //
-// +kubebuilder:validation:XValidation:rule="!self.preemption || (has(self.priorityClass) && size(self.priorityClass) > 0)",message="priorityClass is required when preemption is true"
+// The has() guard is not decoration. preemption is `bool json:",omitempty"`
+// with `default: false`, so an object that never set it has no preemption key
+// on the wire. The apiserver defaults it on a full write at the request
+// version — but the conversion webhook's output is not re-defaulted, so once
+// v1beta1 became the storage version, `kubectl patch`/`client.Status().Patch`
+// through a v1alpha1 client evaluated this rule against a key-less object and
+// was rejected with `no such key: preemption`. That is every reconcile of the
+// SchedulingPolicy controller. Reproduced in envtest before the guard was
+// added. The guard only widens what the rule admits: an absent key means
+// false, which the rule already permitted when the key was present.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.preemption) || !self.preemption || (has(self.priorityClass) && size(self.priorityClass) > 0)",message="priorityClass is required when preemption is true"
 type SchedulingPolicySpec struct {
 	// Scheduler selects the scheduler implementation.
 	// +kubebuilder:validation:Required
@@ -98,6 +109,13 @@ type SchedulingPolicyStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// This version is served and deprecated; v1beta1 is the storage version. The
+// marker moved there in the same change that turned the conversion webhook on
+// — see the note on the v1alpha1 FrameJob for why those two could not be
+// separated. SchedulingPolicy loses no field in either direction, so neither
+// placement ever pruned anything.
+//
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 SchedulingPolicy is deprecated; use frame.plume-labs.io/v1beta1."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Scheduler",type=string,JSONPath=".spec.scheduler"
