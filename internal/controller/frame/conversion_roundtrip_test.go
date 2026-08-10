@@ -118,21 +118,34 @@ func reKey(obj client.Object, name string) {
 
 // conversionSurvivesStorage is the assertion this file exists for:
 //
-//	v1alpha1 --[apiserver]--> stored --ConvertTo--> hub --[apiserver]--> stored
-//	  --ConvertFrom--> back,  and back == stored.
+//	fixture --[apiserver]--> stored --ConvertTo--> hub --[apiserver]--> stored
+//	  --ConvertFrom--> back,  and back == fixture.
 //
 // Every arrow marked [apiserver] is a real create plus a real status write plus
 // a real read, against the rendered CRDs. A field the v1beta1 schema would
 // prune is lost at the second one and the comparison catches it; a field
 // v1alpha1's defaulting would invent appears at the first and the comparison
 // catches that too.
+//
+// The comparison is against `fixture` — a deep copy taken before anything
+// touches the object — and that is the whole difference between a fidelity
+// test and a tautology. Comparing against `alpha` after the first write, which
+// is what this helper used to do, compares f(x) with f(f(x)): writeThrough-
+// APIServer ends in a Get, so `alpha` has already been through
+// ConvertTo -> store -> ConvertFrom by then, and anything conversion or the
+// v1beta1 schema drops is dropped identically on both sides and cancels. That
+// version stayed green with `dst.Spec.Rack = src.Spec.Rack` deleted from
+// FrameNode.ConvertFrom, and green again with spec.rack deleted from the
+// v1beta1 schema — verbatim the case the paragraph above claims it catches.
 func conversionSurvivesStorage[S conversionSpoke, H conversionHub](
 	alpha S, hub H, back S, hubName string, ignore ...cmp.Option,
 ) {
 	GinkgoHelper()
 
+	fixture, ok := alpha.DeepCopyObject().(S)
+	Expect(ok).To(BeTrue(), "DeepCopyObject must return the same concrete type")
+
 	writeThroughAPIServer(alpha)
-	wantSpec, wantStatus := specOf(alpha), statusOf(alpha)
 
 	Expect(alpha.ConvertTo(hub)).To(Succeed())
 	reKey(hub, hubName)
@@ -142,9 +155,9 @@ func conversionSurvivesStorage[S conversionSpoke, H conversionHub](
 
 	Expect(back.ConvertFrom(hub)).To(Succeed())
 
-	Expect(cmp.Diff(wantSpec, specOf(back), ignore...)).To(BeEmpty(),
+	Expect(cmp.Diff(specOf(fixture), specOf(back), ignore...)).To(BeEmpty(),
 		"spec changed on a v1alpha1 -> v1beta1 -> v1alpha1 trip through the apiserver")
-	Expect(cmp.Diff(wantStatus, statusOf(back), ignore...)).To(BeEmpty(),
+	Expect(cmp.Diff(statusOf(fixture), statusOf(back), ignore...)).To(BeEmpty(),
 		"status changed on a v1alpha1 -> v1beta1 -> v1alpha1 trip through the apiserver")
 }
 
@@ -437,13 +450,21 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 			// frameuser_v1beta1_schema_test.go owns the invariant itself — it
 			// reads the storage version and the strategy off the running
 			// apiserver and asserts whichever half must survive.
+			// A literal, not alpha.Spec.PasswordHash: the object the assertion
+			// below compares against must not be one the trip could have
+			// emptied. This is the freeze's only bijection, and the version
+			// that self-compared stayed green with
+			// `dst.Spec.PasswordHash = src.Status.PasswordHash` commented out
+			// of ConvertFrom — both sides were "".
+			const hash = "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$aGFzaA"
+
 			alpha := &framev1alpha1.FrameUser{
 				ObjectMeta: metav1.ObjectMeta{Name: "conv-user", Namespace: "default"},
 				Spec: framev1alpha1.FrameUserSpec{
 					Email:        "operator@frame.test",
 					Role:         framev1alpha1.RoleOperator,
 					PasswordAuth: framev1alpha1.PasswordEnabled,
-					PasswordHash: "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$aGFzaA",
+					PasswordHash: hash,
 				},
 				Status: framev1alpha1.FrameUserStatus{
 					ObservedGeneration: 0,
@@ -459,7 +480,7 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 			back := &framev1alpha1.FrameUser{}
 			conversionSurvivesStorage(alpha, &framev1beta1.FrameUser{}, back, "conv-user-hub")
 
-			Expect(back.Spec.PasswordHash).To(Equal(alpha.Spec.PasswordHash),
+			Expect(back.Spec.PasswordHash).To(Equal(hash),
 				"the moved hash must come back in spec on v1alpha1, or password login breaks with a 200")
 			Expect(back.Status.Credentials).To(HaveLen(1))
 			Expect(back.Status.Credentials[0].SignCount).To(BeNumerically("==", 42))

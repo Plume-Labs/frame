@@ -103,9 +103,16 @@ var _ = Describe("FrameService v1alpha1 <-> v1beta1 conversion through the apise
 
 	It("survives a trip through v1beta1 storage with only status.phase recomputed", func() {
 		alpha := live("conv-svc")
+		// The fixture as written, captured before the apiserver sees it. The
+		// comparison at the end is against *this*, not against `alpha` after
+		// the write: `writeThrough` ends in a Get, so a post-write `alpha` has
+		// already been through ConvertTo -> store -> ConvertFrom and comparing
+		// it with `back` compares f(x) with f(f(x)) — anything conversion drops
+		// is missing from both sides and cancels.
+		fixture := alpha.DeepCopy()
+
 		wantStatus := alpha.Status
 		writeThrough(alpha, func() { alpha.Status = wantStatus })
-		storedSpec, storedStatus := alpha.Spec, alpha.Status
 
 		hub := &servicesv1beta1.FrameService{}
 		Expect(alpha.ConvertTo(hub)).To(Succeed())
@@ -124,13 +131,13 @@ var _ = Describe("FrameService v1alpha1 <-> v1beta1 conversion through the apise
 		back := &servicesv1alpha1.FrameService{}
 		Expect(back.ConvertFrom(hub)).To(Succeed())
 
-		Expect(cmp.Diff(storedSpec, back.Spec)).To(BeEmpty(),
+		Expect(cmp.Diff(fixture.Spec, back.Spec)).To(BeEmpty(),
 			"spec changed on a v1alpha1 -> v1beta1 -> v1alpha1 trip through the apiserver")
 		// status.phase is the sole v1alpha1-only field, and on this object the
-		// projection reconstructs the very value that was stored: Ready=True is
-		// Ready. So the whole status compares equal, phase included — no
+		// projection reconstructs the very value the fixture carried: Ready=True
+		// is Ready. So the whole status compares equal, phase included — no
 		// exclusion is needed and none is taken.
-		Expect(cmp.Diff(storedStatus, back.Status)).To(BeEmpty(),
+		Expect(cmp.Diff(fixture.Status, back.Status)).To(BeEmpty(),
 			"status changed on a v1alpha1 -> v1beta1 -> v1alpha1 trip through the apiserver")
 		Expect(back.Status.Phase).To(Equal("Ready"))
 		Expect(back.Annotations).To(BeEmpty(), "nothing is stashed in an annotation")
