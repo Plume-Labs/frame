@@ -94,6 +94,16 @@ type FrameUserSpec struct {
 // grant can write it, and the viewer and editor tiers can be denied the
 // subresource entirely.
 //
+// **The status split alone was not enough while v1alpha1 is served, and the
+// missing half is an admission webhook.** RBAC has no version dimension and CR
+// validation runs against the request version, so v1alpha1's spec.passwordHash
+// was a write channel straight into this field — one merge patch, needing
+// nothing but `patch frameusers`. guardPasswordHash in
+// internal/webhook/frame/v1beta1 is what makes the sentence above true today:
+// it rejects any main-resource write, at either version, that changes this
+// field, and the /status subresource is the only way through. Do not read the
+// RBAC tiers as the protection on their own; they are one of two halves.
+//
 // **The move buys write protection, not confidentiality.** Measured against a
 // real apiserver while writing the tier roles: a plain `GET frameusers`
 // returns the whole object, status included, so anyone who can read the

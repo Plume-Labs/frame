@@ -404,7 +404,18 @@ so it is the one genuine bijection in the freeze.
 against a real apiserver while writing the RBAC tiers, not assumed. A
 principal with `patch frameusers` but no `frameusers/status` cannot alter the
 hash: a merge patch carrying both a spec change and a status change applies
-the spec half and the apiserver drops the status half silently. But a plain
+the spec half and the apiserver drops the status half silently.
+
+That is the `v1beta1` half. The `v1alpha1` half is the validating webhook, and
+it is not optional: RBAC resource names carry no version, so `patch
+frameusers` also covers `spec.passwordHash` at the deprecated version, and
+conversion carries whatever it finds there into `status.passwordHash` without
+re-validation. The webhook therefore rejects **any** main-resource write, at
+either version, that changes the hash — including a replace that omits it,
+which would otherwise erase the credential and report success. The subresource
+is the only way in.
+
+But a plain
 `GET frameusers` returns the whole object, status included, so **anyone who
 can read a FrameUser at all can read its password hash** — the status
 subresource splits writes, not reads. `frameuser-viewer-role` and
@@ -419,7 +430,11 @@ partially-written pair.
 
 **Webhook:** validation refuses to remove the last admin, whether by deletion or
 by demotion, and **fails closed** — if the admin list cannot be read, the request
-is denied rather than assumed safe.
+is denied rather than assumed safe. It also refuses any main-resource write
+that changes `status.passwordHash` (see above). This is the one webhook in the
+tree that declares `matchPolicy: Equivalent` explicitly rather than inheriting
+the apiserver default, because the hash guard only reaches a `v1alpha1`
+request if the apiserver converts it first.
 
 **Deployment status:** `authd` runs in the `cluster-control` namespace but is
 consumed by nothing. The `frameusers.frame.plume-labs.io` CRD is installed on

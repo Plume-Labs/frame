@@ -8,12 +8,25 @@
 # Unlike every other editor tier, this one has **no frameusers/status rule at
 # all**: status.passwordHash is an argon2id credential (F11).
 #
-# The write half of that is real and was measured against a real apiserver:
-# this tier's `patch frameusers` cannot alter status.passwordHash. A merge
-# patch carrying both a spec change and a status change applies the spec half
-# and the apiserver drops the status half silently, so an editor cannot set
-# anyone's password. That is the protection moving the hash out of spec
-# actually bought — in spec, `patch frameusers` overwrote it.
+# The write half of that is real, and it takes TWO mechanisms, not one. The
+# absent /status rule is only the first:
+#
+#   1. At v1beta1, a merge patch carrying both a spec change and a status
+#      change applies the spec half and the apiserver drops the status half
+#      silently. Measured against a real apiserver.
+#   2. At v1alpha1 the same field is spec.passwordHash, and RBAC has no version
+#      dimension: `patch frameusers` covers every served version, CR validation
+#      runs against the request version, and conversion output is stored
+#      without re-validation. So point 1 bought nothing at all for as long as
+#      v1alpha1 is served — one merge patch at the deprecated version set any
+#      account's password, and a full replace that merely omitted the field
+#      erased it. What closes that is an admission webhook, not this role:
+#      guardPasswordHash in internal/webhook/frame/v1beta1 rejects any
+#      main-resource write, at either version, that changes
+#      status.passwordHash.
+#
+# Both are needed. Remove the webhook and this tier can set passwords again;
+# grant the /status rule and it can set them through the front door.
 #
 # The read half is not real. A plain `GET frameusers` returns the whole
 # object, status included, so this tier can still read the hash: the status

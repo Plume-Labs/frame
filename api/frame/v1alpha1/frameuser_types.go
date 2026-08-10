@@ -64,6 +64,15 @@ type FrameUserSpec struct {
 
 	// PasswordHash is an argon2id PHC string, written only by authd. It is
 	// meaningless while PasswordAuth is disabled.
+	//
+	// This field is readable at v1alpha1 and effectively read-only. v1beta1
+	// moved it to status.passwordHash (F11) so that `patch frameusers` could
+	// not set anyone's password; RBAC has no version dimension, so this field
+	// was a way around that, and the validating webhook now closes it. A write
+	// here that changes the stored value is rejected, and so is one that omits
+	// the field on a full replace — that is a credential deletion wearing an
+	// ordinary update's clothes. See guardPasswordHash in
+	// internal/webhook/frame/v1beta1.
 	// +optional
 	PasswordHash string `json:"passwordHash,omitempty"`
 }
@@ -102,7 +111,11 @@ type FrameUserStatus struct {
 // marker without it, silently breaks password login.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use frame.plume-labs.io/v1beta1. spec.passwordHash has moved to status.passwordHash — writing it through v1alpha1 requires the frameusers/status subresource."
+// The warning is capped at 256 characters by the apiserver — envtest rejects
+// the whole CRD past that — so it says what a client must do and leaves the
+// reasoning to docs/upgrading.md.
+//
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameUser is deprecated; use frame.plume-labs.io/v1beta1. spec.passwordHash moved to status.passwordHash: a write that changes it is rejected, and so is a replace that omits it. Use the v1beta1 frameusers/status subresource."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Email",type=string,JSONPath=`.spec.email`
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.spec.role`

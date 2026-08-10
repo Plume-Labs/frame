@@ -182,11 +182,18 @@ through the subresource.
 **Know exactly what that buys, because it is less than it looks.** Both
 halves below were measured against a real apiserver, not assumed:
 
-- **Write protection: real.** An editor's `patch frameusers` cannot alter
-  `status.passwordHash`. A merge patch carrying a spec change *and* a status
-  change applies the spec half and the apiserver drops the status half
-  silently. Before `v1beta1` the hash was in `spec`, where that same patch
-  overwrote it. This is what moving the hash actually bought.
+- **Write protection: real, and it takes the webhook as well as the role.** An
+  editor's `patch frameusers` cannot alter `status.passwordHash`. At `v1beta1`
+  that is the apiserver: a merge patch carrying a spec change *and* a status
+  change applies the spec half and drops the status half silently. At
+  `v1alpha1` the same field is `spec.passwordHash`, and RBAC has no version
+  dimension, so the role alone bought nothing for the whole deprecation
+  window — the editor tier could set any account's password with one patch at
+  the deprecated version, and erase one with a replace that merely omitted the
+  field. The FrameUser validating webhook is what closes that: it refuses any
+  main-resource write, at either version, that changes the hash. **Both halves
+  are load-bearing.** If you disable webhooks (`webhooks.enabled: false`), the
+  editor tier can set passwords again.
 - **Confidentiality: not real.** A plain `GET frameusers` returns the whole
   object, status included. **A viewer or editor can still read the hash.** The
   Kubernetes status subresource splits *writes*, not reads; denying it removes

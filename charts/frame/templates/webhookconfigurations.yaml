@@ -176,6 +176,13 @@ webhooks:
       namespace: {{ $ns }}
       path: /validate-frame-plume-labs-io-v1beta1-frameuser
   failurePolicy: Fail
+  # Load-bearing, and the only entry here that carries it: the password-hash
+  # guard in this webhook exists to stop a write arriving at the deprecated
+  # v1alpha1 version, and only matchPolicy Equivalent makes the apiserver
+  # convert such a request to v1beta1 and dispatch it here. Equivalent is the
+  # apiserver default; stating it stops a later hand-edit from turning the
+  # guard off silently.
+  matchPolicy: Equivalent
   name: vframeuser-v1beta1.kb.io
   rules:
   - apiGroups:
