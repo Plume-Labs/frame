@@ -20,11 +20,12 @@ replicas:
 images:
   - name: cluster-control
 
-configMapGenerator:
-  - name: cluster-control-config
-    literals:
-      - ENV=development
-      - LOG_LEVEL=debug
+# No configMapGenerator for cluster-control-config. The base declares that name
+# deliberately empty, because the Settings screen owns its contents at runtime —
+# generating literals here both collided with it ("namespace transformation
+# produces ID conflict", which is why this overlay had never rendered) and would
+# have fought whoever last used the UI. Nothing consumes ENV/LOG_LEVEL: the pod
+# is nginx serving a static bundle, and its own env comes from the deployment.
 
 labels:
   - pairs:
