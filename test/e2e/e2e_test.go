@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,6 +58,24 @@ var frameKinds = []string{
 	"framejobs", "framenodes", "frameresourcequotas", "schedulingpolicies",
 	"talosmachineconfigs", "talosupgrades", "frameusers", "frameservices",
 }
+
+// frameCRDs is every Frame CRD by its full resource name, for the checks that
+// operate on the CustomResourceDefinition object rather than on CRs.
+var frameCRDs = []string{
+	"framejobs.frame.plume-labs.io",
+	"framenodes.frame.plume-labs.io",
+	"frameresourcequotas.frame.plume-labs.io",
+	"schedulingpolicies.frame.plume-labs.io",
+	"talosmachineconfigs.frame.plume-labs.io",
+	"talosupgrades.frame.plume-labs.io",
+	"frameusers.frame.plume-labs.io",
+	"frameservices.services.plume-labs.io",
+}
+
+// storageVersion is the version every Frame CRD stores at. Kept beside
+// frameCRDs because the migration spec and hack/migrate-storage-version.sh
+// both have to agree with it.
+const storageVersion = "v1beta1"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -355,6 +374,38 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyCAInjection).Should(Succeed())
 		})
 
+		It("should have CA injection for the CRD conversion webhooks", func() {
+			// A different object and a different replacement block from the two
+			// above: the conversion CA lands in the CRD's own
+			// spec.conversion.webhook.clientConfig.caBundle, wired by the blocks
+			// under config/default's crdkustomizecainjection markers. Nothing in
+			// Go exercises this — envtest rewrites clientConfig itself and injects
+			// its own CA, so the shipped manifests are never the thing under test
+			// there. It is pure manifest plumbing, and it is the part of the
+			// conversion webhook that fails silently when it is wrong (F14 layer 3).
+			//
+			// This replaces the eight copy-pasted per-CRD specs kubebuilder
+			// scaffolded: same caBundle assertion on the same eight objects, plus
+			// the strategy check none of them made. A CRD with a caBundle and
+			// strategy None would have passed all eight.
+			for _, crd := range frameCRDs {
+				By("checking " + crd)
+				verify := func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "crd", crd,
+						"-o", "jsonpath={.spec.conversion.strategy}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(Equal("Webhook"), crd+" is not served by the conversion webhook")
+
+					out, err = utils.Run(exec.Command("kubectl", "get", "crd", crd,
+						"-o", "jsonpath={.spec.conversion.webhook.clientConfig.caBundle}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(len(out)).To(BeNumerically(">", 10),
+						crd+" has no caBundle — cert-manager did not inject it")
+				}
+				Eventually(verify).Should(Succeed())
+			}
+		})
+
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 	})
 
@@ -523,6 +574,90 @@ spec:
 			}).Should(Succeed())
 		})
 
+		It("converts a FrameJob written as v1alpha1 and read as v1beta1", func() {
+			// Deliberately written at the *old* version, the way an existing
+			// client or a stored object arrives. The apiserver runs ConvertTo
+			// on the way into etcd, because v1beta1 is storage — so this
+			// exercises the deployed webhook, its cert-manager CA, its service
+			// coordinate and its conversionReviewVersions, none of which any
+			// Go test can reach: envtest generates its own serving CA and
+			// rewrites every convertible CRD in the scheme, so the unit and
+			// envtest suites are green whatever the shipped manifests say
+			// (F14 layer 3), and they start from objects they just created at
+			// the storage version rather than at v1alpha1 (F14 layer 4).
+			//
+			// It depends on the Workflow CRD the preceding spec installs, which
+			// is why this context is Ordered.
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameJob
+metadata:
+  name: conv-e2e-job
+  namespace: %s
+spec:
+  pipeline: training
+  namespace: some-other-namespace
+  serviceClass: HIGH
+  priority: high
+  gpuCount: 1
+`, crNamespace))
+
+			By("reading it at v1beta1 and finding no spec.namespace")
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get",
+					"framejobs.v1beta1.frame.plume-labs.io", "conv-e2e-job",
+					"-n", crNamespace, "-o", "jsonpath={.spec}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(ContainSubstring(`"pipeline":"training"`))
+				g.Expect(out).NotTo(ContainSubstring("some-other-namespace"),
+					"spec.namespace must not survive into the storage version")
+			}).Should(Succeed())
+
+			By("reading it back at v1alpha1 and finding the normalised namespace")
+			Eventually(func(g Gomega) {
+				out, err := kubectlGet(g, "framejobs.v1alpha1.frame.plume-labs.io", "conv-e2e-job",
+					crNamespace, "{.spec.namespace}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(Equal(crNamespace),
+					"a v1alpha1 client sees the namespace the operator acts in")
+			}).Should(Succeed())
+
+			By("finding the Workflow beside the FrameJob, not in the namespace it asked for")
+			Eventually(func(g Gomega) {
+				_, err := kubectlGet(g, "workflow.argoproj.io", "conv-e2e-job", crNamespace,
+					"{.metadata.name}")
+				g.Expect(err).NotTo(HaveOccurred())
+			}).Should(Succeed())
+			out, err := utils.Run(exec.Command("kubectl", "get", "workflow.argoproj.io",
+				"-A", "-o", "jsonpath={range .items[*]}{.metadata.namespace}{\"\\n\"}{end}"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).NotTo(ContainSubstring("some-other-namespace"))
+
+			By("seeing a phase projected out of conditions at v1alpha1")
+			Eventually(func(g Gomega) {
+				phase, err := kubectlGet(g, "framejobs.v1alpha1.frame.plume-labs.io", "conv-e2e-job",
+					crNamespace, "{.status.phase}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(phase).To(BeElementOf("Submitted", "Running", "Completed", "Failed", "Suspended"),
+					"status.phase is computed from conditions, never stored")
+
+				stored, err := kubectlGet(g, "framejobs.v1beta1.frame.plume-labs.io", "conv-e2e-job",
+					crNamespace, "{.status.phase}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(stored).To(BeEmpty(), "v1beta1 has no status.phase at all")
+			}).Should(Succeed())
+
+			By("emitting the deprecation warning that is the migration policy's only enforcement")
+			// utils.Run uses CombinedOutput, so the apiserver's Warning header
+			// — which kubectl prints to stderr — lands in out. err is nil on a
+			// successful read, so it must not be dereferenced here.
+			out, err = utils.Run(exec.Command("kubectl", "get",
+				"framejobs.v1alpha1.frame.plume-labs.io", "conv-e2e-job", "-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("deprecated"),
+				"reading at v1alpha1 must warn — the deprecation policy has no other enforcement")
+		})
+
 		It("syncs a FrameNode onto the real Kubernetes Node", func() {
 			By("finding a node in the cluster")
 			nodeName, err := utils.Run(exec.Command("kubectl", "get", "nodes",
@@ -685,6 +820,135 @@ spec:
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
 		})
 
+		// C1. The one place the whole chain is exercised as an operator gets
+		// it: the shipped ValidatingWebhookConfiguration (matchPolicy included,
+		// with a cert-manager-issued CA), the shipped frameuser-editor-role,
+		// and a request made under that role's identity rather than as
+		// cluster-admin.
+		//
+		// The envtest twin in internal/webhook/frame/v1beta1 covers the
+		// admission decision. What it cannot cover is the premise: that a
+		// principal with nothing but this tier's grants reaches the field at
+		// all. RBAC resource names carry no version, so `patch frameusers`
+		// covers spec.passwordHash at v1alpha1 too, and that is the whole
+		// finding.
+		It("refuses an editor's v1alpha1 write of the FrameUser password hash", func() {
+			const editorSA = "e2e-hash-editor"
+			editor := fmt.Sprintf("system:serviceaccount:%s:%s", crNamespace, editorSA)
+
+			By("granting exactly the shipped editor tier and nothing else")
+			_, err := utils.Run(exec.Command("kubectl", "create", "serviceaccount",
+				editorSA, "-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = utils.Run(exec.Command("kubectl", "create", "clusterrolebinding",
+				"e2e-hash-editor-binding",
+				"--clusterrole=frame-frameuser-editor-role",
+				"--serviceaccount="+crNamespace+":"+editorSA))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "clusterrolebinding",
+					"e2e-hash-editor-binding", "--ignore-not-found"))
+			})
+
+			// The tier's own probe: it can patch the resource and cannot touch
+			// the subresource. If this ever inverts, the spec below stops
+			// meaning what it says.
+			out, err := utils.Run(exec.Command("kubectl", "auth", "can-i", "patch",
+				"frameusers", "--as="+editor, "-n", crNamespace))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(out)).To(Equal("yes"))
+			out, _ = utils.Run(exec.Command("kubectl", "auth", "can-i", "patch",
+				"frameusers", "--subresource=status", "--as="+editor, "-n", crNamespace))
+			Expect(strings.TrimSpace(out)).To(Equal("no"),
+				"the editor tier must not hold the subresource, or this spec proves nothing")
+
+			By("seeding an account the way authd does: v1beta1, through /status")
+			applyCR(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameUser
+metadata:
+  name: e2e-hash-victim
+  namespace: %s
+spec:
+  email: victim@example.test
+  role: operator
+  passwordAuth: enabled
+`, crNamespace))
+			_, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+				"e2e-hash-victim", "-n", crNamespace, "--subresource=status",
+				"--type=merge", "-p", `{"status":{"passwordHash":"argon2id$LEGIT"}}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			storedHash := func() string {
+				GinkgoHelper()
+				v, err := kubectlGet(nil, "frameusers.v1beta1.frame.plume-labs.io",
+					"e2e-hash-victim", crNamespace, "{.status.passwordHash}")
+				Expect(err).NotTo(HaveOccurred())
+				return v
+			}
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("refusing the overwrite: one merge patch at the deprecated version")
+			out, err = utils.Run(exec.Command("kubectl", "patch",
+				"frameusers.v1alpha1.frame.plume-labs.io", "e2e-hash-victim",
+				"-n", crNamespace, "--type=merge", "--as="+editor,
+				"-p", `{"spec":{"passwordHash":"argon2id$ATTACKER"}}`))
+			Expect(err).To(HaveOccurred(), "an editor must not be able to set a password")
+			Expect(out).To(ContainSubstring("refusing to change status.passwordHash"))
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("refusing the silent wipe: a replace that simply omits the field")
+			replace := exec.Command("kubectl", "replace", "-f", "-", "--as="+editor)
+			replace.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  name: e2e-hash-victim
+  namespace: %s
+spec:
+  email: victim@example.test
+  role: operator
+  passwordAuth: enabled
+`, crNamespace))
+			out, err = utils.Run(replace)
+			Expect(err).To(HaveOccurred(), "omitting the hash on a replace must not erase it")
+			Expect(out).To(ContainSubstring("refusing to clear status.passwordHash"))
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("refusing a create that arrives carrying a hash")
+			create := exec.Command("kubectl", "create", "-f", "-", "--as="+editor)
+			create.Stdin = strings.NewReader(fmt.Sprintf(`
+apiVersion: frame.plume-labs.io/v1alpha1
+kind: FrameUser
+metadata:
+  name: e2e-hash-mallory
+  namespace: %s
+spec:
+  email: mallory@example.test
+  role: operator
+  passwordAuth: enabled
+  passwordHash: argon2id$ATTACKER
+`, crNamespace))
+			out, err = utils.Run(create)
+			Expect(err).To(HaveOccurred(), "an editor must not be able to mint an account with a known password")
+			Expect(out).To(ContainSubstring("status.passwordHash"))
+
+			By("still letting the editor edit everything else at v1alpha1")
+			_, err = utils.Run(exec.Command("kubectl", "patch",
+				"frameusers.v1alpha1.frame.plume-labs.io", "e2e-hash-victim",
+				"-n", crNamespace, "--type=merge", "--as="+editor,
+				"-p", `{"spec":{"email":"renamed@example.test"}}`))
+			Expect(err).NotTo(HaveOccurred(), "the guard must be narrow, or it breaks the deprecation window")
+			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
+
+			By("still letting the /status subresource rotate it")
+			_, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+				"e2e-hash-victim", "-n", crNamespace, "--subresource=status",
+				"--type=merge", "-p", `{"status":{"passwordHash":"argon2id$ROTATED"}}`))
+			Expect(err).NotTo(HaveOccurred(), "authd's own write path must stay open")
+			Expect(storedHash()).To(Equal("argon2id$ROTATED"))
+		})
+
 		It("provisions a FrameService through its inference provider", func() {
 			// The inference provider requires a PersistentVolumeClaim for model
 			// weights, named by parameters.modelCache and defaulting to
@@ -789,8 +1053,140 @@ spec:
 			Expect(err).To(HaveOccurred(), "A service that cannot fit must be refused")
 			Expect(out).To(ContainSubstring("7680Mi"))
 		})
+
+		It("completes the storage migration so v1alpha1 could be removed", func() {
+			// storedVersions only grows. The apiserver appends the new storage
+			// version the moment an apply makes it one, and never removes an
+			// entry — not even once the last object stored at the old version
+			// has been rewritten. A version cannot be dropped from
+			// spec.versions while it appears there, so without a migration
+			// there is no point at which anyone could say v1alpha1 is
+			// removable, and the deprecation policy is unenforceable
+			// (F14 layer 5).
+			//
+			// A fresh Kind cluster installs the CRDs already at
+			// storedVersions: ["v1beta1"], so asserting that straight away
+			// would prove nothing. This spec first reproduces the shape a
+			// cluster upgraded from the pre-freeze build is actually in — an
+			// object stored at v1alpha1, and both versions listed — and then
+			// runs hack/migrate-storage-version.sh, the same script the
+			// upgrade path documents, rather than a reimplementation of it.
+
+			By("putting FrameJob's storage back on v1alpha1, the pre-upgrade shape")
+			const jobCRD = "framejobs.frame.plume-labs.io"
+			setStorageVersion(jobCRD, "v1alpha1")
+			DeferCleanup(func() {
+				// If anything below fails, the CRD must not be left storing
+				// the deprecated version. Best-effort on purpose: Ginkgo runs
+				// this after the enclosing container's AfterAll, which has
+				// already run `make uninstall`, so the CRD is usually gone by
+				// now — and failing the suite for tidying up something that no
+				// longer exists would turn a green run red.
+				restoreStorageVersion(jobCRD, storageVersion)
+			})
+
+			By("writing a FrameJob so the apiserver records v1alpha1 as stored")
+			_, err := utils.Run(exec.Command("kubectl", "patch", "framejob", "conv-e2e-job",
+				"-n", crNamespace, "--type=merge",
+				"-p", `{"metadata":{"annotations":{"frame.plume-labs.io/e2e-storage-rehearsal":"true"}}}`))
+			Expect(err).NotTo(HaveOccurred())
+
+			By("moving storage forward again, which is all an operator upgrade does")
+			setStorageVersion(jobCRD, storageVersion)
+
+			By("confirming the cliff is real: both versions are now stored")
+			Eventually(func(g Gomega) {
+				out, err := utils.Run(exec.Command("kubectl", "get", "crd", jobCRD,
+					"-o", "jsonpath={.status.storedVersions}"))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(out).To(ContainSubstring("v1alpha1"),
+					"the rehearsal did not put v1alpha1 into storedVersions, so the migration below proves nothing")
+				g.Expect(out).To(ContainSubstring(storageVersion))
+			}).Should(Succeed())
+
+			By("running hack/migrate-storage-version.sh as a dry run first")
+			out, err := utils.Run(exec.Command("./hack/migrate-storage-version.sh"))
+			Expect(err).NotTo(HaveOccurred(), "dry run failed:\n%s", out)
+			Expect(out).To(ContainSubstring("Dry run"))
+			Expect(out).To(ContainSubstring("rewrite " + crNamespace + "/conv-e2e-job"))
+
+			By("confirming the dry run changed nothing")
+			out, err = utils.Run(exec.Command("kubectl", "get", "crd", jobCRD,
+				"-o", "jsonpath={.status.storedVersions}"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("v1alpha1"))
+
+			By("running it for real")
+			out, err = utils.Run(exec.Command("./hack/migrate-storage-version.sh", "--apply"))
+			Expect(err).NotTo(HaveOccurred(), "migration failed:\n%s", out)
+
+			By("finding every CRD storing only the storage version")
+			for _, crd := range frameCRDs {
+				Eventually(func(g Gomega) {
+					out, err := utils.Run(exec.Command("kubectl", "get", "crd", crd,
+						"-o", "jsonpath={.status.storedVersions}"))
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(out).To(Equal(`["`+storageVersion+`"]`),
+						crd+" still lists a version other than "+storageVersion+", so v1alpha1 cannot be removed")
+				}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			}
+
+			By("finding the rewritten objects still readable through both versions")
+			// The migration is only worth anything if what it rewrote survived
+			// the round trip it forced them through.
+			for _, v := range []string{"v1alpha1", storageVersion} {
+				out, err := kubectlGet(nil, "framejobs."+v+".frame.plume-labs.io", "conv-e2e-job",
+					crNamespace, "{.spec.pipeline}")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(Equal("training"), "conv-e2e-job is unreadable at "+v+" after the migration")
+			}
+		})
 	})
 })
+
+// setStorageVersion moves a CRD's storage flag onto one of its served
+// versions. The index of each version in spec.versions is read back rather
+// than assumed, because it is manifest ordering and nothing enforces it. Both
+// flags move in one JSON patch: the apiserver requires exactly one storage
+// version, and only an atomic patch never passes through zero or two.
+func setStorageVersion(crd, version string) {
+	GinkgoHelper()
+	names, patch, err := storageVersionPatch(crd, version)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(names).To(ContainElement(version), crd+" does not serve "+version)
+
+	_, err = utils.Run(exec.Command("kubectl", "patch", "crd", crd, "--type=json", "-p", patch))
+	Expect(err).NotTo(HaveOccurred(), "failed to move %s's storage version to %s", crd, version)
+}
+
+// restoreStorageVersion is setStorageVersion's best-effort twin, for
+// DeferCleanup. It exists only to stop a mid-spec failure leaving a CRD
+// storing the deprecated version; by the time it runs the CRD may legitimately
+// be gone, and that must not fail the suite.
+func restoreStorageVersion(crd, version string) {
+	names, patch, err := storageVersionPatch(crd, version)
+	if err != nil || !slices.Contains(names, version) {
+		return
+	}
+	_, _ = utils.Run(exec.Command("kubectl", "patch", "crd", crd, "--type=json", "-p", patch))
+}
+
+// storageVersionPatch reads a CRD's served versions and returns them alongside
+// the JSON patch that makes exactly `version` the storage one.
+func storageVersionPatch(crd, version string) (names []string, patch string, err error) {
+	out, err := utils.Run(exec.Command("kubectl", "get", "crd", crd,
+		"-o", `jsonpath={range .spec.versions[*]}{.name}{"\n"}{end}`))
+	if err != nil {
+		return nil, "", err
+	}
+	names = utils.GetNonEmptyLines(out)
+	ops := make([]string, 0, len(names))
+	for i, name := range names {
+		ops = append(ops, fmt.Sprintf(
+			`{"op":"replace","path":"/spec/versions/%d/storage","value":%t}`, i, name == version))
+	}
+	return names, "[" + strings.Join(ops, ",") + "]", nil
+}
 
 // applyCR pipes a manifest through kubectl apply. Manifests are written inline
 // so each spec reads as one thing: the input, and what the cluster does with it.
@@ -808,7 +1204,26 @@ func kubectlGet(_ Gomega, kind, name, ns, jsonPath string) (string, error) {
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	return utils.Run(exec.Command("kubectl", args...))
+	out, err := utils.Run(exec.Command("kubectl", args...))
+	return stripWarnings(out), err
+}
+
+// stripWarnings drops the apiserver's deprecation warnings from kubectl
+// output. utils.Run reads CombinedOutput, so every read at a version carrying
+// `deprecated: true` arrives as "Warning: …\n" ahead of the value — which is
+// not part of the value, and turns every exact-match assertion on a v1alpha1
+// read into a false failure. The specs that assert the warning *is* emitted
+// call utils.Run directly and so still see it.
+func stripWarnings(out string) string {
+	lines := strings.Split(out, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Warning:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // readyReason returns a Gomega-friendly getter for the Ready condition's reason,

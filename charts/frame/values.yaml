@@ -132,9 +132,21 @@ networkPolicy:
   webhookSourceCIDRs: []
 
 rbac:
-  # The viewer/editor/admin ClusterRoles scaffolded per CRD (framejob,
-  # framenode, frameresourcequota, schedulingpolicy, talosmachineconfig,
-  # talosupgrade, frameservice). Not used by the manager itself — they're
-  # convenience roles for cluster admins to bind to real users/groups.
+  # The viewer/editor/admin ClusterRoles, three per CRD (framejob, framenode,
+  # frameresourcequota, frameuser, schedulingpolicy, talosmachineconfig,
+  # talosupgrade, frameservice — 24 in all). Not used by the manager itself —
+  # they're convenience roles for cluster admins to bind to real users/groups,
+  # and this chart binds none of them, so installing them grants nobody
+  # anything.
+  #
+  # frameuser is the exception in shape as well as in origin (it is the one
+  # kubebuilder never scaffolded): its editor and viewer roles carry no
+  # frameusers/status rule, because status.passwordHash is an argon2id
+  # credential. That stops those tiers *writing* a password hash — together
+  # with the validating webhook, which is what covers the v1alpha1 spelling of
+  # the same field, since RBAC has no version dimension. It does not stop them
+  # reading one, since a plain `get frameusers` returns status too.
+  # Bind frameuser-viewer-role only to principals you would hand the hashes.
+  # See docs/deployment.md, "RBAC".
   tierRoles:
     install: true

@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/services/provider"
 )
 
@@ -48,11 +48,11 @@ func (f *fakeProvisioner) ParameterSchema() *provider.Schema { return &provider.
 func (f *fakeProvisioner) Size(map[string]string) (provider.Sizing, error) {
 	return provider.Sizing{GPU: "1", GPUMemory: "512Mi", CPU: "1", Memory: "1Gi"}, nil
 }
-func (f *fakeProvisioner) Reconcile(context.Context, *servicesv1alpha1.FrameService) (provider.Result, error) {
+func (f *fakeProvisioner) Reconcile(context.Context, *servicesv1beta1.FrameService) (provider.Result, error) {
 	f.reconciles++
 	return f.result, f.err
 }
-func (f *fakeProvisioner) Bind(context.Context, *servicesv1alpha1.FrameService) (provider.Binding, error) {
+func (f *fakeProvisioner) Bind(context.Context, *servicesv1beta1.FrameService) (provider.Binding, error) {
 	return f.binding, nil
 }
 
@@ -62,7 +62,7 @@ var _ = Describe("FrameService Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	var svc *servicesv1alpha1.FrameService
+	var svc *servicesv1beta1.FrameService
 	var fake *fakeProvisioner
 
 	BeforeEach(func() {
@@ -70,15 +70,15 @@ var _ = Describe("FrameService Controller", func() {
 			result:  provider.Result{Ready: true, Reason: "Provisioned", Message: "Serving"},
 			binding: provider.Binding{Endpoint: "http://test-svc.default.svc:8080"},
 		}
-		svc = &servicesv1alpha1.FrameService{
+		svc = &servicesv1beta1.FrameService{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec:       servicesv1alpha1.FrameServiceSpec{Type: "fake", DeletionPolicy: "Retain"},
+			Spec:       servicesv1beta1.FrameServiceSpec{Type: "fake", DeletionPolicy: "Retain"},
 		}
 		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		fresh := &servicesv1alpha1.FrameService{}
+		fresh := &servicesv1beta1.FrameService{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
@@ -123,7 +123,6 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Ready"))
 		Expect(svc.Status.Binding.Endpoint).To(Equal("http://test-svc.default.svc:8080"))
 		Expect(svc.Status.Sizing.GPUMemory).To(Equal("512Mi"))
 		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionTrue))
@@ -144,7 +143,7 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Ready"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionTrue))
 
 		Expect(res.RequeueAfter).To(Equal(readyRequeue))
 		// Bounded on both sides rather than just asserted equal to the
@@ -165,12 +164,12 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.RequeueAfter).To(BeNumerically(">", 0))
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("OperatorMissing"))
 	})
 
 	It("keeps a previously recorded status.Provisioned when a later degrade reports none", func() {
-		provisioned := []servicesv1alpha1.ProvisionedRef{
+		provisioned := []servicesv1beta1.ProvisionedRef{
 			{APIVersion: "apps/v1", Kind: "Deployment", Name: name, Namespace: ns},
 		}
 		fake.result = provider.Result{Ready: true, Reason: "Provisioned", Message: "Serving", Provisioned: provisioned}
@@ -179,7 +178,7 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Ready"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionTrue))
 		Expect(svc.Status.Provisioned).To(Equal(provisioned))
 
 		// A later pass degrades without reporting any Provisioned at all —
@@ -193,7 +192,7 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("ModelCacheMissing"))
 		Expect(svc.Status.Provisioned).To(Equal(provisioned))
 	})
@@ -208,7 +207,7 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("UnknownType"))
 	})
 
@@ -219,7 +218,7 @@ var _ = Describe("FrameService Controller", func() {
 		_, err := r().Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1beta1.FrameService{}))
 		}, "5s").Should(BeTrue())
 	})
 
@@ -238,7 +237,7 @@ var _ = Describe("FrameService Controller", func() {
 		cmKey := types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		svc.Status.Provisioned = []servicesv1alpha1.ProvisionedRef{
+		svc.Status.Provisioned = []servicesv1beta1.ProvisionedRef{
 			{APIVersion: "v1", Kind: "ConfigMap", Name: cm.Name, Namespace: cm.Namespace},
 		}
 		Expect(k8sClient.Status().Update(ctx, svc)).To(Succeed())
@@ -248,7 +247,7 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1beta1.FrameService{}))
 		}, "5s").Should(BeTrue())
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, cmKey, &corev1.ConfigMap{}))).To(BeTrue())
 	})
@@ -262,7 +261,7 @@ var _ = Describe("FrameService Controller", func() {
 		defer func() { _ = k8sClient.Delete(ctx, cm) }()
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		svc.Status.Provisioned = []servicesv1alpha1.ProvisionedRef{
+		svc.Status.Provisioned = []servicesv1beta1.ProvisionedRef{
 			{APIVersion: "v1", Kind: "ConfigMap", Name: cm.Name, Namespace: cm.Namespace},
 		}
 		Expect(k8sClient.Status().Update(ctx, svc)).To(Succeed())
@@ -272,7 +271,7 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1beta1.FrameService{}))
 		}, "5s").Should(BeTrue())
 		// Retain relies on owner-reference GC for exposing objects; a data
 		// object named in status.Provisioned is never touched by reconcileDelete.
@@ -280,7 +279,7 @@ var _ = Describe("FrameService Controller", func() {
 	})
 })
 
-func readyCondition(svc *servicesv1alpha1.FrameService) metav1.Condition {
+func readyCondition(svc *servicesv1beta1.FrameService) metav1.Condition {
 	for _, c := range svc.Status.Conditions {
 		if c.Type == "Ready" {
 			return c

@@ -17,7 +17,7 @@ Frame is a full-stack mainframe framework: a React control-plane UI, a TypeScrip
 **CRD API & TypeScript SDK** *(primary)*
 - Functionality: the Frame CRDs are the API. The TypeScript `FrameClient` SDK reads and writes them directly against the Kubernetes API — job submission, scheduling policy management, resource quota control, node inspection. There is no intermediate REST server.
 - Purpose: Lets workloads, CI pipelines, and operator CLIs interact with Frame programmatically without the UI, using ordinary Kubernetes clients if they prefer
-- Trigger: Any client writes a Frame CR — `POST /apis/frame.plume-labs.io/v1alpha1/namespaces/:ns/framejobs`, and so on — through the SDK, `kubectl`, or its own client
+- Trigger: Any client writes a Frame CR — `POST /apis/frame.plume-labs.io/v1beta1/namespaces/:ns/framejobs`, and so on — through the SDK, `kubectl`, or its own client
 - Progression: Client calls SDK → SDK calls the Kubernetes API → operator reconciles the CR into real cluster state → status subresource reports back
 - Success criteria: every CRD kind is readable and writable through the SDK with accurate TypeScript types; the schema contract is the CRD's own OpenAPI, served by the apiserver and generated from the kubebuilder markers, not a hand-maintained document
 

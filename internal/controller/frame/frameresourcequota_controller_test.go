@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("FrameResourceQuota Controller", func() {
@@ -39,13 +39,13 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	frq := &framev1alpha1.FrameResourceQuota{}
+	frq := &framev1beta1.FrameResourceQuota{}
 	cpu := resource.MustParse("100")
 
 	BeforeEach(func() {
-		*frq = framev1alpha1.FrameResourceQuota{
+		*frq = framev1beta1.FrameResourceQuota{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: framev1alpha1.FrameResourceQuotaSpec{
+			Spec: framev1beta1.FrameResourceQuotaSpec{
 				ServiceClass: "HIGH",
 				MaxGPUs:      8,
 				MaxCPU:       &cpu,
@@ -56,14 +56,14 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 	})
 
 	AfterEach(func() {
-		fresh := &framev1alpha1.FrameResourceQuota{}
+		fresh := &framev1beta1.FrameResourceQuota{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.FrameResourceQuota{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.FrameResourceQuota{}))
 		}, "5s").Should(BeTrue())
 	})
 
@@ -149,9 +149,9 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 	})
 
 	It("records the generation its status was computed from", func() {
-		frq := &framev1alpha1.FrameResourceQuota{
+		frq := &framev1beta1.FrameResourceQuota{
 			ObjectMeta: metav1.ObjectMeta{Name: "obsgen", Namespace: "default"},
-			Spec:       framev1alpha1.FrameResourceQuotaSpec{ServiceClass: "HIGH", MaxJobs: 5},
+			Spec:       framev1beta1.FrameResourceQuotaSpec{ServiceClass: "HIGH", MaxJobs: 5},
 		}
 		Expect(k8sClient.Create(ctx, frq)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, frq) })
@@ -168,7 +168,7 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: obsgenKey})
 		Expect(err).NotTo(HaveOccurred())
 
-		fetched := &framev1alpha1.FrameResourceQuota{}
+		fetched := &framev1beta1.FrameResourceQuota{}
 		Expect(k8sClient.Get(ctx, obsgenKey, fetched)).To(Succeed())
 		Expect(fetched.Status.ObservedGeneration).To(Equal(fetched.Generation),
 			"status.observedGeneration must track metadata.generation")
@@ -195,9 +195,9 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 			Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 		}
 
-		frq := &framev1alpha1.FrameResourceQuota{
+		frq := &framev1beta1.FrameResourceQuota{
 			ObjectMeta: metav1.ObjectMeta{Name: "quota-usage", Namespace: "default"},
-			Spec:       framev1alpha1.FrameResourceQuotaSpec{ServiceClass: "MEDIUM", MaxJobs: 10},
+			Spec:       framev1beta1.FrameResourceQuotaSpec{ServiceClass: "MEDIUM", MaxJobs: 10},
 		}
 		Expect(k8sClient.Create(ctx, frq)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, frq) })
@@ -213,7 +213,7 @@ var _ = Describe("FrameResourceQuota Controller", func() {
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
 
-		fetched := &framev1alpha1.FrameResourceQuota{}
+		fetched := &framev1beta1.FrameResourceQuota{}
 		Expect(k8sClient.Get(ctx, key, fetched)).To(Succeed())
 		Expect(fetched.Status.Namespaces).To(BeNumerically(">=", 2),
 			"both labelled namespaces must be counted")

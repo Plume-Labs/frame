@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // sessionCookieFrom extracts the frame_session cookie a response set, failing
@@ -49,7 +49,7 @@ func doWithCookie(t *testing.T, srv *Server, path, body string, cookie *http.Coo
 	return rec
 }
 
-func testServer(t *testing.T, users ...*framev1alpha1.FrameUser) *Server {
+func testServer(t *testing.T, users ...*framev1beta1.FrameUser) *Server {
 	t.Helper()
 	store := storeWith(t, users...)
 	auth, err := NewAuthenticator("example.com", "https://example.com", store, testCodec())
@@ -94,13 +94,13 @@ const (
 // cannot be reused for this: it doesn't expose the client underneath its
 // Store, and the bootstrap-completion tests need to inspect that same client
 // directly (via NewStore, and via a raw Get on the Secret).
-func bootstrapServer(t *testing.T, seedSecret bool, users ...*framev1alpha1.FrameUser) (*Server, client.Client) {
+func bootstrapServer(t *testing.T, seedSecret bool, users ...*framev1beta1.FrameUser) (*Server, client.Client) {
 	t.Helper()
 	s := scheme.Scheme
-	if err := framev1alpha1.AddToScheme(s); err != nil {
+	if err := framev1beta1.AddToScheme(s); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
-	b := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&framev1alpha1.FrameUser{})
+	b := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&framev1beta1.FrameUser{})
 	for _, u := range users {
 		b = b.WithObjects(u)
 	}
@@ -144,7 +144,7 @@ func TestDiscoveryAndKeysArePublic(t *testing.T) {
 }
 
 func TestBootstrapClosesOnceAUserExists(t *testing.T) {
-	srv := testServer(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin))
+	srv := testServer(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	rec := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"eve@example.com"}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bootstrap with an existing user = %d, want 404", rec.Code)
@@ -211,10 +211,10 @@ func TestBootstrapCreatesTheFirstAdminAndDeletesTheSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ByEmail after bootstrap: %v", err)
 	}
-	if u.Spec.Role != framev1alpha1.RoleAdmin {
-		t.Fatalf("role = %q, want %q", u.Spec.Role, framev1alpha1.RoleAdmin)
+	if u.Spec.Role != framev1beta1.RoleAdmin {
+		t.Fatalf("role = %q, want %q", u.Spec.Role, framev1beta1.RoleAdmin)
 	}
-	if u.Spec.PasswordAuth == framev1alpha1.PasswordEnabled {
+	if u.Spec.PasswordAuth == framev1beta1.PasswordEnabled {
 		t.Fatal("bootstrap admin was created with password auth enabled; it must enrol a passkey first")
 	}
 
@@ -251,10 +251,10 @@ func TestBootstrapRejectsMalformedEmail(t *testing.T) {
 }
 
 func TestPasswordLoginRefusedWhenDisabled(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1alpha1.PasswordDisabled
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	u.Spec.PasswordAuth = framev1beta1.PasswordDisabled
 	hash, _ := HashPassword("hunter2")
-	u.Spec.PasswordHash = hash
+	u.Status.PasswordHash = hash
 	srv := testServer(t, u)
 
 	rec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
@@ -264,10 +264,10 @@ func TestPasswordLoginRefusedWhenDisabled(t *testing.T) {
 }
 
 func TestPasswordLoginSucceedsWhenEnabled(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 	hash, _ := HashPassword("hunter2")
-	u.Spec.PasswordHash = hash
+	u.Status.PasswordHash = hash
 	srv := testServer(t, u)
 
 	rec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
@@ -284,7 +284,7 @@ func TestPasswordLoginSucceedsWhenEnabled(t *testing.T) {
 }
 
 func TestTokenRequiresASession(t *testing.T) {
-	srv := testServer(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin))
+	srv := testServer(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	rec := do(t, srv, http.MethodPost, "/auth/token", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("token without session = %d, want 401", rec.Code)
@@ -323,16 +323,16 @@ func TestDummyPasswordHashIsValidAndVerifiable(t *testing.T) {
 // TestDummyPasswordHashIsValidAndVerifiable would both still pass — neither
 // of those actually observes whether verifyPassword ran.
 func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
-	enabled := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
-	enabled.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+	enabled := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	enabled.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 	hash, err := HashPassword("hunter2")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	enabled.Spec.PasswordHash = hash
+	enabled.Status.PasswordHash = hash
 
-	disabled := fixture("bob", "bob@example.com", framev1alpha1.RoleViewer)
-	disabled.Spec.PasswordAuth = framev1alpha1.PasswordDisabled
+	disabled := fixture("bob", "bob@example.com", framev1beta1.RoleViewer)
+	disabled.Spec.PasswordAuth = framev1beta1.PasswordDisabled
 
 	cases := []struct {
 		name string
@@ -364,10 +364,10 @@ func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
 }
 
 func TestUnknownEmailAndWrongPasswordAreIndistinguishable(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 	hash, _ := HashPassword("hunter2")
-	u.Spec.PasswordHash = hash
+	u.Status.PasswordHash = hash
 	srv := testServer(t, u)
 
 	wrong := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"nope"}`)
@@ -410,10 +410,10 @@ func TestBootstrapSessionAllowsImmediateRegisterBegin(t *testing.T) {
 // set it (or anything derived from it) as a cookie, which would give an XSS
 // a way to read it that surviving only in memory is meant to prevent.
 func TestTokenIsBodyOnlyNeverCookie(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 	hash, _ := HashPassword("hunter2")
-	u.Spec.PasswordHash = hash
+	u.Status.PasswordHash = hash
 	srv := testServer(t, u)
 
 	loginRec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
@@ -454,7 +454,7 @@ func TestTokenIsBodyOnlyNeverCookie(t *testing.T) {
 // (see setSession), so this also incidentally proves the role is read fresh
 // from the store on every call to handleToken, not cached in the cookie.
 func TestTokenReflectsRoleChangedAfterSessionIssued(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleViewer)
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleViewer)
 	srv, c := bootstrapServer(t, false, u)
 
 	sessRec := httptest.NewRecorder()
@@ -463,11 +463,11 @@ func TestTokenReflectsRoleChangedAfterSessionIssued(t *testing.T) {
 	}
 	session := sessionCookieFrom(t, sessRec)
 
-	var fresh framev1alpha1.FrameUser
+	var fresh framev1beta1.FrameUser
 	if err := c.Get(context.Background(), client.ObjectKey{Name: "alice", Namespace: "cluster-control"}, &fresh); err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	fresh.Spec.Role = framev1alpha1.RoleAdmin
+	fresh.Spec.Role = framev1beta1.RoleAdmin
 	if err := c.Update(context.Background(), &fresh); err != nil {
 		t.Fatalf("promote alice to admin: %v", err)
 	}
@@ -505,8 +505,8 @@ func TestTokenReflectsRoleChangedAfterSessionIssued(t *testing.T) {
 // publicKey.user.name back out of the registration options and checking it
 // names the session owner, not the body's account.
 func TestRegisterBeginIgnoresRequestBodyAccount(t *testing.T) {
-	alice := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin)
-	bob := fixture("bob", "bob@example.com", framev1alpha1.RoleViewer)
+	alice := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	bob := fixture("bob", "bob@example.com", framev1beta1.RoleViewer)
 	srv := testServer(t, alice, bob)
 
 	sessRec := httptest.NewRecorder()

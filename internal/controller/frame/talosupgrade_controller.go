@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 const talosUpgradeFinalizer = "frame.plume-labs.io/talosupgrade"
@@ -57,7 +57,7 @@ type TalosUpgradeReconciler struct {
 func (r *TalosUpgradeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var tu framev1alpha1.TalosUpgrade
+	var tu framev1beta1.TalosUpgrade
 	if err := r.Get(ctx, req.NamespacedName, &tu); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -137,7 +137,7 @@ func isAlreadyAtVersion(err error) bool {
 	return strings.Contains(msg, "already at target version") || strings.Contains(msg, "no upgrade required")
 }
 
-func (r *TalosUpgradeReconciler) setCondition(ctx context.Context, tu *framev1alpha1.TalosUpgrade, status metav1.ConditionStatus, reason, msg string) error {
+func (r *TalosUpgradeReconciler) setCondition(ctx context.Context, tu *framev1beta1.TalosUpgrade, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tu.DeepCopy())
 	tu.Status.ObservedGeneration = tu.Generation
 	meta.SetStatusCondition(&tu.Status.Conditions, metav1.Condition{
@@ -153,7 +153,7 @@ func (r *TalosUpgradeReconciler) setCondition(ctx context.Context, tu *framev1al
 // SetupWithManager sets up the controller with the Manager.
 func (r *TalosUpgradeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1alpha1.TalosUpgrade{}).
+		For(&framev1beta1.TalosUpgrade{}).
 		Named("talosupgrade").
 		Complete(r)
 }

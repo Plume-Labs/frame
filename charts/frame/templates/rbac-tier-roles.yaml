@@ -3,10 +3,36 @@
 {{- $labels := include "frame.chartLabels" . }}
 {{- $namePrefix := include "frame.name" $root }}
 {{- range (fromYamlArray (include "frame.tierRoleCRDs" .)) }}
+{{- /*
+frameusers/status carries an argon2id password hash (F11), so only the admin
+tier may touch it — the editor and viewer tiers get no /status rule at all,
+and the admin tier gets write on it as well as read, because setting or
+resetting a password is only reachable through the subresource now. Every
+other kind's status is the controller's to write and safe to read, which is
+what makes this a per-kind exception rather than a blanket rule.
+
+Note what the exception does *not* do: a plain `GET frameusers` still returns
+the whole object, status included, so the lower tiers can still read the hash
+(the subresource splits writes, not reads — measured, not assumed). It blocks
+the write path and the /status endpoint. See docs/deployment.md, "RBAC".
+
+This must stay byte-for-byte equivalent to config/rbac/*_{admin,editor,
+viewer}_role.yaml — there is no `make helm-sync-rbac`; `make helm-parity` is
+the only thing keeping the two hand-maintained copies in step.
+*/}}
+{{- $lowerTiersGetStatus := true }}
+{{- $adminWritesStatus := false }}
+{{- if eq .roleBase "frameuser" }}
+{{- $lowerTiersGetStatus = false }}
+{{- $adminWritesStatus = true }}
+{{- end }}
 # This rule is not used by the project frame itself. It is provided to allow
 # the cluster admin to help manage permissions for users.
 #
-# Grants full permissions ('*') over {{ .apiGroup }}/{{ .resource }}.
+# Grants the full set of verbs over {{ .apiGroup }}/{{ .resource }}, enumerated
+# explicitly. It used to be '*', which also covers verbs and subresources that
+# do not exist yet — an admin tier that silently acquires whatever a future
+# version adds is not a frozen tier.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -19,13 +45,24 @@ rules:
   resources:
   - {{ .resource }}
   verbs:
-  - '*'
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - {{ .apiGroup }}
   resources:
   - {{ .resource }}/status
   verbs:
   - get
+  {{- if $adminWritesStatus }}
+  - patch
+  - update
+  {{- end }}
 ---
 # Grants create/update/delete over {{ .apiGroup }}/{{ .resource }}, without
 # permission to manage RBAC for others.
@@ -48,12 +85,14 @@ rules:
   - patch
   - update
   - watch
+{{- if $lowerTiersGetStatus }}
 - apiGroups:
   - {{ .apiGroup }}
   resources:
   - {{ .resource }}/status
   verbs:
   - get
+{{- end }}
 ---
 # Grants read-only access to {{ .apiGroup }}/{{ .resource }}.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -71,12 +110,14 @@ rules:
   - get
   - list
   - watch
+{{- if $lowerTiersGetStatus }}
 - apiGroups:
   - {{ .apiGroup }}
   resources:
   - {{ .resource }}/status
   verbs:
   - get
+{{- end }}
 ---
 {{- end }}
 {{- end }}

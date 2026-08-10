@@ -25,7 +25,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // readyConditionReason reads the Ready condition's Reason the way a caller
@@ -67,16 +67,16 @@ func TestSetConditionReasonRegression(t *testing.T) {
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme (client-go): %v", err)
 	}
-	if err := framev1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme (framev1alpha1): %v", err)
+	if err := framev1beta1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme (framev1beta1): %v", err)
 	}
 
-	tmc := &framev1alpha1.TalosMachineConfig{
+	tmc := &framev1beta1.TalosMachineConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "regression", Namespace: "default"},
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&framev1alpha1.TalosMachineConfig{}).
+		WithStatusSubresource(&framev1beta1.TalosMachineConfig{}).
 		WithObjects(tmc).
 		Build()
 	r := &TalosMachineConfigReconciler{Client: c}

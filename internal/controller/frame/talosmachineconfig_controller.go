@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 const talosMachineConfigFinalizer = "frame.plume-labs.io/talosmachineconfig"
@@ -57,7 +57,7 @@ type TalosMachineConfigReconciler struct {
 func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var tmc framev1alpha1.TalosMachineConfig
+	var tmc framev1beta1.TalosMachineConfig
 	if err := r.Get(ctx, req.NamespacedName, &tmc); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -118,7 +118,7 @@ func (r *TalosMachineConfigReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, r.setCondition(ctx, &tmc, metav1.ConditionTrue, "Applied", msg)
 }
 
-func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig) (string, error) {
+func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *framev1beta1.TalosMachineConfig) (string, error) {
 	if tmc.Spec.ConfigPatch != "" {
 		return tmc.Spec.ConfigPatch, nil
 	}
@@ -143,7 +143,7 @@ func (r *TalosMachineConfigReconciler) resolvePatch(ctx context.Context, tmc *fr
 	return val, nil
 }
 
-func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *framev1alpha1.TalosMachineConfig, status metav1.ConditionStatus, reason, msg string) error {
+func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *framev1beta1.TalosMachineConfig, status metav1.ConditionStatus, reason, msg string) error {
 	p := client.MergeFrom(tmc.DeepCopy())
 	tmc.Status.ObservedGeneration = tmc.Generation
 	meta.SetStatusCondition(&tmc.Status.Conditions, metav1.Condition{
@@ -159,7 +159,7 @@ func (r *TalosMachineConfigReconciler) setCondition(ctx context.Context, tmc *fr
 // SetupWithManager sets up the controller with the Manager.
 func (r *TalosMachineConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1alpha1.TalosMachineConfig{}).
+		For(&framev1beta1.TalosMachineConfig{}).
 		Named("talosmachineconfig").
 		Complete(r)
 }

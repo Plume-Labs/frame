@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("SchedulingPolicy Controller", func() {
@@ -40,14 +40,14 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	sp := &framev1alpha1.SchedulingPolicy{}
+	sp := &framev1beta1.SchedulingPolicy{}
 
 	prio := int32(500)
 
 	BeforeEach(func() {
-		*sp = framev1alpha1.SchedulingPolicy{
+		*sp = framev1beta1.SchedulingPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: framev1alpha1.SchedulingPolicySpec{
+			Spec: framev1beta1.SchedulingPolicySpec{
 				Scheduler:     "default",
 				PriorityClass: pcName,
 				PriorityValue: &prio,
@@ -57,14 +57,14 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 	})
 
 	AfterEach(func() {
-		fresh := &framev1alpha1.SchedulingPolicy{}
+		fresh := &framev1beta1.SchedulingPolicy{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
 			_ = k8sClient.Delete(ctx, fresh)
 		}
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1alpha1.SchedulingPolicy{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.SchedulingPolicy{}))
 		}, "5s").Should(BeTrue())
 		_ = k8sClient.Delete(ctx, &schedulingv1.PriorityClass{
 			ObjectMeta: metav1.ObjectMeta{Name: pcName},
@@ -128,9 +128,9 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 	It("degrades Ready condition when queue CRD is missing (volcano scheduler)", func() {
 		// Volcano Queue CRD is not installed in envtest — controller must degrade gracefully.
 		weight := int32(2)
-		spV := &framev1alpha1.SchedulingPolicy{
+		spV := &framev1beta1.SchedulingPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "volcano-policy", Namespace: ns},
-			Spec: framev1alpha1.SchedulingPolicySpec{
+			Spec: framev1beta1.SchedulingPolicySpec{
 				Scheduler:   "volcano",
 				QueueName:   "hpc",
 				QueueWeight: &weight,
@@ -138,7 +138,7 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, spV)).To(Succeed())
 		defer func() {
-			fresh := &framev1alpha1.SchedulingPolicy{}
+			fresh := &framev1beta1.SchedulingPolicy{}
 			vKey := types.NamespacedName{Name: "volcano-policy", Namespace: ns}
 			if err := k8sClient.Get(ctx, vKey, fresh); err == nil {
 				fresh.Finalizers = nil

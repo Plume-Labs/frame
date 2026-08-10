@@ -9,32 +9,32 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
-func storeWith(t *testing.T, users ...*framev1alpha1.FrameUser) *Store {
+func storeWith(t *testing.T, users ...*framev1beta1.FrameUser) *Store {
 	t.Helper()
 	s := scheme.Scheme
-	if err := framev1alpha1.AddToScheme(s); err != nil {
+	if err := framev1beta1.AddToScheme(s); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
-	b := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&framev1alpha1.FrameUser{})
+	b := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&framev1beta1.FrameUser{})
 	for _, u := range users {
 		b = b.WithObjects(u)
 	}
 	return NewStore(b.Build(), "cluster-control")
 }
 
-func fixture(name, email, role string, creds ...framev1alpha1.WebAuthnCredential) *framev1alpha1.FrameUser {
-	return &framev1alpha1.FrameUser{
+func fixture(name, email, role string, creds ...framev1beta1.WebAuthnCredential) *framev1beta1.FrameUser {
+	return &framev1beta1.FrameUser{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "cluster-control"},
-		Spec:       framev1alpha1.FrameUserSpec{Email: email, Role: role},
-		Status:     framev1alpha1.FrameUserStatus{Credentials: creds},
+		Spec:       framev1beta1.FrameUserSpec{Email: email, Role: role},
+		Status:     framev1beta1.FrameUserStatus{Credentials: creds},
 	}
 }
 
 func TestByEmailFindsAndMisses(t *testing.T) {
-	s := storeWith(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin))
+	s := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	got, err := s.ByEmail(context.Background(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("ByEmail: %v", err)
@@ -48,8 +48,8 @@ func TestByEmailFindsAndMisses(t *testing.T) {
 }
 
 func TestByCredentialID(t *testing.T) {
-	cred := framev1alpha1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk", SignCount: 7}
-	s := storeWith(t, fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred))
+	cred := framev1beta1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk", SignCount: 7}
+	s := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred))
 	got, err := s.ByCredentialID(context.Background(), "cred-1")
 	if err != nil {
 		t.Fatalf("ByCredentialID: %v", err)
@@ -63,8 +63,8 @@ func TestByCredentialID(t *testing.T) {
 }
 
 func TestUpdateSignCount(t *testing.T) {
-	cred := framev1alpha1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk", SignCount: 7}
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred)
+	cred := framev1beta1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk", SignCount: 7}
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
 	s := storeWith(t, u)
 	if err := s.UpdateSignCount(context.Background(), u, "cred-1", 9); err != nil {
 		t.Fatalf("UpdateSignCount: %v", err)
@@ -76,9 +76,9 @@ func TestUpdateSignCount(t *testing.T) {
 }
 
 func TestRemoveCredentialKeepsLastKeyWhenPasswordDisabled(t *testing.T) {
-	cred := framev1alpha1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred)
-	u.Spec.PasswordAuth = framev1alpha1.PasswordDisabled
+	cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
+	u.Spec.PasswordAuth = framev1beta1.PasswordDisabled
 	s := storeWith(t, u)
 	if err := s.RemoveCredential(context.Background(), u, "only"); err == nil {
 		t.Fatal("removing the last key of a passkey-only account was allowed")
@@ -87,8 +87,8 @@ func TestRemoveCredentialKeepsLastKeyWhenPasswordDisabled(t *testing.T) {
 
 // TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset pins the zero-value
 // behavior of Store.RemoveCredential's last-credential guard, which reads
-// `u.Spec.PasswordAuth != framev1alpha1.PasswordEnabled` rather than
-// `== framev1alpha1.PasswordDisabled`. Those two are equivalent today only
+// `u.Spec.PasswordAuth != framev1beta1.PasswordEnabled` rather than
+// `== framev1beta1.PasswordDisabled`. Those two are equivalent today only
 // because fixture() never sets PasswordAuth explicitly here, leaving it at
 // Go's zero value for the string-typed field (""), which correctly falls on
 // the "not enabled" side of the `!=` comparison. A refactor to the `==`
@@ -100,8 +100,8 @@ func TestRemoveCredentialKeepsLastKeyWhenPasswordDisabled(t *testing.T) {
 // RemoveCredential has no production caller yet: nothing else exercises this
 // guard until a future revocation endpoint wires it up.
 func TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset(t *testing.T) {
-	cred := framev1alpha1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred)
+	cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
 	// PasswordAuth deliberately left at its zero value ("") — not set to
 	// PasswordDisabled, which is the point of this test.
 	s := storeWith(t, u)
@@ -111,9 +111,9 @@ func TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset(t *testing.T) {
 }
 
 func TestRemoveCredentialAllowedWhenPasswordEnabled(t *testing.T) {
-	cred := framev1alpha1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
-	u := fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin, cred)
-	u.Spec.PasswordAuth = framev1alpha1.PasswordEnabled
+	cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
+	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 	s := storeWith(t, u)
 	if err := s.RemoveCredential(context.Background(), u, "only"); err != nil {
 		t.Fatalf("RemoveCredential: %v", err)
@@ -126,8 +126,8 @@ func TestRemoveCredentialAllowedWhenPasswordEnabled(t *testing.T) {
 
 func TestAdminCount(t *testing.T) {
 	s := storeWith(t,
-		fixture("alice", "alice@example.com", framev1alpha1.RoleAdmin),
-		fixture("bob", "bob@example.com", framev1alpha1.RoleViewer),
+		fixture("alice", "alice@example.com", framev1beta1.RoleAdmin),
+		fixture("bob", "bob@example.com", framev1beta1.RoleViewer),
 	)
 	n, err := s.AdminCount(context.Background())
 	if err != nil {

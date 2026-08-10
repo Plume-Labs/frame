@@ -153,6 +153,13 @@ type FrameNodeStatus struct {
 	NodeName string `json:"nodeName,omitempty"`
 }
 
+// This version is served and deprecated; v1beta1 is the storage version. The
+// marker moved there in the same change that turned the conversion webhook on
+// — see the note on the v1alpha1 FrameJob for why those two could not be
+// separated. Without the webhook, promoting v1beta1 would have emptied
+// status.phase out of every v1alpha1 write, in the create response itself.
+//
+// +kubebuilder:deprecatedversion:warning="frame.plume-labs.io/v1alpha1 FrameNode is deprecated; use frame.plume-labs.io/v1beta1. serviceClass no longer admits the empty string, and status.phase is computed from status.conditions and is not stored."
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=fn

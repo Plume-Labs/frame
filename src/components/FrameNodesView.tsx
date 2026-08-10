@@ -116,7 +116,7 @@ export function FrameNodesView() {
                     variant="outline"
                     className={`font-mono text-[10px] border-current ${CLASS_TONE[n.serviceClass] ?? 'text-foreground'}`}
                   >
-                    {n.serviceClass}
+                    {n.serviceClass || 'unclassified'}
                   </Badge>
                   <Badge
                     variant="outline"

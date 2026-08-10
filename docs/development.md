@@ -28,12 +28,14 @@ make lint          # golangci-lint
 
 ### Regenerating after API changes
 
-Edit `api/v1alpha1/*_types.go`, then:
+Edit `api/frame/v1beta1/*_types.go` or `api/services/v1beta1/*_types.go` — the frozen, stored version — then:
 
 ```bash
 make manifests     # regenerate CRDs, RBAC, webhook manifests
 make generate      # regenerate zz_generated.deepcopy.go
 ```
+
+Two rules the freeze added. **A change to a `v1beta1` type is a change to a frozen API**: new optional fields and looser validation are fine, renames and tightened bounds are not — see [upgrading.md](upgrading.md), "What the guarantee is". And if the change is not a pure addition, `api/frame/v1alpha1/conversion.go` (or its `services` twin) has to carry it, with a fuzzed round-trip case beside it.
 
 **Never hand-edit** generated files: `config/crd/bases/*`, `config/rbac/role.yaml`, `config/webhook/manifests.yaml`, `**/zz_generated.*`, or `PROJECT`. Never delete `// +kubebuilder:scaffold:*` markers. Scaffold new APIs/webhooks with the `kubebuilder` CLI, not by hand. (See [AGENTS.md](../AGENTS.md).)
 
@@ -47,7 +49,7 @@ make install
 make run
 
 # In another terminal, apply a sample CR
-kubectl apply -f config/samples/frame_v1alpha1_framejob.yaml
+kubectl apply -f config/samples/frame_v1beta1_framejob.yaml
 kubectl describe framejob <name>
 ```
 
@@ -59,6 +61,22 @@ make test-e2e       # Kind-based e2e (requires make setup-test-e2e first)
 ```
 
 The CI enforces ≥ 45% envtest coverage on `internal/controller` (tracked in `.github/workflows/test.yml`).
+
+### Why envtest reads `bin/crd-render`, not `config/crd/bases`
+
+`config/crd/bases/` is controller-gen's output. It has no `spec.conversion`
+stanza, because controller-gen has no marker that emits one — the conversion
+webhook is wired by a kustomize patch under `config/crd/patches/`.
+
+envtest can drive a conversion webhook: `WebhookInstallOptions` rewrites each
+CRD's `clientConfig` to the locally-served webhook and injects the CA it
+generated. But it only does that for a CRD that already declares
+`strategy: Webhook`. Reading the bases would therefore have made every
+conversion test pass while exercising no conversion at all.
+
+`make crd-render` runs `kustomize build config/crd` into `bin/crd-render/`
+(gitignored) and `make test` depends on it. If a suite fails with
+"bin/crd-render is missing", run `make crd-render`.
 
 ---
 
@@ -98,11 +116,13 @@ npm run build        # production build → dist/
 
 1. Scaffold with kubebuilder:
    ```bash
-   kubebuilder create api --group frame --version v1alpha1 --kind MyKind
-   kubebuilder create webhook --group frame --version v1alpha1 --kind MyKind --defaulting --programmatic-validation
+   kubebuilder create api --group frame --version v1beta1 --kind MyKind
+   kubebuilder create webhook --group frame --version v1beta1 --kind MyKind --defaulting --programmatic-validation
    ```
 
-2. Edit `api/v1alpha1/mykind_types.go` — add `+kubebuilder:` markers.
+   A brand-new kind starts at `v1beta1` in an existing frozen group and needs no `v1alpha1` spoke — there is nothing to convert from. A new *group* starts at `v1alpha1`; see [roadmap.md](roadmap.md), Phase E.
+
+2. Edit `api/frame/v1beta1/mykind_types.go` — add `+kubebuilder:` markers, including `status.observedGeneration` and a `Ready` condition. Do not add a `status.phase`; see [crd-reference.md](crd-reference.md).
 
 3. Run `make manifests generate` to regenerate CRDs, RBAC, and deepcopy.
 

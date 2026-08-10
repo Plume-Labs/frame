@@ -5,7 +5,7 @@
 # Apply after the operators (Frame, Volcano, Argo) are up:
 #   kubectl apply -f deploy/samples/test-cluster/workloads.yaml
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata: { name: neura-k3s-cp, namespace: default }
 spec:
@@ -16,7 +16,7 @@ spec:
   zone: local
   network: { address: 192.168.2.201/24, gateway: 192.168.2.254, dns: [192.168.2.254] }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata: { name: neura-k3s-w1, namespace: default }
 spec:
@@ -27,7 +27,7 @@ spec:
   zone: local
   network: { address: 192.168.2.202/24, gateway: 192.168.2.254, dns: [192.168.2.254] }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata: { name: neura-k3s-w2, namespace: default }
 spec:
@@ -38,22 +38,22 @@ spec:
   zone: local
   network: { address: 192.168.2.203/24, gateway: 192.168.2.254, dns: [192.168.2.254] }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: SchedulingPolicy
 metadata: { name: neura-default, namespace: default }
 spec: { scheduler: volcano, queueName: neura-high, queueWeight: 100, preemption: true, priorityClass: neura-high, priorityValue: 100 }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameResourceQuota
 metadata: { name: quota-high, namespace: default }
 spec: { serviceClass: HIGH, maxGPUs: 0, maxCPU: "8", maxMemory: 16Gi, maxJobs: 20 }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameResourceQuota
 metadata: { name: quota-medium, namespace: default }
 spec: { serviceClass: MEDIUM, maxGPUs: 0, maxCPU: "4", maxMemory: 8Gi, maxJobs: 10 }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameResourceQuota
 metadata: { name: quota-low, namespace: default }
 spec: { serviceClass: LOW, maxGPUs: 0, maxCPU: "2", maxMemory: 4Gi, maxJobs: 5 }
@@ -61,8 +61,10 @@ spec: { serviceClass: LOW, maxGPUs: 0, maxCPU: "2", maxMemory: 4Gi, maxJobs: 5 }
 # Argo >= 3.4 has every workflow pod report back by creating a
 # workflowtaskresult. The cluster-scoped install grants that only in `argo`, so
 # a workflow running anywhere else dies with `workflowtaskresults.argoproj.io is
-# forbidden`. Frame puts the Workflow in FrameJob.spec.namespace, so each such
-# namespace needs this pair bound to the ServiceAccount the pods run as.
+# forbidden`. Frame puts the Workflow in the FrameJob's own namespace, so every
+# namespace holding a FrameJob needs this pair bound to the ServiceAccount the
+# pods run as. (v1alpha1 let spec.namespace name a different one; that field is
+# gone at v1beta1 — F5.)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: { name: argo-workflow-executor, namespace: default }
@@ -79,7 +81,7 @@ subjects:
   - { kind: ServiceAccount, name: default, namespace: default }
 ---
 # The two FrameJobs below reference these by spec.pipeline. Frame creates the
-# Argo Workflow in FrameJob.spec.namespace and a Workflow only resolves a
+# Argo Workflow in the FrameJob's own namespace and a Workflow only resolves a
 # WorkflowTemplate in its OWN namespace, so these must live in `default` next to
 # the jobs — not in `argo`. Without them the Workflow fails immediately with
 # `workflowtemplates.argoproj.io "..." not found`; that stayed invisible for as
@@ -123,12 +125,12 @@ spec:
           requests: { cpu: 10m, memory: 16Mi }
           limits: { cpu: 100m, memory: 64Mi }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameJob
 metadata: { name: neura-embed-refresh, namespace: default }
 spec: { pipeline: neura-inference-dag, serviceClass: HIGH, priority: high, gpuCount: 0 }
 ---
-apiVersion: frame.plume-labs.io/v1alpha1
+apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameJob
 metadata: { name: nightly-consolidation, namespace: default }
 spec: { pipeline: neura-training-dag, serviceClass: LOW, priority: low, gpuCount: 0 }

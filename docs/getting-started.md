@@ -89,7 +89,7 @@ kustomize build deploy/kubernetes/overlays/development | kubectl apply -f -
 
 2. **Apply a sample CR:**
    ```bash
-   kubectl apply -f config/samples/frame_v1alpha1_framejob.yaml
+   kubectl apply -f config/samples/frame_v1beta1_framejob.yaml
    kubectl describe framejob <name>   # see conditions + events
    ```
 

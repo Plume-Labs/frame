@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/scheduling"
 	"github.com/rmocq/frame/internal/services/provider"
 )
@@ -391,7 +391,7 @@ func apiKeyDigest(token string) string {
 // Secret the pod is waiting on. Owning a separate Secret here, and creating
 // it before the Deployment below, breaks that deadlock: this Secret exists
 // before anything reads it, on every pass including the first.
-func (p *Provider) ensureAPIKey(ctx context.Context, svc *servicesv1alpha1.FrameService) (string, error) {
+func (p *Provider) ensureAPIKey(ctx context.Context, svc *servicesv1beta1.FrameService) (string, error) {
 	name := apiKeySecretName(svc.Name)
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: svc.Namespace}}
 
@@ -428,7 +428,7 @@ func (p *Provider) ensureAPIKey(ctx context.Context, svc *servicesv1alpha1.Frame
 // called — but the Get is real rather than assumed, so a Secret deleted out
 // from under a Ready instance surfaces as an error here instead of Bind
 // quietly returning an empty credential.
-func (p *Provider) readAPIKey(ctx context.Context, svc *servicesv1alpha1.FrameService) (string, error) {
+func (p *Provider) readAPIKey(ctx context.Context, svc *servicesv1beta1.FrameService) (string, error) {
 	name := apiKeySecretName(svc.Name)
 	var secret corev1.Secret
 	if err := p.client.Get(ctx, types.NamespacedName{Name: name, Namespace: svc.Namespace}, &secret); err != nil {
@@ -467,17 +467,18 @@ func (p *Provider) readAPIKey(ctx context.Context, svc *servicesv1alpha1.FrameSe
 // which is why this failure mode is invisible to a naive test and had to be
 // closed twice: first at the Containers-slice level, then again one level
 // down inside a single container's Ports and Resources.
-func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameService) (provider.Result, error) {
-	sizing, err := p.Size(svc.Spec.Parameters)
+func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameService) (provider.Result, error) {
+	params := provider.Params(svc.Spec.Parameters)
+	sizing, err := p.Size(params)
 	if err != nil {
 		return provider.Result{}, err
 	}
-	contextLength, err := resolveContextLength(svc.Spec.Parameters)
+	contextLength, err := resolveContextLength(params)
 	if err != nil {
 		return provider.Result{}, err
 	}
 
-	cacheName := resolveModelCache(svc.Spec.Parameters)
+	cacheName := resolveModelCache(params)
 	var pvc corev1.PersistentVolumeClaim
 	// Deliberately p.apiReader, not p.client: see the field comment on
 	// apiReader for why this single named lookup must not go through the
@@ -540,7 +541,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		// FrameNode controller already writes rather than this provider ever
 		// naming a node.
 		deployment.Spec.Template.Spec.NodeSelector = map[string]string{
-			serviceClassLabel: svc.Spec.ServiceClass,
+			serviceClassLabel: string(svc.Spec.ServiceClass),
 		}
 		// Scheduling priority is derived from serviceClass, not from a
 		// field of its own (F10): a long-lived instance's tier is its
@@ -553,7 +554,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		// wholesale. An unrecognised serviceClass yields "", which leaves
 		// the pod at the cluster's implicit default rather than failing.
 		deployment.Spec.Template.Spec.PriorityClassName =
-			scheduling.PriorityClassForServiceClass(svc.Spec.ServiceClass)
+			scheduling.PriorityClassForServiceClass(string(svc.Spec.ServiceClass))
 		// A digest of the token, never the token itself, rides on the pod
 		// template so a changed token is a changed template: if the API key
 		// Secret is ever deleted and ensureAPIKey mints a new value, the
@@ -583,7 +584,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		args := []string{
 			"--host", "0.0.0.0",
 			"--port", strconv.Itoa(containerPort),
-			"-m", modelPath(svc.Spec.Parameters["model"]),
+			"-m", modelPath(params["model"]),
 			"-c", strconv.FormatInt(contextLength, 10),
 		}
 		// The API key reaches llama.cpp through the environment, sourced
@@ -625,7 +626,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1alpha1.FrameSer
 		return provider.Result{}, fmt.Errorf("reconciling Service %s/%s: %w", svc.Namespace, svc.Name, err)
 	}
 
-	provisioned := []servicesv1alpha1.ProvisionedRef{
+	provisioned := []servicesv1beta1.ProvisionedRef{
 		{APIVersion: "apps/v1", Kind: "Deployment", Name: deployment.Name, Namespace: deployment.Namespace},
 		{APIVersion: "v1", Kind: "Service", Name: service.Name, Namespace: service.Namespace},
 	}
@@ -1006,7 +1007,7 @@ func setServicePort(spec *corev1.ServiceSpec, port int32, targetPort intstr.IntO
 // read back from the Secret ensureAPIKey wrote during Reconcile rather than
 // generated here: Bind and Reconcile are separate calls, and both have to
 // agree on the same value.
-func (p *Provider) Bind(ctx context.Context, svc *servicesv1alpha1.FrameService) (provider.Binding, error) {
+func (p *Provider) Bind(ctx context.Context, svc *servicesv1beta1.FrameService) (provider.Binding, error) {
 	endpoint := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, containerPort)
 	token, err := p.readAPIKey(ctx, svc)
 	if err != nil {

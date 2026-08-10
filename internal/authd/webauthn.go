@@ -13,7 +13,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // challengeTTL bounds how long a ceremony may take. Long enough to find the
@@ -57,7 +57,7 @@ func NewAuthenticator(rpID, rpOrigin string, store *Store, codec *ChallengeCodec
 }
 
 // webauthnUser adapts a FrameUser to the library's interface.
-type webauthnUser struct{ u *framev1alpha1.FrameUser }
+type webauthnUser struct{ u *framev1beta1.FrameUser }
 
 func (w webauthnUser) WebAuthnID() []byte          { return []byte(w.u.Name) }
 func (w webauthnUser) WebAuthnName() string        { return w.u.Spec.Email }
@@ -83,7 +83,7 @@ func (w webauthnUser) WebAuthnCredentials() []webauthn.Credential {
 	return creds
 }
 
-func (a *Authenticator) BeginRegistration(_ context.Context, u *framev1alpha1.FrameUser) ([]byte, string, error) {
+func (a *Authenticator) BeginRegistration(_ context.Context, u *framev1beta1.FrameUser) ([]byte, string, error) {
 	options, session, err := a.web.BeginRegistration(
 		webauthnUser{u},
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
@@ -94,7 +94,7 @@ func (a *Authenticator) BeginRegistration(_ context.Context, u *framev1alpha1.Fr
 	return a.seal(options, session)
 }
 
-func (a *Authenticator) FinishRegistration(ctx context.Context, u *framev1alpha1.FrameUser, sealed string, response []byte, label string) error {
+func (a *Authenticator) FinishRegistration(ctx context.Context, u *framev1beta1.FrameUser, sealed string, response []byte, label string) error {
 	session, err := a.openSession(sealed)
 	if err != nil {
 		return err
@@ -107,7 +107,7 @@ func (a *Authenticator) FinishRegistration(ctx context.Context, u *framev1alpha1
 	if err != nil {
 		return fmt.Errorf("verifying registration: %w", err)
 	}
-	return a.store.AddCredential(ctx, u, framev1alpha1.WebAuthnCredential{
+	return a.store.AddCredential(ctx, u, framev1beta1.WebAuthnCredential{
 		ID:        base64.RawURLEncoding.EncodeToString(cred.ID),
 		PublicKey: base64.RawStdEncoding.EncodeToString(cred.PublicKey),
 		SignCount: cred.Authenticator.SignCount,
@@ -127,7 +127,7 @@ func (a *Authenticator) BeginLogin(_ context.Context) ([]byte, string, error) {
 	return a.seal(options, session)
 }
 
-func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response []byte) (*framev1alpha1.FrameUser, error) {
+func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response []byte) (*framev1beta1.FrameUser, error) {
 	session, err := a.openSession(sealed)
 	if err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response
 		return nil, fmt.Errorf("parsing assertion: %w", err)
 	}
 
-	var matched *framev1alpha1.FrameUser
+	var matched *framev1beta1.FrameUser
 	lookup := func(rawID, _ []byte) (webauthn.User, error) {
 		u, err := a.store.ByCredentialID(ctx, base64.RawURLEncoding.EncodeToString(rawID))
 		if err != nil {
@@ -173,7 +173,7 @@ func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response
 // On a regression the login is refused (ErrCounterRegression) and the store
 // is deliberately left untouched: no UpdateSignCount, no credential removal.
 // Only a clean counter reaches the write that rotates it forward.
-func (a *Authenticator) recordLoginCounter(ctx context.Context, u *framev1alpha1.FrameUser, cred *webauthn.Credential) error {
+func (a *Authenticator) recordLoginCounter(ctx context.Context, u *framev1beta1.FrameUser, cred *webauthn.Credential) error {
 	if cred.Authenticator.CloneWarning {
 		return fmt.Errorf("%w: authenticator reported counter %d", ErrCounterRegression, cred.Authenticator.SignCount)
 	}

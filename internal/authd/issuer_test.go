@@ -11,7 +11,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 func testIssuer(t *testing.T) *Issuer {
@@ -29,7 +29,7 @@ func testIssuer(t *testing.T) *Issuer {
 
 func TestMintCarriesEmailAndGroup(t *testing.T) {
 	iss := testIssuer(t)
-	raw, err := iss.Mint("alice@example.com", framev1alpha1.RoleOperator, 15*time.Minute)
+	raw, err := iss.Mint("alice@example.com", framev1beta1.RoleOperator, 15*time.Minute)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

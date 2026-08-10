@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	"github.com/rmocq/frame/internal/services/provider"
 )
 
@@ -49,7 +50,7 @@ var _ = Describe("FrameService Binding", func() {
 	key := types.NamespacedName{Name: name, Namespace: ns}
 	ctx := context.Background()
 
-	var svc *servicesv1alpha1.FrameService
+	var svc *servicesv1beta1.FrameService
 	var fake *fakeProvisioner
 
 	BeforeEach(func() {
@@ -68,15 +69,15 @@ var _ = Describe("FrameService Binding", func() {
 				Data:     map[string][]byte{"endpoint": []byte("http://binding-svc.default.svc:8080")},
 			},
 		}
-		svc = &servicesv1alpha1.FrameService{
+		svc = &servicesv1beta1.FrameService{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec:       servicesv1alpha1.FrameServiceSpec{Type: "fake", DeletionPolicy: "Retain"},
+			Spec:       servicesv1beta1.FrameServiceSpec{Type: "fake", DeletionPolicy: "Retain"},
 		}
 		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		fresh := &servicesv1alpha1.FrameService{}
+		fresh := &servicesv1beta1.FrameService{}
 		if err := k8sClient.Get(ctx, key, fresh); err == nil {
 			fresh.Finalizers = nil
 			_ = k8sClient.Update(ctx, fresh)
@@ -160,7 +161,7 @@ var _ = Describe("FrameService Binding", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("BindingConflict"))
 
 		var untouched corev1.Secret
@@ -223,7 +224,7 @@ var _ = Describe("FrameService Binding", func() {
 		// deleteAllProjections succeeds, so the FrameService being gone here
 		// is itself evidence the projection cleanup ran rather than errored.
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1alpha1.FrameService{}))
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &servicesv1beta1.FrameService{}))
 		}, "5s").Should(BeTrue())
 	})
 
@@ -235,13 +236,26 @@ var _ = Describe("FrameService Binding", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("ProjectedNamespaceMissing"))
 	})
 
 	It("degrades naming the entry when projectTo lists a syntactically invalid namespace name", func() {
 		_, _ = r().Reconcile(ctx, req) // lands the finalizer
-		updateProjectTo([]string{"Not_A_Valid_Namespace!"})
+
+		// Written through v1alpha1, and that is the whole reason this branch
+		// is still reachable. v1beta1 bounds projectTo entries with a
+		// DNS-1123 pattern (F13), so the typed v1beta1 client above cannot
+		// produce this object any more — the apiserver refuses it. v1alpha1
+		// has no such bound, and CR schema validation runs against the
+		// *request* version only: the conversion webhook's output is stored
+		// without being re-validated. So a v1alpha1 client can still land an
+		// invalid entry on a v1beta1-stored object, and the controller's
+		// defensive branch is what stands between that and an error loop.
+		alpha := &servicesv1alpha1.FrameService{}
+		Expect(k8sClient.Get(ctx, key, alpha)).To(Succeed())
+		alpha.Spec.Binding.ProjectTo = []string{"Not_A_Valid_Namespace!"}
+		Expect(k8sClient.Update(ctx, alpha)).To(Succeed())
 
 		// A syntactically invalid name is rejected by client-go itself before
 		// the request ever reaches the apiserver, as a plain error carrying
@@ -253,7 +267,7 @@ var _ = Describe("FrameService Binding", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("ProjectedNamespaceInvalid"))
 	})
 
@@ -315,7 +329,7 @@ var _ = Describe("FrameService Binding", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, key, svc)).To(Succeed())
-		Expect(svc.Status.Phase).To(Equal("Degraded"))
+		Expect(readyCondition(svc).Status).To(Equal(metav1.ConditionFalse))
 		Expect(readyCondition(svc).Reason).To(Equal("BindingConflict"))
 
 		var untouched corev1.Secret

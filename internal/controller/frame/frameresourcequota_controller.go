@@ -36,7 +36,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 const frameResourceQuotaFinalizer = "frame.plume-labs.io/frameresourcequota"
@@ -57,7 +57,7 @@ type FrameResourceQuotaReconciler struct {
 func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	var frq framev1alpha1.FrameResourceQuota
+	var frq framev1beta1.FrameResourceQuota
 	if err := r.Get(ctx, req.NamespacedName, &frq); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -74,13 +74,13 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	var nsList corev1.NamespaceList
 	if err := r.List(ctx, &nsList, client.MatchingLabels{
-		"frame.plume-labs.io/service-class": frq.Spec.ServiceClass,
+		"frame.plume-labs.io/service-class": string(frq.Spec.ServiceClass),
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	hard := buildResourceList(&frq)
-	quotaName := "frame-" + strings.ToLower(frq.Spec.ServiceClass)
+	quotaName := "frame-" + strings.ToLower(string(frq.Spec.ServiceClass))
 
 	projected := make([]corev1.ResourceQuota, 0, len(nsList.Items))
 	for _, ns := range nsList.Items {
@@ -120,7 +120,7 @@ func (r *FrameResourceQuotaReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, r.Status().Patch(ctx, &frq, patch)
 }
 
-func buildResourceList(frq *framev1alpha1.FrameResourceQuota) corev1.ResourceList {
+func buildResourceList(frq *framev1beta1.FrameResourceQuota) corev1.ResourceList {
 	hard := corev1.ResourceList{}
 	if frq.Spec.MaxCPU != nil {
 		hard[corev1.ResourceLimitsCPU] = *frq.Spec.MaxCPU
@@ -166,7 +166,7 @@ func sumQuotaUsage(quotas []corev1.ResourceQuota) corev1.ResourceList {
 // SetupWithManager sets up the controller with the Manager.
 func (r *FrameResourceQuotaReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1alpha1.FrameResourceQuota{}).
+		For(&framev1beta1.FrameResourceQuota{}).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.namespaceToFRQ)).
 		Named("frameresourcequota").
 		Complete(r)
@@ -178,13 +178,13 @@ func (r *FrameResourceQuotaReconciler) namespaceToFRQ(ctx context.Context, obj c
 	if sc == "" {
 		return nil
 	}
-	var list framev1alpha1.FrameResourceQuotaList
+	var list framev1beta1.FrameResourceQuotaList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}
 	var reqs []reconcile.Request
 	for _, frq := range list.Items {
-		if frq.Spec.ServiceClass == sc {
+		if string(frq.Spec.ServiceClass) == sc {
 			reqs = append(reqs, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: frq.Name, Namespace: frq.Namespace},
 			})

@@ -86,12 +86,12 @@ See `values.yaml` for the full, commented list. Highlights:
 | `metrics.enabled` | `true` | Gates the metrics port, its Service, its RBAC (`metrics-auth-role`/`metrics-reader`), and (with `certManager.enabled`) the metrics Certificate. |
 | `metrics.secure` | `true` | `true` = HTTPS+authn/authz on `:8443` (matches kustomize); `false` = plain HTTP on `:8080`, for local debugging only. The metrics Service, the metrics NetworkPolicy rule and the ServiceMonitor endpoint all derive their port/scheme from this value (`templates/_helpers.tpl`'s `frame.metricsPort`/`frame.metricsPortName`) so they can't drift out of sync with the container's actual `--metrics-bind-address`. |
 | `metrics.serviceMonitor.enabled` | `false` | Off by default to match kustomize (`config/prometheus` is commented out of `config/default`). Requires the Prometheus Operator CRDs in-cluster. |
-| `webhooks.enabled` | `true` | Disabling it sets `ENABLE_WEBHOOKS=false` on the container (the actual switch `cmd/main.go` checks — `webhooks.enabled: false` used to only drop the cert mount/volume/port and leave webhook registration itself on, which crash-looped the manager on the now-missing `tls.crt`). With it `false`, CRs are accepted with no defaulting or validation — only meant for constrained debugging. |
+| `webhooks.enabled` | `true` | Disabling it sets `ENABLE_WEBHOOKS=false` on the container (the actual switch `cmd/main.go` checks — `webhooks.enabled: false` used to only drop the cert mount/volume/port and leave webhook registration itself on, which crash-looped the manager on the now-missing `tls.crt`). With it `false`, CRs are accepted with no defaulting or validation — only meant for constrained debugging. **Since the API went two-version, `false` is incompatible with `crds.install: true`** and `templates/crds.yaml` fails the render: the same switch that turns admission off also removes `/convert` (controller-runtime registers the conversion handler as a side effect of the admission builder), and a multi-version CRD with nowhere to convert is either broken loudly (`strategy: Webhook`, every read at the non-storage version errors) or broken silently (`strategy: None`, every such read returns the stored object uninterpreted — for FrameUser, a password hash that is simply absent, answered with a 200). |
 | `webhooks.certSecretName` | `webhook-server-cert` | The Secret the manager mounts at `/tmp/k8s-webhook-server/serving-certs`, keys `tls.crt` / `tls.key`. |
 | `webhooks.caBundle` | `""` | Only used when `certManager.enabled: false` — base64 PEM CA bundle injected into both WebhookConfigurations' `clientConfig.caBundle`. **Required whenever `certManager.enabled: false` and `webhooks.enabled: true`**: `templates/webhookconfigurations.yaml` fails the render if it's left empty, because an empty `caBundle` installs cleanly and then fails every CR create/update cluster-wide with an x509 error (`failurePolicy: Fail` on all 10 webhooks) — a silent, fail-closed outage is exactly what this guard turns into a loud, install-time one. |
 | `certManager.enabled` | `true` | When `false`, the chart renders no Issuer/Certificate and expects `webhooks.certSecretName` to already exist with a cert whose CA matches `webhooks.caBundle`, provisioned by whatever your cluster uses instead (manual, `openssl`, a different PKI operator, …). |
 | `networkPolicy.enabled` | `false` | Matches kustomize (`config/network-policy` is commented out of `config/default`). **The webhook rule is open to any source on port 9443, by design — this is not a partial fix, it is the honest answer.** The port is corrected from kustomize's `443` (the Service port; NetworkPolicy `ingress.ports[].port` is a pod port, and the webhook server only ever listens on 9443 — kustomize's own copy of this rule has this bug too). But restricting *source* is a different problem: on every real target (k3s, kubeadm, …) `kube-apiserver` is a host process, not a pod, so a `namespaceSelector` can never match it — verified cross-node on Kind+Calico: even with the port fixed, a `namespaceSelector`-restricted rule DROPPED (timed out) genuine host→pod admission traffic; the open rule below did not, and a real `kubectl apply` through the actual apiserver was admitted. `failurePolicy: Fail` on all 10 webhooks makes a rule the apiserver can't satisfy a cluster-wide CR write outage, not a source restriction, so this chart does not ship one by default. Set `networkPolicy.webhookSourceCIDRs` (your control-plane node IPs — cluster-specific, no safe chart default) to tighten it. |
-| `rbac.tierRoles.install` | `true` | The 21 viewer/editor/admin ClusterRoles kubebuilder scaffolds per CRD — not used by the manager itself, convenience roles for cluster admins. |
+| `rbac.tierRoles.install` | `true` | The 24 viewer/editor/admin ClusterRoles, three per CRD — not used by the manager itself, convenience roles for cluster admins, and **bound to nobody by this chart**, so installing them grants no principal anything. Verbs are enumerated explicitly rather than `'*'` (a wildcard also covers verbs and subresources a future version adds, which is not a frozen tier). `frameuser` is the odd one out: its editor and viewer roles have no `frameusers/status` rule at all, because that subresource carries an argon2id password hash, and its admin role is the only one with `patch`/`update` on a `/status`, because setting a password is only reachable there. **That denial blocks writing a hash, not reading one** — a plain `get frameusers` returns status too, measured against a real apiserver — so bind `frameuser-viewer-role` only to principals you would hand the password hashes. See `docs/deployment.md`, "RBAC". |
 
 ## Installing without cert-manager
 
@@ -121,11 +121,22 @@ resource's *full body* (not just its name), because a name-only check cannot
 see a dropped ClusterRole verb, a dropped `--leader-elect`, or a changed
 probe port — all of which would break a `--take-ownership` migration
 silently. Three narrow, permanent exceptions are allow-listed explicitly in
-the script: `CustomResourceDefinition` (verified separately, see decision #2
-and `make helm-crds-check`), and on the `frame-controller-manager` Deployment
-and `frame-metrics-certs` Certificate, the specific fields already documented
-above and in `values.yaml` (`image`/`imagePullPolicy`, the default
-`affinity`, and `dnsNames`).
+the script:
+
+- **CustomResourceDefinition bodies** are skipped from the content diff:
+  their OpenAPI schemas are large, and `make helm-crds-check` already keeps
+  `files/crds/` byte-identical to `config/crd/bases/`. Their **version
+  topology and conversion wiring are not skipped** — `hack/helm-parity.sh`
+  compares those separately, because they are added on one side only
+  (kustomize patches the conversion stanza in; the chart's
+  `templates/crds.yaml` has to inject the equivalent itself) and are
+  therefore invisible to `helm-crds-check`. A chart shipping
+  `conversion.strategy: None` against a multi-version operator is a silent
+  data-interpretation failure with green CI; this check is what stops it.
+- The `frame-controller-manager` Deployment and `frame-metrics-certs`
+  Certificate: the specific fields already documented above and in
+  `values.yaml` (`image`/`imagePullPolicy`, the default `affinity`, and
+  `dnsNames`).
 
 A third pass turns on `networkPolicy.enabled`, `metrics.serviceMonitor.enabled`
 and `podDisruptionBudget.enabled`, and asserts that *exactly* the four

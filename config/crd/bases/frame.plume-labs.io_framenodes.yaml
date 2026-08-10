@@ -32,6 +32,10 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: frame.plume-labs.io/v1alpha1 FrameNode is deprecated; use
+      frame.plume-labs.io/v1beta1. serviceClass no longer admits the empty string,
+      and status.phase is computed from status.conditions and is not stored.
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -281,6 +285,351 @@ spec:
                 - Offline
                 - Failed
                 type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Phase
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .spec.role
+      name: Role
+      type: string
+    - jsonPath: .spec.serviceClass
+      name: ServiceClass
+      type: string
+    - jsonPath: .spec.zone
+      name: Zone
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameNode is the Schema for the framenodes API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FrameNode
+            properties:
+              disk:
+                description: Disk device for Talos installation (e.g. /dev/nvme0n1).
+                  Set after discovery.
+                type: string
+              hostname:
+                description: Hostname for the node.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              ip:
+                description: |-
+                  IP address of the node in maintenance mode.
+
+                  Validated by CEL, not by Format. v1alpha1 carried a
+                  validation:Format=ip marker, which does nothing: `ip` is not a
+                  recognised OpenAPI format — the apiserver knows ipv4, ipv6 and cidr —
+                  and unrecognised formats are silently dropped, so the only thing
+                  rejecting a malformed address was the Go webhook's net.ParseIP. The
+                  MaxLength is what lets the CEL cost estimator bound isIP(), the same
+                  way network.dns needed it (T2).
+
+                  isIP() is not net.ParseIP: measured against the pinned
+                  k8s.io/apiserver CEL library, it rejects IPv4-mapped IPv6
+                  (::ffff:192.168.100.228) and zoned addresses (fe80::1%eth0), both of
+                  which net.ParseIP accepts. So this is a real tightening over the
+                  webhook, not just a relocation of it. All three stored FrameNodes hold
+                  plain IPv4, so none is stranded. It also means 45 is unreachable — the
+                  longest string isIP() accepts is a 39-character expanded IPv6 — but the
+                  bound stays at 45 to match network.dns's items and because its job is
+                  bounding CEL cost, not describing the value.
+                maxLength: 45
+                type: string
+                x-kubernetes-validations:
+                - message: ip must be a valid IP address
+                  rule: isIP(self)
+              network:
+                description: Network configuration. Set after discovery to trigger
+                  provisioning.
+                properties:
+                  address:
+                    description: |-
+                      Address is the node's post-provisioning address. It is expected in CIDR
+                      form — every stored object holds one (192.168.2.201/24) — which is why
+                      it carries no isIP rule, in either direction: a conversion or a later
+                      tightening that applies isIP here would strand all three.
+
+                      The format is *documented and deliberately not validated*, and the
+                      MaxLength is deliberately the only bound. This field is the one node
+                      field written into a Talos machine config, so leaving it wholly
+                      unbounded was not acceptable past the freeze; but the field is named
+                      "address" while every value is a prefix, nothing in the code enforces
+                      either reading, and a pattern would freeze a decision nobody has taken.
+                      A bound cannot strand anything and can be raised later; a pattern could
+                      do neither. This note exists so the next reader does not add the
+                      pattern believing it was merely overlooked — it was considered and
+                      declined (Fix Round 1).
+
+                      45 matches spec.ip and the network.dns items for no reason beyond
+                      consistency; the longest expanded IPv6 prefix is 43 characters and the
+                      stored values are 18.
+                    maxLength: 45
+                    type: string
+                  bond:
+                    description: Bond names the bonding interface to configure.
+                    type: string
+                  dns:
+                    description: |-
+                      DNS lists the resolvers for the node. The MaxLength on the items is
+                      what lets the CEL cost estimator bound isIP(); without it the rule is
+                      rejected as unboundedly expensive.
+                    items:
+                      maxLength: 45
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-validations:
+                    - message: each network.dns entry must be a valid IP
+                      rule: self.all(x, isIP(x))
+                  gateway:
+                    description: Gateway is the default gateway for the node.
+                    type: string
+                  vlan:
+                    description: VLAN tags the node's interface.
+                    format: int32
+                    type: integer
+                type: object
+              rack:
+                description: |-
+                  Rack identifier for topology. Projected onto the Kubernetes Node as the
+                  label frame.plume-labs.io/rack, which is why it is bounded like a label
+                  value: v1alpha1 accepted anything at all, and the controller then wrote
+                  it as a label, so an over-long or malformed rack would be admitted here
+                  and rejected there, leaving the FrameNode permanently short of Online
+                  behind an error naming label validation rather than this field (T1).
+
+                  The bound is prophylactic, not a fix for an observed outage: the
+                  label-projection path has never run on this cluster — all three stored
+                  FrameNodes sit at the discovery stage with no spec.disk — and every one
+                  of them uses "rack-01", which passes. What the bound buys is that the
+                  failure can no longer be introduced, and after the freeze it could
+                  never be added.
+                maxLength: 63
+                pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
+                type: string
+              rdmaInterface:
+                description: |-
+                  RDMAInterface names the RDMA device (e.g. ib0, mlx5_0). Its presence is
+                  projected onto the Kubernetes Node as frame.plume-labs.io/rdma=true.
+                type: string
+              role:
+                description: Role of the node in the cluster. Empty during initial
+                  discovery.
+                enum:
+                - controlplane
+                - worker
+                - ""
+                type: string
+              serviceClass:
+                description: |-
+                  ServiceClass is the tier of hardware this node offers, projected onto
+                  the Kubernetes Node as frame.plume-labs.io/service-class and read by
+                  the inference provider's NodeSelector.
+
+                  Optional and deliberately undefaulted: a node is discovered before it
+                  is classified, and defaulting it would classify hardware nobody has
+                  looked at. v1alpha1's enum also admitted the empty string; that member
+                  is gone, because absence already means unclassified. Dropping it is
+                  field-level, so ratcheting protects stored objects — and none of the
+                  three that exist uses it.
+                enum:
+                - HIGH
+                - MEDIUM
+                - LOW
+                type: string
+              zone:
+                description: |-
+                  Zone identifier for topology. Projected onto the Kubernetes Node as
+                  topology.kubernetes.io/zone; bounded for the same reason as Rack.
+                maxLength: 63
+                pattern: ^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$
+                type: string
+            required:
+            - ip
+            type: object
+            x-kubernetes-validations:
+            - message: network.address, network.gateway, and at least one network.dns
+                entry are required once disk is set
+              rule: '!has(self.disk) || size(self.disk) == 0 || (has(self.network)
+                && has(self.network.address) && size(self.network.address) > 0 &&
+                has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns)
+                && self.network.dns.size() > 0)'
+          status:
+            description: status defines the observed state of FrameNode
+            properties:
+              allocatable:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: Allocatable represents the resources available for scheduling.
+                type: object
+              capacity:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: Capacity represents the total resources of the node.
+                type: object
+              conditions:
+                description: |-
+                  Conditions represent the current state of the FrameNode resource.
+                  Ready's reason is the node's lifecycle state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              discoveredDisks:
+                description: DiscoveredDisks contains disk information from maintenance
+                  mode discovery.
+                items:
+                  description: DiskInfo describes a disk discovered on a node in maintenance
+                    mode.
+                  properties:
+                    name:
+                      type: string
+                    size:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - name
+                  - size
+                  - type
+                  type: object
+                type: array
+              discoveredHostname:
+                description: DiscoveredHostname is the hostname reported by the node
+                  in maintenance mode.
+                type: string
+              discoveredNICs:
+                description: DiscoveredNICs contains network interface information
+                  from maintenance mode discovery.
+                items:
+                  description: NICInfo describes a network interface discovered on
+                    a node in maintenance mode.
+                  properties:
+                    mac:
+                      type: string
+                    name:
+                      type: string
+                    speed:
+                      type: string
+                  required:
+                  - mac
+                  - name
+                  - speed
+                  type: object
+                type: array
+              discoveredTalosVersion:
+                description: DiscoveredTalosVersion is the Talos version reported
+                  during maintenance mode discovery.
+                type: string
+              kubeletVersion:
+                description: KubeletVersion is the kubelet version running on the
+                  node.
+                type: string
+              nodeName:
+                description: NodeName is the Kubernetes node name.
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation this status was computed
+                  from.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

@@ -1,0 +1,44 @@
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants read-only access to frame.plume-labs.io/frameusers.
+# This role is intended for users who need visibility into these resources
+# without permissions to modify them. It is ideal for monitoring purposes and limited-access viewing.
+#
+# Unlike every other viewer tier, this one has **no frameusers/status rule at
+# all**: status.passwordHash is an argon2id credential (F11).
+#
+# Be clear about what that does and does not buy, because it is easy to read
+# too much into it. Measured against a real apiserver: a plain
+# `GET frameusers` returns the whole object, status included, so this tier
+# CAN still read the hash. The status subresource splits writes, not reads.
+# Removing the rule denies the dedicated /status endpoint and nothing more.
+#
+# Nor is the absent rule what stops a write. RBAC has no version dimension, so
+# for as long as v1alpha1 is served the same field is reachable as
+# spec.passwordHash on the main resource. The validating webhook
+# (guardPasswordHash in internal/webhook/frame/v1beta1) is what refuses that,
+# at both versions. See frameuser_editor_role.yaml for the full account.
+#
+# It is kept because it is correct — a read-only tier has no business on a
+# credential endpoint — and because it is the shape this role must already
+# have when the hash moves to a Secret, which is the only change that makes
+# the hash genuinely unreadable here. Until then, granting this role is
+# granting the password hashes. See frameuser_admin_role.yaml.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: frameuser-viewer-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameusers
+  verbs:
+  - get
+  - list
+  - watch

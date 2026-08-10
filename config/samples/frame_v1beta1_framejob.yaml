@@ -1,0 +1,20 @@
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameJob
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: framejob-sample
+  namespace: frame-system
+spec:
+  pipeline: training
+  # The Argo Workflow is created in this FrameJob's own namespace. v1alpha1
+  # had a spec.namespace naming another one; it is gone (F5).
+  serviceClass: HIGH
+  priority: high
+  gpuCount: 2
+  parameters:
+    dataset: imagenet
+    epochs: "90"
+  # Flip to true to suspend the underlying Workflow, back to false to resume.
+  suspended: false

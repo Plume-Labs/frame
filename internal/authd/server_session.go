@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	framev1alpha1 "github.com/rmocq/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
 // dummyPasswordHash is a valid argon2id PHC string for a password nobody
@@ -61,8 +61,8 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// a real, password-enabled account with a parseable hash gets its own
 	// hash checked. Folding hasUsableHash into usable matters because an
 	// account can have PasswordAuth: enabled with an empty or malformed
-	// spec.passwordHash — nothing writes that field yet, so it's unreachable
-	// today, but it is exactly the half-completed state a future
+	// status.passwordHash — nothing writes that field yet, so it's
+	// unreachable today, but it is exactly the half-completed state a future
 	// set-password endpoint will transiently create between enabling
 	// password auth and writing the hash. Without this check, that account
 	// would return 401 in microseconds (VerifyPassword's malformed-input
@@ -70,10 +70,14 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// real argon2id work, positively identifying it by timing alone — the
 	// same class of oracle TestUnknownEmailAndWrongPasswordAreIndistinguishable
 	// guards against.
-	usable := err == nil && u.Spec.PasswordAuth == framev1alpha1.PasswordEnabled && hashIsUsable(u.Spec.PasswordHash)
+	// The hash is on the status subresource, not in spec (F11): it is
+	// credential material, and only authd's frameusers/status RBAC reaches
+	// it. A v1alpha1 client still spells it spec.passwordHash; the conversion
+	// webhook moves it, so this read sees either origin.
+	usable := err == nil && u.Spec.PasswordAuth == framev1beta1.PasswordEnabled && hashIsUsable(u.Status.PasswordHash)
 	hash := dummyPasswordHash
 	if usable {
-		hash = u.Spec.PasswordHash
+		hash = u.Status.PasswordHash
 	}
 	verified := verifyPassword(hash, body.Password)
 
@@ -96,7 +100,7 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 // its own success status on top (the bug this return value exists to
 // prevent: a 500 followed by an unconditional 204, and the
 // "superfluous response.WriteHeader call" warning that comes with it).
-func (s *Server) setSession(w http.ResponseWriter, u *framev1alpha1.FrameUser) bool {
+func (s *Server) setSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bool {
 	sealed, err := s.cfg.Codec.Seal(PurposeSession, []byte(u.Spec.Email), s.cfg.SessionTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -156,7 +160,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 
 // sessionUser resolves the signed-in account, writing the 401 itself so every
 // caller is a two-liner that cannot forget to stop on failure.
-func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*framev1alpha1.FrameUser, bool) {
+func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*framev1beta1.FrameUser, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
