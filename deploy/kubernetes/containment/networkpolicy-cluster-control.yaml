@@ -1,0 +1,325 @@
+# Default-deny containment for the `cluster-control` namespace.
+#
+# Context: the control-plane UI is an unauthenticated path to the Kubernetes
+# API (security review 2026-08-09, C1/C2) and, since the `cluster-control-ui-lan`
+# NodePort was added at the owner's request, it is reachable from the whole LAN.
+# These policies do not fix the missing authentication — they bound what the
+# namespace can talk to, and what can talk to it, so a foothold anywhere else in
+# the cluster cannot reach the UI's proxy sidecar laterally.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# TWO THINGS THAT LOOK RIGHT AND ARE NOT. Both were measured, not assumed
+# (Kind v0.30 + Calico v3.30.2 rehearsal; see docs/runbook.md).
+#
+# 1. THE APISERVER IS NOT A POD. On k3s it is a host process on the control
+#    plane, so no `namespaceSelector`/`podSelector` can ever select it — the
+#    operator's own NetworkPolicy shipped broken for exactly this reason.
+#    Nor can you address it by the `kubernetes` Service ClusterIP: NetworkPolicy
+#    is evaluated in the iptables *filter* table, which runs AFTER the *nat*
+#    table has already DNAT'd 10.43.0.1:443 to the real backend. Measured: an
+#    egress rule naming `ipBlock: 10.96.0.1/32` port 443 still dropped the call.
+#    The destination that must appear in the rule is the POST-DNAT one — the
+#    node IP on port 6443.
+#
+# 2. NODEPORT TRAFFIC ARRIVES FROM THE NODE'S NETWORK NAMESPACE, NOT FROM A
+#    POD — so a pod/namespace selector can never match it. Measured: a
+#    selector-only ingress rule left the cross-node NodePort call timing out
+#    while simultaneously admitting every pod in the cluster. The exact
+#    opposite of the intent, in both directions at once.
+#
+#    BUT — and this is the part that is easy to get wrong, and that the first
+#    draft of this file DID get wrong — the source address is NOT the node IP.
+#    kube-proxy masquerades to the address of the interface the packet leaves
+#    by, and the route to the pod network does not leave by the LAN NIC. On
+#    this cluster (k3s, flannel vxlan) that means, measured from the live UI
+#    pods' own nginx logs while a browser was on http://192.168.2.201:30379/ :
+#
+#      pod on a REMOTE node  <- 10.42.0.0   the ingress node's flannel.1
+#      pod on the SAME node  <- 10.42.0.1   that node's cni0 bridge
+#
+#    Not one packet arrived from 192.168.2.201. An ipBlock listing the node
+#    IPs — the obvious reading of "NodePort traffic comes from the node" —
+#    would have blackholed the entire UI.
+#
+#    The kubelet's readiness/liveness probes take the same path as the
+#    same-node case and so also arrive from `cni0`, i.e. 10.42.<n>.1. They are
+#    invisible in the nginx logs because `/health` sets `access_log off`, which
+#    is precisely why this is worth writing down rather than re-deriving: get it
+#    wrong and every replica fails its probe and the Deployment rolls itself
+#    into an outage.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ADDRESSES BELOW, AND HOW TO RE-DERIVE THEM
+#
+# Per node, flannel gives `flannel.1` the network address of that node's
+# podCIDR and `cni0` the next one. Today:
+#
+#   kubectl get nodes -o custom-columns=NAME:.metadata.name,POD_CIDR:.spec.podCIDR
+#     neura-k3s-cp   10.42.0.0/24   ->  10.42.0.0 (flannel.1)  10.42.0.1 (cni0)
+#     neura-k3s-w2   10.42.1.0/24   ->  10.42.1.0              10.42.1.1
+#     neura-k3s-w1   10.42.2.0/24   ->  10.42.2.0              10.42.2.1
+#
+# Six /32s, and they are safe to allow: host-local IPAM hands pods .2 upwards,
+# never .0 or .1. Verified against the running cluster — of 150 pods holding a
+# 10.42.0.0/16 address, none has a final octet of 0 or 1. So this admits the
+# three nodes and no workload. (Source spoofing is not a way around it: both
+# flannel and the netpol dataplane apply reverse-path filtering to pod
+# interfaces, and a pod would need NET_RAW/NET_ADMIN it does not have.)
+#
+# THIS IS THE FRAGILE PART OF THE WHOLE CHANGE. Adding a node, or a podCIDR
+# reallocation, invalidates the list and the symptom is the UI going dark from
+# that node only. Re-run the two commands in the runbook's verification section
+# after any node change.
+#
+# LAN client addresses are deliberately absent: with
+# `externalTrafficPolicy: Cluster` (what `cluster-control-ui-lan` is set to)
+# they are masqueraded away before the policy sees them. If that field is ever
+# flipped to `Local`, the real client IP survives instead and every rule here
+# stops matching — see the runbook's "what to watch".
+#
+# NODE IPs are listed alongside, though nothing matched them in the
+# measurement. They are the source if flannel is ever switched off vxlan to
+# host-gw/direct routing, and they are the source for host-network pods such as
+# k3s's `svclb` DaemonSet, which would carry the traffic if the UI were ever
+# fronted by a LoadBalancer Service instead of a NodePort. Cheap insurance
+# against a silent outage; they grant a node's host namespace access it
+# effectively already has.
+#
+# The apiserver egress rule allows 6443 on all three node IPs. Only
+# 192.168.2.201 answers on 6443 today (single control plane — the `kubernetes`
+# Endpoints object lists it alone); .202/.203 are there so that promoting a
+# worker does not silently break the UI. Allowing a port nothing listens on
+# grants nothing.
+#
+# NOT NEEDED, and deliberately absent: egress to Prometheus, Alertmanager,
+# node-exporter, DCGM and the rest. Every one of those is reached THROUGH the
+# apiserver's pod-proxy subresource (`frame-sdk.ts:617 integrationProxy()`
+# builds `/api/v1/namespaces/{ns}/pods/{pod}:{port}/proxy{path}`). The browser
+# calls nginx, nginx forwards to the `kubectl proxy` sidecar over pod-local
+# loopback — which NetworkPolicy does not see — and the apiserver, not this
+# namespace, opens the connection to the target pod. The UI pod's only
+# off-pod egress is DNS and the apiserver.
+---
+# 1/6 — Deny everything, both directions, for every pod in the namespace.
+# Everything below re-opens one specific hole. Order does not matter to
+# Kubernetes (policies are additive/OR-ed) but it matters to the reader.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-control-default-deny
+  namespace: cluster-control
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2/6 — DNS. Without this, nothing resolves and every other allowance is moot.
+# The failure mode is distinctive and worth knowing: a pod that cannot reach
+# DNS fails with "could not resolve host" (curl exit 6), whereas a pod that
+# resolves fine but is dropped on the wire hangs until timeout (curl exit 28).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-control-allow-dns-egress
+  namespace: cluster-control
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3/6 — The apiserver. See trap 1 in the header: node IPs on 6443, because the
+# rule is matched after DNAT. This is what the `kubectl proxy` sidecar needs,
+# and (once Stage 2 of authd lands) what authd needs to read FrameUsers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-control-allow-apiserver-egress
+  namespace: cluster-control
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 192.168.2.201/32
+        - ipBlock:
+            cidr: 192.168.2.202/32
+        - ipBlock:
+            cidr: 192.168.2.203/32
+      ports:
+        - protocol: TCP
+          port: 6443
+---
+# 4/6 — Ingress to the UI. See trap 2 in the header: the source of NodePort
+# traffic is the ingress node's own IP, so this must be an ipBlock.
+# Port 8080 is the CONTAINER port (`deployment.yaml`, container `ui`), not the
+# Service port 80 and not the nodePort 30379 — a NetworkPolicy port is always
+# the port on the destination pod. Getting this wrong is how the operator's
+# webhook policy came to allow 443 while the webhook listened on 9443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-control-allow-ui-ingress
+  namespace: cluster-control
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector:
+    matchLabels:
+      app: cluster-control
+      component: ui
+  policyTypes:
+    - Ingress
+  ingress:
+    # NodePort clients and the kubelet's readiness/liveness probes. Both
+    # arrive from the node's own network namespace, addressed as flannel.1
+    # (.0, cross-node) or cni0 (.1, same-node) — see the header. Dropping the
+    # probes would take every replica NotReady and roll the Deployment into an
+    # outage, so if anything goes wrong after the apply, check probe failures
+    # first.
+    - from:
+        # neura-k3s-cp  — podCIDR 10.42.0.0/24
+        - ipBlock:
+            cidr: 10.42.0.0/32
+        - ipBlock:
+            cidr: 10.42.0.1/32
+        # neura-k3s-w2  — podCIDR 10.42.1.0/24
+        - ipBlock:
+            cidr: 10.42.1.0/32
+        - ipBlock:
+            cidr: 10.42.1.1/32
+        # neura-k3s-w1  — podCIDR 10.42.2.0/24
+        - ipBlock:
+            cidr: 10.42.2.0/32
+        - ipBlock:
+            cidr: 10.42.2.1/32
+        # Host-namespace fallbacks: non-encapsulating CNI mode, host-network
+        # pods (k3s svclb). Unmatched in today's measurement.
+        - ipBlock:
+            cidr: 192.168.2.201/32
+        - ipBlock:
+            cidr: 192.168.2.202/32
+        - ipBlock:
+            cidr: 192.168.2.203/32
+      ports:
+        - protocol: TCP
+          port: 8080
+    # NOTE — there is deliberately no rule admitting in-cluster pods. That is
+    # the point of the exercise: `jupyterhub` and `neura-sandbox` run
+    # user-supplied code and were, until now, one HTTP request away from the
+    # proxy sidecar's cluster-wide credential.
+    #
+    # If an Ingress is ever put back in front of the UI (there is none on the
+    # cluster today — `kubectl -n cluster-control get ingress` returns nothing,
+    # although `base/ingress.yaml` still defines one), the ingress controller
+    # is a pod and WILL need admitting. For k3s Traefik that is:
+    #
+    #   - from:
+    #       - namespaceSelector:
+    #           matchLabels: { kubernetes.io/metadata.name: kube-system }
+    #         podSelector:
+    #           matchLabels: { app.kubernetes.io/name: traefik }
+    #     ports: [{ protocol: TCP, port: 8080 }]
+---
+# 5/6 — Ingress to authd.
+# Nothing calls authd today: it is Stage 1 of the per-user auth work and only
+# serves its OIDC discovery document and JWKS. Both future callers are covered
+# here so that turning Stage 2/3 on is not gated on remembering this file:
+#   * the apiserver fetching the discovery document once `--oidc-issuer-url`
+#     points at it — a host process, hence the same ipBlock as everywhere else;
+#   * the UI pods, once the browser flow is wired through them.
+# Port 8443 is the container port (`deploy/kubernetes/authd/deployment.yaml`),
+# not the Service port 443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-control-allow-auth-ingress
+  namespace: cluster-control
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector:
+    matchLabels:
+      app: cluster-control
+      component: auth
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # The apiserver, and the kubelet's probes against authd's /healthz.
+        # Same host-namespace addressing as the UI rule above — the apiserver
+        # is a host process, so it reaches a pod via flannel.1 or cni0, NOT
+        # from its node's LAN address and never from a selectable pod.
+        - ipBlock:
+            cidr: 10.42.0.0/32
+        - ipBlock:
+            cidr: 10.42.0.1/32
+        - ipBlock:
+            cidr: 10.42.1.0/32
+        - ipBlock:
+            cidr: 10.42.1.1/32
+        - ipBlock:
+            cidr: 10.42.2.0/32
+        - ipBlock:
+            cidr: 10.42.2.1/32
+        - ipBlock:
+            cidr: 192.168.2.201/32
+        - ipBlock:
+            cidr: 192.168.2.202/32
+        - ipBlock:
+            cidr: 192.168.2.203/32
+        - podSelector:
+            matchLabels:
+              app: cluster-control
+              component: ui
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+# 6/6 — Egress from the UI to authd. The mirror of 5/6: a NetworkPolicy denies
+# in both directions independently, so admitting the UI at authd's door is not
+# enough — the UI also has to be let out of its own.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-control-allow-ui-to-auth-egress
+  namespace: cluster-control
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector:
+    matchLabels:
+      app: cluster-control
+      component: ui
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: cluster-control
+              component: auth
+      ports:
+        - protocol: TCP
+          port: 8443

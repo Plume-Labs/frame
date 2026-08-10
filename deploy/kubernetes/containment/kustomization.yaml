@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Containment for the control-plane UI: the namespaced pod-proxy Roles that
+# replace the UI ServiceAccount's cluster-wide `pods/proxy` grant, and the
+# default-deny NetworkPolicies for the `cluster-control` namespace.
+#
+# Kept as its own kustomize target, NOT wired into `../base`, for two reasons:
+#
+#  1. `../base/kustomization.yaml` sets `namespace: cluster-control`, and that
+#     transformer rewrites the namespace of every namespaced object it renders.
+#     The Roles below deliberately live in `monitoring`, `inference`,
+#     `gpu-operator`, `falco`, `tetragon` and `alluxio`; folding them into the
+#     base would silently relocate all six into `cluster-control`, where they
+#     would grant nothing and the UI would 403 on every metrics screen.
+#
+#  2. `apply -k ../base` is already documented as unsafe against the live
+#     cluster (see docs/superpowers/plans/2026-07-30-frame-authd-stage1.md):
+#     `base/deployment.yaml`'s image and `base/service.yaml`'s type are
+#     overlay-only placeholders, so a bare base apply resets the running UI's
+#     image and turns the LAN NodePort back into a ClusterIP. Containment must
+#     be applyable and rollback-able without that hazard.
+#
+# The narrowed ClusterRoles themselves stay in `../base/rbac.yaml` (the source
+# of truth for them) and are applied with `kubectl apply -f`, never `-k`.
+# Apply order, what to watch, and the exact rollback: `docs/runbook.md`.
+#
+# No `namespace:` field here on purpose — each object carries its own.
+
+resources:
+  - rbac-integration-proxy.yaml
+  - networkpolicy-cluster-control.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: cluster-control
+      app.kubernetes.io/part-of: cluster-control-containment
