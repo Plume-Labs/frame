@@ -409,3 +409,38 @@ objects change.
    node's two /32s. Likewise, flipping `cluster-control-ui-lan` to
    `externalTrafficPolicy: Local` stops the masquerade, so the real LAN client
    address arrives and no rule matches.
+
+### Applying the containment: what actually happened
+
+Applied to the live k3s cluster 2026-08-11. Two facts the rehearsal could not
+establish, both learned here:
+
+**NetworkPolicy is enforced on this cluster.** The report could not confirm it,
+because k3s embeds kube-router in its own process and nothing about it is
+readable through the API. Deleting `cluster-control-allow-ui-ingress` blackholed
+the UI on all three nodes within seconds, and re-applying it restored them. That
+is the proof, and it is worth keeping: it means every policy here has teeth.
+
+**kube-router's convergence lag will make you misdiagnose the ipBlock.** After
+each apply, probes failed on a different node each round — first `.202`, then
+`.201` and `.202`, then none — before settling green on all three about a minute
+later. The six `/32`s (flannel.1 and cni0 per node) are correct as written. A
+supplementary `10.42.0.0/16` rule was added on the strength of the first failure
+and removed once three consecutive clean rounds showed it unnecessary; leaving it
+would have let any pod in the cluster reach the UI, which is exactly what the
+`/32`s exist to prevent.
+
+**Probe on a loop, not once, and wait a full minute before believing a failure.**
+
+```bash
+for r in 1 2 3; do
+  for ip in 192.168.2.201 192.168.2.202 192.168.2.203; do
+    printf "%s=%s " "${ip##*.}" "$(curl -s -o /dev/null -w '%{http_code}' http://$ip:30379/ --max-time 8)"
+  done; echo; sleep 12
+done
+```
+
+Also note that `kubectl auth can-i get pods/proxy` parses `proxy` as a **pod
+name** and answers `yes` for anyone who can get pods. Every check of a
+subresource needs `--subresource=`; without it the RBAC half of this containment
+appears not to have worked when it has.
