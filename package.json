@@ -104,7 +104,7 @@
     },
     "overrides": {
         "picomatch": "4.0.4",
-        "path-to-regexp": "8.4.0",
+        "path-to-regexp": "8.4.2",
         "lodash": "4.17.21",
         "@typescript-eslint/typescript-estree": {
             "minimatch": "9.0.7"
