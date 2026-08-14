@@ -107,7 +107,7 @@
         "path-to-regexp": "8.4.0",
         "lodash": "4.17.21",
         "@typescript-eslint/typescript-estree": {
-            "minimatch": "9.0.7"
+            "minimatch": "3.1.5"
         }
     }
 }
