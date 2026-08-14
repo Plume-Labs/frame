@@ -94,7 +94,11 @@ spec:
             cpu: 500m
             memory: 128Mi
           requests:
-            cpu: 10m
+            # 10m left the manager with almost no CPU weight under contention,
+            # which is how it kept missing its leader-election renew deadline on
+            # a saturated control-plane node. This is the share it needs to stay
+            # responsive, not a ceiling — the limit above is unchanged.
+            cpu: 100m
             memory: 64Mi
         volumeMounts: []
       volumes: []
