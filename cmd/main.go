@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -29,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -218,6 +220,15 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "b9bf5a0e.plume-labs.io",
+		// The kubebuilder defaults (15s/10s/2s) assume the manager always gets
+		// scheduled promptly. On a control-plane node sitting at 85% CPU it did
+		// not: the manager missed the 10s renew deadline, logged "leader
+		// election lost" and exited 1 — seventeen times in four days. We run a
+		// single replica, so a longer lease costs nothing (there is no standby
+		// waiting to take over) and buys the renewal a much wider margin.
+		LeaseDuration: ptr.To(60 * time.Second),
+		RenewDeadline: ptr.To(40 * time.Second),
+		RetryPeriod:   ptr.To(10 * time.Second),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
