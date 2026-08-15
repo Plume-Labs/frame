@@ -431,3 +431,66 @@ describe('k8sFetch in-flight de-duplication', () => {
     expect(calls.filter((c) => c.includes('/api/v1/nodes/w1')).length).toBe(2)
   })
 })
+
+describe('ClusterClient.capacity', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  const NODES = { items: [{ status: { allocatable: { cpu: '8', memory: '32Gi' } } }] }
+
+  /**
+   * Route by URL. `promValues` null makes the Prometheus instant query fail the
+   * way an undeployed or unreachable Prometheus does.
+   */
+  function serve(promValues: [number, number] | null) {
+    stubBrowser()
+    const urls: string[] = []
+    let promCall = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      urls.push(url)
+      const json = (o: unknown, status = 200) =>
+        new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } })
+
+      if (url.includes('/proxy/api/v1/query')) {
+        if (!promValues) return new Response('nope', { status: 503 })
+        const v = promValues[promCall++]
+        return json({ data: { result: [{ value: [0, String(v)] }] } })
+      }
+      // Prometheus pod discovery, before the query itself.
+      if (url.includes('/namespaces/monitoring/pods')) return json({ items: [{ metadata: { name: 'prom-0' } }] })
+      if (url.includes('/api/v1/nodes')) return json(NODES)
+      if (url.includes('/apis/metrics.k8s.io')) return json({ items: [] })
+      if (url.includes('/api/v1/pods')) {
+        return json({ items: [
+          { status: { phase: 'Running' }, spec: { containers: [{ resources: { requests: { cpu: '500m', memory: '1Gi' } } }] } },
+          // Must be skipped: a finished pod asks nothing of the scheduler.
+          { status: { phase: 'Succeeded' }, spec: { containers: [{ resources: { requests: { cpu: '4', memory: '8Gi' } } }] } },
+        ] })
+      }
+      return json({ items: [] })
+    }))
+    return { urls }
+  }
+
+  it('does not read the whole pod list when Prometheus can answer', async () => {
+    // The point of the change: 432 KB per call, on every screen, every 30 s.
+    const { urls } = serve([4.965, 15.244])
+
+    const cap = await createFrameClient().cluster.capacity()
+
+    expect(urls.some((u) => u.includes('/api/v1/pods'))).toBe(false)
+    expect(cap.find((c) => c.name === 'CPU')?.requested).toBeCloseTo(4.965, 3)
+    expect(cap.find((c) => c.name === 'Memory')?.requested).toBeCloseTo(15.244, 3)
+  })
+
+  it('falls back to the pod list when Prometheus is unavailable', async () => {
+    // Without the fallback an absent Prometheus would silently show 0 requested.
+    const { urls } = serve(null)
+
+    const cap = await createFrameClient().cluster.capacity()
+
+    expect(urls.some((u) => u.includes('/api/v1/pods'))).toBe(true)
+    expect(cap.find((c) => c.name === 'CPU')?.requested).toBeCloseTo(0.5, 3)
+    expect(cap.find((c) => c.name === 'Memory')?.requested).toBeCloseTo(1, 3)
+  })
+})
