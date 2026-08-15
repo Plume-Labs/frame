@@ -667,7 +667,46 @@ function toK8sName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
 }
 
+/**
+ * GET requests currently in flight, keyed by path.
+ *
+ * Every screen owns its own watch and its own fetcher, and nothing is shared
+ * between them. So one Node event makes each mounted component that watches
+ * nodes re-read the same list at the same moment: a measured burst reached
+ * 321 reads of `/api/v1/nodes` and 308 of the node metrics inside twenty
+ * seconds, plus 33 whole-cluster pod lists totalling 13.6 MB. The apiserver
+ * answered all of them; the cost lands on the browser, which spends its
+ * per-origin connection budget on duplicates and shows values late.
+ *
+ * Collapsing them is safe precisely because they are identical concurrent
+ * GETs: every caller would have received the same body, so handing them one
+ * response changes no result. Deliberately no expiry — the entry lives only
+ * as long as the request, and the next call after it settles goes to the
+ * network. A TTL would be a cache, with staleness to reason about after a
+ * write; this is only de-duplication.
+ */
+const inFlightGets = new Map<string, Promise<unknown>>()
+
 async function k8sFetch<T>(
+  path: string,
+  opts: { method?: string; body?: unknown; contentType?: string } = {},
+): Promise<T> {
+  const method = opts.method ?? 'GET'
+  // Only plain GETs dedupe. A write must always reach the apiserver, and two
+  // writes to one path are not interchangeable the way two reads are.
+  if (method === 'GET' && opts.body === undefined) {
+    const pending = inFlightGets.get(path)
+    if (pending) return pending as Promise<T>
+    const p = k8sFetchUncached<T>(path, opts).finally(() => {
+      inFlightGets.delete(path)
+    })
+    inFlightGets.set(path, p)
+    return p
+  }
+  return k8sFetchUncached<T>(path, opts)
+}
+
+async function k8sFetchUncached<T>(
   path: string,
   opts: { method?: string; body?: unknown; contentType?: string } = {},
 ): Promise<T> {

@@ -364,3 +364,70 @@ describe('JobClient.submit', () => {
     expect(job.namespace).toBe('team-a')
   })
 })
+
+describe('k8sFetch in-flight de-duplication', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  /**
+   * Serve a node list, but only resolve when the test says so, so both callers
+   * are genuinely concurrent rather than one finishing before the other starts.
+   */
+  function gatedNodeList() {
+    stubBrowser()
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)}`)
+      await gate
+      return new Response(JSON.stringify({ items: [], metadata: {} }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    return { calls, release }
+  }
+
+  it('issues one request when two screens read the same path at once', async () => {
+    // The real shape of the problem: many mounted components each watch nodes
+    // and each re-read on the same event. A broken version reaches the network
+    // twice here — which at the observed fan-out was 321 reads in 20 seconds.
+    const { calls, release } = gatedNodeList()
+    const frame = createFrameClient()
+
+    const both = Promise.all([frame.cluster.nodes(), frame.cluster.nodes()])
+    release()
+    await both
+
+    expect(calls.filter((c) => c.includes('/api/v1/nodes')).length).toBe(1)
+  })
+
+  it('reaches the network again once the first request has settled', async () => {
+    // De-duplication, not caching: the entry must not outlive the request, or
+    // a screen would keep rendering data from before the last write.
+    const { calls, release } = gatedNodeList()
+    const frame = createFrameClient()
+
+    const first = frame.cluster.nodes()
+    release()
+    await first
+    await frame.cluster.nodes()
+
+    expect(calls.filter((c) => c.includes('/api/v1/nodes')).length).toBe(2)
+  })
+
+  it('never collapses two writes to one path', async () => {
+    // Two cordons are not interchangeable the way two reads are; dropping one
+    // would silently lose a user action.
+    stubBrowser()
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)}`)
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const frame = createFrameClient()
+
+    await Promise.all([frame.cluster.cordon('w1', true), frame.cluster.cordon('w1', false)])
+
+    expect(calls.filter((c) => c.includes('/api/v1/nodes/w1')).length).toBe(2)
+  })
+})
