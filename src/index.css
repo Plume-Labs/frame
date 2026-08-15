@@ -1,6 +1,32 @@
 @import 'tailwindcss';
 @import "tw-animate-css";
 
+/*
+ * Fonts are self-hosted rather than pulled from fonts.googleapis.com. The CDN
+ * stylesheet was render-blocking in <head>, and it made first paint depend on
+ * an external host reachable from wherever the browser sits — which a cluster
+ * console viewed from an isolated network cannot count on.
+ *
+ * Both families ship as variable fonts, so one file covers every weight the UI
+ * asks for; Google's own css2 endpoint serves the same woff2 for each discrete
+ * weight it advertises. `swap` keeps text visible while the file loads.
+ */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  src: url('/fonts/SpaceGrotesk.woff2') format('woff2');
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   * {
     @apply border-border;
