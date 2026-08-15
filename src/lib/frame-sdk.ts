@@ -905,6 +905,21 @@ const SYSTEM_NAMESPACES = new Set([
   'kube-node-lease',
 ])
 
+/**
+ * Every pod in the cluster, served from the apiserver's watch cache.
+ *
+ * `resourceVersion=0` tells the apiserver "any reasonably recent version will
+ * do", which lets it answer from memory instead of a quorum read against etcd.
+ * The three callers below — capacity, placement, resilience — all aggregate
+ * over the whole list and then re-read it on a watch or a poll, so a response
+ * that may lag by a beat costs them nothing and saves roughly a third of the
+ * latency on a list this size.
+ *
+ * Do not reuse this for a read whose result is about to be written back: a
+ * stale resourceVersion is exactly the wrong basis for a read-modify-write.
+ */
+const ALL_PODS_CACHED = '/api/v1/pods?resourceVersion=0'
+
 function crToComponent(cr: WorkloadCR, kind: AppComponent['kind']): AppComponent {
   return {
     name:            cr.metadata.name,
@@ -1164,7 +1179,7 @@ class ClusterClient {
         spec?: { nodeName?: string }
         status?: { phase?: string }
       }>
-    >('/api/v1/pods')
+    >(ALL_PODS_CACHED)
 
     const byNode = new Map<string, NodePlacement>()
     for (const p of res.items ?? []) {
@@ -1319,7 +1334,7 @@ class ClusterClient {
           status?: { phase?: string }
           spec?: { containers?: Array<{ resources?: { requests?: Record<string, string> } }> }
         }>
-      >('/api/v1/pods'),
+      >(ALL_PODS_CACHED),
     ])
 
     let allocCpu = 0
@@ -1520,7 +1535,7 @@ class ClusterClient {
           metadata: { name: string; namespace: string }
           status?: { containerStatuses?: Array<{ restartCount?: number }> }
         }>
-      >('/api/v1/pods'),
+      >(ALL_PODS_CACHED),
     ])
 
     let ceph: CephStatus | null = null

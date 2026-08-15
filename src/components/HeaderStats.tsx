@@ -11,13 +11,17 @@ export function HeaderStats() {
       return { nodes, cap }
     },
     [],
-    // Both calls read real Node/Pod objects underneath — watched.
-    [coreListPath('nodes'), coreListPath('pods')],
-    // The cpu/mem percentages layer metrics-server usage on top, best-effort,
-    // with no watch support and continuous drift the object watch can't see.
-    // Slow poll: the watch already covers every discrete change (a node
-    // joining, a pod scheduled), this only tops up the number that moves on
-    // its own between them.
+    // Watch nodes only. `capacity()` reads pods too, but this component is
+    // mounted on every screen, and watching pods cluster-wide meant any pod
+    // event anywhere — a cronjob, an Argo step, a restarting probe — re-ran a
+    // full unfiltered pod list (3.7 MB, ~1 s of apiserver time) behind the
+    // header. On a cluster that always has something churning, that was
+    // continuous. Nodes are the half that changes rarely and matters visibly.
+    [coreListPath('nodes')],
+    // Everything else the header shows — requested CPU/mem from pod specs, and
+    // metrics-server usage layered on top — refreshes on this poll instead.
+    // Neither needs to be event-exact: requests move when workloads are
+    // scheduled, usage drifts continuously and has no watch to begin with.
     30_000,
   )
   if (state.phase !== 'ready') return null
