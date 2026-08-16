@@ -20,6 +20,15 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${KUBECONFIG:=/home/rmocq/Neura/.test-cluster/kubeconfig-neura-test.yaml}"
+# A relative KUBECONFIG — which is what the project settings export — makes this
+# script silently cwd-dependent: run it from a subdirectory and kubectl finds no
+# config, every lookup fails, and the failure surfaces as a wrong answer about
+# the cluster rather than as a missing file. Resolve it once, up front.
+if [ "${KUBECONFIG#/}" = "$KUBECONFIG" ]; then
+  KUBECONFIG="$(cd "$(dirname "$KUBECONFIG")" 2>/dev/null && pwd)/$(basename "$KUBECONFIG")" \
+    || { echo "error: relative KUBECONFIG '$KUBECONFIG' does not resolve from $(pwd)" >&2; exit 1; }
+fi
+[ -r "$KUBECONFIG" ] || { echo "error: KUBECONFIG not readable: $KUBECONFIG" >&2; exit 1; }
 export KUBECONFIG
 
 # Only units whose restart is a known, recoverable node operation. k3s and
@@ -64,7 +73,16 @@ esac
 
 # Validate the node against what the cluster actually reports, for the same
 # reason, and so a typo cannot silently target nothing.
-kubectl get node "$NODE" >/dev/null 2>&1 || die "no such node: $NODE"
+# Distinguish "the cluster says no such node" from "kubectl could not answer".
+# Reporting the second as the first is what sent the last caller looking for a
+# renamed node when the real fault was an unreachable kubeconfig.
+if ! NODE_LIST=$(kubectl get nodes -o name 2>&1); then
+  die "kubectl could not reach the cluster (KUBECONFIG=$KUBECONFIG): $NODE_LIST"
+fi
+case "$NODE_LIST" in
+  *"node/$NODE"*) ;;
+  *) die "no such node: $NODE (cluster reports: $(echo "$NODE_LIST" | tr '\n' ' '))" ;;
+esac
 
 # Refuse to disrupt a second node while another is already down. Losing one
 # node is a rolling operation; losing two at once on a three-node cluster is an
@@ -130,8 +148,14 @@ echo "  waiting for the unit to report a new start time"
 deadline=$(( SECONDS + READY_TIMEOUT ))
 while [ $SECONDS -lt $deadline ]; do
   sleep 15
-  after=$(run_on_node "systemctl show $UNIT -p ActiveEnterTimestamp --value" | tail -1)
-  state=$(kubectl get node "$NODE" --no-headers 2>/dev/null | awk '{print $2}')
+  # Every probe here must tolerate failure. Restarting k3s on the server node
+  # takes the apiserver down for a few seconds, so kubectl is *expected* to fail
+  # mid-wait — and under `set -e` a single non-zero status ends the script right
+  # where it is most important that it keep reporting. That is exactly what
+  # happened on the first control-plane restart: the unit came back fine, the
+  # script had already exited without a word.
+  after=$(run_on_node "systemctl show $UNIT -p ActiveEnterTimestamp --value" 2>/dev/null | tail -1) || after=""
+  state=$(kubectl get node "$NODE" --no-headers 2>/dev/null | awk '{print $2}') || state=""
   echo "    ${SECONDS}s: node=${state:-unknown} started=${after:-unknown}"
   if [ -n "$after" ] && [ "$after" != "$BEFORE" ]; then
     # Restarted. Still require the node back in service before returning, so a
