@@ -33,16 +33,18 @@ Three failures made that expensive, and the design exists to prevent each:
 
 ## Scope
 
-Four settings get the CRD, because all four share the pattern "the file is not
-the effect, and something must restart":
+The dividing line is what `tuned` can own (see "Delegation to tuned" below).
+Frame keeps only what tuned structurally cannot reach, and all of it shares the
+pattern "the file is not the effect, and something must restart":
 
 - **KSM** — `MemoryKSM=` drop-in on `k3s.service` / `k3s-agent.service`, plus
   the `/sys/kernel/mm/ksm/*` scanner knobs.
-- **Kernel modules** — modprobe plus persistence, for RDMA (`ib_core`,
-  `rdma_cm`).
-- **Sysctls** — near-free once the mechanism exists.
 - **cpu-manager policy** — needs a kubelet restart and removal of
   `cpu_manager_state`, which is exactly the "restart plus cleanup" case.
+
+**Sysctls and kernel-module loading are delegated to tuned**, which has
+first-class plugins for both. Declaring them here as well would put two writers
+on one setting.
 
 **MIG** is declared in the CRD but applied as a node label that the NVIDIA GPU
 operator already watches. Frame does not reimplement its logic.
@@ -64,14 +66,12 @@ metadata: { name: workers }
 spec:
   nodeSelector:
     matchLabels: { node-role.kubernetes.io/worker: "true" }
+  tunedProfile: frame-worker   # OS-level profile; owns sysctls and modules
   ksm:
-    enabled: true
+    enabled: true              # default false — see Security
     pagesToScan: 4000          # default 100
     sleepMillisecs: 200        # default 20
     mergeAcrossNodes: false
-  kernelModules: [ib_core, rdma_cm]
-  sysctls:
-    vm.swappiness: "10"
   cpuManagerPolicy: static     # none | static
   migProfile: ""               # sets the GPU-operator label; empty = untouched
 status:
@@ -107,12 +107,43 @@ restart takes down the kubelet that owns it.
 It reports *measured* state, never the state it intended to write. Each setting
 declares its own proof:
 
-| setting     | proof of effect                                       |
-|-------------|-------------------------------------------------------|
-| KSM         | `systemctl show <unit> -p MemoryKSM`, `general_profit` |
-| modules     | present in `/proc/modules`                             |
-| sysctls     | value read back                                        |
-| cpu-manager | policy the kubelet actually reports                    |
+| setting      | proof of effect                                       |
+|--------------|-------------------------------------------------------|
+| KSM          | `systemctl show <unit> -p MemoryKSM`, `general_profit` |
+| cpu-manager  | policy the kubelet actually reports                    |
+| tuned profile| `tuned-adm active` matches, and tuned reports no error |
+| MIG          | the GPU operator's own status for the node             |
+
+### Delegation to tuned
+
+`tuned` owns the OS-level performance profile: sysctls, CPU governor, disk
+scheduler, transparent hugepages, network tunables, and kernel-module loading,
+all of which it has first-class plugins for. `NodeTuning` declares *which*
+profile a node runs and never restates its contents.
+
+The split is not stylistic. tuned re-applies its profile at boot and on every
+profile change, so a setting written by both tuned and the agent has two
+writers and no owner — and the conflict surfaces hours later, at the next
+reapply, far from the change that caused it. One writer per setting is the
+whole point.
+
+tuned is **not installed** on these nodes (Ubuntu Server does not ship it), so
+the agent image carries it and runs it, the way OpenShift's NodeTuningOperator
+does. That is a real upstream dependency and a materially larger agent image —
+tuned pulls python — bought in exchange for a standard, well-understood profile
+format instead of a bespoke one.
+
+Frame keeps what tuned structurally cannot express:
+
+- **`MemoryKSM=` on the k3s unit.** tuned has no model for modifying another
+  systemd unit's properties. It does have a `[sysfs]` plugin that would happily
+  write `/sys/kernel/mm/ksm/run=1` — which is exactly the half that merges
+  nothing. Handing KSM to tuned would look like managing it while managing only
+  the inert part, reproducing this design's founding bug behind an extra layer
+  of abstraction.
+- **cpu-manager policy** — kubelet configuration, not OS configuration.
+- **MIG profile** — a Kubernetes-level label the GPU operator consumes.
+- **The approval, drain and restart lifecycle**, which is the actual subject.
 
 ### Controller (in `frame-controller-manager`)
 
@@ -175,7 +206,8 @@ mid-operation.
   `Effective` / `FullyRealized` distinction.
 - **Kind e2e** covers the agent: apply, observe, and report — including the
   case that motivated this design, a drop-in present on disk while systemd
-  still reports the old value.
+  still reports the old value, and a tuned profile that is set but whose
+  `tuned-adm active` disagrees with the spec.
 
 Note `make test-e2e` is not currently wired into CI, so the e2e suite guards
 this only when run by hand until that changes.
