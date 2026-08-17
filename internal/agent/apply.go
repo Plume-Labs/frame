@@ -35,23 +35,22 @@ import (
 // pod kills the caller"). It only writes state and answers the question; the
 // controller decides when a restart is safe to schedule (Task 5/6).
 const (
-	// ksmDropInPath is the systemd drop-in that flips MemoryKSM= on the unit
-	// that owns containerd. This is the half of KSM that actually merges
-	// anything: PR_SET_MEMORY_MERGE has to be set on the process before it
-	// forks, so it has to live on the unit, not be poked at from outside.
-	// Writing it is not enough on its own — systemd only picks it up on the
-	// unit's next start, which is exactly why Apply reports needsRestart
-	// rather than letting a caller assume it is already live.
+	// ksmDropInDir and ksmDropInFile locate the systemd drop-in that flips
+	// MemoryKSM= on whichever unit owns containerd on this node. This is the
+	// half of KSM that actually merges anything: PR_SET_MEMORY_MERGE has to
+	// be set on the process before it forks, so it has to live on the unit,
+	// not be poked at from outside. Writing it is not enough on its own —
+	// systemd only picks it up on the unit's next start, which is exactly
+	// why Apply reports needsRestart rather than letting a caller assume it
+	// is already live.
 	//
-	// Hardcoded to k3s-agent.service.d, matching every fixture this package's
-	// tests use (see TestObserveReportsSystemdNotTheFile in observe_test.go
-	// and the apply tests below). The reference ksm-tuner DaemonSet this
-	// design replaces wrote the same drop-in to whichever of k3s.service /
-	// k3s-agent.service existed on the node, since the server runs the
-	// former and workers the latter; picking the unit that way needs to stat
-	// both unit files, and no test in this task exercises the server case,
-	// so it is left as a known gap rather than guessed at.
-	ksmDropInPath = "etc/systemd/system/k3s-agent.service.d/10-ksm.conf"
+	// The unit itself is not hardcoded: workers run k3s-agent.service and
+	// the control-plane server runs k3s.service, and on the live cluster the
+	// server delivered most of KSM's benefit (109 of ~166 MB saved).
+	// Hardcoding either one silently skips the other kind of node — see
+	// DetectKSMUnit, which picks the real one.
+	ksmDropInDir  = "etc/systemd/system/%s.service.d"
+	ksmDropInFile = "10-ksm.conf"
 
 	// ksmRunPath, ksmPagesToScanPath, ksmSleepMillisecsPath and
 	// ksmMergeAcrossNodesPath are the KSM scanner knobs under sysfs. Unlike
@@ -134,7 +133,20 @@ func Apply(root string, spec framev1beta1.NodeTuningSpec) (needsRestart bool, er
 // scanner knobs (live) for ksm. It reports changed=true only for the
 // drop-in: the scanner knobs never gate a restart, per the package doc.
 func applyKSM(root string, ksm *framev1beta1.KSMSpec) (changed bool, err error) {
-	dropInPath := filepath.Join(root, ksmDropInPath)
+	unit, err := DetectKSMUnit(root)
+	if err != nil {
+		return false, fmt.Errorf("applying KSM: %w", err)
+	}
+	// Belt and braces: DetectKSMUnit can only ever return one of
+	// ksmUnitCandidates, both of which are already on the allowlist, but the
+	// drop-in path is about to be built from this value, and this is the
+	// whole security boundary described in restartableUnits' doc — check it
+	// again here rather than trust the caller above to have gotten it right.
+	if !IsRestartable(unit) {
+		return false, fmt.Errorf("applying KSM: detected unit %q is not on the restart allowlist", unit)
+	}
+
+	dropInPath := filepath.Join(root, fmt.Sprintf(ksmDropInDir, unit), ksmDropInFile)
 	changed, err = writeFileIfChanged(dropInPath, ksmDropInContent(ksm.Enabled))
 	if err != nil {
 		return false, fmt.Errorf("writing KSM drop-in: %w", err)
@@ -171,6 +183,38 @@ func ksmDropInContent(enabled bool) string {
 		value = "yes"
 	}
 	return fmt.Sprintf("[Service]\nMemoryKSM=%s\n", value)
+}
+
+// ksmUnitCandidates lists the systemd unit base names (without ".service")
+// that might own containerd on a node, in the order DetectKSMUnit prefers
+// them if — improbably — both exist on the same node. Workers run
+// k3s-agent; the control-plane server runs k3s.
+var ksmUnitCandidates = []string{"k3s-agent", "k3s"}
+
+// ksmUnitSearchDirs are the root-relative directories a unit file can live
+// under: the systemd package default and the local admin override tree —
+// the same two locations the ksm-tuner DaemonSet this design replaces
+// checked (deploy/kubernetes/base/ksm-tuner/daemonset.yaml).
+var ksmUnitSearchDirs = []string{"etc/systemd/system", "usr/lib/systemd/system"}
+
+// DetectKSMUnit finds which of k3s-agent.service / k3s.service actually
+// exists on the node under root, so the KSM drop-in lands on the unit that
+// really owns containerd there. Hardcoding either one silently skips the
+// other kind of node — confirmed on the live cluster, where the
+// control-plane server runs k3s.service (not k3s-agent.service) and
+// delivered most of KSM's measured benefit. k3s-agent is preferred if,
+// improbably, both are present. A node with neither unit is not one this
+// agent has any business writing a drop-in to, so that is a real error, not
+// a silent no-op.
+func DetectKSMUnit(root string) (string, error) {
+	for _, name := range ksmUnitCandidates {
+		for _, dir := range ksmUnitSearchDirs {
+			if _, err := os.Stat(filepath.Join(root, dir, name+".service")); err == nil {
+				return name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no k3s or k3s-agent unit found under %s (checked %v in %v)", root, ksmUnitCandidates, ksmUnitSearchDirs)
 }
 
 // boolKnob renders a bool as the "1"/"0" vocabulary sysfs knobs expect,

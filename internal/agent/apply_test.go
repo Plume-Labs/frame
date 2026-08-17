@@ -28,8 +28,15 @@ import (
 // start, so Apply must say so rather than let a caller assume it is live. A
 // version that only writes files and always returns needsRestart=false fails
 // this test.
+//
+// The k3s-agent.service stub represents a worker node (see
+// mustWriteUnitFile): Apply now detects which unit actually owns containerd
+// rather than assuming one, so a fixture with no unit file at all — which
+// this test had before that fix — no longer models any real node and would
+// (correctly) fail with "no k3s or k3s-agent unit found".
 func TestApplyKSMRequestsRestart(t *testing.T) {
 	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
 	yes := true
 	needsRestart, err := Apply(root, v1beta1.NodeTuningSpec{
 		KSM: &v1beta1.KSMSpec{Enabled: yes},
@@ -48,6 +55,7 @@ func TestApplyKSMRequestsRestart(t *testing.T) {
 // changed) fails this test, even though it would pass the one above.
 func TestApplyScannerKnobsAloneNeedNoRestart(t *testing.T) {
 	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
 	mustWrite(t, filepath.Join(root, "etc/systemd/system/k3s-agent.service.d/10-ksm.conf"),
 		"[Service]\nMemoryKSM=yes\n")
 	four := int32(4000)
@@ -59,6 +67,117 @@ func TestApplyScannerKnobsAloneNeedNoRestart(t *testing.T) {
 	}
 	if needsRestart {
 		t.Fatal("scanner knobs apply live; demanding a restart would drain a node for nothing")
+	}
+}
+
+// FINDING 1 fix — the server node runs k3s.service, not k3s-agent.service.
+// Hardcoding k3s-agent silently never configured the control plane, which
+// delivered most of KSM's benefit on the live cluster (109 of ~166 MB
+// saved). A detectUnit that always returns "k3s-agent" — the bug being
+// fixed — passes every other KSM test in this file (all of them model a
+// worker) but fails this one loudly: the drop-in would land at the
+// k3s-agent path, which this test asserts must NOT exist, and the k3s path,
+// which it asserts must, would be missing.
+func TestApplyDetectsControlPlaneUnitK3s(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s")
+
+	if _, err := Apply(root, v1beta1.NodeTuningSpec{
+		KSM: &v1beta1.KSMSpec{Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileContent(t, filepath.Join(root, "etc/systemd/system/k3s.service.d/10-ksm.conf"),
+		"[Service]\nMemoryKSM=yes\n")
+	if _, err := os.Stat(filepath.Join(root, "etc/systemd/system/k3s-agent.service.d/10-ksm.conf")); !os.IsNotExist(err) {
+		t.Fatalf("must not write a k3s-agent drop-in on a server node that has no k3s-agent.service, stat err: %v", err)
+	}
+}
+
+// The worker-node counterpart of the control-plane test above — the two
+// together are what "test both layouts" means. A version that only handles
+// one of the two unit names (whichever direction) fails one or the other.
+func TestApplyDetectsWorkerUnitK3sAgent(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
+
+	if _, err := Apply(root, v1beta1.NodeTuningSpec{
+		KSM: &v1beta1.KSMSpec{Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileContent(t, filepath.Join(root, "etc/systemd/system/k3s-agent.service.d/10-ksm.conf"),
+		"[Service]\nMemoryKSM=yes\n")
+	if _, err := os.Stat(filepath.Join(root, "etc/systemd/system/k3s.service.d/10-ksm.conf")); !os.IsNotExist(err) {
+		t.Fatalf("must not write a k3s drop-in on a worker node that has no k3s.service, stat err: %v", err)
+	}
+}
+
+// If both unit files somehow exist on the same node, k3s-agent must win
+// (that is the one actually running containerd for workloads on a worker;
+// a node cannot really run both, but detection must still pick
+// deterministically rather than depend on directory iteration order). A
+// version that iterates a map instead of the ordered candidate slice, or
+// that prefers k3s, fails this test.
+func TestApplyPrefersK3sAgentWhenBothUnitsPresent(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s")
+	mustWriteUnitFile(t, root, "k3s-agent")
+
+	if _, err := Apply(root, v1beta1.NodeTuningSpec{
+		KSM: &v1beta1.KSMSpec{Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileContent(t, filepath.Join(root, "etc/systemd/system/k3s-agent.service.d/10-ksm.conf"),
+		"[Service]\nMemoryKSM=yes\n")
+	if _, err := os.Stat(filepath.Join(root, "etc/systemd/system/k3s.service.d/10-ksm.conf")); !os.IsNotExist(err) {
+		t.Fatalf("k3s-agent must win when both units exist, but a k3s drop-in was also written, stat err: %v", err)
+	}
+}
+
+// detectKSMUnit also checks usr/lib/systemd/system, the systemd package
+// default location, not just the /etc override tree — this is where a
+// distro-packaged unit file normally lives if it was never locally
+// overridden. A version that only checks etc/systemd/system fails this test
+// even though it would pass every other one in this file.
+func TestApplyDetectsUnitUnderPackageSystemdDir(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "usr/lib/systemd/system/k3s.service"), "[Unit]\nDescription=k3s\n")
+
+	if _, err := Apply(root, v1beta1.NodeTuningSpec{
+		KSM: &v1beta1.KSMSpec{Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The override drop-in still goes under /etc regardless of where the
+	// unit file itself lives — that is where systemd looks for drop-ins.
+	assertFileContent(t, filepath.Join(root, "etc/systemd/system/k3s.service.d/10-ksm.conf"),
+		"[Service]\nMemoryKSM=yes\n")
+}
+
+// A node with neither unit is not one this agent has any business writing a
+// drop-in to — per FINDING 1, that must be a real, reported error, not a
+// silent no-op that leaves the node unconfigured with no trace. A version
+// that falls back to a hardcoded default unit name when detection finds
+// nothing fails this test by returning nil error and writing a drop-in
+// anyway.
+func TestApplyErrorsWhenNoK3sUnitExists(t *testing.T) {
+	root := t.TempDir()
+
+	if _, err := Apply(root, v1beta1.NodeTuningSpec{
+		KSM: &v1beta1.KSMSpec{Enabled: true},
+	}); err == nil {
+		t.Fatal("want an error when no k3s or k3s-agent unit exists under root")
+	}
+
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 0 {
+		t.Fatalf("no unit found must not write anything, but root now has: %v", entries)
 	}
 }
 
@@ -86,6 +205,7 @@ func TestRestartableUnitsAreAllowlisted(t *testing.T) {
 // fails this one.
 func TestApplyWritesScannerKnobValues(t *testing.T) {
 	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
 	pages := int32(4000)
 	sleep := int32(200)
 	mergeAcrossNodes := false
@@ -112,6 +232,7 @@ func TestApplyWritesScannerKnobValues(t *testing.T) {
 // nothing asked for it.
 func TestApplyLeavesUnsetScannerKnobsUntouched(t *testing.T) {
 	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
 	if _, err := Apply(root, v1beta1.NodeTuningSpec{
 		KSM: &v1beta1.KSMSpec{Enabled: true},
 	}); err != nil {
@@ -133,6 +254,7 @@ func TestApplyLeavesUnsetScannerKnobsUntouched(t *testing.T) {
 // version that propagates the error fails it by returning non-nil.
 func TestApplyToleratesRefusedSysfsKnob(t *testing.T) {
 	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
 	mergePath := filepath.Join(root, "sys/kernel/mm/ksm/merge_across_nodes")
 	if err := os.MkdirAll(mergePath, 0o755); err != nil {
 		t.Fatal(err)
@@ -162,6 +284,7 @@ func TestApplyToleratesRefusedSysfsKnob(t *testing.T) {
 // (rather than comparing against what is already on disk) fails this test.
 func TestApplyIsIdempotent(t *testing.T) {
 	root := t.TempDir()
+	mustWriteUnitFile(t, root, "k3s-agent")
 	spec := v1beta1.NodeTuningSpec{KSM: &v1beta1.KSMSpec{Enabled: true}}
 
 	if _, err := Apply(root, spec); err != nil {
@@ -215,6 +338,15 @@ func TestApplyCPUManagerPolicyUnchangedNeedsNoRestart(t *testing.T) {
 	if needsRestart {
 		t.Fatal("re-applying the same CPU manager policy must not ask for another restart")
 	}
+}
+
+// mustWriteUnitFile writes a stub systemd unit file under root's default
+// (etc/systemd/system) search location, so DetectKSMUnit finds it. Content
+// is irrelevant — only existence is checked — but it is non-empty to look
+// like a real unit rather than an accidental empty file.
+func mustWriteUnitFile(t *testing.T, root, unit string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(root, "etc/systemd/system", unit+".service"), "[Unit]\nDescription="+unit+"\n")
 }
 
 func assertFileContent(t *testing.T, path, want string) {

@@ -105,6 +105,20 @@ func run() error {
 // not stop the agent from reporting on the next tick or on the other
 // objects.
 func observeAndReport(ctx context.Context, kc client.Client, nodeName, root string) {
+	// Refresh the systemd cache before every Observe, so MemoryKSM reflects
+	// what systemd currently reports rather than a value nothing ever
+	// updates. This has to run here, not in agent.Apply: Apply only writes
+	// the drop-in, which systemd does not pick up until the unit's next
+	// start, so querying systemd from inside Apply would just re-cache the
+	// stale value and prove nothing changed. A node with no k3s unit at all
+	// is logged and skipped rather than treated as fatal — the same
+	// tolerant-tick discipline as everything else in this function.
+	if unit, err := agent.DetectKSMUnit(root); err != nil {
+		slog.Error("detecting k3s unit", "error", err)
+	} else if err := agent.RefreshSystemdCache(root, unit, agent.ExecCommandRunner{}); err != nil {
+		slog.Error("refreshing systemd cache", "unit", unit, "error", err)
+	}
+
 	observed, err := agent.Observe(root)
 	if err != nil {
 		slog.Error("observing node state", "error", err)
