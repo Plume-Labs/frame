@@ -13,6 +13,28 @@ spec:
   template:
     metadata: { labels: { app: tei } }
     spec:
+      # Placement measured, not guessed. Left to the default scheduler this
+      # landed on the control plane, which sits at ~99% CPU: 24-32s of
+      # inference plus 34-67s of queueing per batch. Off it, the same batch
+      # takes 1.7s with 0.6ms of queueing — a 35x difference that turned a
+      # document backfill from ~20h into ~1h.
+      #
+      # An anti-affinity on the control-plane role, not a nodeSelector pinning
+      # one named worker: a pinned node does not survive being replaced, and
+      # the scheduler picks the emptiest worker on its own — which is the
+      # right answer whenever the cluster's shape changes.
+      #
+      # It also must not land on whichever node runs Postgres if that node is
+      # tight on memory: TEI reserves 3Gi, and crowding the database node
+      # killed the postgres process (restarted in-place by Patroni, 286
+      # documents failed with ECONNREFUSED) during that same backfill.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
       containers:
         - name: tei
           image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
@@ -30,8 +52,12 @@ spec:
           ports: [{ containerPort: 80, name: http }]
           env:
             - { name: HF_HOME, value: /data }
+          # 2500m and not 1: embeddings are CPU-bound here, and a single core
+          # is what made a batch of 8 take a minute. The request is what the
+          # scheduler reserves, so it also keeps TEI off a node that has
+          # nothing left to give.
           resources:
-            requests: { cpu: "1", memory: 3Gi }
+            requests: { cpu: 2500m, memory: 3Gi }
             limits: { memory: 6Gi }
           volumeMounts: [{ name: cache, mountPath: /data }]
           readinessProbe:
