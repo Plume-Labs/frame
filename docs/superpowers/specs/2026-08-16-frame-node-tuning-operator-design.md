@@ -127,11 +127,23 @@ writers and no owner — and the conflict surfaces hours later, at the next
 reapply, far from the change that caused it. One writer per setting is the
 whole point.
 
-tuned is **not installed** on these nodes (Ubuntu Server does not ship it), so
-the agent image carries it and runs it, the way OpenShift's NodeTuningOperator
-does. That is a real upstream dependency and a materially larger agent image —
-tuned pulls python — bought in exchange for a standard, well-understood profile
-format instead of a bespoke one.
+tuned is **not installed** on these nodes (Ubuntu Server does not ship it), and
+it has to be, because every host call the agent makes goes through nsenter into
+the node's own namespaces — so `tuned-adm` resolves to the *node's* binary, not
+one baked into the agent image. Installing tuned on the nodes is therefore a
+deployment prerequisite, not something the image can satisfy.
+
+An earlier draft of this document said the agent image would carry tuned "the
+way OpenShift's NodeTuningOperator does". That was wrong on the mechanism:
+OpenShift runs its own tuned in-container against host mounts, and does not
+nsenter. Both designs work, but they are alternatives — carrying tuned in the
+image only helps if the agent stops nsentering for this one call, which would
+make it the sole host interaction with different semantics from all the others.
+Consistency won: nsenter everywhere, tuned installed on the node.
+
+Until tuned is present, a `NodeTuning` that sets `tunedProfile` fails loudly on
+that node rather than appearing to work — which is the correct behaviour for an
+unconfigured node, and is what the failure looks like today.
 
 Frame keeps what tuned structurally cannot express:
 
