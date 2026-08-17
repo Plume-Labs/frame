@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
@@ -44,6 +45,7 @@ var _ = Describe("NodeTuning Controller", func() {
 
 	var testNodes []string
 	var testNodeTunings []string
+	var testPods []*corev1.Pod
 
 	r := func() *NodeTuningReconciler {
 		return &NodeTuningReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: record.NewFakeRecorder(100)}
@@ -195,6 +197,67 @@ var _ = Describe("NodeTuning Controller", func() {
 		}
 	}
 
+	// createPodOnNode creates a running pod on nodeName with a given
+	// Status.StartTime, the one signal realizeNode reads to tell a container
+	// that predates a restart from one that postdates it. It patches status
+	// after create because StartTime lives there, and Create ignores a
+	// caller-supplied status.
+	createPodOnNode := func(nodeName, name string, startTime metav1.Time) {
+		p := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: corev1.PodSpec{
+				NodeName:      nodeName,
+				Containers:    []corev1.Container{{Name: "c", Image: "busybox"}},
+				RestartPolicy: corev1.RestartPolicyNever,
+			},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+		testPods = append(testPods, p)
+		p.Status.Phase = corev1.PodRunning
+		p.Status.StartTime = &startTime
+		Expect(k8sClient.Status().Update(ctx, p)).To(Succeed())
+	}
+
+	// completeRestart writes status.nodes[].restartedAt directly, the way a
+	// verified rollout (nodetuning_rollout.go's continueRollout) would leave
+	// it, without driving the whole cordon/drain/restart machinery that
+	// produces it — realizeNode's job starts once RestartedAt exists, and
+	// these tests are about that computation, not about how it gets there.
+	completeRestart := func(nodeName string, restartedAt metav1.Time) {
+		Eventually(func() error {
+			nt := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, nt); err != nil {
+				return err
+			}
+			found := false
+			for i := range nt.Status.Nodes {
+				if nt.Status.Nodes[i].Name == nodeName {
+					nt.Status.Nodes[i].RestartedAt = &restartedAt
+					found = true
+				}
+			}
+			if !found {
+				nt.Status.Nodes = append(nt.Status.Nodes, framev1beta1.NodeTuningNodeStatus{
+					Name:        nodeName,
+					RestartedAt: &restartedAt,
+				})
+			}
+			return k8sClient.Status().Update(ctx, nt)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	// nodeRealization reconciles "a" on every poll (realizeNode only runs
+	// inside Reconcile) and reports the resulting Realization for nodeName.
+	nodeRealization := func(ntName, nodeName string) func() framev1beta1.Realization {
+		return func() framev1beta1.Realization {
+			_, _ = r().Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: ntName}})
+			if ns := getNodeStatus(ntName, nodeName); ns != nil {
+				return ns.Realization
+			}
+			return ""
+		}
+	}
+
 	// bumpGeneration applies a trivial spec mutation (toggling
 	// cpuManagerPolicy) so metadata.generation advances by exactly one, and
 	// returns the object at its new generation. The mutation itself also
@@ -224,6 +287,11 @@ var _ = Describe("NodeTuning Controller", func() {
 	}
 
 	AfterEach(func() {
+		for _, p := range testPods {
+			_ = k8sClient.Delete(ctx, p, client.GracePeriodSeconds(0))
+		}
+		testPods = nil
+
 		for _, name := range testNodeTunings {
 			nt := &framev1beta1.NodeTuning{}
 			if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, nt); err == nil {
@@ -450,5 +518,72 @@ var _ = Describe("NodeTuning Controller", func() {
 			annotateNode("node-1", framev1beta1.ApprovalAnnotation, bad)
 			Consistently(nodeStatusPhase("a", "node-1"), "2s").Should(Equal(framev1beta1.PhaseRebootPending))
 		}
+	})
+
+	// A node can be correctly configured and still deduplicate almost nothing
+	// while its long-lived pods predate the restart. Reporting that as
+	// "applied" is the illusion this field exists to prevent. An
+	// implementation that always promotes straight to FullyRealized whenever
+	// RestartedAt is set — never actually looking at pod StartTimes — passes
+	// every other realization test here and fails only this one.
+	It("reports Effective, not FullyRealized, when pods predate the restart", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		restartAt := metav1.Now()
+		createPodOnNode("node-1", "old", metav1.NewTime(restartAt.Add(-time.Hour)))
+		completeRestart("node-1", restartAt)
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationEffective))
+		Consistently(nodeRealization("a", "node-1"), "2s").Should(Equal(framev1beta1.RealizationEffective))
+	})
+
+	// The positive control for the test above: once every pod on the node
+	// postdates the restart, realization has to actually reach
+	// FullyRealized. Without this test, an implementation that never
+	// promotes past Effective — for instance one that forgot to write the
+	// FullyRealized branch at all — would still pass the "predates" test
+	// unnoticed.
+	It("promotes to FullyRealized once every pod on the node postdates the restart", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		restartAt := metav1.Now()
+		createPodOnNode("node-1", "new", metav1.NewTime(restartAt.Add(time.Minute)))
+		completeRestart("node-1", restartAt)
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationFullyRealized))
+	})
+
+	// The boundary this task calls out explicitly: a pod whose startTime
+	// exactly equals RestartedAt is treated as predating the restart, not
+	// postdating it. At the timestamp resolution available, a tie is not
+	// demonstrable evidence the container was created after the change, and
+	// claiming FullyRealized on evidence that cannot actually decide it is
+	// the same overclaim this field exists to prevent for the "long before"
+	// case. An implementation using "not before" (>=) instead of "strictly
+	// after" (>) as its promotion test passes both specs above and fails
+	// only this one.
+	It("treats a pod whose startTime exactly equals the restart as not yet postdating it", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		restartAt := metav1.Now()
+		createPodOnNode("node-1", "tie", restartAt)
+		completeRestart("node-1", restartAt)
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationEffective))
+		Consistently(nodeRealization("a", "node-1"), "2s").Should(Equal(framev1beta1.RealizationEffective))
+	})
+
+	// A node that has never had a verified restart has nothing to be
+	// Effective about yet. Reported as Pending rather than the zero value,
+	// so a caller reading the field can never mistake "never restarted" for
+	// "restarted, but the controller forgot to record it."
+	It("reports Pending realization when the node has never been restarted", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationPending))
 	})
 })
