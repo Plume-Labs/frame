@@ -19,17 +19,66 @@ package controller
 import (
 	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
-func TestNodeTuningKSMDefaultsOff(t *testing.T) {
-	// Page merging across tenants is a side channel. A NodeTuning that says
-	// nothing about KSM must not turn it on.
-	var nt framev1beta1.NodeTuning
-	if nt.Spec.KSM != nil {
-		t.Fatalf("KSM must be nil unless declared, got %+v", nt.Spec.KSM)
-	}
-}
+// These specs are about the v1beta1 *schema*, not a Go zero-value fact: they
+// go through the real apiserver (k8sClient / envtest, wired up in
+// suite_test.go) so that a `+kubebuilder:default` marker regression is
+// something the suite can actually see. See the sibling *_v1beta1_schema_test.go
+// files for the same pattern.
+//
+// Page merging across tenants is a side channel (see KSMSpec's doc comment),
+// so "KSM defaults off" has to mean the schema, not a struct literal: a Go
+// zero-value NodeTuning has a nil *KSMSpec regardless of what
+// +kubebuilder:default says, so asserting on that alone would pass unchanged
+// even if the marker were flipped to `default=true` or deleted outright.
+var _ = Describe("NodeTuning v1beta1 schema", func() {
+	It("leaves spec.ksm nil when the spec says nothing about KSM at all", func() {
+		nt := &framev1beta1.NodeTuning{
+			ObjectMeta: metav1.ObjectMeta{Name: "ksm-untouched"},
+		}
+		Expect(k8sClient.Create(ctx, nt)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, nt) })
+
+		back := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "ksm-untouched"}, back)).To(Succeed())
+		Expect(back.Spec.KSM).To(BeNil(), "an unset ksm field must stay absent, not get defaulted into an object")
+	})
+
+	It("defaults ksm.enabled to false when ksm is declared but enabled is omitted from the wire", func() {
+		// A typed client can't exercise this: KSMSpec.Enabled has no
+		// `omitempty`, so encoding/json always puts an explicit
+		// "enabled": false on the wire for a Go zero-value KSMSpec{},
+		// which would satisfy this assertion whatever the schema default
+		// said (an explicit value on the wire always wins over a CRD
+		// default). Only a request that omits the "enabled" key entirely
+		// exercises the `+kubebuilder:default=false` marker, hence the
+		// unstructured object with `ksm: {}` and no "enabled" key.
+		raw := &unstructured.Unstructured{}
+		raw.SetGroupVersionKind(framev1beta1.GroupVersion.WithKind("NodeTuning"))
+		raw.SetName("ksm-enabled-defaulted")
+		Expect(unstructured.SetNestedMap(raw.Object, map[string]any{
+			"ksm": map[string]any{},
+		}, "spec")).To(Succeed())
+
+		Expect(k8sClient.Create(ctx, raw)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, raw) })
+
+		back := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "ksm-enabled-defaulted"}, back)).To(Succeed())
+		Expect(back.Spec.KSM).NotTo(BeNil())
+		Expect(back.Spec.KSM.Enabled).To(BeFalse(),
+			"spec.ksm.enabled must default to false — page merging across tenants is a side channel and must stay opt-in")
+	})
+})
 
 func TestNodeTuningPhaseConstantsAreDistinct(t *testing.T) {
 	seen := map[framev1beta1.NodeTuningPhase]bool{}
