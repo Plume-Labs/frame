@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"strconv"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -157,11 +158,33 @@ var _ = Describe("NodeTuning Controller", func() {
 		}, "5s", "50ms").Should(Succeed())
 	}
 
-	// nodeCordoned reports the live corev1.Node's Spec.Unschedulable. Task 5
-	// performs no cordon of its own — this exists so its tests can prove that
-	// stopping at RebootPending really does mean "nothing happened yet",
-	// rather than just asserting on a phase string a broken implementation
-	// could satisfy some other way.
+	// markNodeReady writes the NodeReady condition. envtest nodes are created
+	// with no conditions at all, which reads as NotReady — and the rollout
+	// refuses to start anywhere while any node is not Ready, so a test that
+	// wants to see approval do something has to say so.
+	markNodeReady := func(nodeName string) {
+		Eventually(func() error {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n); err != nil {
+				return err
+			}
+			n.Status.Conditions = []corev1.NodeCondition{{
+				Type:               corev1.NodeReady,
+				Status:             corev1.ConditionTrue,
+				LastHeartbeatTime:  metav1.Now(),
+				LastTransitionTime: metav1.Now(),
+			}}
+			return k8sClient.Status().Update(ctx, n)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	// nodeCordoned reports the live corev1.Node's Spec.Unschedulable. The
+	// approval gate performs no cordon of its own — this exists so its tests
+	// can prove that stopping at RebootPending really does mean "nothing
+	// happened yet", rather than just asserting on a phase string a broken
+	// implementation could satisfy some other way. Past the gate the rollout
+	// does cordon (nodetuning_rollout_test.go), which is what makes this a
+	// real discriminator rather than a constant.
 	nodeCordoned := func(nodeName string) func() bool {
 		return func() bool {
 			n := &corev1.Node{}
@@ -365,16 +388,26 @@ var _ = Describe("NodeTuning Controller", func() {
 	// annotation — never reading ApprovalAnnotation at all — would pass
 	// every other test in this file and still never let a single node
 	// proceed.
+	//
+	// What "proceeds" means changed with Task 6: approval no longer resolves
+	// to Drifted, it hands the node to the rollout, which cordons it. So this
+	// test now has to give the rollout what it refuses to start without — a
+	// Ready node, and the agent's report of which unit it runs and that
+	// unit's current ActiveEnterTimestamp (see nodetuning_rollout.go).
 	It("proceeds once the node is approved for the current generation", func() {
 		createTestNode("node-1", map[string]string{"role": "worker"})
+		markNodeReady("node-1")
+		annotateNode("node-1", framev1beta1.TuningUnitAnnotation, "k3s-agent")
+		annotateNode("node-1", framev1beta1.TuningUnitActiveEnterAnnotation, time.Now().Add(-time.Hour).Format(time.RFC3339Nano))
 		nt := createNodeTuning("a", map[string]string{"role": "worker"})
 		setObservedNeedingRestart("a", "node-1")
 		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+		Expect(nodeCordoned("node-1")()).To(BeFalse())
 
 		annotateNode("node-1", framev1beta1.ApprovalAnnotation, strconv.FormatInt(nt.Generation, 10))
 
-		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseDrifted))
-		Expect(getNodeStatus("a", "node-1").AppliedGeneration).To(Equal(nt.Generation))
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseApplying))
+		Expect(nodeCordoned("node-1")()).To(BeTrue())
 	})
 
 	// A stale approval must not carry: approving one generation says nothing

@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,24 +40,48 @@ import (
 
 // NodeTuningReconciler reconciles a NodeTuning object.
 //
-// This is the diff-and-report half of the lifecycle (see the design doc's
-// "Controller" section): it lists the nodes a NodeTuning selects, detects
-// selector overlap with every other NodeTuning, and otherwise diffs
-// spec against status.nodes[].observed to write InSync or Drifted. Anything
-// needing a restart to take effect stops at RebootPending until a per-node
-// annotation approves that exact metadata.generation (Task 5). It never
-// cordons, drains, or restarts anything itself — that is Task 6, layered on
-// top of the phases this reconciler writes.
+// It lists the nodes a NodeTuning selects, detects selector overlap with every
+// other NodeTuning, and diffs spec against status.nodes[].observed to write
+// InSync or Drifted. Anything needing a restart to take effect stops at
+// RebootPending until a per-node annotation approves that exact
+// metadata.generation. Once approved, the disruptive half takes over — cordon,
+// drain, detached restart, verify, uncordon, one node at a time — which lives
+// in nodetuning_rollout.go and is where every rule about not taking the
+// cluster down is written down.
 type NodeTuningReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// APIReader reads straight from the API server, bypassing the manager's
+	// cache. The drain lists the pods on one node by field selector, which
+	// the cached client can only serve from an index — and registering that
+	// index would make the manager cache every pod in the cluster forever for
+	// a list it makes a handful of times per rollout. nil falls back to the
+	// cached Client, which is only correct for a client that talks to the API
+	// server directly (as the tests' does).
+	APIReader client.Reader
+
+	// DrainTimeout and RestartTimeout are the two waits this controller can
+	// give up on. Zero means the package default (see defaultDrainTimeout /
+	// defaultRestartTimeout); they are fields so tests can use waits a test
+	// can actually sit through.
+	DrainTimeout   time.Duration
+	RestartTimeout time.Duration
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=nodetunings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=nodetunings/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=nodetunings/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// nodes patch/update: the rollout cordons and uncordons, and writes the
+// restart-protocol annotations the node agent reads (see nodetuning_rollout.go).
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch;update
+// pods list + pods/eviction create, and nothing more: the drain moves pods off
+// a node through the eviction API, which is what makes PodDisruptionBudgets
+// enforceable. Plain delete is deliberately not requested — it would bypass
+// every budget in the cluster.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
 
 func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -66,10 +91,20 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// The whole node list, not just the matched ones: the rollout's "one node
+	// at a time" and "refuse while any other node is not Ready" rules are
+	// cluster-wide facts, and a NodeTuning that only ever looked at its own
+	// selection would happily take down the second of three nodes.
+	var allNodesList corev1.NodeList
+	if err := r.List(ctx, &allNodesList); err != nil {
+		return ctrl.Result{}, fmt.Errorf("listing nodes: %w", err)
+	}
+	allNodes := allNodesList.Items
+
 	// A nil selector matches no nodes rather than every node (see
 	// NodeTuningSpec.NodeSelector's doc comment), so an object created
 	// without one is inert instead of fleet-wide by accident.
-	matched, err := r.matchingNodes(ctx, nt.Spec.NodeSelector)
+	matched, err := selectNodes(allNodes, nt.Spec.NodeSelector)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing nodes for selector: %w", err)
 	}
@@ -82,11 +117,20 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	patch := client.MergeFrom(nt.DeepCopy())
 	nt.Status.ObservedGeneration = nt.Generation
 
+	rolloutActive := false
 	newNodes := make([]framev1beta1.NodeTuningNodeStatus, 0, len(matched))
-	for _, node := range matched {
+	for i := range matched {
+		node := &matched[i]
 		ns := existingNodeStatus(nt.Status.Nodes, node.Name)
 
-		if others := overlappingNodeTunings(all.Items, nt.Name, node); len(others) > 0 {
+		// Diff against what the agent measured (status.nodes[].observed),
+		// never against what another NodeTuning intended: Observed is the
+		// only value ever actually verified on the node.
+		reason, needsRestart := diffTuning(nt.Spec, ns.Observed)
+		others := overlappingNodeTunings(all.Items, nt.Name, *node)
+
+		switch {
+		case len(others) > 0:
 			// Overlapping selectors are a configuration error, not a merge:
 			// silently picking a winner (by name, by age, by anything) makes
 			// the effective configuration of a node unpredictable, which is
@@ -94,31 +138,63 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			// node's Observed/AppliedGeneration/RestartedAt is touched.
 			ns.Phase = framev1beta1.PhaseFailed
 			ns.Message = fmt.Sprintf("node also selected by NodeTuning %s", strings.Join(others, ", "))
-		} else if reason, needsRestart := diffTuning(nt.Spec, ns.Observed); reason != "" {
-			// Diff against what the agent measured (status.nodes[].observed),
-			// never against what another NodeTuning intended: Observed is the
-			// only value ever actually verified on the node.
-			if needsRestart && !approvedForGeneration(node, nt.Generation) {
-				// Anything needing a restart stops here until a human
-				// approves this exact generation (see ApprovalAnnotation's
-				// doc comment). Like the overlap-Failed branch above, a
-				// refused node is left untouched: AppliedGeneration is not
-				// advanced, and nothing is cordoned, drained, or restarted
-				// — that first action belongs to Task 6, once approved.
-				ns.Phase = framev1beta1.PhaseRebootPending
-				ns.Message = fmt.Sprintf(
-					"restart required to apply: %s; approve with `kubectl annotate node %s %s=%d --overwrite`",
-					reason, node.Name, framev1beta1.ApprovalAnnotation, nt.Generation,
-				)
-			} else {
-				ns.Phase = framev1beta1.PhaseDrifted
-				ns.AppliedGeneration = nt.Generation
-				ns.Message = reason
-			}
-		} else {
+
+		case rolloutInFlight(node) && ns.Phase == framev1beta1.PhaseFailed:
+			// Halted. The node stays exactly as the failure left it —
+			// cordoned, annotated, and blocking every other node — until a
+			// human looks at it. Retrying on a timer would be a rollout that
+			// keeps going through failures, which is the outage this design
+			// refuses to risk.
+			rolloutActive = true
+
+		case rolloutInFlight(node):
+			// A node this controller cordoned gets driven to a conclusion
+			// whatever the diff now says: an in-flight rollout that stopped
+			// being "needed" mid-way still has to end with the node
+			// uncordoned.
+			ns = r.continueRollout(ctx, &nt, node, ns)
+			rolloutActive = true
+
+		case reason == "":
 			ns.Phase = framev1beta1.PhaseInSync
 			ns.AppliedGeneration = nt.Generation
 			ns.Message = ""
+
+		case needsRestart && !approvedForGeneration(*node, nt.Generation):
+			// Anything needing a restart stops here until a human approves
+			// this exact generation (see ApprovalAnnotation's doc comment).
+			// Like the overlap-Failed branch above, a refused node is left
+			// untouched: AppliedGeneration is not advanced, and nothing is
+			// cordoned, drained, or restarted.
+			ns.Phase = framev1beta1.PhaseRebootPending
+			ns.Message = fmt.Sprintf(
+				"restart required to apply: %s; approve with `kubectl annotate node %s %s=%d --overwrite`",
+				reason, node.Name, framev1beta1.ApprovalAnnotation, nt.Generation,
+			)
+
+		case needsRestart && restartedForGeneration(ns, nt.Generation):
+			// Already restarted for this generation. Usually this is just the
+			// agent not having re-observed yet and it converges to InSync on
+			// its next tick; if it never does, the restart did not achieve
+			// what the spec asked for, and the honest report is that spec and
+			// observed still disagree — not another restart.
+			ns.Phase = framev1beta1.PhaseDrifted
+			ns.AppliedGeneration = nt.Generation
+			ns.Message = fmt.Sprintf(
+				"%s; restart already verified at %s for generation %d — not restarting again (approve a new generation, or clear status.nodes[].restartedAt to retry)",
+				reason, ns.RestartedAt.Time.Format(time.RFC3339), nt.Generation,
+			)
+
+		case needsRestart:
+			ns = r.startRollout(ctx, &nt, node, ns, reason, allNodes)
+			if ns.Phase == framev1beta1.PhaseApplying {
+				rolloutActive = true
+			}
+
+		default:
+			ns.Phase = framev1beta1.PhaseDrifted
+			ns.AppliedGeneration = nt.Generation
+			ns.Message = reason
 		}
 		newNodes = append(newNodes, ns)
 	}
@@ -130,11 +206,17 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	log.Info("Reconciled NodeTuning", "matchedNodes", len(matched))
+	if rolloutActive {
+		// A node mid-rollout has to be re-driven on a timer: the agent's
+		// answers arrive as annotations (which do produce watch events), but
+		// a drain merely waiting for pods to go produces none at all.
+		return ctrl.Result{RequeueAfter: rolloutRequeueInterval}, nil
+	}
 	return ctrl.Result{}, nil
 }
 
-// matchingNodes returns the corev1.Nodes selected by sel, or none if sel is nil.
-func (r *NodeTuningReconciler) matchingNodes(ctx context.Context, sel *metav1.LabelSelector) ([]corev1.Node, error) {
+// selectNodes returns the nodes selected by sel, or none if sel is nil.
+func selectNodes(nodes []corev1.Node, sel *metav1.LabelSelector) ([]corev1.Node, error) {
 	if sel == nil {
 		return nil, nil
 	}
@@ -142,11 +224,13 @@ func (r *NodeTuningReconciler) matchingNodes(ctx context.Context, sel *metav1.La
 	if err != nil {
 		return nil, fmt.Errorf("invalid nodeSelector: %w", err)
 	}
-	var list corev1.NodeList
-	if err := r.List(ctx, &list, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		return nil, err
+	var matched []corev1.Node
+	for i := range nodes {
+		if selector.Matches(labels.Set(nodes[i].Labels)) {
+			matched = append(matched, nodes[i])
+		}
 	}
-	return list.Items, nil
+	return matched, nil
 }
 
 // existingNodeStatus returns the prior status entry for nodeName, or a fresh

@@ -311,9 +311,13 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.NodeTuningReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("nodetuning"), //nolint:staticcheck
+		Client: mgr.GetClient(),
+		// Uncached, on purpose: the drain lists the pods on one node by field
+		// selector a handful of times per rollout, and serving that from the
+		// cache would mean caching every pod in the cluster forever.
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("nodetuning"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "nodetuning")
 		os.Exit(1)
