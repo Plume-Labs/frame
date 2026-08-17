@@ -660,6 +660,11 @@ partway through and the unit may never come back. Pass the unit through
 `IsRestartable` before acting on it, exactly as Task 3 does: the request arrives
 over an annotation, which is caller-influenced input.
 
+Compare the request annotation's **value**, not its presence. Task 6's fix round
+re-issues the request when a halted rollout is released, so an agent that keys
+on "the annotation exists" would either skip the re-issued restart or replay the
+old one. Record the value it last acted on and act again only when it changes.
+
 - [ ] **Step 1b: RBAC for the agent**
 
 The agent is a second identity, not the manager: it runs on every node, lists
