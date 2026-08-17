@@ -257,12 +257,23 @@ spec:
                       type: string
                     restartedAt:
                       description: |-
-                        RestartedAt is when Task 6 verified the unit came back. Task 7 compares
-                        pod start times against it to promote Effective to FullyRealized. It
-                        lives in the API rather than being re-derived from the node's
-                        ActiveEnterTimestamp, which would cost a second agent round-trip.
+                        RestartedAt is when the rollout verified the unit came back. Task 7
+                        compares pod start times against it to promote Effective to
+                        FullyRealized. It lives in the API rather than being re-derived from the
+                        node's ActiveEnterTimestamp, which would cost a second agent round-trip.
                       format: date-time
                       type: string
+                    restartedGeneration:
+                      description: |-
+                        RestartedGeneration is the metadata.generation the restart recorded in
+                        RestartedAt was performed for, and it is deliberately not
+                        AppliedGeneration: that field is also advanced by a node simply being
+                        InSync, so reading "we already restarted for this generation" off it
+                        would refuse to ever restart a node that reached this generation
+                        without one — for instance a setting that regresses on the node long
+                        after an unrelated restart at an older generation.
+                      format: int64
+                      type: integer
                   required:
                   - name
                   type: object

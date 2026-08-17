@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -95,11 +96,23 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// at a time" and "refuse while any other node is not Ready" rules are
 	// cluster-wide facts, and a NodeTuning that only ever looked at its own
 	// selection would happily take down the second of three nodes.
+	//
+	// Read through the API server, never the manager's cache. The campaign
+	// lock is a check-then-act on a value another reconcile may have written
+	// moments ago, and a cached read of it is a snapshot from before that
+	// write: NodeTuning "b", queued before "a" cordoned node-1, would see no
+	// lock and cordon node-2. MaxConcurrentReconciles removes parallelism, not
+	// this window, and the merge patches here take no optimistic lock.
 	var allNodesList corev1.NodeList
-	if err := r.List(ctx, &allNodesList); err != nil {
+	if err := r.reader().List(ctx, &allNodesList); err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing nodes: %w", err)
 	}
 	allNodes := allNodesList.Items
+	lock := newCampaignLock(allNodes)
+
+	if !nt.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finishDeletion(ctx, &nt, allNodes)
+	}
 
 	// A nil selector matches no nodes rather than every node (see
 	// NodeTuningSpec.NodeSelector's doc comment), so an object created
@@ -108,19 +121,23 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing nodes for selector: %w", err)
 	}
+	// Plus any node this object cordoned that has since stopped matching —
+	// relabelled, or the selector edited. Dropping it from the loop would
+	// leave it cordoned and holding the cluster-wide lock with nothing left
+	// to drive it and no status anywhere saying so.
+	adopted := adoptOwnedNodes(allNodes, matched, nt.Name)
+	work := append(matched, adopted...)
 
 	var all framev1beta1.NodeTuningList
 	if err := r.List(ctx, &all); err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing NodeTunings: %w", err)
 	}
 
-	patch := client.MergeFrom(nt.DeepCopy())
-	nt.Status.ObservedGeneration = nt.Generation
-
 	rolloutActive := false
-	newNodes := make([]framev1beta1.NodeTuningNodeStatus, 0, len(matched))
-	for i := range matched {
-		node := &matched[i]
+	ownsNode := false
+	newNodes := make([]framev1beta1.NodeTuningNodeStatus, 0, len(work))
+	for i := range work {
+		node := &work[i]
 		ns := existingNodeStatus(nt.Status.Nodes, node.Name)
 
 		// Diff against what the agent measured (status.nodes[].observed),
@@ -130,6 +147,43 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		others := overlappingNodeTunings(all.Items, nt.Name, *node)
 
 		switch {
+		// The in-flight cases come first, before the overlap check: a node
+		// this object already cordoned has to reach a conclusion whatever
+		// else has since changed about the configuration. A second NodeTuning
+		// appearing mid-restart is a problem for the *next* rollout, not a
+		// reason to abandon a drained node in a cordoned state.
+		case rolloutOwnedBy(node, nt.Name) && rolloutHalted(node):
+			// Halted. The node stays exactly as the failure left it —
+			// cordoned, annotated, and blocking every other node — until a
+			// human clears the started annotation. Retrying on a timer would
+			// be a rollout that keeps going through failures, which is the
+			// outage this design refuses to risk. The phase/message are
+			// whatever the failure wrote; if status was lost, say so plainly
+			// rather than silently reporting something healthier.
+			ownsNode = true
+			rolloutActive = true
+			ns.Phase = framev1beta1.PhaseFailed
+			if ns.Message == "" {
+				ns.Message = fmt.Sprintf("rollout halted on %s and is waiting for a human (%s)",
+					node.Name, releaseHaltHint(node.Name))
+			}
+
+		case rolloutOwnedBy(node, nt.Name):
+			ns = r.continueRollout(ctx, &nt, node, ns, lock)
+			ownsNode = true
+			rolloutActive = true
+
+		case rolloutInFlight(node):
+			// Cordoned by somebody else (another NodeTuning, or a rollout
+			// whose owner annotation was stripped by hand). Not ours to
+			// drive, and definitely not ours to start a second rollout on.
+			owner := node.Annotations[framev1beta1.TuningRolloutOwnerAnnotation]
+			if owner == "" {
+				owner = "an unknown owner"
+			}
+			ns.Phase = framev1beta1.PhaseRebootPending
+			ns.Message = fmt.Sprintf("waiting: %s is mid-rollout under %s", node.Name, owner)
+
 		case len(others) > 0:
 			// Overlapping selectors are a configuration error, not a merge:
 			// silently picking a winner (by name, by age, by anything) makes
@@ -138,22 +192,6 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			// node's Observed/AppliedGeneration/RestartedAt is touched.
 			ns.Phase = framev1beta1.PhaseFailed
 			ns.Message = fmt.Sprintf("node also selected by NodeTuning %s", strings.Join(others, ", "))
-
-		case rolloutInFlight(node) && ns.Phase == framev1beta1.PhaseFailed:
-			// Halted. The node stays exactly as the failure left it —
-			// cordoned, annotated, and blocking every other node — until a
-			// human looks at it. Retrying on a timer would be a rollout that
-			// keeps going through failures, which is the outage this design
-			// refuses to risk.
-			rolloutActive = true
-
-		case rolloutInFlight(node):
-			// A node this controller cordoned gets driven to a conclusion
-			// whatever the diff now says: an in-flight rollout that stopped
-			// being "needed" mid-way still has to end with the node
-			// uncordoned.
-			ns = r.continueRollout(ctx, &nt, node, ns)
-			rolloutActive = true
 
 		case reason == "":
 			ns.Phase = framev1beta1.PhaseInSync
@@ -186,8 +224,9 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			)
 
 		case needsRestart:
-			ns = r.startRollout(ctx, &nt, node, ns, reason, allNodes)
+			ns = r.startRollout(ctx, &nt, node, ns, reason, allNodes, lock)
 			if ns.Phase == framev1beta1.PhaseApplying {
+				ownsNode = true
 				rolloutActive = true
 			}
 
@@ -199,13 +238,27 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		newNodes = append(newNodes, ns)
 	}
 	sort.Slice(newNodes, func(i, j int) bool { return newNodes[i].Name < newNodes[j].Name })
-	nt.Status.Nodes = newNodes
 
+	// The status base is taken here, after the loop: startRollout may have
+	// added the finalizer, which refreshes nt from the server, and a base
+	// captured before that would diff against an object that no longer
+	// exists in that shape.
+	patch := client.MergeFrom(nt.DeepCopy())
+	nt.Status.ObservedGeneration = nt.Generation
+	nt.Status.Nodes = newNodes
 	if err := r.Status().Patch(ctx, &nt, patch); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Reconciled NodeTuning", "matchedNodes", len(matched))
+	// Nothing cordoned any more: stop blocking this object's deletion. The
+	// finalizer exists only for as long as there is a node to release.
+	if !ownsNode {
+		if err := r.removeFinalizer(ctx, &nt); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	log.Info("Reconciled NodeTuning", "matchedNodes", len(matched), "adoptedNodes", len(adopted))
 	if rolloutActive {
 		// A node mid-rollout has to be re-driven on a timer: the agent's
 		// answers arrive as annotations (which do produce watch events), but
@@ -215,7 +268,14 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
-// selectNodes returns the nodes selected by sel, or none if sel is nil.
+// selectNodes returns deep copies of the nodes selected by sel, or none if
+// sel is nil.
+//
+// Deep copies, not the structs themselves: a plain copy shares the
+// Annotations map with the caller's list, so mutating a node before patching
+// it — which is how every write here is built — would edit the cluster-wide
+// view too, committed or not. That made a failed uncordon look exactly like a
+// successful one to the next node in the same pass.
 func selectNodes(nodes []corev1.Node, sel *metav1.LabelSelector) ([]corev1.Node, error) {
 	if sel == nil {
 		return nil, nil
@@ -227,10 +287,81 @@ func selectNodes(nodes []corev1.Node, sel *metav1.LabelSelector) ([]corev1.Node,
 	var matched []corev1.Node
 	for i := range nodes {
 		if selector.Matches(labels.Set(nodes[i].Labels)) {
-			matched = append(matched, nodes[i])
+			matched = append(matched, *nodes[i].DeepCopy())
 		}
 	}
 	return matched, nil
+}
+
+// adoptOwnedNodes returns deep copies of the nodes ntName cordoned that are
+// not already in matched. A node that stops matching mid-rollout (relabelled,
+// or the selector edited) is still this object's to finish: it is cordoned,
+// possibly drained, possibly waiting on a restart it was asked for, and it
+// holds the cluster-wide lock.
+func adoptOwnedNodes(all []corev1.Node, matched []corev1.Node, ntName string) []corev1.Node {
+	inMatched := make(map[string]bool, len(matched))
+	for i := range matched {
+		inMatched[matched[i].Name] = true
+	}
+	var adopted []corev1.Node
+	for i := range all {
+		if !inMatched[all[i].Name] && rolloutOwnedBy(&all[i], ntName) {
+			adopted = append(adopted, *all[i].DeepCopy())
+		}
+	}
+	return adopted
+}
+
+// nodeTuningFinalizer blocks deletion of a NodeTuning while it still has a
+// node cordoned. Without it, deleting the object mid-rollout strands that
+// node cordoned forever, holding the cluster-wide lock with nothing left in
+// the cluster that knows it exists.
+const nodeTuningFinalizer = "frame.plume-labs.io/nodetuning-rollout"
+
+// ensureFinalizer adds the finalizer if it is missing. Called immediately
+// before the first disruptive write, never on every reconcile: an object that
+// has never cordoned anything holds no resources and has no business being
+// harder to delete.
+func (r *NodeTuningReconciler) ensureFinalizer(ctx context.Context, nt *framev1beta1.NodeTuning) error {
+	if controllerutil.ContainsFinalizer(nt, nodeTuningFinalizer) {
+		return nil
+	}
+	controllerutil.AddFinalizer(nt, nodeTuningFinalizer)
+	return r.Update(ctx, nt)
+}
+
+func (r *NodeTuningReconciler) removeFinalizer(ctx context.Context, nt *framev1beta1.NodeTuning) error {
+	if !controllerutil.RemoveFinalizer(nt, nodeTuningFinalizer) {
+		return nil
+	}
+	return r.Update(ctx, nt)
+}
+
+// finishDeletion releases every node this object left cordoned, then lets the
+// deletion through.
+//
+// Releasing rather than waiting is deliberate, and it is a trade: a node
+// whose restart was requested but not yet verified is handed workloads back
+// while the agent may still act on that request. That is a bounded, one-node
+// disruption; the alternative is a cordoned node and a cluster-wide lock that
+// nothing will ever release, because the only object that knew about them is
+// gone. Deleting a NodeTuning mid-rollout is an explicit human act, and it is
+// recorded as an Event on the way out.
+func (r *NodeTuningReconciler) finishDeletion(ctx context.Context, nt *framev1beta1.NodeTuning, allNodes []corev1.Node) error {
+	for i := range allNodes {
+		if !rolloutOwnedBy(&allNodes[i], nt.Name) {
+			continue
+		}
+		node := allNodes[i].DeepCopy()
+		if err := r.releaseNode(ctx, node); err != nil {
+			// Returned, not swallowed: the deletion stays blocked and is
+			// retried rather than completing with the node still cordoned.
+			return fmt.Errorf("releasing %s on NodeTuning deletion: %w", node.Name, err)
+		}
+		r.Recorder.Eventf(nt, corev1.EventTypeWarning, "RolloutAbandoned",
+			"NodeTuning deleted mid-rollout; uncordoned %s and cleared its restart request", node.Name)
+	}
+	return r.removeFinalizer(ctx, nt)
 }
 
 // existingNodeStatus returns the prior status entry for nodeName, or a fresh

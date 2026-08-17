@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -33,6 +34,40 @@ import (
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
+
+// patchFailingClient fails every Patch of one named Node and delegates
+// everything else. Without it no spec in this package can reach the paths
+// that only run when a write to the API server fails — and "the apiserver is
+// briefly unavailable" is not an edge case here, it is what restarting k3s on
+// the server node does every single time.
+type patchFailingClient struct {
+	client.Client
+	failNode string
+}
+
+func (c patchFailingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if n, ok := obj.(*corev1.Node); ok && n.Name == c.failNode {
+		return fmt.Errorf("simulated apiserver failure patching node %s", n.Name)
+	}
+	return c.Client.Patch(ctx, obj, patch, opts...)
+}
+
+// staleNodeListClient answers Node lists from a snapshot taken earlier,
+// standing in for the manager's cache lagging behind a write another
+// reconcile just made. Everything else, including the APIReader the
+// reconciler is given separately, stays live.
+type staleNodeListClient struct {
+	client.Client
+	snapshot *corev1.NodeList
+}
+
+func (c staleNodeListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if nl, ok := list.(*corev1.NodeList); ok {
+		c.snapshot.DeepCopyInto(nl)
+		return nil
+	}
+	return c.Client.List(ctx, list, opts...)
+}
 
 // Like the Task 4/5 suite next door, this one calls Reconcile directly: no
 // live manager runs here, so nothing re-triggers a reconcile on its own.
@@ -64,15 +99,24 @@ var _ = Describe("NodeTuning rollout", func() {
 		restartTimeout = 30 * time.Second
 	})
 
-	rec := func() *NodeTuningReconciler {
+	// recWith builds the reconciler over a given client, so a spec can swap in
+	// one that fails writes or serves a stale cache. APIReader always stays
+	// the live client: that split is the whole point of the field.
+	recWith := func(c client.Client) *NodeTuningReconciler {
 		return &NodeTuningReconciler{
-			Client:         k8sClient,
+			Client:         c,
 			APIReader:      k8sClient,
 			Scheme:         k8sClient.Scheme(),
 			Recorder:       record.NewFakeRecorder(100),
 			DrainTimeout:   drainTimeout,
 			RestartTimeout: restartTimeout,
 		}
+	}
+
+	rec := func() *NodeTuningReconciler { return recWith(k8sClient) }
+
+	reconcileWith := func(c client.Client, ntName string) {
+		_, _ = recWith(c).Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: ntName}})
 	}
 
 	reconcileNow := func(ntName string) {
@@ -276,9 +320,14 @@ var _ = Describe("NodeTuning rollout", func() {
 		}
 		for _, name := range testNodeTunings {
 			n := name
+			// Reconciling on each poll: a NodeTuning that cordoned a node
+			// carries the rollout finalizer, and nothing else in this suite
+			// would ever run the reconcile that releases the node and lets
+			// the deletion through.
 			Eventually(func() bool {
+				reconcileNow(n)
 				return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: n}, &framev1beta1.NodeTuning{}))
-			}, "5s").Should(BeTrue())
+			}, "5s", "50ms").Should(BeTrue())
 		}
 		testNodeTunings = nil
 
@@ -527,6 +576,271 @@ var _ = Describe("NodeTuning rollout", func() {
 
 		Consistently(cordonedAfterReconcile("a", "node-1"), "3s", "100ms").Should(BeFalse())
 		Expect(nodeStatus("a", "node-1").Phase).To(Equal(framev1beta1.PhaseRebootPending))
+	})
+
+	// Every write in the rollout is built by mutating a node and then patching
+	// it, so a returned node that shares its Annotations map with the
+	// cluster-wide list edits that list whether or not the patch ever lands —
+	// an uncommitted write becomes indistinguishable from a committed one to
+	// anything else reading the list in the same pass. The campaign lock no
+	// longer depends on that sharing (it is an explicit value now), which is
+	// exactly why this needs asserting directly: no behavioural spec can
+	// reach it any more.
+	It("selects and adopts nodes that share no state with the list they came from", func() {
+		all := []corev1.Node{{ObjectMeta: metav1.ObjectMeta{
+			Name:   "node-1",
+			Labels: worker,
+			Annotations: map[string]string{
+				framev1beta1.TuningRolloutStartedAnnotation: "2026-08-17T00:00:00Z",
+				framev1beta1.TuningRolloutOwnerAnnotation:   "a",
+			},
+		}}}
+
+		selected, err := selectNodes(all, &metav1.LabelSelector{MatchLabels: worker})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(selected).To(HaveLen(1))
+		delete(selected[0].Annotations, framev1beta1.TuningRolloutStartedAnnotation)
+		Expect(all[0].Annotations).To(HaveKey(framev1beta1.TuningRolloutStartedAnnotation),
+			"mutating a selected node must not edit the cluster-wide view before the patch lands")
+
+		adopted := adoptOwnedNodes(all, nil, "a")
+		Expect(adopted).To(HaveLen(1))
+		delete(adopted[0].Annotations, framev1beta1.TuningRolloutStartedAnnotation)
+		Expect(all[0].Annotations).To(HaveKey(framev1beta1.TuningRolloutStartedAnnotation))
+	})
+
+	// The halt-release procedure the failure message and the annotation docs
+	// both name has to be the one that works. Clearing the started annotation
+	// leaves the previous attempt's restart request behind, and a rollout
+	// that reads that stale request is measuring its deadline from a
+	// timestamp already past it — the node re-fails instantly, retakes the
+	// cluster-wide lock, and the agent, which acts on request values it has
+	// not seen before, never acts on it either.
+	It("releases a halt cleanly when the started annotation is cleared", func() {
+		restartTimeout = 500 * time.Millisecond
+
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+
+		approve(nt, "node-1")
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+		staleRequest := getNode("node-1").Annotations[framev1beta1.TuningRestartRequestedAnnotation]
+		Expect(staleRequest).NotTo(BeEmpty())
+		Eventually(phaseAfterReconcile("a", "node-1"), "10s", "100ms").Should(Equal(framev1beta1.PhaseFailed))
+
+		By("a human clearing exactly the one annotation the message names")
+		restartTimeout = 30 * time.Second
+		Eventually(func() error {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "node-1"}, n); err != nil {
+				return err
+			}
+			delete(n.Annotations, framev1beta1.TuningRolloutStartedAnnotation)
+			return k8sClient.Update(ctx, n)
+		}, "5s", "50ms").Should(Succeed())
+
+		// The retry must re-issue the request, not inherit the dead one.
+		Eventually(func() string {
+			reconcileNow("a")
+			return getNode("node-1").Annotations[framev1beta1.TuningRestartRequestedAnnotation]
+		}, "5s", "100ms").ShouldNot(Or(BeEmpty(), Equal(staleRequest)))
+		Expect(nodeStatus("a", "node-1").Phase).To(Equal(framev1beta1.PhaseApplying))
+
+		agentReports("node-1", "k3s-agent", time.Now())
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeFalse())
+	})
+
+	// The lock must survive a write that did not land. This is the failure
+	// mode rule 2 says to expect — the apiserver is down for seconds while
+	// k3s restarts — and a lock released on an unconfirmed patch turns it
+	// into two cordoned nodes at once.
+	It("does not release the lock when the uncordon patch fails", func() {
+		createReadyNode("node-1", worker)
+		createReadyNode("node-2", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		setObservedNeedingRestart("a", "node-2")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+		agentReports("node-2", "k3s-agent", time.Now().Add(-time.Hour))
+
+		approve(nt, "node-1")
+		approve(nt, "node-2")
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+		agentReports("node-1", "k3s-agent", time.Now())
+
+		By("the uncordon failing on every attempt, so node-1 is never actually finished")
+		failing := patchFailingClient{Client: k8sClient, failNode: "node-1"}
+		for i := 0; i < 5; i++ {
+			reconcileWith(failing, "a")
+		}
+
+		Expect(getNode("node-1").Spec.Unschedulable).To(BeTrue(), "the patch failed, so node-1 is still cordoned on the server")
+		Expect(getNode("node-2").Spec.Unschedulable).To(BeFalse(),
+			"node-1 is cordoned and unfinished; starting node-2 is the two-nodes-down outage")
+		Expect(statusMessage("a", "node-2")).To(ContainSubstring("node-1"))
+	})
+
+	// The lock is a check-then-act, and the manager's cache is a snapshot
+	// from before the write being checked for. Here "a" has already cordoned
+	// node-1 when "b" reconciles off a cache that predates it: reading the
+	// lock from that cache starts node-2 with node-1 still down.
+	It("reads the campaign lock from the API server, not a stale cache", func() {
+		createReadyNode("node-1", map[string]string{"role": "w1"})
+		createReadyNode("node-2", map[string]string{"role": "w2"})
+		a := createNodeTuning("a", map[string]string{"role": "w1"})
+		b := createNodeTuning("b", map[string]string{"role": "w2"})
+		setObservedNeedingRestart("a", "node-1")
+		setObservedNeedingRestart("b", "node-2")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+		agentReports("node-2", "k3s-agent", time.Now().Add(-time.Hour))
+		approve(a, "node-1")
+		approve(b, "node-2")
+
+		stale := &corev1.NodeList{}
+		Expect(k8sClient.List(ctx, stale)).To(Succeed())
+
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		By("reconciling b off the pre-cordon snapshot")
+		lagging := staleNodeListClient{Client: k8sClient, snapshot: stale}
+		for i := 0; i < 3; i++ {
+			reconcileWith(lagging, "b")
+		}
+
+		Expect(getNode("node-2").Spec.Unschedulable).To(BeFalse(),
+			"node-1 is cordoned; b must see that even when its own cache does not")
+		Expect(statusMessage("b", "node-2")).To(ContainSubstring("node-1"))
+	})
+
+	// The baseline has to be read when the restart is asked for, not when the
+	// node was cordoned: a drain can take minutes, and a restart of the unit
+	// during it would otherwise sit between an old baseline and the first
+	// post-request probe, "verifying" a restart nobody asked for and handing
+	// the node its workloads back at the moment the agent finally acts.
+	It("takes the verification baseline when the restart is requested, not at cordon time", func() {
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+
+		approve(nt, "node-1")
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		By("the unit restarting for an unrelated reason while the node drains")
+		agentReports("node-1", "k3s-agent", time.Now())
+
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+		Consistently(cordonedAfterReconcile("a", "node-1"), "2s", "100ms").Should(BeTrue(),
+			"the requested restart has not happened yet; the earlier one is not evidence of it")
+
+		agentReports("node-1", "k3s-agent", time.Now().Add(time.Second))
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeFalse())
+	})
+
+	// Deleting the object mid-rollout must not strand the node. Nothing else
+	// in the cluster knows that node is cordoned, or that it holds the
+	// cluster-wide lock every other rollout waits on.
+	It("releases a cordoned node when the NodeTuning is deleted mid-rollout", func() {
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+
+		approve(nt, "node-1")
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		fetched := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, fetched)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, fetched)).To(Succeed())
+
+		Eventually(func() bool {
+			reconcileNow("a")
+			return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, &framev1beta1.NodeTuning{}))
+		}, "5s", "100ms").Should(BeTrue())
+
+		n := getNode("node-1")
+		Expect(n.Spec.Unschedulable).To(BeFalse(), "a deleted NodeTuning must not leave a node cordoned forever")
+		Expect(n.Annotations).NotTo(HaveKey(framev1beta1.TuningRolloutStartedAnnotation))
+		Expect(n.Annotations).NotTo(HaveKey(framev1beta1.TuningRestartRequestedAnnotation))
+	})
+
+	// A node relabelled out of the selector mid-rollout is still cordoned,
+	// still holding the lock, and still owed an uncordon. Dropping it from
+	// the loop because it no longer matches abandons it there.
+	It("finishes a rollout on a node that stops matching the selector", func() {
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+
+		approve(nt, "node-1")
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		By("relabelling the node out of the selector while it is cordoned")
+		Eventually(func() error {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "node-1"}, n); err != nil {
+				return err
+			}
+			n.Labels["role"] = "somewhere-else"
+			return k8sClient.Update(ctx, n)
+		}, "5s", "50ms").Should(Succeed())
+
+		agentReports("node-1", "k3s-agent", time.Now())
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeFalse())
+	})
+
+	// An overlapping NodeTuning appearing mid-rollout is a problem for the
+	// next rollout, not a reason to abandon a drained, cordoned node. Ordering
+	// the overlap check ahead of the in-flight one pins the node at Failed
+	// with the lock held, and it stays there even after the overlap is fixed.
+	It("finishes a rollout even when a second NodeTuning starts selecting the node", func() {
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+
+		approve(nt, "node-1")
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		createNodeTuning("b", worker)
+		agentReports("node-1", "k3s-agent", time.Now())
+
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeFalse())
+	})
+
+	// "Already restarted for this generation" must mean a restart actually
+	// happened for it. AppliedGeneration is also advanced by a node simply
+	// being InSync, so reading the loop guard off that field refuses to ever
+	// restart a node that reached this generation without one — the state
+	// this spec sets up by hand is exactly what the InSync branch leaves
+	// behind on a node restarted at some older generation.
+	It("restarts a node whose only recorded restart belongs to an older generation", func() {
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		agentReports("node-1", "k3s-agent", time.Now().Add(-time.Hour))
+
+		old := metav1.NewTime(time.Now().Add(-72 * time.Hour))
+		Eventually(func() error {
+			fetched := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, fetched); err != nil {
+				return err
+			}
+			fetched.Status.Nodes = []framev1beta1.NodeTuningNodeStatus{{
+				Name:                "node-1",
+				Phase:               framev1beta1.PhaseInSync,
+				AppliedGeneration:   nt.Generation,
+				RestartedAt:         &old,
+				RestartedGeneration: nt.Generation - 1,
+				Observed:            framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false}},
+			}}
+			return k8sClient.Status().Update(ctx, fetched)
+		}, "5s", "50ms").Should(Succeed())
+
+		approve(nt, "node-1")
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
 	})
 
 	// One restart per approved generation. Right after a verified restart the
