@@ -641,6 +641,17 @@ that deployment requires:
 kubectl delete ds -n kube-system ksm-tuner
 ```
 
+- [ ] **Step 1b: RBAC for the agent**
+
+The agent is a second identity, not the manager: it runs on every node, lists
+`NodeTuning`, and patches `nodetunings/status`. Nothing has granted it that yet
+— Task 2 shipped a binary with no ServiceAccount, which the Task 2 review
+flagged. Create `deploy/kubernetes/base/node-tuning-agent/rbac.yaml` with a
+dedicated ServiceAccount, a ClusterRole limited to `get;list;watch` on
+`nodetunings` and `patch;update` on `nodetunings/status`, and a binding. Do not
+reuse the manager's ServiceAccount: the manager may cordon and evict, and the
+agent must not inherit that.
+
 - [ ] **Step 2: Write the e2e test**
 
 ```go
