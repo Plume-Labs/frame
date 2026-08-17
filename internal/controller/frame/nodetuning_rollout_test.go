@@ -927,4 +927,74 @@ var _ = Describe("NodeTuning rollout", func() {
 		Consistently(cordonedAfterReconcile("a", "node-1"), "3s", "100ms").Should(BeFalse())
 		Expect(getNode("node-1").Annotations).NotTo(HaveKey(framev1beta1.TuningRestartRequestedAnnotation))
 	})
+
+	// The third road to the same second restart, and the one an optimistic lock
+	// opened rather than closed.
+	//
+	// The verify pass is not atomic. continueRollout uncordons the node and
+	// deletes its rollout annotations — owner and baseline included — on the
+	// server, and only then sets RestartedAt/RestartedGeneration, which live
+	// nowhere but in that pass's memory until the status patch at the end of
+	// Reconcile. If a concurrent writer makes that patch conflict and the
+	// controller answers the conflict by giving up, the annotation clear has
+	// already landed: rolloutOwnedBy is false, continueRollout is never
+	// re-entered, RestartedAt is never recomputed, restartedForGeneration reads
+	// false, and the approval annotation is still on the node. The next pass
+	// falls straight through to startRollout — a second cordon, drain and
+	// restart of the same node on one approval.
+	//
+	// The concurrent writer is not hypothetical: it is the node agent, ticking
+	// every 30 seconds on this very node, and it is why the conflict path
+	// exists at all.
+	//
+	// The racing client is wired as both the reconciler's Client and its
+	// APIReader, so an agent write lands after the top-level read AND after
+	// patchStatus's own read — covering the wide window and the narrow one in
+	// one pass. A version that requeues on conflict fails on RestartedAt and
+	// again on the second cordon; a version that retries without re-reading
+	// conflicts until it exhausts its backoff and fails the same way.
+	It("records the restart even when the status patch conflicts on the verify pass", func() {
+		baseline := time.Now().Add(-time.Hour)
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", baseline)
+
+		approve(nt, "node-1")
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		// The unit comes back. The next reconcile is the verify pass.
+		agentReports("node-1", "k3s-agent", time.Now())
+
+		listed := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
+		racing := &writeOnReadClient{Client: k8sClient, remaining: 2, write: func() {
+			Expect(agent.PatchObserved(ctx, k8sClient, listed, "node-1",
+				framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false, PagesSharing: 7777}})).To(Succeed())
+		}}
+
+		verifier := recWith(racing)
+		verifier.APIReader = racing
+		_, err := verifier.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "a"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(racing.fired).To(BeNumerically(">=", 1),
+			"the racing write must actually have happened, or this spec proves nothing")
+
+		// The verify pass did commit its disruptive half — which is exactly why
+		// its status half may not be dropped.
+		Expect(getNode("node-1").Annotations).NotTo(HaveKey(framev1beta1.TuningRolloutOwnerAnnotation))
+		Expect(getNode("node-1").Spec.Unschedulable).To(BeFalse())
+
+		after := nodeStatus("a", "node-1")
+		Expect(after).NotTo(BeNil())
+		Expect(after.RestartedAt).NotTo(BeNil(),
+			"the restart record cannot be recomputed once the owner annotation is cleared, so a conflict must not discard it")
+		Expect(after.RestartedGeneration).To(Equal(nt.Generation))
+		Expect(after.Observed.KSM.PagesSharing).To(Equal(int64(7777)),
+			"and the agent's concurrent write must survive too, or the retry has simply reversed who loses")
+
+		// The harm, asserted directly.
+		Consistently(cordonedAfterReconcile("a", "node-1"), "3s", "100ms").Should(BeFalse())
+		Expect(getNode("node-1").Annotations).NotTo(HaveKey(framev1beta1.TuningRestartRequestedAnnotation))
+	})
 })
