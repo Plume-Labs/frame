@@ -1,8 +1,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: cluster-control
-
+# No `namespace:` here, deliberately. Every resource below declares its own,
+# and the ones added for node tuning are not in cluster-control: nvidia-mps
+# and the node-tuning agent live in kube-system (system-node-critical is only
+# accepted there), and node-feature-discovery brings its own namespace.
+#
+# A kustomization-wide `namespace:` is not a default, it is an override — it
+# rewrites the namespace of every resource *including a Namespace object's own
+# name*, which is why adding nfd under the old `namespace: cluster-control`
+# failed outright with "namespace transformation produces ID conflict"
+# (cluster-control and node-feature-discovery both becoming a Namespace named
+# cluster-control). Removing it renders the pre-existing resources byte for
+# byte identically, since each one already names cluster-control itself.
 resources:
   - namespace.yaml
   - rbac.yaml
@@ -12,12 +22,35 @@ resources:
   - ingress.yaml
   - hpa.yaml
   - pdb.yaml
+  # Node-level tuning. nfd and nvidia-mps are ordinary DaemonSets with no
+  # drift problem; their only defect was that this file never referenced
+  # them, so they have never been deployed by any automated path.
+  #
+  # node-tuning-agent supersedes the ksm-tuner DaemonSet, whose manifest is
+  # removed in the same commit. Removing a manifest does not remove a running
+  # object: on a cluster where ksm-tuner was deployed it keeps running, and
+  # both it and the agent then write the KSM sysfs knobs, so deployment also
+  # requires `kubectl delete ds -n kube-system ksm-tuner`.
+  - nfd
+  - nvidia-mps.yaml
+  - node-tuning-agent
 
+# Applies to everything in this kustomization, node addons included — a
+# kustomization-wide transformer has no per-resource scope, and these labels
+# are also injected into DaemonSet/Deployment selectors. Two consequences
+# worth knowing before deploying:
+#   * nvidia-mps and nfd carry `part-of: monitoring-platform`, which is not
+#     what they are. Cosmetic.
+#   * a selector is immutable, so a previously hand-applied nvidia-mps
+#     (`kubectl apply -f deploy/kubernetes/base/nvidia-mps.yaml`, as its own
+#     header suggests) must be deleted before this renders over it.
 commonLabels:
   app.kubernetes.io/name: cluster-control
   app.kubernetes.io/part-of: monitoring-platform
 
-# Image name and tag are set per-overlay via `kustomize edit set image`.
+# Image names and tags are set per-overlay via `kustomize edit set image`.
 # Run: kustomize edit set image cluster-control=<registry>/<image>:<tag>
+#      kustomize edit set image frame-agent=<registry>/frame-agent:<tag>
 images:
   - name: cluster-control
+  - name: frame-agent

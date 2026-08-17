@@ -16,9 +16,24 @@ cd gitops
 This will install Flux controllers and bootstrap it against this repo — it then
 reconciles whatever Kustomizations live under `clusters/${CLUSTER_NAME}`.
 
-Flux manages a handful of cluster add-ons that aren't part of the
-Neura/cluster-control application stack: `ksm-tuner`, `node-feature-discovery`,
-`kmod-rdma-loader` (see `flux/kustomizations/`). **cluster-control-ui and the
+Flux manages the cluster add-ons that aren't part of the
+Neura/cluster-control application stack: `kmod-rdma-loader` (see
+`flux/kustomizations/`).
+
+`ksm-tuner` and `node-feature-discovery` used to be here too. `ksm-tuner` is
+superseded by the Frame node-tuning agent and its manifest is gone;
+`node-feature-discovery` is now a resource of `deploy/kubernetes/base`, which
+Argo CD reconciles through `overlays/production`, so keeping a Flux
+Kustomization for it would have made two GitOps controllers owners of one
+HelmRelease. On a cluster where those two Flux Kustomizations were applied,
+delete them — both carry `prune: true`, so deleting the Kustomization also
+deletes what it deployed, which is what you want for `ksm-tuner` (it is the
+`kubectl delete ds -n kube-system ksm-tuner` the agent's rollout requires) and
+what Argo CD immediately re-creates for `node-feature-discovery`:
+
+```bash
+kubectl delete kustomization -n flux-system ksm-tuner node-feature-discovery
+``` **cluster-control-ui and the
 controller-manager are Argo CD-managed** (see the ArgoCD section below,
 `argocd/applications/frame.yaml`) — they used to have their own Flux
 Kustomization + image-automation setup too, but that duplicated the Argo CD
@@ -34,8 +49,6 @@ flux install --namespace flux-system
 
 ```bash
 kubectl apply -f flux/sources/git-repository.yaml
-kubectl apply -f flux/kustomizations/ksm-tuner.yaml
-kubectl apply -f flux/kustomizations/node-feature-discovery.yaml
 kubectl apply -f flux/kustomizations/kmod-rdma-loader.yaml
 ```
 

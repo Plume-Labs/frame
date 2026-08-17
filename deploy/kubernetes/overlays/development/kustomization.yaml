@@ -1,7 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: cluster-control
+# No `namespace:` here — see base/kustomization.yaml. An overlay-wide
+# namespace is an override, not a default: it would drag the node-tuning
+# DaemonSets out of kube-system (where system-node-critical is the only place
+# it is accepted) and collide the node-feature-discovery Namespace object with
+# cluster-control's. Every resource names its own namespace.
 
 bases:
   - ../../base
