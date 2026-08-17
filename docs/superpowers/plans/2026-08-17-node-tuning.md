@@ -166,7 +166,12 @@ type NodeTuningNodeStatus struct {
 	AppliedGeneration int64           `json:"appliedGeneration,omitempty"`
 	Realization       Realization     `json:"realization,omitempty"`
 	Observed          ObservedTuning  `json:"observed,omitempty"`
-	Message           string          `json:"message,omitempty"`
+	// RestartedAt is when Task 6 verified the unit came back. Task 7 compares
+	// pod start times against it to promote Effective to FullyRealized. It
+	// lives in the API rather than being re-derived from the node's
+	// ActiveEnterTimestamp, which would cost a second agent round-trip.
+	RestartedAt *metav1.Time `json:"restartedAt,omitempty"`
+	Message     string       `json:"message,omitempty"`
 }
 
 type NodeTuningStatus struct {
@@ -624,6 +629,17 @@ git commit -m "feat(controller): distinguish Effective from FullyRealized"
 only defect is that `base/kustomization.yaml` never referenced them, so they
 were never deployed. Add them as resources. `ksm-tuner` is superseded by the
 agent and is removed.
+
+Removing a manifest does not remove a running object: `ksm-tuner` is deployed
+on the test cluster and keeps running until it is deleted explicitly. Until
+then it and the agent both write the KSM sysfs knobs — with identical values,
+so the overlap is harmless rather than a race, but it is two writers on one
+setting, which this design forbids everywhere else. Record in the commit body
+that deployment requires:
+
+```bash
+kubectl delete ds -n kube-system ksm-tuner
+```
 
 - [ ] **Step 2: Write the e2e test**
 
