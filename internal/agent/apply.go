@@ -19,7 +19,6 @@ package agent
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -92,7 +91,26 @@ const (
 // change is left untouched, and any node-only default (an unset optional
 // field) is intentionally not restated — see NodeTuningSpec's field docs for
 // why nil/empty means "untouched", not "off" or "reset to zero".
-func Apply(root string, spec framev1beta1.NodeTuningSpec) (needsRestart bool, err error) {
+//
+// run is how Apply reaches the node's own system (tuned lives there, not in
+// this container — see applyTunedProfile). It is injected rather than assumed
+// so tests never exec anything, and so the production caller can be explicit
+// about running on the host.
+//
+// The settings are applied cheapest-and-most-independent first, and MIG —
+// which is a single file write that cannot fail for any reason another
+// setting caused — goes first of all. Ordering is not cosmetic here: any
+// setting that returns an error ends the call, so a setting placed after a
+// failing one is silently not applied. Losing the MIG label because tuned
+// could not reach the node would strand a GPU node on the wrong profile with
+// nothing in the error to say so.
+func Apply(root string, spec framev1beta1.NodeTuningSpec, run CommandRunner) (needsRestart bool, err error) {
+	if spec.MIGProfile != "" {
+		if err := recordMIGProfile(root, spec.MIGProfile); err != nil {
+			return false, err
+		}
+	}
+
 	if spec.KSM != nil {
 		changed, err := applyKSM(root, spec.KSM)
 		if err != nil {
@@ -114,13 +132,7 @@ func Apply(root string, spec framev1beta1.NodeTuningSpec) (needsRestart bool, er
 	}
 
 	if spec.TunedProfile != "" {
-		if err := applyTunedProfile(root, spec.TunedProfile); err != nil {
-			return false, err
-		}
-	}
-
-	if spec.MIGProfile != "" {
-		if err := recordMIGProfile(root, spec.MIGProfile); err != nil {
+		if err := applyTunedProfile(root, spec.TunedProfile, run); err != nil {
 			return false, err
 		}
 	}
@@ -257,7 +269,20 @@ func applyCPUManagerPolicy(root, policy string) (changed bool, err error) {
 // own sysctls, governor and scheduler, all of which apply live, and the
 // design doc's own proof-of-effect for this setting is `tuned-adm active`
 // agreeing, not a restart.
-func applyTunedProfile(root, profile string) error {
+//
+// It runs through the injected CommandRunner, which in production enters PID
+// 1's namespaces (HostCommandRunner). Running it plainly inside the container
+// is not a smaller version of the same thing — it is a different machine: the
+// profile would be applied to the container, which owns none of the sysctls,
+// governor or scheduler the profile exists to set, and it would write the
+// container's /etc/tuned/active_profile while Observe reads the node's. Spec
+// and observed would then disagree forever, and the node would sit in Drifted
+// with a `tuned-adm` that reported success every time.
+//
+// Note that both halves of the comparison have to be about the same machine:
+// the current profile is read from the node's filesystem under root, so the
+// command that changes it has to run on the node too.
+func applyTunedProfile(root, profile string, run CommandRunner) error {
 	current, err := readString(filepath.Join(root, tunedActiveProfilePath))
 	if err != nil {
 		return fmt.Errorf("reading current tuned profile: %w", err)
@@ -265,10 +290,15 @@ func applyTunedProfile(root, profile string) error {
 	if current == profile {
 		return nil
 	}
+	if run == nil {
+		// Fails loudly rather than falling back to exec'ing in the container:
+		// the fallback is precisely the bug this signature exists to prevent,
+		// and a silent wrong-machine apply is worse than a refusal.
+		return fmt.Errorf("applying tuned profile %s: no command runner", profile)
+	}
 
-	cmd := exec.Command("tuned-adm", "profile", profile)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("tuned-adm profile %s: %w: %s", profile, err, strings.TrimSpace(string(out)))
+	if out, err := run.Run("tuned-adm", "profile", profile); err != nil {
+		return fmt.Errorf("tuned-adm profile %s: %w: %s", profile, err, strings.TrimSpace(out))
 	}
 	return nil
 }
