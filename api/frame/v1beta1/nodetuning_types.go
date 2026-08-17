@@ -56,6 +56,46 @@ const (
 // next one.
 const ApprovalAnnotation = "frame.plume-labs.io/tuning-approved"
 
+// The annotations below are the whole controller/agent restart protocol, and
+// they live on the corev1.Node rather than in NodeTuning's status because
+// they are per-node facts that must survive the controller restarting and
+// must be readable and clearable by a human with kubectl on the node alone.
+//
+// The controller writes TuningRolloutStarted/Baseline/RestartRequested; the
+// node agent writes TuningUnit/TuningUnitActiveEnter. Neither trusts the
+// other's values blindly: the controller passes TuningUnitAnnotation through
+// the agent package's compile-time allowlist before acting on it, and the
+// agent detects its own unit rather than restarting whatever it is told to.
+const (
+	// TuningRolloutStartedAnnotation is when the controller cordoned this
+	// node for a tuning restart (RFC3339Nano). Its presence is the
+	// cluster-wide "a rollout is in flight or unfinished here" lock: one node
+	// at a time, and a node whose restart failed keeps it, which is what
+	// halts the campaign until a human clears it.
+	TuningRolloutStartedAnnotation = "frame.plume-labs.io/tuning-rollout-started"
+
+	// TuningRestartBaselineAnnotation is the unit's ActiveEnterTimestamp as
+	// it was before the restart was asked for (RFC3339Nano). A restart is
+	// verified by this value moving, never by the node flapping NotReady.
+	TuningRestartBaselineAnnotation = "frame.plume-labs.io/tuning-restart-baseline"
+
+	// TuningRestartRequestedAnnotation is when the controller asked the agent
+	// to schedule a detached restart (RFC3339Nano), which is also the anchor
+	// the wait times out from. The agent acts on a value it has not acted on
+	// before; the controller removes it once the restart is verified.
+	TuningRestartRequestedAnnotation = "frame.plume-labs.io/tuning-restart-requested"
+
+	// TuningUnitAnnotation is the systemd unit (base name, no ".service")
+	// that owns containerd on this node, as detected by the agent. The
+	// controller refuses any value the agent package's allowlist rejects.
+	TuningUnitAnnotation = "frame.plume-labs.io/tuning-unit"
+
+	// TuningUnitActiveEnterAnnotation is that unit's ActiveEnterTimestamp as
+	// systemd last reported it (RFC3339Nano), republished by the agent every
+	// tick. This is the single piece of evidence a restart actually happened.
+	TuningUnitActiveEnterAnnotation = "frame.plume-labs.io/tuning-unit-active-enter"
+)
+
 // KSMSpec configures kernel same-page merging. Enabled defaults to false:
 // KSM's cross-tenant page merging is a side channel (a process on one node
 // can infer another's memory contents from merge timing), so turning it on
