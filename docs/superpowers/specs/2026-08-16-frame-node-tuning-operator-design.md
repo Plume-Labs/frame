@@ -39,8 +39,29 @@ pattern "the file is not the effect, and something must restart":
 
 - **KSM** — `MemoryKSM=` drop-in on `k3s.service` / `k3s-agent.service`, plus
   the `/sys/kernel/mm/ksm/*` scanner knobs.
-- **cpu-manager policy** — needs a kubelet restart and removal of
-  `cpu_manager_state`, which is exactly the "restart plus cleanup" case.
+
+**cpu-manager policy is deferred and is not in the CRD.** It was the second
+setting this section named, and it fits the pattern — it needs a kubelet
+restart and removal of `cpu_manager_state`, exactly the "restart plus cleanup"
+case. What V1 did not have is the other half: something that writes the kubelet
+configuration selecting the policy. As first implemented the agent wrote a
+cache file under `/run` and deleted `cpu_manager_state`, and nothing anywhere
+wrote k3s's kubelet config, while the controller diffed the field as
+restart-gated. A `cpuManagerPolicy: static` would therefore cordon a node,
+evict its workloads, restart k3s, and leave the kubelet running the policy it
+already had — reporting `Drifted` forever.
+
+That is this document's failure #1 wearing the opposite face: not "written is
+not effective" but *nothing written at all*, sold at the price of a node's
+workloads. Half-wiring it would have been a worse outcome than not shipping it,
+so the field, its apply path, its diff branch and its observed field are all
+removed rather than left inert. Adding it back means writing k3s's kubelet
+configuration (`/etc/rancher/k3s/config.yaml` `kubelet-arg`, or a kubelet
+config file the k3s unit points at), observing the policy the kubelet actually
+reports rather than a file Frame wrote, and testing the restart on a real node
+— its own task, with its own proof of effect. The hand-applied
+`deploy/kubernetes/base/cpu-manager-policy.yaml` remains the manual path until
+then, exactly as it was before this design.
 
 **Sysctls and kernel-module loading are delegated to tuned**, which has
 first-class plugins for both. Declaring them here as well would put two writers
@@ -72,7 +93,6 @@ spec:
     pagesToScan: 4000          # default 100
     sleepMillisecs: 200        # default 20
     mergeAcrossNodes: false
-  cpuManagerPolicy: static     # none | static
   migProfile: ""               # sets the GPU-operator label; empty = untouched
 status:
   observedGeneration: 4
@@ -96,6 +116,18 @@ the controller reports `Failed` on that node naming both objects, and changes
 nothing. Silently picking a winner would make the effective configuration
 unpredictable.
 
+`status.nodes` has **two writers**, and that is a contract, not an accident.
+The node agent owns `observed` and nothing else; the controller owns every
+other field. Neither may write the other's, and — less obviously — neither may
+write its own without a `resourceVersion` precondition. A CRD status patch is a
+JSON merge patch, which replaces an array wholesale rather than merging it, so
+an unlocked write built from a stale read reverts the *whole list*, every node
+included. The field that costs the most when reverted is
+`restartedAt`/`restartedGeneration`: it is the guard that stops an approved node
+being cordoned, drained and restarted more than once, so losing it restarts a
+node that has already been restarted. Both writers therefore re-read and take an
+optimistic lock, and `status.nodes` carries `listType=map` keyed on `name`.
+
 ## Components
 
 ### Agent (DaemonSet, privileged, hostPID)
@@ -110,7 +142,6 @@ declares its own proof:
 | setting      | proof of effect                                       |
 |--------------|-------------------------------------------------------|
 | KSM          | `systemctl show <unit> -p MemoryKSM`, `general_profit` |
-| cpu-manager  | policy the kubelet actually reports                    |
 | tuned profile| `tuned-adm active` matches, and tuned reports no error |
 | MIG          | the GPU operator's own status for the node             |
 
@@ -127,11 +158,23 @@ writers and no owner — and the conflict surfaces hours later, at the next
 reapply, far from the change that caused it. One writer per setting is the
 whole point.
 
-tuned is **not installed** on these nodes (Ubuntu Server does not ship it), so
-the agent image carries it and runs it, the way OpenShift's NodeTuningOperator
-does. That is a real upstream dependency and a materially larger agent image —
-tuned pulls python — bought in exchange for a standard, well-understood profile
-format instead of a bespoke one.
+tuned is **not installed** on these nodes (Ubuntu Server does not ship it), and
+it has to be, because every host call the agent makes goes through nsenter into
+the node's own namespaces — so `tuned-adm` resolves to the *node's* binary, not
+one baked into the agent image. Installing tuned on the nodes is therefore a
+deployment prerequisite, not something the image can satisfy.
+
+An earlier draft of this document said the agent image would carry tuned "the
+way OpenShift's NodeTuningOperator does". That was wrong on the mechanism:
+OpenShift runs its own tuned in-container against host mounts, and does not
+nsenter. Both designs work, but they are alternatives — carrying tuned in the
+image only helps if the agent stops nsentering for this one call, which would
+make it the sole host interaction with different semantics from all the others.
+Consistency won: nsenter everywhere, tuned installed on the node.
+
+Until tuned is present, a `NodeTuning` that sets `tunedProfile` fails loudly on
+that node rather than appearing to work — which is the correct behaviour for an
+unconfigured node, and is what the failure looks like today.
 
 Frame keeps what tuned structurally cannot express:
 
@@ -141,7 +184,9 @@ Frame keeps what tuned structurally cannot express:
   nothing. Handing KSM to tuned would look like managing it while managing only
   the inert part, reproducing this design's founding bug behind an extra layer
   of abstraction.
-- **cpu-manager policy** — kubelet configuration, not OS configuration.
+- **cpu-manager policy** — kubelet configuration, not OS configuration. Still
+  Frame's rather than tuned's when it is eventually built; deferred out of V1
+  for the reason in Scope.
 - **MIG profile** — a Kubernetes-level label the GPU operator consumes.
 - **The approval, drain and restart lifecycle**, which is the actual subject.
 

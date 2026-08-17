@@ -1,0 +1,654 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+)
+
+// NodeTuningReconciler reconciles a NodeTuning object.
+//
+// It lists the nodes a NodeTuning selects, detects selector overlap with every
+// other NodeTuning, and diffs spec against status.nodes[].observed to write
+// InSync or Drifted. Anything needing a restart to take effect stops at
+// RebootPending until a per-node annotation approves that exact
+// metadata.generation. Once approved, the disruptive half takes over — cordon,
+// drain, detached restart, verify, uncordon, one node at a time — which lives
+// in nodetuning_rollout.go and is where every rule about not taking the
+// cluster down is written down.
+type NodeTuningReconciler struct {
+	client.Client
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
+
+	// APIReader reads straight from the API server, bypassing the manager's
+	// cache. The drain lists the pods on one node by field selector, which
+	// the cached client can only serve from an index — and registering that
+	// index would make the manager cache every pod in the cluster forever for
+	// a list it makes a handful of times per rollout. nil falls back to the
+	// cached Client, which is only correct for a client that talks to the API
+	// server directly (as the tests' does).
+	APIReader client.Reader
+
+	// DrainTimeout and RestartTimeout are the two waits this controller can
+	// give up on. Zero means the package default (see defaultDrainTimeout /
+	// defaultRestartTimeout); they are fields so tests can use waits a test
+	// can actually sit through.
+	DrainTimeout   time.Duration
+	RestartTimeout time.Duration
+}
+
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=nodetunings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=nodetunings/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=nodetunings/finalizers,verbs=update
+// nodes patch/update: the rollout cordons and uncordons, and writes the
+// restart-protocol annotations the node agent reads (see nodetuning_rollout.go).
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch;update
+// pods list + pods/eviction create, and nothing more: the drain moves pods off
+// a node through the eviction API, which is what makes PodDisruptionBudgets
+// enforceable. Plain delete is deliberately not requested — it would bypass
+// every budget in the cluster.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
+
+func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	var nt framev1beta1.NodeTuning
+	if err := r.Get(ctx, req.NamespacedName, &nt); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// The whole node list, not just the matched ones: the rollout's "one node
+	// at a time" and "refuse while any other node is not Ready" rules are
+	// cluster-wide facts, and a NodeTuning that only ever looked at its own
+	// selection would happily take down the second of three nodes.
+	//
+	// Read through the API server, never the manager's cache. The campaign
+	// lock is a check-then-act on a value another reconcile may have written
+	// moments ago, and a cached read of it is a snapshot from before that
+	// write: NodeTuning "b", queued before "a" cordoned node-1, would see no
+	// lock and cordon node-2. MaxConcurrentReconciles removes parallelism, not
+	// this window, and the Node merge patches take no optimistic lock: the
+	// agent writes its own annotation keys on the same object every tick, so a
+	// resourceVersion precondition there would conflict constantly over keys
+	// neither writer shares. (The NodeTuning *status* patch below does take
+	// one — there the two writers do share a field, status.nodes.)
+	var allNodesList corev1.NodeList
+	if err := r.reader().List(ctx, &allNodesList); err != nil {
+		return ctrl.Result{}, fmt.Errorf("listing nodes: %w", err)
+	}
+	allNodes := allNodesList.Items
+	lock := newCampaignLock(allNodes)
+
+	if !nt.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finishDeletion(ctx, &nt, allNodes)
+	}
+
+	// A nil selector matches no nodes rather than every node (see
+	// NodeTuningSpec.NodeSelector's doc comment), so an object created
+	// without one is inert instead of fleet-wide by accident.
+	matched, err := selectNodes(allNodes, nt.Spec.NodeSelector)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("listing nodes for selector: %w", err)
+	}
+	// Plus any node this object cordoned that has since stopped matching —
+	// relabelled, or the selector edited. Dropping it from the loop would
+	// leave it cordoned and holding the cluster-wide lock with nothing left
+	// to drive it and no status anywhere saying so.
+	adopted := adoptOwnedNodes(allNodes, matched, nt.Name)
+	work := append(matched, adopted...)
+
+	var all framev1beta1.NodeTuningList
+	if err := r.List(ctx, &all); err != nil {
+		return ctrl.Result{}, fmt.Errorf("listing NodeTunings: %w", err)
+	}
+
+	rolloutActive := false
+	ownsNode := false
+	newNodes := make([]framev1beta1.NodeTuningNodeStatus, 0, len(work))
+	for i := range work {
+		node := &work[i]
+		ns := existingNodeStatus(nt.Status.Nodes, node.Name)
+
+		// Diff against what the agent measured (status.nodes[].observed),
+		// never against what another NodeTuning intended: Observed is the
+		// only value ever actually verified on the node.
+		reason, needsRestart := diffTuning(nt.Spec, ns.Observed)
+		others := overlappingNodeTunings(all.Items, nt.Name, *node)
+
+		switch {
+		// The in-flight cases come first, before the overlap check: a node
+		// this object already cordoned has to reach a conclusion whatever
+		// else has since changed about the configuration. A second NodeTuning
+		// appearing mid-restart is a problem for the *next* rollout, not a
+		// reason to abandon a drained node in a cordoned state.
+		case rolloutOwnedBy(node, nt.Name) && rolloutHalted(node):
+			// Halted. The node stays exactly as the failure left it —
+			// cordoned, annotated, and blocking every other node — until a
+			// human clears the started annotation. Retrying on a timer would
+			// be a rollout that keeps going through failures, which is the
+			// outage this design refuses to risk. The phase/message are
+			// whatever the failure wrote; if status was lost, say so plainly
+			// rather than silently reporting something healthier.
+			ownsNode = true
+			rolloutActive = true
+			ns.Phase = framev1beta1.PhaseFailed
+			if ns.Message == "" {
+				ns.Message = fmt.Sprintf("rollout halted on %s and is waiting for a human (%s)",
+					node.Name, releaseHaltHint(node.Name))
+			}
+
+		case rolloutOwnedBy(node, nt.Name):
+			ns = r.continueRollout(ctx, &nt, node, ns, lock)
+			ownsNode = true
+			rolloutActive = true
+
+		case rolloutInFlight(node):
+			// Cordoned by somebody else (another NodeTuning, or a rollout
+			// whose owner annotation was stripped by hand). Not ours to
+			// drive, and definitely not ours to start a second rollout on.
+			owner := node.Annotations[framev1beta1.TuningRolloutOwnerAnnotation]
+			if owner == "" {
+				owner = "an unknown owner"
+			}
+			ns.Phase = framev1beta1.PhaseRebootPending
+			ns.Message = fmt.Sprintf("waiting: %s is mid-rollout under %s", node.Name, owner)
+
+		case len(others) > 0:
+			// Overlapping selectors are a configuration error, not a merge:
+			// silently picking a winner (by name, by age, by anything) makes
+			// the effective configuration of a node unpredictable, which is
+			// worse than refusing. Nothing is applied and nothing about the
+			// node's Observed/AppliedGeneration/RestartedAt is touched.
+			ns.Phase = framev1beta1.PhaseFailed
+			ns.Message = fmt.Sprintf("node also selected by NodeTuning %s", strings.Join(others, ", "))
+
+		case reason == "":
+			ns.Phase = framev1beta1.PhaseInSync
+			ns.AppliedGeneration = nt.Generation
+			ns.Message = ""
+
+		case needsRestart && !approvedForGeneration(*node, nt.Generation):
+			// Anything needing a restart stops here until a human approves
+			// this exact generation (see ApprovalAnnotation's doc comment).
+			// Like the overlap-Failed branch above, a refused node is left
+			// untouched: AppliedGeneration is not advanced, and nothing is
+			// cordoned, drained, or restarted.
+			ns.Phase = framev1beta1.PhaseRebootPending
+			ns.Message = fmt.Sprintf(
+				"restart required to apply: %s; approve with `kubectl annotate node %s %s=%d --overwrite`",
+				reason, node.Name, framev1beta1.ApprovalAnnotation, nt.Generation,
+			)
+
+		case needsRestart && restartedForGeneration(ns, nt.Generation):
+			// Already restarted for this generation. Usually this is just the
+			// agent not having re-observed yet and it converges to InSync on
+			// its next tick; if it never does, the restart did not achieve
+			// what the spec asked for, and the honest report is that spec and
+			// observed still disagree — not another restart.
+			ns.Phase = framev1beta1.PhaseDrifted
+			ns.AppliedGeneration = nt.Generation
+			ns.Message = fmt.Sprintf(
+				"%s; restart already verified at %s for generation %d — not restarting again (approve a new generation, or clear status.nodes[].restartedAt to retry)",
+				reason, ns.RestartedAt.Time.Format(time.RFC3339), nt.Generation,
+			)
+
+		case needsRestart:
+			ns = r.startRollout(ctx, &nt, node, ns, reason, allNodes, lock)
+			if ns.Phase == framev1beta1.PhaseApplying {
+				ownsNode = true
+				rolloutActive = true
+			}
+
+		default:
+			ns.Phase = framev1beta1.PhaseDrifted
+			ns.AppliedGeneration = nt.Generation
+			ns.Message = reason
+		}
+		newNodes = append(newNodes, r.realizeNode(ctx, node.Name, ns))
+	}
+	sort.Slice(newNodes, func(i, j int) bool { return newNodes[i].Name < newNodes[j].Name })
+
+	if err := r.patchStatus(ctx, &nt, newNodes); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Nothing cordoned any more: stop blocking this object's deletion. The
+	// finalizer exists only for as long as there is a node to release.
+	if !ownsNode {
+		if err := r.removeFinalizer(ctx, &nt); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	log.Info("Reconciled NodeTuning", "matchedNodes", len(matched), "adoptedNodes", len(adopted))
+	if rolloutActive {
+		// A node mid-rollout has to be re-driven on a timer: the agent's
+		// answers arrive as annotations (which do produce watch events), but
+		// a drain merely waiting for pods to go produces none at all.
+		return ctrl.Result{RequeueAfter: rolloutRequeueInterval}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// patchStatus writes this pass's computed status onto nt, retrying on conflict
+// by re-reading rather than giving up.
+//
+// Giving up is not available here, and that is the whole point of this
+// function. By the time it is called, the disruptive half has already
+// committed: the restart-verify branch in continueRollout uncordons the node
+// and deletes its rollout annotations on the server BEFORE RestartedAt and
+// RestartedGeneration exist anywhere but in this pass's memory. Dropping the
+// status write therefore destroys the only record that the restart happened,
+// while the annotations that would let a later pass recompute it are already
+// gone — rolloutOwnedBy is false, continueRollout is never re-entered,
+// restartedForGeneration reads false, the approval annotation is still there,
+// and control falls through to startRollout. That is a second cordon, drain
+// and restart of the same node on one approval: exactly the failure the
+// optimistic lock was added to prevent, reached from the other side.
+//
+// So a conflict re-reads and re-applies. Every field this controller owns was
+// recomputed by the caller and is rewritten here; Observed is the node agent's
+// and is taken from the re-read (see preserveObserved), never from this pass's
+// carried-forward copy. That is the same shape as agent.PatchObserved, on
+// purpose: the two writers of status.nodes resolve a race the same way, each
+// keeping its own fields and deferring on the other's.
+//
+// The read goes through r.reader(), never the manager's cache: a cached read
+// on a retry would serve the same stale version that just lost, and the retry
+// would conflict again until the informer caught up.
+//
+// The status base is the object as read here, not as read at the top of
+// Reconcile: startRollout may have added the finalizer, which refreshes nt
+// from the server, and a base captured before that would diff against an
+// object that no longer exists in that shape.
+func (r *NodeTuningReconciler) patchStatus(
+	ctx context.Context,
+	nt *framev1beta1.NodeTuning,
+	nodes []framev1beta1.NodeTuningNodeStatus,
+) error {
+	log := logf.FromContext(ctx)
+	key := client.ObjectKeyFromObject(nt)
+	generation := nt.Generation
+
+	attempt := 0
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		attempt++
+		if attempt > 1 {
+			log.V(1).Info("NodeTuning status changed under us; re-applying",
+				"nodeTuning", key.Name, "attempt", attempt)
+		}
+
+		fresh := &framev1beta1.NodeTuning{}
+		if err := r.reader().Get(ctx, key, fresh); err != nil {
+			return err
+		}
+		base := fresh.DeepCopy()
+		fresh.Status.ObservedGeneration = generation
+		fresh.Status.Nodes = preserveObserved(nodes, fresh.Status.Nodes)
+
+		if err := r.Status().Patch(ctx, fresh, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		// The caller keeps using nt afterwards — removeFinalizer issues an
+		// Update against it — so it has to carry the resourceVersion this
+		// patch just produced, not the one it was read with.
+		fresh.DeepCopyInto(nt)
+		return nil
+	})
+}
+
+// preserveObserved returns computed with each entry's Observed replaced by the
+// value currently on the server.
+//
+// status.nodes[].observed belongs to the node agent. This controller carries it
+// forward from its own read purely so it can diff against it, and writing that
+// copy back would revert any agent tick that landed in between — the mirror of
+// the failure patchStatus exists to prevent, and just as silent. Taking it from
+// the read the patch is actually based on costs nothing when nothing changed
+// and is the whole fix when something did.
+//
+// The list membership itself stays the caller's: a node that no longer belongs
+// to this NodeTuning must not be resurrected by an entry the agent left behind.
+func preserveObserved(computed, current []framev1beta1.NodeTuningNodeStatus) []framev1beta1.NodeTuningNodeStatus {
+	observed := make(map[string]framev1beta1.ObservedTuning, len(current))
+	for _, ns := range current {
+		observed[ns.Name] = ns.Observed
+	}
+	merged := make([]framev1beta1.NodeTuningNodeStatus, 0, len(computed))
+	for _, ns := range computed {
+		if o, ok := observed[ns.Name]; ok {
+			ns.Observed = o
+		}
+		merged = append(merged, ns)
+	}
+	return merged
+}
+
+// selectNodes returns deep copies of the nodes selected by sel, or none if
+// sel is nil.
+//
+// Deep copies, not the structs themselves: a plain copy shares the
+// Annotations map with the caller's list, so mutating a node before patching
+// it — which is how every write here is built — would edit the cluster-wide
+// view too, committed or not. That made a failed uncordon look exactly like a
+// successful one to the next node in the same pass.
+func selectNodes(nodes []corev1.Node, sel *metav1.LabelSelector) ([]corev1.Node, error) {
+	if sel == nil {
+		return nil, nil
+	}
+	selector, err := metav1.LabelSelectorAsSelector(sel)
+	if err != nil {
+		return nil, fmt.Errorf("invalid nodeSelector: %w", err)
+	}
+	var matched []corev1.Node
+	for i := range nodes {
+		if selector.Matches(labels.Set(nodes[i].Labels)) {
+			matched = append(matched, *nodes[i].DeepCopy())
+		}
+	}
+	return matched, nil
+}
+
+// adoptOwnedNodes returns deep copies of the nodes ntName cordoned that are
+// not already in matched. A node that stops matching mid-rollout (relabelled,
+// or the selector edited) is still this object's to finish: it is cordoned,
+// possibly drained, possibly waiting on a restart it was asked for, and it
+// holds the cluster-wide lock.
+func adoptOwnedNodes(all []corev1.Node, matched []corev1.Node, ntName string) []corev1.Node {
+	inMatched := make(map[string]bool, len(matched))
+	for i := range matched {
+		inMatched[matched[i].Name] = true
+	}
+	var adopted []corev1.Node
+	for i := range all {
+		if !inMatched[all[i].Name] && rolloutOwnedBy(&all[i], ntName) {
+			adopted = append(adopted, *all[i].DeepCopy())
+		}
+	}
+	return adopted
+}
+
+// nodeTuningFinalizer blocks deletion of a NodeTuning while it still has a
+// node cordoned. Without it, deleting the object mid-rollout strands that
+// node cordoned forever, holding the cluster-wide lock with nothing left in
+// the cluster that knows it exists.
+const nodeTuningFinalizer = "frame.plume-labs.io/nodetuning-rollout"
+
+// ensureFinalizer adds the finalizer if it is missing. Called immediately
+// before the first disruptive write, never on every reconcile: an object that
+// has never cordoned anything holds no resources and has no business being
+// harder to delete.
+func (r *NodeTuningReconciler) ensureFinalizer(ctx context.Context, nt *framev1beta1.NodeTuning) error {
+	if controllerutil.ContainsFinalizer(nt, nodeTuningFinalizer) {
+		return nil
+	}
+	controllerutil.AddFinalizer(nt, nodeTuningFinalizer)
+	return r.Update(ctx, nt)
+}
+
+func (r *NodeTuningReconciler) removeFinalizer(ctx context.Context, nt *framev1beta1.NodeTuning) error {
+	if !controllerutil.RemoveFinalizer(nt, nodeTuningFinalizer) {
+		return nil
+	}
+	return r.Update(ctx, nt)
+}
+
+// finishDeletion releases every node this object left cordoned, then lets the
+// deletion through.
+//
+// Releasing rather than waiting is deliberate, and it is a trade: a node
+// whose restart was requested but not yet verified is handed workloads back
+// while the agent may still act on that request. That is a bounded, one-node
+// disruption; the alternative is a cordoned node and a cluster-wide lock that
+// nothing will ever release, because the only object that knew about them is
+// gone. Deleting a NodeTuning mid-rollout is an explicit human act, and it is
+// recorded as an Event on the way out.
+func (r *NodeTuningReconciler) finishDeletion(ctx context.Context, nt *framev1beta1.NodeTuning, allNodes []corev1.Node) error {
+	for i := range allNodes {
+		if !rolloutOwnedBy(&allNodes[i], nt.Name) {
+			continue
+		}
+		node := allNodes[i].DeepCopy()
+		if err := r.releaseNode(ctx, node); err != nil {
+			// Returned, not swallowed: the deletion stays blocked and is
+			// retried rather than completing with the node still cordoned.
+			return fmt.Errorf("releasing %s on NodeTuning deletion: %w", node.Name, err)
+		}
+		r.Recorder.Eventf(nt, corev1.EventTypeWarning, "RolloutAbandoned",
+			"NodeTuning deleted mid-rollout; uncordoned %s and cleared its restart request", node.Name)
+	}
+	return r.removeFinalizer(ctx, nt)
+}
+
+// realizeNode recomputes ns.Realization from ns.RestartedAt and the pods
+// currently on node. Realization is not carried forward like Observed —
+// this reconciler owns it and recomputes it fresh every reconcile, because
+// the only inputs it depends on (RestartedAt and live pod StartTimes) can
+// both change without anything else about the node's status changing.
+//
+// A node that has never had a verified restart has nothing to be Effective
+// about yet, so it reports Pending rather than an empty string: the field is
+// always one of the three named values, never a silent default a caller
+// could mistake for "unset because nobody looked."
+func (r *NodeTuningReconciler) realizeNode(ctx context.Context, nodeName string, ns framev1beta1.NodeTuningNodeStatus) framev1beta1.NodeTuningNodeStatus {
+	if ns.RestartedAt == nil {
+		ns.Realization = framev1beta1.RealizationPending
+		return ns
+	}
+
+	// The setting is live in the unit the moment the restart is verified —
+	// that is what RestartedAt being non-nil already means — so Effective is
+	// never in question here. What is in question is whether every container
+	// on the node was created after that moment, which needs a fresh read of
+	// the node's pods: unlike Observed, nothing pushes this to the
+	// reconciler, and yesterday's pod list says nothing about this reconcile.
+	ns.Realization = framev1beta1.RealizationEffective
+
+	var pods corev1.PodList
+	if err := r.reader().List(ctx, &pods, client.MatchingFields{"spec.nodeName": nodeName}); err != nil {
+		// Can't prove FullyRealized without seeing every pod on the node, so
+		// report the claim this can still stand behind (Effective) rather
+		// than one it could not verify. Tried again next reconcile.
+		return ns
+	}
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		// Finished pods have no running container left to have missed the
+		// change; they cannot disqualify FullyRealized either way.
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		// A pod with no StartTime yet has not created its container at all,
+		// which is not evidence FOR full realization either — withhold the
+		// promotion until it reports one, rather than assume in its favor.
+		//
+		// startTime <= RestartedAt, not <: a container whose StartTime ties
+		// the restart down to the timestamp's own resolution is not
+		// demonstrably a container created after the change, and claiming
+		// FullyRealized on a tie the evidence cannot actually decide is
+		// exactly the overclaim this field exists to prevent. It stays
+		// Effective until a later reconcile sees an unambiguous StartTime.
+		if pod.Status.StartTime == nil || !pod.Status.StartTime.After(ns.RestartedAt.Time) {
+			return ns
+		}
+	}
+	ns.Realization = framev1beta1.RealizationFullyRealized
+	return ns
+}
+
+// existingNodeStatus returns the prior status entry for nodeName, or a fresh
+// zero-value one. Observed and RestartedAt are the agent's and Task 6's
+// fields respectively — this reconciler never writes them, so whatever was
+// already there is carried forward unchanged.
+func existingNodeStatus(nodes []framev1beta1.NodeTuningNodeStatus, nodeName string) framev1beta1.NodeTuningNodeStatus {
+	for _, n := range nodes {
+		if n.Name == nodeName {
+			return n
+		}
+	}
+	return framev1beta1.NodeTuningNodeStatus{Name: nodeName}
+}
+
+// overlappingNodeTunings returns the names (sorted) of every other NodeTuning
+// whose selector also matches node, excluding selfName.
+func overlappingNodeTunings(all []framev1beta1.NodeTuning, selfName string, node corev1.Node) []string {
+	var others []string
+	for _, other := range all {
+		if other.Name == selfName || other.Spec.NodeSelector == nil {
+			continue
+		}
+		sel, err := metav1.LabelSelectorAsSelector(other.Spec.NodeSelector)
+		if err != nil {
+			continue
+		}
+		if sel.Matches(labels.Set(node.Labels)) {
+			others = append(others, other.Name)
+		}
+	}
+	sort.Strings(others)
+	return others
+}
+
+// diffTuning compares the fields NodeTuningSpec declares against what the
+// agent actually measured (observed), and returns a human-readable reason
+// for the first mismatch(es) found, or "" if everything the spec cares about
+// matches, plus whether applying the fix needs a unit restart. It never
+// compares against another NodeTuning's spec and never treats a field the
+// spec leaves unset as a mismatch: KSM's Enabled default aside, an unset
+// field means "untouched", not "must equal the zero value".
+//
+// needsRestart mirrors internal/agent/apply.go's Apply exactly, and that
+// correspondence is load-bearing: this is the function that decides whether a
+// node gets cordoned, drained and restarted, so a field diffed here that Apply
+// does not actually write costs a node its workloads for nothing. KSM's
+// enabled/disabled state is the only such field — it only takes effect on the
+// owning unit's next start (the drop-in). TunedProfile applies live via
+// `tuned-adm profile` and never gates a restart.
+//
+// MIGProfile is deliberately not diffed here: ObservedTuning carries no MIG
+// field (see the design doc — MIG's proof of effect is the GPU operator's
+// own node status, not something the agent reads back), so there is nothing
+// in Observed to diff it against yet.
+func diffTuning(spec framev1beta1.NodeTuningSpec, observed framev1beta1.ObservedTuning) (reason string, needsRestart bool) {
+	var mismatches []string
+
+	if spec.TunedProfile != "" && spec.TunedProfile != observed.TunedProfile {
+		mismatches = append(mismatches, fmt.Sprintf("tunedProfile: want %q, observed %q", spec.TunedProfile, observed.TunedProfile))
+	}
+
+	if spec.KSM != nil {
+		wantEnabled := spec.KSM.Enabled
+		gotEnabled := observed.KSM != nil && observed.KSM.MemoryKSM
+		if wantEnabled != gotEnabled {
+			mismatches = append(mismatches, fmt.Sprintf("ksm.enabled: want %t, observed %t", wantEnabled, gotEnabled))
+			needsRestart = true
+		}
+	}
+
+	return strings.Join(mismatches, "; "), needsRestart
+}
+
+// approvedForGeneration reports whether node carries an ApprovalAnnotation
+// that parses to exactly generation. A generation rather than a boolean, so
+// approving one change never silently authorizes the next: approving
+// generation 4 says nothing about generation 5 (see ApprovalAnnotation's
+// doc comment). Any malformed value — missing, empty, non-numeric, or
+// negative — is treated as no approval at all: a parse ambiguity must never
+// be read as consent, so this fails closed rather than defaulting open.
+func approvedForGeneration(node corev1.Node, generation int64) bool {
+	raw, ok := node.Annotations[framev1beta1.ApprovalAnnotation]
+	if !ok {
+		return false
+	}
+	approved, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || approved < 0 {
+		return false
+	}
+	return approved == generation
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *NodeTuningReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&framev1beta1.NodeTuning{}).
+		// A Node's labels changing, joining, or leaving can change which
+		// NodeTuning(s) select it, so every NodeTuning must be re-evaluated.
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.allNodeTunings)).
+		// Overlap is only detectable by looking at every other NodeTuning:
+		// creating "b" is what turns "a" Failed, so "a" needs to be
+		// re-reconciled when any sibling object changes, not just itself.
+		//
+		// Siblings only — the changed object itself is already enqueued by
+		// For's own handler on this same GVK. Fanning out to *all* of them
+		// here instead would enqueue it twice for every event it produces,
+		// including the object's own status writes, which is churn the
+		// workqueue then has to collapse.
+		Watches(&framev1beta1.NodeTuning{}, handler.EnqueueRequestsFromMapFunc(r.otherNodeTunings)).
+		Named("nodetuning").
+		Complete(r)
+}
+
+// allNodeTunings enqueues every NodeTuning in the cluster. A Node event cannot
+// be resolved to a subset without re-evaluating every selector, which is what
+// the reconcile does anyway.
+func (r *NodeTuningReconciler) allNodeTunings(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.nodeTuningRequests(ctx, "")
+}
+
+// otherNodeTunings enqueues every NodeTuning except the one the event came
+// from. See SetupWithManager for why the exclusion matters.
+func (r *NodeTuningReconciler) otherNodeTunings(ctx context.Context, obj client.Object) []reconcile.Request {
+	return r.nodeTuningRequests(ctx, obj.GetName())
+}
+
+func (r *NodeTuningReconciler) nodeTuningRequests(ctx context.Context, exclude string) []reconcile.Request {
+	var list framev1beta1.NodeTuningList
+	if err := r.List(ctx, &list); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for _, nt := range list.Items {
+		if nt.Name == exclude {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&nt)})
+	}
+	return reqs
+}

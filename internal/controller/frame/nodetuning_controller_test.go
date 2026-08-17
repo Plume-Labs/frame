@@ -1,0 +1,727 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"strconv"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	"github.com/rmocq/frame/internal/agent"
+)
+
+// writeOnReadClient runs write() immediately after each of its first
+// `remaining` Gets, so a caller's read-modify-write has a competing commit land
+// in the window between its own read and its own write.
+//
+// That window is microseconds wide in production and cannot be hit by
+// scheduling two goroutines and hoping. It is also the only window an
+// optimistic lock covers that a plain re-read does not, so without this a spec
+// cannot tell the two apart — a writer that merely re-reads before patching
+// passes every wall-clock interleaving a test can arrange, and still loses the
+// concurrent write here.
+//
+// `remaining` is finite by design: the point is a bounded number of racing
+// commits, not an unwinnable livelock in which every retry is beaten again by
+// construction, which would prove nothing about a correct implementation.
+type writeOnReadClient struct {
+	client.Client
+	remaining int
+	fired     int
+	write     func()
+}
+
+func (c *writeOnReadClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if c.remaining > 0 {
+		c.remaining--
+		c.fired++
+		c.write()
+	}
+	return nil
+}
+
+// This suite calls Reconcile directly, matching every other controller test
+// in this package (framenode_controller_test.go, frameresourcequota_controller_test.go,
+// ...): no live manager runs here, so nothing re-triggers a reconcile on its
+// own. nodeStatusPhase below reconciles once per poll — the fan-out watches
+// SetupWithManager registers (Node changes, sibling NodeTuning changes) exist
+// for the real manager and are exercised at the cluster level, not here.
+var _ = Describe("NodeTuning Controller", func() {
+	ctx := context.Background()
+
+	var testNodes []string
+	var testNodeTunings []string
+	var testPods []*corev1.Pod
+
+	r := func() *NodeTuningReconciler {
+		return &NodeTuningReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: record.NewFakeRecorder(100)}
+	}
+
+	createTestNode := func(name string, lbls map[string]string) {
+		n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: lbls}}
+		Expect(k8sClient.Create(ctx, n)).To(Succeed())
+		testNodes = append(testNodes, name)
+	}
+
+	// createNodeTuning always asks for KSM enabled: that gives the drift test
+	// something concrete to disagree with (an unset spec.ksm is "untouched",
+	// never a mismatch — see diffTuning's doc comment — so a real desired
+	// value is required to prove drift detection actually compares fields
+	// rather than always returning InSync).
+	createNodeTuning := func(name string, lbls map[string]string) *framev1beta1.NodeTuning {
+		nt := &framev1beta1.NodeTuning{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: framev1beta1.NodeTuningSpec{
+				NodeSelector: &metav1.LabelSelector{MatchLabels: lbls},
+				KSM:          &framev1beta1.KSMSpec{Enabled: true},
+			},
+		}
+		Expect(k8sClient.Create(ctx, nt)).To(Succeed())
+		testNodeTunings = append(testNodeTunings, name)
+		return nt
+	}
+
+	// setObserved writes status.nodes[].observed the way the node agent
+	// (Tasks 2-3) would, via a Get/modify/Update retry loop so a concurrent
+	// reconcile's status patch never silently loses this write.
+	setObserved := func(ntName, nodeName string, observed framev1beta1.ObservedTuning) {
+		Eventually(func() error {
+			nt := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: ntName}, nt); err != nil {
+				return err
+			}
+			found := false
+			for i := range nt.Status.Nodes {
+				if nt.Status.Nodes[i].Name == nodeName {
+					nt.Status.Nodes[i].Observed = observed
+					found = true
+				}
+			}
+			if !found {
+				nt.Status.Nodes = append(nt.Status.Nodes, framev1beta1.NodeTuningNodeStatus{
+					Name:     nodeName,
+					Observed: observed,
+				})
+			}
+			return k8sClient.Status().Update(ctx, nt)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	getNodeStatus := func(ntName, nodeName string) *framev1beta1.NodeTuningNodeStatus {
+		nt := &framev1beta1.NodeTuning{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: ntName}, nt); err != nil {
+			return nil
+		}
+		for i := range nt.Status.Nodes {
+			if nt.Status.Nodes[i].Name == nodeName {
+				return &nt.Status.Nodes[i]
+			}
+		}
+		return nil
+	}
+
+	// nodeStatusPhase reconciles ntName on every poll so Eventually converges
+	// without a live watch loop, then reports the phase for nodeName (or ""
+	// if the node has no status entry yet).
+	nodeStatusPhase := func(ntName, nodeName string) func() framev1beta1.NodeTuningPhase {
+		return func() framev1beta1.NodeTuningPhase {
+			_, _ = r().Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: ntName}})
+			if ns := getNodeStatus(ntName, nodeName); ns != nil {
+				return ns.Phase
+			}
+			return ""
+		}
+	}
+
+	nodeStatusMessage := func(ntName, nodeName string) string {
+		if ns := getNodeStatus(ntName, nodeName); ns != nil {
+			return ns.Message
+		}
+		return ""
+	}
+
+	// setObservedNeedingRestart reports an observed KSM state that disagrees
+	// with createNodeTuning's spec.ksm.enabled=true. That specific mismatch
+	// is restart-gated (see diffTuning/internal/agent/apply.go — the KSM
+	// drop-in only takes effect on the owning unit's next start), so this is
+	// the fixture the approval-gate tests need to reach RebootPending at all.
+	setObservedNeedingRestart := func(ntName, nodeName string) {
+		setObserved(ntName, nodeName, framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false}})
+	}
+
+	// annotateNode sets a single annotation on a Node via a Get/modify/Update
+	// retry loop, mirroring setObserved's pattern so a concurrent write never
+	// silently loses this one either.
+	annotateNode := func(nodeName, key, value string) {
+		Eventually(func() error {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n); err != nil {
+				return err
+			}
+			if n.Annotations == nil {
+				n.Annotations = map[string]string{}
+			}
+			n.Annotations[key] = value
+			return k8sClient.Update(ctx, n)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	// markNodeReady writes the NodeReady condition. envtest nodes are created
+	// with no conditions at all, which reads as NotReady — and the rollout
+	// refuses to start anywhere while any node is not Ready, so a test that
+	// wants to see approval do something has to say so.
+	markNodeReady := func(nodeName string) {
+		Eventually(func() error {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n); err != nil {
+				return err
+			}
+			n.Status.Conditions = []corev1.NodeCondition{{
+				Type:               corev1.NodeReady,
+				Status:             corev1.ConditionTrue,
+				LastHeartbeatTime:  metav1.Now(),
+				LastTransitionTime: metav1.Now(),
+			}}
+			return k8sClient.Status().Update(ctx, n)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	// nodeCordoned reports the live corev1.Node's Spec.Unschedulable. The
+	// approval gate performs no cordon of its own — this exists so its tests
+	// can prove that stopping at RebootPending really does mean "nothing
+	// happened yet", rather than just asserting on a phase string a broken
+	// implementation could satisfy some other way. Past the gate the rollout
+	// does cordon (nodetuning_rollout_test.go), which is what makes this a
+	// real discriminator rather than a constant.
+	nodeCordoned := func(nodeName string) func() bool {
+		return func() bool {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n); err != nil {
+				return false
+			}
+			return n.Spec.Unschedulable
+		}
+	}
+
+	// createPodOnNode creates a running pod on nodeName with a given
+	// Status.StartTime, the one signal realizeNode reads to tell a container
+	// that predates a restart from one that postdates it. It patches status
+	// after create because StartTime lives there, and Create ignores a
+	// caller-supplied status.
+	createPodOnNode := func(nodeName, name string, startTime metav1.Time) {
+		p := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: corev1.PodSpec{
+				NodeName:      nodeName,
+				Containers:    []corev1.Container{{Name: "c", Image: "busybox"}},
+				RestartPolicy: corev1.RestartPolicyNever,
+			},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+		testPods = append(testPods, p)
+		p.Status.Phase = corev1.PodRunning
+		p.Status.StartTime = &startTime
+		Expect(k8sClient.Status().Update(ctx, p)).To(Succeed())
+	}
+
+	// completeRestart writes status.nodes[].restartedAt directly, the way a
+	// verified rollout (nodetuning_rollout.go's continueRollout) would leave
+	// it, without driving the whole cordon/drain/restart machinery that
+	// produces it — realizeNode's job starts once RestartedAt exists, and
+	// these tests are about that computation, not about how it gets there.
+	completeRestart := func(nodeName string, restartedAt metav1.Time) {
+		Eventually(func() error {
+			nt := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, nt); err != nil {
+				return err
+			}
+			found := false
+			for i := range nt.Status.Nodes {
+				if nt.Status.Nodes[i].Name == nodeName {
+					nt.Status.Nodes[i].RestartedAt = &restartedAt
+					found = true
+				}
+			}
+			if !found {
+				nt.Status.Nodes = append(nt.Status.Nodes, framev1beta1.NodeTuningNodeStatus{
+					Name:        nodeName,
+					RestartedAt: &restartedAt,
+				})
+			}
+			return k8sClient.Status().Update(ctx, nt)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	// nodeRealization reconciles "a" on every poll (realizeNode only runs
+	// inside Reconcile) and reports the resulting Realization for nodeName.
+	nodeRealization := func(ntName, nodeName string) func() framev1beta1.Realization {
+		return func() framev1beta1.Realization {
+			_, _ = r().Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: ntName}})
+			if ns := getNodeStatus(ntName, nodeName); ns != nil {
+				return ns.Realization
+			}
+			return ""
+		}
+	}
+
+	// bumpGeneration applies a trivial spec mutation (toggling
+	// ksm.sleepMillisecs) so metadata.generation advances by exactly one, and
+	// returns the object at its new generation. The knob it toggles is a live
+	// sysfs one that never gates a restart and is not diffed, so it changes
+	// only the generation: whatever restart-gated mismatch the caller set up
+	// (ksm.enabled against Observed) is still the one and only reason the node
+	// needs a restart afterwards.
+	bumpGeneration := func(ntName string) *framev1beta1.NodeTuning {
+		var updated *framev1beta1.NodeTuning
+		Eventually(func() error {
+			nt := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: ntName}, nt); err != nil {
+				return err
+			}
+			if nt.Spec.KSM == nil {
+				nt.Spec.KSM = &framev1beta1.KSMSpec{Enabled: true}
+			}
+			next := int32(21)
+			if nt.Spec.KSM.SleepMillisecs != nil && *nt.Spec.KSM.SleepMillisecs == 21 {
+				next = 20
+			}
+			nt.Spec.KSM.SleepMillisecs = &next
+			if err := k8sClient.Update(ctx, nt); err != nil {
+				return err
+			}
+			updated = nt
+			return nil
+		}, "5s", "50ms").Should(Succeed())
+		return updated
+	}
+
+	AfterEach(func() {
+		for _, p := range testPods {
+			_ = k8sClient.Delete(ctx, p, client.GracePeriodSeconds(0))
+		}
+		testPods = nil
+
+		for _, name := range testNodeTunings {
+			nt := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, nt); err == nil {
+				_ = k8sClient.Delete(ctx, nt)
+			}
+		}
+		for _, name := range testNodeTunings {
+			n := name
+			// Reconciling on each poll: a NodeTuning that got as far as
+			// cordoning a node carries the rollout finalizer, and nothing
+			// else here would run the reconcile that releases the node and
+			// lets the deletion through.
+			Eventually(func() bool {
+				_, _ = r().Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: n}})
+				return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: n}, &framev1beta1.NodeTuning{}))
+			}, "5s", "50ms").Should(BeTrue())
+		}
+		testNodeTunings = nil
+
+		for _, name := range testNodes {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, n); err == nil {
+				_ = k8sClient.Delete(ctx, n)
+			}
+		}
+		for _, name := range testNodes {
+			n := name
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: n}, &corev1.Node{}))
+			}, "5s").Should(BeTrue())
+		}
+		testNodes = nil
+	})
+
+	// Overlapping selectors are a configuration error, not a merge: silently
+	// picking a winner makes the effective configuration of a node
+	// unpredictable, which is worse than refusing. A reconciler that instead
+	// picked a winner (e.g. by name) would fail this test, because it
+	// asserts BOTH objects report Failed and BOTH messages name the other —
+	// an implementation that only fails the "loser" would leave one of these
+	// two Eventually calls hanging.
+	It("marks a node Failed when two NodeTunings select it", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		createNodeTuning("b", map[string]string{"role": "worker"})
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseFailed))
+		Expect(nodeStatusMessage("a", "node-1")).To(ContainSubstring("b"))
+
+		Eventually(nodeStatusPhase("b", "node-1")).Should(Equal(framev1beta1.PhaseFailed))
+		Expect(nodeStatusMessage("b", "node-1")).To(ContainSubstring("a"))
+
+		By("changing nothing: AppliedGeneration stays at the zero value for a refused node")
+		Expect(getNodeStatus("a", "node-1").AppliedGeneration).To(BeZero())
+		Expect(getNodeStatus("b", "node-1").AppliedGeneration).To(BeZero())
+	})
+
+	// Diffs against status.nodes[].observed, the agent's measured truth — not
+	// against another NodeTuning's spec (that would be the overlap case
+	// above) and not a hardcoded phase. A reconciler that always reports
+	// InSync fails this test outright.
+	//
+	// Uses tunedProfile, not ksm, as the mismatched field: tuned applies live
+	// (see diffTuning's doc comment), so this proves diff detection on its
+	// own, without also exercising the Task 5 approval gate, which only
+	// blocks the one restart-needing field (ksm.enabled).
+	It("reports Drifted when observed does not match spec", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := &framev1beta1.NodeTuning{
+			ObjectMeta: metav1.ObjectMeta{Name: "a"},
+			Spec: framev1beta1.NodeTuningSpec{
+				NodeSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "worker"}},
+				TunedProfile: "network-latency",
+			},
+		}
+		Expect(k8sClient.Create(ctx, nt)).To(Succeed())
+		testNodeTunings = append(testNodeTunings, "a")
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{TunedProfile: "balanced"})
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseDrifted))
+		Expect(nodeStatusMessage("a", "node-1")).To(ContainSubstring("tunedProfile"))
+	})
+
+	// The positive control for the Drifted test above: once Observed
+	// actually matches what the spec asked for, the same node must stop
+	// being reported as drifted. Without this test, a reconciler that always
+	// reports Drifted (or never re-evaluates once drifted) would pass the
+	// Drifted test unnoticed.
+	It("reports InSync when observed matches spec", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true}})
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseInSync))
+		Expect(getNodeStatus("a", "node-1").AppliedGeneration).To(Equal(nt.Generation))
+		Expect(getNodeStatus("a", "node-1").Message).To(BeEmpty())
+	})
+
+	// A node the selector does not match must never appear in status.nodes:
+	// proves the reconciler is scoped by the selector rather than reporting
+	// on every node in the cluster. node-1's phase here is incidental (no
+	// Observed was ever reported, so it mismatches spec.ksm.enabled and, with
+	// no approval, stops at RebootPending) — the assertion on it exists only
+	// to prove node-1 was actually reconciled at all.
+	It("does not add a status entry for a node the selector does not match", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createTestNode("node-2", map[string]string{"role": "control-plane"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+		Expect(getNodeStatus("a", "node-2")).To(BeNil())
+	})
+
+	// NodeTuningSpec.NodeSelector's doc comment: a nil selector matches no
+	// nodes rather than every node, so an object created without one is
+	// inert instead of fleet-wide by accident.
+	It("matches no nodes when nodeSelector is nil", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := &framev1beta1.NodeTuning{
+			ObjectMeta: metav1.ObjectMeta{Name: "no-selector"},
+		}
+		Expect(k8sClient.Create(ctx, nt)).To(Succeed())
+		testNodeTunings = append(testNodeTunings, "no-selector")
+
+		_, err := r().Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "no-selector"}})
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "no-selector"}, fetched)).To(Succeed())
+		Expect(fetched.Status.Nodes).To(BeEmpty())
+	})
+
+	It("preserves Observed and RestartedAt written by the agent when the node is InSync", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		observed := framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 5528}}
+		setObserved("a", "node-1", observed)
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseInSync))
+
+		ns := getNodeStatus("a", "node-1")
+		Expect(ns).NotTo(BeNil())
+		Expect(ns.Observed.KSM).NotTo(BeNil())
+		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(5528)),
+			"the controller must never overwrite status.nodes[].observed — that field belongs to the agent")
+	})
+
+	// The other direction, and the narrow one: a controller status write that
+	// commits between the agent's read and the agent's patch.
+	//
+	// Re-reading before patching (which agent.PatchObserved also does) is not
+	// enough on its own — it only shrinks the window from "however long a tick
+	// spends in nsenter" to "however long one round-trip takes", and the
+	// fields at stake are RestartedAt/RestartedGeneration, the loop guard that
+	// stops an approved node being cordoned, drained and restarted more than
+	// once. The resourceVersion precondition is what closes the window: the
+	// racing commit turns the patch into a 409 and the read is redone.
+	//
+	// An implementation that re-reads but patches without the precondition
+	// passes the sibling rollout spec and fails here, on the first assertion.
+	It("does not lose a controller status write that commits inside the agent's read-modify-write", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false}})
+
+		listed := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
+
+		restartedAt := metav1.Now()
+		racing := &writeOnReadClient{Client: k8sClient, remaining: 1, write: func() {
+			// Exactly what continueRollout writes when it verifies a restart.
+			Eventually(func() error {
+				fetched := &framev1beta1.NodeTuning{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, fetched); err != nil {
+					return err
+				}
+				for i := range fetched.Status.Nodes {
+					if fetched.Status.Nodes[i].Name == "node-1" {
+						fetched.Status.Nodes[i].RestartedAt = &restartedAt
+						fetched.Status.Nodes[i].RestartedGeneration = nt.Generation
+					}
+				}
+				return k8sClient.Status().Update(ctx, fetched)
+			}, "5s", "50ms").Should(Succeed())
+		}}
+
+		Expect(agent.PatchObserved(ctx, racing, listed, "node-1",
+			framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 4242}})).To(Succeed())
+		Expect(racing.fired).To(Equal(1), "the racing write must actually have happened, or this spec proves nothing")
+
+		ns := getNodeStatus("a", "node-1")
+		Expect(ns).NotTo(BeNil())
+		Expect(ns.RestartedAt).NotTo(BeNil(),
+			"the agent must not revert a restart record committed between its read and its write")
+		Expect(ns.RestartedGeneration).To(Equal(nt.Generation))
+		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(4242)),
+			"and the agent's own write must still land — losing it would trade one lost update for another")
+	})
+
+	// And the mirror image, because "two writers" has two directions and
+	// fixing only one is not fixing it: an agent tick committing between this
+	// reconciler's read and its status patch must not be reverted either.
+	//
+	// The damage is quieter this way round — a reverted Observed is re-reported
+	// within 30 seconds — but it is the same defect, and while it lasts the
+	// controller is diffing spec against a measurement it deleted. A
+	// reconciler patching status without the resourceVersion precondition
+	// fails this on the first assertion.
+	It("does not lose an agent write that commits inside the reconciler's read-modify-write", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true}})
+
+		listed := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
+
+		racing := &writeOnReadClient{Client: k8sClient, remaining: 1, write: func() {
+			// A node agent tick, landing after patchStatus has read the object
+			// and before it writes its own view of status back. It is wired as
+			// the APIReader rather than the Client on purpose: that is the read
+			// patchStatus bases its patch on, so this is the narrow window the
+			// precondition exists for, not the wide one the re-read already
+			// covers.
+			Expect(agent.PatchObserved(ctx, k8sClient, listed, "node-1",
+				framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 9001}})).To(Succeed())
+		}}
+
+		racer := &NodeTuningReconciler{
+			Client:    k8sClient,
+			APIReader: racing,
+			Scheme:    k8sClient.Scheme(),
+			Recorder:  record.NewFakeRecorder(100),
+		}
+		_, err := racer.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "a"}})
+		Expect(err).NotTo(HaveOccurred(), "a lost race is retried, not a reconcile failure")
+		Expect(racing.fired).To(Equal(1), "the racing write must actually have happened, or this spec proves nothing")
+
+		ns := getNodeStatus("a", "node-1")
+		Expect(ns).NotTo(BeNil())
+		Expect(ns.Observed.KSM).NotTo(BeNil())
+		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(9001)),
+			"status.nodes[].observed belongs to the agent; a reconcile that read before it must not write over it")
+
+		// And the requeued pass still converges, rather than conflicting forever.
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseInSync))
+		Expect(getNodeStatus("a", "node-1").Observed.KSM.PagesSharing).To(Equal(int64(9001)))
+	})
+
+	// A reconciler that skips the gate entirely (proceeds to Drifted/InSync
+	// on any restart-needing mismatch, approval or not) fails this test: it
+	// would never observe RebootPending at all, and the node would never be
+	// cordoned either way so that half of the assertion alone would not
+	// catch it — the phase check is what a "no gate" implementation fails.
+	It("waits at RebootPending until the node is approved", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+		Consistently(nodeCordoned("node-1"), "3s").Should(BeFalse())
+		Expect(getNodeStatus("a", "node-1").AppliedGeneration).To(BeZero(),
+			"a refused node must not be reported as applied to this generation")
+	})
+
+	// The positive control for the test above: approving the exact current
+	// generation must actually unblock the node. Without this test, an
+	// implementation that always reports RebootPending regardless of any
+	// annotation — never reading ApprovalAnnotation at all — would pass
+	// every other test in this file and still never let a single node
+	// proceed.
+	//
+	// What "proceeds" means changed with Task 6: approval no longer resolves
+	// to Drifted, it hands the node to the rollout, which cordons it. So this
+	// test now has to give the rollout what it refuses to start without — a
+	// Ready node, and the agent's report of which unit it runs and that
+	// unit's current ActiveEnterTimestamp (see nodetuning_rollout.go).
+	It("proceeds once the node is approved for the current generation", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		markNodeReady("node-1")
+		annotateNode("node-1", framev1beta1.TuningUnitAnnotation, "k3s-agent")
+		annotateNode("node-1", framev1beta1.TuningUnitActiveEnterAnnotation, time.Now().Add(-time.Hour).Format(time.RFC3339Nano))
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+		Expect(nodeCordoned("node-1")()).To(BeFalse())
+
+		annotateNode("node-1", framev1beta1.ApprovalAnnotation, strconv.FormatInt(nt.Generation, 10))
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseApplying))
+		Expect(nodeCordoned("node-1")()).To(BeTrue())
+	})
+
+	// A stale approval must not carry: approving one generation says nothing
+	// about the next. A reconciler that compared loosely — annotation merely
+	// present, or approved >= generation, instead of approved == generation
+	// — would wrongly let this node proceed once the spec moves on, and
+	// this is exactly the bug the design doc calls out: someone who approved
+	// enabling KSM must not thereby have approved, unseen, a later change
+	// that also flips the CPU manager policy.
+	It("ignores an approval for an older generation", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+
+		staleGeneration := nt.Generation
+		annotateNode("node-1", framev1beta1.ApprovalAnnotation, strconv.FormatInt(staleGeneration, 10))
+		bumped := bumpGeneration("a")
+		Expect(bumped.Generation).To(BeNumerically(">", staleGeneration))
+
+		Consistently(nodeStatusPhase("a", "node-1"), "3s").Should(Equal(framev1beta1.PhaseRebootPending))
+	})
+
+	// Treats a malformed annotation value as no approval at all — fail
+	// closed. A reconciler that used a permissive parse (e.g. defaulting a
+	// parse failure to "approved", or treating any non-empty string as
+	// consent) would let one of these through and pass RebootPending.
+	It("treats a malformed approval annotation as no approval", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+
+		for _, bad := range []string{"", "not-a-number", "-1"} {
+			annotateNode("node-1", framev1beta1.ApprovalAnnotation, bad)
+			Consistently(nodeStatusPhase("a", "node-1"), "2s").Should(Equal(framev1beta1.PhaseRebootPending))
+		}
+	})
+
+	// A node can be correctly configured and still deduplicate almost nothing
+	// while its long-lived pods predate the restart. Reporting that as
+	// "applied" is the illusion this field exists to prevent. An
+	// implementation that always promotes straight to FullyRealized whenever
+	// RestartedAt is set — never actually looking at pod StartTimes — passes
+	// every other realization test here and fails only this one.
+	It("reports Effective, not FullyRealized, when pods predate the restart", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		restartAt := metav1.Now()
+		createPodOnNode("node-1", "old", metav1.NewTime(restartAt.Add(-time.Hour)))
+		completeRestart("node-1", restartAt)
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationEffective))
+		Consistently(nodeRealization("a", "node-1"), "2s").Should(Equal(framev1beta1.RealizationEffective))
+	})
+
+	// The positive control for the test above: once every pod on the node
+	// postdates the restart, realization has to actually reach
+	// FullyRealized. Without this test, an implementation that never
+	// promotes past Effective — for instance one that forgot to write the
+	// FullyRealized branch at all — would still pass the "predates" test
+	// unnoticed.
+	It("promotes to FullyRealized once every pod on the node postdates the restart", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		restartAt := metav1.Now()
+		createPodOnNode("node-1", "new", metav1.NewTime(restartAt.Add(time.Minute)))
+		completeRestart("node-1", restartAt)
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationFullyRealized))
+	})
+
+	// The boundary this task calls out explicitly: a pod whose startTime
+	// exactly equals RestartedAt is treated as predating the restart, not
+	// postdating it. At the timestamp resolution available, a tie is not
+	// demonstrable evidence the container was created after the change, and
+	// claiming FullyRealized on evidence that cannot actually decide it is
+	// the same overclaim this field exists to prevent for the "long before"
+	// case. An implementation using "not before" (>=) instead of "strictly
+	// after" (>) as its promotion test passes both specs above and fails
+	// only this one.
+	It("treats a pod whose startTime exactly equals the restart as not yet postdating it", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		restartAt := metav1.Now()
+		createPodOnNode("node-1", "tie", restartAt)
+		completeRestart("node-1", restartAt)
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationEffective))
+		Consistently(nodeRealization("a", "node-1"), "2s").Should(Equal(framev1beta1.RealizationEffective))
+	})
+
+	// A node that has never had a verified restart has nothing to be
+	// Effective about yet. Reported as Pending rather than the zero value,
+	// so a caller reading the field can never mistake "never restarted" for
+	// "restarted, but the controller forgot to record it."
+	It("reports Pending realization when the node has never been restarted", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+
+		Eventually(nodeRealization("a", "node-1")).Should(Equal(framev1beta1.RealizationPending))
+	})
+})

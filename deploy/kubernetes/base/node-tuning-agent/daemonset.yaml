@@ -1,0 +1,103 @@
+---
+# The Frame node-tuning agent.
+#
+# It replaces the ksm-tuner DaemonSet, which wrote the same KSM settings from
+# a shell script and could only ever report what it had written. This agent
+# reports what the node actually measures (`systemctl show -p MemoryKSM`, the
+# sysfs counters, tuned's active profile), which is the whole point of the
+# design: a drop-in on disk is not a setting in effect until the unit restarts.
+#
+# Removing the ksm-tuner manifest does not remove the running DaemonSet. On a
+# cluster where it was deployed, run:
+#
+#   kubectl delete ds -n kube-system ksm-tuner
+#
+# Until then both write the KSM sysfs knobs — with identical values, so the
+# overlap is harmless rather than a race, but two writers on one setting is
+# what this design forbids everywhere else.
+#
+# NODE PREREQUISITE: tuned must be installed on every node this lands on, if
+# any NodeTuning sets spec.tunedProfile. It is NOT in the agent image and
+# cannot be: every host call the agent makes is nsentered into PID 1's
+# namespaces, so `tuned-adm` resolves to the node's own binary. Ubuntu Server
+# does not ship tuned, and the three nodes of the live cluster were checked and
+# do not have it, so on those nodes:
+#
+#   apt-get install -y tuned && systemctl enable --now tuned
+#
+# Until it is there, a NodeTuning that sets tunedProfile fails loudly on that
+# node (the agent logs the tuned-adm failure and the node stays Drifted), which
+# is the correct report for an unconfigured node. KSM and the MIG label need
+# nothing installed and work regardless.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: frame-node-tuning-agent
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: frame-node-tuning-agent
+    app.kubernetes.io/component: node-tuning
+spec:
+  selector:
+    matchLabels:
+      app: frame-node-tuning-agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: frame-node-tuning-agent
+    spec:
+      serviceAccountName: frame-node-tuning-agent
+      # Every node, including tainted ones and the control-plane server —
+      # which on the live cluster runs k3s.service and delivered most of
+      # KSM's measured benefit.
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      # hostPID is what makes PID 1 reachable, and PID 1 is how every systemd
+      # command gets to the node's own systemd instead of a systemd the
+      # container does not have (see internal/agent's HostCommandRunner).
+      hostPID: true
+      containers:
+        - name: agent
+          # Overridden per environment:
+          #   kustomize edit set image frame-agent=<registry>/frame-agent:<tag>
+          image: frame-agent:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: FRAME_AGENT_ROOT
+              value: /host
+          securityContext:
+            # Privileged, and there is no smaller grant that works: the agent
+            # writes systemd drop-ins and sysfs knobs on the host and enters
+            # PID 1's namespaces to talk to systemd. This is host root, which
+            # is exactly why the set of units it may restart is a map literal
+            # compiled into the binary with no path from the CRD to it.
+            privileged: true
+          volumeMounts:
+            - name: host
+              mountPath: /host
+              # Without this, /host is the host's root filesystem *only* —
+              # every submount (/sys, /run, /var/lib/kubelet) shows up empty,
+              # which would silently turn the KSM scanner knobs, the systemd
+              # cache and the restart latch into writes to nowhere.
+              mountPropagation: HostToContainer
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+            type: Directory

@@ -1,0 +1,46 @@
+# Dockerfile for the Frame node-tuning agent: a privileged, hostPID DaemonSet
+# pod that applies and observes node-local tuning (KSM drop-in, KSM scanner
+# knobs, tuned profile, MIG label). Kept separate from Dockerfile.controller
+# and Dockerfile.authd for the same reason as those: each binary gets its own
+# minimal image rather than a shared one that overgrants what a compromised
+# container could reach — and this one is the most sensitive of the three,
+# since it runs host-root-equivalent on every node it lands on.
+#
+# The runtime stage carries no packages at all. It cannot be distroless/static
+# like the other two only because the agent's every host interaction goes
+# through `nsenter --target 1`, and nsenter has to exist in this image —
+# debian:13-slim ships it as part of util-linux, which is Essential, so no
+# apt-get layer is needed to get it.
+#
+# It deliberately does NOT install tuned. Every host call is nsentered into PID
+# 1's namespaces, so `tuned-adm` resolves to the *node's* binary; a copy in
+# this image would never be the one that runs, and installing it would only
+# pull python in for nothing. tuned is therefore a node prerequisite — see
+# docs/superpowers/specs/2026-08-16-frame-node-tuning-operator-design.md,
+# "Delegation to tuned", and the header of
+# deploy/kubernetes/base/node-tuning-agent/daemonset.yaml, which says so where
+# an operator will see it before applying anything.
+FROM golang:1.26 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY cmd/ cmd/
+COPY api/ api/
+COPY internal/ internal/
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -a -o frame-agent cmd/agent/main.go
+
+FROM debian:13-slim
+
+# Root, and not a mistake: nsenter into PID 1 and writing the host's
+# /etc/systemd and /sys both need it, which is why the DaemonSet declares
+# privileged and why the set of units this binary may restart is a map literal
+# compiled into it with no path from the CRD.
+COPY --from=builder /workspace/frame-agent /frame-agent
+
+ENTRYPOINT ["/frame-agent"]
