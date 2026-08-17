@@ -61,11 +61,23 @@ const ApprovalAnnotation = "frame.plume-labs.io/tuning-approved"
 // they are per-node facts that must survive the controller restarting and
 // must be readable and clearable by a human with kubectl on the node alone.
 //
-// The controller writes TuningRolloutStarted/Baseline/RestartRequested; the
-// node agent writes TuningUnit/TuningUnitActiveEnter. Neither trusts the
-// other's values blindly: the controller passes TuningUnitAnnotation through
-// the agent package's compile-time allowlist before acting on it, and the
-// agent detects its own unit rather than restarting whatever it is told to.
+// The controller writes TuningRolloutStarted/Owner/Baseline/RestartRequested/
+// RolloutFailed; the node agent writes TuningUnit/TuningUnitActiveEnter.
+// Neither trusts the other's values blindly: the controller passes
+// TuningUnitAnnotation through the agent package's compile-time allowlist
+// before acting on it, and the agent detects its own unit rather than
+// restarting whatever it is told to.
+//
+// Releasing a halted campaign is one command, and it is the only one needed:
+//
+//	kubectl annotate node <name> frame.plume-labs.io/tuning-rollout-started-
+//
+// The controller then re-enters the rollout on that node from a clean slate —
+// it clears the stale baseline, request and failure markers itself before
+// starting, so the node is retried rather than instantly re-failed, and ends
+// up uncordoned when the restart is verified. To abandon the node instead
+// (leave it tuned as it is), remove the tuning-rollout-* and tuning-restart-*
+// annotations and `kubectl uncordon` it.
 const (
 	// TuningRolloutStartedAnnotation is when the controller cordoned this
 	// node for a tuning restart (RFC3339Nano). Its presence is the
@@ -74,15 +86,34 @@ const (
 	// halts the campaign until a human clears it.
 	TuningRolloutStartedAnnotation = "frame.plume-labs.io/tuning-rollout-started"
 
+	// TuningRolloutOwnerAnnotation names the NodeTuning that cordoned this
+	// node. Without it a cordoned node has no owner to drive it to a
+	// conclusion once it stops matching that object's selector (or once the
+	// object is deleted), and the cluster-wide lock would be orphaned with
+	// nothing left to release it.
+	TuningRolloutOwnerAnnotation = "frame.plume-labs.io/tuning-rollout-owner"
+
+	// TuningRolloutFailedAnnotation marks a rollout that gave up (RFC3339Nano).
+	// The halt is keyed on this rather than on a Failed phase in status:
+	// status.nodes[].phase reports other kinds of failure too (two NodeTunings
+	// selecting one node, say), and freezing a node forever over a
+	// configuration error that has since been fixed is not a halt, it is a
+	// leak.
+	TuningRolloutFailedAnnotation = "frame.plume-labs.io/tuning-rollout-failed"
+
 	// TuningRestartBaselineAnnotation is the unit's ActiveEnterTimestamp as
-	// it was before the restart was asked for (RFC3339Nano). A restart is
-	// verified by this value moving, never by the node flapping NotReady.
+	// it was at the moment the restart was asked for (RFC3339Nano) — not as
+	// it was at cordon time, which can be many minutes of drain earlier and
+	// would let an unrelated restart during the drain "verify" a restart that
+	// never fired. A restart is verified by this value moving, never by the
+	// node flapping NotReady.
 	TuningRestartBaselineAnnotation = "frame.plume-labs.io/tuning-restart-baseline"
 
 	// TuningRestartRequestedAnnotation is when the controller asked the agent
 	// to schedule a detached restart (RFC3339Nano), which is also the anchor
 	// the wait times out from. The agent acts on a value it has not acted on
-	// before; the controller removes it once the restart is verified.
+	// before, so a retry must re-issue it with a new value rather than leave
+	// a stale one in place.
 	TuningRestartRequestedAnnotation = "frame.plume-labs.io/tuning-restart-requested"
 
 	// TuningUnitAnnotation is the systemd unit (base name, no ".service")
@@ -168,12 +199,22 @@ type NodeTuningNodeStatus struct {
 	// +optional
 	Observed ObservedTuning `json:"observed,omitempty"`
 
-	// RestartedAt is when Task 6 verified the unit came back. Task 7 compares
-	// pod start times against it to promote Effective to FullyRealized. It
-	// lives in the API rather than being re-derived from the node's
-	// ActiveEnterTimestamp, which would cost a second agent round-trip.
+	// RestartedAt is when the rollout verified the unit came back. Task 7
+	// compares pod start times against it to promote Effective to
+	// FullyRealized. It lives in the API rather than being re-derived from the
+	// node's ActiveEnterTimestamp, which would cost a second agent round-trip.
 	// +optional
 	RestartedAt *metav1.Time `json:"restartedAt,omitempty"`
+
+	// RestartedGeneration is the metadata.generation the restart recorded in
+	// RestartedAt was performed for, and it is deliberately not
+	// AppliedGeneration: that field is also advanced by a node simply being
+	// InSync, so reading "we already restarted for this generation" off it
+	// would refuse to ever restart a node that reached this generation
+	// without one — for instance a setting that regresses on the node long
+	// after an unrelated restart at an older generation.
+	// +optional
+	RestartedGeneration int64 `json:"restartedGeneration,omitempty"`
 	// +optional
 	Message string `json:"message,omitempty"`
 }

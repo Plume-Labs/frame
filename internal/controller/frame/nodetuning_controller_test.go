@@ -232,9 +232,14 @@ var _ = Describe("NodeTuning Controller", func() {
 		}
 		for _, name := range testNodeTunings {
 			n := name
+			// Reconciling on each poll: a NodeTuning that got as far as
+			// cordoning a node carries the rollout finalizer, and nothing
+			// else here would run the reconcile that releases the node and
+			// lets the deletion through.
 			Eventually(func() bool {
+				_, _ = r().Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: n}})
 				return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: n}, &framev1beta1.NodeTuning{}))
-			}, "5s").Should(BeTrue())
+			}, "5s", "50ms").Should(BeTrue())
 		}
 		testNodeTunings = nil
 
