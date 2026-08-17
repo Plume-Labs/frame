@@ -125,18 +125,75 @@ for node in $NODE_NAMES; do
   say "   $node: tuned installed and verified"
 done
 
-# ── 3. Install NodeTuning itself ─────────────────────────────────────────────
-step "3. CRDs and manifests"
+# ── 3. The agent image ───────────────────────────────────────────────────────
+step "3. Agent image"
+
+# The DaemonSet ships referencing `frame-agent:latest`, which is not a pullable
+# reference on these nodes — they would go to Docker Hub and fail. Build it and
+# push it to the cluster's own registry, then pin that digestless-but-qualified
+# tag into the DaemonSet. Doing this BEFORE applying the manifests means the
+# agent's first scheduling attempt already has an image to pull, rather than
+# spending a backoff cycle failing first.
+: "${REGISTRY:=192.168.2.201:30500}"
+: "${CONTAINER_TOOL:=podman}"
+AGENT_IMAGE="$REGISTRY/frame-agent:$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
+would "$CONTAINER_TOOL build -f $REPO_ROOT/Dockerfile.agent -t $AGENT_IMAGE $REPO_ROOT"
+would "$CONTAINER_TOOL push --tls-verify=false $AGENT_IMAGE"
+if [ $APPLY -eq 1 ]; then
+  "$CONTAINER_TOOL" build -f "$REPO_ROOT/Dockerfile.agent" -t "$AGENT_IMAGE" "$REPO_ROOT" >/dev/null
+  "$CONTAINER_TOOL" push --tls-verify=false "$AGENT_IMAGE"
+  say "   built and pushed $AGENT_IMAGE"
+fi
+
+# ── 4. Install NodeTuning itself ─────────────────────────────────────────────
+step "4. CRDs and the agent"
+
+# Only the CRDs and the agent's own directory. NOT `-k base/`: that renders the
+# whole cluster-control stack, including an Ingress carrying a literal
+# REPLACE_HOSTNAME placeholder meant to be substituted by an overlay, and an
+# NFD HelmRelease that needs Flux CRDs this cluster does not have. Applying it
+# fails at the end having already changed things, which is the worst shape a
+# deploy script can take. Deploying the rest of that stack is its own job.
+# The agent's own selector can already be wrong: a DaemonSet applied through
+# `-k base/` carries commonLabels injected into its selector, and a selector is
+# immutable, so applying the un-injected form over it fails. Same failure class
+# as nvidia-mps above — and it bites here too, because an earlier version of
+# this script pointed at `base/`. Delete on mismatch rather than leaving a
+# half-applied install with a confusing error.
+if AGENT_SEL=$(kubectl -n kube-system get ds frame-node-tuning-agent -o jsonpath='{.spec.selector.matchLabels}' 2>/dev/null) && [ -n "$AGENT_SEL" ]; then
+  case "$AGENT_SEL" in
+    *app.kubernetes.io/name*)
+      say "   existing agent DaemonSet has an injected selector, which this apply cannot change"
+      would "kubectl -n kube-system delete ds frame-node-tuning-agent   (recreated immediately below)"
+      [ $APPLY -eq 1 ] && kubectl -n kube-system delete ds frame-node-tuning-agent ;;
+    *) say "   existing agent DaemonSet selector matches, applying in place" ;;
+  esac
+fi
 
 would "kubectl apply -f $REPO_ROOT/config/crd/bases/"
-would "kubectl apply -k $REPO_ROOT/deploy/kubernetes/base/"
+would "kubectl apply -k $REPO_ROOT/deploy/kubernetes/base/node-tuning-agent/"
+would "kubectl -n kube-system set image ds/frame-node-tuning-agent agent=$AGENT_IMAGE"
 if [ $APPLY -eq 1 ]; then
   kubectl apply -f "$REPO_ROOT/config/crd/bases/"
-  kubectl apply -k "$REPO_ROOT/deploy/kubernetes/base/"
+  kubectl apply -k "$REPO_ROOT/deploy/kubernetes/base/node-tuning-agent/"
+  kubectl -n kube-system set image ds/frame-node-tuning-agent "agent=$AGENT_IMAGE"
+
+  # Verify rather than declare success: a DaemonSet that exists but whose pods
+  # cannot pull is indistinguishable from a working one in `kubectl apply`
+  # output, and the whole point of this feature is not trusting what we wrote.
+  say "   waiting for the agent to become ready on every node"
+  if kubectl -n kube-system rollout status ds/frame-node-tuning-agent --timeout=600s; then
+    say "   agent ready on all nodes"
+  else
+    kubectl -n kube-system get pods -l app=frame-node-tuning-agent \
+      -o custom-columns='POD:.metadata.name,STATUS:.status.phase,REASON:.status.containerStatuses[0].state.waiting.reason' --no-headers 2>/dev/null || true
+    die "the agent did not become ready — nothing else was changed, fix the image or the node and re-run"
+  fi
 fi
 
 # ── 4. What is left for a human ──────────────────────────────────────────────
-step "4. Left for you, deliberately"
+step "5. Left for you, deliberately"
 
 cat <<'NEXT'
    Nothing is tuned yet. This installed the machinery; it created no NodeTuning
