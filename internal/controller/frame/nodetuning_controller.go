@@ -25,11 +25,11 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -244,33 +244,7 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	sort.Slice(newNodes, func(i, j int) bool { return newNodes[i].Name < newNodes[j].Name })
 
-	// The status base is taken here, after the loop: startRollout may have
-	// added the finalizer, which refreshes nt from the server, and a base
-	// captured before that would diff against an object that no longer
-	// exists in that shape.
-	//
-	// Optimistic lock, and it is not optional. status.nodes has a second
-	// writer — every node agent patches its own entry's Observed every 30
-	// seconds — and a CRD status patch is a JSON merge patch, which replaces
-	// an array wholesale rather than merging it. Without the resourceVersion
-	// precondition, an agent write landing between this reconcile's read and
-	// this patch is silently reverted; the reverse (the agent reverting
-	// RestartedAt/RestartedGeneration) is what would cordon, drain and restart
-	// an already-restarted node a second time on one approval, since
-	// restartedForGeneration reads exactly those fields. A conflict here is
-	// not an error to paper over: every decision above was computed from a
-	// read that is now stale, so the whole pass is redone against fresh state.
-	patch := client.MergeFromWithOptions(nt.DeepCopy(), client.MergeFromWithOptimisticLock{})
-	nt.Status.ObservedGeneration = nt.Generation
-	nt.Status.Nodes = newNodes
-	if err := r.Status().Patch(ctx, &nt, patch); err != nil {
-		if apierrors.IsConflict(err) {
-			// Requeued rather than returned as an error: another writer got
-			// there first, which is expected traffic on this object, not a
-			// fault worth an error-level log on every agent tick.
-			log.V(1).Info("NodeTuning status changed under us; re-reconciling", "nodeTuning", nt.Name)
-			return ctrl.Result{Requeue: true}, nil
-		}
+	if err := r.patchStatus(ctx, &nt, newNodes); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -290,6 +264,100 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: rolloutRequeueInterval}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// patchStatus writes this pass's computed status onto nt, retrying on conflict
+// by re-reading rather than giving up.
+//
+// Giving up is not available here, and that is the whole point of this
+// function. By the time it is called, the disruptive half has already
+// committed: the restart-verify branch in continueRollout uncordons the node
+// and deletes its rollout annotations on the server BEFORE RestartedAt and
+// RestartedGeneration exist anywhere but in this pass's memory. Dropping the
+// status write therefore destroys the only record that the restart happened,
+// while the annotations that would let a later pass recompute it are already
+// gone — rolloutOwnedBy is false, continueRollout is never re-entered,
+// restartedForGeneration reads false, the approval annotation is still there,
+// and control falls through to startRollout. That is a second cordon, drain
+// and restart of the same node on one approval: exactly the failure the
+// optimistic lock was added to prevent, reached from the other side.
+//
+// So a conflict re-reads and re-applies. Every field this controller owns was
+// recomputed by the caller and is rewritten here; Observed is the node agent's
+// and is taken from the re-read (see preserveObserved), never from this pass's
+// carried-forward copy. That is the same shape as agent.PatchObserved, on
+// purpose: the two writers of status.nodes resolve a race the same way, each
+// keeping its own fields and deferring on the other's.
+//
+// The read goes through r.reader(), never the manager's cache: a cached read
+// on a retry would serve the same stale version that just lost, and the retry
+// would conflict again until the informer caught up.
+//
+// The status base is the object as read here, not as read at the top of
+// Reconcile: startRollout may have added the finalizer, which refreshes nt
+// from the server, and a base captured before that would diff against an
+// object that no longer exists in that shape.
+func (r *NodeTuningReconciler) patchStatus(
+	ctx context.Context,
+	nt *framev1beta1.NodeTuning,
+	nodes []framev1beta1.NodeTuningNodeStatus,
+) error {
+	log := logf.FromContext(ctx)
+	key := client.ObjectKeyFromObject(nt)
+	generation := nt.Generation
+
+	attempt := 0
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		attempt++
+		if attempt > 1 {
+			log.V(1).Info("NodeTuning status changed under us; re-applying",
+				"nodeTuning", key.Name, "attempt", attempt)
+		}
+
+		fresh := &framev1beta1.NodeTuning{}
+		if err := r.reader().Get(ctx, key, fresh); err != nil {
+			return err
+		}
+		base := fresh.DeepCopy()
+		fresh.Status.ObservedGeneration = generation
+		fresh.Status.Nodes = preserveObserved(nodes, fresh.Status.Nodes)
+
+		if err := r.Status().Patch(ctx, fresh, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		// The caller keeps using nt afterwards — removeFinalizer issues an
+		// Update against it — so it has to carry the resourceVersion this
+		// patch just produced, not the one it was read with.
+		fresh.DeepCopyInto(nt)
+		return nil
+	})
+}
+
+// preserveObserved returns computed with each entry's Observed replaced by the
+// value currently on the server.
+//
+// status.nodes[].observed belongs to the node agent. This controller carries it
+// forward from its own read purely so it can diff against it, and writing that
+// copy back would revert any agent tick that landed in between — the mirror of
+// the failure patchStatus exists to prevent, and just as silent. Taking it from
+// the read the patch is actually based on costs nothing when nothing changed
+// and is the whole fix when something did.
+//
+// The list membership itself stays the caller's: a node that no longer belongs
+// to this NodeTuning must not be resurrected by an entry the agent left behind.
+func preserveObserved(computed, current []framev1beta1.NodeTuningNodeStatus) []framev1beta1.NodeTuningNodeStatus {
+	observed := make(map[string]framev1beta1.ObservedTuning, len(current))
+	for _, ns := range current {
+		observed[ns.Name] = ns.Observed
+	}
+	merged := make([]framev1beta1.NodeTuningNodeStatus, 0, len(computed))
+	for _, ns := range computed {
+		if o, ok := observed[ns.Name]; ok {
+			ns.Observed = o
+		}
+		merged = append(merged, ns)
+	}
+	return merged
 }
 
 // selectNodes returns deep copies of the nodes selected by sel, or none if

@@ -35,9 +35,9 @@ import (
 	"github.com/rmocq/frame/internal/agent"
 )
 
-// writeOnFirstReadClient runs write() immediately after the first Get it
-// serves, so a caller's read-modify-write has a competing commit land in the
-// window between its own read and its own write.
+// writeOnReadClient runs write() immediately after each of its first
+// `remaining` Gets, so a caller's read-modify-write has a competing commit land
+// in the window between its own read and its own write.
 //
 // That window is microseconds wide in production and cannot be hit by
 // scheduling two goroutines and hoping. It is also the only window an
@@ -45,20 +45,24 @@ import (
 // cannot tell the two apart — a writer that merely re-reads before patching
 // passes every wall-clock interleaving a test can arrange, and still loses the
 // concurrent write here.
-type writeOnFirstReadClient struct {
+//
+// `remaining` is finite by design: the point is a bounded number of racing
+// commits, not an unwinnable livelock in which every retry is beaten again by
+// construction, which would prove nothing about a correct implementation.
+type writeOnReadClient struct {
 	client.Client
-	done  bool
-	write func()
+	remaining int
+	fired     int
+	write     func()
 }
 
-func (c *writeOnFirstReadClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+func (c *writeOnReadClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
 		return err
 	}
-	// Once only: the point is a single racing commit, not an unwinnable
-	// livelock in which every retry is beaten again by construction.
-	if !c.done {
-		c.done = true
+	if c.remaining > 0 {
+		c.remaining--
+		c.fired++
 		c.write()
 	}
 	return nil
@@ -494,7 +498,7 @@ var _ = Describe("NodeTuning Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
 
 		restartedAt := metav1.Now()
-		racing := &writeOnFirstReadClient{Client: k8sClient, write: func() {
+		racing := &writeOnReadClient{Client: k8sClient, remaining: 1, write: func() {
 			// Exactly what continueRollout writes when it verifies a restart.
 			Eventually(func() error {
 				fetched := &framev1beta1.NodeTuning{}
@@ -513,7 +517,7 @@ var _ = Describe("NodeTuning Controller", func() {
 
 		Expect(agent.PatchObserved(ctx, racing, listed, "node-1",
 			framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 4242}})).To(Succeed())
-		Expect(racing.done).To(BeTrue(), "the racing write must actually have happened, or this spec proves nothing")
+		Expect(racing.fired).To(Equal(1), "the racing write must actually have happened, or this spec proves nothing")
 
 		ns := getNodeStatus("a", "node-1")
 		Expect(ns).NotTo(BeNil())
@@ -541,22 +545,26 @@ var _ = Describe("NodeTuning Controller", func() {
 		listed := &framev1beta1.NodeTuning{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
 
-		racing := &writeOnFirstReadClient{Client: k8sClient, write: func() {
-			// A node agent tick, landing after the reconciler has read the
-			// object and before it writes its own view of status back.
+		racing := &writeOnReadClient{Client: k8sClient, remaining: 1, write: func() {
+			// A node agent tick, landing after patchStatus has read the object
+			// and before it writes its own view of status back. It is wired as
+			// the APIReader rather than the Client on purpose: that is the read
+			// patchStatus bases its patch on, so this is the narrow window the
+			// precondition exists for, not the wide one the re-read already
+			// covers.
 			Expect(agent.PatchObserved(ctx, k8sClient, listed, "node-1",
 				framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 9001}})).To(Succeed())
 		}}
 
 		racer := &NodeTuningReconciler{
-			Client:    racing,
-			APIReader: k8sClient,
+			Client:    k8sClient,
+			APIReader: racing,
 			Scheme:    k8sClient.Scheme(),
 			Recorder:  record.NewFakeRecorder(100),
 		}
 		_, err := racer.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "a"}})
-		Expect(err).NotTo(HaveOccurred(), "a lost race is a requeue, not a reconcile failure")
-		Expect(racing.done).To(BeTrue(), "the racing write must actually have happened, or this spec proves nothing")
+		Expect(err).NotTo(HaveOccurred(), "a lost race is retried, not a reconcile failure")
+		Expect(racing.fired).To(Equal(1), "the racing write must actually have happened, or this spec proves nothing")
 
 		ns := getNodeStatus("a", "node-1")
 		Expect(ns).NotTo(BeNil())
