@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	"github.com/rmocq/frame/internal/agent"
 )
 
 // patchFailingClient fails every Patch of one named Node and delegates
@@ -861,6 +862,68 @@ var _ = Describe("NodeTuning rollout", func() {
 
 		// Observed still reports the old value, exactly as it does until the
 		// agent's next tick.
+		Consistently(cordonedAfterReconcile("a", "node-1"), "3s", "100ms").Should(BeFalse())
+		Expect(getNode("node-1").Annotations).NotTo(HaveKey(framev1beta1.TuningRestartRequestedAnnotation))
+	})
+
+	// The same loop guard, but with the agent's tick landing where it really
+	// does: the agent lists NodeTunings, spends seconds on the node in
+	// nsenter, and only then writes status.nodes[].observed — from the
+	// snapshot it listed. If the controller records the verified restart
+	// during those seconds, the agent's write is built from an object that
+	// predates it.
+	//
+	// That is not a lost field, it is a lost array: a CRD status patch is a
+	// JSON merge patch, which replaces `nodes` wholesale rather than merging
+	// it, so one stale snapshot reverts RestartedAt and RestartedGeneration
+	// for every node at once. restartedForGeneration then reads false and the
+	// same node is cordoned, drained and restarted a second time on a single
+	// approval — the exact failure the spec above believes it covers, which it
+	// passed only because nothing in the suite modelled a concurrent agent
+	// write.
+	//
+	// This drives the production agent path (agent.PatchObserved), not a
+	// hand-written imitation of it, so an agent that goes back to patching
+	// from its own stale copy fails here.
+	It("does not restart a node twice when an agent tick lands during the restart record", func() {
+		baseline := time.Now().Add(-time.Hour)
+		createReadyNode("node-1", worker)
+		nt := createNodeTuning("a", worker)
+		setObservedNeedingRestart("a", "node-1")
+		agentReports("node-1", "k3s-agent", baseline)
+
+		approve(nt, "node-1")
+		Eventually(restartRequestedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeTrue())
+
+		// The agent's tick begins here: it lists the object and goes off to
+		// the node. Nothing it later writes can know about anything below.
+		inFlight := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, inFlight)).To(Succeed())
+		Expect(nodeStatus("a", "node-1").RestartedAt).To(BeNil(),
+			"the snapshot must genuinely predate the restart record, or this spec proves nothing")
+
+		// Meanwhile the unit comes back and the controller verifies it,
+		// writing RestartedAt/RestartedGeneration and uncordoning.
+		agentReports("node-1", "k3s-agent", time.Now())
+		Eventually(cordonedAfterReconcile("a", "node-1"), "5s", "100ms").Should(BeFalse())
+		Expect(nodeStatus("a", "node-1").RestartedAt).NotTo(BeNil())
+
+		// And now the tick that started before all that finally writes. It
+		// reports the same pre-restart KSM state the agent has always seen,
+		// because the drop-in only takes effect on the next start and the
+		// systemd cache is refreshed before Observe, not after.
+		Expect(agent.PatchObserved(ctx, k8sClient, inFlight, "node-1",
+			framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false, PagesSharing: 5528}})).To(Succeed())
+
+		after := nodeStatus("a", "node-1")
+		Expect(after.RestartedAt).NotTo(BeNil(),
+			"the agent must not revert the controller's restart record — that record is the loop guard")
+		Expect(after.RestartedGeneration).To(Equal(nt.Generation))
+		Expect(after.Observed.KSM.PagesSharing).To(Equal(int64(5528)),
+			"and the agent's own write must still land, or this is a deadlock rather than a fix")
+
+		// The consequence, which is what actually costs a cluster: no second
+		// cordon, no second drain, no second restart on one approval.
 		Consistently(cordonedAfterReconcile("a", "node-1"), "3s", "100ms").Should(BeFalse())
 		Expect(getNode("node-1").Annotations).NotTo(HaveKey(framev1beta1.TuningRestartRequestedAnnotation))
 	})

@@ -245,19 +245,25 @@ func TestApplyLeavesUnsetScannerKnobsUntouched(t *testing.T) {
 	}
 }
 
-// The kernel refuses merge_across_nodes with EBUSY once any page is merged.
-// A writer that aborts the whole KSM apply on the first refused knob fails
-// on every run after the first — this was observed for real on the live
-// cluster. Simulate the refusal by making the target path a directory (any
-// write to it fails), and confirm Apply both returns no error and still
-// writes the knob that comes after it. A version that returns early on the
-// first write error fails this test by leaving pages_to_scan unwritten; a
-// version that propagates the error fails it by returning non-nil.
+// The kernel refuses some KSM knobs outright once the setting they configure
+// has taken effect (merge_across_nodes returns EBUSY once any page is
+// merged), so a writer that aborts the whole KSM apply on the first refusal
+// fails on every run after the first — observed for real on the live cluster.
+//
+// The refused knob is `run`, which is the FIRST one applyKSM writes, and the
+// assertions are on knobs written after it. That ordering is the whole test:
+// an earlier version of this spec refused merge_across_nodes — the last knob
+// written — and then asserted pages_to_scan, which had already been written
+// before the refusal could happen, so it could not tell "continues past a
+// refusal" from "aborts on the first one". As written now, a version that
+// returns early on the first write error fails on both assertions, and a
+// version that propagates the error fails by returning non-nil.
 func TestApplyToleratesRefusedSysfsKnob(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUnitFile(t, root, "k3s-agent")
-	mergePath := filepath.Join(root, "sys/kernel/mm/ksm/merge_across_nodes")
-	if err := os.MkdirAll(mergePath, 0o755); err != nil {
+	// A directory where a file is expected: every write to it fails, which is
+	// the closest a test can get to the kernel's own refusal.
+	if err := os.MkdirAll(filepath.Join(root, "sys/kernel/mm/ksm/run"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -277,6 +283,7 @@ func TestApplyToleratesRefusedSysfsKnob(t *testing.T) {
 		t.Fatal("this is a fresh root, so the drop-in write alone still needs a restart")
 	}
 	assertFileContent(t, filepath.Join(root, "sys/kernel/mm/ksm/pages_to_scan"), "4000")
+	assertFileContent(t, filepath.Join(root, "sys/kernel/mm/ksm/merge_across_nodes"), "0")
 }
 
 // A second Apply with the same spec must be a no-op with respect to the
@@ -300,46 +307,12 @@ func TestApplyIsIdempotent(t *testing.T) {
 	}
 }
 
-// A changed cpu-manager policy needs a kubelet restart and, per the design
-// doc, removal of the stale cpu_manager_state so kubelet does not rebuild
-// its CPU assignments from state written under the old policy. A version
-// that tracks the policy but forgets the removal fails the second check
-// here; a version that never compares against the previous policy (so it
-// reports changed=true, or removes the state file, on every call including
-// ones where the policy is unchanged) fails TestApplyCPUManagerPolicyUnchangedNeedsNoRestart below.
-func TestApplyCPUManagerPolicyChangeRemovesStaleState(t *testing.T) {
-	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "var/lib/kubelet/cpu_manager_state"), `{"policyName":"none"}`)
-
-	needsRestart, err := Apply(root, v1beta1.NodeTuningSpec{CPUManagerPolicy: "static"}, &fakeCommandRunner{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !needsRestart {
-		t.Fatal("changing the CPU manager policy needs a kubelet restart")
-	}
-	if _, err := os.Stat(filepath.Join(root, "var/lib/kubelet/cpu_manager_state")); !os.IsNotExist(err) {
-		t.Fatalf("stale cpu_manager_state must be removed on a policy change, stat err: %v", err)
-	}
-}
-
-// Discriminates a version that always reports needsRestart=true whenever
-// CPUManagerPolicy is set (ignoring whether it actually changed) from one
-// that compares against what was previously applied.
-func TestApplyCPUManagerPolicyUnchangedNeedsNoRestart(t *testing.T) {
-	root := t.TempDir()
-	if _, err := Apply(root, v1beta1.NodeTuningSpec{CPUManagerPolicy: "static"}, &fakeCommandRunner{}); err != nil {
-		t.Fatal(err)
-	}
-
-	needsRestart, err := Apply(root, v1beta1.NodeTuningSpec{CPUManagerPolicy: "static"}, &fakeCommandRunner{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if needsRestart {
-		t.Fatal("re-applying the same CPU manager policy must not ask for another restart")
-	}
-}
+// Nothing here tests a cpu-manager policy: the field is gone from the CRD.
+// It used to write an agent-side cache file and delete kubelet's
+// cpu_manager_state while nothing wrote the kubelet configuration that
+// actually selects the policy, so it reported needsRestart for a change that
+// was never made — a node cordoned, drained and restarted for nothing. See
+// the design doc's Scope section for the deferral.
 
 // mustWriteUnitFile writes a stub systemd unit file under root's default
 // (etc/systemd/system) search location, so DetectKSMUnit finds it. Content

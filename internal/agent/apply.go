@@ -60,20 +60,13 @@ const (
 	ksmSleepMillisecsPath   = "sys/kernel/mm/ksm/sleep_millisecs"
 	ksmMergeAcrossNodesPath = "sys/kernel/mm/ksm/merge_across_nodes"
 
-	// cpuManagerPolicyCachePath records the last policy Apply wrote, so a
-	// later call can tell "unchanged" from "changed" without a kubelet API
-	// to ask. There is no equivalent to systemd's drop-in-plus-show pattern
-	// for kubelet's CPU manager policy, so Apply owns this comparison itself
-	// rather than re-deriving it from ObservedTuning.CPUManagerPolicy, which
-	// Observe does not populate (see observe.go).
-	cpuManagerPolicyCachePath = "run/frame-agent/cpu-manager-policy"
-
-	// cpuManagerStatePath is kubelet's own persisted CPU assignments. A
-	// state file written under one policy is invalid input to a different
-	// one — kubelet must rebuild it from scratch after a policy change, so
-	// changing the policy removes it. This is the standard kubelet path
-	// regardless of distribution; k3s embeds a real kubelet at this location.
-	cpuManagerStatePath = "var/lib/kubelet/cpu_manager_state"
+	// There is deliberately no cpu-manager policy here. An earlier revision
+	// wrote a cache file under /run and deleted kubelet's cpu_manager_state,
+	// and nothing anywhere wrote the kubelet configuration that actually
+	// selects the policy — so the change the controller cordoned, drained and
+	// restarted a node for was never made, and the node then sat Drifted
+	// forever. Applying it for real means writing k3s's kubelet configuration,
+	// which is its own task; see the design doc's Scope section.
 
 	// migProfileCachePath records the MIG profile Apply was asked for.
 	// Applying it as the node label the NVIDIA GPU operator watches needs a
@@ -113,16 +106,6 @@ func Apply(root string, spec framev1beta1.NodeTuningSpec, run CommandRunner) (ne
 
 	if spec.KSM != nil {
 		changed, err := applyKSM(root, spec.KSM)
-		if err != nil {
-			return false, err
-		}
-		if changed {
-			needsRestart = true
-		}
-	}
-
-	if spec.CPUManagerPolicy != "" {
-		changed, err := applyCPUManagerPolicy(root, spec.CPUManagerPolicy)
 		if err != nil {
 			return false, err
 		}
@@ -238,29 +221,6 @@ func boolKnob(b bool) string {
 		return "1"
 	}
 	return "0"
-}
-
-// applyCPUManagerPolicy writes the desired kubelet CPU manager policy and
-// reports whether it changed. On change it also removes kubelet's persisted
-// cpu_manager_state: a state file built under the old policy is invalid
-// input to the new one, and kubelet must rebuild it from scratch after the
-// restart this triggers (see the design doc's "needs a kubelet restart and
-// removal of cpu_manager_state").
-func applyCPUManagerPolicy(root, policy string) (changed bool, err error) {
-	cachePath := filepath.Join(root, cpuManagerPolicyCachePath)
-	changed, err = writeFileIfChanged(cachePath, policy)
-	if err != nil {
-		return false, fmt.Errorf("recording CPU manager policy: %w", err)
-	}
-	if !changed {
-		return false, nil
-	}
-
-	statePath := filepath.Join(root, cpuManagerStatePath)
-	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("removing %s: %w", statePath, err)
-	}
-	return true, nil
 }
 
 // applyTunedProfile runs `tuned-adm profile <profile>` when the node's

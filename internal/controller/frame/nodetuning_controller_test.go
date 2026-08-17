@@ -32,7 +32,37 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	"github.com/rmocq/frame/internal/agent"
 )
+
+// writeOnFirstReadClient runs write() immediately after the first Get it
+// serves, so a caller's read-modify-write has a competing commit land in the
+// window between its own read and its own write.
+//
+// That window is microseconds wide in production and cannot be hit by
+// scheduling two goroutines and hoping. It is also the only window an
+// optimistic lock covers that a plain re-read does not, so without this a spec
+// cannot tell the two apart — a writer that merely re-reads before patching
+// passes every wall-clock interleaving a test can arrange, and still loses the
+// concurrent write here.
+type writeOnFirstReadClient struct {
+	client.Client
+	done  bool
+	write func()
+}
+
+func (c *writeOnFirstReadClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	// Once only: the point is a single racing commit, not an unwinnable
+	// livelock in which every retry is beaten again by construction.
+	if !c.done {
+		c.done = true
+		c.write()
+	}
+	return nil
+}
 
 // This suite calls Reconcile directly, matching every other controller test
 // in this package (framenode_controller_test.go, frameresourcequota_controller_test.go,
@@ -259,12 +289,12 @@ var _ = Describe("NodeTuning Controller", func() {
 	}
 
 	// bumpGeneration applies a trivial spec mutation (toggling
-	// cpuManagerPolicy) so metadata.generation advances by exactly one, and
-	// returns the object at its new generation. The mutation itself also
-	// happens to be a restart-gated mismatch against the zero-value Observed
-	// used by these tests, which is irrelevant to what it's used for here
-	// (advancing the generation) but keeps the node genuinely still needing a
-	// restart rather than accidentally resolving to InSync.
+	// ksm.sleepMillisecs) so metadata.generation advances by exactly one, and
+	// returns the object at its new generation. The knob it toggles is a live
+	// sysfs one that never gates a restart and is not diffed, so it changes
+	// only the generation: whatever restart-gated mismatch the caller set up
+	// (ksm.enabled against Observed) is still the one and only reason the node
+	// needs a restart afterwards.
 	bumpGeneration := func(ntName string) *framev1beta1.NodeTuning {
 		var updated *framev1beta1.NodeTuning
 		Eventually(func() error {
@@ -272,11 +302,14 @@ var _ = Describe("NodeTuning Controller", func() {
 			if err := k8sClient.Get(ctx, types.NamespacedName{Name: ntName}, nt); err != nil {
 				return err
 			}
-			if nt.Spec.CPUManagerPolicy == "static" {
-				nt.Spec.CPUManagerPolicy = "none"
-			} else {
-				nt.Spec.CPUManagerPolicy = "static"
+			if nt.Spec.KSM == nil {
+				nt.Spec.KSM = &framev1beta1.KSMSpec{Enabled: true}
 			}
+			next := int32(21)
+			if nt.Spec.KSM.SleepMillisecs != nil && *nt.Spec.KSM.SleepMillisecs == 21 {
+				next = 20
+			}
+			nt.Spec.KSM.SleepMillisecs = &next
 			if err := k8sClient.Update(ctx, nt); err != nil {
 				return err
 			}
@@ -357,7 +390,7 @@ var _ = Describe("NodeTuning Controller", func() {
 	// Uses tunedProfile, not ksm, as the mismatched field: tuned applies live
 	// (see diffTuning's doc comment), so this proves diff detection on its
 	// own, without also exercising the Task 5 approval gate, which only
-	// blocks the restart-needing fields (ksm.enabled, cpuManagerPolicy).
+	// blocks the one restart-needing field (ksm.enabled).
 	It("reports Drifted when observed does not match spec", func() {
 		createTestNode("node-1", map[string]string{"role": "worker"})
 		nt := &framev1beta1.NodeTuning{
@@ -437,6 +470,103 @@ var _ = Describe("NodeTuning Controller", func() {
 		Expect(ns.Observed.KSM).NotTo(BeNil())
 		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(5528)),
 			"the controller must never overwrite status.nodes[].observed — that field belongs to the agent")
+	})
+
+	// The other direction, and the narrow one: a controller status write that
+	// commits between the agent's read and the agent's patch.
+	//
+	// Re-reading before patching (which agent.PatchObserved also does) is not
+	// enough on its own — it only shrinks the window from "however long a tick
+	// spends in nsenter" to "however long one round-trip takes", and the
+	// fields at stake are RestartedAt/RestartedGeneration, the loop guard that
+	// stops an approved node being cordoned, drained and restarted more than
+	// once. The resourceVersion precondition is what closes the window: the
+	// racing commit turns the patch into a 409 and the read is redone.
+	//
+	// An implementation that re-reads but patches without the precondition
+	// passes the sibling rollout spec and fails here, on the first assertion.
+	It("does not lose a controller status write that commits inside the agent's read-modify-write", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false}})
+
+		listed := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
+
+		restartedAt := metav1.Now()
+		racing := &writeOnFirstReadClient{Client: k8sClient, write: func() {
+			// Exactly what continueRollout writes when it verifies a restart.
+			Eventually(func() error {
+				fetched := &framev1beta1.NodeTuning{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, fetched); err != nil {
+					return err
+				}
+				for i := range fetched.Status.Nodes {
+					if fetched.Status.Nodes[i].Name == "node-1" {
+						fetched.Status.Nodes[i].RestartedAt = &restartedAt
+						fetched.Status.Nodes[i].RestartedGeneration = nt.Generation
+					}
+				}
+				return k8sClient.Status().Update(ctx, fetched)
+			}, "5s", "50ms").Should(Succeed())
+		}}
+
+		Expect(agent.PatchObserved(ctx, racing, listed, "node-1",
+			framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 4242}})).To(Succeed())
+		Expect(racing.done).To(BeTrue(), "the racing write must actually have happened, or this spec proves nothing")
+
+		ns := getNodeStatus("a", "node-1")
+		Expect(ns).NotTo(BeNil())
+		Expect(ns.RestartedAt).NotTo(BeNil(),
+			"the agent must not revert a restart record committed between its read and its write")
+		Expect(ns.RestartedGeneration).To(Equal(nt.Generation))
+		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(4242)),
+			"and the agent's own write must still land — losing it would trade one lost update for another")
+	})
+
+	// And the mirror image, because "two writers" has two directions and
+	// fixing only one is not fixing it: an agent tick committing between this
+	// reconciler's read and its status patch must not be reverted either.
+	//
+	// The damage is quieter this way round — a reverted Observed is re-reported
+	// within 30 seconds — but it is the same defect, and while it lasts the
+	// controller is diffing spec against a measurement it deleted. A
+	// reconciler patching status without the resourceVersion precondition
+	// fails this on the first assertion.
+	It("does not lose an agent write that commits inside the reconciler's read-modify-write", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true}})
+
+		listed := &framev1beta1.NodeTuning{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "a"}, listed)).To(Succeed())
+
+		racing := &writeOnFirstReadClient{Client: k8sClient, write: func() {
+			// A node agent tick, landing after the reconciler has read the
+			// object and before it writes its own view of status back.
+			Expect(agent.PatchObserved(ctx, k8sClient, listed, "node-1",
+				framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: true, PagesSharing: 9001}})).To(Succeed())
+		}}
+
+		racer := &NodeTuningReconciler{
+			Client:    racing,
+			APIReader: k8sClient,
+			Scheme:    k8sClient.Scheme(),
+			Recorder:  record.NewFakeRecorder(100),
+		}
+		_, err := racer.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "a"}})
+		Expect(err).NotTo(HaveOccurred(), "a lost race is a requeue, not a reconcile failure")
+		Expect(racing.done).To(BeTrue(), "the racing write must actually have happened, or this spec proves nothing")
+
+		ns := getNodeStatus("a", "node-1")
+		Expect(ns).NotTo(BeNil())
+		Expect(ns.Observed.KSM).NotTo(BeNil())
+		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(9001)),
+			"status.nodes[].observed belongs to the agent; a reconcile that read before it must not write over it")
+
+		// And the requeued pass still converges, rather than conflicting forever.
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseInSync))
+		Expect(getNodeStatus("a", "node-1").Observed.KSM.PagesSharing).To(Equal(int64(9001)))
 	})
 
 	// A reconciler that skips the gate entirely (proceeds to Drifted/InSync
