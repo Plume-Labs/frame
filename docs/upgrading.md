@@ -93,7 +93,9 @@ cluster to adopt the real, running kustomize objects. That cluster runs
 other workloads and this migration was explicitly out of scope for this
 session — the dry-run evidence above is as far as this doc goes. Before
 doing it for real: back up `frame-system` (Velero, or at minimum
-`kubectl get -o yaml` every object in the namespace plus the eight CRDs),
+`kubectl get -o yaml` every object in the namespace plus all nine CRDs —
+note that `NodeTuning` is cluster-scoped, so a namespaced dump misses both
+the CRD and its CRs),
 run the adoption command for real, then confirm
 `kubectl -n frame-system get deploy frame-controller-manager -o
 jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}'` now reads
@@ -154,10 +156,15 @@ planning an upgrade, and the answer is the same regardless of how many
 ## 3. API versions and the migration path
 
 Frame's API is frozen at **`v1beta1`**, in both `frame.plume-labs.io` and
-`services.plume-labs.io`, on all eight kinds. `v1beta1` is the storage
-version and the conversion hub; `v1alpha1` is still served, is marked
-`deprecated: true`, and emits a warning on every read and write naming what
-changed for that kind.
+`services.plume-labs.io`, on the eight kinds that existed at the freeze.
+`v1beta1` is the storage version and the conversion hub; `v1alpha1` is still
+served, is marked `deprecated: true`, and emits a warning on every read and
+write naming what changed for that kind.
+
+**`NodeTuning` is outside all of this.** It was added after the freeze, so it
+has exactly one version, no `v1alpha1` to convert from, no conversion webhook,
+and nothing in this section applies to it. Nine CRDs exist; eight have a
+migration path.
 
 **`v1` is deliberately not part of V1.** Frame is in beta and needs
 capability before it needs a stability promise it cannot yet keep; promotion

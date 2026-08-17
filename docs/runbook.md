@@ -255,6 +255,68 @@ Log lines carry `controller`, `controllerKind`, the object's
 namespace/name, and a `reconcileID` that ties every line of one reconcile
 together — grep that, not the object name, when two reconciles interleave.
 
+## Node tuning
+
+Install and first use are in [deployment.md](deployment.md); the field
+reference is in [crd-reference.md](crd-reference.md). This section is what to
+do when it misbehaves.
+
+```bash
+# The one view worth having: name, phase, realization, per node.
+kubectl get nodetuning <name> \
+  -o jsonpath='{range .status.nodes[*]}{.name}{"\t"}{.phase}{"\t"}{.realization}{"\t"}{.message}{"\n"}{end}'
+
+# The agent, one pod per node.
+kubectl -n kube-system get ds frame-node-tuning-agent
+kubectl -n kube-system logs ds/frame-node-tuning-agent --tail=50
+```
+
+| Symptom | Cause |
+|---|---|
+| Every node stuck `Drifted`, status never moves | No agent. It is not in the Helm chart — run `deploy/scripts/node-tuning-install.sh --apply` |
+| One node `Failed`, message names `tuned-adm` | `tuned` is not installed on that node. It cannot ship in the agent image; the install script does it |
+| Node stuck `RebootPending` forever | Working as designed. It waits for `frame.plume-labs.io/tuning-approved=<generation>` on the node, and the value must equal the **current** generation — approving generation 4 does nothing for generation 5 |
+| Rollout stopped, one node cordoned | A failure halts the whole campaign on purpose. Read that node's `message`, fix, then uncordon by hand |
+| A node is refused with a message about two NodeTunings | Two objects' selectors both match it. The agent will not pick a winner — narrow one selector |
+| `phase: InSync` but `realization: Effective` | The live knobs took; the restart-gated ones have not. Approve the restart, or accept that only newly-created containers get the setting |
+
+**Do not diagnose a restart by watching the node go `NotReady`.** `k3s-agent`
+comes back in seconds while a node only reports `NotReady` after roughly forty
+seconds of missed lease, so a healthy restart usually never flaps the node at
+all. The evidence is the unit's `ActiveEnterTimestamp` moving, which is what
+the controller waits on.
+
+**Expect your own reads to fail mid-rollout.** Restarting k3s on the server
+node takes the apiserver down for seconds. That is not the rollout failing.
+
+### Rolling back
+
+There is no undo verb. Edit or delete the `NodeTuning`; the agent converges the
+live knobs on its next 30 s tick. Anything restart-gated needs another approved
+restart to actually revert — a drop-in removed from disk is no more in effect
+than a drop-in added to it.
+
+## Workload placement on the test cluster
+
+Two incidents, one rule: **nothing heavy runs on the control plane, and
+everything states what it needs.**
+
+TEI (the embedding server) shipped with no placement constraint, landed on the
+control-plane node, and ran at ~99% CPU: 24–32 s of inference plus 34–67 s of
+queueing per batch. The same batch elsewhere takes 1.7 s with 0.6 ms of queue —
+35×, the difference between a ~20 h document indexing run and a ~1 h one.
+
+The fix (`deploy/samples/test-cluster/tei.yaml`) is **anti-affinity on the
+control-plane role, not a `nodeSelector` naming a node**: a pinned node does not
+survive being replaced, and the scheduler picks the freest worker better than a
+human does. Its CPU request went to `2500m` — a request is what the scheduler
+reserves, so it is also what stops the pod landing on a node with nothing left
+to give. Moved by hand onto the database node earlier, it helped kill the
+Postgres process mid-indexing (286 documents failing `ECONNREFUSED`).
+
+Both halves matter. Anti-affinity alone keeps it off the control plane and
+still lets it crush whatever worker it lands on.
+
 ## Containing the control-plane UI (RBAC + NetworkPolicy)
 
 Prepared 2026-08-10, **not applied**. Two changes that shrink what the

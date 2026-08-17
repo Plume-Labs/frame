@@ -188,21 +188,26 @@ kubectl delete framejob llm-finetune-v4 -n neura-prod
 
 ## CRD API endpoints
 
-All resources are namespaced. Seven are under `frame.plume-labs.io/v1beta1`;
-`FrameService` is under the separate `services.plume-labs.io/v1beta1` group
-(see [crd-reference.md](crd-reference.md) for why). Both groups also serve a
-deprecated `v1alpha1`.
+Eight are under `frame.plume-labs.io/v1beta1`; `FrameService` is under the
+separate `services.plume-labs.io/v1beta1` group (see
+[crd-reference.md](crd-reference.md) for why). Both groups also serve a
+deprecated `v1alpha1` — except `NodeTuning`, which postdates the freeze and is
+`v1beta1` only.
 
-| Resource | Group | Plural | Shortname |
-|---|---|---|---|
-| FrameJob | `frame.plume-labs.io` | `framejobs` | `fj` |
-| FrameNode | `frame.plume-labs.io` | `framenodes` | `fn` |
-| SchedulingPolicy | `frame.plume-labs.io` | `schedulingpolicies` | `sp` |
-| FrameResourceQuota | `frame.plume-labs.io` | `frameresourcequotas` | `frq` |
-| TalosMachineConfig | `frame.plume-labs.io` | `talosmachineconfigs` | `tmc` |
-| TalosUpgrade | `frame.plume-labs.io` | `talosupgrades` | `tu` |
-| FrameUser | `frame.plume-labs.io` | `frameusers` | — |
-| FrameService | `services.plume-labs.io` | `frameservices` | — |
+All are namespaced except `NodeTuning`, which is **cluster-scoped**: its URL
+has no `/namespaces/<ns>` segment, and a namespaced list will never return it.
+
+| Resource | Group | Plural | Shortname | Scope |
+|---|---|---|---|---|
+| FrameJob | `frame.plume-labs.io` | `framejobs` | `fj` | namespaced |
+| FrameNode | `frame.plume-labs.io` | `framenodes` | `fn` | namespaced |
+| SchedulingPolicy | `frame.plume-labs.io` | `schedulingpolicies` | `sp` | namespaced |
+| FrameResourceQuota | `frame.plume-labs.io` | `frameresourcequotas` | `frq` | namespaced |
+| TalosMachineConfig | `frame.plume-labs.io` | `talosmachineconfigs` | `tmc` | namespaced |
+| TalosUpgrade | `frame.plume-labs.io` | `talosupgrades` | `tu` | namespaced |
+| FrameUser | `frame.plume-labs.io` | `frameusers` | — | namespaced |
+| NodeTuning | `frame.plume-labs.io` | `nodetunings` | — | **cluster** |
+| FrameService | `services.plume-labs.io` | `frameservices` | — | namespaced |
 
 Direct API path pattern:
 

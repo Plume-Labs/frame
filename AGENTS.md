@@ -25,6 +25,16 @@ internal/webhook/<group>/<version>/*   Webhooks by group and version (if present
 
 Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check the `PROJECT` file for `multigroup: true`.
 
+**Frame is multi-group, and ships three Go binaries, not one:**
+```
+cmd/main.go     Manager: controllers + webhooks for frame.plume-labs.io and services.plume-labs.io
+cmd/authd/      Per-user auth (argon2id, OIDC/JWKS, WebAuthn) — reads FrameUser, has no controller
+cmd/agent/      Node-tuning agent — a privileged DaemonSet, one per node. Not scaffolded
+                by kubebuilder; the CLI commands below do not apply to it.
+internal/agent/ The agent's logic: observe.go, apply.go, systemd.go, status.go
+```
+The agent is privileged with `hostPID`, so treat `internal/agent/` as security-critical: the restartable-unit allowlist in `apply.go` is its whole boundary. See [SECURITY.md](SECURITY.md).
+
 **To convert to multi-group layout:**
 1. Run: `kubebuilder edit --multigroup=true`
 2. Move APIs: `mkdir -p api/<group> && mv api/<version> api/<group>/`
