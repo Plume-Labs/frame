@@ -310,6 +310,14 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosupgrade")
 		os.Exit(1)
 	}
+	if err := (&controller.NodeTuningReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nodetuning"), //nolint:staticcheck
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "nodetuning")
+		os.Exit(1)
+	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1beta1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameNode")

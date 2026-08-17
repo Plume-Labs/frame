@@ -89,6 +89,7 @@ rules:
   - framejobs
   - framenodes
   - frameresourcequotas
+  - nodetunings
   - schedulingpolicies
   - talosmachineconfigs
   - talosupgrades
@@ -106,6 +107,7 @@ rules:
   - framejobs/finalizers
   - framenodes/finalizers
   - frameresourcequotas/finalizers
+  - nodetunings/finalizers
   - schedulingpolicies/finalizers
   - talosmachineconfigs/finalizers
   - talosupgrades/finalizers
@@ -117,6 +119,7 @@ rules:
   - framejobs/status
   - framenodes/status
   - frameresourcequotas/status
+  - nodetunings/status
   - schedulingpolicies/status
   - talosmachineconfigs/status
   - talosupgrades/status
