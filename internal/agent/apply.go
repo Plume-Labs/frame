@@ -80,11 +80,10 @@ const (
 	// Applying it as the node label the NVIDIA GPU operator watches needs a
 	// Kubernetes client and this node's identity, neither of which Apply's
 	// root-parameterized signature carries — deliberately, so it stays
-	// testable without a real node or cluster (see the package doc). That
-	// wiring belongs to the agent's Kubernetes-facing loop in
-	// cmd/agent/main.go, which is out of this task's file scope (Task 3 is
-	// internal/agent/apply.go and its test only). Apply's job here is to
-	// record the desired value so that loop has something to read.
+	// testable without a real node or cluster (see the package doc). Apply's
+	// job here is to record the desired value; the agent's Kubernetes-facing
+	// loop reads it back with RecordedMIGProfile and writes the label (see
+	// setNodeState in cmd/agent/main.go).
 	migProfileCachePath = "run/frame-agent/mig-profile"
 )
 
@@ -156,9 +155,10 @@ func applyKSM(root string, ksm *framev1beta1.KSMSpec) (changed bool, err error) 
 	// a refusal: the kernel returns EBUSY on merge_across_nodes once any
 	// page is already merged, and a writer that treated that as fatal would
 	// fail on every apply cycle after the first — this was observed for
-	// real on the live cluster (see the ksm-tuner DaemonSet this design
-	// replaces, deploy/kubernetes/base/ksm-tuner/daemonset.yaml, which hit
-	// exactly this and tolerates it the same way).
+	// real on the live cluster by the ksm-tuner DaemonSet this design
+	// replaces, which hit exactly this and tolerated it the same way (its
+	// manifest was deploy/kubernetes/base/ksm-tuner/daemonset.yaml, removed
+	// when this agent took over).
 	writeSysfsKnobTolerant(filepath.Join(root, ksmRunPath), boolKnob(ksm.Enabled))
 	if ksm.PagesToScan != nil {
 		writeSysfsKnobTolerant(filepath.Join(root, ksmPagesToScanPath), strconv.Itoa(int(*ksm.PagesToScan)))
@@ -175,8 +175,9 @@ func applyKSM(root string, ksm *framev1beta1.KSMSpec) (changed bool, err error) 
 
 // ksmDropInContent renders the systemd drop-in content for the given
 // Enabled value. Byte-exact with what the ksm-tuner DaemonSet this design
-// replaces wrote (see deploy/kubernetes/base/ksm-tuner/daemonset.yaml) and
-// with what this package's tests write as a fixture.
+// replaces wrote, and with what this package's tests write as a fixture —
+// so an agent taking over from ksm-tuner on a live node rewrites nothing and
+// demands no restart for a drop-in that is already correct.
 func ksmDropInContent(enabled bool) string {
 	value := "no"
 	if enabled {
@@ -194,7 +195,7 @@ var ksmUnitCandidates = []string{"k3s-agent", "k3s"}
 // ksmUnitSearchDirs are the root-relative directories a unit file can live
 // under: the systemd package default and the local admin override tree —
 // the same two locations the ksm-tuner DaemonSet this design replaces
-// checked (deploy/kubernetes/base/ksm-tuner/daemonset.yaml).
+// checked.
 var ksmUnitSearchDirs = []string{"etc/systemd/system", "usr/lib/systemd/system"}
 
 // DetectKSMUnit finds which of k3s-agent.service / k3s.service actually
@@ -270,6 +271,25 @@ func applyTunedProfile(root, profile string) error {
 		return fmt.Errorf("tuned-adm profile %s: %w: %s", profile, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// RecordedMIGProfile returns the MIG profile the last Apply recorded under
+// root, or "" when none was ever recorded. It is the read half of
+// migProfileCachePath: the agent's Kubernetes-facing loop turns this into the
+// node label the NVIDIA GPU operator watches (see cmd/agent/main.go), which
+// is the step Apply deliberately cannot take.
+//
+// A missing file is "" and no error — a node no NodeTuning has ever asked for
+// a MIG profile on is not a broken node.
+func RecordedMIGProfile(root string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(root, migProfileCachePath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading recorded MIG profile: %w", err)
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 // recordMIGProfile persists the desired MIG profile under root. See
