@@ -235,7 +235,7 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			ns.AppliedGeneration = nt.Generation
 			ns.Message = reason
 		}
-		newNodes = append(newNodes, ns)
+		newNodes = append(newNodes, r.realizeNode(ctx, node.Name, ns))
 	}
 	sort.Slice(newNodes, func(i, j int) bool { return newNodes[i].Name < newNodes[j].Name })
 
@@ -362,6 +362,63 @@ func (r *NodeTuningReconciler) finishDeletion(ctx context.Context, nt *framev1be
 			"NodeTuning deleted mid-rollout; uncordoned %s and cleared its restart request", node.Name)
 	}
 	return r.removeFinalizer(ctx, nt)
+}
+
+// realizeNode recomputes ns.Realization from ns.RestartedAt and the pods
+// currently on node. Realization is not carried forward like Observed —
+// this reconciler owns it and recomputes it fresh every reconcile, because
+// the only inputs it depends on (RestartedAt and live pod StartTimes) can
+// both change without anything else about the node's status changing.
+//
+// A node that has never had a verified restart has nothing to be Effective
+// about yet, so it reports Pending rather than an empty string: the field is
+// always one of the three named values, never a silent default a caller
+// could mistake for "unset because nobody looked."
+func (r *NodeTuningReconciler) realizeNode(ctx context.Context, nodeName string, ns framev1beta1.NodeTuningNodeStatus) framev1beta1.NodeTuningNodeStatus {
+	if ns.RestartedAt == nil {
+		ns.Realization = framev1beta1.RealizationPending
+		return ns
+	}
+
+	// The setting is live in the unit the moment the restart is verified —
+	// that is what RestartedAt being non-nil already means — so Effective is
+	// never in question here. What is in question is whether every container
+	// on the node was created after that moment, which needs a fresh read of
+	// the node's pods: unlike Observed, nothing pushes this to the
+	// reconciler, and yesterday's pod list says nothing about this reconcile.
+	ns.Realization = framev1beta1.RealizationEffective
+
+	var pods corev1.PodList
+	if err := r.reader().List(ctx, &pods, client.MatchingFields{"spec.nodeName": nodeName}); err != nil {
+		// Can't prove FullyRealized without seeing every pod on the node, so
+		// report the claim this can still stand behind (Effective) rather
+		// than one it could not verify. Tried again next reconcile.
+		return ns
+	}
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		// Finished pods have no running container left to have missed the
+		// change; they cannot disqualify FullyRealized either way.
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		// A pod with no StartTime yet has not created its container at all,
+		// which is not evidence FOR full realization either — withhold the
+		// promotion until it reports one, rather than assume in its favor.
+		//
+		// startTime <= RestartedAt, not <: a container whose StartTime ties
+		// the restart down to the timestamp's own resolution is not
+		// demonstrably a container created after the change, and claiming
+		// FullyRealized on a tie the evidence cannot actually decide is
+		// exactly the overclaim this field exists to prevent. It stays
+		// Effective until a later reconcile sees an unambiguous StartTime.
+		if pod.Status.StartTime == nil || !pod.Status.StartTime.After(ns.RestartedAt.Time) {
+			return ns
+		}
+	}
+	ns.Realization = framev1beta1.RealizationFullyRealized
+	return ns
 }
 
 // existingNodeStatus returns the prior status entry for nodeName, or a fresh
