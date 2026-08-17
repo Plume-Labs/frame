@@ -15,6 +15,20 @@
 # Until then both write the KSM sysfs knobs — with identical values, so the
 # overlap is harmless rather than a race, but two writers on one setting is
 # what this design forbids everywhere else.
+#
+# NODE PREREQUISITE: tuned must be installed on every node this lands on, if
+# any NodeTuning sets spec.tunedProfile. It is NOT in the agent image and
+# cannot be: every host call the agent makes is nsentered into PID 1's
+# namespaces, so `tuned-adm` resolves to the node's own binary. Ubuntu Server
+# does not ship tuned, and the three nodes of the live cluster were checked and
+# do not have it, so on those nodes:
+#
+#   apt-get install -y tuned && systemctl enable --now tuned
+#
+# Until it is there, a NodeTuning that sets tunedProfile fails loudly on that
+# node (the agent logs the tuned-adm failure and the node stays Drifted), which
+# is the correct report for an unconfigured node. KSM and the MIG label need
+# nothing installed and work regardless.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

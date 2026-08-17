@@ -188,7 +188,13 @@ func tick(ctx context.Context, kc client.Client, nodeName, root string, runner a
 		return
 	}
 	for _, nt := range matching {
-		if err := patchObserved(ctx, kc, nt, nodeName, observed); err != nil {
+		// nt comes from the List above, and everything between it and here —
+		// Apply, the systemd round-trips, Observe — happens on the node, in
+		// seconds. agent.PatchObserved therefore re-reads the object rather
+		// than patching from this snapshot: the controller may have written
+		// the node's restart record in the meantime, and a merge patch built
+		// from a stale copy would revert it. See its doc comment.
+		if err := agent.PatchObserved(ctx, kc, nt, nodeName, observed); err != nil {
 			slog.Error("patching NodeTuning status", "nodeTuning", nt.Name, "node", nodeName, "error", err)
 		}
 	}
@@ -424,33 +430,6 @@ func selectorMatches(sel *metav1.LabelSelector, labelSet map[string]string) (boo
 		return false, err
 	}
 	return selector.Matches(labels.Set(labelSet)), nil
-}
-
-// patchObserved upserts this node's Observed entry in nt.Status.Nodes. It
-// only ever writes the Observed field — Phase, Realization and the rest of
-// NodeTuningNodeStatus are the controller's to compute, from exactly this
-// data. Upserting rather than requiring an existing entry keeps the agent
-// independently useful before the controller exists at all, and resilient if
-// a NodeTuning is created while an agent is already running.
-func patchObserved(ctx context.Context, kc client.Client, nt *framev1beta1.NodeTuning, nodeName string, observed framev1beta1.ObservedTuning) error {
-	base := nt.DeepCopy()
-
-	found := false
-	for i := range nt.Status.Nodes {
-		if nt.Status.Nodes[i].Name == nodeName {
-			nt.Status.Nodes[i].Observed = observed
-			found = true
-			break
-		}
-	}
-	if !found {
-		nt.Status.Nodes = append(nt.Status.Nodes, framev1beta1.NodeTuningNodeStatus{
-			Name:     nodeName,
-			Observed: observed,
-		})
-	}
-
-	return kc.Status().Patch(ctx, nt, client.MergeFrom(base))
 }
 
 func requiredEnv(key string) (string, error) {

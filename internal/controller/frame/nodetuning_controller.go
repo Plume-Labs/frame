@@ -25,6 +25,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -102,7 +103,11 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// moments ago, and a cached read of it is a snapshot from before that
 	// write: NodeTuning "b", queued before "a" cordoned node-1, would see no
 	// lock and cordon node-2. MaxConcurrentReconciles removes parallelism, not
-	// this window, and the merge patches here take no optimistic lock.
+	// this window, and the Node merge patches take no optimistic lock: the
+	// agent writes its own annotation keys on the same object every tick, so a
+	// resourceVersion precondition there would conflict constantly over keys
+	// neither writer shares. (The NodeTuning *status* patch below does take
+	// one — there the two writers do share a field, status.nodes.)
 	var allNodesList corev1.NodeList
 	if err := r.reader().List(ctx, &allNodesList); err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing nodes: %w", err)
@@ -243,10 +248,29 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// added the finalizer, which refreshes nt from the server, and a base
 	// captured before that would diff against an object that no longer
 	// exists in that shape.
-	patch := client.MergeFrom(nt.DeepCopy())
+	//
+	// Optimistic lock, and it is not optional. status.nodes has a second
+	// writer — every node agent patches its own entry's Observed every 30
+	// seconds — and a CRD status patch is a JSON merge patch, which replaces
+	// an array wholesale rather than merging it. Without the resourceVersion
+	// precondition, an agent write landing between this reconcile's read and
+	// this patch is silently reverted; the reverse (the agent reverting
+	// RestartedAt/RestartedGeneration) is what would cordon, drain and restart
+	// an already-restarted node a second time on one approval, since
+	// restartedForGeneration reads exactly those fields. A conflict here is
+	// not an error to paper over: every decision above was computed from a
+	// read that is now stale, so the whole pass is redone against fresh state.
+	patch := client.MergeFromWithOptions(nt.DeepCopy(), client.MergeFromWithOptimisticLock{})
 	nt.Status.ObservedGeneration = nt.Generation
 	nt.Status.Nodes = newNodes
 	if err := r.Status().Patch(ctx, &nt, patch); err != nil {
+		if apierrors.IsConflict(err) {
+			// Requeued rather than returned as an error: another writer got
+			// there first, which is expected traffic on this object, not a
+			// fault worth an error-level log on every agent tick.
+			log.V(1).Info("NodeTuning status changed under us; re-reconciling", "nodeTuning", nt.Name)
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -462,11 +486,13 @@ func overlappingNodeTunings(all []framev1beta1.NodeTuning, selfName string, node
 // spec leaves unset as a mismatch: KSM's Enabled default aside, an unset
 // field means "untouched", not "must equal the zero value".
 //
-// needsRestart mirrors internal/agent/apply.go's Apply exactly: KSM's
-// enabled/disabled state only takes effect on the owning unit's next start
-// (the drop-in), and a CPU manager policy change requires a kubelet restart
-// to rebuild cpu_manager_state. TunedProfile applies live via `tuned-adm
-// profile` and never gates a restart.
+// needsRestart mirrors internal/agent/apply.go's Apply exactly, and that
+// correspondence is load-bearing: this is the function that decides whether a
+// node gets cordoned, drained and restarted, so a field diffed here that Apply
+// does not actually write costs a node its workloads for nothing. KSM's
+// enabled/disabled state is the only such field — it only takes effect on the
+// owning unit's next start (the drop-in). TunedProfile applies live via
+// `tuned-adm profile` and never gates a restart.
 //
 // MIGProfile is deliberately not diffed here: ObservedTuning carries no MIG
 // field (see the design doc — MIG's proof of effect is the GPU operator's
@@ -477,11 +503,6 @@ func diffTuning(spec framev1beta1.NodeTuningSpec, observed framev1beta1.Observed
 
 	if spec.TunedProfile != "" && spec.TunedProfile != observed.TunedProfile {
 		mismatches = append(mismatches, fmt.Sprintf("tunedProfile: want %q, observed %q", spec.TunedProfile, observed.TunedProfile))
-	}
-
-	if spec.CPUManagerPolicy != "" && spec.CPUManagerPolicy != observed.CPUManagerPolicy {
-		mismatches = append(mismatches, fmt.Sprintf("cpuManagerPolicy: want %q, observed %q", spec.CPUManagerPolicy, observed.CPUManagerPolicy))
-		needsRestart = true
 	}
 
 	if spec.KSM != nil {
@@ -525,18 +546,40 @@ func (r *NodeTuningReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Overlap is only detectable by looking at every other NodeTuning:
 		// creating "b" is what turns "a" Failed, so "a" needs to be
 		// re-reconciled when any sibling object changes, not just itself.
-		Watches(&framev1beta1.NodeTuning{}, handler.EnqueueRequestsFromMapFunc(r.allNodeTunings)).
+		//
+		// Siblings only — the changed object itself is already enqueued by
+		// For's own handler on this same GVK. Fanning out to *all* of them
+		// here instead would enqueue it twice for every event it produces,
+		// including the object's own status writes, which is churn the
+		// workqueue then has to collapse.
+		Watches(&framev1beta1.NodeTuning{}, handler.EnqueueRequestsFromMapFunc(r.otherNodeTunings)).
 		Named("nodetuning").
 		Complete(r)
 }
 
+// allNodeTunings enqueues every NodeTuning in the cluster. A Node event cannot
+// be resolved to a subset without re-evaluating every selector, which is what
+// the reconcile does anyway.
 func (r *NodeTuningReconciler) allNodeTunings(ctx context.Context, _ client.Object) []reconcile.Request {
+	return r.nodeTuningRequests(ctx, "")
+}
+
+// otherNodeTunings enqueues every NodeTuning except the one the event came
+// from. See SetupWithManager for why the exclusion matters.
+func (r *NodeTuningReconciler) otherNodeTunings(ctx context.Context, obj client.Object) []reconcile.Request {
+	return r.nodeTuningRequests(ctx, obj.GetName())
+}
+
+func (r *NodeTuningReconciler) nodeTuningRequests(ctx context.Context, exclude string) []reconcile.Request {
 	var list framev1beta1.NodeTuningList
 	if err := r.List(ctx, &list); err != nil {
 		return nil
 	}
 	reqs := make([]reconcile.Request, 0, len(list.Items))
 	for _, nt := range list.Items {
+		if nt.Name == exclude {
+			continue
+		}
 		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&nt)})
 	}
 	return reqs

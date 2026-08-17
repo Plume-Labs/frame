@@ -160,10 +160,14 @@ type NodeTuningSpec struct {
 	// +optional
 	KSM *KSMSpec `json:"ksm,omitempty"`
 
-	// CPUManagerPolicy sets the kubelet CPU manager policy.
-	// +optional
-	// +kubebuilder:validation:Enum=none;static
-	CPUManagerPolicy string `json:"cpuManagerPolicy,omitempty"`
+	// No cpuManagerPolicy field, deliberately — see the design doc's Scope
+	// section. Setting it would need Frame to write k3s's kubelet
+	// configuration, which nothing here does; the field as first drafted only
+	// wrote an agent-side cache file, so a node would cordon, drain and
+	// restart for a policy that never changed and then sit Drifted forever.
+	// A setting that costs a node's workloads and delivers nothing is the
+	// exact overclaim this whole type exists to prevent, so it is deferred
+	// rather than half-wired.
 
 	// MIGProfile names the NVIDIA MIG profile to apply.
 	// +optional
@@ -181,9 +185,8 @@ type ObservedKSM struct {
 // ObservedTuning is what the node agent last read back from the node, used
 // to detect drift against NodeTuningSpec.
 type ObservedTuning struct {
-	KSM              *ObservedKSM `json:"ksm,omitempty"`
-	TunedProfile     string       `json:"tunedProfile,omitempty"`
-	CPUManagerPolicy string       `json:"cpuManagerPolicy,omitempty"`
+	KSM          *ObservedKSM `json:"ksm,omitempty"`
+	TunedProfile string       `json:"tunedProfile,omitempty"`
 }
 
 // NodeTuningNodeStatus is one node's reconciliation state under a
@@ -230,6 +233,21 @@ type NodeTuningStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// Nodes is one entry per node, keyed by name.
+	//
+	// listType=map is a statement about ownership, not a fix for the write
+	// race it looks like it addresses: two components write this list — the
+	// controller owns every field except Observed, the node agent owns
+	// Observed — and the merge key is what lets a server-side apply from one
+	// of them leave the other's entries alone. CRDs do not support strategic
+	// merge patch, so a JSON merge patch still replaces the whole array
+	// regardless of this marker; that hazard is handled where the writes are
+	// (agent.PatchObserved and the reconciler's status patch both take an
+	// optimistic lock). What the marker does buy unconditionally is the API
+	// server rejecting a duplicate node name, which no writer here could
+	// otherwise detect.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
 	Nodes []NodeTuningNodeStatus `json:"nodes,omitempty"`
 
@@ -247,8 +265,8 @@ type NodeTuningStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // NodeTuning is the Schema for the nodetunings API. It is cluster-scoped:
-// the node-level settings it manages (sysctls, KSM, CPU manager policy) have
-// no namespace of their own.
+// the node-level settings it manages (the tuned profile, KSM, the MIG label)
+// have no namespace of their own.
 type NodeTuning struct {
 	metav1.TypeMeta `json:",inline"`
 
