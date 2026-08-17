@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -130,6 +131,75 @@ var _ = Describe("NodeTuning Controller", func() {
 		return ""
 	}
 
+	// setObservedNeedingRestart reports an observed KSM state that disagrees
+	// with createNodeTuning's spec.ksm.enabled=true. That specific mismatch
+	// is restart-gated (see diffTuning/internal/agent/apply.go — the KSM
+	// drop-in only takes effect on the owning unit's next start), so this is
+	// the fixture the approval-gate tests need to reach RebootPending at all.
+	setObservedNeedingRestart := func(ntName, nodeName string) {
+		setObserved(ntName, nodeName, framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false}})
+	}
+
+	// annotateNode sets a single annotation on a Node via a Get/modify/Update
+	// retry loop, mirroring setObserved's pattern so a concurrent write never
+	// silently loses this one either.
+	annotateNode := func(nodeName, key, value string) {
+		Eventually(func() error {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n); err != nil {
+				return err
+			}
+			if n.Annotations == nil {
+				n.Annotations = map[string]string{}
+			}
+			n.Annotations[key] = value
+			return k8sClient.Update(ctx, n)
+		}, "5s", "50ms").Should(Succeed())
+	}
+
+	// nodeCordoned reports the live corev1.Node's Spec.Unschedulable. Task 5
+	// performs no cordon of its own — this exists so its tests can prove that
+	// stopping at RebootPending really does mean "nothing happened yet",
+	// rather than just asserting on a phase string a broken implementation
+	// could satisfy some other way.
+	nodeCordoned := func(nodeName string) func() bool {
+		return func() bool {
+			n := &corev1.Node{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: nodeName}, n); err != nil {
+				return false
+			}
+			return n.Spec.Unschedulable
+		}
+	}
+
+	// bumpGeneration applies a trivial spec mutation (toggling
+	// cpuManagerPolicy) so metadata.generation advances by exactly one, and
+	// returns the object at its new generation. The mutation itself also
+	// happens to be a restart-gated mismatch against the zero-value Observed
+	// used by these tests, which is irrelevant to what it's used for here
+	// (advancing the generation) but keeps the node genuinely still needing a
+	// restart rather than accidentally resolving to InSync.
+	bumpGeneration := func(ntName string) *framev1beta1.NodeTuning {
+		var updated *framev1beta1.NodeTuning
+		Eventually(func() error {
+			nt := &framev1beta1.NodeTuning{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: ntName}, nt); err != nil {
+				return err
+			}
+			if nt.Spec.CPUManagerPolicy == "static" {
+				nt.Spec.CPUManagerPolicy = "none"
+			} else {
+				nt.Spec.CPUManagerPolicy = "static"
+			}
+			if err := k8sClient.Update(ctx, nt); err != nil {
+				return err
+			}
+			updated = nt
+			return nil
+		}, "5s", "50ms").Should(Succeed())
+		return updated
+	}
+
 	AfterEach(func() {
 		for _, name := range testNodeTunings {
 			nt := &framev1beta1.NodeTuning{}
@@ -187,13 +257,26 @@ var _ = Describe("NodeTuning Controller", func() {
 	// against another NodeTuning's spec (that would be the overlap case
 	// above) and not a hardcoded phase. A reconciler that always reports
 	// InSync fails this test outright.
+	//
+	// Uses tunedProfile, not ksm, as the mismatched field: tuned applies live
+	// (see diffTuning's doc comment), so this proves diff detection on its
+	// own, without also exercising the Task 5 approval gate, which only
+	// blocks the restart-needing fields (ksm.enabled, cpuManagerPolicy).
 	It("reports Drifted when observed does not match spec", func() {
 		createTestNode("node-1", map[string]string{"role": "worker"})
-		createNodeTuning("a", map[string]string{"role": "worker"})
-		setObserved("a", "node-1", framev1beta1.ObservedTuning{KSM: &framev1beta1.ObservedKSM{MemoryKSM: false}})
+		nt := &framev1beta1.NodeTuning{
+			ObjectMeta: metav1.ObjectMeta{Name: "a"},
+			Spec: framev1beta1.NodeTuningSpec{
+				NodeSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "worker"}},
+				TunedProfile: "network-latency",
+			},
+		}
+		Expect(k8sClient.Create(ctx, nt)).To(Succeed())
+		testNodeTunings = append(testNodeTunings, "a")
+		setObserved("a", "node-1", framev1beta1.ObservedTuning{TunedProfile: "balanced"})
 
 		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseDrifted))
-		Expect(nodeStatusMessage("a", "node-1")).To(ContainSubstring("ksm"))
+		Expect(nodeStatusMessage("a", "node-1")).To(ContainSubstring("tunedProfile"))
 	})
 
 	// The positive control for the Drifted test above: once Observed
@@ -213,13 +296,16 @@ var _ = Describe("NodeTuning Controller", func() {
 
 	// A node the selector does not match must never appear in status.nodes:
 	// proves the reconciler is scoped by the selector rather than reporting
-	// on every node in the cluster.
+	// on every node in the cluster. node-1's phase here is incidental (no
+	// Observed was ever reported, so it mismatches spec.ksm.enabled and, with
+	// no approval, stops at RebootPending) — the assertion on it exists only
+	// to prove node-1 was actually reconciled at all.
 	It("does not add a status entry for a node the selector does not match", func() {
 		createTestNode("node-1", map[string]string{"role": "worker"})
 		createTestNode("node-2", map[string]string{"role": "control-plane"})
 		createNodeTuning("a", map[string]string{"role": "worker"})
 
-		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseDrifted))
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
 		Expect(getNodeStatus("a", "node-2")).To(BeNil())
 	})
 
@@ -255,5 +341,76 @@ var _ = Describe("NodeTuning Controller", func() {
 		Expect(ns.Observed.KSM).NotTo(BeNil())
 		Expect(ns.Observed.KSM.PagesSharing).To(Equal(int64(5528)),
 			"the controller must never overwrite status.nodes[].observed — that field belongs to the agent")
+	})
+
+	// A reconciler that skips the gate entirely (proceeds to Drifted/InSync
+	// on any restart-needing mismatch, approval or not) fails this test: it
+	// would never observe RebootPending at all, and the node would never be
+	// cordoned either way so that half of the assertion alone would not
+	// catch it — the phase check is what a "no gate" implementation fails.
+	It("waits at RebootPending until the node is approved", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+		Consistently(nodeCordoned("node-1"), "3s").Should(BeFalse())
+		Expect(getNodeStatus("a", "node-1").AppliedGeneration).To(BeZero(),
+			"a refused node must not be reported as applied to this generation")
+	})
+
+	// The positive control for the test above: approving the exact current
+	// generation must actually unblock the node. Without this test, an
+	// implementation that always reports RebootPending regardless of any
+	// annotation — never reading ApprovalAnnotation at all — would pass
+	// every other test in this file and still never let a single node
+	// proceed.
+	It("proceeds once the node is approved for the current generation", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+
+		annotateNode("node-1", framev1beta1.ApprovalAnnotation, strconv.FormatInt(nt.Generation, 10))
+
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseDrifted))
+		Expect(getNodeStatus("a", "node-1").AppliedGeneration).To(Equal(nt.Generation))
+	})
+
+	// A stale approval must not carry: approving one generation says nothing
+	// about the next. A reconciler that compared loosely — annotation merely
+	// present, or approved >= generation, instead of approved == generation
+	// — would wrongly let this node proceed once the spec moves on, and
+	// this is exactly the bug the design doc calls out: someone who approved
+	// enabling KSM must not thereby have approved, unseen, a later change
+	// that also flips the CPU manager policy.
+	It("ignores an approval for an older generation", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		nt := createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+
+		staleGeneration := nt.Generation
+		annotateNode("node-1", framev1beta1.ApprovalAnnotation, strconv.FormatInt(staleGeneration, 10))
+		bumped := bumpGeneration("a")
+		Expect(bumped.Generation).To(BeNumerically(">", staleGeneration))
+
+		Consistently(nodeStatusPhase("a", "node-1"), "3s").Should(Equal(framev1beta1.PhaseRebootPending))
+	})
+
+	// Treats a malformed annotation value as no approval at all — fail
+	// closed. A reconciler that used a permissive parse (e.g. defaulting a
+	// parse failure to "approved", or treating any non-empty string as
+	// consent) would let one of these through and pass RebootPending.
+	It("treats a malformed approval annotation as no approval", func() {
+		createTestNode("node-1", map[string]string{"role": "worker"})
+		createNodeTuning("a", map[string]string{"role": "worker"})
+		setObservedNeedingRestart("a", "node-1")
+		Eventually(nodeStatusPhase("a", "node-1")).Should(Equal(framev1beta1.PhaseRebootPending))
+
+		for _, bad := range []string{"", "not-a-number", "-1"} {
+			annotateNode("node-1", framev1beta1.ApprovalAnnotation, bad)
+			Consistently(nodeStatusPhase("a", "node-1"), "2s").Should(Equal(framev1beta1.PhaseRebootPending))
+		}
 	})
 })

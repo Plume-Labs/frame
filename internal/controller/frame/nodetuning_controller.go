@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -41,10 +42,11 @@ import (
 // This is the diff-and-report half of the lifecycle (see the design doc's
 // "Controller" section): it lists the nodes a NodeTuning selects, detects
 // selector overlap with every other NodeTuning, and otherwise diffs
-// spec against status.nodes[].observed to write InSync or Drifted. It never
-// cordons, drains, or restarts anything — that is Task 5 (approval) and
-// Task 6 (the restart itself), layered on top of the phases this reconciler
-// writes.
+// spec against status.nodes[].observed to write InSync or Drifted. Anything
+// needing a restart to take effect stops at RebootPending until a per-node
+// annotation approves that exact metadata.generation (Task 5). It never
+// cordons, drains, or restarts anything itself — that is Task 6, layered on
+// top of the phases this reconciler writes.
 type NodeTuningReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
@@ -92,13 +94,27 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			// node's Observed/AppliedGeneration/RestartedAt is touched.
 			ns.Phase = framev1beta1.PhaseFailed
 			ns.Message = fmt.Sprintf("node also selected by NodeTuning %s", strings.Join(others, ", "))
-		} else if reason := diffTuning(nt.Spec, ns.Observed); reason != "" {
+		} else if reason, needsRestart := diffTuning(nt.Spec, ns.Observed); reason != "" {
 			// Diff against what the agent measured (status.nodes[].observed),
 			// never against what another NodeTuning intended: Observed is the
 			// only value ever actually verified on the node.
-			ns.Phase = framev1beta1.PhaseDrifted
-			ns.AppliedGeneration = nt.Generation
-			ns.Message = reason
+			if needsRestart && !approvedForGeneration(node, nt.Generation) {
+				// Anything needing a restart stops here until a human
+				// approves this exact generation (see ApprovalAnnotation's
+				// doc comment). Like the overlap-Failed branch above, a
+				// refused node is left untouched: AppliedGeneration is not
+				// advanced, and nothing is cordoned, drained, or restarted
+				// — that first action belongs to Task 6, once approved.
+				ns.Phase = framev1beta1.PhaseRebootPending
+				ns.Message = fmt.Sprintf(
+					"restart required to apply: %s; approve with `kubectl annotate node %s %s=%d --overwrite`",
+					reason, node.Name, framev1beta1.ApprovalAnnotation, nt.Generation,
+				)
+			} else {
+				ns.Phase = framev1beta1.PhaseDrifted
+				ns.AppliedGeneration = nt.Generation
+				ns.Message = reason
+			}
 		} else {
 			ns.Phase = framev1beta1.PhaseInSync
 			ns.AppliedGeneration = nt.Generation
@@ -168,16 +184,23 @@ func overlappingNodeTunings(all []framev1beta1.NodeTuning, selfName string, node
 
 // diffTuning compares the fields NodeTuningSpec declares against what the
 // agent actually measured (observed), and returns a human-readable reason
-// for the first mismatch found, or "" if everything the spec cares about
-// matches. It never compares against another NodeTuning's spec and never
-// treats a field the spec leaves unset as a mismatch: KSM's Enabled default
-// aside, an unset field means "untouched", not "must equal the zero value".
+// for the first mismatch(es) found, or "" if everything the spec cares about
+// matches, plus whether applying the fix needs a unit restart. It never
+// compares against another NodeTuning's spec and never treats a field the
+// spec leaves unset as a mismatch: KSM's Enabled default aside, an unset
+// field means "untouched", not "must equal the zero value".
+//
+// needsRestart mirrors internal/agent/apply.go's Apply exactly: KSM's
+// enabled/disabled state only takes effect on the owning unit's next start
+// (the drop-in), and a CPU manager policy change requires a kubelet restart
+// to rebuild cpu_manager_state. TunedProfile applies live via `tuned-adm
+// profile` and never gates a restart.
 //
 // MIGProfile is deliberately not diffed here: ObservedTuning carries no MIG
 // field (see the design doc — MIG's proof of effect is the GPU operator's
 // own node status, not something the agent reads back), so there is nothing
 // in Observed to diff it against yet.
-func diffTuning(spec framev1beta1.NodeTuningSpec, observed framev1beta1.ObservedTuning) string {
+func diffTuning(spec framev1beta1.NodeTuningSpec, observed framev1beta1.ObservedTuning) (reason string, needsRestart bool) {
 	var mismatches []string
 
 	if spec.TunedProfile != "" && spec.TunedProfile != observed.TunedProfile {
@@ -186,6 +209,7 @@ func diffTuning(spec framev1beta1.NodeTuningSpec, observed framev1beta1.Observed
 
 	if spec.CPUManagerPolicy != "" && spec.CPUManagerPolicy != observed.CPUManagerPolicy {
 		mismatches = append(mismatches, fmt.Sprintf("cpuManagerPolicy: want %q, observed %q", spec.CPUManagerPolicy, observed.CPUManagerPolicy))
+		needsRestart = true
 	}
 
 	if spec.KSM != nil {
@@ -193,10 +217,30 @@ func diffTuning(spec framev1beta1.NodeTuningSpec, observed framev1beta1.Observed
 		gotEnabled := observed.KSM != nil && observed.KSM.MemoryKSM
 		if wantEnabled != gotEnabled {
 			mismatches = append(mismatches, fmt.Sprintf("ksm.enabled: want %t, observed %t", wantEnabled, gotEnabled))
+			needsRestart = true
 		}
 	}
 
-	return strings.Join(mismatches, "; ")
+	return strings.Join(mismatches, "; "), needsRestart
+}
+
+// approvedForGeneration reports whether node carries an ApprovalAnnotation
+// that parses to exactly generation. A generation rather than a boolean, so
+// approving one change never silently authorizes the next: approving
+// generation 4 says nothing about generation 5 (see ApprovalAnnotation's
+// doc comment). Any malformed value — missing, empty, non-numeric, or
+// negative — is treated as no approval at all: a parse ambiguity must never
+// be read as consent, so this fails closed rather than defaulting open.
+func approvedForGeneration(node corev1.Node, generation int64) bool {
+	raw, ok := node.Annotations[framev1beta1.ApprovalAnnotation]
+	if !ok {
+		return false
+	}
+	approved, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || approved < 0 {
+		return false
+	}
+	return approved == generation
 }
 
 // SetupWithManager sets up the controller with the Manager.
