@@ -33,11 +33,23 @@ what Argo CD immediately re-creates for `node-feature-discovery`:
 
 ```bash
 kubectl delete kustomization -n flux-system ksm-tuner node-feature-discovery
-``` **cluster-control-ui and the
-controller-manager are Argo CD-managed** (see the ArgoCD section below,
-`argocd/applications/frame.yaml`) — they used to have their own Flux
-Kustomization + image-automation setup too, but that duplicated the Argo CD
-Application for no reason and was removed.
+```
+
+One more object has to be deleted by hand, for a different reason.
+`nvidia-mps` is now rendered by `deploy/kubernetes/base`, which stamps the
+kustomization's common labels into its DaemonSet selector — and a selector is
+immutable. If it was ever applied by hand (`kubectl apply -f
+deploy/kubernetes/base/nvidia-mps.yaml`, as its own header suggests), the
+first reconcile fails with "field is immutable" until it is removed:
+
+```bash
+kubectl delete ds -n kube-system nvidia-mps
+```
+
+**cluster-control-ui and the controller-manager are Argo CD-managed** (see the
+ArgoCD section below, `argocd/applications/frame.yaml`) — they used to have
+their own Flux Kustomization + image-automation setup too, but that duplicated
+the Argo CD Application for no reason and was removed.
 
 ### Manual Flux Installation
 

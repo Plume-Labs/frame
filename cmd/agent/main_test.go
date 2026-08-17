@@ -252,14 +252,14 @@ func TestApplyMatchedRefusesWhenTwoNodeTuningsSelectTheNode(t *testing.T) {
 		Spec:       framev1beta1.NodeTuningSpec{KSM: &framev1beta1.KSMSpec{Enabled: false}},
 	}
 
-	applyMatched(root, []*framev1beta1.NodeTuning{one, two})
+	applyMatched(root, []*framev1beta1.NodeTuning{one, two}, &fakeRunner{})
 	if _, err := os.Stat(dropIn); !os.IsNotExist(err) {
 		t.Fatal("nothing may be applied to a node two NodeTunings select")
 	}
 
 	// The same call with a single object must apply, or the test above would
 	// also pass an agent that applies nothing at all, ever.
-	applyMatched(root, []*framev1beta1.NodeTuning{one})
+	applyMatched(root, []*framev1beta1.NodeTuning{one}, &fakeRunner{})
 	got, err := os.ReadFile(dropIn)
 	if err != nil {
 		t.Fatal(err)

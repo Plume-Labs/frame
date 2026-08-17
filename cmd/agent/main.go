@@ -161,7 +161,7 @@ func tick(ctx context.Context, kc client.Client, nodeName, root string, runner a
 	}
 	matching := selecting(list.Items, node.Labels)
 
-	applyMatched(root, matching)
+	applyMatched(root, matching, runner)
 
 	// The systemd-facing half. A node with no k3s unit at all is logged and
 	// skipped, not treated as fatal: it is a node this agent has no business
@@ -223,7 +223,7 @@ func selecting(items []framev1beta1.NodeTuning, nodeLabels map[string]string) []
 // would let two specs take turns writing the same drop-in every 30 seconds,
 // with the node's effective configuration decided by whichever object the API
 // server happened to list last.
-func applyMatched(root string, matching []*framev1beta1.NodeTuning) {
+func applyMatched(root string, matching []*framev1beta1.NodeTuning, runner agent.CommandRunner) {
 	if len(matching) > 1 {
 		names := make([]string, 0, len(matching))
 		for _, nt := range matching {
@@ -241,7 +241,11 @@ func applyMatched(root string, matching []*framev1beta1.NodeTuning) {
 	// when a restart happens — it writes the state and answers when asked;
 	// the controller owns approval, cordon, drain and the request (see
 	// internal/controller/frame/nodetuning_rollout.go).
-	if _, err := agent.Apply(root, matching[0].Spec); err != nil {
+	//
+	// The runner is passed through because tuned runs on the node, not in
+	// this container (see agent.Apply): a `tuned-adm` that lands inside the
+	// pod configures nothing the node can see and leaves it Drifted forever.
+	if _, err := agent.Apply(root, matching[0].Spec, runner); err != nil {
 		slog.Error("applying node tuning", "nodeTuning", matching[0].Name, "error", err)
 	}
 }

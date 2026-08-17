@@ -24,11 +24,15 @@ replicas:
 images:
   - name: cluster-control
 
-configMapGenerator:
-  - name: cluster-control-config
-    literals:
-      - ENV=production
-      - LOG_LEVEL=info
+# No configMapGenerator. The base declares cluster-control-config deliberately
+# empty because the Settings screen owns its contents at runtime (see the
+# development overlay's note), and nothing reads ENV or LOG_LEVEL: the pod is
+# nginx serving a static bundle and takes its own env from the Deployment. The
+# generator was also the reason this overlay had never rendered at all — it
+# collided with the namespace override — and with that override gone it
+# rendered a namespace-less `cluster-control-config-c2c6g75b49` that the Argo
+# Application, which sets no destination.namespace, would drop into `default`
+# or fail to sync. A dead generator is not worth either outcome.
 
 labels:
   - pairs:
