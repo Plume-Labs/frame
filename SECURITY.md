@@ -73,8 +73,29 @@ Reporters are credited by name or handle unless they ask not to be.
 
 In scope: anything in this repository — the operator (`Dockerfile.controller`),
 the control plane UI (`Dockerfile`), `authd` (`Dockerfile.authd`), the
-generated RBAC in `config/rbac/`, the admission webhooks, the Helm chart, and
-the deployment manifests under `deploy/`.
+node-tuning agent (`Dockerfile.agent`), the generated RBAC in `config/rbac/`,
+the admission webhooks, the Helm chart, and the deployment manifests under
+`deploy/`.
+
+**The node-tuning agent deserves particular attention.** It runs on every node
+as a privileged DaemonSet with `hostPID`, and every host command it issues is
+`nsenter`ed into PID 1's namespaces — which is host-root-equivalent by
+construction. Its entire security boundary is one compile-time allowlist of
+restartable systemd units (`k3s`, `k3s-agent`, `kubelet`, `containerd`, exact
+match, in `internal/agent/apply.go`). **Any path by which a CRD field, an
+annotation, or any other attacker-influenced input reaches a unit name, a
+command argument, or a file path outside that allowlist is a vulnerability**,
+and is exactly the kind of report this policy wants. So is any way to make the
+controller perform a restart without the per-node, per-generation approval
+annotation.
+
+Note also that **enabling KSM is a security trade-off, not just a performance
+one**: merged pages make writes take a measurable copy-on-write fault, which
+lets one container probe whether another holds a given page. That is why
+`ksm.enabled` defaults to off. Reports about KSM side channels on a cluster
+that deliberately turned it on are a documented trade-off rather than a
+vulnerability; reports that Frame enables it without the operator asking are
+not.
 
 Out of scope, because they are not Frame's to fix — report these upstream:
 

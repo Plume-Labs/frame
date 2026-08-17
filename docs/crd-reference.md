@@ -1,13 +1,20 @@
 # CRD Reference
 
-Eight CRDs across two API groups, all namespaced, all at **`v1beta1`** with
-`v1alpha1` still served and deprecated: seven in `frame.plume-labs.io` (this
-page's first seven sections) and `FrameService` in `services.plume-labs.io` —
-a separate group so the service catalog can move without blocking the
-`frame.plume-labs.io` freeze (see [roadmap.md](roadmap.md)). Generated CRDs
-live in `config/crd/bases/`; sample CRs in `config/samples/`. Each kind has a
-controller (`internal/controller/<group>/`) except FrameUser, and a webhook
-(`internal/webhook/<group>/v1beta1/`).
+Nine CRDs across two API groups: eight in `frame.plume-labs.io` and
+`FrameService` in `services.plume-labs.io` — a separate group so the service
+catalog can move without blocking the `frame.plume-labs.io` freeze (see
+[roadmap.md](roadmap.md)). Generated CRDs live in `config/crd/bases/`; sample
+CRs in `config/samples/`. Each kind has a controller
+(`internal/controller/<group>/`) except FrameUser, and a webhook
+(`internal/webhook/<group>/v1beta1/`) except NodeTuning.
+
+Eight of the nine are namespaced and serve both **`v1beta1`** (storage) and a
+deprecated `v1alpha1`. **NodeTuning is the exception on three counts**: it is
+**cluster-scoped**, it has **no `v1alpha1`** (it was added after the freeze,
+so there is nothing to convert from), and it has **no webhook**. It is also
+the one kind whose status is a per-node `phase` rather than a `Ready`
+condition — see its section for why, and read that as a documented
+divergence, not a licence to add more.
 
 > This page documents **`v1beta1`**, the storage version and the conversion
 > hub. What the freeze does and does not promise, the nine differences from
@@ -28,17 +35,28 @@ the top-level field is the one a client can read without knowing which
 condition types this kind writes. `FrameUser` has the field and no writer —
 it has no controller.
 
-### No `status.phase`
+### No top-level `status.phase`
 
 No Frame kind has one. Health is reported through `status.conditions`, and
-every kind with a controller writes a `Ready` condition.
+every kind with a controller writes a `Ready` condition — with one exception,
+recorded below.
 
 This is a rule, not a drift. A single enum forces the API to pick one
 dimension of health out of several and cannot express "provisioned but
 degraded", which is why the Kubernetes API conventions have called `phase`
-strongly discouraged for new APIs since 2019. **Do not add a `phase` field to
-a Frame kind.** If a lifecycle needs more than `Ready`, add a second
+strongly discouraged for new APIs since 2019. **Do not add a `status.phase`
+field to a Frame kind.** If a lifecycle needs more than `Ready`, add a second
 condition type and document its reason vocabulary here.
+
+**NodeTuning is the exception, and it is a partial one.** It has no top-level
+`status.phase` either, and it does carry `status.conditions` — but nothing
+writes that field today. What it reports instead is a `phase` *per node*, in
+`status.nodes[].phase`, because the object describes N nodes at once and a
+single cluster-wide `Ready` would have to collapse "two nodes in sync, one
+awaiting approval, one failed" into one boolean. A per-node condition array
+would have been the conventional answer; a per-node enum is what shipped.
+Clients reading NodeTuning must branch on `status.nodes[].phase` and
+`status.nodes[].realization`, not on conditions.
 
 Three kinds — FrameJob, FrameNode, FrameService — had one at `v1alpha1`, and
 that version still serves it: it is computed out of the conditions on the way
@@ -303,6 +321,97 @@ two resources authoritative for one number.
 
 ---
 
+## NodeTuning
+
+Node-local kernel and hardware settings — KSM, a `tuned` profile, a MIG
+profile — declared once and applied by a per-node agent. **Cluster-scoped**,
+**`v1beta1` only**, **no webhook**.
+
+**Spec:** `nodeSelector` (a `metav1.LabelSelector`; omitted means every node),
+`tunedProfile`, `ksm` (`enabled`, plus optional `pagesToScan`,
+`sleepMillisecs`, `mergeAcrossNodes`), `migProfile`. `ksm.enabled` defaults to
+**off** — tuning that costs CPU is opt-in.
+
+Two NodeTunings whose selectors both match a node is a configuration error,
+not a merge: the agent refuses the node and leaves it alone rather than
+picking a winner.
+
+**Status:** `observedGeneration`, `nodes[]`, and a `conditions[]` that nothing
+currently writes. Each `nodes[]` entry carries:
+
+| Field | Meaning |
+|---|---|
+| `phase` | `InSync`, `Drifted`, `RebootPending`, `Applying`, `Failed` |
+| `realization` | `FullyRealized`, `Effective`, `Pending` — see below |
+| `appliedGeneration` | the spec generation the agent last wrote to disk |
+| `observed` | what the node **measures**, never what was written: `ksm.memoryKSM` (from `systemctl show -p MemoryKSM`), `ksm.generalProfit`, `ksm.pagesSharing` (sysfs counters), `tunedProfile` (tuned's active profile) |
+| `restartedAt` / `restartedGeneration` | when the unit was verified back up, and for which generation |
+| `message` | why a node is `Failed` or held |
+
+`Effective` vs `FullyRealized` is the distinction the whole design exists for:
+a drop-in written to disk is **not** a setting in effect until the unit
+restarts. `Effective` means the live knobs took; `FullyRealized` means the
+restart-gated ones did too.
+
+**Printer columns:** `TunedProfile`, `KSM`, `Age`.
+
+**Controller** (`internal/controller/frame/nodetuning_controller.go` +
+`nodetuning_rollout.go`): diffs desired against **observed** and reports. It
+never disrupts a node on its own. When a change needs a unit restart, the node
+is held at `RebootPending` until it carries an explicit approval:
+
+```bash
+kubectl annotate node <node> frame.plume-labs.io/tuning-approved=<generation> --overwrite
+```
+
+The value is the `metadata.generation` being approved. Approving generation 4
+says nothing about generation 5 — each disruptive change is approved on its
+own.
+
+Once approved, the rollout half takes over: cordon → evict through the
+eviction API (so PodDisruptionBudgets are honoured) → ask the agent for a
+detached restart → wait → uncordon. Four properties are load-bearing, and each
+is a scar:
+
+1. **A restart is verified by the unit's `ActiveEnterTimestamp` moving**, never
+   by the node flapping `NotReady`. `k3s-agent` returns in seconds while a node
+   only reports `NotReady` after ~40 s of missed lease — a wait keyed on
+   readiness reports failure on success. Readiness is still required before
+   uncordoning; it is the precondition for handing workloads back, not the
+   evidence anything restarted.
+2. **Every probe tolerates failure.** Restarting k3s on the server node takes
+   the apiserver down for seconds, so the controller's own reads are *expected*
+   to fail mid-wait.
+3. **One node at a time, and never while another node is not Ready.** Losing
+   one node is a rolling operation; losing two on a three-node cluster is an
+   outage.
+4. **A failure halts the campaign.** The node stays cordoned, the reason lands
+   in its status entry, and no other node is touched.
+
+**Node agent** (`cmd/agent`, `Dockerfile.agent`, DaemonSet in
+`deploy/kubernetes/base/node-tuning-agent/`): runs on every node including
+tainted ones and the control-plane server, `priorityClassName:
+system-node-critical`, privileged with `hostPID` so every host call is
+`nsenter`ed into PID 1's namespaces. It observes every 30 s, applies what
+matches, and publishes node state through annotations
+(`frame.plume-labs.io/tuning-*`) that the controller reads.
+
+Because privileged + `hostPID` is host-root-equivalent, **the set of units the
+agent may restart is a compile-time allowlist**, not anything reachable from a
+spec: `k3s`, `k3s-agent`, `kubelet`, `containerd`. Exact match, never a prefix
+— that allowlist is the agent's entire security boundary.
+
+**Node prerequisite:** `tuned` must already be installed on any node a
+NodeTuning sets `tunedProfile` on. It is *not* in the agent image and cannot
+be, since `tuned-adm` resolves to the node's own binary. Ubuntu Server does not
+ship it. Until it is present the node fails loudly and stays `Drifted`, which
+is the correct report for an unconfigured node. KSM and the MIG label need
+nothing installed. `deploy/scripts/node-tuning-install.sh` does the install,
+and the two other things `kubectl apply` cannot do — see
+[deployment.md](deployment.md).
+
+---
+
 ## TalosMachineConfig
 
 Declarative Talos MachineConfig application to a node.
@@ -449,7 +558,7 @@ on.
 *Group `services.plume-labs.io`, not `frame.plume-labs.io`.* A declared
 instance of a service — inference today; database, queue and VM are future
 provider types on the same envelope. Designed in
-[`docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`](superpowers/specs/2026-08-08-frame-service-catalog-design.md).
+`docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`.
 
 **One generic CRD, not one per type.** `spec.type` selects a Go provider
 (`internal/services/provider/`) registered at manager startup. The provider,
@@ -590,9 +699,12 @@ requests (including `nvidia.com/gpu`) and a node selector derived from
 
 FrameNode and FrameJob have **defaulting + validation**; the other six —
 SchedulingPolicy, FrameResourceQuota, TalosMachineConfig, TalosUpgrade,
-FrameUser, and FrameService — have **validation** only. Validators enforce
-required fields and value ranges (or, for FrameService, dispatch to the
-provider's own parameter schema) before a CR is admitted. Tests:
+FrameUser, and FrameService — have **validation** only. **NodeTuning has
+neither**: its bounds are CRD schema markers alone, so nothing rejects a
+NodeTuning whose selector overlaps another's — the agent detects that at apply
+time and refuses the node instead. Validators enforce required fields and value
+ranges (or, for FrameService, dispatch to the provider's own parameter schema)
+before a CR is admitted. Tests:
 `internal/webhook/frame/v1beta1/*_test.go` and
 `internal/webhook/services/v1beta1/*_test.go`.
 

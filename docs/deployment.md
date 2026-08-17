@@ -11,24 +11,29 @@
 
 ---
 
-## 1. Build and push the UI image
+## 1. Build and push the images
 
-The Dockerfile builds the React UI with Vite and serves it via nginx:
-
-```bash
-# Default: tags as controller:latest
-make docker-build
-
-# With a custom registry
-make docker-build docker-push IMG=ghcr.io/<your-org>/frame-ui:v0.1.0
-```
-
-Or directly with Docker:
+Four images, four Dockerfiles, four target pairs. **`make docker-build` builds
+the controller, not the UI** — it uses `Dockerfile.controller`. The UI is the
+unsuffixed `Dockerfile` (React + Vite, served by nginx) and has its own target.
 
 ```bash
-docker build -t ghcr.io/<your-org>/frame-ui:dev .
-docker push ghcr.io/<your-org>/frame-ui:dev
+make docker-build       docker-push        IMG=ghcr.io/<org>/frame-controller:v0.1.0
+make docker-build-ui    docker-push-ui     IMG_UI=ghcr.io/<org>/frame-ui:v0.1.0
+make docker-build-authd docker-push-authd  IMG_AUTHD=ghcr.io/<org>/frame-authd:v0.1.0
+make docker-build-agent docker-push-agent  IMG_AGENT=ghcr.io/<org>/frame-agent:v0.1.0
 ```
+
+Or directly:
+
+```bash
+docker build -t ghcr.io/<org>/frame-ui:dev .                          # UI
+docker build -f Dockerfile.controller -t ghcr.io/<org>/frame-controller:dev .
+docker build -f Dockerfile.agent      -t ghcr.io/<org>/frame-agent:dev .
+```
+
+For the agent, `deploy/scripts/node-tuning-install.sh` builds and pushes it for
+you as part of the install.
 
 ---
 
@@ -39,7 +44,9 @@ docker push ghcr.io/<your-org>/frame-ui:dev
 kubectl apply -k config/default
 ```
 
-This applies the `frame-system` namespace, all eight CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
+This applies the `frame-system` namespace, all nine CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
+
+It does **not** install the node-tuning agent — that is a DaemonSet with node prerequisites, and it has its own step below.
 
 Verify:
 
@@ -142,12 +149,92 @@ kubectl apply -k config/default
 
 ---
 
+## Node-tuning agent
+
+`NodeTuning` needs a DaemonSet on every node. It is deliberately not part of
+`kubectl apply -k config/default`, because two of its prerequisites cannot be
+expressed as a manifest.
+
+> **The Helm chart does not ship it either.** `charts/frame/` installs the
+> `NodeTuning` CRD and the controller's RBAC, but the agent DaemonSet lives
+> only under `deploy/kubernetes/base/node-tuning-agent/`. After a pure
+> `helm install`, a `NodeTuning` you apply will sit with every node `Drifted`
+> and no agent to observe or apply anything. Run the script below.
+
+```bash
+# Dry run first — it changes nothing and prints every action it would take.
+deploy/scripts/node-tuning-install.sh
+deploy/scripts/node-tuning-install.sh --apply
+```
+
+The script refuses to start if any node is not `Ready`, then does five things:
+
+1. **Removes superseded DaemonSets.** `ksm-tuner` wrote the same KSM knobs from
+   a shell script and could only report what it had written; the agent reports
+   what the node measures. Deleting the manifest does not delete a running
+   DaemonSet — this does. It also recreates `nvidia-mps` if its selector
+   predates the injected common labels, since a DaemonSet selector is
+   immutable.
+2. **Installs `tuned` on nodes that lack it.** Required only if a NodeTuning
+   sets `spec.tunedProfile`. It cannot ship in the agent image: every host
+   command the agent runs is `nsenter`ed into PID 1's namespaces, so
+   `tuned-adm` resolves to the node's own binary. Ubuntu Server does not ship
+   it.
+3. **Builds and pushes the agent image.**
+4. **Applies the CRD and the agent** (`deploy/kubernetes/base/node-tuning-agent/`).
+5. **Stops.** It creates no `NodeTuning` and enables nothing.
+
+### Enabling KSM is a security decision, not a performance one
+
+Merged pages make a write take a measurable copy-on-write fault, which lets one
+container test whether another holds a given page. On a cluster running
+notebooks or code sandboxes those are real neighbours. `ksm.enabled` therefore
+defaults to **off**, and turning it on is a deliberate act. See
+[SECURITY.md](../SECURITY.md).
+
+### Tuning a set of nodes
+
+```yaml
+apiVersion: frame.plume-labs.io/v1beta1
+kind: NodeTuning
+metadata: { name: workers }
+spec:
+  nodeSelector:
+    matchLabels: { "kubernetes.io/os": linux }
+  ksm: { enabled: true, pagesToScan: 4000, sleepMillisecs: 200 }
+```
+
+The controller parks each node at `RebootPending` and waits for an explicit,
+per-node, per-generation approval:
+
+```bash
+kubectl annotate node <NODE> --overwrite \
+  frame.plume-labs.io/tuning-approved=$(kubectl get nodetuning workers -o jsonpath='{.metadata.generation}')
+```
+
+Then watch it converge, reading `realization` rather than `phase` alone:
+
+```bash
+kubectl get nodetuning workers \
+  -o jsonpath='{range .status.nodes[*]}{.name}{"\t"}{.phase}{"\t"}{.realization}{"\n"}{end}'
+```
+
+`Effective` means new containers get the setting; `FullyRealized` means every
+container on the node does. For KSM, the gap between the two is most of the
+benefit.
+
+---
+
 ## RBAC
 
 ### The viewer / editor / admin tiers
 
 Twenty-four `ClusterRole`s, three per kind, across both API groups
-(`frame.plume-labs.io` and `services.plume-labs.io`). They are **not bound to
+(`frame.plume-labs.io` and `services.plume-labs.io`) — eight kinds, not nine:
+**`NodeTuning` has no tier roles.** It postdates the freeze, and access to it
+is currently whatever a cluster-admin holds. Anyone able to write a
+`NodeTuning` and annotate a node can cause a rolling restart of the cluster's
+kubelets; scope that accordingly until the tiers exist. They are **not bound to
 anything** — no `RoleBinding` or `ClusterRoleBinding` in `config/`, `charts/`
 or `deploy/` references any of them, and the UI authenticates with a single
 ServiceAccount token, so the tiers are not currently enforced against any
@@ -313,8 +400,9 @@ Every CRD this chart installs carries `helm.sh/resource-policy: keep`, so
 `helm uninstall` removes the Deployment, RBAC and webhook configuration but
 **leaves the CRDs (and any CRs) in place** — verified in this session: after
 `helm uninstall` on a disposable kind cluster, all eight `plume-labs.io` CRDs
-were still present and `helm uninstall` printed each one under "kept due to
-the resource policy." Removing the CRDs themselves is a deliberate, separate,
+then present were still there afterwards, and `helm uninstall` printed each one
+under "kept due to the resource policy." (`NodeTuning` postdates that run and
+carries the same annotation, but was not part of the verified set.) Removing the CRDs themselves is a deliberate, separate,
 manual step (`kubectl delete crd <name>`) — not exercised here, since on a
 real cluster it cascade-deletes every CR of that kind. See "CRDs are
 rendered from `templates/`, not Helm's `crds/` directory" in
@@ -347,6 +435,9 @@ deploy/kubernetes/
 |---|---|
 | `make docker-build` | Build the controller image |
 | `make docker-push` | Push the controller image |
+| `make docker-build-ui` | Build the UI image (the unsuffixed `Dockerfile`) |
+| `make docker-build-authd` / `make docker-push-authd` | Build/push the authd image (`IMG_AUTHD`) |
+| `make docker-build-agent` / `make docker-push-agent` | Build/push the node-tuning agent image (`IMG_AGENT`, default `frame-agent:latest` — it matches the name the DaemonSet declares, so `kustomize edit set image frame-agent=…` works) |
 | `make install` | Apply CRDs to the cluster |
 | `make deploy` | Apply the full operator (config/default) |
 | `make undeploy` | Remove the operator from the cluster |

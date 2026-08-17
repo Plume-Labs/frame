@@ -1,6 +1,6 @@
 # Roadmap
 
-Frame is a **`v1beta1` beta**: the operator reconciles eight CRDs across two API groups with webhooks, a conversion webhook and envtest coverage, the IaC under `deploy/` provisions the cluster, and the UI talks directly to the Kubernetes CRD API. `v1alpha1` is still served and deprecated — see [upgrading.md](upgrading.md).
+Frame is a **`v1beta1` beta**: the operator reconciles nine CRDs across two API groups with webhooks, a conversion webhook and envtest coverage, the IaC under `deploy/` provisions the cluster, and the UI talks directly to the Kubernetes CRD API. `v1alpha1` is still served and deprecated on the eight kinds that predate the freeze — see [upgrading.md](upgrading.md).
 
 Two things advance at once:
 
@@ -15,11 +15,22 @@ Running both tracks with a single operator means alternating between them, not a
 
 The bar for each phase is its **Exit criteria** — a phase is not done until those are demonstrable, not just coded.
 
+> **Specs, plans and reviews.** `docs/superpowers/` was emptied on 2026-08-17 of
+> everything dated before that day, leaving only the current plan. The paths
+> cited below — and in `crd-reference.md` and `runbook.md` — therefore name
+> files that no longer exist on disk. They are all still in git history:
+>
+> ```bash
+> git log --diff-filter=D --name-only -- docs/superpowers/
+> git show <sha>^:<path>
+> ```
+
 ---
 
 ## Current state (baseline)
 
 - ✅ 7 CRDs in `frame.plume-labs.io`, frozen at `v1beta1` with `v1alpha1` served and deprecated: FrameJob, FrameNode, FrameResourceQuota, FrameUser, SchedulingPolicy, TalosMachineConfig, TalosUpgrade — with generated manifests and per-kind RBAC tiers
+- ✅ **NodeTuning**, an eighth kind in the same group, added **after** the freeze (17/08): cluster-scoped, `v1beta1` only, no webhook, no conversion, **no RBAC tiers**. Controller + a privileged node-agent DaemonSet (`cmd/agent`) that reports measured node state and performs approval-gated, one-node-at-a-time restarts. See [crd-reference.md](crd-reference.md) and [deployment.md](deployment.md)
 - ✅ Every CRD has a controller producing real cluster effects, with finalizers, Kubernetes Events and Prometheus metrics
 - ✅ Validating/defaulting webhooks + envtest coverage threshold ≥ 45% on `internal/controller`, tracked in CI
 - ✅ UI (13 tabbed screens behind an Overview landing) and SDK talk directly to the Kubernetes API — no intermediate server. Dev: `kubectl proxy`. Prod: ServiceAccount Bearer token.
@@ -32,6 +43,13 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
 ## The V1 path
 
 V1 means: a frozen, conversion-guaranteed API for `frame.plume-labs.io`; live status instead of polling; and a repeatable, secured release. It does **not** mean per-user authentication — see the RBAC note in Phase B.
+
+> **NodeTuning broke the "no new capability enters V1" rule**, and this is the record of it rather than a retroactive justification. A kind was added to the frozen group after the freeze. The freeze itself is intact — no existing kind changed, and NodeTuning has no `v1alpha1`, so nothing had to convert — but the narrowing discipline was not. What it costs is listed below, and each item is V1 work now, not post-V1:
+>
+> - **No RBAC tiers.** The other eight kinds have viewer/editor/admin `ClusterRole`s; NodeTuning has none. Writing a NodeTuning plus annotating a node rolls the cluster's kubelets, so this is the sharpest of the four.
+> - **The Helm chart does not ship the agent.** `charts/frame/` installs the CRD and the controller's RBAC, but the DaemonSet lives only in `deploy/kubernetes/base/node-tuning-agent/`. A pure `helm install` therefore gives you a kind nothing can satisfy: every node sits `Drifted` forever with no agent to observe it.
+> - **No `Ready` condition.** Status is a per-node `phase`, which is the pattern the API conventions and this project's own CRD reference argue against.
+> - **No UI or SDK surface.** `FrameClient` covers six of nine kinds.
 
 ### Phase A — Clear the debt ✅ DONE
 
@@ -118,7 +136,7 @@ Declarative provisioning of service instances with a lifecycle and credential bi
 
 **This is the one new group that precedes the V1 freeze**, and it is sliced so that only its first part does:
 
-1. ✅ **Done. The model + inference** — the instance/binding shape, and one type implemented against it. Designed in [`docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`](superpowers/specs/2026-08-08-frame-service-catalog-design.md): one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze. See "What implementing S1 proved" below for the answers.
+1. ✅ **Done. The model + inference** — the instance/binding shape, and one type implemented against it. Designed in `docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`: one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze. See "What implementing S1 proved" below for the answers.
 2. **Database, queue, VM** — further types on a settled model. These do not gate anything. VM implies KubeVirt, which appears nowhere in the repo: greenfield, and the reason V1 must not wait for the full catalog.
 
 Note the hardware constraint on the inference type: the current GPU is a Pascal P4 (`sm_6.1`), which rules out vLLM and KubeAI. `deploy/caching/vllm-rdma-kvcache.yaml` exists but cannot run here. llama.cpp is the only viable backend until the hardware changes — the model must not assume otherwise.
@@ -139,8 +157,8 @@ The design spec posed three hypotheses under "Where this may force the core API 
 
 Frame itself. `TalosUpgrade` already covers the node OS; nothing covered the operator, the UI or authd. Designed as two pieces, neither of which is an API group:
 
-- a [release chain](superpowers/specs/2026-08-09-frame-release-chain-design.md) publishing the three images to GHCR from a git tag — a prerequisite, and the place where CI's own defect gets fixed: `build.yml` builds the root Dockerfile, which is the UI, and publishes it under the bare repository name as though it were the project, while the operator and authd are built by CI nowhere
-- an [update screen](superpowers/specs/2026-08-09-frame-update-screen-design.md) showing what runs, what is available, and what an update would disturb right now
+- a release chain (`docs/superpowers/specs/2026-08-09-frame-release-chain-design.md`) publishing the three images to GHCR from a git tag — a prerequisite, and the place where CI's own defect gets fixed: `build.yml` builds the root Dockerfile, which is the UI, and publishes it under the bare repository name as though it were the project, while the operator and authd are built by CI nowhere
+- an update screen (`docs/superpowers/specs/2026-08-09-frame-update-screen-design.md`) showing what runs, what is available, and what an update would disturb right now
 
 No self-updating operator: the UI patches the Deployment, so the bootstrap problem — a controller surviving its own rollout mid-reconcile — never arises. No new CRD either, which means **S3 does not gate the Phase B freeze**, contrary to the assumption behind the phase ordering.
 
@@ -186,7 +204,7 @@ S1 is already through it: `services.plume-labs.io` was frozen alongside `frame.p
 
 1. `frame.plume-labs.io` is `v1beta1` with tested conversion from alpha, and a written deprecation policy. Not `v1` — see Phase B.
 2. UI and SDK drive real CRDs over watch streams; no polling and no simulation in the default path.
-3. All seven controllers produce real, observable cluster effects with metrics and events, each proven end-to-end on Kind in CI.
+3. All eight controllers produce real, observable cluster effects with metrics and events, each proven end-to-end on Kind in CI. (`NodeTuning`'s effects are node-local and privileged; what "proven on Kind" means for it is an open question this item has to answer, not assume.)
 4. One-command install from a published, versioned Helm chart.
 5. CI is green across build, lint, unit/envtest, and Kind e2e.
 6. Security and upgrade paths reviewed and documented, including an explicit statement that RBAC tiers are not yet enforced per user.

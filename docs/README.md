@@ -9,11 +9,12 @@ Engineering documentation for the Frame operator and control plane. For the prod
 | [getting-started.md](getting-started.md) | Prerequisites, local dev loop, first deploy — start here |
 | [architecture.md](architecture.md) | Three layers (control plane, operator, IaC) and how they fit together |
 | [api.md](api.md) | CRD API, TypeScript SDK (`FrameClient`), authentication |
-| [crd-reference.md](crd-reference.md) | All eight CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — fields, controllers, webhooks |
+| [crd-reference.md](crd-reference.md) | All nine CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — fields, controllers, webhooks |
 | [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
 | [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm |
 | [upgrading.md](upgrading.md) | Migrating a kustomize install to Helm, chart-to-chart upgrades, what schema stability to expect pre-Phase B |
 | [roadmap.md](roadmap.md) | Path from the `v1beta1` beta to stable V1, plus the new API groups building alongside it |
+| [runbook.md](runbook.md) | Operating the live cluster: health, failover, certificates, storage migration, backup/restore, control-plane containment |
 
 ## 30-second model
 
@@ -34,8 +35,8 @@ Bare-metal IaC (deploy/)
 ```
 
 - **Control plane** (`src/`) — React UI + TypeScript SDK. Both talk **directly to the Kubernetes API** — no intermediate server. Dev: `kubectl proxy`. Prod: ServiceAccount Bearer token.
-- **Operator** (`internal/`) — Kubebuilder v4 controllers for seven of the eight CRDs, across two API groups. FrameUser is the exception: it is a record `authd` reads, not something reconciled.
-- **IaC** (`deploy/`) — Talos provisioning (Omni for bare metal, prepared), Ceph (RGW) storage, Cilium RDMA networking, GitOps, and Argo Workflows manifests.
+- **Operator** (`internal/`) — Kubebuilder v4 controllers for eight of the nine CRDs, across two API groups. FrameUser is the exception: it is a record `authd` reads, not something reconciled. Two more Go binaries ship with it: `cmd/authd` (per-user auth) and `cmd/agent` (the node-tuning agent DaemonSet).
+- **IaC** (`deploy/`) — Talos provisioning (Omni for bare metal, prepared), Ceph (RGW) storage, Cilium RDMA networking, caching (Alluxio, NVMe burst buffer), resilience (Velero), GitOps, and Argo Workflows manifests.
 
 ## Scope
 
