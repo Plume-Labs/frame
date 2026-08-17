@@ -166,7 +166,12 @@ type NodeTuningNodeStatus struct {
 	AppliedGeneration int64           `json:"appliedGeneration,omitempty"`
 	Realization       Realization     `json:"realization,omitempty"`
 	Observed          ObservedTuning  `json:"observed,omitempty"`
-	Message           string          `json:"message,omitempty"`
+	// RestartedAt is when Task 6 verified the unit came back. Task 7 compares
+	// pod start times against it to promote Effective to FullyRealized. It
+	// lives in the API rather than being re-derived from the node's
+	// ActiveEnterTimestamp, which would cost a second agent round-trip.
+	RestartedAt *metav1.Time `json:"restartedAt,omitempty"`
+	Message     string       `json:"message,omitempty"`
 }
 
 type NodeTuningStatus struct {
@@ -624,6 +629,56 @@ git commit -m "feat(controller): distinguish Effective from FullyRealized"
 only defect is that `base/kustomization.yaml` never referenced them, so they
 were never deployed. Add them as resources. `ksm-tuner` is superseded by the
 agent and is removed.
+
+Removing a manifest does not remove a running object: `ksm-tuner` is deployed
+on the test cluster and keeps running until it is deleted explicitly. Until
+then it and the agent both write the KSM sysfs knobs — with identical values,
+so the overlap is harmless rather than a race, but it is two writers on one
+setting, which this design forbids everywhere else. Record in the commit body
+that deployment requires:
+
+```bash
+kubectl delete ds -n kube-system ksm-tuner
+```
+
+- [ ] **Step 1a: The agent's half of the restart channel**
+
+Task 6 built the controller side of the rollout and had to invent the channel
+it talks over, because the plan never specified one: five Node annotations, the
+agent publishing the detected unit and its `ActiveEnterTimestamp`, the
+controller publishing rollout state and the restart request. The agent side was
+out of Task 6's scope and does not exist, so **on a live cluster an approved
+node today cordons, drains, and then times out into `Failed`**. The feature
+dead-ends until this step lands.
+
+The agent must, each tick: publish the unit `DetectKSMUnit` resolved and that
+unit's `ActiveEnterTimestamp`; and when the controller's request annotation
+names its node, schedule the restart **detached** via `systemd-run --on-active`
+rather than running it inline. Inline is not a style choice — restarting k3s
+stops the kubelet that owns the pod issuing the command, so the caller dies
+partway through and the unit may never come back. Pass the unit through
+`IsRestartable` before acting on it, exactly as Task 3 does: the request arrives
+over an annotation, which is caller-influenced input.
+
+Compare the request annotation's **value**, not its presence. Task 6's fix round
+re-issues the request when a halted rollout is released, so an agent that keys
+on "the annotation exists" would either skip the re-issued restart or replay the
+old one. Record the value it last acted on and act again only when it changes.
+
+- [ ] **Step 1b: RBAC for the agent**
+
+The agent is a second identity, not the manager: it runs on every node, lists
+`NodeTuning`, and patches `nodetunings/status`. Nothing has granted it that yet
+— Task 2 shipped a binary with no ServiceAccount, which the Task 2 review
+flagged. Create `deploy/kubernetes/base/node-tuning-agent/rbac.yaml` with a
+dedicated ServiceAccount, a ClusterRole limited to `get;list;watch` on
+`nodetunings`, `patch;update` on `nodetunings/status`, and `get;list;watch;patch`
+on `nodes` — the agent publishes its unit and `ActiveEnterTimestamp` as Node
+annotations, which needs `patch`. Note what that grant really is: `patch` on
+nodes also permits labels and taints, so this is the widest privilege the agent
+holds and the reason it gets its own role rather than a shared one. Do not
+reuse the manager's ServiceAccount: the manager may cordon and evict, and the
+agent must not inherit that.
 
 - [ ] **Step 2: Write the e2e test**
 

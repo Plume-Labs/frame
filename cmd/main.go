@@ -310,6 +310,18 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "talosupgrade")
 		os.Exit(1)
 	}
+	if err := (&controller.NodeTuningReconciler{
+		Client: mgr.GetClient(),
+		// Uncached, on purpose: the drain lists the pods on one node by field
+		// selector a handful of times per rollout, and serving that from the
+		// cache would mean caching every pod in the cluster forever.
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("nodetuning"), //nolint:staticcheck
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "nodetuning")
+		os.Exit(1)
+	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1beta1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameNode")

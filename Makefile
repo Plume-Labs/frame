@@ -4,6 +4,10 @@ IMG ?= controller:latest
 IMG_UI ?= frame-ui:latest
 # Image for authd, the Cluster Control UI's auth surface (Dockerfile.authd)
 IMG_AUTHD ?= cluster-control-auth:latest
+# Image for the node-tuning agent (Dockerfile.agent). Matches the image name
+# the DaemonSet declares, so `kustomize edit set image frame-agent=...` and
+# this variable name the same thing.
+IMG_AGENT ?= frame-agent:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -155,6 +159,14 @@ docker-push-ui: ## Push the Frame UI Docker image
 .PHONY: docker-build-authd
 docker-build-authd: ## Build the authd Docker image
 	$(CONTAINER_TOOL) build -f Dockerfile.authd -t $(IMG_AUTHD) .
+
+.PHONY: docker-build-agent
+docker-build-agent: ## Build the node-tuning agent Docker image
+	$(CONTAINER_TOOL) build -f Dockerfile.agent -t $(IMG_AGENT) .
+
+.PHONY: docker-push-agent
+docker-push-agent: ## Push the node-tuning agent Docker image
+	$(CONTAINER_TOOL) push $(IMG_AGENT)
 
 .PHONY: docker-push-authd
 docker-push-authd: ## Push the authd Docker image

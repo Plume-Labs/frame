@@ -21,6 +21,6 @@ flux bootstrap github \
 
 echo "✅ Flux bootstrapped successfully!"
 echo "📦 Flux now reconciles whatever Kustomizations live under clusters/${CLUSTER_NAME}"
-echo "   (e.g. flux/kustomizations/{ksm-tuner,node-feature-discovery,kmod-rdma-loader}.yaml)."
+echo "   (e.g. flux/kustomizations/kmod-rdma-loader.yaml)."
 echo "   cluster-control-ui + the controller-manager are Argo CD-managed now — see"
 echo "   ../gitops/argocd/applications/frame.yaml, not Flux."

@@ -1,0 +1,69 @@
+---
+# RBAC for the Frame node-tuning agent.
+#
+# A second identity, deliberately not the manager's. The manager may cordon
+# nodes and evict pods; the agent runs on *every* node, privileged and with
+# hostPID, so a compromise of one agent must not hand over the ability to
+# drain the cluster. Nothing had granted the agent anything at all before
+# this — it shipped as a binary with no ServiceAccount.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frame-node-tuning-agent
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: frame-node-tuning-agent
+    app.kubernetes.io/component: node-tuning
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-node-tuning-agent
+  labels:
+    app.kubernetes.io/name: frame-node-tuning-agent
+    app.kubernetes.io/component: node-tuning
+rules:
+  # NodeTuning is read-only to the agent: it applies what a NodeTuning
+  # declares and reports what it measured, but the object itself — and every
+  # decision about approval, cordon and restart — belongs to the controller.
+  - apiGroups: ["frame.plume-labs.io"]
+    resources: ["nodetunings"]
+    verbs: ["get", "list", "watch"]
+  # status.nodes[].observed is the agent's one write into the API's own
+  # objects. update as well as patch because the subresource's writers are
+  # not required to be able to express every change as a merge patch.
+  - apiGroups: ["frame.plume-labs.io"]
+    resources: ["nodetunings/status"]
+    verbs: ["patch", "update"]
+  # The widest privilege this agent holds, and the reason it gets a role of
+  # its own rather than sharing one. The agent publishes the systemd unit it
+  # detected, that unit's ActiveEnterTimestamp, and the MIG profile label, all
+  # of which live on the Node object — and Kubernetes has no verb for "patch
+  # only these three keys". `patch` on nodes is patch on the whole object:
+  # labels, taints and spec.unschedulable included. A compromised agent can
+  # therefore taint or cordon its node, or relabel it into another
+  # NodeTuning's selector. That is stated plainly rather than glossed,
+  # because it is the reason the restart target is a compile-time allowlist
+  # in the binary instead of anything this identity could write.
+  #
+  # Not granted: pods/eviction (draining is the controller's), and no verb on
+  # any other resource.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: frame-node-tuning-agent
+  labels:
+    app.kubernetes.io/name: frame-node-tuning-agent
+    app.kubernetes.io/component: node-tuning
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: frame-node-tuning-agent
+subjects:
+  - kind: ServiceAccount
+    name: frame-node-tuning-agent
+    namespace: kube-system
