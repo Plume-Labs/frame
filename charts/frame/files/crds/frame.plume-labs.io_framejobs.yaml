@@ -442,6 +442,72 @@ spec:
                       type: object
                     maxItems: 64
                     type: array
+                  envFrom:
+                    description: |-
+                      EnvFrom populates environment variables from a Secret or ConfigMap that
+                      already exists — corev1.EnvFromSource covers both secretRef and
+                      configMapRef, so this does not need two separate fields the way Frame
+                      would if it minted its own type. It exists alongside Env for the same
+                      reason Neura's other container workloads need it: object-store
+                      credentials and similar bulk config are handed to a workload as a
+                      whole Secret, not as individual Env entries a caller would have to
+                      enumerate by key.
+
+                      Blast radius: the Job this becomes runs in the FrameJob's own
+                      namespace (see the no-namespace-field rule on FrameJobSpec above), and
+                      neither corev1.SecretEnvSource nor corev1.ConfigMapEnvSource carries a
+                      namespace field either — Kubernetes itself only lets envFrom name a
+                      Secret or ConfigMap in the Pod's own namespace. So a FrameJob can only
+                      ever pull in a Secret that already lives beside it, which is exactly
+                      the reach any other Job a principal in that namespace could create
+                      directly already has. This field grants no new access; it only lets a
+                      caller use through Frame the same reach it already had.
+                    items:
+                      description: EnvFromSource represents the source of a set of
+                        ConfigMaps or Secrets
+                      properties:
+                        configMapRef:
+                          description: The ConfigMap to select from
+                          properties:
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap must be defined
+                              type: boolean
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        prefix:
+                          description: |-
+                            Optional text to prepend to the name of each environment variable.
+                            May consist of any printable ASCII characters except '='.
+                          type: string
+                        secretRef:
+                          description: The Secret to select from
+                          properties:
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret must be defined
+                              type: boolean
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                    maxItems: 64
+                    type: array
                   image:
                     description: |-
                       Image is the container image to run. Required: unlike Pipeline, there

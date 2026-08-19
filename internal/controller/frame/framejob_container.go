@@ -91,6 +91,7 @@ func (r *FrameJobReconciler) buildContainerObject(ctx context.Context, job *fram
 			Command:   c.Command,
 			Args:      c.Args,
 			Env:       c.Env,
+			EnvFrom:   c.EnvFrom,
 			Resources: c.Resources,
 		}},
 	}
@@ -99,7 +100,19 @@ func (r *FrameJobReconciler) buildContainerObject(ctx context.Context, job *fram
 		return nil, nil, fmt.Errorf("converting pod spec: %w", err)
 	}
 
-	labels := map[string]any{
+	// labels starts from the FrameJob's own metadata.labels — this is what
+	// lets Neura's JobWatcher (and anything else selecting by label) find
+	// the Job it submitted, the correlation GAP 2 exists to restore. Frame's
+	// own labels are applied second, into the same map, so they win any key
+	// collision: a caller must not be able to overwrite
+	// frame.plume-labs.io/job or /job-namespace and redirect which FrameJob
+	// this object's events are attributed to (workflowToFrameJob below reads
+	// exactly those two keys to route watch events back to a FrameJob).
+	labels := map[string]any{}
+	for k, v := range job.Labels {
+		labels[k] = v
+	}
+	for k, v := range map[string]string{
 		"frame.plume-labs.io/job":           job.Name,
 		"frame.plume-labs.io/job-namespace": job.Namespace,
 		"frame.plume-labs.io/service-class": string(job.Spec.ServiceClass),
@@ -109,6 +122,8 @@ func (r *FrameJobReconciler) buildContainerObject(ctx context.Context, job *fram
 		// realtime from background once priority is (deliberately) left out
 		// of it below.
 		"frame.plume-labs.io/workload-type": string(job.Spec.Type),
+	} {
+		labels[k] = v
 	}
 
 	if job.Spec.Type == framev1beta1.WorkloadTypeBatch {
@@ -148,6 +163,13 @@ func buildBatchJob(job *framev1beta1.FrameJob, podSpec map[string]any, labels ma
 		"backoffLimit": int64(0),
 		"suspend":      job.Spec.Suspended,
 		"template": map[string]any{
+			// The pod template carries the same labels as the Job object
+			// itself (GAP 2) — a selector watching pods rather than the Job
+			// needs the correlation too, and there is no reason for the two
+			// to diverge.
+			"metadata": map[string]any{
+				"labels": labels,
+			},
 			"spec": podSpec,
 		},
 	}
@@ -221,6 +243,10 @@ func (r *FrameJobReconciler) buildVolcanoJob(ctx context.Context, job *framev1be
 				"name":     "main",
 				"replicas": int64(1),
 				"template": map[string]any{
+					// Same rationale as buildBatchJob's template.metadata.labels.
+					"metadata": map[string]any{
+						"labels": labels,
+					},
 					"spec": podSpec,
 				},
 			},

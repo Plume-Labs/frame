@@ -191,6 +191,28 @@ type ContainerSpec struct {
 	// Resources are the compute resource requirements for the container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// EnvFrom populates environment variables from a Secret or ConfigMap that
+	// already exists — corev1.EnvFromSource covers both secretRef and
+	// configMapRef, so this does not need two separate fields the way Frame
+	// would if it minted its own type. It exists alongside Env for the same
+	// reason Neura's other container workloads need it: object-store
+	// credentials and similar bulk config are handed to a workload as a
+	// whole Secret, not as individual Env entries a caller would have to
+	// enumerate by key.
+	//
+	// Blast radius: the Job this becomes runs in the FrameJob's own
+	// namespace (see the no-namespace-field rule on FrameJobSpec above), and
+	// neither corev1.SecretEnvSource nor corev1.ConfigMapEnvSource carries a
+	// namespace field either — Kubernetes itself only lets envFrom name a
+	// Secret or ConfigMap in the Pod's own namespace. So a FrameJob can only
+	// ever pull in a Secret that already lives beside it, which is exactly
+	// the reach any other Job a principal in that namespace could create
+	// directly already has. This field grants no new access; it only lets a
+	// caller use through Frame the same reach it already had.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
 }
 
 // FrameJobStatus defines the observed state of FrameJob.

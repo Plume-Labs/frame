@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -126,6 +127,56 @@ var _ = Describe("FrameJob Controller — container substrate", func() {
 		Expect(k8sJob.Labels["frame.plume-labs.io/workload-type"]).To(Equal("background"))
 	})
 
+	It("wires envFrom into the container and propagates the FrameJob's labels onto the batch/v1 Job and its pod template (GAP 1 + GAP 2)", func() {
+		name := "realtime-envfrom-labels"
+		defer deleteJob(name)
+		job := &framev1beta1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: ns,
+				// A caller-set label, and one deliberately colliding with a
+				// key Frame itself always sets — the collision is the point:
+				// Frame's own value must win, never the caller's.
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "neura",
+					"frame.plume-labs.io/job":      "caller-supplied-and-must-be-overwritten",
+				},
+			},
+			Spec: framev1beta1.FrameJobSpec{
+				Container: &framev1beta1.ContainerSpec{
+					Image: "ghcr.io/example/worker:latest",
+					EnvFrom: []corev1.EnvFromSource{
+						{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "objectstore-creds"}}},
+					},
+				},
+				Type: framev1beta1.WorkloadTypeRealtime,
+			},
+		}
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: ns}}
+		_, err := r().Reconcile(ctx, req) // finalizer
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r().Reconcile(ctx, req) // creates the Job
+		Expect(err).NotTo(HaveOccurred())
+
+		k8sJob := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, k8sJob)).To(Succeed())
+
+		container := k8sJob.Spec.Template.Spec.Containers[0]
+		Expect(container.EnvFrom).To(HaveLen(1))
+		Expect(container.EnvFrom[0].SecretRef.Name).To(Equal("objectstore-creds"),
+			"GAP 1: envFrom must reach the container the Job runs, or the credentials it names are silently dropped")
+
+		Expect(k8sJob.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "neura"),
+			"GAP 2: the FrameJob's own labels must land on the created Job so a label-selecting watcher can find it")
+		Expect(k8sJob.Labels).To(HaveKeyWithValue("frame.plume-labs.io/job", name),
+			"Frame's own label must win the collision, not the caller-supplied value")
+
+		Expect(k8sJob.Spec.Template.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "neura"),
+			"the pod template must carry the same labels as the Job object")
+		Expect(k8sJob.Spec.Template.Labels).To(HaveKeyWithValue("frame.plume-labs.io/job", name))
+	})
+
 	It("creates a Volcano Job with schedulerName=volcano for type=batch, and degrades with a condition when no SchedulingPolicy matches", func() {
 		name := "batch-job-no-policy"
 		defer deleteJob(name)
@@ -208,6 +259,70 @@ var _ = Describe("FrameJob Controller — container substrate", func() {
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		Expect(cond.Reason).To(Equal("Applied"))
+	})
+
+	It("wires envFrom into the container and propagates the FrameJob's labels onto the Volcano Job and its pod template (GAP 1 + GAP 2)", func() {
+		name := "batch-envfrom-labels"
+		defer deleteJob(name)
+		job := &framev1beta1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: ns,
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "neura",
+					"frame.plume-labs.io/job":      "caller-supplied-and-must-be-overwritten",
+				},
+			},
+			Spec: framev1beta1.FrameJobSpec{
+				Container: &framev1beta1.ContainerSpec{
+					Image: "ghcr.io/example/worker:latest",
+					EnvFrom: []corev1.EnvFromSource{
+						{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "job-config"}}},
+					},
+				},
+				Type: framev1beta1.WorkloadTypeBatch,
+			},
+		}
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: name, Namespace: ns}}
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		vj := &unstructured.Unstructured{}
+		vj.SetGroupVersionKind(volcanoJobGVK)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, vj)).To(Succeed())
+
+		tasks, found, err := unstructured.NestedSlice(vj.Object, "spec", "tasks")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(tasks).To(HaveLen(1))
+		task, ok := tasks[0].(map[string]any)
+		Expect(ok).To(BeTrue())
+
+		containers, found, err := unstructured.NestedSlice(task, "template", "spec", "containers")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(containers).To(HaveLen(1))
+		container, ok := containers[0].(map[string]any)
+		Expect(ok).To(BeTrue())
+
+		envFrom, found, err := unstructured.NestedSlice(container, "envFrom")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue(), "GAP 1: envFrom must reach the Volcano Job's container template")
+		Expect(envFrom).To(HaveLen(1))
+
+		Expect(vj.GetLabels()).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "neura"),
+			"GAP 2: the FrameJob's own labels must land on the created Volcano Job")
+		Expect(vj.GetLabels()).To(HaveKeyWithValue("frame.plume-labs.io/job", name),
+			"Frame's own label must win the collision, not the caller-supplied value")
+
+		templateLabels, found, err := unstructured.NestedStringMap(task, "template", "metadata", "labels")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(templateLabels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "neura"))
+		Expect(templateLabels).To(HaveKeyWithValue("frame.plume-labs.io/job", name))
 	})
 
 	It("holds creation and reports Suspended when spec.suspended is true before any object exists", func() {
