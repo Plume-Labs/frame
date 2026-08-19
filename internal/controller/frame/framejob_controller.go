@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -75,6 +76,28 @@ var argoWorkflowGVK = schema.GroupVersionKind{
 	Kind:    "Workflow",
 }
 
+// batchJobGVK and volcanoJobGVK are the two primitives a container-substrate
+// FrameJob can create (see containerObjectGVK in framejob_container.go).
+// batch/v1 is a built-in Kubernetes API and is always present; Volcano's is
+// a third-party CRD that may not be, matching how
+// schedulingpolicy_controller.go already treats it as optionally absent
+// (reconcileQueue's "Queue CRD may not be installed — degrade rather than
+// hard-fail"). That asymmetry is why only batchJobGVK is watched in
+// SetupWithManager below.
+var (
+	batchJobGVK   = schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "Job"}
+	volcanoJobGVK = schema.GroupVersionKind{Group: "batch.volcano.sh", Version: "v1alpha1", Kind: "Job"}
+)
+
+// conditionTypeSchedulingPolicy and conditionTypeSuspendApplied are
+// additive condition types alongside Ready — see the doc on
+// FrameJobStatus.Conditions for what each means and why neither repurposes
+// an existing field or reason.
+const (
+	conditionTypeSchedulingPolicy = "SchedulingPolicyResolved"
+	conditionTypeSuspendApplied   = "SuspendApplied"
+)
+
 // FrameJobReconciler reconciles a FrameJob object
 type FrameJobReconciler struct {
 	client.Client
@@ -85,7 +108,10 @@ type FrameJobReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framejobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framejobs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framejobs/finalizers,verbs=update
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=schedulingpolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=argoproj.io,resources=workflows,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch.volcano.sh,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -102,6 +128,19 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !controllerutil.ContainsFinalizer(&job, frameJobFinalizer) {
 		controllerutil.AddFinalizer(&job, frameJobFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &job)
+	}
+
+	// Stage 2 dispatch: pipeline and container are CEL-enforced mutually
+	// exclusive (stage 1's has(self.pipeline) != has(self.container) rule),
+	// so this is the same test that rule already relies on. The container
+	// path lives entirely in framejob_container.go as a sibling to the
+	// pipeline body below, not a refactor merging the two — the pipeline
+	// path is the only one in production use today, and the surest way to
+	// leave its behaviour unchanged while three more substrates are added is
+	// to not touch its code at all. See framejob_controller_test.go's
+	// existing pipeline-path coverage, which this change does not modify.
+	if job.Spec.Container != nil {
+		return r.reconcileContainer(ctx, &job)
 	}
 
 	// The Workflow lives beside its FrameJob. spec.namespace is gone (F5):
@@ -195,6 +234,11 @@ func (r *FrameJobReconciler) syncSuspend(ctx context.Context, wf *unstructured.U
 }
 
 func (r *FrameJobReconciler) reconcileDelete(ctx context.Context, job *framev1beta1.FrameJob) (ctrl.Result, error) {
+	// See the note on Reconcile's dispatch: pipeline and container are
+	// mutually exclusive, so the same test picks the right cleanup path.
+	if job.Spec.Container != nil {
+		return r.reconcileContainerDelete(ctx, job)
+	}
 	ns := job.Namespace
 	wf := &unstructured.Unstructured{}
 	wf.SetGroupVersionKind(argoWorkflowGVK)
@@ -277,7 +321,12 @@ func workflowMessage(wf *unstructured.Unstructured) string {
 	return msg
 }
 
-// workflowToFrameJob maps an Argo Workflow event back to the owning FrameJob.
+// workflowToFrameJob maps an event on a created object back to the owning
+// FrameJob, purely off the frame.plume-labs.io/job(-namespace) labels every
+// buildWorkflow/buildBatchJob output carries — nothing about it is
+// Workflow-specific, so SetupWithManager reuses it as the map func for the
+// batch/v1 Job watch too rather than duplicating an identical function under
+// a second name.
 func (r *FrameJobReconciler) workflowToFrameJob(_ context.Context, obj client.Object) []reconcile.Request {
 	labels := obj.GetLabels()
 	name := labels["frame.plume-labs.io/job"]
@@ -289,6 +338,18 @@ func (r *FrameJobReconciler) workflowToFrameJob(_ context.Context, obj client.Ob
 }
 
 // SetupWithManager sets up the controller with the Manager.
+//
+// Only batch/v1 Job is watched alongside the Argo Workflow, not Volcano's.
+// controller-runtime's cache starts an informer for every Watch()ed GVK at
+// manager start and blocks readiness on it syncing; batch/v1 is a built-in
+// API guaranteed to exist, but Volcano's CRD may not be installed at all on
+// a cluster that never runs a batch-type FrameJob (the same premise
+// schedulingpolicy_controller.go's reconcileQueue already acts on). A static
+// Watch on an absent CRD would make the whole operator's readiness — every
+// controller it runs, not just this one — depend on Volcano being present.
+// Volcano-backed FrameJobs still get their status refreshed; they just do it
+// through the same RequeueAfter: 30*time.Second poll every other in-flight
+// FrameJob already uses, rather than a push from an informer.
 func (r *FrameJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	wfType := &unstructured.Unstructured{}
 	wfType.SetGroupVersionKind(argoWorkflowGVK)
@@ -296,6 +357,7 @@ func (r *FrameJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&framev1beta1.FrameJob{}).
 		Watches(wfType, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob)).
+		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob)).
 		Named("framejob").
 		Complete(r)
 }

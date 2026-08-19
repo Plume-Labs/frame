@@ -83,12 +83,12 @@ type FrameJobSpec struct {
 
 	// Type is the substrate a container job runs on: realtime, batch, or
 	// background. See WorkloadType for the default and why. It is ignored
-	// for a pipeline job — Argo is that substrate regardless of type — and,
-	// as of stage 1, ignored for a container job too: the controller does
-	// not yet branch on it (stage 2 of the design in the doc referenced
-	// above). It is accepted and stored now so stage 2 has a stable field to
-	// read, rather than shipping the dispatch logic and the API surface it
-	// depends on in the same change.
+	// for a pipeline job — Argo is that substrate regardless of type. For a
+	// container job, the controller dispatches on it (stage 2 of the design
+	// in the doc referenced above): realtime and background both produce a
+	// batch/v1 Job on the default scheduler, batch produces a Volcano Job.
+	// See framejob_container.go's buildContainerObject for the dispatch and
+	// its reasoning.
 	// +optional
 	// +kubebuilder:default=background
 	Type WorkloadType `json:"type,omitempty"`
@@ -210,7 +210,17 @@ type FrameJobStatus struct {
 
 	// Conditions represent the current state of the FrameJob resource.
 	// Ready's reason is one of Submitted, Running, Suspended, Completed,
-	// Failed.
+	// Failed — contractual across every substrate stage 2 added (clients,
+	// including Neura, branch on it), not just the pipeline path it started
+	// on. Two more condition types appear here only for a container-substrate
+	// job: SchedulingPolicyResolved (batch type only — records whether the
+	// frame-<type>-named SchedulingPolicy that supplies the Volcano queue was
+	// found, so a fallback to the default queue is visible rather than
+	// silent) and SuspendApplied (batch type only — records that Volcano has
+	// no live pause primitive once a Job has started, so a suspend request
+	// against a running one is visible as unhonored rather than silently
+	// dropped). Neither repurposes Ready; both are additive condition types
+	// in the same list.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -218,8 +228,32 @@ type FrameJobStatus struct {
 
 	// ArgoWorkflowName is the name of the created Argo Workflow. It always
 	// lives in the FrameJob's own namespace.
+	//
+	// Empty for a container-substrate job — see ContainerJobName below. This
+	// field is not repurposed to also name a container job's primitive: it
+	// has always meant "the name of the created Argo Workflow" specifically,
+	// and the freeze forbids giving a stored field a new meaning even to
+	// widen what it can name (docs/upgrading.md). A container job gets its
+	// own, new, optional field instead.
 	// +optional
 	ArgoWorkflowName string `json:"argoWorkflowName,omitempty"`
+
+	// ContainerJobName is the name of the batch/v1 Job or Volcano Job
+	// (batch.volcano.sh/v1alpha1) a container-substrate FrameJob created —
+	// the container-path counterpart to ArgoWorkflowName above. Always equal
+	// to the FrameJob's own name and always in its own namespace, mirroring
+	// ArgoWorkflowName's own contract. Empty for a pipeline job.
+	// +optional
+	ContainerJobName string `json:"containerJobName,omitempty"`
+
+	// ContainerJobKind identifies which primitive ContainerJobName names, as
+	// "<Kind>.<Group>": "Job.batch" for realtime/background, or
+	// "Job.batch.volcano.sh" for batch. Kind alone is ambiguous — Kubernetes'
+	// batch/v1 Job and Volcano's batch.volcano.sh/v1alpha1 Job both use the
+	// Kind "Job" — so a client that only read Kind could not tell them apart
+	// without also inspecting spec.type. Empty for a pipeline job.
+	// +optional
+	ContainerJobKind string `json:"containerJobKind,omitempty"`
 
 	// StartTime is when the job started running.
 	// +optional

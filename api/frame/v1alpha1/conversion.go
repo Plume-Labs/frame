@@ -119,14 +119,31 @@ import (
 // write, for the same reason: no re-validation after conversion. That is a
 // client actively contradicting itself rather than an unchanged round trip,
 // and is out of scope for this fix.
+//
+// Stage 2 (the controller dispatch) adds status.containerJobName and
+// status.containerJobKind at v1beta1, the container-substrate counterpart to
+// status.argoWorkflowName — and hits the identical gap: two v1beta1-only
+// fields with nowhere to go at v1alpha1. Rather than invent a second
+// annotation for a status-shaped version of the exact same problem, they
+// ride in the same framejobContainerAnnotation payload; TestHubRoundTripIsLossless
+// caught the drop the same way it caught the stage 1 one, before any manual
+// reasoning about it was written down here.
 const framejobContainerAnnotation = "frame.plume-labs.io/framejob-container"
 
-// framejobContainerAnnotationPayload is deliberately minimal: only the two
-// fields v1alpha1 cannot represent. Everything else already has a real
+// framejobContainerAnnotationPayload started (stage 1) as the two spec
+// fields v1alpha1 cannot represent. Stage 2 adds two more, for the same
+// reason and through the same mechanism rather than a second annotation:
+// status.containerJobName/status.containerJobKind are new v1beta1-only
+// fields (the container-substrate counterpart to status.argoWorkflowName,
+// which v1alpha1 already has), so a naive drop would reproduce the exact
+// silent-loss scenario ConvertTo/ConvertFrom's doc above already fixed once
+// for spec.container/spec.type. Everything else already has a real
 // v1alpha1 field to round-trip through.
 type framejobContainerAnnotationPayload struct {
-	Type      string                    `json:"type,omitempty"`
-	Container *framejobContainerPayload `json:"container,omitempty"`
+	Type             string                    `json:"type,omitempty"`
+	Container        *framejobContainerPayload `json:"container,omitempty"`
+	ContainerJobName string                    `json:"containerJobName,omitempty"`
+	ContainerJobKind string                    `json:"containerJobKind,omitempty"`
 }
 
 // framejobContainerPayload mirrors v1beta1.ContainerSpec, except Command,
@@ -199,12 +216,15 @@ func fromFramejobContainerPayload(p *framejobContainerPayload) *v1beta1.Containe
 // map. Mutating it in place would corrupt src, the hub object the apiserver
 // is still holding — hence the copy before the write.
 func stashFrameJobContainer(dst *FrameJob, src *v1beta1.FrameJob) error {
-	if src.Spec.Container == nil && src.Spec.Type == "" {
+	if src.Spec.Container == nil && src.Spec.Type == "" &&
+		src.Status.ContainerJobName == "" && src.Status.ContainerJobKind == "" {
 		return nil
 	}
 	payload := framejobContainerAnnotationPayload{
-		Type:      string(src.Spec.Type),
-		Container: toFramejobContainerPayload(src.Spec.Container),
+		Type:             string(src.Spec.Type),
+		Container:        toFramejobContainerPayload(src.Spec.Container),
+		ContainerJobName: src.Status.ContainerJobName,
+		ContainerJobKind: src.Status.ContainerJobKind,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -237,6 +257,8 @@ func restoreFrameJobContainer(dst *v1beta1.FrameJob, src *FrameJob) error {
 	}
 	dst.Spec.Type = v1beta1.WorkloadType(payload.Type)
 	dst.Spec.Container = fromFramejobContainerPayload(payload.Container)
+	dst.Status.ContainerJobName = payload.ContainerJobName
+	dst.Status.ContainerJobKind = payload.ContainerJobKind
 
 	if len(dst.Annotations) == 0 {
 		return nil
