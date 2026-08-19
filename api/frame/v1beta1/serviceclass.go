@@ -52,3 +52,37 @@ const (
 //
 // +kubebuilder:validation:MaxLength=1024
 type ParameterValue string
+
+// WorkloadType is the substrate a FrameJob runs on, independent of
+// ServiceClass (resource tier) and Priority (urgency) — see
+// docs/superpowers/specs/2026-08-19-frame-typed-job-submission-design.md
+// section 3.1 in the Neura repo, the design this field materialises. Before
+// this field existed, "substrate" was implicit in which controller a caller
+// happened to talk to: Argo for a pipeline, or straight past Frame to
+// Volcano/the Kubernetes Job API for anything else, because Frame offered no
+// typed way to ask for a container workload. That gap, not a stability
+// concern, is why the type is new rather than always having been here.
+//
+// The default is `background`, not `realtime`. An unspecified job is the
+// common case — the bulk of what Frame runs is fire-and-forget batch/back-
+// ground work, not something a user is actively waiting on — and defaulting
+// to `realtime` would hand every caller that never set the field a
+// scheduling priority and preemption exemption it never asked for. Getting
+// this wrong in the other direction (a real realtime job silently landing in
+// the background queue) is a caller bug that shows up immediately, as
+// latency; getting it wrong the way `background` avoids would silently
+// consume priority scheduling capacity meant for jobs that actually need it.
+//
+// Stage 1 (this field) only extends the schema. The controller does not yet
+// branch on it — that is stage 2 of the design above — so today `type` is
+// accepted and stored but every FrameJob still runs the same way regardless
+// of its value.
+//
+// +kubebuilder:validation:Enum=realtime;batch;background
+type WorkloadType string
+
+const (
+	WorkloadTypeRealtime   WorkloadType = "realtime"
+	WorkloadTypeBatch      WorkloadType = "batch"
+	WorkloadTypeBackground WorkloadType = "background"
+)

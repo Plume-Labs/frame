@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -41,6 +42,17 @@ import (
 // through a mechanism that records what it wrote and refuses to touch
 // anything it did not create — see internal/services/binding.go, whose
 // spec.binding.projectTo does pass that test.
+//
+// pipeline and container are mutually exclusive substrates, enforced below.
+// Before this rule, pipeline was the only substrate a FrameJob could name,
+// so every existing object satisfies "exactly one of the two is set" simply
+// by having pipeline and never having heard of container — the rule widens
+// what the API accepts, it narrows nothing a stored object already relies
+// on. See docs/superpowers/specs/2026-08-19-frame-typed-job-submission-design.md
+// (Neura repo) section 3.2 for why container exists at all: Frame had no
+// typed way to accept a container workload, so callers reached past it to
+// Volcano and the Kubernetes Job API directly.
+// +kubebuilder:validation:XValidation:rule="has(self.pipeline) != has(self.container)",message="exactly one of pipeline or container must be set"
 type FrameJobSpec struct {
 	// Pipeline names the Argo WorkflowTemplate to run.
 	//
@@ -49,10 +61,37 @@ type FrameJobSpec struct {
 	// enum would make Frame's API the gatekeeper for a namespace of objects
 	// someone else creates. The validating webhook warns — and only warns —
 	// when the value is outside the list Frame knows about.
-	// +kubebuilder:validation:Required
+	//
+	// Required -> optional (loosened, not tightened, so every stored object
+	// stays valid): a FrameJob now names exactly one of pipeline or
+	// container, and this is the one Frame has always supported. Argo
+	// remains the substrate for every pipeline job regardless of the new
+	// `type` field — `type` only steers container jobs, see the note there.
+	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
-	Pipeline string `json:"pipeline"`
+	Pipeline string `json:"pipeline,omitempty"`
+
+	// Container runs a plain container workload instead of an Argo pipeline
+	// — the other half of the mutual-exclusion rule above. This is new
+	// surface, not a relaxation of anything that shipped before the freeze,
+	// so it is free to be as strict as it needs to be (F required, bounded
+	// command/args/env) without touching the freeze's no-tightening rule,
+	// which only binds fields that already existed at v1beta1.
+	// +optional
+	Container *ContainerSpec `json:"container,omitempty"`
+
+	// Type is the substrate a container job runs on: realtime, batch, or
+	// background. See WorkloadType for the default and why. It is ignored
+	// for a pipeline job — Argo is that substrate regardless of type — and,
+	// as of stage 1, ignored for a container job too: the controller does
+	// not yet branch on it (stage 2 of the design in the doc referenced
+	// above). It is accepted and stored now so stage 2 has a stable field to
+	// read, rather than shipping the dispatch logic and the API surface it
+	// depends on in the same change.
+	// +optional
+	// +kubebuilder:default=background
+	Type WorkloadType `json:"type,omitempty"`
 
 	// ServiceClass is the resource tier this job's workloads run at.
 	//
@@ -103,6 +142,55 @@ type FrameJobSpec struct {
 	// +optional
 	// +kubebuilder:default=false
 	Suspended bool `json:"suspended,omitempty"`
+}
+
+// ContainerSpec is the container substrate for a FrameJob, the alternative
+// to naming an Argo pipeline. It is deliberately narrow — image, command,
+// args, env, resources — rather than an embedded corev1.PodSpec: a FrameJob
+// is not a pod template, and the fields it does not expose (volumes,
+// affinity, tolerations, service account) are ones stage 2's controller
+// decides for every container job alike, not ones a caller should be able to
+// override on a case-by-case basis. Widening this later is possible under
+// the freeze (new optional fields); narrowing it is not, which is the reason
+// to start narrow.
+//
+// Command, args and env follow the same bounded-envelope shape Parameters
+// uses (T3: a ceiling exists to turn a mistake into a validation error, not
+// to describe a real workload) — 64 entries is generous for any of the
+// three, and MaxLength on each string is the same reasoning ParameterValue
+// documents: unconstrained string length inside a bounded list is still an
+// unbounded object. Env is a corev1.EnvVar slice rather than a local type
+// because Frame does not own the semantics of an environment variable the
+// way it owns a parameter map; the ceiling is on the list, not on
+// corev1.EnvVar's own fields, which Frame has no marker access to.
+type ContainerSpec struct {
+	// Image is the container image to run. Required: unlike Pipeline, there
+	// is no sensible default for "which image" the way there is for
+	// serviceClass or priority.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MaxLength=512
+	Image string `json:"image"`
+
+	// Command overrides the image's entrypoint.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
+	Command []string `json:"command,omitempty"`
+
+	// Args overrides the image's default command arguments.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
+	Args []string `json:"args,omitempty"`
+
+	// Env sets environment variables in the container.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Resources are the compute resource requirements for the container.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
 // FrameJobStatus defines the observed state of FrameJob.

@@ -61,6 +61,23 @@ import (
 // real conversion mistake behind a cmp option.
 
 // --- FrameJob ---------------------------------------------------------------
+//
+// spec.type and spec.container (added at v1beta1 for the typed-job-
+// submission design, stage 1) have no v1alpha1 equivalent. That breaks rule
+// 1 above for FrameJob specifically: for the first time, v1beta1 has a field
+// v1alpha1 lacks. ConvertFrom has nothing to copy them into, so they are
+// silently absent from the spoke; ConvertTo then has nothing to read them
+// back from, so a v1beta1 object with type or container set does not survive
+// a v1beta1 -> v1alpha1 -> v1beta1 trip. Concretely: a v1alpha1 client that
+// reads a container-typed FrameJob and writes it back (a full PUT, not a
+// patch) erases both fields from the stored object. This is accepted for
+// stage 1 rather than solved with an annotation escape hatch, for the same
+// reason ConvertTo does not stash spec.namespace: a v1alpha1 client silently
+// carrying a value that no longer does anything would be worse than one that
+// visibly loses it. It is pinned by
+// TestFrameJobTypeAndContainerAreLostAtV1alpha1 in conversion_test.go so a
+// future change to this behaviour is a deliberate decision, not a silent
+// regression either way.
 
 func (src *FrameJob) ConvertTo(dstRaw conversion.Hub) error {
 	dst, ok := dstRaw.(*v1beta1.FrameJob)

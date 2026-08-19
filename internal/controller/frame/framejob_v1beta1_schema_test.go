@@ -119,7 +119,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		Expect(byType["Ready"].Reason).To(Equal("Completed"))
 	})
 
-	It("defaults serviceClass, priority, gpuCount and suspended from the schema", func() {
+	It("defaults serviceClass, priority, gpuCount, suspended and type from the schema", func() {
 		// v1alpha1 defaulted serviceClass in the mutating webhook. The webhook
 		// is not running in this suite, so a LOW here can only have come from
 		// the CRD.
@@ -136,6 +136,59 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		Expect(back.Spec.Priority).To(Equal("medium"))
 		Expect(back.Spec.GPUCount).To(BeNumerically("==", 0))
 		Expect(back.Spec.Suspended).To(BeFalse())
+		// background, not realtime: an unspecified job must not silently gain
+		// a scheduling priority and preemption exemption it never asked for.
+		// See the comment on WorkloadType.
+		Expect(back.Spec.Type).To(Equal(framev1beta1.WorkloadTypeBackground))
+	})
+
+	It("still validates and defaults a pipeline-only spec exactly as before container and type existed", func() {
+		// The invariant stage 1 must not break: a FrameJob shaped like every
+		// one that predates `container` and `type` — pipeline set, nothing
+		// else — is admitted unchanged and defaults the same way. This is
+		// liveShapedJob with nothing added, the same fixture the rest of this
+		// file builds every other case on top of.
+		job := liveShapedJob("pipeline-only-unchanged")
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, job) })
+
+		back := &framev1beta1.FrameJob{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pipeline-only-unchanged", Namespace: "default"}, back)).To(Succeed())
+		Expect(back.Spec.Pipeline).To(Equal("neura-inference-dag"))
+		Expect(back.Spec.Container).To(BeNil())
+		Expect(back.Spec.Type).To(Equal(framev1beta1.WorkloadTypeBackground))
+	})
+
+	It("accepts a container-only spec in place of a pipeline", func() {
+		job := &framev1beta1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{Name: "container-only", Namespace: "default"},
+			Spec: framev1beta1.FrameJobSpec{
+				Container: &framev1beta1.ContainerSpec{Image: "ghcr.io/example/worker:latest"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, job) })
+
+		back := &framev1beta1.FrameJob{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "container-only", Namespace: "default"}, back)).To(Succeed())
+		Expect(back.Spec.Pipeline).To(BeEmpty())
+		Expect(back.Spec.Container).NotTo(BeNil())
+		Expect(back.Spec.Container.Image).To(Equal("ghcr.io/example/worker:latest"))
+		Expect(back.Spec.Type).To(Equal(framev1beta1.WorkloadTypeBackground))
+	})
+
+	It("rejects a spec naming both pipeline and container", func() {
+		// The mutual-exclusion rule's other half: liveShapedJob already
+		// carries a valid pipeline, so adding a container is the only change
+		// and it alone must be enough to reject the object.
+		job := liveShapedJob("reject-both-substrates")
+		job.Spec.Container = &framev1beta1.ContainerSpec{Image: "ghcr.io/example/worker:latest"}
+		err := k8sClient.Create(ctx, job)
+		if err == nil {
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, job) })
+		}
+		Expect(err).To(HaveOccurred(), "the apiserver accepted a FrameJob naming both pipeline and container")
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected a validation error, got: %v", err)
 	})
 
 	DescribeTable("rejects a spec the freeze bounds forbid",
@@ -157,7 +210,14 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 			func(s *framev1beta1.FrameJobSpec) { s.GPUCount = -1 }),
 		Entry("a pipeline that is not DNS-1123-shaped (T7)", "reject-pipeline-case",
 			func(s *framev1beta1.FrameJobSpec) { s.Pipeline = "Neura-Training-DAG" }),
-		Entry("an empty pipeline, which the pattern forbids", "reject-pipeline-empty",
+		// Before stage 1, this was a Pattern rejection: pipeline had no
+		// omitempty, so a Go client's "" was sent on the wire and the
+		// pattern (which requires at least one character) refused it. Now
+		// pipeline is optional with omitempty, so "" here is indistinguishable
+		// on the wire from an absent field — and with no container either,
+		// it is the mutual-exclusion CEL rule that rejects it: neither
+		// substrate is named.
+		Entry("an empty pipeline with no container, which the mutual-exclusion rule forbids", "reject-pipeline-empty",
 			func(s *framev1beta1.FrameJobSpec) { s.Pipeline = "" }),
 		Entry("a pipeline longer than 253 characters (T7)", "reject-pipeline-length",
 			func(s *framev1beta1.FrameJobSpec) { s.Pipeline = strings.Repeat("a", 254) }),
