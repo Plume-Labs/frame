@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
@@ -105,14 +106,18 @@ func newFiller() *randfill.Filler {
 // served v1alpha1 endpoint unchanged. It is lossless by construction —
 // v1beta1 has no field v1alpha1 lacks, because observedGeneration and
 // FrameResourceQuota's used/namespaces were added to v1alpha1 before the
-// freeze specifically so this would hold — and this test is what keeps that
-// true as fields are added.
+// freeze specifically so this would hold, and because FrameJob's
+// spec.type/spec.container — added after the freeze, the one exception — are
+// round-tripped through framejobContainerAnnotation instead — and this test
+// is what keeps that true as fields are added.
 //
 // This one direction is enough to catch a field dropped by *either* function:
 // anything ConvertFrom fails to carry down, or ConvertTo fails to carry back
 // up, is missing from the result. That includes FrameUser's bijection, where
 // the hub's status.passwordHash only survives if ConvertFrom parks it in
-// spec.passwordHash and ConvertTo reads it back out of there.
+// spec.passwordHash and ConvertTo reads it back out of there — and FrameJob's
+// annotation hatch, where spec.container only survives if ConvertFrom stashes
+// it and ConvertTo reads it back out and strips the annotation again.
 //
 // The reverse direction is deliberately not fuzzed. Everything it could lose
 // is v1alpha1-only, and there are exactly three such fields — status.phase,
@@ -120,25 +125,61 @@ func newFiller() *randfill.Filler {
 // which are *supposed* to change. A fuzz over that direction would need all
 // three excluded and would then be asserting nothing. They are pinned by name
 // in the two tests below instead.
-// normalize, when given, is applied to the fuzzed original before it is
-// converted down. FrameJob is the one caller that needs it: spec.type and
-// spec.container have no v1alpha1 counterpart (see the comment on
-// conversion.go's FrameJob section), so a fuzzed value in either is lost on
-// the way down and cannot come back on the way up. Zeroing them here keeps
-// this test asserting what it says it asserts — losslessness of every field
-// that *is* shared — instead of failing on the two fields everyone already
-// knows are not. TestFrameJobTypeAndContainerAreLostAtV1alpha1 below is what
-// pins the loss itself, so it cannot regress silently by someone quietly
-// widening what this helper ignores.
-func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name string, newHub func() H, newSpoke func() S, normalize ...func(H)) {
+//
+// normalizeResourceRequirements is the one deliberate exception to "exactly
+// lossless": corev1.ResourceRequirements is k8s.io/api's own type, and its
+// Limits/Requests/Claims carry *its* omitempty tags, outside this package's
+// reach the way ContainerSpec's own Command/Args/Env are not (see
+// framejobContainerPayload's comment in conversion.go for the mechanism that
+// preserves those). A cmp.Transformer, not cmpopts.EquateEmpty(): it is
+// scoped to this one type, so it cannot also blind this test to a real
+// nil-vs-empty regression showing up anywhere else in the fuzzed corpus —
+// spec.parameters and status.conditions stay held to the exact standard.
+var normalizeResourceRequirements = cmp.Transformer("normalizeResourceRequirements",
+	func(r corev1.ResourceRequirements) corev1.ResourceRequirements {
+		if len(r.Limits) == 0 {
+			r.Limits = nil
+		}
+		if len(r.Requests) == 0 {
+			r.Requests = nil
+		}
+		if len(r.Claims) == 0 {
+			r.Claims = nil
+		}
+		return r
+	})
+
+// equateEmptyStringMaps treats a nil and an empty-but-present
+// map[string]string as equal. It exists for exactly one reason:
+// stashFrameJobContainer/restoreFrameJobContainer add and then remove a key
+// from FrameJob's own ObjectMeta.Annotations, and when that key was the
+// *only* one present, removing it again cannot tell "there were no
+// annotations" (nil) apart from "there was an empty annotations map"
+// (map[string]string{}) — both looked identical the moment the stash key
+// was the sole entry, and by the time restoreFrameJobContainer runs, which
+// one it started as is already gone. Real k8s clients and the apiserver's
+// own wire encoding already treat the two as interchangeable everywhere
+// (ObjectMeta.Annotations carries `omitempty`); this only needed calling
+// out here because, unlike every other field in this file, annotations is
+// mutated in place rather than passed through untouched. Scoped to
+// map[string]string specifically — Labels shares the type but is never
+// touched by this package, so the transformer is a no-op there — rather
+// than cmpopts.EquateEmpty(), for the same reason normalizeResourceRequirements
+// is scoped rather than blanket: this test's job is catching every *other*
+// nil-vs-empty regression, not hiding them.
+var equateEmptyStringMaps = cmp.Transformer("equateEmptyStringMaps", func(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+})
+
+func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name string, newHub func() H, newSpoke func() S) {
 	t.Helper()
 	f := newFiller()
 	for i := range fuzzIterations {
 		original := newHub()
 		f.Fill(original)
-		for _, n := range normalize {
-			n(original)
-		}
 
 		spoke := newSpoke()
 		if err := spoke.ConvertFrom(original); err != nil {
@@ -149,7 +190,7 @@ func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name
 			t.Fatalf("%s [%d]: ConvertTo: %v", name, i, err)
 		}
 
-		if diff := cmp.Diff(original, roundTripped); diff != "" {
+		if diff := cmp.Diff(original, roundTripped, normalizeResourceRequirements, equateEmptyStringMaps); diff != "" {
 			t.Fatalf("%s [%d]: v1beta1 -> v1alpha1 -> v1beta1 lost data (-want +got):\n%s", name, i, diff)
 		}
 	}
@@ -158,11 +199,7 @@ func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name
 func TestHubRoundTripIsLossless(t *testing.T) {
 	hubRoundTrip(t, "FrameJob",
 		func() *v1beta1.FrameJob { return &v1beta1.FrameJob{} },
-		func() *FrameJob { return &FrameJob{} },
-		func(h *v1beta1.FrameJob) {
-			h.Spec.Type = ""
-			h.Spec.Container = nil
-		})
+		func() *FrameJob { return &FrameJob{} })
 	hubRoundTrip(t, "FrameNode",
 		func() *v1beta1.FrameNode { return &v1beta1.FrameNode{} },
 		func() *FrameNode { return &FrameNode{} })
@@ -379,7 +416,18 @@ func TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields(t *testing.T) {
 // spoke direction the other test covers. Pinned here by name, the same way,
 // so a future change that starts silently preserving them (or drops
 // something else alongside) fails in this test rather than in production.
-func TestFrameJobTypeAndContainerAreLostAtV1alpha1(t *testing.T) {
+// spec.type and spec.container are v1beta1-only: added for the typed-job-
+// submission design (stage 1), with no v1alpha1 field to carry them. A first
+// version of this fix stopped at documenting that a v1alpha1 round trip
+// erases them; internal/controller/frame/conversion_envtest_test.go's
+// envtest spec proved that erasure is silent — the apiserver *accepts* the
+// resulting object even though it now violates FrameJobSpec's own CEL
+// invariant, because conversion-webhook output is never re-validated. That
+// made documenting the gap insufficient; framejobContainerAnnotation closes
+// it. This test is the Go-level proof the annotation does its job: unlike
+// the three fields TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields
+// pins as *supposed* to change, container and type are supposed to survive.
+func TestFrameJobContainerAndTypeSurviveAV1alpha1RoundTrip(t *testing.T) {
 	hub := &v1beta1.FrameJob{}
 	hub.Spec.Container = &v1beta1.ContainerSpec{Image: "ghcr.io/example/worker:latest"}
 	hub.Spec.Type = v1beta1.WorkloadTypeRealtime
@@ -391,17 +439,44 @@ func TestFrameJobTypeAndContainerAreLostAtV1alpha1(t *testing.T) {
 	if err := spoke.ConvertFrom(hub); err != nil {
 		t.Fatalf("ConvertFrom: %v", err)
 	}
+	// v1alpha1's FrameJobSpec has no field for either — the annotation is the
+	// only place they can be, on the object a v1alpha1 client actually sees.
+	if got := spoke.Annotations[framejobContainerAnnotation]; got == "" {
+		t.Fatalf("annotation %q is empty; spec.container/spec.type were not stashed", framejobContainerAnnotation)
+	}
 
 	roundTripped := &v1beta1.FrameJob{}
 	if err := spoke.ConvertTo(roundTripped); err != nil {
 		t.Fatalf("ConvertTo: %v", err)
 	}
 
-	if roundTripped.Spec.Type != "" {
-		t.Fatalf("spec.type = %q, want empty — v1alpha1 has nowhere to carry it", roundTripped.Spec.Type)
+	if roundTripped.Spec.Type != v1beta1.WorkloadTypeRealtime {
+		t.Fatalf("spec.type = %q, want %q", roundTripped.Spec.Type, v1beta1.WorkloadTypeRealtime)
 	}
-	if roundTripped.Spec.Container != nil {
-		t.Fatalf("spec.container = %+v, want nil — v1alpha1 has nowhere to carry it", roundTripped.Spec.Container)
+	if diff := cmp.Diff(hub.Spec.Container, roundTripped.Spec.Container); diff != "" {
+		t.Fatalf("spec.container changed on the round trip (-want +got):\n%s", diff)
+	}
+	if _, present := roundTripped.Annotations[framejobContainerAnnotation]; present {
+		t.Fatalf("annotation %q leaked into the v1beta1 object; it must be stripped before storage",
+			framejobContainerAnnotation)
+	}
+}
+
+// The common case — a pipeline-only job, every FrameJob that predates this
+// field — must not carry the annotation at all. Its absence is itself part
+// of the contract: an annotation on every job forever would be silent
+// metadata noise on objects that never touched spec.container or a non-
+// default spec.type.
+func TestFrameJobPipelineOnlyGetsNoContainerAnnotation(t *testing.T) {
+	hub := &v1beta1.FrameJob{}
+	hub.Spec.Pipeline = "neura-training-dag"
+
+	spoke := &FrameJob{}
+	if err := spoke.ConvertFrom(hub); err != nil {
+		t.Fatalf("ConvertFrom: %v", err)
+	}
+	if _, present := spoke.Annotations[framejobContainerAnnotation]; present {
+		t.Fatalf("annotation %q present on a pipeline-only job; want absent", framejobContainerAnnotation)
 	}
 }
 

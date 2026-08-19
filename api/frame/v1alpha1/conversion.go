@@ -17,8 +17,10 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"encoding/json"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 
 	v1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
@@ -29,14 +31,21 @@ import (
 // Two rules govern every function here.
 //
 //  1. ConvertFrom must reproduce a v1alpha1 object faithfully enough that a
-//     v1beta1 -> v1alpha1 -> v1beta1 round trip is *exactly* lossless. That is
-//     achievable without any annotation escape hatch because v1beta1 has no
-//     field v1alpha1 lacks: status.observedGeneration and
-//     FrameResourceQuota's status.used/status.namespaces were all added to
-//     v1alpha1 before the freeze, deliberately, so this direction would be
-//     empty. FrameUser is the one kind where the difference runs both ways,
-//     and there it is a rename (spec.passwordHash <-> status.passwordHash)
-//     rather than an addition, so it is a bijection and still needs no hatch.
+//     v1beta1 -> v1alpha1 -> v1beta1 round trip is *exactly* lossless. For
+//     every kind but one, that is achievable without any annotation escape
+//     hatch, because v1beta1 has no field v1alpha1 lacks: status.observed-
+//     Generation and FrameResourceQuota's status.used/status.namespaces were
+//     all added to v1alpha1 before the freeze, deliberately, so this
+//     direction would be empty. FrameUser is the one kind where the
+//     difference runs both ways, and there it is a rename
+//     (spec.passwordHash <-> status.passwordHash) rather than an addition,
+//     so it is a bijection and still needs no hatch. FrameJob is the
+//     exception: spec.type and spec.container were added at v1beta1 after
+//     the freeze (the typed-job-submission design), so this direction is not
+//     empty there, and the hatch this rule otherwise avoids is exactly what
+//     keeps FrameJob's round trip lossless too — see the note on FrameJob's
+//     ConvertTo/ConvertFrom below for why a naive drop was unacceptable here
+//     specifically.
 //
 //  2. ConvertTo may normalise, and does so in exactly two places —
 //     FrameJob.spec.namespace and TalosSecretReference.namespace. Both name a
@@ -63,21 +72,187 @@ import (
 // --- FrameJob ---------------------------------------------------------------
 //
 // spec.type and spec.container (added at v1beta1 for the typed-job-
-// submission design, stage 1) have no v1alpha1 equivalent. That breaks rule
+// submission design, stage 1) have no v1alpha1 equivalent, which breaks rule
 // 1 above for FrameJob specifically: for the first time, v1beta1 has a field
-// v1alpha1 lacks. ConvertFrom has nothing to copy them into, so they are
-// silently absent from the spoke; ConvertTo then has nothing to read them
-// back from, so a v1beta1 object with type or container set does not survive
-// a v1beta1 -> v1alpha1 -> v1beta1 trip. Concretely: a v1alpha1 client that
-// reads a container-typed FrameJob and writes it back (a full PUT, not a
-// patch) erases both fields from the stored object. This is accepted for
-// stage 1 rather than solved with an annotation escape hatch, for the same
-// reason ConvertTo does not stash spec.namespace: a v1alpha1 client silently
-// carrying a value that no longer does anything would be worse than one that
-// visibly loses it. It is pinned by
-// TestFrameJobTypeAndContainerAreLostAtV1alpha1 in conversion_test.go so a
-// future change to this behaviour is a deliberate decision, not a silent
-// regression either way.
+// v1alpha1 lacks.
+//
+// The first version of this comment assumed the CEL rule on FrameJobSpec
+// ("exactly one of pipeline or container") would turn a naive drop into a
+// rejection: converting a container-typed job down to v1alpha1 and back up
+// unchanged leaves *neither* field set, which the rule forbids. Proven wrong
+// by internal/controller/frame/conversion_envtest_test.go, "a full v1alpha1
+// PUT round trip of a container-typed FrameJob": the write is **accepted**.
+// The apiserver validates a write against the *request* version's schema —
+// v1alpha1 has no container field, so there is nothing for the CEL rule to
+// see — and stores whatever the conversion webhook returns **without
+// re-validating it against the storage version's schema**. That asymmetry is
+// exactly the one docs/upgrading.md already documents for a v1alpha1 status
+// patch on SchedulingPolicy evaluating a CEL rule against an absent
+// spec.preemption key; this is its FrameJob-shaped twin, hit through a full
+// spec PUT rather than a status patch. Concretely, unmitigated: a v1alpha1
+// client that reads a container-typed FrameJob and writes it back verbatim
+// silently erases spec.container, and spec.type resets to whatever the
+// schema defaults it to (verified: "background", regardless of what it was) —
+// producing a *stored* v1beta1 object that violates its own CEL invariant,
+// with no error surfaced anywhere.
+//
+// That is real, silent data loss on a still-served version, not a rejection
+// an old client can expect and handle, so it is closed here rather than
+// merely documented: framejobContainerAnnotation stashes spec.container and
+// a non-empty spec.type on the way down (ConvertFrom) and restores them on
+// the way up (ConvertTo), removing the annotation so it never reaches
+// storage. This is the standard multi-version-CRD escape hatch, and it is a
+// different situation from the one rule 2 below declines to use it for:
+// spec.namespace and TalosSecretReference.namespace are v1alpha1 fields a
+// client can still see and be misled by if their now-inert value were
+// preserved untouched; spec.container and spec.type have no v1alpha1 field
+// to be misled by at all; the annotation is visibly out-of-band extra data,
+// not a normal-looking field quietly lying. It restores rule 1 in full for
+// FrameJob: with the annotation round-tripping, a v1beta1 -> v1alpha1 ->
+// v1beta1 trip is exactly lossless again, proven by
+// TestHubRoundTripIsLossless with no exception needed for this kind.
+//
+// This does not close every gap. A client that both sets spec.pipeline at
+// v1alpha1 *and* carries a leftover container-stash annotation (from an
+// earlier GET of a different, container-typed object, copied onto a new
+// manifest by hand) reconstructs a spec violating the same CEL invariant on
+// write, for the same reason: no re-validation after conversion. That is a
+// client actively contradicting itself rather than an unchanged round trip,
+// and is out of scope for this fix.
+const framejobContainerAnnotation = "frame.plume-labs.io/framejob-container"
+
+// framejobContainerAnnotationPayload is deliberately minimal: only the two
+// fields v1alpha1 cannot represent. Everything else already has a real
+// v1alpha1 field to round-trip through.
+type framejobContainerAnnotationPayload struct {
+	Type      string                    `json:"type,omitempty"`
+	Container *framejobContainerPayload `json:"container,omitempty"`
+}
+
+// framejobContainerPayload mirrors v1beta1.ContainerSpec, except Command,
+// Args and Env are wrapped behind a pointer to their slice type.
+// encoding/json's omitempty on a pointer field checks the *pointer's*
+// nilness, not the pointee's emptiness, so an empty-but-present slice
+// (`[]string{}`) and an absent one (nil) come out as two different things on
+// the far side of the round trip — which json.Marshal(v1beta1.ContainerSpec)
+// directly cannot do, because ContainerSpec's own `omitempty` tags (needed
+// so a typed Go client's zero values stay off the real API's wire, same
+// reason Pipeline has one) collapse both to absent. Resources is the one
+// field left as a plain value: corev1.ResourceRequirements carries its own
+// omitempty tags on Limits/Requests/Claims from k8s.io/api, outside this
+// package's reach, so nil-vs-empty for *those* three does not survive this
+// annotation. That is judged acceptable rather than worth a second shadow
+// type: unlike spec.container's presence (which this whole mechanism exists
+// to protect), "no resource limits set" and "resource limits set to an
+// explicitly empty map" have never been two different things a FrameJob
+// caller could mean.
+type framejobContainerPayload struct {
+	Image     string                      `json:"image"`
+	Command   *[]string                   `json:"command,omitempty"`
+	Args      *[]string                   `json:"args,omitempty"`
+	Env       *[]corev1.EnvVar            `json:"env,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+func toFramejobContainerPayload(c *v1beta1.ContainerSpec) *framejobContainerPayload {
+	if c == nil {
+		return nil
+	}
+	p := &framejobContainerPayload{Image: c.Image, Resources: c.Resources}
+	if c.Command != nil {
+		p.Command = &c.Command
+	}
+	if c.Args != nil {
+		p.Args = &c.Args
+	}
+	if c.Env != nil {
+		p.Env = &c.Env
+	}
+	return p
+}
+
+func fromFramejobContainerPayload(p *framejobContainerPayload) *v1beta1.ContainerSpec {
+	if p == nil {
+		return nil
+	}
+	c := &v1beta1.ContainerSpec{Image: p.Image, Resources: p.Resources}
+	if p.Command != nil {
+		c.Command = *p.Command
+	}
+	if p.Args != nil {
+		c.Args = *p.Args
+	}
+	if p.Env != nil {
+		c.Env = *p.Env
+	}
+	return c
+}
+
+// stashFrameJobContainer preserves src's spec.container and spec.type into
+// an annotation on dst, since v1alpha1's FrameJobSpec has no field for
+// either. Only writes the annotation when there is something to preserve —
+// no annotation appears on a pipeline-only job's v1alpha1 read, which is
+// every FrameJob that existed before this field did.
+//
+// dst.ObjectMeta was just set to src.ObjectMeta by assignment, which is a
+// shallow copy: dst.Annotations and src.Annotations are still the *same*
+// map. Mutating it in place would corrupt src, the hub object the apiserver
+// is still holding — hence the copy before the write.
+func stashFrameJobContainer(dst *FrameJob, src *v1beta1.FrameJob) error {
+	if src.Spec.Container == nil && src.Spec.Type == "" {
+		return nil
+	}
+	payload := framejobContainerAnnotationPayload{
+		Type:      string(src.Spec.Type),
+		Container: toFramejobContainerPayload(src.Spec.Container),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("stashing spec.container/spec.type for v1alpha1: %w", err)
+	}
+	annotations := make(map[string]string, len(dst.Annotations)+1)
+	for k, v := range dst.Annotations {
+		annotations[k] = v
+	}
+	annotations[framejobContainerAnnotation] = string(raw)
+	dst.Annotations = annotations
+	return nil
+}
+
+// restoreFrameJobContainer is stashFrameJobContainer's inverse: it reads the
+// annotation off src (a v1alpha1 object, possibly with no annotation at all
+// — every pipeline-only job) and fills dst's spec.container/spec.type from
+// it, then strips the annotation from dst so it never reaches v1beta1
+// storage. The same shallow-copy-aliasing note applies: dst.Annotations was
+// just aliased to src.Annotations by the ObjectMeta assignment above, so the
+// strip clones rather than deletes in place.
+func restoreFrameJobContainer(dst *v1beta1.FrameJob, src *FrameJob) error {
+	raw, ok := src.Annotations[framejobContainerAnnotation]
+	if !ok {
+		return nil
+	}
+	var payload framejobContainerAnnotationPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return fmt.Errorf("restoring spec.container/spec.type from v1alpha1: %w", err)
+	}
+	dst.Spec.Type = v1beta1.WorkloadType(payload.Type)
+	dst.Spec.Container = fromFramejobContainerPayload(payload.Container)
+
+	if len(dst.Annotations) == 0 {
+		return nil
+	}
+	annotations := make(map[string]string, len(dst.Annotations))
+	for k, v := range dst.Annotations {
+		if k != framejobContainerAnnotation {
+			annotations[k] = v
+		}
+	}
+	if len(annotations) == 0 {
+		annotations = nil
+	}
+	dst.Annotations = annotations
+	return nil
+}
 
 func (src *FrameJob) ConvertTo(dstRaw conversion.Hub) error {
 	dst, ok := dstRaw.(*v1beta1.FrameJob)
@@ -97,6 +272,10 @@ func (src *FrameJob) ConvertTo(dstRaw conversion.Hub) error {
 	// FrameJob now (F5). Every stored FrameJob set it to its own namespace,
 	// so this is a no-op on everything that exists.
 
+	if err := restoreFrameJobContainer(dst, src); err != nil {
+		return err
+	}
+
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.Conditions = src.Status.Conditions
 	dst.Status.ArgoWorkflowName = src.Status.ArgoWorkflowName
@@ -115,6 +294,10 @@ func (dst *FrameJob) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	dst.ObjectMeta = src.ObjectMeta
+
+	if err := stashFrameJobContainer(dst, src); err != nil {
+		return err
+	}
 
 	dst.Spec.Pipeline = src.Spec.Pipeline
 	dst.Spec.ServiceClass = string(src.Spec.ServiceClass)
