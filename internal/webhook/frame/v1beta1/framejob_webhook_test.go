@@ -108,6 +108,26 @@ func TestValidateFrameJobAdmitsGPUsAtLowServiceClass(t *testing.T) {
 	}
 }
 
+func TestValidateFrameJobNoWarningForContainerJob(t *testing.T) {
+	// Regression guard for the bug frame-stage1-report.md flagged: pipeline
+	// is "" (omitempty) on every container-only job, and before this guard
+	// that unconditionally warned "pipeline \"\" not in known list [...]" on
+	// every create/update of every container job.
+	image := "ghcr.io/example/worker:latest"
+	job := &framev1beta1.FrameJob{
+		Spec: framev1beta1.FrameJobSpec{
+			Container: &framev1beta1.ContainerSpec{Image: image},
+		},
+	}
+	warnings, err := validateFrameJob(job)
+	if err != nil {
+		t.Fatalf("expected a container job to be admitted, got error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for a container job (pipeline is absent, not unknown), got %v", warnings)
+	}
+}
+
 func TestValidateFrameJobWarnsOnUnknownPipeline(t *testing.T) {
 	job := &framev1beta1.FrameJob{
 		Spec: framev1beta1.FrameJobSpec{Pipeline: "training", ServiceClass: "LOW", GPUCount: 2},

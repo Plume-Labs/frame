@@ -86,7 +86,19 @@ func (v *FrameJobCustomValidator) ValidateDelete(_ context.Context, _ *framev1be
 // Pascal P4). It was also only ever reachable for the three pipelines in
 // knownPipelines, so it constrained nothing anyone had hit. Scheduling
 // priority is SchedulingPolicy's and the frame-* PriorityClasses' job.
+//
+// Guarded on job.Spec.Pipeline != "" since stage 1 (typed job submission):
+// pipeline and container are now mutually exclusive (CEL-enforced), so a
+// container-only job has pipeline == "" and, before this guard, hit this
+// same unknown-pipeline warning on every single create/update — a spurious
+// admission warning on 100% of container jobs from day one of that field
+// being usable. That trains callers to ignore this webhook's warnings
+// altogether, including the pipeline jobs where the warning is real and
+// meant to be read. See frame-stage1-report.md concern #2.
 func validateFrameJob(job *framev1beta1.FrameJob) (admission.Warnings, error) {
+	if job.Spec.Pipeline == "" {
+		return nil, nil
+	}
 	if !knownPipelines[job.Spec.Pipeline] {
 		known := make([]string, 0, len(knownPipelines))
 		for k := range knownPipelines {
