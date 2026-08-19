@@ -150,4 +150,67 @@ var _ = Describe("Conversion", func() {
 		Expect(k8sClient.Create(ctx, beta)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, beta) })
 	})
+
+	It("survives a full v1alpha1 GET-then-PUT round trip of a container-typed FrameJob", func() {
+		// This is the load-bearing case the typed-job-submission design's
+		// stage 1 almost got wrong. A first version reasoned that the
+		// FrameJobSpec CEL rule ("exactly one of pipeline or container")
+		// would turn a naive v1alpha1 round trip into a rejection: v1alpha1
+		// has no container field, so ConvertFrom drops it, and writing that
+		// object back unchanged would leave *neither* pipeline nor container
+		// set. That reasoning was wrong, and only running this against a
+		// real apiserver caught it: the apiserver validates a write against
+		// the *request* version's schema (v1alpha1, which has no container
+		// field for the CEL rule to see), and stores whatever the
+		// conversion webhook returns for the storage version **without
+		// re-validating it** — the same asymmetry docs/upgrading.md already
+		// documents for a v1alpha1 status patch on SchedulingPolicy
+		// evaluating a CEL rule against an absent spec.preemption key.
+		// Confirmed here rather than assumed: the write below succeeds.
+		//
+		// Because that write is accepted, not rejected, an old client
+		// reading a container-typed FrameJob and writing it back verbatim —
+		// exactly what `kubectl edit`, or any controller doing a
+		// read-modify-write on an unrelated field, does — is real,
+		// unannounced data loss on a still-served version unless something
+		// closes it. framejobContainerAnnotation (api/frame/v1alpha1/
+		// conversion.go) is that something: this spec proves it holds.
+		beta := &framev1beta1.FrameJob{
+			ObjectMeta: metav1.ObjectMeta{Name: "conv-job-container-roundtrip", Namespace: "default"},
+			Spec: framev1beta1.FrameJobSpec{
+				Container: &framev1beta1.ContainerSpec{
+					Image:   "ghcr.io/example/worker:latest",
+					Command: []string{"/bin/worker"},
+				},
+				Type: framev1beta1.WorkloadTypeRealtime,
+			},
+		}
+		Expect(k8sClient.Create(ctx, beta)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, beta) })
+
+		key := types.NamespacedName{Name: "conv-job-container-roundtrip", Namespace: "default"}
+
+		By("reading it at v1alpha1, which has no field for container or type")
+		alpha := &framev1alpha1.FrameJob{}
+		Expect(k8sClient.Get(ctx, key, alpha)).To(Succeed())
+		Expect(alpha.Spec.Pipeline).To(BeEmpty(),
+			"a container-typed job has no pipeline; v1alpha1 must not invent one")
+
+		By("writing that v1alpha1 object back completely unchanged")
+		Expect(k8sClient.Update(ctx, alpha)).To(Succeed(),
+			"an unchanged v1alpha1 PUT of a container-typed job must not be rejected")
+
+		By("reading it back at v1beta1: container and type must have survived")
+		after := &framev1beta1.FrameJob{}
+		Expect(k8sClient.Get(ctx, key, after)).To(Succeed())
+		Expect(after.Spec.Pipeline).To(BeEmpty())
+		Expect(after.Spec.Type).To(Equal(framev1beta1.WorkloadTypeRealtime),
+			"a non-default type must not silently reset to the schema default")
+		Expect(after.Spec.Container).NotTo(BeNil())
+		Expect(after.Spec.Container.Image).To(Equal("ghcr.io/example/worker:latest"))
+		Expect(after.Spec.Container.Command).To(Equal([]string{"/bin/worker"}))
+
+		By("the stash annotation must not leak into permanent v1beta1 storage")
+		Expect(after.Annotations).NotTo(HaveKey("frame.plume-labs.io/framejob-container"))
+	})
 })
