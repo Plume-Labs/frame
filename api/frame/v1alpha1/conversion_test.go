@@ -120,12 +120,25 @@ func newFiller() *randfill.Filler {
 // which are *supposed* to change. A fuzz over that direction would need all
 // three excluded and would then be asserting nothing. They are pinned by name
 // in the two tests below instead.
-func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name string, newHub func() H, newSpoke func() S) {
+// normalize, when given, is applied to the fuzzed original before it is
+// converted down. FrameJob is the one caller that needs it: spec.type and
+// spec.container have no v1alpha1 counterpart (see the comment on
+// conversion.go's FrameJob section), so a fuzzed value in either is lost on
+// the way down and cannot come back on the way up. Zeroing them here keeps
+// this test asserting what it says it asserts — losslessness of every field
+// that *is* shared — instead of failing on the two fields everyone already
+// knows are not. TestFrameJobTypeAndContainerAreLostAtV1alpha1 below is what
+// pins the loss itself, so it cannot regress silently by someone quietly
+// widening what this helper ignores.
+func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name string, newHub func() H, newSpoke func() S, normalize ...func(H)) {
 	t.Helper()
 	f := newFiller()
 	for i := range fuzzIterations {
 		original := newHub()
 		f.Fill(original)
+		for _, n := range normalize {
+			n(original)
+		}
 
 		spoke := newSpoke()
 		if err := spoke.ConvertFrom(original); err != nil {
@@ -145,7 +158,11 @@ func hubRoundTrip[H conversion.Hub, S conversion.Convertible](t *testing.T, name
 func TestHubRoundTripIsLossless(t *testing.T) {
 	hubRoundTrip(t, "FrameJob",
 		func() *v1beta1.FrameJob { return &v1beta1.FrameJob{} },
-		func() *FrameJob { return &FrameJob{} })
+		func() *FrameJob { return &FrameJob{} },
+		func(h *v1beta1.FrameJob) {
+			h.Spec.Type = ""
+			h.Spec.Container = nil
+		})
 	hubRoundTrip(t, "FrameNode",
 		func() *v1beta1.FrameNode { return &v1beta1.FrameNode{} },
 		func() *FrameNode { return &FrameNode{} })
@@ -353,6 +370,39 @@ func TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields(t *testing.T) {
 			t.Fatalf("spec.passwordHash = %q, want it back", back.Spec.PasswordHash)
 		}
 	})
+}
+
+// spec.type and spec.container are v1beta1-only: added for the typed-job-
+// submission design (stage 1), with no v1alpha1 field to carry them. Unlike
+// the two namespace fields above, this loss runs the other way — it is the
+// *hub* direction (v1beta1 -> v1alpha1 -> v1beta1) that is lossy, not the
+// spoke direction the other test covers. Pinned here by name, the same way,
+// so a future change that starts silently preserving them (or drops
+// something else alongside) fails in this test rather than in production.
+func TestFrameJobTypeAndContainerAreLostAtV1alpha1(t *testing.T) {
+	hub := &v1beta1.FrameJob{}
+	hub.Spec.Container = &v1beta1.ContainerSpec{Image: "ghcr.io/example/worker:latest"}
+	hub.Spec.Type = v1beta1.WorkloadTypeRealtime
+	// pipeline is left unset deliberately: a real object satisfies the
+	// mutual-exclusion CEL rule, even though this Go-level test never goes
+	// through the apiserver and so never evaluates it.
+
+	spoke := &FrameJob{}
+	if err := spoke.ConvertFrom(hub); err != nil {
+		t.Fatalf("ConvertFrom: %v", err)
+	}
+
+	roundTripped := &v1beta1.FrameJob{}
+	if err := spoke.ConvertTo(roundTripped); err != nil {
+		t.Fatalf("ConvertTo: %v", err)
+	}
+
+	if roundTripped.Spec.Type != "" {
+		t.Fatalf("spec.type = %q, want empty — v1alpha1 has nowhere to carry it", roundTripped.Spec.Type)
+	}
+	if roundTripped.Spec.Container != nil {
+		t.Fatalf("spec.container = %+v, want nil — v1alpha1 has nowhere to carry it", roundTripped.Spec.Container)
+	}
 }
 
 func TestLegacyPhaseIsProjectedNotStored(t *testing.T) {
