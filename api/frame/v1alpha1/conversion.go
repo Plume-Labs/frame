@@ -164,10 +164,24 @@ type framejobContainerAnnotationPayload struct {
 // explicitly empty map" have never been two different things a FrameJob
 // caller could mean.
 type framejobContainerPayload struct {
-	Image     string                      `json:"image"`
-	Command   *[]string                   `json:"command,omitempty"`
-	Args      *[]string                   `json:"args,omitempty"`
-	Env       *[]corev1.EnvVar            `json:"env,omitempty"`
+	Image   string           `json:"image"`
+	Command *[]string        `json:"command,omitempty"`
+	Args    *[]string        `json:"args,omitempty"`
+	Env     *[]corev1.EnvVar `json:"env,omitempty"`
+	// EnvFrom needs the same pointer-to-slice treatment as Command/Args/Env
+	// and for the identical reason: ContainerSpec.EnvFrom is a brand new
+	// v1beta1-only field (GAP 1 of the typed-job-submission follow-up), and
+	// this whole payload type exists precisely because embedding
+	// v1beta1.ContainerSpec directly, or copying it field-by-field without
+	// this wrapper, loses the nil-vs-empty distinction the same way Command
+	// and friends already do. It is not covered "for free" by this struct
+	// existing — each field has to be listed here explicitly, which is the
+	// mistake this project has already shipped twice on this branch: adding
+	// a field to ContainerSpec without extending this payload passes `go
+	// build` and even most tests, and only TestHubRoundTripIsLossless
+	// (api/frame/v1alpha1/conversion_test.go), which fuzzes the whole
+	// v1beta1.FrameJob including this field, catches the silent drop.
+	EnvFrom   *[]corev1.EnvFromSource     `json:"envFrom,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
@@ -185,6 +199,9 @@ func toFramejobContainerPayload(c *v1beta1.ContainerSpec) *framejobContainerPayl
 	if c.Env != nil {
 		p.Env = &c.Env
 	}
+	if c.EnvFrom != nil {
+		p.EnvFrom = &c.EnvFrom
+	}
 	return p
 }
 
@@ -201,6 +218,9 @@ func fromFramejobContainerPayload(p *framejobContainerPayload) *v1beta1.Containe
 	}
 	if p.Env != nil {
 		c.Env = *p.Env
+	}
+	if p.EnvFrom != nil {
+		c.EnvFrom = *p.EnvFrom
 	}
 	return c
 }
