@@ -85,6 +85,19 @@ rules:
   - update
   - watch
 - apiGroups:
+  - batch
+  - batch.volcano.sh
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - ceph.rook.io
   resources:
   - cephblockpools
