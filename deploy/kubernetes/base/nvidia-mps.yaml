@@ -28,6 +28,9 @@ spec:
         app: nvidia-mps
     spec:
       priorityClassName: system-node-critical
+      # Required for nvidia-container-toolkit to act on NVIDIA_VISIBLE_DEVICES
+      # below; the node's default runtime does not inject driver binaries.
+      runtimeClassName: nvidia
       nodeSelector:
         nvidia.com/gpu.present: "true"
       tolerations:
@@ -39,7 +42,7 @@ spec:
       initContainers:
         # Start the MPS control daemon
         - name: mps-init
-          image: nvidia/cuda:12.4-base-ubuntu22.04
+          image: nvidia/cuda:12.4.1-base-ubuntu22.04
           command: [sh, -c]
           args:
             - |
@@ -51,6 +54,14 @@ spec:
               nvidia-cuda-mps-control -d
               echo "MPS daemon started"
           env:
+            # Make nvidia-container-toolkit inject the host driver binaries
+            # (nvidia-cuda-mps-control lives there, not in the cuda base image).
+            # Env rather than a nvidia.com/gpu limit: a resource request would
+            # claim the node's only GPU slot and starve the inference pod.
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
             - name: CUDA_MPS_PIPE_DIRECTORY
               value: /tmp/nvidia-mps
             - name: CUDA_MPS_LOG_DIRECTORY
@@ -79,7 +90,7 @@ spec:
       containers:
         # Sidecar that keeps MPS alive and exposes a /healthz endpoint
         - name: mps-monitor
-          image: nvidia/cuda:12.4-base-ubuntu22.04
+          image: nvidia/cuda:12.4.1-base-ubuntu22.04
           command: [sh, -c]
           args:
             - |
@@ -92,8 +103,17 @@ spec:
                 sleep 30
               done
           env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
             - name: CUDA_MPS_PIPE_DIRECTORY
               value: /tmp/nvidia-mps
+            # The init container's daemon dies with its cgroup, so the one that
+            # actually survives is the one this sidecar restarts — the SM cap
+            # has to be in *this* env or the daemon comes back at 100%.
+            - name: CUDA_MPS_ACTIVE_THREAD_PERCENTAGE
+              value: "25"
           securityContext:
             privileged: true
           volumeMounts:
