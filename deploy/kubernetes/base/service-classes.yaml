@@ -15,6 +15,29 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
+        # Traefik, et pas seulement ingress-nginx.
+        #
+        # Ce depot amorce les deux : `bootstrap-prereqs.sh` installe
+        # ingress-nginx, tandis que `traefik-timeouts-up.sh` regle le Traefik
+        # que k3s deploie tout seul dans kube-system. Un cluster k3s n'a donc
+        # pas de namespace `ingress-nginx` du tout.
+        #
+        # Cette politique est un `podSelector: {}` — elle refuse par defaut
+        # TOUT le namespace. Avec la seule entree ci-dessus, appliquer
+        # `neura-bootstrap.sh` etape 2 sur un k3s rendrait l'inference
+        # injoignable depuis l'exterieur : la liste d'autorisation ne
+        # designerait aucun pod existant. Verifie sur le cluster de test le
+        # 2026-09-05 — Traefik y tourne dans kube-system, `ingress-nginx`
+        # n'existe pas.
+        #
+        # Le podSelector limite l'ouverture a Traefik : kube-system entier
+        # serait une porte bien plus large que ce que cette regle demande.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
