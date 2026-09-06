@@ -16,14 +16,16 @@
 # Config — all optional env vars:
 #   INFER_ENGINE      llamacpp | vllm                 (default: llamacpp)
 #   INFER_MODEL       model reference                 (default: per engine, below)
-#   INFER_CTX         context length                  (default: 4096)
-#   INFER_CACHE_SIZE  node-local weight cache limit   (default: 22Gi)
+#   INFER_CTX         context length                  (default: 65536)
+#   INFER_PARALLEL    llama.cpp slots, sharing -c     (default: 1)
+#   INFER_THREADS     CPU threads for expert tensors  (default: 6)
+#   INFER_CACHE_SIZE  node-local weight cache limit   (default: 30Gi)
 #   LLAMACPP_NGL      layers to put on the GPU        (default: 99 = all)
 #   LLAMACPP_OFFLOAD  tensor-offload args             (default: -ot exps=CPU)
 #   VLLM_IMAGE        vLLM image                      (default: vllm/vllm-openai:latest)
 #   VLLM_EXTRA_ARGS   extra vLLM flags                (default: --gpu-memory-utilization 0.9)
 #
-# e.g.  INFER_MODEL=unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M ./inference-up.sh
+# e.g.  INFER_MODEL=unsloth/Qwen-AgentWorld-35B-A3B-GGUF:UD-Q4_K_M ./inference-up.sh
 #       INFER_ENGINE=vllm INFER_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507 ./inference-up.sh
 set -euo pipefail
 
@@ -32,12 +34,26 @@ ENGINE="${INFER_ENGINE:-llamacpp}"
 # 4096 starved every agent: llama.cpp splits -c across its slots, so four
 # concurrent agents got ~1k tokens each and lost the thread of their own work
 # mid-run — malformed output and re-dispatch loops that looked like a bad model.
-CTX="${INFER_CTX:-32768}"
-# Slots share -c. One lane for interactive chat, one for background missions:
-# with a single slot a mission monopolised the model and chat requests timed
-# out; with four, nobody had enough context to finish anything.
-PARALLEL="${INFER_PARALLEL:-2}"
-CACHE_SIZE="${INFER_CACHE_SIZE:-22Gi}"
+#
+# 65536 is affordable on AgentWorld where 32768 was not on Qwen3-30B-A3B, and
+# the reason is the attention layout, not the GPU. The 30B is full attention on
+# all 48 layers (4 KV heads x 128 dim) = ~96 KiB of KV cache per token. AgentWorld
+# interleaves 3 linear-attention layers per full one, so only 10 of its 40 layers
+# hold a growing cache (2 KV heads x 256 dim) = ~20 KiB per token. 65536 tokens
+# therefore cost ~1.3 GiB of VRAM here, less than the 30B spent on 16384.
+CTX="${INFER_CTX:-65536}"
+# Slots share -c, and the P4 serves ~1.4 tok/s: two lanes halve the context
+# without buying real concurrency, since a single request already saturates the
+# GPU. One slot with the full budget. The cost is that a long mission blocks
+# interactive chat for its duration — raise to 2 if that becomes the complaint.
+PARALLEL="${INFER_PARALLEL:-1}"
+# The container is capped at 6 CPUs, but llama.cpp sizes its thread pool from
+# the node's 10 cores unless told otherwise, and then thrashes against its own
+# cgroup quota. Keep this equal to the CPU limit below.
+THREADS="${INFER_THREADS:-6}"
+# 30Gi, matching the PVC already bound on w2: a PersistentVolumeClaim cannot be
+# shrunk, so any smaller value here makes the apply fail rather than resize.
+CACHE_SIZE="${INFER_CACHE_SIZE:-30Gi}"
 
 say() { echo -e "\n\033[1;35m==>\033[0m $*"; }
 
@@ -46,30 +62,37 @@ args_yaml() { for a in "$@"; do printf '            - "%s"\n' "$a"; done; }
 
 case "$ENGINE" in
   llamacpp)
-    # Qwen3-30B-A3B: MoE with only 3B active params. -ngl 99 puts the attention /
+    # AgentWorld-35B-A3B: MoE, 256 experts but only 8 per token, so 3B active
+    # params — the same active budget the 30B had. -ngl 99 puts the attention /
     # non-expert weights on the GPU and LLAMACPP_OFFLOAD pushes the expert tensors
     # to CPU RAM, which is what lets an ~18.5GB Q4_K_M serve from a 7.68GB P4.
     # --jinja enables the model's own chat template — Qwen3 tool calls need it,
     # and tool calling is what the delegating agents depend on.
     #
-    # Offload default is `-ncmoe 34`: keep the experts of the first 34 of 48
-    # layers on the CPU, leaving 14 layers' experts on the GPU. Measured on the
-    # P4 against the previous `-ot exps=CPU` (which offloaded *every* expert and
-    # left ~6GB of VRAM idle): VRAM 1539MiB -> 6493MiB, and a delegation call
-    # 55s -> 36s cold / 23s warm, with prefill 30s -> 2.3s warm.
-    # Raise N if a larger model or context overflows VRAM.
+    # Offload keeps the experts of the first N layers on the CPU and leaves the
+    # rest on the GPU. Measured on the P4 against the previous `-ot exps=CPU`
+    # (which offloaded *every* expert and left ~6GB of VRAM idle): VRAM 1539MiB
+    # -> 6493MiB, and a delegation call 55s -> 36s cold / 23s warm, with prefill
+    # 30s -> 2.3s warm. Raise N if a larger model or context overflows VRAM.
     # Do NOT add `--load-mode none`: it segfaults (exit 139) loading this model.
-    MODEL="${INFER_MODEL:-unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_M}"
+    #
+    # The quant tag is UD-Q4_K_M, not Q4_K_M: unsloth publishes no bare Q4_K_M
+    # file for this repo. This name is also the EPP's routing key, so it must
+    # stay byte-identical to Neura's AI_MODEL_NAME.
+    MODEL="${INFER_MODEL:-unsloth/Qwen-AgentWorld-35B-A3B-GGUF:UD-Q4_K_M}"
     NGL="${LLAMACPP_NGL:-99}"
-    # 42, not 34: measured on the P4 with -c 32768, whose larger KV cache needs
-    # the VRAM that 8 more layers of experts would have taken.
-    OFFLOAD="${LLAMACPP_OFFLOAD:--ncmoe 42}"
+    # 36 of AgentWorld's 40 layers. The previous default was 42, sized for the
+    # 30B's 48 layers — left as-is it silently clamps to "all", which forfeits
+    # the VRAM that AgentWorld's much smaller KV cache frees up. Lower it if
+    # nvidia-smi shows headroom after load.
+    OFFLOAD="${LLAMACPP_OFFLOAD:--ncmoe 36}"
     IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
     CACHE_ENV="LLAMA_CACHE"
     # $OFFLOAD is intentionally unquoted: it must word-split into separate args.
     # shellcheck disable=SC2086
     ARGS=$(args_yaml -hf "$MODEL" --host 0.0.0.0 --port 8080 \
-      -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX" --parallel "$PARALLEL")
+      -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX" \
+      --threads "$THREADS" --parallel "$PARALLEL")
     ;;
   vllm)
     MODEL="${INFER_MODEL:-Qwen/Qwen3-30B-A3B-Instruct-2507}"
