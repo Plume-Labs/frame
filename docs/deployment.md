@@ -343,6 +343,25 @@ load-bearing — not a preference, a dependency chain. Do them in this order:
    out for everyone with no `FrameUser` to sign in as. The old `kubectl
    proxy`-style access is still live at this point precisely so a failed or
    retried bootstrap call has a working fallback.
+
+   **The very next thing to do, inside the same window, is enrol a
+   passkey.** This is not optional housekeeping — it is what decides
+   whether this rollout succeeds or strands the operator. The account
+   bootstrap creates has `passwordAuth: disabled` and no credential of any
+   kind (`internal/authd/server_bootstrap.go`); the only thing the caller
+   walks away with is a session cookie, good for 12 hours (`SessionTTL`,
+   default in `internal/authd/server.go`) — not the 15-minute `TOKEN_TTL`
+   set in `deploy/kubernetes/authd/deployment.yaml`, which is the *bearer*
+   token the UI silently re-mints from that still-valid cookie
+   (`currentSession()` in `src/lib/auth.ts`). A passkey is the only
+   credential this account can ever acquire, and it can only be enrolled
+   from inside that 12-hour session — in the UI, via the "Passkeys" entry
+   in the sidebar footer (`src/components/PasskeysDialog.tsx`, driving
+   `POST /auth/register/begin` + `/finish`). Let the cookie lapse with none
+   enrolled and there is no way back through the UI or through authd at
+   all: recovery means hand-editing the `FrameUser`'s `status` or deleting
+   the `ValidatingWebhookConfiguration` that guards the last admin, and
+   both of those need the node's own kubeconfig anyway.
 2. **Apply the tier bindings** (`rbac-tier-bindings.yaml`): the
    `ClusterRoleBinding`s that give `frame:admins` / `frame:operators` /
    `frame:viewers` their aggregated `ClusterRole`s. This has to land before
@@ -387,16 +406,30 @@ uses a placeholder (`base/ingress.yaml` and both overlays use
 `REPLACE_HOSTNAME` / `REPLACE_YOUR_DOMAIN`), so this is the one exception,
 and it is unconfirmed. `RP_ID` is what WebAuthn binds a credential to: a
 browser will only complete a passkey ceremony when the page's origin matches
-`RP_ORIGIN` and its domain matches or is a suffix of `RP_ID`. Rolling out
-with the wrong value does not fail loudly — password sign-in (the only login
-path the UI currently offers; see below) keeps working — it silently breaks
-every passkey enrolled against it, since passkeys are bound to the domain,
-not to the account. **Confirm the console's real hostname against this
-value before step 4**, and correct it in the deployment if it does not
-match. Passkey login is not wired into the UI yet regardless — the login
-screen offers password only, so nothing user-visible breaks *today* on a
-wrong value — but a wrong `RP_ID` now means re-enrolling every credential
-later rather than a one-line fix once WebAuthn login lands.
+`RP_ORIGIN` and its domain matches or is a suffix of `RP_ID`. This matters
+more than a stray placeholder normally would, because passkeys are wired
+into the UI now (`src/components/LoginView.tsx`'s "Sign in with a passkey",
+`src/components/PasskeysDialog.tsx`'s enrolment dialog) and step 1 above
+depends on one: the bootstrapped admin's *only* credential is a passkey
+enrolled in the 12-hour window after bootstrap, and that enrolment ceremony
+is exactly where a wrong `RP_ID` bites. It does not fail loudly, and it
+does not fail invisibly-later either — it fails at the one moment that
+matters, stranding the first admin before they have any other way in,
+since password sign-in isn't a fallback for this specific account
+(`passwordAuth: disabled`).
+
+**This changes what "step 4" can mean in practice.** `authd` is already
+running when step 1 executes (it has been since Stage 1), so the `RP_ID` /
+`RP_ORIGIN` that actually govern the bootstrap admin's enrolment ceremony
+are whatever is *already deployed* on that running pod at that moment — not
+whatever step 4 will eventually set. **Confirm the currently-running value
+is already correct before starting step 1**, against the console's real
+hostname, and correct it now if the two differ. Step 4 remains the place to
+*apply* a corrected value if that hadn't already been done — but by the
+time this rollout reaches step 4, it is too late for it to help the account
+created in step 1: a passkey enrolled against a wrong `RP_ID` does not
+become valid retroactively when `RP_ID` is fixed later, because a passkey
+is bound to the domain it was created for, not to the account.
 
 ### Running the storage-version migration
 
