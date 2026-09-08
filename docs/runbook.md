@@ -413,7 +413,7 @@ kubectl -n cluster-control get pods -w
 
 # The quiet failure mode: pods stay Ready but the sidecar cannot reach the
 # apiserver, so the UI loads and every panel is empty.
-kubectl -n cluster-control logs -l component=ui -c kube-proxy-api --tail=20
+kubectl -n cluster-control logs -l component=ui -c uiproxy --tail=20
 curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.2.201:30379/
 curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.2.201:30379/api/v1/nodes
 ```

@@ -44,7 +44,7 @@ you as part of the install.
 kubectl apply -k config/default
 ```
 
-This applies the `frame-system` namespace, all nine CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
+This applies the `frame-system` namespace, all ten CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
 It does **not** install the node-tuning agent — that is a DaemonSet with node prerequisites, and it has its own step below.
 
@@ -229,25 +229,59 @@ benefit.
 
 ### The viewer / editor / admin tiers
 
-Twenty-four `ClusterRole`s, three per kind, across both API groups
-(`frame.plume-labs.io` and `services.plume-labs.io`) — eight kinds, not nine:
-**`NodeTuning` has no tier roles.** It postdates the freeze, and access to it
-is currently whatever a cluster-admin holds. Anyone able to write a
-`NodeTuning` and annotate a node can cause a rolling restart of the cluster's
-kubelets; scope that accordingly until the tiers exist. They are **not bound to
-anything** — no `RoleBinding` or `ClusterRoleBinding` in `config/`, `charts/`
-or `deploy/` references any of them, and the UI authenticates with a single
-ServiceAccount token, so the tiers are not currently enforced against any
-human. V1 delivers correct, frozen, tested tiers; enforcing them per user
-needs authd Stages 2 and 3, which are post-V1. Installing or upgrading the
-chart therefore grants nobody anything new; the tiers are manifests an
-administrator binds.
+Twenty-seven `ClusterRole`s, three per kind, across both API groups
+(`frame.plume-labs.io` and `services.plume-labs.io`) — nine kinds of ten.
+`FrameTask` postdates the freeze the same as `NodeTuning`, but got the usual
+three (`config/rbac/frametask_*.yaml`, wired into `config/rbac/kustomization.yaml`)
+so a `FrameTask` — the record of who did what — is readable and manageable
+through the same viewer/editor/admin split as everything else, rather than
+only by whoever holds the ServiceAccount that writes it. **`NodeTuning`
+remains the sole exception, with no tier roles at all.** It postdates the
+freeze, and access to it is currently whatever a cluster-admin holds. Anyone
+able to write a `NodeTuning` and annotate a node can cause a rolling restart
+of the cluster's kubelets; scope that accordingly until the tiers exist.
+Each of the twenty-seven carries a `rbac.frame.plume-labs.io/tier: viewer|editor|admin`
+label, and three aggregated `ClusterRole`s — `frame-viewer`, `frame-editor`,
+`frame-admin` — pick them up, each selecting its own tier and every tier
+below it (`deploy/kubernetes/base/rbac-tier-bindings.yaml`). Those three are
+bound to three groups, `frame:viewers` / `frame:operators` / `frame:admins`
+— never to a person directly.
 
-Bind one like this:
+**This is now enforced per person, which is the thing this lot exists to
+close.** The `cluster-control-ui` ServiceAccount no longer authenticates the
+UI's requests itself: the `frame-uiproxy` sidecar (`deploy/kubernetes/base/deployment.yaml`)
+validates the bearer token authd issued, strips whatever `Impersonate-*`
+headers the browser sent, and re-issues the request impersonating the
+FrameUser's own email plus one group derived from `FrameUser.spec.role` —
+`admin` → `frame:admins`, `operator` → `frame:operators`, `viewer` →
+`frame:viewers` (note the mismatch: FrameUser roles are admin/operator/
+viewer, RBAC tiers are admin/editor/viewer, and `operator` maps to the
+*editor* tier — there is no "operator" tier and no "editor" role). The
+apiserver evaluates that impersonated identity's own RBAC, not the
+ServiceAccount's. Installing or upgrading the chart still grants nobody
+anything by itself — a `FrameUser` has to exist and carry a role before its
+holder can do anything through the console — but from here the binding that
+matters is the one between that role and the impersonated group, not a token
+shared by every browser.
+
+**No RBAC binding may ever name an individual user.** The ServiceAccount
+behind `frame-uiproxy` holds `impersonate` on `users` with **no
+`resourceNames` restriction** — email addresses are not an enumerable set,
+so there is no fixed list to bind it to — and only its `impersonate` on
+`groups` is bounded, to exactly `frame:admins`, `frame:operators`,
+`frame:viewers` (`deploy/kubernetes/base/rbac.yaml`,
+`cluster-control-impersonator`). That split means the group restriction is
+the *only* thing standing between a caller and whatever a bound
+`ClusterRole` grants: a binding that names a `User` subject directly, the
+way `kubectl create clusterrolebinding alice-frame-editor
+--clusterrole=frame-framejob-editor-role --user=alice@example.com` used to
+be shown here, would be reachable by anyone the proxy can be made to
+impersonate as that literal string, with no `resourceNames` guard anywhere
+in the path to stop it. Bind tiers to the three groups, never to a user:
 
 ```bash
-kubectl create clusterrolebinding alice-frame-editor \
-  --clusterrole=frame-framejob-editor-role --user=alice@example.com
+kubectl create clusterrolebinding frame-operators-extra \
+  --clusterrole=frame-framejob-editor-role --group=frame:operators
 ```
 
 (`rbac.tierRoles.install=false` on the chart if you manage them yourself.)
@@ -261,7 +295,7 @@ list, watch`.
 
 **`frameusers/status` is admin-only.** It carries an argon2id password hash.
 `frameuser-editor-role` and `frameuser-viewer-role` carry **no `/status` rule
-at all** — the only two tier roles of the twenty-four that do not — and
+at all** — the only two tier roles of the twenty-seven that do not — and
 `frameuser-admin-role` is the only admin tier with `patch`/`update` on a
 `/status`, because setting or resetting a password is now only reachable
 through the subresource.
@@ -291,6 +325,78 @@ Do not bind `frameuser-viewer-role` to anyone you would not hand the hashes
 to. Moving the hash into a `Secret` is the only change that fixes this; it is
 recorded as the destination in the CRD reference and is not part of the
 freeze. The tiers are written in the shape they will need when it happens.
+
+### Rollout order
+
+Turning per-user enforcement on is a four-step sequence, and the order is
+load-bearing — not a preference, a dependency chain. Do them in this order:
+
+1. **Bootstrap the first admin through authd's one-shot `/auth/bootstrap`
+   Secret, while the old anonymous path still works.** `authd` is already
+   running (Stage 1) but has no `FrameUser` to authenticate as yet; `POST
+   /auth/bootstrap` with the token in the `frame-auth-bootstrap` Secret
+   creates the first admin account and deletes the Secret so it cannot be
+   replayed (`internal/authd/server_bootstrap.go`). Do this before step 3
+   swaps the ServiceAccount's own RBAC for impersonation-only: if the swap
+   happens first and this account does not exist yet, there is nobody
+   `frame-uiproxy` can impersonate into anything, and the console is locked
+   out for everyone with no `FrameUser` to sign in as. The old `kubectl
+   proxy`-style access is still live at this point precisely so a failed or
+   retried bootstrap call has a working fallback.
+2. **Apply the tier bindings** (`rbac-tier-bindings.yaml`): the
+   `ClusterRoleBinding`s that give `frame:admins` / `frame:operators` /
+   `frame:viewers` their aggregated `ClusterRole`s. This has to land before
+   step 3 for the same reason as step 1: once impersonation is live, an
+   admin token that carries the `frame:admins` group buys nothing at all
+   until that group is actually bound to `frame-admin`.
+3. **Apply the deployment (the `uiproxy` sidecar swap) and the
+   ServiceAccount's RBAC change together.** These two are one atomic change,
+   not two: the new `deployment.yaml` requires impersonation to reach the
+   apiserver at all, and the new `rbac.yaml` is what removes the
+   ServiceAccount's direct `cluster-control-viewer`/`cluster-control-operator`
+   binding and replaces it with `impersonate` on `users` and the three
+   `frame:` groups. Applying one without the other either leaves the old
+   anonymous path open behind a sidecar that no longer expects it, or cuts
+   off API access before anything can impersonate its way back in.
+4. **Point authd's `RP_ID` / `RP_ORIGIN` at the real hostname.** WebAuthn
+   binds credentials to `RP_ID`; see the open question below — this cannot
+   be step 1, because there is nothing to enrol a passkey against until an
+   admin account and a session exist.
+
+**Inverting the first two — doing the deployment/RBAC swap (step 3) before
+both the bootstrap admin and the tier bindings exist — locks everyone out.**
+Once step 3 lands, the ServiceAccount can no longer read or write anything
+on its own account; every request has to arrive as an impersonated
+`FrameUser` whose group is bound to a tier. With no admin account, or an
+admin account whose group has no binding, that is nobody. The only way back
+at that point is the node's own kubeconfig — cluster-admin access outside
+Frame's RBAC entirely, used to either fix the missing piece by hand or
+re-apply the previous kustomization.
+
+**Rollback** is re-applying the previous kustomization (the old
+`deployment.yaml` + `rbac.yaml`, before this lot). Accounts created in step
+1 survive a rollback — `FrameUser` objects are ordinary CRs, untouched by
+which sidecar or RBAC is currently applied — so a rollback and a later
+re-attempt does not need to bootstrap again.
+
+**Open question, not yet answered: is `frame.anna.ovh` the right `RP_ID`?**
+`deploy/kubernetes/authd/deployment.yaml` currently sets `RP_ID:
+frame.anna.ovh` and `RP_ORIGIN: https://frame.anna.ovh`. That value appears
+nowhere else in the repo — every other manifest that needs a real hostname
+uses a placeholder (`base/ingress.yaml` and both overlays use
+`REPLACE_HOSTNAME` / `REPLACE_YOUR_DOMAIN`), so this is the one exception,
+and it is unconfirmed. `RP_ID` is what WebAuthn binds a credential to: a
+browser will only complete a passkey ceremony when the page's origin matches
+`RP_ORIGIN` and its domain matches or is a suffix of `RP_ID`. Rolling out
+with the wrong value does not fail loudly — password sign-in (the only login
+path the UI currently offers; see below) keeps working — it silently breaks
+every passkey enrolled against it, since passkeys are bound to the domain,
+not to the account. **Confirm the console's real hostname against this
+value before step 4**, and correct it in the deployment if it does not
+match. Passkey login is not wired into the UI yet regardless — the login
+screen offers password only, so nothing user-visible breaks *today* on a
+wrong value — but a wrong `RP_ID` now means re-enrolling every credential
+later rather than a one-line fix once WebAuthn login lands.
 
 ### Running the storage-version migration
 
@@ -370,7 +476,7 @@ guide.
 | `certManager.enabled` | `true` | `false` means you provision `webhooks.certSecretName` and `webhooks.caBundle` yourself — see "Installing without cert-manager" in `charts/frame/README.md`. |
 | `metrics.serviceMonitor.enabled` | `false` | Turn on only if the Prometheus Operator CRDs are already installed. |
 | `networkPolicy.enabled` | `false` | Off by default, matching kustomize. If enabled, the webhook rule is intentionally open on port 9443 to any source — `charts/frame/README.md` explains why a source-restricted rule breaks admission on real clusters. |
-| `rbac.tierRoles.install` | `true` | The 24 viewer/editor/admin convenience `ClusterRole`s (three per CRD); not required by the manager itself, and bound to nobody — see "RBAC" above. |
+| `rbac.tierRoles.install` | `true` | The 27 viewer/editor/admin convenience `ClusterRole`s (three per CRD); not required by the manager itself, and bound to nobody by the chart — the group bindings that make them reachable are `deploy/kubernetes/base/rbac-tier-bindings.yaml`, part of the UI/authd kustomize path, not this chart — see "RBAC" above. |
 
 The full, commented list is in `charts/frame/values.yaml`; `charts/frame/README.md`
 has the complete table with the reasoning behind each default.
@@ -401,8 +507,9 @@ Every CRD this chart installs carries `helm.sh/resource-policy: keep`, so
 **leaves the CRDs (and any CRs) in place** — verified in this session: after
 `helm uninstall` on a disposable kind cluster, all eight `plume-labs.io` CRDs
 then present were still there afterwards, and `helm uninstall` printed each one
-under "kept due to the resource policy." (`NodeTuning` postdates that run and
-carries the same annotation, but was not part of the verified set.) Removing the CRDs themselves is a deliberate, separate,
+under "kept due to the resource policy." (`NodeTuning` and `FrameTask` both
+postdate that run and carry the same annotation, but neither was part of the
+verified set.) Removing the CRDs themselves is a deliberate, separate,
 manual step (`kubectl delete crd <name>`) — not exercised here, since on a
 real cluster it cascade-deletes every CR of that kind. See "CRDs are
 rendered from `templates/`, not Helm's `crds/` directory" in
