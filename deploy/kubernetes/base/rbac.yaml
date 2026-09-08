@@ -15,6 +15,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-control-viewer
+  # Labelled so the frame-viewer/-editor/-admin aggregated ClusterRoles
+  # (rbac-tier-bindings.yaml) all pick this up via a `tier: viewer` selector,
+  # giving every Frame user the core-object read surface below (nodes, pods,
+  # events, deployments, Ceph, Volcano, Velero, ...) alongside their
+  # per-kind Frame CRD tier. See rbac-tier-bindings.yaml for why every tier
+  # selects viewer and up rather than only its own tier.
+  labels:
+    rbac.frame.plume-labs.io/tier: viewer
 rules:
   # nodes  — frame-sdk.ts:996, :1315, :1611  (cluster.nodes, capacity, racks)
   # pods   — frame-sdk.ts:1167, :1322, :1523 and every `integrationPods()` call
@@ -216,27 +224,51 @@ rules:
   #     blast radius from every pod in the cluster to six observability
   #     namespaces (read) and `monitoring` alone (POST/DELETE)
 ---
+# The pod ServiceAccount no longer holds cluster-control-viewer or
+# cluster-control-operator directly (those ClusterRoleBindings are gone — the
+# ClusterRoles themselves stay, unbound, until lot 1 confirms nothing else
+# uses them). Per-request identity now comes from the uiproxy sidecar
+# (deployment.yaml), which authenticates the caller against authd and
+# impersonates them; the apiserver then evaluates the *impersonated* user's
+# own RBAC (the frame-viewer/-editor/-admin aggregated roles in
+# rbac-tier-bindings.yaml), not this ServiceAccount's.
+#
+# What the SA itself needs is only the right to *perform* that impersonation,
+# plus the FrameTask CRUD the proxy uses to hand off long-running work
+# (Task 3).
+#
+# Impersonating a user cannot be bounded by resourceNames — email
+# addresses are not enumerable. The rule that keeps this safe lives in
+# docs/deployment.md: no RBAC binding may ever name an individual user.
+# Everything is granted to the three frame: groups below.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: ClusterRole
 metadata:
-  name: cluster-control-viewer
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-control-viewer
-subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  name: cluster-control-impersonator
+rules:
+  - apiGroups: [""]
+    resources: [users]
+    verbs: [impersonate]
+  - apiGroups: [""]
+    resources: [groups]
+    resourceNames: ["frame:admins", "frame:operators", "frame:viewers"]
+    verbs: [impersonate]
+  # Deliberately absent: serviceaccounts, uids, userextras.
+  - apiGroups: [frame.plume-labs.io]
+    resources: [frametasks]
+    verbs: [create, get, list, delete]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [frametasks/status]
+    verbs: [update, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: cluster-control-operator
+  name: cluster-control-impersonator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-control-operator
+  name: cluster-control-impersonator
 subjects:
   - kind: ServiceAccount
     name: cluster-control-ui

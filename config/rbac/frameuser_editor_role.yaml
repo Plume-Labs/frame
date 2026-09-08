@@ -39,6 +39,7 @@ metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: editor
   name: frameuser-editor-role
 rules:
 - apiGroups:

@@ -39,6 +39,7 @@ metadata:
   name: {{ $namePrefix }}-{{ .roleBase }}-admin-role
   labels:
     {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: admin
 rules:
 - apiGroups:
   - {{ .apiGroup }}
@@ -72,6 +73,7 @@ metadata:
   name: {{ $namePrefix }}-{{ .roleBase }}-editor-role
   labels:
     {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: editor
 rules:
 - apiGroups:
   - {{ .apiGroup }}
@@ -101,6 +103,7 @@ metadata:
   name: {{ $namePrefix }}-{{ .roleBase }}-viewer-role
   labels:
     {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: viewer
 rules:
 - apiGroups:
   - {{ .apiGroup }}

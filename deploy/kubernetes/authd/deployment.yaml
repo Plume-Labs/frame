@@ -40,21 +40,27 @@ spec:
               containerPort: 8443
               protocol: TCP
           env:
-            # Stage 1 placeholders. WebAuthn login is not exercised until the
-            # UI is switched over in Stage 3 — that stage sets RP_ID/RP_ORIGIN
-            # to the UI's real hostname and OIDC_ISSUER_URL/OIDC_CLIENT_ID to
-            # match whatever --oidc-issuer-url/--oidc-client-id the apiserver
-            # is given in Stage 2. This task only proves the discovery
-            # document and JWKS are served correctly at the in-cluster
-            # Service DNS name below.
+            # WebAuthn now targets the UI's real hostname (lot 0, task 6):
+            # RP_ID/RP_ORIGIN must match wherever the browser is actually
+            # talking to cluster-control-ui, or WebAuthn's origin check
+            # rejects every login. OIDC_ISSUER_URL/OIDC_CLIENT_ID stay as-is
+            # here: they match what the uiproxy sidecar validates
+            # (deploy/kubernetes/base/deployment.yaml), the in-cluster
+            # Service DNS name and the `frame-ui` client id, both unchanged
+            # since Stage 1.
+            #
+            # TODO: `frame.anna.ovh` is a placeholder pending confirmation —
+            # nothing in this repo names the real hostname (base/ingress.yaml
+            # and both overlays use REPLACE_HOSTNAME / REPLACE_YOUR_DOMAIN).
+            # Confirm and correct before this is actually deployed.
             - name: OIDC_ISSUER_URL
               value: https://cluster-control-auth.cluster-control.svc
             - name: OIDC_CLIENT_ID
               value: frame-ui
             - name: RP_ID
-              value: frame.local
+              value: frame.anna.ovh
             - name: RP_ORIGIN
-              value: https://frame.local
+              value: https://frame.anna.ovh
             - name: NAMESPACE
               valueFrom:
                 fieldRef:

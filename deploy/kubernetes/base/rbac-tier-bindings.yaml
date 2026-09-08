@@ -1,0 +1,86 @@
+# Aggregated ClusterRoles for the three FrameUser roles (admin / operator /
+# viewer), bound to the three `frame:` groups authd issues in the
+# impersonated user's token.
+#
+# Each aggregated role selects its own RBAC tier *and every tier below it*,
+# using multiple clusterRoleSelectors (they OR together) rather than a single
+# selector on its own tier. A single-tier selector would give an operator
+# only the Frame per-kind editor rights and none of the core reads (nodes,
+# pods, events, deployments, Ceph, Volcano, Velero) that the old
+# cluster-control-viewer ClusterRole granted directly to the SA — every
+# screen in the console would break for everyone except viewers. A label key
+# holds one value, so labelling cluster-control-viewer three times is not an
+# option; instead it carries a single `tier: viewer` label
+# (rbac.yaml), and all three aggregated roles below select it.
+#
+# Mapping (do not get this backwards): FrameUser roles are admin/operator/
+# viewer; RBAC tiers are admin/editor/viewer. There is no "operator" tier and
+# no "editor" FrameUser role.
+#   frame:viewers   -> frame-viewer
+#   frame:operators -> frame-editor
+#   frame:admins    -> frame-admin
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-viewer
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.frame.plume-labs.io/tier: viewer
+rules: [] # filled by the controller-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: frame-viewers
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: frame-viewer}
+subjects:
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-editor
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.frame.plume-labs.io/tier: viewer
+    - matchLabels:
+        rbac.frame.plume-labs.io/tier: editor
+rules: [] # filled by the controller-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: frame-operators
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: frame-editor}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: frame-admin
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.frame.plume-labs.io/tier: viewer
+    - matchLabels:
+        rbac.frame.plume-labs.io/tier: editor
+    - matchLabels:
+        rbac.frame.plume-labs.io/tier: admin
+rules: [] # filled by the controller-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: frame-admins
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: frame-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
