@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -185,8 +186,37 @@ func (v *JWKSVerifier) Verify(ctx context.Context, raw string) (Identity, error)
 	}); err != nil {
 		return Identity{}, err
 	}
-	if claims.Subject == "" {
-		return Identity{}, fmt.Errorf("token has no subject")
+	if err := checkSubject(claims.Subject); err != nil {
+		return Identity{}, err
 	}
 	return Identity{User: claims.Subject, Groups: claims.Groups}, nil
+}
+
+// maxSubjectLen mirrors FrameUserSpec.Email's MaxLength.
+const maxSubjectLen = 254
+
+// checkSubject refuses a subject that is not an ordinary email address.
+//
+// The proxy's ServiceAccount holds `impersonate` on `users` with no
+// `resourceNames` — email addresses are not enumerable, so there is nothing
+// to bind it to — and the subject goes verbatim into `Impersonate-User`. The
+// only thing keeping `system:kube-controller-manager` out of that header was
+// the pattern on `FrameUserSpec.Email`, in another kind's CRD, enforced by a
+// component that is not this one. This makes the invariant local, so it
+// holds whatever authd does next (whole-branch review, I6).
+//
+// `system:` first, then `@`: an address like `system:x@example.com` has an
+// `@` and is still the shape that matters.
+func checkSubject(sub string) error {
+	switch {
+	case sub == "":
+		return fmt.Errorf("token has no subject")
+	case len(sub) > maxSubjectLen:
+		return fmt.Errorf("token subject is longer than %d characters", maxSubjectLen)
+	case strings.HasPrefix(sub, "system:"):
+		return fmt.Errorf("refusing to impersonate a system: identity (%q)", sub)
+	case !strings.Contains(sub, "@"):
+		return fmt.Errorf("token subject %q is not an email address", sub)
+	}
+	return nil
 }
