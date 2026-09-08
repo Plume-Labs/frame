@@ -57,6 +57,14 @@ commonLabels:
 # Image names and tags are set per-overlay via `kustomize edit set image`.
 # Run: kustomize edit set image cluster-control=<registry>/<image>:<tag>
 #      kustomize edit set image frame-agent=<registry>/frame-agent:<tag>
+#      kustomize edit set image frame-uiproxy=<registry>/frame-uiproxy:<tag>
+#
+# frame-uiproxy was missing here and from both overlays until 2026-09-08
+# (whole-branch review C5), so `deployment.yaml`'s `frame-uiproxy:latest` was
+# never rewritten and the kubelet went looking for it on Docker Hub. Every
+# entry a container image names must be listed here or no overlay can retag
+# it.
 images:
   - name: cluster-control
   - name: frame-agent
+  - name: frame-uiproxy

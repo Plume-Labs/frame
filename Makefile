@@ -195,6 +195,18 @@ set-image-ui-prod: ## Set UI image in production overlay (requires IMG_UI)
 set-image-authd: ## Set authd image in its kustomize target (requires IMG_AUTHD)
 	cd deploy/kubernetes/authd && kustomize edit set image cluster-control-auth=$(IMG_AUTHD)
 
+# The uiproxy sidecar lives in the same Deployment as the UI, so its image has
+# to be retagged in the same overlay and in the same step — a deploy that sets
+# one and not the other rolls out a pod that cannot start. See
+# docs/deployment.md's rollout order.
+.PHONY: set-image-uiproxy
+set-image-uiproxy: ## Set uiproxy image in development overlay (requires IMG_UIPROXY)
+	cd deploy/kubernetes/overlays/development && kustomize edit set image frame-uiproxy=$(IMG_UIPROXY)
+
+.PHONY: set-image-uiproxy-prod
+set-image-uiproxy-prod: ## Set uiproxy image in production overlay (requires IMG_UIPROXY)
+	cd deploy/kubernetes/overlays/production && kustomize edit set image frame-uiproxy=$(IMG_UIPROXY)
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/

@@ -21,8 +21,10 @@ replicas:
 # Set before deploying:
 #   cd deploy/kubernetes/overlays/development
 #   kustomize edit set image cluster-control=<registry>/frame-ui:dev
+#   kustomize edit set image frame-uiproxy=<registry>/frame-uiproxy:dev
 images:
   - name: cluster-control
+  - name: frame-uiproxy
 
 # No configMapGenerator for cluster-control-config. The base declares that name
 # deliberately empty, because the Settings screen owns its contents at runtime —

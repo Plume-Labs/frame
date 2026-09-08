@@ -100,6 +100,13 @@ spec:
         # every request — reads and writes alike — as the pod ServiceAccount.
         - name: uiproxy
           image: frame-uiproxy:latest
+          # Same as the ui container above, and for the same reason. Without
+          # it `:latest` defaults to Always, so the kubelet resolves the bare
+          # name to `docker.io/library/frame-uiproxy:latest` and
+          # ImagePullBackOffs — with the ServiceAccount's direct RBAC already
+          # removed by the same apply. Retag it first: `make
+          # set-image-uiproxy IMG_UIPROXY=<registry>/frame-uiproxy:<tag>`.
+          imagePullPolicy: IfNotPresent
           env:
             - name: JWKS_URL
               value: https://cluster-control-auth.cluster-control.svc/keys
