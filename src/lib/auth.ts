@@ -39,28 +39,32 @@ export interface Session {
 }
 
 /**
- * Thrown when an `/auth/*` request came back with the console's own HTML
- * shell instead of authd's answer.
+ * Thrown when an `/auth/*` request came back as HTML instead of authd's
+ * answer.
  *
- * That happens when nothing routes `/auth/` to authd: the request falls
- * through nginx's `location /` to `try_files ... /index.html` (or, in dev,
- * through vite's dev server, which only proxies `/api` and `/apis` unless
- * `/auth` is proxied too). The status is 200 and `res.ok` is true, so every
- * check below it passes and the failure only surfaces as
- * `SyntaxError: Unexpected token '<'` from `res.json()` — a message that
- * points at nothing.
+ * Two deployments produce it, and the message names both because the client
+ * cannot tell them apart:
  *
- * This is the one deployment mistake that makes the whole console
- * unreachable, so it gets a named error saying what to fix rather than a
- * parse error.
+ *  - nothing routes `/auth/` to authd, so the request falls through nginx's
+ *    `location /` to `try_files ... /index.html`. Status 200, `res.ok` true,
+ *    every check below it passes, and the failure surfaces only as
+ *    `SyntaxError: Unexpected token '<'` from `res.json()` — a message that
+ *    points at nothing. This was the shipped state (whole-branch review, C1).
+ *  - the route exists but authd is not answering, which nginx renders as its
+ *    own HTML 502.
+ *
+ * Both mean "the request did not reach authd", which is the only thing the
+ * user needs told, and between them they are the one class of failure that
+ * makes the whole console unreachable.
  */
 export class AuthUnreachableError extends Error {
-  constructor(path: string) {
+  constructor(path: string, status: number) {
     super(
-      `${path} returned the console's own HTML page instead of authd's response — ` +
-        `nothing is routing /auth/ to cluster-control-auth. ` +
-        `Check nginx's \`location /auth/\` (deploy/docker/nginx.conf) in a deployment, ` +
-        `or vite's \`/auth\` dev proxy (vite.config.ts) locally.`,
+      `${path} answered ${status} with an HTML page instead of authd's response — ` +
+        `the request did not reach authd. Either nothing routes /auth/ to ` +
+        `cluster-control-auth (nginx's \`location /auth/\` in ` +
+        `deploy/docker/nginx.conf, or vite's \`/auth\` dev proxy in ` +
+        `vite.config.ts), or authd is not answering.`,
     )
     this.name = 'AuthUnreachableError'
   }
@@ -140,7 +144,7 @@ export async function loginWithPassword(email: string, password: string): Promis
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
-  if (!servedByAuthd(res)) throw new AuthUnreachableError('/auth/login/password')
+  if (!servedByAuthd(res)) throw new AuthUnreachableError('/auth/login/password', res.status)
   if (!res.ok) {
     throw new Error(`login failed: ${res.status} ${await res.text()}`)
   }
@@ -199,7 +203,7 @@ export async function loginWithPasskey(): Promise<void> {
   ensurePasskeysSupported()
 
   const beginRes = await fetch('/auth/login/begin', { method: 'POST' })
-  if (!servedByAuthd(beginRes)) throw new AuthUnreachableError('/auth/login/begin')
+  if (!servedByAuthd(beginRes)) throw new AuthUnreachableError('/auth/login/begin', beginRes.status)
   if (!beginRes.ok) {
     throw new Error(`could not start passkey sign-in: ${beginRes.status} ${await beginRes.text()}`)
   }
@@ -219,7 +223,7 @@ export async function loginWithPasskey(): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(authenticationResponseToJSON(credential as PublicKeyCredential)),
   })
-  if (!servedByAuthd(finishRes)) throw new AuthUnreachableError('/auth/login/finish')
+  if (!servedByAuthd(finishRes)) throw new AuthUnreachableError('/auth/login/finish', finishRes.status)
   if (!finishRes.ok) {
     // authd answers every failure here with a bare 401 (see handleLoginFinish)
     // — it cannot say more without telling an attacker which credential ID
@@ -242,7 +246,7 @@ export async function enrolPasskey(label: string): Promise<void> {
   ensurePasskeysSupported()
 
   const beginRes = await fetch('/auth/register/begin', { method: 'POST' })
-  if (!servedByAuthd(beginRes)) throw new AuthUnreachableError('/auth/register/begin')
+  if (!servedByAuthd(beginRes)) throw new AuthUnreachableError('/auth/register/begin', beginRes.status)
   if (beginRes.status === 401) {
     throw new Error('Enrolling a passkey requires an active session — sign in first.')
   }
@@ -265,7 +269,7 @@ export async function enrolPasskey(label: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(registrationResponseToJSON(credential as PublicKeyCredential)),
   })
-  if (!servedByAuthd(finishRes)) throw new AuthUnreachableError('/auth/register/finish')
+  if (!servedByAuthd(finishRes)) throw new AuthUnreachableError('/auth/register/finish', finishRes.status)
   if (!finishRes.ok) {
     throw new Error(`passkey enrolment failed: ${finishRes.status} ${await finishRes.text()}`)
   }
