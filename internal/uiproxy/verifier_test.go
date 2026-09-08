@@ -6,8 +6,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -224,5 +228,104 @@ func TestVerifyRefetchesOnceWhenAKeyRotates(t *testing.T) {
 	}
 	if got := fetches.Load(); got != 2 {
 		t.Fatalf("fetched the JWKS %d times after rotation, want 2 (one extra for the unrecognized kid)", got)
+	}
+}
+
+// --- the JWKS endpoint's own TLS ------------------------------------------
+//
+// C2 of the whole-branch review. authd serves /keys over TLS with a
+// certificate issued by the in-cluster `frame-auth-ca` Issuer, and the
+// uiproxy image is distroless/static — public roots only. With the default
+// client every JWKS fetch fails `x509: certificate signed by unknown
+// authority`, so Verify errors and the proxy 401s every single request.
+//
+// newTLSSignerFixture is newSignerFixture over TLS, with the server's own
+// certificate written out as PEM so a test can decide whether to trust it.
+type tlsSignerFixture struct {
+	*signerFixture
+	caFile string
+}
+
+func newTLSSignerFixture(t *testing.T) *tlsSignerFixture {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &signerFixture{key: key}
+	f.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+			Key: key.Public(), KeyID: "k1", Algorithm: string(jose.ES256), Use: "sig",
+		}}}
+		_ = json.NewEncoder(w).Encode(set)
+	}))
+	t.Cleanup(f.server.Close)
+
+	caFile := filepath.Join(t.TempDir(), "ca.crt")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.server.Certificate().Raw})
+	if err := os.WriteFile(caFile, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return &tlsSignerFixture{signerFixture: f, caFile: caFile}
+}
+
+func TestVerifyFailsAgainstAPrivateCAWithoutIt(t *testing.T) {
+	f := newTLSSignerFixture(t)
+	// nil client: exactly what cmd/uiproxy passed before this fix.
+	v := NewJWKSVerifier(f.server.URL, "https://authd", "frame-ui", nil)
+	tok := f.mint(t, "alice@example.com", "https://authd", "frame-ui", []string{"operators"}, time.Now().Add(10*time.Minute))
+	if _, err := v.Verify(context.Background(), tok); err == nil {
+		t.Fatal("verified a token whose JWKS was served by an untrusted CA — the fixture is not testing what it claims")
+	} else if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("expected an x509 trust failure, got %v", err)
+	}
+}
+
+func TestVerifyTrustsTheConfiguredCA(t *testing.T) {
+	f := newTLSSignerFixture(t)
+	hc, err := HTTPClientWithCA(f.caFile)
+	if err != nil {
+		t.Fatalf("HTTPClientWithCA: %v", err)
+	}
+	v := NewJWKSVerifier(f.server.URL, "https://authd", "frame-ui", hc)
+	tok := f.mint(t, "alice@example.com", "https://authd", "frame-ui", []string{"operators"}, time.Now().Add(10*time.Minute))
+	id, err := v.Verify(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if id.User != "alice@example.com" {
+		t.Fatalf("User = %q", id.User)
+	}
+}
+
+func TestHTTPClientWithCARejectsAnUnusableFile(t *testing.T) {
+	if _, err := HTTPClientWithCA(filepath.Join(t.TempDir(), "absent.crt")); err == nil {
+		t.Fatal("accepted a CA file that does not exist")
+	}
+	notPEM := filepath.Join(t.TempDir(), "junk.crt")
+	if err := os.WriteFile(notPEM, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := HTTPClientWithCA(notPEM); err == nil {
+		t.Fatal("accepted a file holding no PEM certificate — the proxy would start with an empty trust pool and 401 everything")
+	}
+}
+
+// The rate limiter must not swallow the reason the first fetch failed:
+// "fetch attempted too recently" on its own sent the last review looking at
+// the wrong thing entirely.
+func TestRateLimitedFetchStillReportsTheOriginalFailure(t *testing.T) {
+	f := newTLSSignerFixture(t)
+	v := NewJWKSVerifier(f.server.URL, "https://authd", "frame-ui", nil)
+	tok := f.mint(t, "alice@example.com", "https://authd", "frame-ui", []string{"operators"}, time.Now().Add(10*time.Minute))
+	if _, err := v.Verify(context.Background(), tok); err == nil {
+		t.Fatal("expected the first fetch to fail")
+	}
+	_, err := v.Verify(context.Background(), tok)
+	if err == nil {
+		t.Fatal("expected the second fetch to fail too")
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("the rate-limited error hides why the fetch failed: %v", err)
 	}
 }

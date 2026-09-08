@@ -103,6 +103,15 @@ spec:
           env:
             - name: JWKS_URL
               value: https://cluster-control-auth.cluster-control.svc/keys
+            # authd's serving certificate is issued by the in-cluster
+            # `frame-auth-ca` Issuer and this image is distroless/static, so
+            # the system pool cannot verify it: without this the JWKS fetch
+            # fails `x509: certificate signed by unknown authority` and the
+            # proxy 401s every request in the cluster. The variable is
+            # required — the container refuses to start without it rather
+            # than refusing everyone.
+            - name: JWKS_CA_FILE
+              value: /etc/frame-auth-ca/ca.crt
             - name: OIDC_ISSUER_URL
               value: https://cluster-control-auth.cluster-control.svc
             - name: OIDC_CLIENT_ID
@@ -118,6 +127,12 @@ spec:
             limits: {memory: "128Mi", cpu: "200m"}
           # No readiness probe: it binds loopback only, so the kubelet cannot
           # reach it. nginx is the readiness gate.
+          volumeMounts:
+            # Same projection as the ui container above: only `ca.crt`, never
+            # authd's serving private key.
+            - name: frame-auth-ca
+              mountPath: /etc/frame-auth-ca
+              readOnly: true
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

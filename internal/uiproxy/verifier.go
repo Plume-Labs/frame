@@ -2,9 +2,12 @@ package uiproxy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -30,12 +33,52 @@ type JWKSVerifier struct {
 	// got a chance to be picked up.
 	fetchAttempted   time.Time
 	refreshAttempted time.Time
+
+	// Why the last fetch failed, replayed by the rate limiter. Without it
+	// the second and every subsequent request inside the window answers
+	// "fetch attempted too recently" and says nothing about the actual
+	// fault — which, when the fault was an untrusted JWKS certificate,
+	// sent a whole review looking at the rate limiter instead of at the
+	// missing CA (finding C2).
+	lastErr error
 }
 
 // jwksMinRefresh bounds how often either kind of fetch attempt above may go
 // out, so a stream of bogus tokens — or an unreachable authd — cannot turn
 // into a stream of requests to authd.
 const jwksMinRefresh = time.Minute
+
+// HTTPClientWithCA builds the client the verifier should use when authd's
+// JWKS endpoint is served with a certificate no public root chains to —
+// which is every real deployment: authd's serving certificate comes from the
+// in-cluster `frame-auth-ca` Issuer (deploy/kubernetes/authd/certificate.yaml)
+// and the uiproxy image is distroless/static, so it carries public roots
+// only.
+//
+// The pool holds the given CA and nothing else. Adding it to the system pool
+// instead would mean any public CA could also vouch for authd, which is not
+// what "trust our own CA" should mean, and the container has no system roots
+// worth keeping anyway.
+//
+// It fails rather than falling back: a proxy that silently started with an
+// empty trust pool would 401 every request in the cluster, and the reason
+// would be a line in a log nobody reads until the console is already down.
+func HTTPClientWithCA(caFile string) (*http.Client, error) {
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("jwks CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("jwks CA: %s holds no PEM certificate", caFile)
+	}
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+		},
+	}, nil
+}
 
 func NewJWKSVerifier(jwksURL, issuer, audience string, hc *http.Client) *JWKSVerifier {
 	if hc == nil {
@@ -73,9 +116,24 @@ func (v *JWKSVerifier) keySet(ctx context.Context, refresh bool) (*jose.JSONWebK
 			// Still stale, but that's the rate limit doing its job.
 			return v.keys, nil
 		}
+		if v.lastErr != nil {
+			return nil, fmt.Errorf("jwks: %w (retrying in %s)", v.lastErr, jwksMinRefresh-time.Since(*last))
+		}
 		return nil, fmt.Errorf("jwks: fetch attempted too recently, retrying in %s", jwksMinRefresh-time.Since(*last))
 	}
 
+	set, err := v.fetch(ctx)
+	// Remembered win or lose: a nil lastErr is what tells the branch above
+	// that there is nothing better to say than "too recently".
+	v.lastErr = err
+	if err != nil {
+		return nil, err
+	}
+	v.keys = set
+	return v.keys, nil
+}
+
+func (v *JWKSVerifier) fetch(ctx context.Context) (*jose.JSONWebKeySet, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.url, nil)
 	if err != nil {
 		return nil, err
@@ -86,14 +144,13 @@ func (v *JWKSVerifier) keySet(ctx context.Context, refresh bool) (*jose.JSONWebK
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jwks: %s", res.Status)
+		return nil, fmt.Errorf("%s", res.Status)
 	}
 	var set jose.JSONWebKeySet
 	if err := json.NewDecoder(res.Body).Decode(&set); err != nil {
 		return nil, err
 	}
-	v.keys = &set
-	return v.keys, nil
+	return &set, nil
 }
 
 func (v *JWKSVerifier) Verify(ctx context.Context, raw string) (Identity, error) {

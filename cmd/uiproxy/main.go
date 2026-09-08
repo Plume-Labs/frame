@@ -41,6 +41,7 @@ import (
 type config struct {
 	Listen        string
 	JWKSURL       string
+	JWKSCAFile    string
 	Issuer        string
 	ClientID      string
 	GroupPrefix   string
@@ -48,10 +49,26 @@ type config struct {
 	Retention     time.Duration
 }
 
+// jwksCASystem is the one value of JWKS_CA_FILE that is not a path: it says
+// "authd's certificate chains to a public root, use the system pool".
+//
+// The variable is required rather than optional, and this is why. authd's
+// serving certificate is issued by the in-cluster `frame-auth-ca` Issuer,
+// which nothing public chains to, and the uiproxy image is
+// distroless/static. Left to the system pool by default, every JWKS fetch
+// fails `x509: certificate signed by unknown authority`, Verify errors, and
+// the proxy answers 401 to every request in the cluster — the console is
+// down and nothing in the failure names TLS trust. Requiring the variable
+// turns that into a container that refuses to start with a message saying
+// what is missing, and makes "public roots are fine here" a decision
+// somebody wrote down.
+const jwksCASystem = "system"
+
 func configFromEnv(get func(string) string) (config, error) {
 	c := config{
 		Listen:        or(get("LISTEN_ADDR"), "127.0.0.1:8001"),
 		JWKSURL:       get("JWKS_URL"),
+		JWKSCAFile:    get("JWKS_CA_FILE"),
 		Issuer:        get("OIDC_ISSUER_URL"),
 		ClientID:      get("OIDC_CLIENT_ID"),
 		GroupPrefix:   or(get("GROUP_PREFIX"), "frame:"),
@@ -65,7 +82,12 @@ func configFromEnv(get func(string) string) (config, error) {
 		}
 		c.Retention = d
 	}
-	for k, v := range map[string]string{"JWKS_URL": c.JWKSURL, "OIDC_ISSUER_URL": c.Issuer, "OIDC_CLIENT_ID": c.ClientID} {
+	for k, v := range map[string]string{
+		"JWKS_URL":        c.JWKSURL,
+		"JWKS_CA_FILE":    c.JWKSCAFile,
+		"OIDC_ISSUER_URL": c.Issuer,
+		"OIDC_CLIENT_ID":  c.ClientID,
+	} {
 		if v == "" {
 			return config{}, fmt.Errorf("%s is required", k)
 		}
@@ -116,8 +138,17 @@ func run() error {
 	}
 	rec := uiproxy.NewRecorder(c, cfg.TaskNamespace, log)
 
+	// nil means "system roots", which is wrong everywhere authd actually
+	// runs — see jwksCASystem.
+	var jwksClient *http.Client
+	if cfg.JWKSCAFile != jwksCASystem {
+		if jwksClient, err = uiproxy.HTTPClientWithCA(cfg.JWKSCAFile); err != nil {
+			return err
+		}
+	}
+
 	p, err := uiproxy.New(uiproxy.Options{
-		Verifier:    uiproxy.NewJWKSVerifier(cfg.JWKSURL, cfg.Issuer, cfg.ClientID, nil),
+		Verifier:    uiproxy.NewJWKSVerifier(cfg.JWKSURL, cfg.Issuer, cfg.ClientID, jwksClient),
 		Recorder:    rec,
 		Upstream:    upstream,
 		Transport:   transport,
