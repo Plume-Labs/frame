@@ -158,13 +158,21 @@ jobs:
           sbom: true
           provenance: mode=max
 
-  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all three images ─────
+  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all four images ─────
   #
-  # Frame builds three images, and only one of them is pushed by this workflow
-  # today. Scanning still covers all three, because a CVE in the operator is a
+  # Frame builds four images, and only one of them is pushed by this workflow
+  # today. Scanning still covers all four, because a CVE in the operator is a
   # CVE whether or not this workflow is what publishes it. The matrix names
-  # each Dockerfile explicitly rather than deriving anything, so a fourth image
-  # cannot be added without also being listed here.
+  # each Dockerfile explicitly rather than deriving anything.
+  #
+  # The previous version of this comment claimed a fourth image "cannot be
+  # added without also being listed here". It was not true — nothing enforces
+  # it — and uiproxy proved it by being added and not listed for the whole of
+  # the per-user identity lot (whole-branch review, I4). That is the image
+  # holding the impersonation grant, so it was the one image whose CVEs
+  # mattered most and the only one nobody scanned. If a fifth Dockerfile
+  # appears, add it here; `make docker-images` and `make scan` are the local
+  # equivalents and they do list all four.
   scan:
     name: Scan (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -186,6 +194,8 @@ jobs:
             dockerfile: Dockerfile
           - name: authd
             dockerfile: Dockerfile.authd
+          - name: uiproxy
+            dockerfile: Dockerfile.uiproxy
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -261,8 +271,10 @@ jobs:
       # This is a real gate, not a placeholder: .trivyignore enumerates the
       # six advisories that existed when scanning was introduced, each with a
       # note saying what would remove it. Verified before enabling — with the
-      # ignore file all three images exit 0, without it all three exit 1, so
-      # the gate bites rather than passing vacuously.
+      # ignore file the images it was verified against exit 0, without it
+      # they exit 1, so the gate bites rather than passing vacuously. That
+      # verification predates uiproxy, which is distroless/static and carries
+      # no OS packages, so it may well have nothing to report either way.
       #
       # The exit condition is therefore finite and legible: empty
       # .trivyignore. Two of its entries are the same dependency bumps that
