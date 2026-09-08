@@ -87,6 +87,7 @@ conversion test pass while exercising no conversion at all.
 - Node.js 20+
 - A cluster with Frame CRDs installed (or just CRDs for UI-only dev)
 - `kubectl proxy` running
+- something serving `/auth` — see below
 
 ### Dev loop
 
@@ -94,12 +95,38 @@ conversion test pass while exercising no conversion at all.
 # Terminal 1: proxy the K8s API
 kubectl proxy --port=8001
 
-# Terminal 2: start the UI with HMR
+# Terminal 2: reach authd, which kubectl proxy does not serve
+kubectl -n cluster-control port-forward svc/cluster-control-auth 8443:443
+
+# Terminal 3: start the UI with HMR
 npm install
 npm run dev    # → http://localhost:5173
 ```
 
-Vite proxies `/apis/*` → `localhost:8001` (see `vite.config.ts`). The UI reads and writes real CRs.
+Vite proxies `/api/*` and `/apis/*` → `localhost:8001`, and `/auth/*` →
+`https://localhost:8443` (see `vite.config.ts`). The UI reads and writes real
+CRs.
+
+**The second terminal is not optional.** Since the per-user identity lot the
+console sits behind a session gate: `App` calls `currentSession()` — `POST
+/auth/token` — before it renders anything, and `kubectl proxy` serves no
+`/auth` at all. Without something answering there, `npm run dev` lands on a
+login screen that cannot work, whatever credentials you type. Point
+`AUTH_PROXY_TARGET` elsewhere if authd is somewhere other than a
+port-forward:
+
+```bash
+AUTH_PROXY_TARGET=https://frame.example.internal npm run dev
+```
+
+The dev proxy sets `secure: false`, because authd's in-cluster certificate
+names its Service, not `localhost`.
+
+Note that `kubectl proxy` authenticates as *your* kubeconfig, so the RBAC the
+console sees locally is yours, not the impersonated `frame:` group's. A
+screen that works locally can still 403 in the cluster; `deploy/kubernetes`'s
+tier bindings are what decide that, and `go test ./test/manifests/` is what
+checks them.
 
 ### Frontend tests
 
