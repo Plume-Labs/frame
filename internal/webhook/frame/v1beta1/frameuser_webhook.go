@@ -47,8 +47,9 @@ func SetupFrameUserWebhookWithManager(mgr ctrl.Manager) error {
 //
 // +kubebuilder:webhook:path=/validate-frame-plume-labs-io-v1beta1-frameuser,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,sideEffects=None,groups=frame.plume-labs.io,resources=frameusers,verbs=create;update;delete,versions=v1beta1,name=vframeuser-v1beta1.kb.io,admissionReviewVersions=v1
 
-// FrameUserCustomValidator keeps at least one admin in existence, and keeps
-// status.passwordHash off every write path except the status subresource.
+// FrameUserCustomValidator keeps at least one admin in existence, keeps
+// status.passwordHash off every write path except the status subresource, and
+// keeps spec.role changes in the hands of admins.
 //
 // This lives at admission rather than inside authd because authd is not the
 // only writer: admins create, delete and re-role accounts straight through the
@@ -70,11 +71,71 @@ func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, n
 	if err := guardPasswordHash(ctx, oldObj.Status.PasswordHash, newObj.Status.PasswordHash); err != nil {
 		return nil, err
 	}
+	// Before the last-admin rule, not after it: whether another admin exists
+	// is not something to tell a caller who has no business changing a role
+	// in the first place.
+	if oldObj.Spec.Role != newObj.Spec.Role {
+		if err := requireAdminRequester(ctx, oldObj.Spec.Role, newObj.Spec.Role); err != nil {
+			return nil, err
+		}
+	}
 	// Only a demotion can remove an admin; anything else leaves the count alone.
 	if oldObj.Spec.Role != framev1beta1.RoleAdmin || newObj.Spec.Role == framev1beta1.RoleAdmin {
 		return nil, nil
 	}
 	return nil, v.requireAnotherAdmin(ctx, oldObj.Name)
+}
+
+// Groups that count as "already an admin" for the purpose of changing a role.
+//
+// adminGroup is the group the uiproxy impersonates a FrameUser with
+// spec.role: admin into (GroupForRole in internal/authd/issuer.go, plus the
+// `frame:` prefix the proxy applies). Under impersonation the apiserver puts
+// the *impersonated* identity in the AdmissionReview, so this is the caller
+// as the console knows them.
+//
+// clusterAdminGroup is the break-glass path. The node's own kubeconfig is
+// what docs/deployment.md sends an operator to when a rollout strands the
+// first admin, and it is the only way back from an empty FrameUser list —
+// where, by definition, no frame:admins member exists to authorize anything.
+// A guard that refused it would be the thing that made a lockout permanent.
+const (
+	adminGroup        = "frame:admins"
+	clusterAdminGroup = "system:masters"
+)
+
+// requireAdminRequester refuses a change to spec.role made by anyone who is
+// not already an admin.
+//
+// This is the second half of the fix for the promotion path the whole-branch
+// review found (C4). The first half is RBAC: frameuser-editor-role is no
+// longer in the editor tier, so an operator cannot send the request at all.
+// This half is what holds when RBAC is wrong — a re-added tier label, a
+// hand-made binding, a kubeconfig issued to the wrong person. Without it the
+// only rule on this field was the last-admin guard below, which returns nil
+// on its first clause for every write that is not a demotion: a self-promotion
+// to admin was explicitly allowed, and one token lifetime later the account
+// carried frame:admins.
+//
+// Fails closed. An admission request with no UserInfo, or no request in the
+// context at all, is not evidence that the caller is an admin.
+func requireAdminRequester(ctx context.Context, oldRole, newRole string) error {
+	req, err := admission.RequestFromContext(ctx)
+	if err != nil {
+		return fmt.Errorf("refusing to change spec.role from %q to %q: cannot identify who is making the request (%w)",
+			oldRole, newRole, err)
+	}
+	for _, g := range req.UserInfo.Groups {
+		if g == adminGroup || g == clusterAdminGroup {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"refusing to change spec.role from %q to %q: %q is not an admin. "+
+			"Only a member of %s (a FrameUser with spec.role: admin) or %s may change a role — "+
+			"otherwise anyone who can patch a FrameUser can make themselves an admin, "+
+			"and anyone who can patch one can lock the admins out",
+		oldRole, newRole, req.UserInfo.Username, adminGroup, clusterAdminGroup)
 }
 
 func (v *FrameUserCustomValidator) ValidateDelete(ctx context.Context, obj *framev1beta1.FrameUser) (admission.Warnings, error) {

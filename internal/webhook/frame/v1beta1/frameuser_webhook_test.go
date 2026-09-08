@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	admissionv1 "k8s.io/api/admission/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,6 +45,17 @@ func user(name, role string) *framev1beta1.FrameUser {
 }
 
 var _ = Describe("FrameUser webhook", func() {
+	// requestBy builds the admission request the apiserver would send, naming
+	// who is making the write. Under impersonation those groups are the
+	// impersonated user's, which is what makes this guard line up with the
+	// tiers rather than with the proxy's ServiceAccount.
+	requestBy := func(groups ...string) context.Context {
+		return admission.NewContextWithRequest(context.Background(),
+			admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+				UserInfo: authenticationv1.UserInfo{Username: "someone@example.com", Groups: groups},
+			}})
+	}
+
 	newValidator := func(objs ...*framev1beta1.FrameUser) *FrameUserCustomValidator {
 		b := fake.NewClientBuilder().WithScheme(scheme.Scheme)
 		for _, o := range objs {
@@ -72,7 +84,9 @@ var _ = Describe("FrameUser webhook", func() {
 		v := newValidator(alice)
 		demoted := alice.DeepCopy()
 		demoted.Spec.Role = framev1beta1.RoleViewer
-		_, err := v.ValidateUpdate(context.Background(), alice, demoted)
+		// An admin requester, so this exercises the last-admin rule rather
+		// than the role-change authorization one in front of it.
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), alice, demoted)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("last admin"))
 	})
@@ -91,6 +105,84 @@ var _ = Describe("FrameUser webhook", func() {
 		v := newValidator(bob)
 		_, err := v.ValidateDelete(context.Background(), bob)
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// C4 of the whole-branch review, second half. The first half is the
+	// aggregation (test/manifests): the tier labels put frameuser-editor-role
+	// in the editor tier, so an operator held patch on frameusers. This is
+	// the half that holds even if someone re-adds the label, binds the role
+	// by hand, or reaches the object with a kubeconfig — a role change has to
+	// be made by somebody who is already an admin.
+	//
+	// Both halves are needed and neither is sufficient: RBAC decides who may
+	// send the request, admission decides what the request may say.
+	Context("who may change a role", func() {
+		It("refuses an operator promoting themselves to admin", func() {
+			bob := user("bob", framev1beta1.RoleOperator)
+			v := newValidator(bob, user("alice", framev1beta1.RoleAdmin))
+			promoted := bob.DeepCopy()
+			promoted.Spec.Role = framev1beta1.RoleAdmin
+			_, err := v.ValidateUpdate(requestBy("frame:operators", "system:authenticated"), bob, promoted)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.role"))
+		})
+
+		It("refuses an operator demoting an admin", func() {
+			// The mirror: locking the admins out is as much a privilege
+			// escalation as promoting yourself.
+			alice := user("alice", framev1beta1.RoleAdmin)
+			v := newValidator(alice, user("carol", framev1beta1.RoleAdmin))
+			demoted := alice.DeepCopy()
+			demoted.Spec.Role = framev1beta1.RoleViewer
+			_, err := v.ValidateUpdate(requestBy("frame:operators"), alice, demoted)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.role"))
+		})
+
+		It("allows an admin to change a role", func() {
+			bob := user("bob", framev1beta1.RoleViewer)
+			v := newValidator(bob, user("alice", framev1beta1.RoleAdmin))
+			promoted := bob.DeepCopy()
+			promoted.Spec.Role = framev1beta1.RoleOperator
+			_, err := v.ValidateUpdate(requestBy("frame:admins"), bob, promoted)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("allows a break-glass cluster-admin", func() {
+			// The node's own kubeconfig is the documented way back from a
+			// stranded rollout (docs/deployment.md). Refusing it would make
+			// this guard the thing that makes the lockout permanent.
+			bob := user("bob", framev1beta1.RoleViewer)
+			v := newValidator(bob)
+			promoted := bob.DeepCopy()
+			promoted.Spec.Role = framev1beta1.RoleAdmin
+			_, err := v.ValidateUpdate(requestBy("system:masters"), bob, promoted)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("refuses a role change it cannot attribute", func() {
+			// Fail closed. An admission request with no UserInfo is not
+			// evidence that the caller is an admin.
+			bob := user("bob", framev1beta1.RoleViewer)
+			v := newValidator(bob, user("alice", framev1beta1.RoleAdmin))
+			promoted := bob.DeepCopy()
+			promoted.Spec.Role = framev1beta1.RoleAdmin
+			_, err := v.ValidateUpdate(context.Background(), bob, promoted)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("leaves a write that does not touch the role alone", func() {
+			// The guard must fire on role changes only: an operator editing
+			// their own display fields is an ordinary write, and if this
+			// needed an admin the console would refuse every self-service
+			// edit.
+			bob := user("bob", framev1beta1.RoleOperator)
+			v := newValidator(bob, user("alice", framev1beta1.RoleAdmin))
+			edited := bob.DeepCopy()
+			edited.Spec.PasswordAuth = framev1beta1.PasswordEnabled
+			_, err := v.ValidateUpdate(requestBy("frame:operators"), bob, edited)
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 
 	// The hash guard. Every spec below is written against status.passwordHash

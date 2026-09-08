@@ -293,6 +293,24 @@ frozen tier. Admin is `create, delete, deletecollection, get, list, patch,
 update, watch`; editor is the same minus `deletecollection`; viewer is `get,
 list, watch`.
 
+**FrameUser and Talos writes are not in the aggregation at all.**
+`frameuser-viewer-role`, `frameuser-editor-role`,
+`talosmachineconfig-editor-role` and `talosupgrade-editor-role` carry no
+`rbac.frame.plume-labs.io/tier` label, so no `frame:` group holds them by
+installing the chart. Account management is `frameuser-admin-role`, admin tier
+only, and Talos writes are admin only — `cluster-control-operator`'s own
+header excludes them by name. The reason is one sentence and it is the whole
+of it: `get frameusers` is every password hash (see below), and `patch
+frameusers` is a promotion to admin one token lifetime later.
+
+That last one is closed twice over, deliberately. The label is RBAC — who may
+send the request. The FrameUser validating webhook is admission — what the
+request may say: `requireAdminRequester` refuses any change to `spec.role`
+made by someone who is not already in `frame:admins` (or `system:masters`,
+the break-glass path the rollout depends on). Re-add the label by hand and the
+webhook still refuses; disable webhooks and the label still refuses. Removing
+both is what reopens it.
+
 **`frameusers/status` is admin-only.** It carries an argon2id password hash.
 `frameuser-editor-role` and `frameuser-viewer-role` carry **no `/status` rule
 at all** — the only two tier roles of the twenty-seven that do not — and
@@ -322,7 +340,8 @@ halves below were measured against a real apiserver, not assumed:
 
 So **treat `get frameusers` as equivalent to holding every password hash.**
 Do not bind `frameuser-viewer-role` to anyone you would not hand the hashes
-to. Moving the hash into a `Secret` is the only change that fixes this; it is
+to — which is why it is not in the aggregation and `frame:viewers` does not
+hold it. Moving the hash into a `Secret` is the only change that fixes this; it is
 recorded as the destination in the CRD reference and is not part of the
 freeze. The tiers are written in the shape they will need when it happens.
 

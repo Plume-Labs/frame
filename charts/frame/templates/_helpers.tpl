@@ -62,6 +62,23 @@ material was the one kind nobody could be scoped to. It is also the one entry
 that renders a different shape; see rbac-tier-roles.yaml. `frametask` was
 added later still, alongside per-user identity — it has no controller, so its
 tier is the plain shape every kind but frameuser gets.
+
+`aggregate` says which of the three roles carry the
+`rbac.frame.plume-labs.io/tier` label, i.e. which ones the three `frame-*`
+aggregated ClusterRoles pick up. Default is all three; two kinds are not.
+
+  frameuser — admin only. `get frameusers` returns status.passwordHash, so
+    the viewer tier is every account's argon2id hash (docs/deployment.md says
+    so in as many words), and the editor tier is a one-PATCH promotion to
+    admin. Both were labelled for one commit; the whole-branch review's C4 is
+    what took them back out. The webhook's requireAdminRequester is the other
+    half.
+  talosmachineconfig / talosupgrade — no editor. Rewriting a machine config
+    or scheduling a reboot into a new OS image is an admin action;
+    cluster-control-operator excludes Talos writes by name.
+
+This list and config/rbac/*_role.yaml are two hand-maintained copies of one
+thing. `make helm-parity` compares them, including this label.
 */}}
 {{- define "frame.tierRoleCRDs" -}}
 - roleBase: framejob
@@ -79,15 +96,18 @@ tier is the plain shape every kind but frameuser gets.
 - roleBase: frameuser
   apiGroup: frame.plume-labs.io
   resource: frameusers
+  aggregate: [admin]
 - roleBase: schedulingpolicy
   apiGroup: frame.plume-labs.io
   resource: schedulingpolicies
 - roleBase: talosmachineconfig
   apiGroup: frame.plume-labs.io
   resource: talosmachineconfigs
+  aggregate: [admin, viewer]
 - roleBase: talosupgrade
   apiGroup: frame.plume-labs.io
   resource: talosupgrades
+  aggregate: [admin, viewer]
 - roleBase: services-frameservice
   apiGroup: services.plume-labs.io
   resource: frameservices

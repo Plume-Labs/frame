@@ -259,6 +259,49 @@ fi
 echo "OK: every shared resource's body matches (CRDs verified separately; Deployment image/imagePullPolicy/affinity and the metrics Certificate's dnsNames are the only documented exceptions)."
 echo
 
+# --- tier label diff: which ClusterRoles the aggregation picks up ------------
+# The body diff above deletes .metadata, because Helm's standard labels
+# legitimately differ from kustomize's — which also means it is blind to the
+# one label that decides authorization. `rbac.frame.plume-labs.io/tier` is
+# what the three aggregated `frame-viewer`/`-editor`/`-admin` ClusterRoles
+# select on: a role that carries it is granted to a whole tier of people, and
+# a role that carries the wrong one is granted to the wrong tier.
+#
+# The whole-branch review's C4 was exactly that — frameuser-editor-role
+# labelled `tier: editor`, so an operator held `patch frameusers` and could
+# PATCH themselves to `role: admin`. Fixing it in config/rbac/ alone would
+# have left the chart shipping the escalation, silently, with this script
+# green. So compare the label, per ClusterRole name, on both sides.
+echo "== tier labels: which ClusterRoles the frame-* aggregation picks up =="
+tier_labels() {
+  jq -r '
+    select(.kind == "ClusterRole")
+    | "\(.metadata.name)\t\((.metadata.labels // {})["rbac.frame.plume-labs.io/tier"] // "-")"
+  ' "$1" | sort
+}
+tier_labels "$tmpdir/kustomize.jsonl"    > "$tmpdir/kustomize.tiers"
+tier_labels "$tmpdir/helm-default.jsonl" > "$tmpdir/helm-default.tiers"
+
+if ! diff -u "$tmpdir/kustomize.tiers" "$tmpdir/helm-default.tiers"; then
+  cat >&2 <<'MSG'
+FAIL: the chart and kustomize disagree on which ClusterRoles carry
+rbac.frame.plume-labs.io/tier, or on which tier.
+
+This label is an authorization decision, not a tag: the three aggregated
+frame-* ClusterRoles select on it, so it decides which tier of user holds the
+role. The body diff above cannot see it — it deletes .metadata, because Helm's
+standard labels legitimately differ.
+
+The two copies are config/rbac/*_role.yaml and
+charts/frame/templates/rbac-tier-roles.yaml (driven by `aggregate` in
+frame.tierRoleCRDs, charts/frame/templates/_helpers.tpl). Make them agree. Do
+not allow-list this.
+MSG
+  exit 1
+fi
+echo "OK: identical tier labels."
+echo
+
 # --- CRD shape diff: version topology and conversion wiring ------------------
 # See crd_shape() for why this is a separate, narrow comparison rather than a
 # full body diff, and for what it is guarding against (F13).
