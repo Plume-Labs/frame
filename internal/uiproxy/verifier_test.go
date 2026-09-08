@@ -329,3 +329,41 @@ func TestRateLimitedFetchStillReportsTheOriginalFailure(t *testing.T) {
 		t.Fatalf("the rate-limited error hides why the fetch failed: %v", err)
 	}
 }
+
+// I6 of the whole-branch review. `rbac.yaml` grants `impersonate` on `users`
+// with no `resourceNames` — email addresses are not an enumerable set, so
+// there is nothing to bind it to — and Verify passed `claims.Subject`
+// straight into `Impersonate-User`. The only thing keeping a subject like
+// `system:kube-controller-manager` out was `FrameUserSpec.Email`'s pattern,
+// in another kind's CRD, enforced by a component that is not this one.
+//
+// Not exploitable today: the subject comes from a token this verifier just
+// checked the signature of, and only authd signs those. This makes the
+// invariant local rather than borrowed, so it survives authd changing.
+func TestVerifyRejectsASubjectThatIsNotAnEmail(t *testing.T) {
+	f := newSignerFixture(t)
+	v := NewJWKSVerifier(f.server.URL, "https://authd", "frame-ui", f.server.Client())
+
+	for _, sub := range []string{
+		"system:kube-controller-manager",
+		"system:masters",
+		"admin",
+		"system:serviceaccount:kube-system:default",
+		// An `@` alone is not enough: `system:` first is the dangerous shape.
+		"system:anything@example.com",
+	} {
+		tok := f.mint(t, sub, "https://authd", "frame-ui", []string{"admins"}, time.Now().Add(10*time.Minute))
+		if _, err := v.Verify(context.Background(), tok); err == nil {
+			t.Errorf("accepted subject %q — that string goes verbatim into Impersonate-User", sub)
+		}
+	}
+}
+
+func TestVerifyAcceptsAnOrdinaryEmail(t *testing.T) {
+	f := newSignerFixture(t)
+	v := NewJWKSVerifier(f.server.URL, "https://authd", "frame-ui", f.server.Client())
+	tok := f.mint(t, "alice@example.com", "https://authd", "frame-ui", []string{"admins"}, time.Now().Add(10*time.Minute))
+	if _, err := v.Verify(context.Background(), tok); err != nil {
+		t.Fatalf("rejected an ordinary email: %v", err)
+	}
+}

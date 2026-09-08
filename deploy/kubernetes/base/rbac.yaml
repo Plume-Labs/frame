@@ -279,6 +279,12 @@ rules:
 # addresses are not enumerable. The rule that keeps this safe lives in
 # docs/deployment.md: no RBAC binding may ever name an individual user.
 # Everything is granted to the three frame: groups below.
+#
+# The second guard is in the proxy, not here: `checkSubject`
+# (internal/uiproxy/verifier.go) refuses to put a `system:` identity or a
+# non-email into Impersonate-User at all. That used to be borrowed from
+# FrameUserSpec.Email's pattern — a rule in another kind's CRD, enforced by
+# a component that is not the proxy (whole-branch review, I6).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
