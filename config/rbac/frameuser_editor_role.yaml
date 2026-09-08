@@ -33,13 +33,34 @@
 # subresource splits writes, not reads. Granting this role is granting the
 # password hashes until the hash moves to a Secret.
 
+#
+# NOT IN THE AGGREGATION (2026-09-08, whole-branch review C4). This role
+# carries no `rbac.frame.plume-labs.io/tier` label, so `frame-editor` does not
+# pick it up and `frame:operators` does not hold it.
+#
+# It had `tier: editor` for one commit, and that was a one-request escalation
+# to admin: an operator PATCHes their own FrameUser to `role: admin`, and
+# within one 15-minute token lifetime `/auth/token` mints them a token
+# carrying `frame:admins`. No second credential needed, no alarm raised. The
+# only rule on spec.role at the time was the last-admin guard, which returns
+# nil on its first clause for anything that is not a demotion — a promotion
+# was explicitly allowed.
+#
+# The label is half the fix. The other half is in the validating webhook
+# (requireAdminRequester, internal/webhook/frame/v1beta1/frameuser_webhook.go),
+# which refuses a spec.role change made by anyone who is not already an admin
+# — so re-adding the label here, or binding this role by hand, does not
+# reopen the path. Both halves have tests; see test/manifests/rbac_tiers_test.go
+# and frameuser_webhook_test.go's "who may change a role".
+#
+# Bind it deliberately if you want it, to a group, never to a user.
+
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
-    rbac.frame.plume-labs.io/tier: editor
   name: frameuser-editor-role
 rules:
 - apiGroups:

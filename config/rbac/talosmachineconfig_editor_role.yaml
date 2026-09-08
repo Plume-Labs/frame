@@ -5,13 +5,24 @@
 # This role is intended for users who need to manage these resources
 # but should not control RBAC or manage permissions for others.
 
+#
+# NOT IN THE AGGREGATION (2026-09-08, whole-branch review C4). No
+# `rbac.frame.plume-labs.io/tier` label, so `frame:operators` does not hold
+# it.
+#
+# `cluster-control-operator`'s own header states the exclusion — "write on
+# safe Frame CRDs (not Talos, not /status)" — and labelling this role
+# `tier: editor` reversed it silently: an operator could rewrite a node's
+# machine configuration. Operators keep read access to Talos through
+# `cluster-control-viewer` and `talosmachineconfig-viewer-role`; writes stay
+# with `frame:admins` via the admin tier.
+
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
-    rbac.frame.plume-labs.io/tier: editor
   name: talosmachineconfig-editor-role
 rules:
 - apiGroups:

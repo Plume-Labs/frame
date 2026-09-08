@@ -26,6 +26,14 @@ the only thing keeping the two hand-maintained copies in step.
 {{- $lowerTiersGetStatus = false }}
 {{- $adminWritesStatus = true }}
 {{- end }}
+{{- /*
+Which of the three roles carry the aggregation label. Defaults to all three;
+`aggregate` in frame.tierRoleCRDs narrows it, and that helper is where the
+reasoning per kind lives. Rendering the label for a tier this kind excludes
+is how an operator got a one-PATCH promotion to admin, so this is not
+cosmetic — see the whole-branch review's C4.
+*/}}
+{{- $aggregate := .aggregate | default (list "admin" "editor" "viewer") }}
 # This rule is not used by the project frame itself. It is provided to allow
 # the cluster admin to help manage permissions for users.
 #
@@ -39,7 +47,9 @@ metadata:
   name: {{ $namePrefix }}-{{ .roleBase }}-admin-role
   labels:
     {{- $labels | nindent 4 }}
+    {{- if has "admin" $aggregate }}
     rbac.frame.plume-labs.io/tier: admin
+    {{- end }}
 rules:
 - apiGroups:
   - {{ .apiGroup }}
@@ -73,7 +83,9 @@ metadata:
   name: {{ $namePrefix }}-{{ .roleBase }}-editor-role
   labels:
     {{- $labels | nindent 4 }}
+    {{- if has "editor" $aggregate }}
     rbac.frame.plume-labs.io/tier: editor
+    {{- end }}
 rules:
 - apiGroups:
   - {{ .apiGroup }}
@@ -103,7 +115,9 @@ metadata:
   name: {{ $namePrefix }}-{{ .roleBase }}-viewer-role
   labels:
     {{- $labels | nindent 4 }}
+    {{- if has "viewer" $aggregate }}
     rbac.frame.plume-labs.io/tier: viewer
+    {{- end }}
 rules:
 - apiGroups:
   - {{ .apiGroup }}

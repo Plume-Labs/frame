@@ -26,13 +26,26 @@
 # the hash genuinely unreadable here. Until then, granting this role is
 # granting the password hashes. See frameuser_admin_role.yaml.
 
+#
+# NOT IN THE AGGREGATION (2026-09-08, whole-branch review C4). This role
+# carries no `rbac.frame.plume-labs.io/tier` label, so `frame-viewer` does not
+# pick it up and `frame:viewers` does not hold it.
+#
+# It had `tier: viewer` for one commit, which is exactly what the deployment
+# guide — edited by the same branch — says never to do: `get frameusers`
+# returns the whole object including `status.passwordHash`, so holding this
+# role is holding every account's argon2id hash, and the branch bound it to
+# the lowest tier of all. See docs/deployment.md, "RBAC".
+#
+# Account management belongs to `frame:admins` via `frameuser-admin-role`,
+# which is the one FrameUser tier still labelled.
+
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
-    rbac.frame.plume-labs.io/tier: viewer
   name: frameuser-viewer-role
 rules:
 - apiGroups:
