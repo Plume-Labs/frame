@@ -572,6 +572,25 @@ export interface Application {
   health: AppHealth
 }
 
+/**
+ * One write the UI made through the proxy — a FrameTask, projected for the
+ * Tasks screen. `target`/`ref` are rendered as `resource/name` (or
+ * `namespace/resource/name`), matching how FrameTaskSpec.ObjectRef names
+ * things: a plural resource off the request path, not a Kind.
+ */
+export interface TaskRecord {
+  name: string
+  user: string
+  verb: string
+  action: string
+  target: string
+  phase: 'Running' | 'Succeeded' | 'Failed'
+  httpCode?: number
+  startedAt?: string
+  finishedAt?: string
+  ref?: { group: string; resource: string; namespace: string; name: string }
+}
+
 // ── Error type ───────────────────────────────────────────────────────────────
 
 export class FrameAPIError extends Error {
@@ -968,6 +987,40 @@ function crToQuota(cr: FrameResourceQuotaCR): ResourceQuota {
     usedMemory:   used['limits.memory'] ?? '0Gi',
     usedGPUs:     quantityToNum(used['requests.nvidia.com/gpu']),
     namespaces:   cr.status?.namespaces ?? 0,
+  }
+}
+
+interface FrameTaskCR {
+  metadata: { name: string; creationTimestamp?: string }
+  spec: {
+    user: string; verb: string; action?: string
+    target: { group?: string; resource: string; namespace?: string; name: string }
+    ref?: { group?: string; resource: string; namespace?: string; name: string }
+  }
+  status?: { phase?: string; httpCode?: number; startedAt?: string; finishedAt?: string }
+}
+
+function refLabel(r: { resource: string; namespace?: string; name: string }): string {
+  return r.namespace ? `${r.namespace}/${r.resource}/${r.name}` : `${r.resource}/${r.name}`
+}
+
+function crToTask(cr: FrameTaskCR): TaskRecord {
+  return {
+    name: cr.metadata.name,
+    user: cr.spec.user,
+    verb: cr.spec.verb,
+    action: cr.spec.action ?? `${cr.spec.verb} ${refLabel(cr.spec.target)}`,
+    target: refLabel(cr.spec.target),
+    // A task with no status is one the proxy created and has not closed:
+    // in flight, or the proxy died mid-request. Both read as Running.
+    phase: (cr.status?.phase as TaskRecord['phase']) ?? 'Running',
+    httpCode: cr.status?.httpCode,
+    startedAt: cr.status?.startedAt ?? cr.metadata.creationTimestamp,
+    finishedAt: cr.status?.finishedAt,
+    ref: cr.spec.ref && {
+      group: cr.spec.ref.group ?? '', resource: cr.spec.ref.resource,
+      namespace: cr.spec.ref.namespace ?? '', name: cr.spec.ref.name,
+    },
   }
 }
 
@@ -2845,6 +2898,16 @@ export class FrameClient {
       return { status: 'degraded', version: VERSION, uptime: 0 }
     }
   }
+
+  /** Who did what through the UI proxy, and how each write ended. */
+  tasks = {
+    list: async (limit = 200): Promise<TaskRecord[]> => {
+      const res = await k8sFetch<{ items: FrameTaskCR[] }>(`${frameListPath('frametasks')}?limit=${limit}`)
+      return res.items
+        .map(crToTask)
+        .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
+    },
+  }
 }
 
 export function createFrameClient(opts: FrameClientOptions = {}): FrameClient {
@@ -2852,4 +2915,4 @@ export function createFrameClient(opts: FrameClientOptions = {}): FrameClient {
 }
 
 /** Module-private mappers, exposed for unit tests only. Not part of the SDK. */
-export const __testing = { crToJob, crToNode, crToPolicy, crToQuota }
+export const __testing = { crToJob, crToNode, crToPolicy, crToQuota, crToTask }

@@ -592,3 +592,28 @@ describe('ClusterClient.capacity', () => {
     expect(cap.find((c) => c.name === 'Memory')?.requested).toBeCloseTo(1, 3)
   })
 })
+
+describe('crToTask', () => {
+  const { crToTask } = __testing
+
+  it('maps a refused write to a failed task', () => {
+    const t = crToTask({
+      metadata: { name: 'task-abc' },
+      spec: { user: 'bob@example.com', verb: 'patch', action: 'cordon node w2',
+              target: { resource: 'nodes', name: 'w2' } },
+      status: { phase: 'Failed', httpCode: 403, startedAt: '2026-09-08T10:00:00Z' },
+    })
+    expect(t.phase).toBe('Failed')
+    expect(t.httpCode).toBe(403)
+    expect(t.target).toBe('nodes/w2')
+  })
+
+  it('treats a task with no status as running', () => {
+    const t = crToTask({
+      metadata: { name: 'task-def' },
+      spec: { user: 'a@b.c', verb: 'create', target: { resource: 'framejobs', namespace: 'frame-system', name: '-' } },
+    })
+    expect(t.phase).toBe('Running')
+    expect(t.target).toBe('frame-system/framejobs/-')
+  })
+})
