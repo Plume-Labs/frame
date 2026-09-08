@@ -225,22 +225,38 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
-    # NOTE — there is deliberately no rule admitting in-cluster pods. That is
-    # the point of the exercise: `jupyterhub` and `neura-sandbox` run
+    # The ingress controller, which is what the note below anticipated. The
+    # console now has an Ingress (`deploy/samples/test-cluster/console-ingress.yaml`)
+    # because WebAuthn needs a secure context and authd's session cookie is
+    # `Secure`: neither survives the plain-HTTP NodePort. Traefik is a pod, so
+    # none of the ipBlocks above match it and the ingress answered 502 until
+    # this rule existed.
+    #
+    # It is two selectors ANDed, not two `from` entries: a namespaceSelector
+    # and a podSelector inside one element mean "a pod matching this, in a
+    # namespace matching that". Split across two entries they would mean "any
+    # pod in kube-system, OR any pod named traefik anywhere" — which admits
+    # every workload in kube-system.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+    # NOTE — there is deliberately no rule admitting arbitrary in-cluster pods.
+    # That is the point of the exercise: `jupyterhub` and `neura-sandbox` run
     # user-supplied code and were, until now, one HTTP request away from the
-    # proxy sidecar's cluster-wide credential.
+    # proxy sidecar's cluster-wide credential. Traefik is admitted above by
+    # name; nothing else is.
     #
-    # If an Ingress is ever put back in front of the UI (there is none on the
-    # cluster today — `kubectl -n cluster-control get ingress` returns nothing,
-    # although `base/ingress.yaml` still defines one), the ingress controller
-    # is a pod and WILL need admitting. For k3s Traefik that is:
-    #
-    #   - from:
-    #       - namespaceSelector:
-    #           matchLabels: { kubernetes.io/metadata.name: kube-system }
-    #         podSelector:
-    #           matchLabels: { app.kubernetes.io/name: traefik }
-    #     ports: [{ protocol: TCP, port: 8080 }]
+    # What reaching the console through Traefik now costs an attacker who
+    # controls a pod: they can send it HTTP, as any LAN client can. What it
+    # does not give them is a credential — every write past the uiproxy needs
+    # a token authd signed.
 ---
 # 5/6 — Ingress to authd.
 # Nothing calls authd today: it is Stage 1 of the per-user auth work and only

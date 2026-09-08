@@ -1,0 +1,59 @@
+# The console's HTTPS origin on the k3s test cluster.
+#
+# WebAuthn needs a secure context and authd's session cookie is `Secure`, so
+# the NodePort the console was reached on (http://<node>:30379) can carry
+# neither: the browser refuses to store the cookie and does not expose
+# navigator.credentials at all. This gives the console a real origin —
+# https://frame.anna.ovh — which is also, and not incidentally, the value
+# authd's RP_ID must hold. Changing that hostname later invalidates every
+# enrolled passkey, so it is chosen once, here.
+#
+# TLS is terminated by Traefik, not by the Nginx Proxy Manager that fronts
+# app.anna.ovh: the console must not be reachable from the WAN. The DNS A
+# record points at a private address, so the name resolves everywhere and
+# answers only on the LAN.
+#
+# The certificate is issued by `frame-auth-ca`, the same in-cluster CA that
+# already issues authd's serving certificate, rather than by a new one — one
+# root to trust on each device you sign in from instead of two.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: frame-console-tls
+  namespace: cluster-control
+spec:
+  secretName: frame-console-tls
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days
+  commonName: frame.anna.ovh
+  dnsNames:
+    - frame.anna.ovh
+  issuerRef:
+    name: frame-auth-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cluster-control-console
+  namespace: cluster-control
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - frame.anna.ovh
+      secretName: frame-console-tls
+  rules:
+    - host: frame.anna.ovh
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cluster-control-ui
+                port:
+                  name: http
