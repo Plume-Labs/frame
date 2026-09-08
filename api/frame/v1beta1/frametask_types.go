@@ -121,8 +121,9 @@ type FrameTaskStatus struct {
 type FrameTask struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              FrameTaskSpec   `json:"spec,omitempty"`
-	Status            FrameTaskStatus `json:"status,omitempty"`
+	// +required
+	Spec   FrameTaskSpec   `json:"spec"`
+	Status FrameTaskStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

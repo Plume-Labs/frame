@@ -20,7 +20,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -73,4 +75,27 @@ var _ = Describe("FrameTask v1beta1 schema", func() {
 			Target: framev1beta1.ObjectRef{Resource: "nodes", Name: "w2"},
 		}, true),
 	)
+
+	// Spec is `+required` precisely so a raw create with no spec key at all —
+	// not reachable through the typed client above, since a Go client always
+	// serialises a non-pointer struct field regardless of the json tag — is
+	// rejected rather than silently producing a FrameTask with no user, verb
+	// or target: exactly the "record that means nothing" the type's own doc
+	// comment argues against. Modelled on FrameUser's "rejects an object with
+	// no spec at all" spec; FrameTask has no v1alpha1, so there is only one
+	// version to assert against.
+	It("rejects an object with no spec at all", func() {
+		raw := &unstructured.Unstructured{}
+		raw.SetGroupVersionKind(framev1beta1.GroupVersion.WithKind("FrameTask"))
+		raw.SetNamespace("default")
+		raw.SetGenerateName("task-no-spec-")
+		err := k8sClient.Create(ctx, raw)
+		if err == nil {
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, raw) })
+		}
+		Expect(err).To(HaveOccurred(), "the apiserver accepted a FrameTask with no spec")
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected a validation error, got: %v", err)
+		Expect(err.Error()).To(ContainSubstring("spec"),
+			"the rejection must name spec, not some other rule")
+	})
 })
