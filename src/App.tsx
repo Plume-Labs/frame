@@ -39,6 +39,7 @@ const ResilienceView = lazy(() => import('@/components/ResilienceView').then((m)
 const SecurityView = lazy(() => import('@/components/SecurityView').then((m) => ({ default: m.SecurityView })))
 const AlertsView = lazy(() => import('@/components/AlertsView').then((m) => ({ default: m.AlertsView })))
 const ClusterEventsView = lazy(() => import('@/components/ClusterEventsView').then((m) => ({ default: m.ClusterEventsView })))
+const TasksView = lazy(() => import('@/components/TasksView').then((m) => ({ default: m.TasksView })))
 const SettingsView = lazy(() => import('@/components/SettingsView').then((m) => ({ default: m.SettingsView })))
 
 import { Button } from '@/components/ui/button'
@@ -70,6 +71,7 @@ import {
   Gauge,
   Gear,
   HardDrives,
+  ListChecks,
   Network,
   Package,
   Queue,
@@ -124,6 +126,7 @@ type TabId =
   | 'security'
   | 'alerts'
   | 'events'
+  | 'tasks'
   | 'settings'
 
 interface NavTab {
@@ -293,6 +296,13 @@ const NAV: NavGroup[] = [
           { id: 'alerts', label: 'Alerts' },
           { id: 'events', label: 'Events' },
         ],
+      },
+      {
+        id: 'tasks',
+        label: 'Tasks',
+        icon: <ListChecks />,
+        description: 'Every write made through the UI, and how it ended',
+        tabs: [{ id: 'tasks', label: 'Tasks' }],
       },
       {
         id: 'settings',
@@ -483,6 +493,8 @@ function App() {
         return <AlertsView />
       case 'events':
         return <ClusterEventsView />
+      case 'tasks':
+        return <TasksView />
       case 'settings':
         return <SettingsView />
 
