@@ -7,11 +7,9 @@ import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { useNavigation } from '@/hooks/useNavigation'
 import { formatAge } from '@/lib/thresholds'
 import {
   ArrowClockwise,
-  ArrowSquareOut,
   CheckCircle,
   ListChecks,
   Spinner,
@@ -24,38 +22,6 @@ const PHASE: Record<TaskRecord['phase'], { tone: string; icon: React.ReactNode }
   Running: { tone: 'text-primary', icon: <Spinner className="animate-spin" size={12} /> },
   Succeeded: { tone: 'text-accent', icon: <CheckCircle size={12} /> },
   Failed: { tone: 'text-destructive', icon: <XCircle size={12} /> },
-}
-
-/**
- * Where a `ref` (a FrameJob, a TalosUpgrade, a Velero backup, …) is shown on
- * the sidebar. Deliberately partial: a resource this map doesn't know about
- * still shows as plain text rather than a broken link.
- */
-const REF_SCREEN: Record<string, { screen: string; tab?: string }> = {
-  framejobs: { screen: 'jobs', tab: 'jobs' },
-  framenodes: { screen: 'nodes', tab: 'provisioned-nodes' },
-  nodes: { screen: 'nodes', tab: 'nodes' },
-  talosupgrades: { screen: 'nodes', tab: 'provisioned-nodes' },
-  talosmachineconfigs: { screen: 'nodes', tab: 'provisioned-nodes' },
-  backups: { screen: 'capacity', tab: 'resilience' },
-}
-
-function RefLink({ taskRef: r }: { taskRef: TaskRecord['ref'] }) {
-  const { navigate } = useNavigation()
-  if (!r) return null
-  const label = r.namespace ? `${r.namespace}/${r.resource}/${r.name}` : `${r.resource}/${r.name}`
-  const target = REF_SCREEN[r.resource]
-  if (!target) return <span className="text-muted-foreground">{label}</span>
-  return (
-    <button
-      type="button"
-      onClick={() => navigate(target.screen, target.tab)}
-      className="inline-flex items-center gap-1 text-primary hover:underline"
-    >
-      {label}
-      <ArrowSquareOut size={11} />
-    </button>
-  )
 }
 
 /**
@@ -122,7 +88,7 @@ export function TasksView() {
                       <TableCell className="font-mono text-xs">{t.user}</TableCell>
                       <TableCell className="font-mono text-xs">{t.action}</TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {t.ref ? <RefLink taskRef={t.ref} /> : t.target}
+                        {t.target}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className={`gap-1 font-mono text-[10px] border-current ${phase.tone}`}>
