@@ -87,6 +87,14 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
+            # nginx's `location /auth/` proxies to authd over TLS and verifies
+            # its certificate, which the in-cluster `frame-auth-ca` Issuer
+            # signs — no public root chains to it. Projected from the leaf
+            # Secret with `items`, so only `ca.crt` lands in the container and
+            # authd's serving private key never does.
+            - name: frame-auth-ca
+              mountPath: /etc/frame-auth-ca
+              readOnly: true
         # Authenticates the UI's requests against authd and impersonates the
         # person they name. Replaces `kubectl proxy`, which authenticated
         # every request — reads and writes alike — as the pod ServiceAccount.
@@ -118,6 +126,16 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        # Created by cert-manager from deploy/kubernetes/authd/certificate.yaml,
+        # which is a separate kustomization applied first (Stage 1). `ca.crt`
+        # is the frame-auth-ca certificate cert-manager copies into every leaf
+        # Secret it issues from that CA Issuer.
+        - name: frame-auth-ca
+          secret:
+            secretName: frame-auth-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: tmp
           emptyDir: {}
         - name: cache
