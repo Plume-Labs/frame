@@ -305,11 +305,17 @@ frameusers` is a promotion to admin one token lifetime later.
 
 That last one is closed twice over, deliberately. The label is RBAC — who may
 send the request. The FrameUser validating webhook is admission — what the
-request may say: `requireAdminRequester` refuses any change to `spec.role`
-made by someone who is not already in `frame:admins` (or `system:masters`,
-the break-glass path the rollout depends on). Re-add the label by hand and the
-webhook still refuses; disable webhooks and the label still refuses. Removing
-both is what reopens it.
+request may say: `requireAdminRequester` refuses, from anyone who is not
+already in `frame:admins` (or `system:masters`, the break-glass path the
+rollout depends on): any change to `spec.role`, a **create** carrying
+`spec.role: admin` (once any admin exists — the very first admin comes from
+bootstrap, which has no admin requester by definition), and a **delete** of
+an admin FrameUser. That last one matters on its own, not just as a
+recreate-then-promote guard: without it, a non-admin holding `delete` could
+remove an existing admin outright as long as a second one remained, with no
+`spec.role` write involved at all. Re-add the label by hand and the webhook
+still refuses — create, update and delete alike — disable webhooks and the
+label still refuses. Removing both is what reopens it.
 
 **`frameusers/status` is admin-only.** It carries an argon2id password hash.
 `frameuser-editor-role` and `frameuser-viewer-role` carry **no `/status` rule

@@ -67,7 +67,9 @@ var _ = Describe("FrameUser webhook", func() {
 	It("refuses deleting the only admin", func() {
 		only := user("alice", framev1beta1.RoleAdmin)
 		v := newValidator(only, user("bob", framev1beta1.RoleViewer))
-		_, err := v.ValidateDelete(context.Background(), only)
+		// An admin requester, so this exercises the last-admin rule rather
+		// than the "who may delete an admin" guard in front of it.
+		_, err := v.ValidateDelete(requestBy("frame:admins"), only)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("last admin"))
 	})
@@ -75,7 +77,7 @@ var _ = Describe("FrameUser webhook", func() {
 	It("allows deleting an admin when another remains", func() {
 		alice := user("alice", framev1beta1.RoleAdmin)
 		v := newValidator(alice, user("carol", framev1beta1.RoleAdmin))
-		_, err := v.ValidateDelete(context.Background(), alice)
+		_, err := v.ValidateDelete(requestBy("frame:admins"), alice)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -181,6 +183,96 @@ var _ = Describe("FrameUser webhook", func() {
 			edited := bob.DeepCopy()
 			edited.Spec.PasswordAuth = framev1beta1.PasswordEnabled
 			_, err := v.ValidateUpdate(requestBy("frame:operators"), bob, edited)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		// The other half of C4: frameuser-editor-role grants create as well
+		// as update, so a principal holding it could sidestep every check
+		// above by creating a brand-new admin FrameUser instead of patching
+		// an existing one. Run against the code before this fix (comment out
+		// the anyAdmin/requireAdminRequester block in ValidateCreate), every
+		// one of these first three cases went the wrong way: an operator's
+		// create with spec.role: admin succeeded instead of failing, and the
+		// unattributed create succeeded too — only guardPasswordHash ran.
+		It("refuses an operator creating a second admin at their own email", func() {
+			v := newValidator(user("alice", framev1beta1.RoleAdmin))
+			mallory := user("mallory", framev1beta1.RoleAdmin)
+			_, err := v.ValidateCreate(requestBy("frame:operators"), mallory)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.role"))
+		})
+
+		It("refuses a create of an admin it cannot attribute, once an admin exists", func() {
+			// Fail closed, the same way an unattributed role change does.
+			v := newValidator(user("alice", framev1beta1.RoleAdmin))
+			mallory := user("mallory", framev1beta1.RoleAdmin)
+			_, err := v.ValidateCreate(context.Background(), mallory)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("allows an admin to create another admin", func() {
+			v := newValidator(user("alice", framev1beta1.RoleAdmin))
+			dave := user("dave", framev1beta1.RoleAdmin)
+			_, err := v.ValidateCreate(requestBy("frame:admins"), dave)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("allows the very first admin to be created with no admin requester", func() {
+			// Bootstrap: authd's own AdminCount() == 0 check is what
+			// authorizes this create (server_bootstrap.go), and the request
+			// itself carries no frame:admins group because there is no admin
+			// yet to belong to. A guard that refused this would break
+			// /auth/bootstrap on every fresh install.
+			v := newValidator()
+			first := user("alice", framev1beta1.RoleAdmin)
+			_, err := v.ValidateCreate(context.Background(), first)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("leaves a create of a non-admin alone", func() {
+			v := newValidator(user("alice", framev1beta1.RoleAdmin))
+			_, err := v.ValidateCreate(requestBy("frame:operators"), user("bob", framev1beta1.RoleViewer))
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		// Delete-then-recreate is the path the create guard above already
+		// closes on its own (a recreate with spec.role: admin is a create),
+		// but an unguarded delete is its own privilege-affecting write: it
+		// can remove an admin who is not the last one using nothing but
+		// `delete`, without ever touching spec.role. Run against the code
+		// before this fix (the ValidateDelete below with no
+		// requireAdminRequester call), the first case succeeded instead of
+		// failing: an operator could delete an admin outright as long as a
+		// second admin remained to satisfy the last-admin check.
+		It("refuses an operator deleting an admin who is not the last one", func() {
+			alice := user("alice", framev1beta1.RoleAdmin)
+			carol := user("carol", framev1beta1.RoleAdmin)
+			v := newValidator(alice, carol)
+			_, err := v.ValidateDelete(requestBy("frame:operators"), alice)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("delete admin FrameUser"))
+		})
+
+		It("refuses a delete of an admin it cannot attribute", func() {
+			alice := user("alice", framev1beta1.RoleAdmin)
+			carol := user("carol", framev1beta1.RoleAdmin)
+			v := newValidator(alice, carol)
+			_, err := v.ValidateDelete(context.Background(), alice)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("allows an admin to delete another admin", func() {
+			alice := user("alice", framev1beta1.RoleAdmin)
+			carol := user("carol", framev1beta1.RoleAdmin)
+			v := newValidator(alice, carol)
+			_, err := v.ValidateDelete(requestBy("frame:admins"), alice)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("leaves deleting a non-admin alone, even for a non-admin requester", func() {
+			bob := user("bob", framev1beta1.RoleViewer)
+			v := newValidator(bob, user("alice", framev1beta1.RoleAdmin))
+			_, err := v.ValidateDelete(requestBy("frame:operators"), bob)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
@@ -297,7 +389,9 @@ var _ = Describe("FrameUser webhook", func() {
 			}).
 			Build()
 		v := &FrameUserCustomValidator{Client: c}
-		_, err := v.ValidateDelete(context.Background(), alice)
+		// An admin requester, so this reaches the last-admin list read
+		// instead of failing earlier on the "who may delete an admin" guard.
+		_, err := v.ValidateDelete(requestBy("frame:admins"), alice)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("cannot verify remaining admins"))
 	})

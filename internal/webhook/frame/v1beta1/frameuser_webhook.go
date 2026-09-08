@@ -64,7 +64,35 @@ func (v *FrameUserCustomValidator) ValidateCreate(ctx context.Context, obj *fram
 	// chose. At v1beta1 the apiserver has already cleared status by the time
 	// admission runs (PrepareForCreate precedes validating admission), so this
 	// can only be non-empty on a v1alpha1 create carrying spec.passwordHash.
-	return nil, guardPasswordHash(ctx, "", obj.Status.PasswordHash)
+	if err := guardPasswordHash(ctx, "", obj.Status.PasswordHash); err != nil {
+		return nil, err
+	}
+	if obj.Spec.Role != framev1beta1.RoleAdmin {
+		return nil, nil
+	}
+	// The other half of C4. requireAdminRequester below was added only to
+	// ValidateUpdate, but frameuser-editor-role grants create as well as
+	// update, so a principal holding it could sidestep the update guard
+	// entirely by creating a brand-new FrameUser at their own email with
+	// spec.role: admin instead of patching one into an existing account.
+	// Same rule, applied to the other write that can set spec.role: admin.
+	//
+	// Bootstrap is the one legitimate create of an admin FrameUser that is
+	// never made by an admin — there isn't one yet to be one. It is not
+	// exempted by identity (this stays independent of authd's ServiceAccount
+	// name or namespace); it is exempted by the same fact authd's own gate
+	// rests on: AdminCount() == 0 (server_bootstrap.go). Once one admin
+	// FrameUser exists, both doors are shut — authd's on the next
+	// /auth/bootstrap request, this one on the next create — and neither
+	// reopens if the other is bypassed.
+	anyAdmin, err := v.anyAdminExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !anyAdmin {
+		return nil, nil
+	}
+	return nil, requireAdminRequester(ctx, fmt.Sprintf("create a FrameUser with spec.role: %q", obj.Spec.Role))
 }
 
 func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *framev1beta1.FrameUser) (admission.Warnings, error) {
@@ -75,7 +103,8 @@ func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, n
 	// is not something to tell a caller who has no business changing a role
 	// in the first place.
 	if oldObj.Spec.Role != newObj.Spec.Role {
-		if err := requireAdminRequester(ctx, oldObj.Spec.Role, newObj.Spec.Role); err != nil {
+		action := fmt.Sprintf("change spec.role from %q to %q", oldObj.Spec.Role, newObj.Spec.Role)
+		if err := requireAdminRequester(ctx, action); err != nil {
 			return nil, err
 		}
 	}
@@ -104,26 +133,30 @@ const (
 	clusterAdminGroup = "system:masters"
 )
 
-// requireAdminRequester refuses a change to spec.role made by anyone who is
-// not already an admin.
+// requireAdminRequester refuses an action that affects who holds the admin
+// role, made by anyone who is not already an admin. action names the write
+// being refused, in a form that reads naturally after "refusing to" and
+// "may" — e.g. `change spec.role from "viewer" to "admin"`, or
+// `delete admin FrameUser "alice"`.
 //
 // This is the second half of the fix for the promotion path the whole-branch
 // review found (C4). The first half is RBAC: frameuser-editor-role is no
 // longer in the editor tier, so an operator cannot send the request at all.
 // This half is what holds when RBAC is wrong — a re-added tier label, a
 // hand-made binding, a kubeconfig issued to the wrong person. Without it the
-// only rule on this field was the last-admin guard below, which returns nil
-// on its first clause for every write that is not a demotion: a self-promotion
-// to admin was explicitly allowed, and one token lifetime later the account
-// carried frame:admins.
+// only rule on spec.role was the last-admin guard, which returns nil on its
+// first clause for every write that is not a demotion: a self-promotion to
+// admin was explicitly allowed, and one token lifetime later the account
+// carried frame:admins. Both ValidateCreate and ValidateUpdate call this,
+// because frameuser-editor-role grants both verbs and either one alone can
+// mint or hijack an admin.
 //
 // Fails closed. An admission request with no UserInfo, or no request in the
 // context at all, is not evidence that the caller is an admin.
-func requireAdminRequester(ctx context.Context, oldRole, newRole string) error {
+func requireAdminRequester(ctx context.Context, action string) error {
 	req, err := admission.RequestFromContext(ctx)
 	if err != nil {
-		return fmt.Errorf("refusing to change spec.role from %q to %q: cannot identify who is making the request (%w)",
-			oldRole, newRole, err)
+		return fmt.Errorf("refusing to %s: cannot identify who is making the request (%w)", action, err)
 	}
 	for _, g := range req.UserInfo.Groups {
 		if g == adminGroup || g == clusterAdminGroup {
@@ -131,16 +164,54 @@ func requireAdminRequester(ctx context.Context, oldRole, newRole string) error {
 		}
 	}
 	return fmt.Errorf(
-		"refusing to change spec.role from %q to %q: %q is not an admin. "+
-			"Only a member of %s (a FrameUser with spec.role: admin) or %s may change a role — "+
-			"otherwise anyone who can patch a FrameUser can make themselves an admin, "+
-			"and anyone who can patch one can lock the admins out",
-		oldRole, newRole, req.UserInfo.Username, adminGroup, clusterAdminGroup)
+		"refusing to %s: %q is not an admin. "+
+			"Only a member of %s (a FrameUser with spec.role: admin) or %s may do this — "+
+			"otherwise anyone who can create or patch a FrameUser can make themselves an admin, "+
+			"and anyone who can delete one can remove an admin who is not the last one",
+		action, req.UserInfo.Username, adminGroup, clusterAdminGroup)
+}
+
+// anyAdminExists reports whether any FrameUser currently holds the admin
+// role. Used only to detect the bootstrap window (no admin exists yet) so
+// that ValidateCreate can tell it apart from every later create, which must
+// come from an existing admin.
+//
+// Fails closed the same way requireAnotherAdmin does: a listing failure is
+// returned as an error rather than treated as "no admin", which would widen
+// the create guard into a second bootstrap window instead of narrowing it.
+func (v *FrameUserCustomValidator) anyAdminExists(ctx context.Context) (bool, error) {
+	var users framev1beta1.FrameUserList
+	if err := v.Client.List(ctx, &users); err != nil {
+		return false, fmt.Errorf("cannot verify existing admins: %w", err)
+	}
+	for _, u := range users.Items {
+		if u.Spec.Role == framev1beta1.RoleAdmin {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (v *FrameUserCustomValidator) ValidateDelete(ctx context.Context, obj *framev1beta1.FrameUser) (admission.Warnings, error) {
 	if obj.Spec.Role != framev1beta1.RoleAdmin {
 		return nil, nil
+	}
+	// Deleting an admin FrameUser is a privilege-affecting write in its own
+	// right, not just a stand-in for the demotion ValidateUpdate already
+	// guards: it removes a principal from frame:admins using only `delete`,
+	// with no need to touch spec.role at all, and — unlike a demotion — the
+	// last-admin check below does not stop it when a second admin remains.
+	// Before this, a non-admin holding frameuser-editor-role could delete any
+	// admin FrameUser except the very last one.
+	//
+	// Scoped to admin-role FrameUsers, not every delete: authd's own
+	// ServiceAccount never deletes FrameUsers at all — deploy/kubernetes/authd/rbac.yaml
+	// grants it get, list, watch and create, and no delete verb — so this
+	// cannot break bootstrap or any normal authd write path. Deleting a
+	// non-admin account is unaffected, including with no admin in existence
+	// at all (there is nothing privilege-affecting to protect in that case).
+	if err := requireAdminRequester(ctx, fmt.Sprintf("delete admin FrameUser %q", obj.Name)); err != nil {
+		return nil, err
 	}
 	return nil, v.requireAnotherAdmin(ctx, obj.Name)
 }
