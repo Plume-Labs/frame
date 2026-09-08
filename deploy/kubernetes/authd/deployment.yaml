@@ -49,18 +49,27 @@ spec:
             # Service DNS name and the `frame-ui` client id, both unchanged
             # since Stage 1.
             #
-            # TODO: `frame.anna.ovh` is a placeholder pending confirmation —
-            # nothing in this repo names the real hostname (base/ingress.yaml
-            # and both overlays use REPLACE_HOSTNAME / REPLACE_YOUR_DOMAIN).
-            # Confirm and correct before this is actually deployed.
+            # RP_ID/RP_ORIGIN are REPLACE_HOSTNAME, the same placeholder
+            # token base/ingress.yaml uses — not a guess. The hostname this
+            # console will be served from has been asked about and is not
+            # yet decided (see the rollout order in docs/deployment.md).
+            # Unlike the UI's Ingress, this manifest has no overlay to
+            # substitute the value later (this directory's own
+            # kustomization.yaml applies it directly, with no overlays at
+            # all), so REPLACE_HOSTNAME must be edited here by hand once the
+            # hostname is chosen. A wrong RP_ID is not caught by any test or
+            # probe — it fails at the exact moment the first admin tries to
+            # enrol their only passkey, which is the step that strands them.
+            # Do not apply this manifest until the hostname is decided and
+            # both values below are replaced.
             - name: OIDC_ISSUER_URL
               value: https://cluster-control-auth.cluster-control.svc
             - name: OIDC_CLIENT_ID
               value: frame-ui
             - name: RP_ID
-              value: frame.anna.ovh
+              value: REPLACE_HOSTNAME
             - name: RP_ORIGIN
-              value: https://frame.anna.ovh
+              value: https://REPLACE_HOSTNAME
             - name: NAMESPACE
               valueFrom:
                 fieldRef:

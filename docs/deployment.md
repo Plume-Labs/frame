@@ -356,6 +356,17 @@ freeze. The tiers are written in the shape they will need when it happens.
 Turning per-user enforcement on is a five-step sequence, and the order is
 load-bearing — not a preference, a dependency chain.
 
+**This rollout cannot start until the console's real hostname is decided.**
+It has been asked about and is not yet answered. `RP_ID` governs the *only*
+credential the bootstrapped admin can ever hold (step 5 below), and a wrong
+value there strands them with no way back short of the node's own
+kubeconfig — so `deploy/kubernetes/authd/deployment.yaml` ships `RP_ID` /
+`RP_ORIGIN` as `REPLACE_HOSTNAME`, the same placeholder token
+`base/ingress.yaml` uses, rather than a guessed hostname someone could
+deploy by accident believing it was configured. See step 2 below for where
+to set it once the hostname is chosen, and the section after this sequence
+for why the value matters as much as it does.
+
 This order was rewritten on 2026-09-08 (whole-branch review, I5 and C5). The
 previous one could not be executed: its step 1 said to bootstrap the first
 admin *and* enrol a passkey "while the old anonymous path still works", but
@@ -388,12 +399,14 @@ fine — there is no chicken-and-egg.
    applying: `kubectl kustomize deploy/kubernetes/overlays/production | grep
    'image:'`.
 
-2. **Point authd's `RP_ID` / `RP_ORIGIN` at the real hostname**
-   (`deploy/kubernetes/authd/deployment.yaml`). Before step 4, not after:
-   `RP_ID` is what WebAuthn binds a credential to, and a wrong one fails at
-   the enrolment ceremony — the one moment where the first admin has no other
-   way in. This is server configuration and depends on nothing else, so there
-   is no reason for it to be late. See the open question below.
+2. **Replace `REPLACE_HOSTNAME` with the real hostname in both `RP_ID` and
+   `RP_ORIGIN`** (`deploy/kubernetes/authd/deployment.yaml`). Before step 4,
+   not after: `RP_ID` is what WebAuthn binds a credential to, and a wrong one
+   fails at the enrolment ceremony — the one moment where the first admin has
+   no other way in. This is server configuration and depends on nothing else,
+   so there is no reason for it to be late — and this whole rollout cannot
+   reach this step at all until the hostname is decided (see above). See the
+   open question below for what a wrong value costs.
 
 3. **Apply the tier bindings** (`rbac-tier-bindings.yaml`) and the per-kind
    tier `ClusterRole`s. Before step 4 for the same reason as always: once
@@ -463,23 +476,22 @@ piece by hand or to re-apply the previous kustomization. That identity is in
 `system:masters`, which is why the FrameUser webhook's role-change guard
 admits it — see the RBAC section above.
 
-**Open question, not yet answered: is `frame.anna.ovh` the right `RP_ID`?**
-`deploy/kubernetes/authd/deployment.yaml` currently sets `RP_ID:
-frame.anna.ovh` and `RP_ORIGIN: https://frame.anna.ovh`. That value appears
-nowhere else in the repo — every other manifest that needs a real hostname
-uses a placeholder (`base/ingress.yaml` and both overlays use
-`REPLACE_HOSTNAME` / `REPLACE_YOUR_DOMAIN`), so this is the one exception,
-and it is unconfirmed. `RP_ID` is what WebAuthn binds a credential to: a
-browser will only complete a passkey ceremony when the page's origin matches
+**Open question, not yet answered: what is the console's real hostname?**
+`deploy/kubernetes/authd/deployment.yaml` sets `RP_ID: REPLACE_HOSTNAME` and
+`RP_ORIGIN: https://REPLACE_HOSTNAME` — the same placeholder token
+`base/ingress.yaml` uses, deliberately, so that nobody can apply this
+manifest by accident believing it is configured. It has been asked and is
+not yet answered. `RP_ID` is what WebAuthn binds a credential to: a browser
+will only complete a passkey ceremony when the page's origin matches
 `RP_ORIGIN` and its domain matches or is a suffix of `RP_ID`. This matters
-more than a stray placeholder normally would, because passkeys are wired
-into the UI now (`src/components/LoginView.tsx`'s "Sign in with a passkey",
-`src/components/PasskeysDialog.tsx`'s enrolment dialog) and step 5 above
-depends on one: the bootstrapped admin's *only* credential is a passkey
-enrolled in the 12-hour window after bootstrap, and that enrolment ceremony
-is exactly where a wrong `RP_ID` bites. It does not fail loudly, and it
-does not fail invisibly-later either — it fails at the one moment that
-matters, stranding the first admin before they have any other way in,
+more than an unresolved placeholder normally would, because passkeys are
+wired into the UI now (`src/components/LoginView.tsx`'s "Sign in with a
+passkey", `src/components/PasskeysDialog.tsx`'s enrolment dialog) and step 5
+above depends on one: the bootstrapped admin's *only* credential is a
+passkey enrolled in the 12-hour window after bootstrap, and that enrolment
+ceremony is exactly where a wrong `RP_ID` bites. It does not fail loudly,
+and it does not fail invisibly-later either — it fails at the one moment
+that matters, stranding the first admin before they have any other way in,
 since password sign-in isn't a fallback for this specific account
 (`passwordAuth: disabled`).
 
@@ -488,11 +500,11 @@ running when step 1 executes (it has been since Stage 1), so the `RP_ID` /
 `RP_ORIGIN` that actually govern the bootstrap admin's enrolment ceremony
 are whatever is *already deployed* on that running pod at that moment — not
 whatever step 4 will eventually set. **Confirm the currently-running value
-is already correct before starting step 1**, against the console's real
-hostname, and correct it now if the two differ. Step 4 remains the place to
-*apply* a corrected value if that hadn't already been done — but by the
-time this rollout reaches step 4, it is too late for it to help the account
-created in step 1: a passkey enrolled against a wrong `RP_ID` does not
+is the decided hostname before starting step 1**, once the hostname has
+been decided, and correct it now if the two differ. Step 4 remains the
+place to *apply* a corrected value if that hadn't already been done — but by
+the time this rollout reaches step 4, it is too late for it to help the
+account created in step 1: a passkey enrolled against a wrong `RP_ID` does not
 become valid retroactively when `RP_ID` is fixed later, because a passkey
 is bound to the domain it was created for, not to the account.
 
