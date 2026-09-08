@@ -20,6 +20,7 @@
  */
 
 import { config, type Integration } from './frame-config'
+import { ensureToken } from './auth'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -710,17 +711,39 @@ async function k8sFetchUncached<T>(
   path: string,
   opts: { method?: string; body?: unknown; contentType?: string } = {},
 ): Promise<T> {
+  const res = await sendToApiserver(path, opts)
+  if (res.status !== 401) return parseApiserverResponse<T>(res)
+
+  // 401 here means the proxy in front of the apiserver rejected the bearer
+  // token itself — missing or expired — not a Kubernetes RBAC decision
+  // (that comes back as 403). The request never reached the apiserver, so
+  // replaying it is safe even for a write. Refresh once and retry once: if
+  // the refresh comes back empty (the browser's own session is gone too)
+  // skip the retry, and the retry's result — 401 again or not — is final
+  // either way. Never loop.
+  const token = await ensureToken()
+  if (!token) return parseApiserverResponse<T>(res)
+  return parseApiserverResponse<T>(await sendToApiserver(path, opts))
+}
+
+async function sendToApiserver(
+  path: string,
+  opts: { method?: string; body?: unknown; contentType?: string },
+): Promise<Response> {
   const headers: Record<string, string> = {}
   const tok = bearerToken()
   if (tok) headers['Authorization'] = `Bearer ${tok}`
   if (opts.body !== undefined) {
     headers['Content-Type'] = opts.contentType ?? 'application/json'
   }
-  const res = await fetch(path, {
+  return fetch(path, {
     method: opts.method ?? 'GET',
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   })
+}
+
+async function parseApiserverResponse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T
   const data = await res.json() as T & { message?: string }
   if (!res.ok) throw new FrameAPIError(res.status, (data as { message?: string }).message ?? res.statusText)
