@@ -122,6 +122,32 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-control-operator
+  # 2026-09-08, whole-branch review finding C3. Impersonation replaced the
+  # ServiceAccount's authorization, and this role was left both unbound and
+  # *unlabelled* — so `frame-editor` aggregated the viewer role and the 27
+  # per-kind Frame CRD roles and nothing else. Cordon, drain, Scale, queue
+  # tuning, queue open/close and on-demand Velero backups had no grant
+  # anywhere in `deploy/`: every one of them 403'd, for admins too. The
+  # branch's headline example was the first casualty.
+  #
+  # It is labelled whole rather than split into a read half (to the viewer
+  # tier) and a write half. Three reasons, in order of weight:
+  #   * `frame-editor` selects `tier: viewer` as well as `tier: editor`
+  #     (rbac-tier-bindings.yaml), so every read rule below is already
+  #     granted to anyone who holds this role through the aggregation.
+  #     Duplicated rules in an aggregated ClusterRole are a union — they cost
+  #     nothing and change nobody's permissions.
+  #   * this role is documented directly above as still possibly bound
+  #     somewhere outside this repo ("stays defined but unbound until lot 1
+  #     confirms nothing else uses it"). Deleting rules from it before that
+  #     confirmation is how a binding nobody remembered loses its reads.
+  #   * it is not in fact a superset of cluster-control-viewer — it lacks the
+  #     trivy-operator reads and velero's schedules/backupstoragelocations —
+  #     so splitting it would not produce a clean "editor = viewer + these
+  #     writes" either. The aggregation is what makes that true, and it
+  #     already does.
+  labels:
+    rbac.frame.plume-labs.io/tier: editor
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, events]
@@ -295,6 +321,18 @@ subjects:
 # the object exists), so granting it would mean create on every ConfigMap in
 # the namespace. The resource is shipped by the kustomize base instead, and
 # `list` is likewise unnecessary since the UI only ever gets it by name.
+#
+# Split in two, and subjected to the `frame:` groups rather than to the
+# ServiceAccount (whole-branch review, C3). Two separate defects were in the
+# single binding this replaces:
+#   * it named `ServiceAccount cluster-control-ui`, which stopped being the
+#     identity making the request the moment the proxy started impersonating.
+#     `loadConfig()` and the Settings screen 403'd for every user and the
+#     console ran permanently on DEFAULT_CONFIG — silently, because
+#     loadConfig is deliberately fail-open.
+#   * `get` and `patch` were one grant. Reading the config is something every
+#     screen does on boot; writing it is an action, and actions stop at the
+#     editor tier like every other write.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -304,7 +342,7 @@ rules:
   - apiGroups: [""]
     resources: [configmaps]
     resourceNames: [cluster-control-config]
-    verbs: [get, patch]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -316,6 +354,41 @@ roleRef:
   kind: Role
   name: cluster-control-config
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+# Saving from the Settings screen. Operators and admins only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-config-write
+  namespace: cluster-control
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [cluster-control-config]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-config-write
+  namespace: cluster-control
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-config-write
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
