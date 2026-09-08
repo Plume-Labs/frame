@@ -26,6 +26,8 @@ func TestConfigFromEnvDefaults(t *testing.T) {
 			return "https://authd"
 		case "OIDC_CLIENT_ID":
 			return "frame-ui"
+		case "JWKS_CA_FILE":
+			return "/etc/frame-auth-ca/ca.crt"
 		}
 		return ""
 	})
@@ -43,5 +45,28 @@ func TestConfigFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.Retention.Hours() != 168 {
 		t.Fatalf("Retention = %v", cfg.Retention)
+	}
+}
+
+// C2 of the whole-branch review: main passed a nil http.Client, so the
+// verifier fetched authd's JWKS with the system root pool from a
+// distroless/static image. Every fetch failed `x509: certificate signed by
+// unknown authority` and the proxy 401'd every request in the cluster. The
+// variable is required so that a deployment which forgets it fails at
+// container start with a message, rather than by refusing everyone.
+func TestConfigFromEnvRequiresAJWKSCA(t *testing.T) {
+	_, err := configFromEnv(func(k string) string {
+		switch k {
+		case "JWKS_URL":
+			return "https://authd/keys"
+		case "OIDC_ISSUER_URL":
+			return "https://authd"
+		case "OIDC_CLIENT_ID":
+			return "frame-ui"
+		}
+		return ""
+	})
+	if err == nil {
+		t.Fatal("accepted a configuration with no JWKS CA — every JWKS fetch would fail on an unknown authority and the proxy would 401 everything")
 	}
 }
