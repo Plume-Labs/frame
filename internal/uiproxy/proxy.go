@@ -11,6 +11,7 @@ package uiproxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"net/textproto"
 	"net/url"
 	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Identity is who the caller is, as proven by their token. Groups are
@@ -132,16 +135,43 @@ func (s *statusRecorder) Flush() {
 	}
 }
 
+// unauthorized answers the way the apiserver answers, with a metav1.Status
+// body.
+//
+// Not cosmetic. This proxy stands exactly where the apiserver stands, and
+// every client of it is `parseApiserverResponse` in `src/lib/frame-sdk.ts`,
+// which calls `res.json()` on every response. A `text/plain` body turned a
+// 401 into `SyntaxError: Unexpected token 'u'` in the caller — so nothing
+// could distinguish "your session lapsed" from a bug, and a tab left open
+// past the 12h cookie filled with parse errors instead of returning to the
+// login screen (whole-branch review, I1).
+//
+// `message` is the field the UI renders, so it says what to do rather than
+// repeating the status line.
+func unauthorized(w http.ResponseWriter, detail string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w).Encode(metav1.Status{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"},
+		Status:   metav1.StatusFailure,
+		Code:     http.StatusUnauthorized,
+		Reason:   metav1.StatusReasonUnauthorized,
+		Message:  "not signed in: " + detail + ". Sign in again.",
+	})
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tok := bearer(r)
 	if tok == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		unauthorized(w, "the request carried no bearer token")
 		return
 	}
 	id, err := p.verifier.Verify(r.Context(), tok)
 	if err != nil {
+		// The reason stays in the log, not in the body: telling the caller
+		// which check their token failed is telling an attacker the same.
 		p.log.Info("rejected token", "err", err)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		unauthorized(w, "the bearer token was not accepted")
 		return
 	}
 

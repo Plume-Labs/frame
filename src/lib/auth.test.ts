@@ -8,6 +8,7 @@ import {
   loginWithPassword,
   AuthUnreachableError,
   logout,
+  onSessionLost,
   PasskeyCancelledError,
 } from '@/lib/auth'
 
@@ -278,5 +279,39 @@ describe('an /auth/ request that never reached authd', () => {
     vi.stubGlobal('fetch', vi.fn(async () => htmlShell()))
     await expect(loginWithPassword('a@b.c', 'pw')).rejects.toThrow(AuthUnreachableError)
     await expect(loginWithPassword('a@b.c', 'pw')).rejects.toThrow(/\/auth\//)
+  })
+})
+
+describe('a session that lapses', () => {
+  it('tells the app, so it can return to the login gate', async () => {
+    vi.stubGlobal('fetch', mockToken(900))
+    await currentSession()
+
+    const lost = vi.fn()
+    onSessionLost(lost)
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unauthorized', { status: 401 })))
+    expect(await currentSession()).toBeUndefined()
+    expect(lost).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays quiet when there was no session to lose', async () => {
+    // The login screen calls currentSession() too. Firing there would bounce
+    // the app between the gate and itself.
+    const lost = vi.fn()
+    onSessionLost(lost)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unauthorized', { status: 401 })))
+    await currentSession()
+    expect(lost).not.toHaveBeenCalled()
+  })
+
+  it('stops notifying once unsubscribed', async () => {
+    vi.stubGlobal('fetch', mockToken(900))
+    await currentSession()
+    const lost = vi.fn()
+    onSessionLost(lost)()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unauthorized', { status: 401 })))
+    await currentSession()
+    expect(lost).not.toHaveBeenCalled()
   })
 })

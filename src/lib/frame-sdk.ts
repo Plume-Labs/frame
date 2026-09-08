@@ -783,11 +783,39 @@ async function sendToApiserver(
   })
 }
 
+/**
+ * Turn an apiserver response into its object, or into a {@link FrameAPIError}.
+ *
+ * The body is not always JSON, and assuming it is cost the console its ability
+ * to notice a lapsed session. The uiproxy used to answer 401 with a
+ * `text/plain` "unauthorized", so `res.json()` threw
+ * `SyntaxError: Unexpected token 'u'` and the caller never saw a 401 at all —
+ * a tab left open past the 12h cookie filled with parse errors instead of
+ * returning to the login screen (whole-branch review, I1). The proxy now
+ * emits a `metav1.Status`, but it is not the only hop that can answer: an
+ * ingress 502 and an nginx 504 are both HTML, and neither is a bug in this
+ * function's caller.
+ *
+ * So: parse when it parses, fall back to the text when it does not, and
+ * always throw a status the caller can act on.
+ */
 async function parseApiserverResponse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T
-  const data = await res.json() as T & { message?: string }
-  if (!res.ok) throw new FrameAPIError(res.status, (data as { message?: string }).message ?? res.statusText)
-  return data
+  const text = await res.text()
+  let data: (T & { message?: string }) | undefined
+  try {
+    data = JSON.parse(text) as T & { message?: string }
+  } catch {
+    // Not JSON. On a success that is a real surprise and worth reporting as
+    // one; on a failure the text *is* the message.
+    if (res.ok) {
+      throw new FrameAPIError(res.status, `expected JSON from ${res.url || 'the apiserver'}, got: ${text.slice(0, 200)}`)
+    }
+  }
+  if (!res.ok) {
+    throw new FrameAPIError(res.status, data?.message ?? text.trim() ?? res.statusText)
+  }
+  return data as T
 }
 
 // ── CR type shims ─────────────────────────────────────────────────────────────
