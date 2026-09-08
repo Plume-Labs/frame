@@ -16,6 +16,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - rbac.yaml
+  - rbac-tier-bindings.yaml
   - config.yaml
   - deployment.yaml
   - service.yaml

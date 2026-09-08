@@ -16,6 +16,7 @@ metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: admin
   name: framejob-admin-role
 rules:
 - apiGroups:

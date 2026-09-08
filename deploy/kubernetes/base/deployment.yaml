@@ -87,37 +87,36 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
-        # Authenticating reverse-proxy to the Kubernetes API. kubectl proxy uses
-        # the pod ServiceAccount (cluster-control-viewer, read-only) and listens
-        # on localhost only; nginx forwards /api and /apis to it.
-        - name: kube-proxy-api
-          image: rancher/kubectl:v1.36.2
-          args:
-            - proxy
-            - --port=8001
-            - --address=127.0.0.1
-            - --accept-hosts=^.*$
+        # Authenticates the UI's requests against authd and impersonates the
+        # person they name. Replaces `kubectl proxy`, which authenticated
+        # every request — reads and writes alike — as the pod ServiceAccount.
+        - name: uiproxy
+          image: frame-uiproxy:latest
+          env:
+            - name: JWKS_URL
+              value: https://cluster-control-auth.cluster-control.svc/keys
+            - name: OIDC_ISSUER_URL
+              value: https://cluster-control-auth.cluster-control.svc
+            - name: OIDC_CLIENT_ID
+              value: frame-ui
+            - name: TASK_NAMESPACE
+              value: frame-system
           ports:
             - name: kube-api
               containerPort: 8001
               protocol: TCP
           resources:
-            requests:
-              memory: "32Mi"
-              cpu: "10m"
-            limits:
-              memory: "128Mi"
-              cpu: "200m"
-          # No readiness probe: kubectl proxy binds loopback only, so the kubelet
-          # (which probes the pod IP) cannot reach it. nginx is the readiness gate.
+            requests: {memory: "32Mi", cpu: "10m"}
+            limits: {memory: "128Mi", cpu: "200m"}
+          # No readiness probe: it binds loopback only, so the kubelet cannot
+          # reach it. nginx is the readiness gate.
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
-              drop:
-                - ALL
+              drop: [ALL]
       volumes:
         - name: tmp
           emptyDir: {}

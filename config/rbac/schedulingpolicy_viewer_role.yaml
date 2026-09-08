@@ -11,6 +11,7 @@ metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: viewer
   name: schedulingpolicy-viewer-role
 rules:
 - apiGroups:
