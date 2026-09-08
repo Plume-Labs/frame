@@ -48,6 +48,22 @@
 #   create pods/proxy : every namespace  ->  `monitoring` only
 #   delete pods/proxy : every namespace  ->  `monitoring` only
 #
+# ─────────────────────────────────────────────────────────────────────────────
+# WHO THESE ARE BOUND TO (changed 2026-09-08, whole-branch review C3)
+#
+# The three `frame:` groups, not `ServiceAccount cluster-control-ui`. Once the
+# uiproxy sidecar started impersonating, the ServiceAccount stopped being the
+# identity making the proxied request — the apiserver evaluates the
+# impersonated user's RBAC and never looks at the SA's. These bindings kept
+# naming the SA, so every integration panel (Prometheus, Alertmanager and
+# silences, node-exporter, DCGM, Tetragon, Alluxio, llama.cpp, TEI) answered
+# 403 for every user, admins included.
+#
+# `get` goes to all three groups: reading an exporter is what every screen
+# does. `create`/`delete` go to operators and admins only — silencing an alert
+# is an action, and the whole point of per-user identity is that a viewer
+# cannot take one.
+#
 # TRADE-OFF, stated rather than buried: the six namespaces are hard-coded here,
 # while the UI reads them at runtime from the `cluster-control-config` ConfigMap
 # (`src/lib/frame-config.ts` DEFAULT_CONFIG). Repointing an integration at a
@@ -86,9 +102,15 @@ roleRef:
   kind: Role
   name: cluster-control-pod-proxy-read
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -114,9 +136,15 @@ roleRef:
   kind: Role
   name: cluster-control-pod-proxy-read
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -142,9 +170,15 @@ roleRef:
   kind: Role
   name: cluster-control-pod-proxy-read
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -170,9 +204,15 @@ roleRef:
   kind: Role
   name: cluster-control-pod-proxy-read
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -198,9 +238,15 @@ roleRef:
   kind: Role
   name: cluster-control-pod-proxy-read
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
 ---
 # `monitoring` — the only namespace that keeps write verbs, and the only place
 # the UI ever POSTs or DELETEs through a proxy.
@@ -215,6 +261,49 @@ subjects:
 # than to any pod in the cluster. Prometheus exposes no write API by default and
 # Grafana requires its own credentials, so the reachable primitive is roughly
 # "manipulate alerting" — which is what the feature is for.
+#
+# Split in two by the whole-branch review's C3, along with re-subjecting
+# everything above: `get` here is a read every screen does (Prometheus
+# query_range, Alertmanager's alert and silence lists, node-exporter's
+# per-pod /metrics), while `create` and `delete` are the silence buttons —
+# an action, and actions stop at the editor tier like every other write.
+# Keeping them in one Role would have handed viewers the ability to silence
+# an alert, which is precisely the kind of thing per-user identity exists to
+# separate.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -225,7 +314,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [pods/proxy]
-    verbs: [get, create, delete]
+    verbs: [create, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -239,6 +328,9 @@ roleRef:
   kind: Role
   name: cluster-control-pod-proxy-alerting
 subjects:
-  - kind: ServiceAccount
-    name: cluster-control-ui
-    namespace: cluster-control
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
