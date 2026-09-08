@@ -87,13 +87,9 @@ rules:
 #
 # 2026-07-29: bound directly to the UI pod's own ServiceAccount below — a
 # conscious, accepted-risk decision for this private test cluster (not
-# internet-facing, single trusted network). It means every action taken
-# through the UI is attributed to the shared SA, not to the person who
-# clicked it — no per-person audit trail. Do NOT carry this binding as-is to
-# a cluster reachable outside a trusted network; replace it with per-user
-# auth (OIDC login + K8s impersonation) and bind this role to real users
-# instead, the same way `kubectl create clusterrolebinding <user>-operator
-# --clusterrole=cluster-control-operator --user=<user@domain>` would.
+# internet-facing, single trusted network). It meant every action taken
+# through the UI was attributed to the shared SA, not to the person who
+# clicked it — no per-person audit trail.
 #
 # 2026-08-10 (UI containment): the accepted risk above stopped being bounded
 # when `cluster-control-ui-lan` (NodePort 30379) put this SA's credential in
@@ -103,6 +99,22 @@ rules:
 # in `deploy/kubernetes/containment/rbac-integration-proxy.yaml`, and the
 # cluster-wide `patch` on workloads is gone. Full rationale and the list of
 # what was cut: `.superpowers/ui-containment-report.md`.
+#
+# Per-user auth is not future work any more (2026-09-08, per-user identity
+# and tasks lot). This ClusterRole is no longer bound to the SA — that
+# ClusterRoleBinding is gone, and this role stays defined but unbound until
+# lot 1 confirms nothing else uses it (see the ServiceAccount block below).
+# Per-request identity now comes from the `frame-viewer` / `frame-editor` /
+# `frame-admin` aggregated ClusterRoles (`rbac-tier-bindings.yaml`), bound to
+# the three `frame:` groups the `frame-uiproxy` sidecar impersonates a caller
+# into, never to an individual person. **Do not "earn this role back" by
+# binding it to a named user** the way an earlier version of this comment
+# suggested (`--user=<user@domain>`) — that is exactly the pattern
+# `docs/deployment.md`'s RBAC section rules out: `impersonate` on `users`
+# cannot be bounded by `resourceNames` (email addresses are not enumerable),
+# so a named-user binding on any tier role would be reachable by anyone the
+# proxy can be made to impersonate as that string. Bind tiers to
+# `frame:viewers` / `frame:operators` / `frame:admins` only.
 #
 # Role 2: operator — write on safe Frame CRDs (not Talos, not /status),
 # plus core node cordon/uncordon (patch only — no node delete/create).

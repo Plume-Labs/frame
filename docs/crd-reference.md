@@ -1,20 +1,22 @@
 # CRD Reference
 
-Nine CRDs across two API groups: eight in `frame.plume-labs.io` and
+Ten CRDs across two API groups: nine in `frame.plume-labs.io` and
 `FrameService` in `services.plume-labs.io` — a separate group so the service
 catalog can move without blocking the `frame.plume-labs.io` freeze (see
 [roadmap.md](roadmap.md)). Generated CRDs live in `config/crd/bases/`; sample
 CRs in `config/samples/`. Each kind has a controller
-(`internal/controller/<group>/`) except FrameUser, and a webhook
-(`internal/webhook/<group>/v1beta1/`) except NodeTuning.
+(`internal/controller/<group>/`) except FrameUser and FrameTask, and a
+webhook (`internal/webhook/<group>/v1beta1/`) except NodeTuning and
+FrameTask.
 
-Eight of the nine are namespaced and serve both **`v1beta1`** (storage) and a
-deprecated `v1alpha1`. **NodeTuning is the exception on three counts**: it is
-**cluster-scoped**, it has **no `v1alpha1`** (it was added after the freeze,
-so there is nothing to convert from), and it has **no webhook**. It is also
-the one kind whose status is a per-node `phase` rather than a `Ready`
-condition — see its section for why, and read that as a documented
-divergence, not a licence to add more.
+Eight of the ten are namespaced and serve both **`v1beta1`** (storage) and a
+deprecated `v1alpha1`. **NodeTuning and FrameTask are the exceptions**, each
+on its own axis: both postdate the freeze, so both have **no `v1alpha1`**
+(nothing to convert from) and **no webhook**. NodeTuning is additionally
+**cluster-scoped**; FrameTask is namespaced, like the eight frozen kinds.
+Both also report status as a `phase` rather than a `Ready` condition — see
+each one's section for why those are two different reasons, and read both as
+documented divergences, not a licence to add more.
 
 > This page documents **`v1beta1`**, the storage version and the conversion
 > hub. What the freeze does and does not promise, the nine differences from
@@ -27,19 +29,24 @@ divergence, not a licence to add more.
 
 ### `status.observedGeneration`
 
-Every kind carries a top-level `status.observedGeneration`: the
-`metadata.generation` its status was computed from. Compare it to
+Every kind except `FrameTask` carries a top-level `status.observedGeneration`:
+the `metadata.generation` its status was computed from. Compare it to
 `metadata.generation` to tell whether the controller has seen the current
 spec. Conditions carry their own per-condition `observedGeneration` as well;
 the top-level field is the one a client can read without knowing which
-condition types this kind writes. `FrameUser` has the field and no writer —
+condition types this kind writes. `FrameTask` has neither: nothing ever
+reconciles its `spec` against a later `spec`, so there is no "has the
+controller seen the current generation" question to answer — `spec` is
+written once and never patched, and `status` is the outcome of that one
+call, not a convergence against it. `FrameUser` has the field and no writer —
 it has no controller.
 
 ### No top-level `status.phase`
 
-No Frame kind has one. Health is reported through `status.conditions`, and
-every kind with a controller writes a `Ready` condition — with one exception,
-recorded below.
+No Frame kind has a top-level one. Health is reported through
+`status.conditions`, and every kind with a controller writes a `Ready`
+condition — with two exceptions, recorded below, and they are exceptions for
+two different reasons.
 
 This is a rule, not a drift. A single enum forces the API to pick one
 dimension of health out of several and cannot express "provisioned but
@@ -57,6 +64,19 @@ awaiting approval, one failed" into one boolean. A per-node condition array
 would have been the conventional answer; a per-node enum is what shipped.
 Clients reading NodeTuning must branch on `status.nodes[].phase` and
 `status.nodes[].realization`, not on conditions.
+
+**FrameTask is the other exception, and for a different reason: it is not
+reconciled at all.** It has no controller, so "add a second condition type"
+above does not apply to it the way it would to a reconciled kind — there is
+no desired state in `spec` for anything to converge toward, only a record of
+one HTTP call the proxy already made and is now reporting the outcome of.
+`status.phase` (`Running` → `Succeeded`/`Failed`, written directly by
+`internal/uiproxy/recorder.go` as the call starts and finishes) is exactly
+the right shape for that: a finished HTTP call has exactly one dimension of
+health, not several that could disagree, which is the situation `Ready`
+conditions exist to express and a `FrameTask` never has. Reusing `Ready`
+here would invent a distinction — "ready" as opposed to what? — that the
+object has no second axis to hold.
 
 Three kinds — FrameJob, FrameNode, FrameService — had one at `v1alpha1`, and
 that version still serves it: it is computed out of the conditions on the way
@@ -77,6 +97,7 @@ branch on it:
 | TalosUpgrade | `UpgradeRequested`, `AlreadyAtVersion`; failures `ClientBuildFailed`, `UpgradeFailed`. |
 | FrameService | diagnostic, not a lifecycle: `Reconciled`, `UnknownType`, `NotProvisionable`, `SizeRefused`, `ModelCacheMissing`, and whatever else the provider returns. Read `status`, not `reason`. |
 | FrameUser | none — it has no controller. |
+| FrameTask | not applicable — it has no `Ready` condition at all; read `status.phase` (`Running`, `Succeeded`, `Failed`) instead, see below. |
 
 > **Enum members no controller ever wrote (R6).** `v1alpha1`'s `phase` enums
 > were wider than anything that ever populated them. FrameJob's `Pending` is
@@ -545,11 +566,79 @@ tree that declares `matchPolicy: Equivalent` explicitly rather than inheriting
 the apiserver default, because the hash guard only reaches a `v1alpha1`
 request if the apiserver converts it first.
 
-**Deployment status:** `authd` runs in the `cluster-control` namespace but is
-consumed by nothing. The `frameusers.frame.plume-labs.io` CRD is installed on
-the test cluster and holds **zero objects**, so the `spec` → `status` move
-had nothing to migrate. See the roadmap for the authd stages that switch this
-on.
+**Deployment status:** `authd` is consumed now — the `frame-uiproxy` sidecar
+verifies its tokens and impersonates the `FrameUser` it names (see
+[deployment.md](deployment.md), "RBAC"). That wiring is merged but **not yet
+rolled out**: the live test cluster still runs the pre-lot operator, and the
+`frameusers.frame.plume-labs.io` CRD installed there holds **zero objects**,
+so the `spec` → `status` move had nothing to migrate yet. See
+[deployment.md](deployment.md)'s "Rollout order" for the sequence that
+changes that.
+
+---
+
+## FrameTask
+
+*No controller, no webhook, no `v1alpha1`* — it postdates the freeze, the
+same as `NodeTuning`, but unlike `NodeTuning` it is **namespaced**, in the
+`uiproxy` sidecar's own `TASK_NAMESPACE` (`frame-system` by default). The
+trace of one mutating request the `frame-uiproxy` sidecar made to the
+apiserver on a person's behalf: who, what verb, against which object, and
+how it ended. See [deployment.md](deployment.md), "RBAC", for how the
+identity in `spec.user` gets there, and `internal/uiproxy/recorder.go` for
+the code that writes this kind — there is nothing else that does.
+
+**Spec:** `user` (the impersonated Kubernetes username — the `FrameUser`'s
+email; required, 1–254 characters), `verb` (`create` | `update` | `patch` |
+`delete` — reads are never recorded), `target` (an `ObjectRef`: `group`,
+`resource`, `namespace`, `name` — `resource` is the plural path segment the
+proxy parsed the request URL into, not a `Kind`, since deriving a `Kind`
+from it would need a RESTMapper for nothing the Tasks screen renders),
+`action` (an optional human label from the UI's `X-Frame-Action` header,
+absent when the request did not come from the console), and `ref` (an
+optional pointer at another object that carries the action's own progress —
+a `FrameJob`, a `TalosUpgrade`, a Velero `Backup`). `ref` is a pointer, not a
+copy: the Tasks screen reads that object's live status directly rather than
+this kind duplicating it, which is part of why `FrameTask` can exist with no
+controller of its own.
+
+**Status:** `phase` (`Running` | `Succeeded` | `Failed`), `httpCode` (the
+apiserver's status code, `0` while running), `message`, `startedAt`,
+`finishedAt`. There is no `Ready` condition — see "No `status.phase`" above
+for why this kind and `NodeTuning` are both exceptions to that rule, and for
+different reasons: `NodeTuning` describes several nodes and needs a
+dimension conditions do not give it, while `FrameTask` describes one
+finished (or in-flight) HTTP call and never has more than one dimension of
+health to report in the first place.
+
+**Printer columns:** `User`, `Action`, `Phase`, `Code`, `Age`.
+
+**Written by:** `TaskRecorder` (`internal/uiproxy/recorder.go`), not
+impersonation — it authenticates as the pod ServiceAccount so that a viewer,
+who cannot create a `FrameTask` under their own impersonated identity, can
+still leave the trace of their own refused request. `Start` creates the
+object and sets `Running` before the request is forwarded; `Finish` closes
+it under a `defer`, so a panic mid-request still closes the record rather
+than leaving it `Running` forever, with `httpCode` mapped straight from
+whatever the apiserver answered (`2xx` → `Succeeded`, anything else →
+`Failed`).
+
+**Retention:** the sidecar purges finished tasks older than seven days on an
+hourly sweep (`TaskRecorder.Purge`, `cmd/uiproxy/main.go`). A task still
+`Running` is never purged by age — one that never finished is a bug worth
+seeing, not a cleanup target.
+
+**RBAC:** two separate grants, easy to conflate. The pod ServiceAccount
+itself holds `create`, `get`, `list`, `delete` on `frametasks` and
+`update`/`patch` on `frametasks/status` (`cluster-control-impersonator` in
+`deploy/kubernetes/base/rbac.yaml`) — distinct from its `impersonate`
+grants, and what `TaskRecorder` actually uses, since it always writes as the
+SA rather than as an impersonated user. Separately, `frametask-viewer-role` /
+`-editor-role` / `-admin-role` exist like every other kind's tier roles and
+are aggregated the same way into `frame-viewer`/`frame-editor`/`frame-admin`
+— so an impersonated human editor or admin *can* create, patch or delete a
+`FrameTask` directly, through `kubectl` or the SDK, under their own RBAC.
+Nothing in the console does that today; the console only ever reads them.
 
 ---
 
@@ -699,12 +788,16 @@ requests (including `nvidia.com/gpu`) and a node selector derived from
 
 FrameNode and FrameJob have **defaulting + validation**; the other six —
 SchedulingPolicy, FrameResourceQuota, TalosMachineConfig, TalosUpgrade,
-FrameUser, and FrameService — have **validation** only. **NodeTuning has
-neither**: its bounds are CRD schema markers alone, so nothing rejects a
-NodeTuning whose selector overlaps another's — the agent detects that at apply
-time and refuses the node instead. Validators enforce required fields and value
-ranges (or, for FrameService, dispatch to the provider's own parameter schema)
-before a CR is admitted. Tests:
+FrameUser, and FrameService — have **validation** only. **NodeTuning and
+FrameTask have neither**: their bounds are CRD schema markers alone. For
+NodeTuning that means nothing rejects a selector that overlaps another's —
+the agent detects that at apply time and refuses the node instead. For
+FrameTask it means the schema's `MinLength`/`Required`/`Enum` markers (e.g.
+`spec.user` must be non-empty) are the only admission-time check there ever
+is — consistent with having no controller to defer anything to either.
+Validators enforce required fields and value ranges (or, for FrameService,
+dispatch to the provider's own parameter schema) before a CR is admitted.
+Tests:
 `internal/webhook/frame/v1beta1/*_test.go` and
 `internal/webhook/services/v1beta1/*_test.go`.
 
