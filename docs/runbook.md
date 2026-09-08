@@ -329,8 +329,12 @@ carried a cluster-wide ServiceAccount directly, so anyone who could reach it
 was that SA. Per-user identity (2026-09-08, per-user identity and tasks lot
 — see [deployment.md](deployment.md)'s RBAC section) closed that specific
 hole: `frame-uiproxy` now validates authd's token before doing anything at
-all, and the pod ServiceAccount itself carries only the right to
-impersonate — not the write actions directly.
+all, and the pod ServiceAccount itself carries only `impersonate` plus its
+own direct write access to `frametasks` — not the write actions on Frame's
+other resources directly. (The `frametasks` grant is deliberate, not a
+leftover: it is what lets a viewer's refused write still leave the trace of
+its own 403, since a viewer's own impersonated identity cannot create a
+`FrameTask`.)
 
 That does not make this section obsolete; it changes what it is for.
 Per-user auth and containment answer different questions. Impersonation
@@ -346,8 +350,14 @@ correctly *is* a legitimate request. The NetworkPolicy half of this section
 is what stops that compromise being reachable from somewhere unexpected in
 the first place (`jupyterhub`, `neura-sandbox`, or the LAN via the
 `cluster-control-ui-lan` NodePort, 30379); the RBAC half is what narrows the
-pod's own reach — `pods/proxy` and cluster-wide reads — independent of
-whatever it is impersonating at the time.
+pod's own reach into `pods/proxy` specifically, namespace by namespace
+(`deploy/kubernetes/containment/rbac-integration-proxy.yaml` — every rule in
+that file names `pods/proxy` and nothing else). The SA's former cluster-wide
+*read* grants were never this procedure's to narrow: they were removed
+outright by `deploy/kubernetes/base/rbac.yaml` as part of the per-user
+identity rollout (see [deployment.md](deployment.md)'s "Rollout order"),
+independently of whether this optional containment section is ever applied
+at all.
 
 Full rationale, and the list of every grant removed with the call site that
 justified keeping the rest: `.superpowers/ui-containment-report.md`.
