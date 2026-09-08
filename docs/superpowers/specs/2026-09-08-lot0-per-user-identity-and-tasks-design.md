@@ -234,11 +234,12 @@ Go unit tests on the proxy: rejected with no token, expired token, wrong
 `aud`, wrong `iss`, bad signature; **an inbound `Impersonate-User` header
 is dropped**; role-to-group mapping.
 
-Kind e2e, the control that discriminates: a `viewer` gets 403 on a cordon,
-an `operator` gets 200, and both leave a `FrameTask` carrying the right
-`user`. A proxy that impersonated nothing would return 200 for both — a
-test that only asserts the operator's 200 would pass against the broken
-version.
+An envtest spec — a real apiserver, without the cost of a Kind cluster — is
+the control that discriminates: a `viewer` gets 403 on a cordon, an
+`operator` gets 200, and both leave a `FrameTask` carrying the right `user`.
+A proxy that impersonated nothing would return 200 for both, because
+envtest's own client is an admin; a test that only asserts the operator's
+200 would pass against that broken version.
 
 On the real cluster after deploy: log in, cordon a node as an operator,
 attempt the same as a viewer and see the 403, and find both in the Tasks
