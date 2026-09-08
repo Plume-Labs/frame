@@ -20,7 +20,7 @@
  */
 
 import { config, type Integration } from './frame-config'
-import { ensureToken } from './auth'
+import { currentSession } from './auth'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -717,13 +717,34 @@ async function k8sFetchUncached<T>(
   // 401 here means the proxy in front of the apiserver rejected the bearer
   // token itself — missing or expired — not a Kubernetes RBAC decision
   // (that comes back as 403). The request never reached the apiserver, so
-  // replaying it is safe even for a write. Refresh once and retry once: if
-  // the refresh comes back empty (the browser's own session is gone too)
-  // skip the retry, and the retry's result — 401 again or not — is final
-  // either way. Never loop.
-  const token = await ensureToken()
+  // replaying it is safe even for a write.
+  //
+  // The retry forces a brand-new token via `currentSession()` rather than
+  // `ensureToken()`'s "still has time left, keep it" fast path. A 401 can
+  // happen for a reason that has nothing to do with local expiry — a
+  // revoked account, a role change, authd reissuing a shorter-lived token,
+  // clock skew — and in every one of those cases the cached token is
+  // exactly the one that was just rejected; replaying it via `ensureToken()`
+  // would only earn a second 401 for free.
+  //
+  // If the refresh itself fails — the browser's own session cookie is also
+  // gone, or authd is unreachable — that must not surface as this call's
+  // error: the caller asked about their apiserver request, not about the
+  // token, so `refreshTokenForRetry` swallows it and this falls through to
+  // the original 401. Refresh once, retry once, never loop: there is no
+  // path back to the top of this function.
+  const token = await refreshTokenForRetry()
   if (!token) return parseApiserverResponse<T>(res)
   return parseApiserverResponse<T>(await sendToApiserver(path, opts))
+}
+
+/** Force a fresh token before retrying a 401 — see the comment above. */
+async function refreshTokenForRetry(): Promise<string | undefined> {
+  try {
+    return (await currentSession())?.token
+  } catch {
+    return undefined
+  }
 }
 
 async function sendToApiserver(

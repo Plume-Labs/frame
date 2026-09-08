@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { __testing, createFrameClient, projectToFull, type MetricSeries } from './frame-sdk'
+import { __testing, createFrameClient, FrameAPIError, projectToFull, type MetricSeries } from './frame-sdk'
+import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 
 /** `n` samples one hour apart, starting at `from` and moving `perDay` %/day. */
 function series(from: number, perDay: number, n = 12): MetricSeries {
@@ -429,6 +430,103 @@ describe('k8sFetch in-flight de-duplication', () => {
     await Promise.all([frame.cluster.cordon('w1', true), frame.cluster.cordon('w1', false)])
 
     expect(calls.filter((c) => c.includes('/api/v1/nodes/w1')).length).toBe(2)
+  })
+})
+
+describe('k8sFetchUncached 401 retry', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  /**
+   * `window` aliased to `globalThis`, the same way a real browser has them be
+   * the same object. `auth.ts` publishes the refreshed token onto
+   * `globalThis.__FRAME_TOKEN__`; `bearerToken()` reads it off `window`. A
+   * plain stub object for `window` (as `stubBrowser()` above uses) would
+   * silently decouple the two and let a broken retry pass by never actually
+   * checking what token the retried request carried.
+   */
+  function stubBrowserAliasedToGlobalThis() {
+    vi.stubGlobal('window', globalThis)
+  }
+
+  /**
+   * Fetch stub shared by the tests below: `/auth/token` mints
+   * `opts.tokenValue`, and `path` answers 401 for its first
+   * `opts.unauthorizedTimes` hits and 200 after. Records every call's
+   * method+URL and the Authorization header it carried, so a test can assert
+   * both how many requests were made and what token the retry actually sent.
+   */
+  function stub401Retry(path: string, opts: { unauthorizedTimes: number; tokenValue?: string }) {
+    stubBrowserAliasedToGlobalThis()
+    const calls: string[] = []
+    const authHeaders: Array<string | undefined> = []
+    let pathHits = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push(`${init?.method ?? 'GET'} ${url}`)
+      authHeaders.push((init?.headers as Record<string, string> | undefined)?.Authorization)
+      if (url === '/auth/token') {
+        return new Response(
+          JSON.stringify({ id_token: opts.tokenValue ?? 'fresh', expires_in: 900 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      pathHits += 1
+      if (pathHits <= opts.unauthorizedTimes) {
+        return new Response(JSON.stringify({ message: 'unauthorized' }), {
+          status: 401, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    return { calls, authHeaders }
+  }
+
+  it('retries once and succeeds when the refresh returns a new token', async () => {
+    const { calls, authHeaders } = stub401Retry('/api/v1/nodes/w1', { unauthorizedTimes: 1 })
+
+    await createFrameClient().cluster.cordon('w1', true)
+
+    // Fails if the retry is removed (only one nodes call) and fails if the
+    // retry becomes unbounded (more than two).
+    expect(calls.filter((c) => c.includes('/api/v1/nodes/w1')).length).toBe(2)
+    expect(calls.filter((c) => c === 'POST /auth/token').length).toBe(1)
+    // The retry must actually carry the refreshed token.
+    expect(authHeaders[authHeaders.length - 1]).toBe('Bearer fresh')
+  })
+
+  it('gives up after a second consecutive 401 instead of retrying again', async () => {
+    const { calls } = stub401Retry('/api/v1/nodes/w1', {
+      unauthorizedTimes: Infinity,
+      tokenValue: 'still-rejected',
+    })
+
+    await expect(createFrameClient().cluster.cordon('w1', true)).rejects.toThrow(FrameAPIError)
+
+    // Exactly one retry — two attempts against the apiserver, never a third.
+    expect(calls.filter((c) => c.includes('/api/v1/nodes/w1')).length).toBe(2)
+    expect(calls.filter((c) => c === 'POST /auth/token').length).toBe(1)
+  })
+
+  it('forces a fresh token on retry rather than reusing one that still has time left', async () => {
+    // Pre-populate a session with 15 minutes left — comfortably outside
+    // ensureToken's 2-minute refresh margin. A retry built on ensureToken()
+    // would reuse this cached token and never touch the network again, even
+    // though it is exactly the token the apiserver just rejected.
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ id_token: 'cached', expires_in: 900 }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })))
+    await currentSession()
+
+    const { calls, authHeaders } = stub401Retry('/api/v1/nodes/w1', { unauthorizedTimes: 1 })
+
+    await createFrameClient().cluster.cordon('w1', true)
+
+    expect(calls.filter((c) => c === 'POST /auth/token').length).toBe(1)
+    expect(authHeaders[authHeaders.length - 1]).toBe('Bearer fresh')
   })
 })
 
