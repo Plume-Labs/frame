@@ -8,6 +8,9 @@ IMG_AUTHD ?= cluster-control-auth:latest
 # the DaemonSet declares, so `kustomize edit set image frame-agent=...` and
 # this variable name the same thing.
 IMG_AGENT ?= frame-agent:latest
+# Image for uiproxy, the authenticating reverse proxy between the UI and the
+# apiserver (Dockerfile.uiproxy).
+IMG_UIPROXY ?= frame-uiproxy:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -172,6 +175,14 @@ docker-push-agent: ## Push the node-tuning agent Docker image
 docker-push-authd: ## Push the authd Docker image
 	$(CONTAINER_TOOL) push $(IMG_AUTHD)
 
+.PHONY: docker-build-uiproxy
+docker-build-uiproxy: ## Build the uiproxy Docker image
+	$(CONTAINER_TOOL) build -f Dockerfile.uiproxy -t $(IMG_UIPROXY) .
+
+.PHONY: docker-push-uiproxy
+docker-push-uiproxy: ## Push the uiproxy Docker image
+	$(CONTAINER_TOOL) push $(IMG_UIPROXY)
+
 .PHONY: set-image-ui
 set-image-ui: ## Set UI image in development overlay (requires IMG_UI)
 	cd deploy/kubernetes/overlays/development && kustomize edit set image cluster-control=$(IMG_UI)
@@ -216,16 +227,18 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
 	"$(GOVULNCHECK)" ./...
 
-# docker-images builds all three images the security targets below inspect, so
+# docker-images builds all four images the security targets below inspect, so
 # `make sbom` and `make scan` work from a clean tree instead of failing on
-# whichever image happens not to be in the local daemon.
+# whichever image happens not to be in the local daemon. uiproxy holds an
+# impersonation grant to the apiserver, so it gets the same coverage as the
+# other three rather than being left out.
 .PHONY: docker-images
-docker-images: docker-build docker-build-ui docker-build-authd ## Build all three images (controller, UI, authd).
+docker-images: docker-build docker-build-ui docker-build-authd docker-build-uiproxy ## Build all four images (controller, UI, authd, uiproxy).
 
 .PHONY: sbom
-sbom: syft docker-images ## Write a CycloneDX SBOM for each of the three images to dist/.
+sbom: syft docker-images ## Write a CycloneDX SBOM for each image to dist/.
 	@mkdir -p dist
-	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "SBOM for $${name} ($${image})"; \
 		"$(SYFT)" scan "$(CONTAINER_TOOL):$${image}" -o cyclonedx-json="dist/sbom-$${name}.cyclonedx.json"; \
@@ -244,8 +257,8 @@ sbom: syft docker-images ## Write a CycloneDX SBOM for each of the three images 
 # here first. Divergence between the two would make this target worse than
 # useless: it would say "clean" about a build CI is about to reject.
 .PHONY: scan
-scan: docker-images ## Scan all three images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
-	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)"; do \
+scan: docker-images ## Scan all four images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "=== $${name} ($${image}) ==="; \
 		$(CONTAINER_TOOL) run --rm \
