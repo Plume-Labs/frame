@@ -3,6 +3,7 @@ import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 import { currentSession, ensureToken, logout, onSessionLost, type Session } from '@/lib/auth'
+import { loadConfig } from '@/lib/frame-config'
 
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
@@ -370,6 +371,29 @@ function App() {
     return () => clearInterval(id)
   }, [sessionState.phase])
 
+  // Runtime config, loaded once the session exists and before any screen
+  // mounts. It used to run in `main.tsx`, before `<App/>` and so outside this
+  // gate — an apiserver read with no bearer token, which 401s on every page
+  // load including the one that renders the login screen, leaving the console
+  // silently on DEFAULT_CONFIG (whole-branch review, "Also fix").
+  //
+  // The property the old placement protected still holds: no screen renders,
+  // and so no SDK call fires, until this has landed. `loadConfig` never
+  // rejects — a missing ConfigMap or an RBAC denial leaves the compiled
+  // defaults in force and records why for the Settings screen — so there is
+  // no failure branch to handle here, only a wait.
+  const [configLoaded, setConfigLoaded] = useState(false)
+  useEffect(() => {
+    if (sessionState.phase !== 'signed-in') return
+    let cancelled = false
+    void loadConfig().then(() => {
+      if (!cancelled) setConfigLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionState.phase])
+
   // Back to the gate when the session goes, rather than leaving every screen
   // to accumulate 401s. `auth.ts` fires this when a session that existed
   // stops existing — the 12h cookie lapsing is the ordinary case, and it
@@ -417,6 +441,14 @@ function App() {
   if (sessionState.phase === 'signed-out') {
     return (
       <LoginView onSignedIn={(session) => setSessionState({ phase: 'signed-in', session })} />
+    )
+  }
+
+  if (!configLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="font-mono text-sm text-muted-foreground">Loading…</div>
+      </div>
     )
   }
 
