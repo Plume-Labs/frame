@@ -320,20 +320,45 @@ still lets it crush whatever worker it lands on.
 ## Containing the control-plane UI (RBAC + NetworkPolicy)
 
 Prepared 2026-08-10, **not applied**. Two changes that shrink what the
-`cluster-control` namespace can do and who can reach it, in response to findings
-C1 and C2 of `docs/superpowers/reviews/2026-08-09-security-review.md`: the UI has
-no authentication in front of it, its `kubectl proxy` sidecar carries a
-cluster-wide ServiceAccount, and the `cluster-control-ui-lan` NodePort (30379)
-now publishes that to the whole LAN.
+`cluster-control` namespace can do and who can reach it, written in response
+to findings C1 and C2 of
+`docs/superpowers/reviews/2026-08-09-security-review.md`. The threat those
+findings described has changed since: at the time, the UI had no
+authentication in front of it at all, and its `kubectl proxy` sidecar
+carried a cluster-wide ServiceAccount directly, so anyone who could reach it
+was that SA. Per-user identity (2026-09-08, per-user identity and tasks lot
+— see [deployment.md](deployment.md)'s RBAC section) closed that specific
+hole: `frame-uiproxy` now validates authd's token before doing anything at
+all, and the pod ServiceAccount itself carries only the right to
+impersonate — not the write actions directly.
+
+That does not make this section obsolete; it changes what it is for.
+Per-user auth and containment answer different questions. Impersonation
+narrows **who the caller is** — a real person, evaluated under their own
+RBAC tier, once they've presented a valid token. Containment narrows
+**what the pod can reach**, regardless of who it is currently acting as. A
+compromised `frame-uiproxy` — a container escape, a bug in the proxy
+itself, anything that does not require stealing someone's token — still
+holds the ServiceAccount's `impersonate` grant on `users` (unbounded) and
+the three `frame:` groups; per-user auth does not touch that risk at all,
+because from the apiserver's point of view a compromised proxy impersonating
+correctly *is* a legitimate request. The NetworkPolicy half of this section
+is what stops that compromise being reachable from somewhere unexpected in
+the first place (`jupyterhub`, `neura-sandbox`, or the LAN via the
+`cluster-control-ui-lan` NodePort, 30379); the RBAC half is what narrows the
+pod's own reach — `pods/proxy` and cluster-wide reads — independent of
+whatever it is impersonating at the time.
 
 Full rationale, and the list of every grant removed with the call site that
 justified keeping the rest: `.superpowers/ui-containment-report.md`.
 
-**What this does not do.** It does not add authentication. Anyone on the LAN can
-still drive the Kubernetes API as `cluster-control-ui`. It removes the path from
-there to node root, and it stops a compromised pod elsewhere in the cluster
-(`jupyterhub`, `neura-sandbox`) from reaching the UI at all. Per-user auth is
-still the real fix.
+**What this does and does not do, now.** It does not add per-user
+authentication — that already shipped, separately (see above). What it
+still does: it removes the path from a compromised `frame-uiproxy` to node
+root, and it stops a compromised pod elsewhere in the cluster from reaching
+the UI, or the apiserver through it, at all. Both jobs stay necessary even
+with impersonation live, for the reason above — containment is a second,
+independent layer, not a stand-in for the first one.
 
 ### Pre-flight — three things to confirm, all read-only
 
@@ -372,6 +397,17 @@ kubectl get netpol -A     # argocd/jupyterhub/neura-sandbox policies exist and a
 
 Do the RBAC first. It is the reversible half, it needs no address to be right,
 and if the NetworkPolicy has to be rolled back the RBAC narrowing should stay.
+
+**This now assumes the per-user identity rollout has already landed, or is
+landing at the same time — not that it's still pending.** `deploy/kubernetes/base/rbac.yaml`
+as committed no longer binds `cluster-control-viewer`/`cluster-control-operator`
+to the SA at all; the SA's only direct grant left in that file is
+`impersonate` (`cluster-control-impersonator`). Applying step 1/3 below on a
+cluster that has not also picked up `frame-uiproxy` (`deployment.yaml`) and
+the tier bindings (`rbac-tier-bindings.yaml`) removes the SA's ability to
+act directly and gives it nothing to replace it with — the UI goes dark,
+not narrowed. Do this as part of, not ahead of,
+[deployment.md](deployment.md)'s "Rollout order."
 
 ```bash
 cd /home/rmocq/Neura/.externals/frame
