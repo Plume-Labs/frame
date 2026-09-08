@@ -464,10 +464,18 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.2.201:30379/
 curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.2.201:30379/api/v1/nodes
 ```
 
-A `000`/hang on the second curl with pods Ready means egress to the apiserver is
-blocked — the `cluster-control-allow-apiserver-egress` ipBlock does not match.
-A hang on the first means ingress is blocked — `cluster-control-allow-ui-ingress`
-does not match. Distinguish a policy drop from a dead endpoint by the shape of
+A hang on the first curl means ingress is blocked —
+`cluster-control-allow-ui-ingress` does not match.
+
+**The second curl no longer tells you about apiserver egress**, and reading it
+as if it does is how you diagnose the wrong thing. Since the per-user identity
+lot it carries no bearer token, so the uiproxy answers 401 *before* it forwards
+anything: `401` means "nginx and the sidecar are both alive", nothing more, and
+a working and a blocked egress look identical. What discriminates is the
+sidecar's own log, which is the line above — `x509`, `dial tcp ... i/o timeout`
+or `context deadline exceeded` against the apiserver is the egress failure; a
+`401` in the access path with nothing in the log is just an unauthenticated
+probe doing its job. A `000`/hang here still means the *ingress* path died. Distinguish a policy drop from a dead endpoint by the shape of
 the failure: a drop **hangs until timeout**, a missing endpoint returns
 **connection refused** immediately. Reading a refusal as a drop (or the reverse)
 is how a previous task drew a right conclusion from a wrong measurement.
