@@ -1,6 +1,9 @@
+/// <reference types="vite/client" />
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { __testing, createFrameClient, FrameAPIError, projectToFull, type MetricSeries } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
+// Raw source, for the structural guard at the bottom of this file.
+import frameSdkSource from './frame-sdk.ts?raw'
 
 /** `n` samples one hour apart, starting at `from` and moving `perDay` %/day. */
 function series(from: number, perDay: number, n = 12): MetricSeries {
@@ -668,5 +671,80 @@ describe('crToTask', () => {
       status: { phase: 'SomeFutureEnumValue' },
     })
     expect(t.phase).toBe('Running')
+  })
+})
+
+// Not in the whole-branch review's list, found while fixing I2: every
+// integration panel reached its exporter through a bare `fetch()`.
+//
+// Those URLs are apiserver paths — `/api/v1/namespaces/{ns}/pods/{p}:{port}/proxy/...`
+// — so they go through nginx to the uiproxy, which rejects any request
+// without a bearer token before RBAC is ever consulted. Prometheus, Alluxio,
+// node-exporter, DCGM, llama.cpp, TEI, Falco, Tetragon and Alertmanager
+// would each have answered 401 for everyone, including admins, and no
+// amount of fixing the RBAC (C3) would have changed it.
+describe('integration proxy requests carry the bearer token', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  function stubTokenAnd(respond: (url: string) => Response) {
+    vi.stubGlobal('window', globalThis)
+    const seen: Array<{ url: string; auth?: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      seen.push({ url, auth: (init?.headers as Record<string, string> | undefined)?.Authorization })
+      return respond(url)
+    }))
+    ;(globalThis as Record<string, unknown>).__FRAME_TOKEN__ = 'tok'
+    return seen
+  }
+
+  const POD_LIST = JSON.stringify({ items: [{ metadata: { name: 'alertmanager-0' } }] })
+
+  it('reads Alertmanager silences with an Authorization header', async () => {
+    const seen = stubTokenAnd((url) =>
+      url.includes('/proxy/')
+        ? new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        : new Response(POD_LIST, { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await createFrameClient().cluster.silences()
+
+    const proxied = seen.filter((c) => c.url.includes('/proxy/'))
+    expect(proxied.length).toBeGreaterThan(0)
+    for (const c of proxied) expect(c.auth).toBe('Bearer tok')
+  })
+
+  it('creates a silence with an Authorization header', async () => {
+    const seen = stubTokenAnd((url) =>
+      url.includes('/proxy/')
+        ? new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        : new Response(POD_LIST, { status: 200, headers: { 'Content-Type': 'application/json' } }))
+
+    await createFrameClient().cluster.silenceAlert(
+      { id: 'a', name: 'x', severity: 'warning', summary: '', startsAt: '', labels: { alertname: 'x' } } as never,
+      30,
+      'someone@example.com',
+    )
+
+    const proxied = seen.filter((c) => c.url.includes('/proxy/'))
+    expect(proxied.length).toBeGreaterThan(0)
+    for (const c of proxied) expect(c.auth).toBe('Bearer tok')
+  })
+
+  // The structural half. Twelve more call sites have the same shape and
+  // stubbing each of their screens would be a lot of fixture for one
+  // property: nothing in this module may reach the apiserver without going
+  // through a helper that attaches the token.
+  it('has no bare fetch() left in the module', () => {
+    const bare = frameSdkSource
+      .split('\n')
+      .map((line: string, i: number) => ({ line, n: i + 1 }))
+      // `globalThis.fetch` is the two helpers' own call; anything else
+      // spelling `fetch(` is a call site that forgot the token.
+      .filter(({ line }: { line: string }) =>
+        /(?<![a-zA-Z.])fetch\(/.test(line) && !/proxyFetch\(|k8sFetch|^\s*\*/.test(line))
+    expect(bare.map((b: { n: number; line: string }) => `${b.n}: ${b.line.trim()}`)).toEqual([])
   })
 })

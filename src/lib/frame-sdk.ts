@@ -776,11 +776,33 @@ async function sendToApiserver(
   if (opts.body !== undefined) {
     headers['Content-Type'] = opts.contentType ?? 'application/json'
   }
-  return fetch(path, {
+  return globalThis.fetch(path, {
     method: opts.method ?? 'GET',
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   })
+}
+
+/**
+ * `fetch` for the integration proxies, carrying the caller's bearer token.
+ *
+ * Every URL these call sites build is an apiserver path —
+ * `/api/v1/namespaces/{ns}/pods/{pod}:{port}/proxy/...`, from
+ * `integrationProxy()` — so it travels through nginx to the uiproxy, which
+ * rejects anything without a token before RBAC is consulted. They were bare
+ * `proxyFetch()` calls, so Prometheus, Alluxio, node-exporter, DCGM, llama.cpp,
+ * TEI, Falco, Tetragon and Alertmanager all answered 401 for everyone. The
+ * reason nothing caught it is that a bare `fetch` is what these looked like
+ * before there was any authentication in the path at all.
+ *
+ * `k8sFetch` is the one for typed Kubernetes objects; this is for the
+ * arbitrary bodies (Prometheus JSON, exporter text) behind the proxy.
+ */
+function proxyFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const tok = bearerToken()
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) }
+  if (tok) headers['Authorization'] = `Bearer ${tok}`
+  return globalThis.fetch(url, { ...init, headers })
 }
 
 /**
@@ -1135,7 +1157,7 @@ async function requestedFromPrometheus(): Promise<[number, number] | null> {
         `sum(kube_pod_container_resource_requests{resource="cpu"} ${phaseJoin})`,
         `sum(kube_pod_container_resource_requests{resource="memory"} ${phaseJoin}) / 1073741824`,
       ].map(async (q) => {
-        const res = await fetch(`${base}?query=${encodeURIComponent(q)}`)
+        const res = await proxyFetch(`${base}?query=${encodeURIComponent(q)}`)
         if (!res.ok) return NaN
         const json = (await res.json()) as {
           data?: { result?: Array<{ value?: [number, string] }> }
@@ -1445,7 +1467,7 @@ class ClusterClient {
     const name = pods.items?.[0]?.metadata.name
     if (!name) throw new FrameAPIError(404, 'Alluxio not deployed')
 
-    const res = await fetch(integrationProxy(alluxio, name, '/metrics/json/'))
+    const res = await proxyFetch(integrationProxy(alluxio, name, '/metrics/json/'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alluxio metrics')
     const g = ((await res.json()) as { gauges: Record<string, { value: number }> }).gauges
     const v = (k: string) => g[k]?.value ?? 0
@@ -1476,7 +1498,7 @@ class ClusterClient {
     const results = await Promise.all(
       (pods.items ?? []).map(async (p) => {
         try {
-          const res = await fetch(integrationProxy(nodeExporter, p.metadata.name, '/metrics'))
+          const res = await proxyFetch(integrationProxy(nodeExporter, p.metadata.name, '/metrics'))
           return { node: p.spec?.nodeName ?? p.metadata.name, text: res.ok ? await res.text() : '' }
         } catch {
           return { node: p.spec?.nodeName ?? p.metadata.name, text: '' }
@@ -1920,7 +1942,7 @@ class ClusterClient {
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) throw new FrameAPIError(404, 'DCGM exporter not deployed')
-    const res = await fetch(integrationProxy(dcgm, name, '/metrics'))
+    const res = await proxyFetch(integrationProxy(dcgm, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read DCGM metrics')
     const text = await res.text()
 
@@ -1975,7 +1997,7 @@ class ClusterClient {
     const name = pod.metadata.name
     const base = integrationProxy(llamacpp, name, '')
 
-    const mRes = await fetch(`${base}/metrics`)
+    const mRes = await proxyFetch(`${base}/metrics`)
     if (!mRes.ok) throw new FrameAPIError(mRes.status, 'cannot read inference metrics')
     const text = await mRes.text()
     const num = (k: string) => Number(text.match(new RegExp(`^${k}\\s+([0-9.e+-]+)`, 'm'))?.[1] ?? 0)
@@ -1985,7 +2007,7 @@ class ClusterClient {
     let slots = 0
     let model = ''
     try {
-      const p = await (await fetch(`${base}/props`)).json()
+      const p = await (await proxyFetch(`${base}/props`)).json()
       nCtx = p.default_generation_settings?.n_ctx ?? p.n_ctx ?? 0
       slots = p.total_slots ?? 0
       model = p.model_alias ?? ''
@@ -2025,7 +2047,7 @@ class ClusterClient {
     const name = pod.metadata.name
     const base = integrationProxy(tei, name, '')
 
-    const mRes = await fetch(`${base}/metrics`)
+    const mRes = await proxyFetch(`${base}/metrics`)
     if (!mRes.ok) throw new FrameAPIError(mRes.status, 'cannot read TEI metrics')
     const text = await mRes.text()
     const num = (k: string) => Number(text.match(new RegExp(`^${k}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)`, 'm'))?.[1] ?? 0)
@@ -2036,7 +2058,7 @@ class ClusterClient {
     let model = ''
     let dtype = ''
     try {
-      const info = await (await fetch(`${base}/info`)).json()
+      const info = await (await proxyFetch(`${base}/info`)).json()
       model = info.model_id ?? ''
       dtype = info.model_dtype ?? ''
     } catch {
@@ -2065,7 +2087,7 @@ class ClusterClient {
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const res = await fetch(integrationProxy(falco, name, '/metrics'))
+    const res = await proxyFetch(integrationProxy(falco, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Falco metrics')
     const text = await res.text()
 
@@ -2184,7 +2206,7 @@ class ClusterClient {
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const res = await fetch(integrationProxy(tetragon, name, '/metrics'))
+    const res = await proxyFetch(integrationProxy(tetragon, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Tetragon metrics')
     const text = await res.text()
 
@@ -2346,7 +2368,7 @@ class ClusterClient {
         const url = `${base}?query=${encodeURIComponent(q)}&start=${start}&end=${end}&step=${step}`
         let json: unknown
         try {
-          const res = await fetch(url)
+          const res = await proxyFetch(url)
           if (!res.ok) return empty
           json = await res.json()
         } catch {
@@ -2389,7 +2411,7 @@ class ClusterClient {
     )
     const name = pods.items?.[0]?.metadata.name
     if (!name) return null
-    const res = await fetch(
+    const res = await proxyFetch(
       integrationProxy(config().integrations.alertmanager, name, '/api/v2/alerts'),
     )
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alertmanager alerts')
@@ -2437,7 +2459,7 @@ class ClusterClient {
 
   /** Silences that are currently active or pending — expired ones are dropped. */
   async silences(): Promise<AlertSilence[]> {
-    const res = await fetch(`${await this.alertmanagerBase()}/silences`)
+    const res = await proxyFetch(`${await this.alertmanagerBase()}/silences`)
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Alertmanager silences')
     const raw: Array<{
       id: string
@@ -2472,7 +2494,7 @@ class ClusterClient {
    * the list only holds live entries.
    */
   async expireSilence(id: string): Promise<void> {
-    const res = await fetch(`${await this.alertmanagerBase()}/silence/${id}`, { method: 'DELETE' })
+    const res = await proxyFetch(`${await this.alertmanagerBase()}/silence/${id}`, { method: 'DELETE' })
     if (!res.ok) throw new FrameAPIError(res.status, `cannot expire silence: ${await res.text()}`)
   }
 
@@ -2480,7 +2502,7 @@ class ClusterClient {
   async silenceAlert(alert: ActiveAlert, durationMinutes: number, createdBy: string): Promise<void> {
     const startsAt = new Date()
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000)
-    const res = await fetch(`${await this.alertmanagerBase()}/silences`, {
+    const res = await proxyFetch(`${await this.alertmanagerBase()}/silences`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
