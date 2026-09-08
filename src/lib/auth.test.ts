@@ -5,6 +5,8 @@ import {
   ensureToken,
   enrolPasskey,
   loginWithPasskey,
+  loginWithPassword,
+  AuthUnreachableError,
   logout,
   PasskeyCancelledError,
 } from '@/lib/auth'
@@ -243,5 +245,38 @@ describe('enrolPasskey', () => {
     })
 
     await expect(enrolPasskey('key')).rejects.toBeInstanceOf(PasskeyCancelledError)
+  })
+})
+
+// --- /auth/* actually reaching authd ------------------------------------
+//
+// The whole-branch review's C1: nothing routed /auth/ to authd, so every one
+// of these calls fell through nginx's `location /` to `try_files ...
+// /index.html` and came back 200 text/html. `res.json()` on that throws
+// `SyntaxError: Unexpected token '<'`, which is what the login screen showed
+// under a form that had just "succeeded".
+//
+// These two are the discriminating checks: an HTML body must read as "not
+// signed in" at the gate, and as a message naming the misrouting at the
+// point where someone is actively trying to sign in — never as a JSON parse
+// error in either place.
+function htmlShell() {
+  return new Response('<!doctype html><html><body><div id="root"></div></body></html>', {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  })
+}
+
+describe('an /auth/ request that never reached authd', () => {
+  it('reads as not signed in rather than throwing a parse error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => htmlShell()))
+    await expect(currentSession()).resolves.toBeUndefined()
+    expect((globalThis as Record<string, unknown>).__FRAME_TOKEN__).toBeUndefined()
+  })
+
+  it('tells a signing-in user what is actually wrong', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => htmlShell()))
+    await expect(loginWithPassword('a@b.c', 'pw')).rejects.toThrow(AuthUnreachableError)
+    await expect(loginWithPassword('a@b.c', 'pw')).rejects.toThrow(/\/auth\//)
   })
 })

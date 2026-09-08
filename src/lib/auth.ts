@@ -39,6 +39,47 @@ export interface Session {
 }
 
 /**
+ * Thrown when an `/auth/*` request came back with the console's own HTML
+ * shell instead of authd's answer.
+ *
+ * That happens when nothing routes `/auth/` to authd: the request falls
+ * through nginx's `location /` to `try_files ... /index.html` (or, in dev,
+ * through vite's dev server, which only proxies `/api` and `/apis` unless
+ * `/auth` is proxied too). The status is 200 and `res.ok` is true, so every
+ * check below it passes and the failure only surfaces as
+ * `SyntaxError: Unexpected token '<'` from `res.json()` — a message that
+ * points at nothing.
+ *
+ * This is the one deployment mistake that makes the whole console
+ * unreachable, so it gets a named error saying what to fix rather than a
+ * parse error.
+ */
+export class AuthUnreachableError extends Error {
+  constructor(path: string) {
+    super(
+      `${path} returned the console's own HTML page instead of authd's response — ` +
+        `nothing is routing /auth/ to cluster-control-auth. ` +
+        `Check nginx's \`location /auth/\` (deploy/docker/nginx.conf) in a deployment, ` +
+        `or vite's \`/auth\` dev proxy (vite.config.ts) locally.`,
+    )
+    this.name = 'AuthUnreachableError'
+  }
+}
+
+/**
+ * True when the response plausibly came from authd rather than from the
+ * static file server in front of it.
+ *
+ * authd answers every endpoint here with JSON or with an empty 204; it never
+ * answers `text/html`. Testing the content type rather than the status is
+ * what makes this work: the misrouted response's status is a perfectly
+ * ordinary 200.
+ */
+function servedByAuthd(res: Response): boolean {
+  return !(res.headers.get('content-type') ?? '').toLowerCase().includes('text/html')
+}
+
+/**
  * Refresh this far ahead of expiry rather than waiting for the token to go
  * stale mid-request. Two minutes comfortably covers one slow apiserver round
  * trip without refreshing on every call.
@@ -62,6 +103,7 @@ export async function loginWithPassword(email: string, password: string): Promis
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
+  if (!servedByAuthd(res)) throw new AuthUnreachableError('/auth/login/password')
   if (!res.ok) {
     throw new Error(`login failed: ${res.status} ${await res.text()}`)
   }
@@ -120,6 +162,7 @@ export async function loginWithPasskey(): Promise<void> {
   ensurePasskeysSupported()
 
   const beginRes = await fetch('/auth/login/begin', { method: 'POST' })
+  if (!servedByAuthd(beginRes)) throw new AuthUnreachableError('/auth/login/begin')
   if (!beginRes.ok) {
     throw new Error(`could not start passkey sign-in: ${beginRes.status} ${await beginRes.text()}`)
   }
@@ -139,6 +182,7 @@ export async function loginWithPasskey(): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(authenticationResponseToJSON(credential as PublicKeyCredential)),
   })
+  if (!servedByAuthd(finishRes)) throw new AuthUnreachableError('/auth/login/finish')
   if (!finishRes.ok) {
     // authd answers every failure here with a bare 401 (see handleLoginFinish)
     // — it cannot say more without telling an attacker which credential ID
@@ -161,6 +205,7 @@ export async function enrolPasskey(label: string): Promise<void> {
   ensurePasskeysSupported()
 
   const beginRes = await fetch('/auth/register/begin', { method: 'POST' })
+  if (!servedByAuthd(beginRes)) throw new AuthUnreachableError('/auth/register/begin')
   if (beginRes.status === 401) {
     throw new Error('Enrolling a passkey requires an active session — sign in first.')
   }
@@ -183,6 +228,7 @@ export async function enrolPasskey(label: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(registrationResponseToJSON(credential as PublicKeyCredential)),
   })
+  if (!servedByAuthd(finishRes)) throw new AuthUnreachableError('/auth/register/finish')
   if (!finishRes.ok) {
     throw new Error(`passkey enrolment failed: ${finishRes.status} ${await finishRes.text()}`)
   }
@@ -199,6 +245,17 @@ export async function enrolPasskey(label: string): Promise<void> {
 export async function currentSession(): Promise<Session | undefined> {
   const res = await fetch('/auth/token', { method: 'POST' })
   if (res.status === 401) {
+    session = undefined
+    publish(undefined)
+    return undefined
+  }
+  // An HTML body means the request never reached authd (see
+  // AuthUnreachableError). Resolve as "not signed in" rather than throwing:
+  // this call is the console's gate, and the useful outcome there is the
+  // login screen, not an unhandled parse error behind a blank page. The
+  // sign-in attempt that follows is where the diagnosis belongs, and that is
+  // where the named error is thrown.
+  if (!servedByAuthd(res)) {
     session = undefined
     publish(undefined)
     return undefined
