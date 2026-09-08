@@ -11,8 +11,16 @@ metadata:
   namespace: cluster-control
 rules:
   # Read accounts to authenticate; write status to record credentials and
-  # rotate sign counters. Create is for bootstrap only — the admission webhook
-  # is what stops it being abused to mint a second admin.
+  # rotate sign counters. Create is for bootstrap only. What stops this SA
+  # itself minting a second admin is authd's own AdminCount() > 0 check
+  # (handleBootstrap in internal/authd/server_bootstrap.go), which closes
+  # /auth/bootstrap the instant the first admin exists — the admission
+  # webhook is never even reached on that path. The webhook
+  # (requireAdminRequester, internal/webhook/frame/v1beta1/frameuser_webhook.go)
+  # is the backstop for anyone else who ends up holding `create` on
+  # frameusers — e.g. frameuser-editor-role bound by hand — refusing a
+  # create carrying `spec.role: admin` from anyone who is not already an
+  # admin, once any admin exists.
   - apiGroups: [frame.plume-labs.io]
     resources: [frameusers]
     verbs: [get, list, watch, create]

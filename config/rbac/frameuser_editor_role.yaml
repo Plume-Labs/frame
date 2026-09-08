@@ -44,14 +44,22 @@
 # carrying `frame:admins`. No second credential needed, no alarm raised. The
 # only rule on spec.role at the time was the last-admin guard, which returns
 # nil on its first clause for anything that is not a demotion — a promotion
-# was explicitly allowed.
+# was explicitly allowed. A scoped re-review the same day (2026-09-08) found
+# that this role's `create` verb was an equally direct route to the same
+# outcome — creating a brand-new FrameUser at your own email with
+# `role: admin`, rather than patching an existing one — because the webhook
+# fix at the time only covered updates.
 #
 # The label is half the fix. The other half is in the validating webhook
 # (requireAdminRequester, internal/webhook/frame/v1beta1/frameuser_webhook.go),
-# which refuses a spec.role change made by anyone who is not already an admin
-# — so re-adding the label here, or binding this role by hand, does not
-# reopen the path. Both halves have tests; see test/manifests/rbac_tiers_test.go
-# and frameuser_webhook_test.go's "who may change a role".
+# which now refuses, from anyone who is not already an admin: a spec.role
+# change, a create carrying `spec.role: admin` (once any admin exists — the
+# very first admin is created by bootstrap, which has no admin requester by
+# definition), and a delete of an admin FrameUser. So re-adding the label
+# here, or binding this role by hand, does not reopen the path — create,
+# update and delete are all covered, not just update. Both halves have
+# tests; see test/manifests/rbac_tiers_test.go and frameuser_webhook_test.go's
+# "who may change a role".
 #
 # Bind it deliberately if you want it, to a group, never to a user.
 
