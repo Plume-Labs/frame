@@ -6,6 +6,7 @@ import { currentSession, ensureToken, logout, type Session } from '@/lib/auth'
 
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
+import { PasskeysDialog } from '@/components/PasskeysDialog'
 import { HeaderStats } from '@/components/HeaderStats'
 import { NotEnabledView } from '@/components/NotEnabledView'
 import { LoginView } from '@/components/LoginView'
@@ -68,6 +69,7 @@ import {
   Cpu,
   Database,
   Detective,
+  Fingerprint,
   Gauge,
   Gear,
   HardDrives,
@@ -379,6 +381,7 @@ function App() {
     setPendingTab(tab)
   }, [])
   const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
+  const [passkeysOpen, setPasskeysOpen] = useState(false)
 
   const { nodes, setNodes } = useClusterSimulation(32)
 
@@ -590,6 +593,16 @@ function App() {
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
+                tooltip="Passkeys"
+                className="font-mono text-xs"
+                onClick={() => setPasskeysOpen(true)}
+              >
+                <Fingerprint />
+                <span>Passkeys</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
                 tooltip="Sign out"
                 className="font-mono text-xs"
                 onClick={() => {
@@ -665,6 +678,7 @@ function App() {
           setSelectedNode(node)
         }}
       />
+      <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
       <Toaster position="bottom-right" />
     </SidebarProvider>
     </NavigationContext.Provider>
