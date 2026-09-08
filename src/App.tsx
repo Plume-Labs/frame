@@ -1,12 +1,14 @@
-import { lazy, ReactNode, Suspense, useCallback, useMemo, useState } from 'react'
+import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
+import { currentSession, ensureToken, logout, type Session } from '@/lib/auth'
 
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
 import { HeaderStats } from '@/components/HeaderStats'
 import { NotEnabledView } from '@/components/NotEnabledView'
+import { LoginView } from '@/components/LoginView'
 
 // Lazy: only the active screen is ever mounted (see renderScreen below), so
 // eagerly importing all 20+ of them bundled every one into the initial
@@ -48,6 +50,7 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarFooter,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -70,6 +73,7 @@ import {
   Network,
   Package,
   Queue,
+  SignOut,
   Speedometer,
   SquaresFour,
 } from '@phosphor-icons/react'
@@ -305,7 +309,48 @@ const NAV_INDEX: Record<string, NavItem> = Object.fromEntries(
   NAV.flatMap((group) => group.items).map((item) => [item.id, item]),
 )
 
+/** `checking` while the initial `currentSession()` call is in flight. */
+type SessionState =
+  | { phase: 'checking' }
+  | { phase: 'signed-out' }
+  | { phase: 'signed-in'; session: Session }
+
 function App() {
+  // Session gate: the console must not mount — and so must not fire a single
+  // /api/ request — until authd has confirmed a signed-in session. Checked
+  // once on mount; the early returns below keep the rest of the component
+  // (Sidebar, HeaderStats, the screens) from ever being part of the render
+  // tree while this is 'checking' or 'signed-out'.
+  const [sessionState, setSessionState] = useState<SessionState>({ phase: 'checking' })
+
+  useEffect(() => {
+    let cancelled = false
+    currentSession()
+      .then((session) => {
+        if (cancelled) return
+        setSessionState(session ? { phase: 'signed-in', session } : { phase: 'signed-out' })
+      })
+      .catch(() => {
+        // authd unreachable, or some other non-401 failure: there is no way
+        // to confirm a session, so fall back to the login screen rather than
+        // rendering the app on an unproven guess.
+        if (!cancelled) setSessionState({ phase: 'signed-out' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Keeps the bearer token from going stale for the life of the tab. The
+  // empty dependency array is what keeps a re-render from stacking a second
+  // interval on top of this one; the cleanup is what stops it on unmount.
+  useEffect(() => {
+    const id = setInterval(() => {
+      void ensureToken()
+    }, 5 * 60_000)
+    return () => clearInterval(id)
+  }, [])
+
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [screen, setScreen] = useState('overview')
   // Set when a navigation targets a specific tab; consumed by the Tabs below so
@@ -333,6 +378,20 @@ function App() {
     () => nodes.filter((node) => /control|master/i.test(node.name)).length,
     [nodes],
   )
+
+  if (sessionState.phase === 'checking') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="font-mono text-sm text-muted-foreground">Loading…</div>
+      </div>
+    )
+  }
+
+  if (sessionState.phase === 'signed-out') {
+    return (
+      <LoginView onSignedIn={(session) => setSessionState({ phase: 'signed-in', session })} />
+    )
+  }
 
   const active = NAV_INDEX[screen] ?? NAV_INDEX['overview']
 
@@ -507,6 +566,23 @@ function App() {
             </SidebarGroup>
           ))}
         </SidebarContent>
+
+        <SidebarFooter className="border-t border-sidebar-border">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Sign out"
+                className="font-mono text-xs"
+                onClick={() => {
+                  void logout().then(() => setSessionState({ phase: 'signed-out' }))
+                }}
+              >
+                <SignOut />
+                <span>Sign out</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
 
         <SidebarRail />
       </Sidebar>
