@@ -60,7 +60,7 @@ func TestMain(m *testing.M) {
 	var err error
 	restCfg, err = testEnv.Start()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "envtest start:", err)
+		fmt.Fprintf(os.Stderr, "envtest start failed: %v\nRun `make crd-render setup-envtest` (or `make test`, which does both) before this suite.\n", err)
 		os.Exit(1)
 	}
 	if err := framev1beta1.AddToScheme(scheme.Scheme); err != nil {
@@ -101,6 +101,9 @@ func bindGroups(t *testing.T) {
 		if err := k8sClient.Create(ctx, cr); err != nil && !apierrorsIsAlreadyExists(err) {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			_ = k8sClient.Delete(context.Background(), cr)
+		})
 		crb := &rbacv1.ClusterRoleBinding{
 			ObjectMeta: metav1.ObjectMeta{Name: r.name},
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: r.name},
@@ -109,6 +112,9 @@ func bindGroups(t *testing.T) {
 		if err := k8sClient.Create(ctx, crb); err != nil && !apierrorsIsAlreadyExists(err) {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			_ = k8sClient.Delete(context.Background(), crb)
+		})
 	}
 }
 
@@ -146,6 +152,9 @@ func TestOperatorMayPatchWhereViewerMayNot(t *testing.T) {
 	if err := k8sClient.Create(context.Background(), node); err != nil && !apierrorsIsAlreadyExists(err) {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(context.Background(), node)
+	})
 
 	cases := []struct {
 		name     string
@@ -174,15 +183,21 @@ func TestOperatorMayPatchWhereViewerMayNot(t *testing.T) {
 			if err := k8sClient.List(context.Background(), &tasks, client.InNamespace("default")); err != nil {
 				t.Fatal(err)
 			}
-			var found *framev1beta1.FrameTask
+			// Exactly one, not "at least one": a scan that kept the last
+			// match would silently pick the wrong object the moment a
+			// second envtest spec ever wrote a FrameTask for the same user
+			// into this namespace — precisely the failure mode this file
+			// exists to rule out.
+			var matches []framev1beta1.FrameTask
 			for i := range tasks.Items {
 				if tasks.Items[i].Spec.User == tc.id.User {
-					found = &tasks.Items[i]
+					matches = append(matches, tasks.Items[i])
 				}
 			}
-			if found == nil {
-				t.Fatalf("no FrameTask recorded for %s", tc.id.User)
+			if len(matches) != 1 {
+				t.Fatalf("found %d FrameTasks for %s, want exactly 1", len(matches), tc.id.User)
 			}
+			found := &matches[0]
 			if int(found.Status.HTTPCode) != tc.wantCode {
 				t.Fatalf("task recorded code %d, want %d", found.Status.HTTPCode, tc.wantCode)
 			}
