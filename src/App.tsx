@@ -351,15 +351,22 @@ function App() {
     }
   }, [])
 
-  // Keeps the bearer token from going stale for the life of the tab. The
-  // empty dependency array is what keeps a re-render from stacking a second
-  // interval on top of this one; the cleanup is what stops it on unmount.
+  // Keeps the bearer token from going stale for the life of a signed-in tab.
+  // Gated on `signed-in` rather than running unconditionally: at
+  // 'checking'/'signed-out' there is no session to refresh, and firing this
+  // anyway would just draw a pointless 401 from /auth/token every five
+  // minutes at the login screen. The dependency is the phase string, not the
+  // whole sessionState object, so this effect only re-runs on an actual
+  // phase transition — never on a re-render — which is what keeps a second
+  // interval from ever stacking on top of this one; the cleanup is what
+  // stops it on unmount or on sign-out.
   useEffect(() => {
+    if (sessionState.phase !== 'signed-in') return
     const id = setInterval(() => {
       void ensureToken()
     }, 5 * 60_000)
     return () => clearInterval(id)
-  }, [])
+  }, [sessionState.phase])
 
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [screen, setScreen] = useState('overview')
@@ -586,7 +593,16 @@ function App() {
                 tooltip="Sign out"
                 className="font-mono text-xs"
                 onClick={() => {
-                  void logout().then(() => setSessionState({ phase: 'signed-out' }))
+                  // logout() clears the in-memory token in its own `finally`
+                  // even when the network call to authd fails — it re-throws
+                  // in that case, but the token is already gone by then. The
+                  // UI must follow it to signed-out regardless of what authd
+                  // said: the user asked to leave, and staying on
+                  // 'signed-in' with no token would just mean every live
+                  // screen starts 401ing instead of showing the login gate.
+                  void logout()
+                    .catch(() => {})
+                    .finally(() => setSessionState({ phase: 'signed-out' }))
                 }}
               >
                 <SignOut />

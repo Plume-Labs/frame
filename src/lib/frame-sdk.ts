@@ -1004,6 +1004,29 @@ function refLabel(r: { resource: string; namespace?: string; name: string }): st
   return r.namespace ? `${r.namespace}/${r.resource}/${r.name}` : `${r.resource}/${r.name}`
 }
 
+/**
+ * A FrameTask's phase, normalized the same way `mapJobPhase`/`mapNodePhase`
+ * normalize theirs: a switch over the raw string with a safe default, never
+ * an unvalidated cast. `TasksView` does an unconditional `PHASE[t.phase]`
+ * lookup, and only a switch-with-default can guarantee that's always a hit —
+ * a cast would let any string the controller ever emits (a future phase
+ * value, a typo, a hand-built object in a test) reach that lookup unchanged
+ * and throw when it comes back undefined.
+ *
+ * A task with no status, or an explicit `Running`, is one the proxy created
+ * and has not closed: in flight, or the proxy died mid-request. Both read as
+ * Running, which is also where anything outside the three known phases
+ * lands — the same "unrecognized reads as not-yet-done" call `mapJobPhase`
+ * makes for a legacy FrameJob with no Ready condition.
+ */
+function mapTaskPhase(cr: FrameTaskCR): TaskRecord['phase'] {
+  switch (cr.status?.phase) {
+    case 'Succeeded': return 'Succeeded'
+    case 'Failed':    return 'Failed'
+    default:          return 'Running'
+  }
+}
+
 function crToTask(cr: FrameTaskCR): TaskRecord {
   return {
     name: cr.metadata.name,
@@ -1011,9 +1034,7 @@ function crToTask(cr: FrameTaskCR): TaskRecord {
     verb: cr.spec.verb,
     action: cr.spec.action ?? `${cr.spec.verb} ${refLabel(cr.spec.target)}`,
     target: refLabel(cr.spec.target),
-    // A task with no status is one the proxy created and has not closed:
-    // in flight, or the proxy died mid-request. Both read as Running.
-    phase: (cr.status?.phase as TaskRecord['phase']) ?? 'Running',
+    phase: mapTaskPhase(cr),
     httpCode: cr.status?.httpCode,
     startedAt: cr.status?.startedAt ?? cr.metadata.creationTimestamp,
     finishedAt: cr.status?.finishedAt,

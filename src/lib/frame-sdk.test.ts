@@ -616,4 +616,19 @@ describe('crToTask', () => {
     expect(t.phase).toBe('Running')
     expect(t.target).toBe('frame-system/framejobs/-')
   })
+
+  it('normalizes a phase outside Running/Succeeded/Failed instead of passing it through', () => {
+    // crToJob and crToNode both switch on the raw string with a safe
+    // default; that's what lets TasksView do an unconditional
+    // PHASE[t.phase] lookup. An unvalidated cast here would let any string
+    // the controller ever emits reach that lookup unnormalized and throw
+    // when PHASE[...] comes back undefined — blanking the whole console via
+    // the top-level ErrorBoundary, not just the Tasks tab.
+    const t = crToTask({
+      metadata: { name: 'task-ghi' },
+      spec: { user: 'x@y.z', verb: 'delete', target: { resource: 'nodes', name: 'w9' } },
+      status: { phase: 'SomeFutureEnumValue' },
+    })
+    expect(t.phase).toBe('Running')
+  })
 })
