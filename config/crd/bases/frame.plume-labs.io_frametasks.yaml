@@ -60,33 +60,10 @@ spec:
                 description: |-
                   Action is a human-readable label supplied by the UI through the
                   X-Frame-Action header ("cordon node w2"). Absent when the request
-                  came from something other than the UI.
+                  came from something other than the UI, in which case the Tasks screen
+                  falls back to "<verb> <target>".
                 maxLength: 200
                 type: string
-              ref:
-                description: |-
-                  Ref points at an object that carries the action's progress — a
-                  FrameJob, a TalosUpgrade, a Velero Backup. The Tasks screen reads
-                  that object's own status rather than copying it here, which is what
-                  lets this kind exist without a controller.
-                properties:
-                  group:
-                    type: string
-                  name:
-                    type: string
-                  namespace:
-                    type: string
-                  resource:
-                    description: |-
-                      Resource is the plural resource name as it appears in the request
-                      path ("nodes", "framejobs"), not a Kind. The proxy reads paths, and a
-                      path carries the resource; deriving a Kind from it would need a
-                      RESTMapper and buy nothing the screen cannot render.
-                    type: string
-                required:
-                - name
-                - resource
-                type: object
               target:
                 description: Target is the object the request acted on.
                 properties:

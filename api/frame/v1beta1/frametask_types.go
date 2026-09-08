@@ -71,17 +71,27 @@ type FrameTaskSpec struct {
 
 	// Action is a human-readable label supplied by the UI through the
 	// X-Frame-Action header ("cordon node w2"). Absent when the request
-	// came from something other than the UI.
+	// came from something other than the UI, in which case the Tasks screen
+	// falls back to "<verb> <target>".
 	// +optional
 	// +kubebuilder:validation:MaxLength=200
 	Action string `json:"action,omitempty"`
 
-	// Ref points at an object that carries the action's progress — a
-	// FrameJob, a TalosUpgrade, a Velero Backup. The Tasks screen reads
-	// that object's own status rather than copying it here, which is what
-	// lets this kind exist without a controller.
-	// +optional
-	Ref *ObjectRef `json:"ref,omitempty"`
+	// There was a `ref` field here, pointing at an object that carried the
+	// action's progress — a FrameJob, a TalosUpgrade, a Velero Backup — so
+	// the Tasks screen could read that object's status instead of copying
+	// it. It is removed, and the reason is worth recording so it is not
+	// re-added on the same reasoning.
+	//
+	// It never had a producer, and could not have one. `ref` is only
+	// meaningful when a write on object A produces progress on some other
+	// object B. Every write the console makes is either terminal (cordon,
+	// scale, queue weight) or a create whose progress lives on the object it
+	// just created — where `ref` would simply repeat `target`. Nothing in
+	// the product needs it, so it shipped as a field nothing wrote, backing
+	// ~30 lines of UI that could never render (whole-branch review, I2).
+	//
+	// FrameTask has not shipped, so removing it costs no compatibility.
 }
 
 // FrameTaskStatus is the outcome, written by the proxy once the apiserver

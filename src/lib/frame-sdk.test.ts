@@ -634,6 +634,66 @@ describe('ClusterClient.capacity', () => {
   })
 })
 
+// I2 of the whole-branch review. `internal/uiproxy/recorder.go` has read
+// `X-Frame-Action` since the first commit, and a repo-wide grep found the
+// header nowhere but in Go tests and doc comments — `sendToApiserver` set
+// only Authorization and Content-Type. So every FrameTask fell back to
+// `${verb} ${target}`: "patch nodes/w2", the same string for a cordon and an
+// uncordon, and the Tasks screen the lot is named for showed the request
+// instead of the action.
+describe('X-Frame-Action', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  function captureHeaders() {
+    vi.stubGlobal('window', globalThis)
+    const seen: Array<Record<string, string> | undefined> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string> | undefined)
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    return seen
+  }
+
+  it('labels a cordon and an uncordon differently', async () => {
+    const seen = captureHeaders()
+    await createFrameClient().cluster.cordon('w2', true)
+    await createFrameClient().cluster.cordon('w2', false)
+    expect(seen[0]?.['X-Frame-Action']).toBe('cordon node w2')
+    expect(seen[1]?.['X-Frame-Action']).toBe('uncordon node w2')
+  })
+
+  it('labels a scale with its replica count', async () => {
+    const seen = captureHeaders()
+    await createFrameClient().apps.scale(
+      { kind: 'Deployment', namespace: 'inference', name: 'llamacpp' }, 3)
+    expect(seen[0]?.['X-Frame-Action']).toBe('scale deployment inference/llamacpp to 3')
+  })
+
+  it('sends no header on a read, since reads are not recorded', async () => {
+    const seen = captureHeaders()
+    await createFrameClient().nodes.list()
+    expect(seen[0]?.['X-Frame-Action']).toBeUndefined()
+  })
+
+  it('strips characters a header cannot carry', async () => {
+    // Action labels are assembled from names a user chose. A non-latin-1
+    // byte in a header value makes fetch() throw, which would turn a
+    // cosmetic label into a failed write.
+    vi.stubGlobal('window', globalThis)
+    const seen: Array<Record<string, string> | undefined> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string> | undefined)
+      return new Response(JSON.stringify({ metadata: { name: 'j' }, spec: {} }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    await createFrameClient().jobs.submit({ name: 'train-\u00e9\u00e9\u2014\ud83d\ude80', image: 'x' } as never)
+    expect(seen[0]?.['X-Frame-Action']).toBe('submit job train-')
+  })
+})
+
 describe('crToTask', () => {
   const { crToTask } = __testing
 

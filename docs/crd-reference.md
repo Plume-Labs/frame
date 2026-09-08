@@ -594,13 +594,18 @@ email; required, 1–254 characters), `verb` (`create` | `update` | `patch` |
 `resource`, `namespace`, `name` — `resource` is the plural path segment the
 proxy parsed the request URL into, not a `Kind`, since deriving a `Kind`
 from it would need a RESTMapper for nothing the Tasks screen renders),
-`action` (an optional human label from the UI's `X-Frame-Action` header,
-absent when the request did not come from the console), and `ref` (an
-optional pointer at another object that carries the action's own progress —
-a `FrameJob`, a `TalosUpgrade`, a Velero `Backup`). `ref` is a pointer, not a
-copy: the Tasks screen reads that object's live status directly rather than
-this kind duplicating it, which is part of why `FrameTask` can exist with no
-controller of its own.
+and `action` (an optional human label from the UI's `X-Frame-Action` header
+— "cordon node w2" — absent when the request did not come from the console,
+in which case the Tasks screen falls back to `<verb> <target>`).
+
+There was a `ref` field here, pointing at an object carrying the action's own
+progress. It is gone, and the reason is worth stating so it is not re-added
+on the same reasoning: it had no producer and could not have one. A `ref` is
+only meaningful when a write on object A produces progress on some other
+object B, and every write the console makes is either terminal (cordon,
+scale, queue weight) or a create whose progress lives on the object it just
+created — where `ref` would only repeat `target`. It shipped as a field
+nothing wrote, backing UI that could never render.
 
 **Status:** `phase` (`Running` | `Succeeded` | `Failed`), `httpCode` (the
 apiserver's status code, `0` while running), `message`, `startedAt`,

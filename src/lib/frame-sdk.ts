@@ -588,7 +588,6 @@ export interface TaskRecord {
   httpCode?: number
   startedAt?: string
   finishedAt?: string
-  ref?: { group: string; resource: string; namespace: string; name: string }
 }
 
 // ── Error type ───────────────────────────────────────────────────────────────
@@ -707,9 +706,28 @@ function toK8sName(s: string): string {
  */
 const inFlightGets = new Map<string, Promise<unknown>>()
 
+interface K8sFetchOptions {
+  method?: string
+  body?: unknown
+  contentType?: string
+  /**
+   * A human-readable label for what this write is, sent as `X-Frame-Action`
+   * and stored on the FrameTask the proxy records ("cordon node w2").
+   *
+   * Without it the Tasks screen falls back to `${verb} ${target}` — "patch
+   * nodes/w2" — which is the request, not the action, and is the same string
+   * for a cordon and an uncordon. The header existed and was read by
+   * `internal/uiproxy/recorder.go` from the first commit; nothing ever sent
+   * it (whole-branch review, I2).
+   *
+   * Only meaningful on a mutating verb: reads are not recorded.
+   */
+  action?: string
+}
+
 async function k8sFetch<T>(
   path: string,
-  opts: { method?: string; body?: unknown; contentType?: string } = {},
+  opts: K8sFetchOptions = {},
 ): Promise<T> {
   const method = opts.method ?? 'GET'
   // Only plain GETs dedupe. A write must always reach the apiserver, and two
@@ -728,7 +746,7 @@ async function k8sFetch<T>(
 
 async function k8sFetchUncached<T>(
   path: string,
-  opts: { method?: string; body?: unknown; contentType?: string } = {},
+  opts: K8sFetchOptions = {},
 ): Promise<T> {
   const res = await sendToApiserver(path, opts)
   if (res.status !== 401) return parseApiserverResponse<T>(res)
@@ -768,7 +786,7 @@ async function refreshTokenForRetry(): Promise<string | undefined> {
 
 async function sendToApiserver(
   path: string,
-  opts: { method?: string; body?: unknown; contentType?: string },
+  opts: K8sFetchOptions,
 ): Promise<Response> {
   const headers: Record<string, string> = {}
   const tok = bearerToken()
@@ -776,6 +794,11 @@ async function sendToApiserver(
   if (opts.body !== undefined) {
     headers['Content-Type'] = opts.contentType ?? 'application/json'
   }
+  // Read by internal/uiproxy/recorder.go and stored on the FrameTask. Header
+  // values must be latin-1, and an action label is assembled from names the
+  // user may have chosen, so anything outside that range is stripped rather
+  // than allowed to throw inside the request.
+  if (opts.action) headers['X-Frame-Action'] = opts.action.replace(/[^\x20-\x7e]/g, '')
   return globalThis.fetch(path, {
     method: opts.method ?? 'GET',
     headers,
@@ -1045,7 +1068,6 @@ interface FrameTaskCR {
   spec: {
     user: string; verb: string; action?: string
     target: { group?: string; resource: string; namespace?: string; name: string }
-    ref?: { group?: string; resource: string; namespace?: string; name: string }
   }
   status?: { phase?: string; httpCode?: number; startedAt?: string; finishedAt?: string }
 }
@@ -1088,10 +1110,6 @@ function crToTask(cr: FrameTaskCR): TaskRecord {
     httpCode: cr.status?.httpCode,
     startedAt: cr.status?.startedAt ?? cr.metadata.creationTimestamp,
     finishedAt: cr.status?.finishedAt,
-    ref: cr.spec.ref && {
-      group: cr.spec.ref.group ?? '', resource: cr.spec.ref.resource,
-      namespace: cr.spec.ref.namespace ?? '', name: cr.spec.ref.name,
-    },
   }
 }
 
@@ -1301,6 +1319,7 @@ class ClusterClient {
   /** Cordon (true) or uncordon (false) a real Kubernetes node. */
   async cordon(name: string, unschedulable: boolean): Promise<void> {
     await k8sFetch<undefined>(`/api/v1/nodes/${name}`, {
+      action: `${unschedulable ? 'cordon' : 'uncordon'} node ${name}`,
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
       body: { spec: { unschedulable } },
@@ -1349,6 +1368,7 @@ class ClusterClient {
         await k8sFetch<undefined>(
           `/api/v1/namespaces/${p.metadata.namespace}/pods/${p.metadata.name}/eviction`,
           {
+            action: `drain node ${name}: evict ${p.metadata.namespace}/${p.metadata.name}`,
             method: 'POST',
             body: {
               apiVersion: 'policy/v1',
@@ -1680,6 +1700,7 @@ class ClusterClient {
   /** Set a Volcano queue's share weight — its slice of capacity when queues compete. */
   async setQueueWeight(name: string, weight: number): Promise<void> {
     await k8sFetch<undefined>(`/apis/scheduling.volcano.sh/v1beta1/queues/${name}`, {
+      action: `set queue ${name} weight to ${weight}`,
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
       body: { spec: { weight } },
@@ -1707,6 +1728,7 @@ class ClusterClient {
 
     const commandNs = config().namespaces.volcanoCommands
     await k8sFetch<unknown>(`/apis/bus.volcano.sh/v1alpha1/namespaces/${commandNs}/commands`, {
+      action: `${state === 'Open' ? 'open' : 'close'} queue ${name}`,
       method: 'POST',
       body: {
         apiVersion: 'bus.volcano.sh/v1alpha1',
@@ -2329,6 +2351,7 @@ class ClusterClient {
     const name = toK8sName(`on-demand-${new Date().toISOString()}`)
     const veleroNs = config().namespaces.velero
     await k8sFetch<undefined>(`/apis/velero.io/v1/namespaces/${veleroNs}/backups`, {
+      action: `trigger backup ${name}`,
       method: 'POST',
       body: {
         apiVersion: 'velero.io/v1',
@@ -2590,6 +2613,7 @@ class ApplicationClient {
     await k8sFetch<undefined>(
       `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}`,
       {
+        action: `restart ${component.kind.toLowerCase()} ${component.namespace}/${component.name}`,
         method: 'PATCH',
         contentType: 'application/strategic-merge-patch+json',
         body: {
@@ -2610,7 +2634,10 @@ class ApplicationClient {
     const plural = component.kind === 'Deployment' ? 'deployments' : 'statefulsets'
     await k8sFetch<undefined>(
       `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}/scale`,
-      { method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: { replicas } } },
+      {
+        action: `scale ${component.kind.toLowerCase()} ${component.namespace}/${component.name} to ${replicas}`,
+        method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: { replicas } },
+      },
     )
   }
 }
@@ -2632,6 +2659,7 @@ class NodeClient {
   async discover(ip: string): Promise<{ crName: string }> {
     const crName = toK8sName('frame-node-' + ip.replace(/\./g, '-'))
     await k8sFetch<FrameNodeCR>(apiBase('framenodes', this.ns), {
+      action: `discover node ${ip}`,
       method: 'POST',
       body: {
         apiVersion: `${GROUP}/${VERSION}`,
@@ -2660,6 +2688,7 @@ class NodeClient {
 
   async patchSpec(name: string, spec: FrameNodeSpec): Promise<void> {
     await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${name}`, {
+      action: `provision node ${name}`,
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
       body: { spec },
@@ -2667,7 +2696,9 @@ class NodeClient {
   }
 
   async delete(name: string): Promise<void> {
-    await k8sFetch<undefined>(`${apiBase('framenodes', this.ns)}/${name}`, { method: 'DELETE' })
+    await k8sFetch<undefined>(`${apiBase('framenodes', this.ns)}/${name}`, {
+      action: `delete node ${name}`, method: 'DELETE',
+    })
   }
 }
 
@@ -2690,6 +2721,7 @@ class JobClient {
     // resubmitting into the namespace the original ran in.
     const ns = spec.namespace ?? this.ns
     const cr = await k8sFetch<FrameJobCR>(apiBase('framejobs', ns), {
+      action: `submit job ${spec.name}`,
       method: 'POST',
       body: {
         apiVersion: `${GROUP}/${VERSION}`,
@@ -2713,7 +2745,9 @@ class JobClient {
   async cancel(id: string): Promise<{ cancelled: boolean; job: Job }> {
     const cr = await k8sFetch<FrameJobCR>(`${apiBase('framejobs', this.ns)}/${id}`)
     const job = crToJob(cr)
-    await k8sFetch<undefined>(`${apiBase('framejobs', this.ns)}/${id}`, { method: 'DELETE' })
+    await k8sFetch<undefined>(`${apiBase('framejobs', this.ns)}/${id}`, {
+      action: `cancel job ${id}`, method: 'DELETE',
+    })
     return { cancelled: true, job }
   }
 }
@@ -2732,6 +2766,7 @@ class SchedulerClient {
     const specBody = { scheduler: policy.scheduler, queueName: policy.queue, priorityValue: policy.priority, preemption: policy.preemption }
     try {
       const res = await k8sFetch<SchedulingPolicyCR>(apiBase('schedulingpolicies', this.ns), {
+        action: `create scheduling policy ${policy.name}`,
         method: 'POST',
         body: { apiVersion: `${GROUP}/${VERSION}`, kind: 'SchedulingPolicy', metadata: { name: crName, namespace: frameNs(this.ns) }, spec: specBody },
       })
@@ -2739,6 +2774,7 @@ class SchedulerClient {
     } catch (e) {
       if (e instanceof FrameAPIError && e.statusCode === 409) {
         const res = await k8sFetch<SchedulingPolicyCR>(`${apiBase('schedulingpolicies', this.ns)}/${crName}`, {
+          action: `update scheduling policy ${policy.name}`,
           method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: specBody },
         })
         return crToPolicy(res)
@@ -2750,7 +2786,9 @@ class SchedulerClient {
   async deletePolicy(name: string): Promise<{ deleted: boolean; policy: SchedulingPolicy }> {
     const cr = await k8sFetch<SchedulingPolicyCR>(`${apiBase('schedulingpolicies', this.ns)}/${name}`)
     const policy = crToPolicy(cr)
-    await k8sFetch<undefined>(`${apiBase('schedulingpolicies', this.ns)}/${name}`, { method: 'DELETE' })
+    await k8sFetch<undefined>(`${apiBase('schedulingpolicies', this.ns)}/${name}`, {
+      action: `delete scheduling policy ${name}`, method: 'DELETE',
+    })
     return { deleted: true, policy }
   }
 }
@@ -2770,6 +2808,7 @@ class ResourceClient {
     const specBody = { serviceClass: sc, maxCPU: quota.maxCPU, maxMemory: quota.maxMemory, maxGPUs: quota.maxGPUs }
     try {
       const res = await k8sFetch<FrameResourceQuotaCR>(apiBase('frameresourcequotas', namespace), {
+        action: `set quota for ${namespace}`,
         method: 'POST',
         body: { apiVersion: `${GROUP}/${VERSION}`, kind: 'FrameResourceQuota', metadata: { name: crName, namespace: frameNs(namespace) }, spec: specBody },
       })
@@ -2777,6 +2816,7 @@ class ResourceClient {
     } catch (e) {
       if (e instanceof FrameAPIError && e.statusCode === 409) {
         const res = await k8sFetch<FrameResourceQuotaCR>(`${apiBase('frameresourcequotas', namespace)}/${crName}`, {
+          action: `update quota for ${namespace}`,
           method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: specBody },
         })
         return crToQuota(res)
@@ -2881,6 +2921,7 @@ class TalosClient {
     secretName: string
   }): Promise<void> {
     await k8sFetch<TalosCR>(apiBase('talosmachineconfigs', this.ns), {
+      action: `apply Talos machine config to ${input.nodeName}`,
       method: 'POST',
       body: {
         apiVersion: `${GROUP}/${VERSION}`,
@@ -2908,6 +2949,7 @@ class TalosClient {
     secretName: string
   }): Promise<void> {
     await k8sFetch<TalosCR>(apiBase('talosupgrades', this.ns), {
+      action: `request Talos upgrade of ${input.nodeName}`,
       method: 'POST',
       body: {
         apiVersion: `${GROUP}/${VERSION}`,
@@ -2926,7 +2968,9 @@ class TalosClient {
 
   async remove(op: Pick<TalosOperation, 'kind' | 'name'>): Promise<void> {
     const plural = op.kind === 'TalosUpgrade' ? 'talosupgrades' : 'talosmachineconfigs'
-    await k8sFetch<undefined>(`${apiBase(plural, this.ns)}/${op.name}`, { method: 'DELETE' })
+    await k8sFetch<undefined>(`${apiBase(plural, this.ns)}/${op.name}`, {
+      action: `delete ${op.kind} ${op.name}`, method: 'DELETE',
+    })
   }
 }
 
