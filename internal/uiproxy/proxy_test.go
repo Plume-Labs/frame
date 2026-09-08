@@ -16,6 +16,29 @@ type stubVerifier struct {
 
 func (s stubVerifier) Verify(context.Context, string) (Identity, error) { return s.id, s.err }
 
+// stubRecorder lets tests observe Start/Finish without a real client.
+type stubRecorder struct {
+	startName string
+
+	finishCalled bool
+	finishedCode int
+}
+
+func (s *stubRecorder) Start(context.Context, Identity, *http.Request) string { return s.startName }
+
+func (s *stubRecorder) Finish(_ context.Context, _ string, httpCode int) {
+	s.finishCalled = true
+	s.finishedCode = httpCode
+}
+
+// panicTransport simulates a proxied call that never gets as far as writing
+// a response — a bug in a custom RoundTripper, for instance — rather than
+// an upstream error, which the reverse proxy's own ErrorHandler always
+// turns into a written status.
+type panicTransport struct{}
+
+func (panicTransport) RoundTrip(*http.Request) (*http.Response, error) { panic("boom") }
+
 // upstreamEcho records what the proxy actually sent upstream.
 func upstreamEcho(t *testing.T, seen *http.Header) *httptest.Server {
 	t.Helper()
@@ -139,5 +162,40 @@ func TestStripsTheUsersAuthorizationHeader(t *testing.T) {
 
 	if got := seen.Get("Authorization"); got == "Bearer users-token" {
 		t.Fatal("the user's own token was forwarded to the apiserver")
+	}
+}
+
+// A panic in the proxied call must still close the task record — otherwise
+// it is left Running forever — and it must not be closed with the
+// meaningless code 0.
+func TestFinishRunsAndReportsFailureWhenTheProxiedCallPanics(t *testing.T) {
+	u, err := url.Parse("http://upstream.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &stubRecorder{startName: "task-1"}
+	p, err := New(Options{
+		Verifier:  stubVerifier{id: Identity{User: "alice@example.com"}},
+		Recorder:  rec,
+		Upstream:  u,
+		Transport: panicTransport{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/nodes/w2", nil)
+	req.Header.Set("Authorization", "Bearer good")
+
+	func() {
+		defer func() { recover() }()
+		p.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	if !rec.finishCalled {
+		t.Fatal("Finish was never called after the proxied call panicked")
+	}
+	if rec.finishedCode != http.StatusInternalServerError {
+		t.Fatalf("finishedCode = %d, want %d", rec.finishedCode, http.StatusInternalServerError)
 	}
 }

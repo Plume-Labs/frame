@@ -160,10 +160,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.recorder != nil && isMutating(r.Method) {
 		task = p.recorder.Start(r.Context(), id, r)
 	}
-	p.rp.ServeHTTP(sr, r)
 	if task != "" {
-		// Detached from the request context: it is cancelled the moment the
-		// response finishes, which is exactly when this runs.
-		p.recorder.Finish(context.WithoutCancel(r.Context()), task, sr.code)
+		// Under defer, not called only after ServeHTTP returns normally: a
+		// panic in the proxied call must still close the record, or it is
+		// left Running forever.
+		defer func() {
+			code := sr.code
+			if code == 0 {
+				// sr.code is only ever 0 here if the proxied call exited
+				// without writing a header at all — the reverse proxy's
+				// own error handler always writes one, even for a broken
+				// upstream, so this means it panicked. "0" is not a
+				// status a reader can make sense of; record the
+				// server-side failure it actually is.
+				code = http.StatusInternalServerError
+			}
+			// Detached from the request context: it is cancelled the
+			// moment the response finishes, which is exactly when this
+			// runs.
+			p.recorder.Finish(context.WithoutCancel(r.Context()), task, code)
+		}()
 	}
+	p.rp.ServeHTTP(sr, r)
 }
