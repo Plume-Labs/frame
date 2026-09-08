@@ -347,75 +347,115 @@ freeze. The tiers are written in the shape they will need when it happens.
 
 ### Rollout order
 
-Turning per-user enforcement on is a four-step sequence, and the order is
-load-bearing — not a preference, a dependency chain. Do them in this order:
+Turning per-user enforcement on is a five-step sequence, and the order is
+load-bearing — not a preference, a dependency chain.
 
-1. **Bootstrap the first admin through authd's one-shot `/auth/bootstrap`
-   Secret, while the old anonymous path still works.** `authd` is already
-   running (Stage 1) but has no `FrameUser` to authenticate as yet; `POST
-   /auth/bootstrap` with the token in the `frame-auth-bootstrap` Secret
-   creates the first admin account and deletes the Secret so it cannot be
-   replayed (`internal/authd/server_bootstrap.go`). Do this before step 3
-   swaps the ServiceAccount's own RBAC for impersonation-only: if the swap
-   happens first and this account does not exist yet, there is nobody
-   `frame-uiproxy` can impersonate into anything, and the console is locked
-   out for everyone with no `FrameUser` to sign in as. The old `kubectl
-   proxy`-style access is still live at this point precisely so a failed or
-   retried bootstrap call has a working fallback.
+This order was rewritten on 2026-09-08 (whole-branch review, I5 and C5). The
+previous one could not be executed: its step 1 said to bootstrap the first
+admin *and* enrol a passkey "while the old anonymous path still works", but
+the "Passkeys" entry, `LoginView` and `PasskeysDialog` all ship in the new UI
+image, which lives in the same `Deployment` object as the `uiproxy` sidecar.
+Applying it *is* the step that closes the anonymous path, so the two halves
+of that step could not both hold. It also never said to build the uiproxy
+image at all, so an operator following it reached the atomic step with the
+pod in `ImagePullBackOff` and the ServiceAccount's direct RBAC already gone.
 
-   **The very next thing to do, inside the same window, is enrol a
-   passkey.** This is not optional housekeeping — it is what decides
-   whether this rollout succeeds or strands the operator. The account
-   bootstrap creates has `passwordAuth: disabled` and no credential of any
-   kind (`internal/authd/server_bootstrap.go`); the only thing the caller
-   walks away with is a session cookie, good for 12 hours (`SessionTTL`,
-   default in `internal/authd/server.go`) — not the 15-minute `TOKEN_TTL`
-   set in `deploy/kubernetes/authd/deployment.yaml`, which is the *bearer*
-   token the UI silently re-mints from that still-valid cookie
-   (`currentSession()` in `src/lib/auth.ts`). A passkey is the only
-   credential this account can ever acquire, and it can only be enrolled
-   from inside that 12-hour session — in the UI, via the "Passkeys" entry
-   in the sidebar footer (`src/components/PasskeysDialog.tsx`, driving
-   `POST /auth/register/begin` + `/finish`). Let the cookie lapse with none
-   enrolled and there is no way back through the UI or through authd at
-   all: recovery means hand-editing the `FrameUser`'s `status` or deleting
-   the `ValidatingWebhookConfiguration` that guards the last admin, and
-   both of those need the node's own kubeconfig anyway.
-2. **Apply the tier bindings** (`rbac-tier-bindings.yaml`): the
-   `ClusterRoleBinding`s that give `frame:admins` / `frame:operators` /
-   `frame:viewers` their aggregated `ClusterRole`s. This has to land before
-   step 3 for the same reason as step 1: once impersonation is live, an
-   admin token that carries the `frame:admins` group buys nothing at all
-   until that group is actually bound to `frame-admin`.
-3. **Apply the deployment (the `uiproxy` sidecar swap) and the
-   ServiceAccount's RBAC change together.** These two are one atomic change,
-   not two: the new `deployment.yaml` requires impersonation to reach the
-   apiserver at all, and the new `rbac.yaml` is what removes the
+The key fact that makes the new order work, and that the old one missed:
+**`/auth/bootstrap` does not go through the uiproxy.** The browser reaches it
+through nginx's `location /auth/`, and authd creates the `FrameUser` under
+its own ServiceAccount. So bootstrapping *after* impersonation is live works
+fine — there is no chicken-and-egg.
+
+1. **Build, push and retag every image the new `Deployment` names.** Nothing
+   is applied yet.
+
+   ```bash
+   make docker-build-ui docker-push-ui           IMG_UI=<registry>/frame-ui:<tag>
+   make docker-build-uiproxy docker-push-uiproxy IMG_UIPROXY=<registry>/frame-uiproxy:<tag>
+   make set-image-ui set-image-uiproxy           IMG_UI=… IMG_UIPROXY=…   # or -prod
+   ```
+
+   `frame-uiproxy` is a second image in the same pod, and it was missing from
+   the base and both overlays' `images:` until this was written — so
+   `frame-uiproxy:latest` was never retagged and the kubelet went looking for
+   it on Docker Hub. Render the overlay and check both images before
+   applying: `kubectl kustomize deploy/kubernetes/overlays/production | grep
+   'image:'`.
+
+2. **Point authd's `RP_ID` / `RP_ORIGIN` at the real hostname**
+   (`deploy/kubernetes/authd/deployment.yaml`). Before step 4, not after:
+   `RP_ID` is what WebAuthn binds a credential to, and a wrong one fails at
+   the enrolment ceremony — the one moment where the first admin has no other
+   way in. This is server configuration and depends on nothing else, so there
+   is no reason for it to be late. See the open question below.
+
+3. **Apply the tier bindings** (`rbac-tier-bindings.yaml`) and the per-kind
+   tier `ClusterRole`s. Before step 4 for the same reason as always: once
+   impersonation is live, a token carrying `frame:admins` buys nothing until
+   that group is actually bound to `frame-admin`.
+
+   Check what a tier grants before trusting it. `go test ./test/manifests/`
+   asserts the invariants that matter — an operator can cordon, a viewer
+   cannot, and no tier below admin reaches `frameusers` or a Talos write.
+
+4. **Apply the new `Deployment` (the `uiproxy` sidecar swap and the new UI
+   image) and the ServiceAccount's RBAC change together.** These are one
+   atomic change, not two: the new `deployment.yaml` requires impersonation to
+   reach the apiserver at all, and the new `rbac.yaml` is what removes the
    ServiceAccount's direct `cluster-control-viewer`/`cluster-control-operator`
    binding and replaces it with `impersonate` on `users` and the three
-   `frame:` groups. Applying one without the other either leaves the old
-   anonymous path open behind a sidecar that no longer expects it, or cuts
-   off API access before anything can impersonate its way back in.
-4. **Point authd's `RP_ID` / `RP_ORIGIN` at the real hostname.** WebAuthn
-   binds credentials to `RP_ID`; see the open question below — this cannot
-   be step 1, because there is nothing to enrol a passkey against until an
-   admin account and a session exist.
+   `frame:` groups.
 
-**Inverting the first two — doing the deployment/RBAC swap (step 3) before
-both the bootstrap admin and the tier bindings exist — locks everyone out.**
-Once step 3 lands, the ServiceAccount can no longer read or write anything
-on its own account; every request has to arrive as an impersonated
-`FrameUser` whose group is bound to a tier. With no admin account, or an
-admin account whose group has no binding, that is nobody. The only way back
-at that point is the node's own kubeconfig — cluster-admin access outside
-Frame's RBAC entirely, used to either fix the missing piece by hand or
-re-apply the previous kustomization.
+   **Between this step and the next, nobody can use the console.** Say it out
+   loud rather than discovering it: every request now has to arrive as an
+   impersonated `FrameUser`, and none exists yet. That is expected, it is
+   minutes long, and step 5 ends it.
+
+5. **Bootstrap the first admin from the browser, then enrol a passkey
+   immediately.** From the browser, not `curl`, and this is the whole point:
+   `/auth/bootstrap` answers with a `Set-Cookie` for a 12-hour session
+   (`SessionTTL`), and that session is the *only* way to enrol a passkey
+   (`/auth/register/begin` reads the account off that cookie). A `curl` leaves
+   the cookie in a jar the browser will never see.
+
+   Open the console — it shows the login screen — and in the devtools console,
+   on that same origin:
+
+   ```js
+   await fetch('/auth/bootstrap', {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify({ token: '<the frame-auth-bootstrap Secret>', email: 'you@example.com' }),
+   })   // 204 on success
+   ```
+
+   Then reload. `currentSession()` mints a bearer token from the cookie and
+   the console opens as an admin. **The very next thing to do is enrol a
+   passkey**, via the "Passkeys" entry in the sidebar footer
+   (`src/components/PasskeysDialog.tsx`). The account bootstrap creates has
+   `passwordAuth: disabled` and no credential of any kind
+   (`internal/authd/server_bootstrap.go`); a passkey is the only credential it
+   can ever acquire, and it can only be enrolled from inside that 12-hour
+   window. Let the cookie lapse with none enrolled and there is no way back
+   through the UI or through authd at all: recovery means hand-editing the
+   `FrameUser`'s status or deleting the `ValidatingWebhookConfiguration` that
+   guards the last admin, and both need the node's own kubeconfig.
+
+   If an admin `FrameUser` already exists, `/auth/bootstrap` answers 404 by
+   design (`AdminCount() > 0` closes it before the token is even checked) —
+   sign in as that account instead.
 
 **Rollback** is re-applying the previous kustomization (the old
-`deployment.yaml` + `rbac.yaml`, before this lot). Accounts created in step
-1 survive a rollback — `FrameUser` objects are ordinary CRs, untouched by
-which sidecar or RBAC is currently applied — so a rollback and a later
-re-attempt does not need to bootstrap again.
+`deployment.yaml` + `rbac.yaml`, before this lot). Accounts created in step 5
+survive it — `FrameUser` objects are ordinary CRs, untouched by which sidecar
+or RBAC is currently applied — so a rollback and a later re-attempt does not
+need to bootstrap again.
+
+**If you are stranded**, the way back is the node's own kubeconfig:
+cluster-admin outside Frame's RBAC entirely, used either to fix the missing
+piece by hand or to re-apply the previous kustomization. That identity is in
+`system:masters`, which is why the FrameUser webhook's role-change guard
+admits it — see the RBAC section above.
 
 **Open question, not yet answered: is `frame.anna.ovh` the right `RP_ID`?**
 `deploy/kubernetes/authd/deployment.yaml` currently sets `RP_ID:
@@ -428,7 +468,7 @@ browser will only complete a passkey ceremony when the page's origin matches
 `RP_ORIGIN` and its domain matches or is a suffix of `RP_ID`. This matters
 more than a stray placeholder normally would, because passkeys are wired
 into the UI now (`src/components/LoginView.tsx`'s "Sign in with a passkey",
-`src/components/PasskeysDialog.tsx`'s enrolment dialog) and step 1 above
+`src/components/PasskeysDialog.tsx`'s enrolment dialog) and step 5 above
 depends on one: the bootstrapped admin's *only* credential is a passkey
 enrolled in the 12-hour window after bootstrap, and that enrolment ceremony
 is exactly where a wrong `RP_ID` bites. It does not fail loudly, and it
