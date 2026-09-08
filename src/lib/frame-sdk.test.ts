@@ -510,6 +510,44 @@ describe('k8sFetchUncached 401 retry', () => {
     expect(calls.filter((c) => c === 'POST /auth/token').length).toBe(1)
   })
 
+  // I1 of the whole-branch review. The proxy replied `http.Error(w,
+  // "unauthorized", 401)` — text/plain — and `parseApiserverResponse` called
+  // `res.json()` on every response including the 401 fall-through, so the
+  // caller got `SyntaxError: Unexpected token 'u'` and never a
+  // FrameAPIError(401). Nothing could tell "session gone" from a bug.
+  //
+  // The proxy now answers with a metav1.Status. This asserts the client
+  // survives a body that is not JSON anyway — an ingress 502, an nginx 504,
+  // or any other hop that does not speak Kubernetes.
+  it('turns a non-JSON error body into a FrameAPIError, not a parse error', async () => {
+    stubBrowserAliasedToGlobalThis()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/auth/token') {
+        return new Response('unauthorized', { status: 401 })
+      }
+      return new Response('unauthorized', {
+        status: 401, headers: { 'Content-Type': 'text/plain' },
+      })
+    }))
+
+    const err = await createFrameClient().cluster.cordon('w1', true).catch((e) => e)
+    expect(err).toBeInstanceOf(FrameAPIError)
+    expect((err as FrameAPIError).statusCode).toBe(401)
+    expect((err as FrameAPIError).message).toContain('unauthorized')
+  })
+
+  it('reports a non-JSON 5xx as its status rather than as a parse error', async () => {
+    stubBrowserAliasedToGlobalThis()
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response('<html>502 Bad Gateway</html>', {
+        status: 502, headers: { 'Content-Type': 'text/html' },
+      })))
+
+    const err = await createFrameClient().cluster.nodes().catch((e) => e)
+    expect(err).toBeInstanceOf(FrameAPIError)
+    expect((err as FrameAPIError).statusCode).toBe(502)
+  })
+
   it('forces a fresh token on retry rather than reusing one that still has time left', async () => {
     // Pre-populate a session with 15 minutes left — comfortably outside
     // ensureToken's 2-minute refresh margin. A retry built on ensureToken()

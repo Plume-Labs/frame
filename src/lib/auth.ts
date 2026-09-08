@@ -97,6 +97,43 @@ function publish(token: string | undefined): void {
   }
 }
 
+const sessionLostListeners = new Set<() => void>()
+
+/**
+ * Called when a session that existed stops existing — the 12h cookie lapsed,
+ * the account was deleted, authd stopped answering with a token.
+ *
+ * `App` uses this to return to the login gate. Without it, a tab left open
+ * past the cookie's life just accumulated 401s on every screen: the SDK
+ * refreshes the token on a 401 and gives up when the refresh also fails, and
+ * nothing above it ever learned that the session was gone (whole-branch
+ * review, I1).
+ *
+ * Returns an unsubscribe function, so an effect can clean up after itself.
+ */
+export function onSessionLost(fn: () => void): () => void {
+  sessionLostListeners.add(fn)
+  return () => {
+    sessionLostListeners.delete(fn)
+  }
+}
+
+/**
+ * Drop the session and, if there was one to drop, tell anyone listening.
+ *
+ * The "if there was one" is what keeps the login screen quiet: `App` polls
+ * nothing while signed out, but `currentSession()` is also what the login
+ * screen calls, and firing on a 401 that was already the signed-out state
+ * would be noise.
+ */
+function clearSession(): void {
+  const had = session !== undefined
+  session = undefined
+  publish(undefined)
+  if (!had) return
+  for (const fn of [...sessionLostListeners]) fn()
+}
+
 export async function loginWithPassword(email: string, password: string): Promise<void> {
   const res = await fetch('/auth/login/password', {
     method: 'POST',
@@ -245,8 +282,7 @@ export async function enrolPasskey(label: string): Promise<void> {
 export async function currentSession(): Promise<Session | undefined> {
   const res = await fetch('/auth/token', { method: 'POST' })
   if (res.status === 401) {
-    session = undefined
-    publish(undefined)
+    clearSession()
     return undefined
   }
   // An HTML body means the request never reached authd (see
@@ -256,8 +292,7 @@ export async function currentSession(): Promise<Session | undefined> {
   // sign-in attempt that follows is where the diagnosis belongs, and that is
   // where the named error is thrown.
   if (!servedByAuthd(res)) {
-    session = undefined
-    publish(undefined)
+    clearSession()
     return undefined
   }
   if (!res.ok) {
@@ -299,4 +334,5 @@ export async function logout(): Promise<void> {
 export function __resetForTests(): void {
   session = undefined
   publish(undefined)
+  sessionLostListeners.clear()
 }

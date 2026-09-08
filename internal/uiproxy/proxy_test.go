@@ -2,11 +2,14 @@ package uiproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type stubVerifier struct {
@@ -197,5 +200,57 @@ func TestFinishRunsAndReportsFailureWhenTheProxiedCallPanics(t *testing.T) {
 	}
 	if rec.finishedCode != http.StatusInternalServerError {
 		t.Fatalf("finishedCode = %d, want %d", rec.finishedCode, http.StatusInternalServerError)
+	}
+}
+
+// I1 of the whole-branch review. The proxy answered `http.Error(w,
+// "unauthorized", 401)` — text/plain — while every client of this endpoint is
+// the Kubernetes SDK in `src/lib/frame-sdk.ts`, which calls `res.json()`
+// unconditionally. The caller got `SyntaxError: Unexpected token 'u'` instead
+// of a 401 it could act on, so nothing could tell "session gone" from a bug,
+// and a tab left open past the 12h cookie filled with parse errors.
+//
+// The apiserver answers a rejection with a metav1.Status body. This proxy
+// stands where the apiserver stands, so it answers the same way.
+func TestUnauthorizedIsAMetav1Status(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    Verifier
+		auth string
+	}{
+		{"no token", stubVerifier{id: Identity{User: "a@b.c"}}, ""},
+		{"bad token", stubVerifier{err: errors.New("expired")}, "Bearer whatever"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen http.Header
+			up := upstreamEcho(t, &seen)
+			defer up.Close()
+			p := newTestProxy(t, tc.v, up.URL)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes", nil)
+			if tc.auth != "" {
+				req.Header.Set("Authorization", tc.auth)
+			}
+			rec := httptest.NewRecorder()
+			p.ServeHTTP(rec, req)
+
+			if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+				t.Fatalf("Content-Type = %q, want application/json — the SDK parses this body as JSON", ct)
+			}
+			var status metav1.Status
+			if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+				t.Fatalf("body is not a metav1.Status (%q): %v", rec.Body.String(), err)
+			}
+			if status.Kind != "Status" || status.Code != http.StatusUnauthorized {
+				t.Fatalf("kind=%q code=%d, want Status/401", status.Kind, status.Code)
+			}
+			if status.Reason != metav1.StatusReasonUnauthorized {
+				t.Fatalf("reason = %q, want Unauthorized", status.Reason)
+			}
+			// `message` is the field the SDK's FrameAPIError renders.
+			if status.Message == "" {
+				t.Fatal("no message — the UI would show a bare status code")
+			}
+		})
 	}
 }

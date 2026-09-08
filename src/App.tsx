@@ -2,7 +2,7 @@ import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } 
 import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
-import { currentSession, ensureToken, logout, type Session } from '@/lib/auth'
+import { currentSession, ensureToken, logout, onSessionLost, type Session } from '@/lib/auth'
 
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
@@ -369,6 +369,13 @@ function App() {
     }, 5 * 60_000)
     return () => clearInterval(id)
   }, [sessionState.phase])
+
+  // Back to the gate when the session goes, rather than leaving every screen
+  // to accumulate 401s. `auth.ts` fires this when a session that existed
+  // stops existing — the 12h cookie lapsing is the ordinary case, and it
+  // happens on the refresh above or on the SDK's own retry after a 401,
+  // whichever notices first (whole-branch review, I1).
+  useEffect(() => onSessionLost(() => setSessionState({ phase: 'signed-out' })), [])
 
   const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [screen, setScreen] = useState('overview')
