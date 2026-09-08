@@ -425,6 +425,27 @@ fine — there is no chicken-and-egg.
    binding and replaces it with `impersonate` on `users` and the three
    `frame:` groups.
 
+   **Two preconditions, or the console does not start at all — not just
+   `/auth/`.** Both are verified against a real `nginx -t`, not assumed, and
+   both are explained at length in `deploy/docker/nginx.conf` and
+   `deploy/kubernetes/base/deployment.yaml` themselves:
+
+   - **The authd `Service` must already exist and resolve.** `nginx.conf`'s
+     `location /auth/` proxies to it with a literal hostname, which nginx
+     resolves once, at startup — not at request time. If the Service object
+     is missing (authd is Stage 1; something would have had to delete it),
+     nginx's config test fails with `[emerg] host not found in upstream` and
+     the pod never becomes ready, taking every route down, not only `/auth/`.
+   - **The `frame-auth-tls` Secret must exist and carry `ca.crt`.** It is what
+     `deploy/kubernetes/base/deployment.yaml` projects into
+     `/etc/frame-auth-ca/ca.crt`, which `nginx.conf`'s
+     `proxy_ssl_trusted_certificate` reads to verify authd's TLS certificate.
+     cert-manager populates it from `deploy/kubernetes/authd/certificate.yaml`
+     (Stage 1, applied first) — if it is missing, or present without
+     `ca.crt`, nginx fails with `[emerg] cannot load certificate
+     "/etc/frame-auth-ca/ca.crt"`, same outcome: the whole console fails to
+     start.
+
    **Between this step and the next, nobody can use the console.** Say it out
    loud rather than discovering it: every request now has to arrive as an
    impersonated `FrameUser`, and none exists yet. That is expected, it is
