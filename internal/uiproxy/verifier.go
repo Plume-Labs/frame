@@ -18,13 +18,23 @@ type JWKSVerifier struct {
 	url, issuer, audience string
 	hc                    *http.Client
 
-	mu      sync.Mutex
-	keys    *jose.JSONWebKeySet
-	fetched time.Time
+	mu   sync.Mutex
+	keys *jose.JSONWebKeySet
+
+	// fetchAttempted and refreshAttempted each rate-limit their own kind of
+	// fetch attempt to at most one per jwksMinRefresh, win or lose. They are
+	// tracked separately: fetchAttempted guards populating an empty (or
+	// unreachable-authd) cache, refreshAttempted guards refetching for an
+	// unrecognized kid. Sharing one clock between them would let the
+	// warm-up fetch consume the refresh budget before a rotated key ever
+	// got a chance to be picked up.
+	fetchAttempted   time.Time
+	refreshAttempted time.Time
 }
 
-// jwksMinRefresh bounds how often an unknown `kid` can force a fetch, so a
-// stream of bogus tokens cannot turn into a stream of requests to authd.
+// jwksMinRefresh bounds how often either kind of fetch attempt above may go
+// out, so a stream of bogus tokens — or an unreachable authd — cannot turn
+// into a stream of requests to authd.
 const jwksMinRefresh = time.Minute
 
 func NewJWKSVerifier(jwksURL, issuer, audience string, hc *http.Client) *JWKSVerifier {
@@ -34,12 +44,38 @@ func NewJWKSVerifier(jwksURL, issuer, audience string, hc *http.Client) *JWKSVer
 	return &JWKSVerifier{url: jwksURL, issuer: issuer, audience: audience, hc: hc}
 }
 
+// attempt reports whether a fetch may proceed right now, given the time of
+// its kind's last attempt. It never delays a first-ever attempt, and it
+// records this attempt's time before the caller does any I/O, so a failure
+// still counts toward the rate limit.
+func attempt(last *time.Time) bool {
+	if !last.IsZero() && time.Since(*last) < jwksMinRefresh {
+		return false
+	}
+	*last = time.Now()
+	return true
+}
+
 func (v *JWKSVerifier) keySet(ctx context.Context, refresh bool) (*jose.JSONWebKeySet, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.keys != nil && (!refresh || time.Since(v.fetched) < jwksMinRefresh) {
+
+	if v.keys != nil && !refresh {
 		return v.keys, nil
 	}
+
+	last := &v.fetchAttempted
+	if refresh {
+		last = &v.refreshAttempted
+	}
+	if !attempt(last) {
+		if v.keys != nil {
+			// Still stale, but that's the rate limit doing its job.
+			return v.keys, nil
+		}
+		return nil, fmt.Errorf("jwks: fetch attempted too recently, retrying in %s", jwksMinRefresh-time.Since(*last))
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.url, nil)
 	if err != nil {
 		return nil, err
@@ -56,7 +92,7 @@ func (v *JWKSVerifier) keySet(ctx context.Context, refresh bool) (*jose.JSONWebK
 	if err := json.NewDecoder(res.Body).Decode(&set); err != nil {
 		return nil, err
 	}
-	v.keys, v.fetched = &set, time.Now()
+	v.keys = &set
 	return v.keys, nil
 }
 
