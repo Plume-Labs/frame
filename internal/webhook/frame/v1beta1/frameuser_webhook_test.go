@@ -34,6 +34,17 @@ import (
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
+// user leaves Spec.State unset ("") on purpose, standing in for an account
+// written before spec.state existed. That omission is load-bearing, not an
+// oversight: "allows disabling an admin when another enabled admin remains"
+// depends on it on both sides at once — the subject alice, whose unset old
+// state must itself read as enabled for the admin-disable branch in
+// ValidateUpdate to fire at all, and the counting side carol, whose unset
+// state must count as enabled inside requireAnotherAdmin's loop for the
+// write to be permitted. If this fixture starts setting
+// State: framev1beta1.StateEnabled explicitly, that coverage of the "" case
+// disappears without turning the suite red, and isEnabled could regress to
+// `state == StateEnabled` unnoticed.
 func user(name, role string) *framev1beta1.FrameUser {
 	return &framev1beta1.FrameUser{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "cluster-control"},
@@ -487,6 +498,27 @@ var _ = Describe("FrameUser webhook", func() {
 	It("does not guard spec.state on create", func() {
 		v := newValidator(user("root", framev1beta1.RoleAdmin))
 		_, err := v.ValidateCreate(requestBy("frame:viewers"), disabledUser("newbie", framev1beta1.RoleViewer))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// Pins the admin-disable last-admin branch to oldObj.Spec.Role, not
+	// newObj.Spec.Role. A promotion combined with a disable in the same write
+	// (viewer/enabled -> admin/disabled) removes nobody from the admin pool —
+	// alice was never an admin whose access this write could be taking away —
+	// so it must not be refused by the rule that exists to stop the last
+	// admin from disappearing. Keying on newObj.Spec.Role instead would treat
+	// alice as the admin being removed and refuse this with no other enabled
+	// admin around, which is why this write goes through system:masters
+	// rather than an existing frame:admins member: it is meant to exercise
+	// the break-glass path a wrongly-refused bootstrap write would strand.
+	It("allows promoting and disabling an account in the same write", func() {
+		alice := user("alice", framev1beta1.RoleViewer)
+		v := newValidator(alice)
+		promotedAndOff := alice.DeepCopy()
+		promotedAndOff.Spec.Role = framev1beta1.RoleAdmin
+		promotedAndOff.Spec.State = framev1beta1.StateDisabled
+
+		_, err := v.ValidateUpdate(requestBy(clusterAdminGroup), alice, promotedAndOff)
 		Expect(err).NotTo(HaveOccurred())
 	})
 })
