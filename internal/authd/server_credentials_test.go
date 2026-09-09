@@ -59,11 +59,16 @@ func TestListCredentialsReturnsTheCallersOwnKeysWithoutPublicKeyMaterial(t *test
 	}
 	// The public key is not the UI's business, and the less of a credential
 	// record that travels, the better. The ID does travel — DELETE needs
-	// something to address, and it is public data an ordinary ceremony puts
-	// in allowCredentials anyway.
+	// something to address it.
 	if strings.Contains(rec.Body.String(), "publicKey") ||
 		strings.Contains(rec.Body.String(), "cHVibGljLWtleS1tYXRlcmlhbA") {
 		t.Fatalf("public key material was returned: %s", rec.Body.String())
+	}
+	// A list of someone's enrolled authenticators must not sit in a shared
+	// cache or the browser's back-forward cache, matching the precedent set
+	// by /auth/invite's response (server_invite_test.go).
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want %q", got, "no-store")
 	}
 }
 
@@ -144,6 +149,15 @@ func TestRevokeRefusesToStrandTheLastAdmin(t *testing.T) {
 	if len(after) != 1 {
 		t.Fatalf("a refused revocation removed the key anyway: %+v", after)
 	}
+	// The 409 body is the handler's own message, not Store.RemoveCredential's
+	// err.Error(). Pinning it here means a future reword of the store's
+	// wording (which also names the account) cannot silently change what the
+	// API sends over the wire without a test noticing.
+	const wantBody = "refusing to remove this account's last credential: " +
+		"it has no password sign-in configured, so it would become unreachable\n"
+	if got := rec.Body.String(); got != wantBody {
+		t.Fatalf("409 body = %q, want %q", got, wantBody)
+	}
 }
 
 func TestRevokeRefusesAViewerActingOnSomeoneElse(t *testing.T) {
@@ -203,5 +217,44 @@ func TestErrLastCredentialIsTypedNotTextual(t *testing.T) {
 	}
 	if err := s.RemoveCredential(context.Background(), u, "b25seQ"); !errors.Is(err, ErrLastCredential) {
 		t.Fatalf("RemoveCredential = %v, want ErrLastCredential", err)
+	}
+}
+
+// TestRevokeIsScopedToTheCallersOwnAccountNotAGlobalCredentialLookup pins the
+// invariant the route depends on but that no other test exercises: the {id}
+// path parameter is resolved within the session-derived subject's own
+// credential list, never by a global lookup such as Store.ByCredentialID. A
+// global lookup would make every other revoke test pass too — none of them
+// address an ID that exists, but belongs to someone other than the resolved
+// subject, with no ?user= present to explain the mismatch.
+//
+// It also pins the no-oracle property: revoking a real credential ID that is
+// merely out of the caller's scope must be byte-identical to revoking an ID
+// that exists nowhere at all. If the two ever diverge, the response starts
+// telling an attacker which credential IDs are real.
+func TestRevokeIsScopedToTheCallersOwnAccountNotAGlobalCredentialLookup(t *testing.T) {
+	bob := fixture("bob", "bob@example.com", framev1beta1.RoleViewer,
+		key("Ym9iLW9uZQ", "one"), key("Ym9iLXR3bw", "two"))
+	eve := fixture("eve", "eve@example.com", framev1beta1.RoleViewer, key("ZXZlLWtleQ", "eve"))
+	srv := testServer(t, bob, eve)
+
+	// eve addresses one of bob's real credential IDs directly, with no
+	// ?user= — so subjectOf resolves the subject as eve, the caller, not
+	// bob. Correct code looks for that ID in eve's own list, does not find
+	// it, and answers 404. A global lookup would find it on bob's account
+	// and remove it.
+	outOfScope := doWithCookieMethod(t, srv, http.MethodDelete, "/auth/credentials/Ym9iLW9uZQ", sessionFor(t, srv, eve))
+	if outOfScope.Code != http.StatusNotFound {
+		t.Fatalf("revoking bob's key by ID alone, no ?user= = %d, want 404: %s", outOfScope.Code, outOfScope.Body.String())
+	}
+	after := decodeCredentials(t, doWithCookieMethod(t, srv, http.MethodGet, "/auth/credentials", sessionFor(t, srv, bob)))
+	if len(after) != 2 {
+		t.Fatalf("bob lost a key to an out-of-scope lookup: %+v", after)
+	}
+
+	unknown := doWithCookieMethod(t, srv, http.MethodDelete, "/auth/credentials/bm90LWEta2V5", sessionFor(t, srv, eve))
+	if unknown.Code != outOfScope.Code || unknown.Body.String() != outOfScope.Body.String() {
+		t.Fatalf("a real-but-out-of-scope ID answered differently from an unknown one: got %d %q, unknown %d %q",
+			outOfScope.Code, outOfScope.Body.String(), unknown.Code, unknown.Body.String())
 	}
 }
