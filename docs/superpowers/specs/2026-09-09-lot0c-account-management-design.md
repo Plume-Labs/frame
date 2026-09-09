@@ -62,13 +62,31 @@ lot 0a covers `role`, and extends here.
 
 | Route | Caller | Behaviour |
 |---|---|---|
-| `POST /auth/invite` | admin session | Body `{email, role}`. Creates the FrameUser (`state: enabled`, `passwordAuth: disabled`, no credential). Returns `{url}` carrying a `PurposeInvite` token sealed over the email, TTL 24h. |
+| `POST /auth/invite` | admin session | Body `{email, role}`, `role` restricted to `operator` or `viewer`. Creates the FrameUser (`state: enabled`, `passwordAuth: disabled`, no credential). Returns `{url}` carrying a `PurposeInvite` token sealed over the email, TTL 24h. |
 | `POST /auth/invite/accept` | invitation token | Opens the seal, loads the account, **410 if it already holds a credential**, else sets a 15-minute session so the holder can enrol. |
 | `GET /auth/credentials` | any session | The caller's enrolled credentials. `?user=<email>` for an admin reading someone else's. |
 | `DELETE /auth/credentials/{id}` | own, or admin | Removes one credential. Refuses if it would leave the last admin with none. |
 
 `Store` already has `Create`, `ByEmail`, `AdminCount`, `RemoveCredential` — no
 new persistence.
+
+**An invitation cannot mint an admin, and that is not a policy choice.** authd
+creates the FrameUser under its own ServiceAccount, and lot 0a's webhook
+refuses a `spec.role: admin` create from a non-admin requester once any admin
+exists. So `/auth/invite` refuses `admin` with a 400 that names the way
+through: invite as operator, then promote from the Accounts screen, where the
+write carries the admin's own impersonated identity and the webhook allows it.
+
+**Revocation is already guarded, and more tightly than this document first
+said.** `Store.RemoveCredential` refuses to leave *any* passkey-only account
+with no credential, not merely the last admin. The route surfaces that as a
+409 rather than restating the rule — a second copy would be a second thing to
+keep true.
+
+**`spec.state` goes into both served versions.** `TestHubRoundTripIsLossless`
+fuzzes v1beta1 → v1alpha1 → v1beta1 and demands equality, so a field added to
+v1beta1 alone fails it — correctly: it would be silently dropped by any client
+writing at the older version.
 
 ### UI
 
