@@ -78,6 +78,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.mux.HandleFunc("POST /auth/register/finish", s.handleRegisterFinish)
 	s.mux.HandleFunc("POST /auth/invite", s.handleInvite)
 	s.mux.HandleFunc("POST /auth/invite/accept", s.handleInviteAccept)
+	s.mux.HandleFunc("GET /auth/credentials", s.handleListCredentials)
+	s.mux.HandleFunc("DELETE /auth/credentials/{id}", s.handleRevokeCredential)
 	return s, nil
 }
 
