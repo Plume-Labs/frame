@@ -62,6 +62,17 @@ describe('inviteAccount', () => {
     stubFetch(new Response('an invitation may only create an operator or a viewer', { status: 400 }))
     await expect(inviteAccount('bob@example.com', 'viewer')).rejects.toThrow(/operator or a viewer/)
   })
+
+  // authd answers every route it owns with a body, even on failure — but a
+  // proxy or an unrelated 5xx in front of it might not. The fallback message
+  // must still name both what was being attempted and the status, rather
+  // than surfacing an empty string.
+  it('falls back to a status-bearing message when the response body is empty', async () => {
+    stubFetch(new Response('', { status: 500 }))
+    await expect(inviteAccount('bob@example.com', 'viewer')).rejects.toThrow(
+      /could not create the invitation \(500\)/,
+    )
+  })
 })
 
 describe('acceptInvitation', () => {
@@ -74,7 +85,7 @@ describe('acceptInvitation', () => {
 
   it('says the link is spent on 410, rather than repeating the status', async () => {
     stubFetch(new Response('this account already has a credential', { status: 410 }))
-    await expect(acceptInvitation('sealed')).rejects.toThrow(/already been used/)
+    await expect(acceptInvitation('sealed')).rejects.toThrow(/already has a credential/)
   })
 
   it('rejects on an expired or forged link', async () => {

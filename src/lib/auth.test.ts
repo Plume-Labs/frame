@@ -345,11 +345,45 @@ describe('identityFromToken', () => {
     expect(isAdminToken(tokenWith({ email: 'a@b.c', groups: ['viewers'] }))).toBe(false)
   })
 
+  // `isAdminToken` must not treat "there is a groups claim at all" as
+  // membership: an account with no groups, or with only unrelated ones,
+  // is not an admin either.
+  it('is not an admin with an empty or unrelated groups claim', () => {
+    expect(isAdminToken(tokenWith({ email: 'a@b.c', groups: [] }))).toBe(false)
+    expect(isAdminToken(tokenWith({ email: 'a@b.c' }))).toBe(false)
+  })
+
+  // tokenWith and identityFromToken share the same -/_  <->  +// mapping, so
+  // any test built with tokenWith would still pass if that mapping were
+  // broken symmetrically (e.g. the two substitutions swapped in both
+  // places at once) — the round trip agrees with itself either way. This
+  // token is a hardcoded literal instead: computed once, offline, from
+  // `{"email":"M(uv>{61@example.com","groups":["admins"]}`, chosen because
+  // that payload's base64 happens to contain a `+` (serialised here as the
+  // url-safe `-`). A decoder that swaps the two substitutions decodes this
+  // exact byte differently — '?' instead of '>' in the email — which only a
+  // literal independent of tokenWith can catch.
+  it('decodes a hardcoded literal token whose payload exercises the url-safe translation', () => {
+    const token =
+      'eyJhbGciOiJFUzI1NiJ9.eyJlbWFpbCI6Ik0odXY-ezYxQGV4YW1wbGUuY29tIiwiZ3JvdXBzIjpbImFkbWlucyJdfQ.c2ln'
+    expect(identityFromToken(token)).toEqual({ email: 'M(uv>{61@example.com', groups: ['admins'] })
+  })
+
   it('returns undefined rather than throwing on anything that is not a token', () => {
     expect(identityFromToken('')).toBeUndefined()
     expect(identityFromToken('not.a.token')).toBeUndefined()
     expect(identityFromToken('only-one-part')).toBeUndefined()
     expect(identityFromToken(tokenWith({ groups: ['admins'] }))).toBeUndefined()
     expect(isAdminToken('garbage')).toBe(false)
+  })
+
+  // 'not.a.token' above has three dot-separated parts, so it passes the
+  // length check and fails at decode/parse — but its middle part isn't
+  // valid base64 at all, so atob throws before JSON.parse ever runs. This
+  // is the other half: valid base64, decodes to bytes, but those bytes are
+  // not JSON — the JSON.parse branch of the same catch.
+  it('returns undefined when the payload is valid base64 but not JSON', () => {
+    const notJson = btoa('this is not json')
+    expect(identityFromToken(`${btoa('h')}.${notJson}.sig`)).toBeUndefined()
   })
 })
