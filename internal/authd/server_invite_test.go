@@ -30,13 +30,26 @@ func sessionFor(t *testing.T, srv *Server, u *framev1beta1.FrameUser) *http.Cook
 // inviteURLToken pulls the sealed token back out of the link the handler
 // returned, so a test can assert on what the link actually carries rather
 // than on the string's shape alone.
+//
+// Reads url.Fragment, not Query: the token rides in the fragment so it is
+// never sent to a server. url.Parse has already percent-decoded Fragment
+// into RawFragment's decoded form, which is the counterpart of the
+// url.QueryEscape the handler applies — except for '+', which QueryEscape
+// writes for a space and Fragment does not decode back. The sealed tokens
+// this codec produces are base64url, so no space can arise; parsing the
+// pair the same way the browser's URLSearchParams does is what keeps this
+// helper honest about what the console will actually receive.
 func inviteURLToken(t *testing.T, rawURL string) string {
 	t.Helper()
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		t.Fatalf("invite url %q does not parse: %v", rawURL, err)
 	}
-	return parsed.Query().Get("token")
+	values, err := url.ParseQuery(parsed.Fragment)
+	if err != nil {
+		t.Fatalf("invite url fragment %q does not parse: %v", parsed.Fragment, err)
+	}
+	return values.Get("token")
 }
 
 func countUsers(t *testing.T, c client.Client) int {
@@ -99,8 +112,15 @@ func TestInviteCreatesAPasskeylessAccountAndReturnsALink(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !strings.HasPrefix(body.URL, testConsoleOrigin+"/invite?token=") {
-		t.Fatalf("invite url = %q, want %s/invite?token=…", body.URL, testConsoleOrigin)
+	// The fragment, not the query string: a fragment is never sent to a
+	// server, so the token stays out of access logs and out of the
+	// same-origin Referer of every asset the /invite page loads. A '?' here
+	// would put a live bearer credential back into all of them.
+	if strings.Contains(body.URL, "?") {
+		t.Fatalf("invite url = %q, want the token in the fragment and nothing in the query string", body.URL)
+	}
+	if !strings.HasPrefix(body.URL, testConsoleOrigin+"/invite#token=") {
+		t.Fatalf("invite url = %q, want %s/invite#token=…", body.URL, testConsoleOrigin)
 	}
 
 	// The link carries the invitee's address, sealed under its own purpose.

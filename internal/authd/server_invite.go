@@ -149,8 +149,22 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// The link is returned, never sent: there is no mail path in this cluster,
 	// and inventing one would be a second project. The admin copies it.
+	//
+	// The token rides in the fragment, not the query string. A fragment is
+	// never transmitted to a server: it stays out of access logs at every
+	// hop, out of the same-origin Referer that every asset the /invite page
+	// loads would otherwise carry, and out of anything that records request
+	// URLs. Since this token is a bearer credential good for one enrolment
+	// against a named account, each of those is a place it should never have
+	// been written down. Cheap to do now, expensive once links are in
+	// circulation and both shapes have to be accepted.
+	//
+	// Still url.QueryEscape, not PathEscape: the console reads the fragment
+	// with URLSearchParams (inviteTokenFromLocation in src/lib/accounts.ts),
+	// which decodes '+' as a space and %XX as bytes — exactly QueryEscape's
+	// output. The two must be chosen as a pair, and they are.
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"url": s.cfg.ConsoleOrigin + "/invite?token=" + url.QueryEscape(sealed),
+		"url": s.cfg.ConsoleOrigin + "/invite#token=" + url.QueryEscape(sealed),
 	})
 }
 
