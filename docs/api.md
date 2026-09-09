@@ -15,14 +15,14 @@ person. The routes:
 
 | Route | Caller | Answer |
 |---|---|---|
-| `POST /auth/bootstrap` | one-shot token | Creates the first admin, then closes forever. |
+| `POST /auth/bootstrap` | one-shot token | 204 + `frame_session` (12h) — creates the first admin, then closes forever. |
 | `POST /auth/login/password` | anyone | 204 + `frame_session` (12h). Disabled account: 401. |
 | `POST /auth/login/begin` / `finish` | anyone | Usernameless WebAuthn. Disabled account: 401. |
 | `POST /auth/token` | session | `{id_token, expires_in}`. Disabled account: 401. |
-| `POST /auth/logout` | session | 204, clears the cookie. |
+| `POST /auth/logout` | anyone | 204, clears the cookie. Unauthenticated by design — it reads no session and checks nothing, so it cannot itself 401. |
 | `POST /auth/register/begin` / `finish` | session (an ordinary one, or an accepted invitation's enrolment session) | Enrols a key for the session's owner, never for anyone named in the body. |
-| `POST /auth/invite` | admin session | `{url}` — an account with no credential, plus a 24h single-use link. `role` is `operator` or `viewer` only. |
-| `POST /auth/invite/accept` | invitation token | 204 + a 15-minute **enrolment session**, sealed under its own purpose. It reaches only the two WebAuthn enrolment routes above — it cannot mint a token and cannot call `/auth/invite`. The invitee holds no ordinary session after enrolling and signs in normally, the same as anyone else. 410 (`this account already has a credential`) once the account holds any credential — not "this invitation has already been used": the same guard also fires for a password, which need not have come from this invitation. |
+| `POST /auth/invite` | admin session | `{url}` — an account with no credential, plus a 24h link. Single-use by *enrolment*, not by acceptance: accepting the same unspent link twice is harmless (204 both times); the link only dies once a credential is added. `role` is `operator` or `viewer` only. |
+| `POST /auth/invite/accept` | invitation token | 204 + a 15-minute **enrolment session**, sealed under its own purpose. It reaches only the two WebAuthn enrolment routes above — it cannot mint a token and cannot call `/auth/invite`. The invitee holds no ordinary session after enrolling and signs in normally, the same as anyone else. Disabled account: **403** (`this account is disabled`), not the 401 every other route above answers with — deliberately: the caller has already proved a valid, unspent invitation for this exact account, so naming the reason leaks nothing a 401 would have hidden. 410 (`this account already has a credential`) once the account holds any credential — not "this invitation has already been used": the same guard also fires for a password, which need not have come from this invitation. |
 | `GET /auth/credentials` | session (`?user=` for an admin) | The enrolled keys, without public-key material. |
 | `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would leave a passkey-only account with no way in. |
 

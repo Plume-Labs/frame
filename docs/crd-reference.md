@@ -525,9 +525,10 @@ but destructively, and only re-enrolment in person would undo it. One
 function in `internal/authd` (`requireIssuable`) enforces it, and all four
 identity-issuing paths — `POST /auth/token`, password login, passkey login,
 invitation acceptance — call it. The load-bearing one is `/auth/token`: the
-console calls it every fifteen minutes, so disabling an account cuts a
-session that is already open within one token lifetime, without touching the
-cookie.
+console polls it every five minutes and refreshes whenever the cached token
+is within two minutes of expiry (`src/lib/auth.ts`), so disabling an account
+cuts a session that is already open within at most one token lifetime,
+without touching the cookie.
 
 **Status:** `passwordHash` (argon2id PHC string, read and written only by
 `authd`) and `credentials[]` — enrolled WebAuthn authenticators, each with the
