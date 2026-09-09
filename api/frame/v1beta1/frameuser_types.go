@@ -27,6 +27,9 @@ const (
 
 	PasswordEnabled  = "enabled"
 	PasswordDisabled = "disabled"
+
+	StateEnabled  = "enabled"
+	StateDisabled = "disabled"
 )
 
 // WebAuthnCredential is one enrolled authenticator (a YubiKey, a phone
@@ -80,6 +83,24 @@ type FrameUserSpec struct {
 	// +kubebuilder:validation:Enum=enabled;disabled
 	// +kubebuilder:default=disabled
 	PasswordAuth string `json:"passwordAuth,omitempty"`
+
+	// State decides whether authd may issue this account an identity at all.
+	//
+	// Deactivation is a flag rather than an absence. Revoking every passkey
+	// would have avoided touching a kind the roadmap declared frozen, but it
+	// makes deactivation destructive and reversible only by re-enrolment — the
+	// person has to be in the room with their key again to come back.
+	//
+	// The enum is what makes the empty string safe to read as "enabled" in
+	// internal/authd: the apiserver defaults an absent value and refuses every
+	// word but these two, so authd never sees a third state it would have to
+	// guess about. No MinLength is needed — "" is not in the enum — and
+	// +kubebuilder:validation:Required would not have helped, since it does
+	// not reject an empty string from a typed client.
+	// +optional
+	// +kubebuilder:validation:Enum=enabled;disabled
+	// +kubebuilder:default=enabled
+	State string `json:"state,omitempty"`
 }
 
 // FrameUserStatus holds everything authd owns.

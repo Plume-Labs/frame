@@ -418,6 +418,7 @@ func (src *FrameUser) ConvertTo(dstRaw conversion.Hub) error {
 	dst.Spec.Email = src.Spec.Email
 	dst.Spec.Role = src.Spec.Role
 	dst.Spec.PasswordAuth = src.Spec.PasswordAuth
+	dst.Spec.State = src.Spec.State
 
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.PasswordHash = src.Spec.PasswordHash
@@ -437,6 +438,7 @@ func (dst *FrameUser) ConvertFrom(srcRaw conversion.Hub) error {
 	dst.Spec.Email = src.Spec.Email
 	dst.Spec.Role = src.Spec.Role
 	dst.Spec.PasswordAuth = src.Spec.PasswordAuth
+	dst.Spec.State = src.Spec.State
 	dst.Spec.PasswordHash = src.Status.PasswordHash
 
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration

@@ -27,6 +27,9 @@ const (
 
 	PasswordEnabled  = "enabled"
 	PasswordDisabled = "disabled"
+
+	StateEnabled  = "enabled"
+	StateDisabled = "disabled"
 )
 
 // WebAuthnCredential is one enrolled authenticator (a YubiKey, a phone
@@ -61,6 +64,18 @@ type FrameUserSpec struct {
 	// +kubebuilder:validation:Enum=enabled;disabled
 	// +kubebuilder:default=disabled
 	PasswordAuth string `json:"passwordAuth,omitempty"`
+
+	// State decides whether authd may issue this account an identity at all.
+	//
+	// This deprecated version carries it for one reason: v1beta1 is the
+	// storage version and TestHubRoundTripIsLossless fuzzes
+	// v1beta1 -> v1alpha1 -> v1beta1 demanding exact equality, so a field this
+	// version lacks is a field a round trip through this version destroys.
+	// The same reasoning put observedGeneration here before the freeze.
+	// +optional
+	// +kubebuilder:validation:Enum=enabled;disabled
+	// +kubebuilder:default=enabled
+	State string `json:"state,omitempty"`
 
 	// PasswordHash is an argon2id PHC string, written only by authd. It is
 	// meaningless while PasswordAuth is disabled.
