@@ -19,7 +19,7 @@
  * ```
  */
 
-import { config, type Integration } from './frame-config'
+import { config, CONFIG_NAMESPACE, type Integration } from './frame-config'
 import { currentSession } from './auth'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
@@ -2997,13 +2997,37 @@ export interface FrameUserCR {
  * the product).
  */
 class UserClient {
+  /**
+   * Where FrameUser accounts live — pinned, not read from `frameNs()`.
+   *
+   * Every other Frame CR is namespaced by `config().frameNamespace`, which an
+   * operator sets from the Settings screen. FrameUsers are not negotiable that
+   * way: they exist only where authd runs. authd takes its namespace from
+   * `fieldRef: metadata.namespace` (`cmd/authd/main.go`), the kustomize base
+   * puts it in `cluster-control` (`deploy/kubernetes/authd/deployment.yaml`),
+   * and its Role is namespaced there — so it *cannot* create a FrameUser
+   * anywhere else. Building these paths from the configurable namespace meant
+   * the shipped default (`default`, since the shipped ConfigMap carries no
+   * `data` and nothing sets `frameNamespace`) pointed the Accounts screen at
+   * an empty collection: the list rendered blank with no error and both
+   * PATCHes 404'd, which made promotion — the only documented way to create a
+   * second admin — impossible on a fresh deploy.
+   *
+   * `CONFIG_NAMESPACE` is reused rather than a second literal: it already
+   * means "where the Frame control plane itself lives" (it is where the UI's
+   * own ConfigMap is read from), and authd is deployed alongside it in the
+   * same kustomize base. One value, one place to change it if that base ever
+   * moves.
+   */
+  private static readonly ns = CONFIG_NAMESPACE
+
   async list(): Promise<FrameUserCR[]> {
-    const res = await k8sFetch<ListResponse<FrameUserCR>>(frameListPath('frameusers'))
+    const res = await k8sFetch<ListResponse<FrameUserCR>>(frameListPath('frameusers', UserClient.ns))
     return res.items ?? []
   }
 
   async setRole(name: string, email: string, role: string): Promise<void> {
-    await k8sFetch<undefined>(`${frameListPath('frameusers')}/${name}`, {
+    await k8sFetch<undefined>(`${frameListPath('frameusers', UserClient.ns)}/${name}`, {
       action: `set ${email} to ${role}`,
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
@@ -3012,7 +3036,7 @@ class UserClient {
   }
 
   async setState(name: string, email: string, state: string): Promise<void> {
-    await k8sFetch<undefined>(`${frameListPath('frameusers')}/${name}`, {
+    await k8sFetch<undefined>(`${frameListPath('frameusers', UserClient.ns)}/${name}`, {
       action: `${state === 'disabled' ? 'disable' : 'enable'} ${email}`,
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
