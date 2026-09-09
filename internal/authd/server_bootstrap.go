@@ -66,7 +66,14 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !emailPattern.MatchString(body.Email) {
+	// Length as well as shape, the same pair handleInvite checks
+	// (server_invite.go). emailPattern alone matches a local part of any
+	// length, so without maxEmailLength here the same address that gets a
+	// clean 400 from /auth/invite gets a 204-then-nothing from this route —
+	// the create fails at admission against the CRD's own MaxLength on
+	// spec.email, and surfaces as an opaque 500 after the bootstrap Secret
+	// has already been consulted. One rule, one answer, both doors.
+	if !emailPattern.MatchString(body.Email) || len(body.Email) > maxEmailLength {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
