@@ -1,5 +1,6 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { enrolPasskey, PasskeyCancelledError } from '@/lib/auth'
+import { listCredentials, revokeCredential, type CredentialSummary } from '@/lib/accounts'
 import {
   Dialog,
   DialogContent,
@@ -11,36 +12,32 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Fingerprint, Plus } from '@phosphor-icons/react'
-
-interface EnrolledThisSession {
-  label: string
-  addedAt: number
-}
+import { Fingerprint, Plus, Trash } from '@phosphor-icons/react'
 
 /**
  * Where a signed-in user manages their passkeys.
  *
- * Lives behind a "Passkeys" entry in the sidebar footer, next to "Sign
- * out" — the other account-scoped action, and the only place in the app
- * that isn't "cluster wiring". `SettingsView` was the other candidate, but
- * it edits `FrameConfig` (the ConfigMap that tells the UI where cluster
- * components live); a user's own credentials are a different kind of thing
- * entirely and don't belong on that screen.
- *
- * The list below is deliberately labelled "enrolled this session", not
- * "your passkeys": authd exposes no endpoint to list a user's previously
- * enrolled credentials (only `/auth/register/begin`+`/finish`, which create
- * one, and the two login endpoints). Reading `FrameUser.status.credentials`
- * back would need either a new authd route or direct k8s API access this
- * task's scope doesn't cover — see the task report. Showing a full history
- * here would be lying about what this screen can actually see.
+ * The list is the account's real one, read from `GET /auth/credentials` —
+ * lot 0c added that route, and this component's previous "enrolled this
+ * session" caveat was the visible shape of its absence. Revoking is refused
+ * by authd (409) when it would leave a passkey-only account with no way in,
+ * so the last key cannot be removed by accident from here.
  */
 export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [label, setLabel] = useState('')
   const [enrolling, setEnrolling] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
-  const [enrolled, setEnrolled] = useState<EnrolledThisSession[]>([])
+  const [keys, setKeys] = useState<CredentialSummary[]>([])
+
+  const refreshKeys = () => {
+    listCredentials()
+      .then(setKeys)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+  }
+
+  useEffect(() => {
+    if (open) refreshKeys()
+  }, [open])
 
   async function handleEnrol(e: FormEvent) {
     e.preventDefault()
@@ -50,8 +47,8 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     setError(undefined)
     try {
       await enrolPasskey(trimmed)
-      setEnrolled((prev) => [...prev, { label: trimmed, addedAt: Date.now() }])
       setLabel('')
+      refreshKeys()
     } catch (err) {
       // A dismissed prompt is the user changing their mind, not a failure —
       // leave the form quiet so they can just try again.
@@ -60,6 +57,16 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       }
     } finally {
       setEnrolling(false)
+    }
+  }
+
+  async function handleRevoke(id: string) {
+    setError(undefined)
+    try {
+      await revokeCredential(id)
+      refreshKeys()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -102,31 +109,25 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
         <div className="space-y-1.5 pt-2 border-t border-border">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            Enrolled this session
+            Your passkeys
           </p>
-          {enrolled.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No keys added yet in this browser session.
-            </p>
+          {keys.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No keys enrolled.</p>
           ) : (
             <ul className="space-y-1">
-              {enrolled.map((key, i) => (
+              {keys.map((key) => (
                 <li
-                  key={`${key.label}-${key.addedAt}-${i}`}
+                  key={key.id}
                   className="flex items-center justify-between rounded border border-border bg-secondary/30 px-2 py-1.5 text-xs font-mono"
                 >
-                  <span className="truncate">{key.label}</span>
-                  <span className="text-muted-foreground shrink-0">
-                    {new Date(key.addedAt).toLocaleTimeString()}
-                  </span>
+                  <span className="truncate">{key.label || key.id}</span>
+                  <Button variant="ghost" size="sm" onClick={() => void handleRevoke(key.id)}>
+                    <Trash />
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
-          <p className="text-[10px] text-muted-foreground">
-            Frame does not yet expose a way to list keys enrolled in earlier sessions — only what
-            you add here shows up above.
-          </p>
         </div>
 
         <DialogFooter>

@@ -2,7 +2,8 @@ import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } 
 import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
-import { currentSession, ensureToken, logout, onSessionLost, type Session } from '@/lib/auth'
+import { currentSession, ensureToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
+import { inviteTokenFromLocation } from '@/lib/accounts'
 import { loadConfig } from '@/lib/frame-config'
 
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
@@ -11,6 +12,7 @@ import { PasskeysDialog } from '@/components/PasskeysDialog'
 import { HeaderStats } from '@/components/HeaderStats'
 import { NotEnabledView } from '@/components/NotEnabledView'
 import { LoginView } from '@/components/LoginView'
+import { InviteAcceptView } from '@/components/InviteAcceptView'
 
 // Lazy: only the active screen is ever mounted (see renderScreen below), so
 // eagerly importing all 20+ of them bundled every one into the initial
@@ -42,6 +44,7 @@ const SecurityView = lazy(() => import('@/components/SecurityView').then((m) => 
 const AlertsView = lazy(() => import('@/components/AlertsView').then((m) => ({ default: m.AlertsView })))
 const ClusterEventsView = lazy(() => import('@/components/ClusterEventsView').then((m) => ({ default: m.ClusterEventsView })))
 const TasksView = lazy(() => import('@/components/TasksView').then((m) => ({ default: m.TasksView })))
+const AccountsView = lazy(() => import('@/components/AccountsView').then((m) => ({ default: m.AccountsView })))
 const SettingsView = lazy(() => import('@/components/SettingsView').then((m) => ({ default: m.SettingsView })))
 
 import { Button } from '@/components/ui/button'
@@ -81,6 +84,7 @@ import {
   SignOut,
   Speedometer,
   SquaresFour,
+  Users,
 } from '@phosphor-icons/react'
 
 /**
@@ -130,6 +134,7 @@ type TabId =
   | 'alerts'
   | 'events'
   | 'tasks'
+  | 'accounts'
   | 'settings'
 
 interface NavTab {
@@ -308,6 +313,13 @@ const NAV: NavGroup[] = [
         tabs: [{ id: 'tasks', label: 'Tasks' }],
       },
       {
+        id: 'accounts',
+        label: 'Accounts',
+        icon: <Users />,
+        description: 'Who can sign in, with what rights, and on which keys',
+        tabs: [{ id: 'accounts', label: 'Accounts' }],
+      },
+      {
         id: 'settings',
         label: 'Settings',
         icon: <Gear />,
@@ -430,11 +442,41 @@ function App() {
     [nodes],
   )
 
+  // The nav gate is a courtesy, not a control: the token is decoded, not
+  // verified (see identityFromToken), and every write the screen makes is
+  // refused server-side for a non-admin regardless. It also does not
+  // re-evaluate mid-session — the five-minute refresh replaces the token
+  // without touching sessionState — so a demotion shows up at the next sign
+  // in, while its effect is immediate at the apiserver.
+  const admin = useMemo(
+    () => (sessionState.phase === 'signed-in' ? isAdminToken(sessionState.session.token) : false),
+    [sessionState],
+  )
+  const visibleNav = useMemo(
+    () =>
+      NAV.map((group) => ({ ...group, items: group.items.filter((i) => i.id !== 'accounts' || admin) }))
+        .filter((group) => group.items.length > 0),
+    [admin],
+  )
+  const inviteToken = useMemo(
+    () => inviteTokenFromLocation(globalThis.location.pathname, globalThis.location.search),
+    [],
+  )
+
   if (sessionState.phase === 'checking') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="font-mono text-sm text-muted-foreground">Loading…</div>
       </div>
+    )
+  }
+
+  if (inviteToken && sessionState.phase !== 'signed-in') {
+    return (
+      <InviteAcceptView
+        token={inviteToken}
+        onEnrolled={(session) => setSessionState({ phase: 'signed-in', session })}
+      />
     )
   }
 
@@ -544,6 +586,8 @@ function App() {
         return <ClusterEventsView />
       case 'tasks':
         return <TasksView />
+      case 'accounts':
+        return <AccountsView />
       case 'settings':
         return <SettingsView />
 
@@ -602,7 +646,7 @@ function App() {
         </SidebarHeader>
 
         <SidebarContent>
-          {NAV.map((group) => (
+          {visibleNav.map((group) => (
             <SidebarGroup key={group.label}>
               <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-widest">
                 {group.label}
