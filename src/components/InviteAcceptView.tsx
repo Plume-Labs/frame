@@ -44,6 +44,26 @@ export function InviteAcceptView({
   const [error, setError] = useState<string | undefined>(undefined)
   const [finished, setFinished] = useState(false)
 
+  /**
+   * Leave this screen for the sign-in gate, clearing the URL on the way out.
+   *
+   * Both exits go through here, not just the one after a successful
+   * enrolment. The success path already rewrote the URL before rendering the
+   * `finished` branch, but the *error* branch offers the same "Go to sign in"
+   * button and used to call `onFinished` bare — so taking that exit left
+   * `?token=` in the address bar and in history, and a reload re-entered the
+   * invitation screen instead of the login gate. That is the branch a person
+   * actually meets when a link is spent or expired, which is exactly when
+   * the stale URL is most misleading.
+   *
+   * Calling `replaceState` twice on the success path is harmless: it is
+   * idempotent, and the alternative is two callers that have to remember.
+   */
+  function leave() {
+    globalThis.history.replaceState({}, '', '/')
+    onFinished()
+  }
+
   async function handleAccept() {
     setBusy(true)
     setError(undefined)
@@ -93,7 +113,7 @@ export function InviteAcceptView({
                 Your passkey is enrolled. This invitation link is now spent — sign in with your new
                 passkey to continue.
               </p>
-              <Button className="w-full font-mono" onClick={onFinished}>
+              <Button className="w-full font-mono" onClick={leave}>
                 Go to sign in
               </Button>
             </>
@@ -127,7 +147,7 @@ export function InviteAcceptView({
                 // retry rather than instead of it, since some failures (a
                 // dropped connection, a cancelled ceremony that got treated
                 // as an error) genuinely are worth trying again first.
-                <Button variant="outline" className="w-full font-mono" onClick={onFinished}>
+                <Button variant="outline" className="w-full font-mono" onClick={leave}>
                   Go to sign in
                 </Button>
               )}
