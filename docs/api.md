@@ -26,6 +26,22 @@ person. The routes:
 | `GET /auth/credentials` | session (`?user=` for an admin) | The enrolled keys, without public-key material. |
 | `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would leave a passkey-only account with no way in. |
 
+**Every route in this table is invisible to the Tasks screen.** A `FrameTask`
+is written by `frame-uiproxy` for each mutating request it forwards
+(`internal/uiproxy/recorder.go`); the console calls these routes directly, so
+the proxy never sees them and no `FrameTask` is created. That covers
+bootstrap, invite, accept, enrolment and revoke — including the two writes
+with the largest privilege consequences the console can produce, creating an
+account and removing a credential.
+
+Their audit trail is `authd`'s own log
+(`kubectl -n cluster-control logs deploy/cluster-control-auth`), not
+`FrameTask`. Worth stating plainly, because the Tasks nav entry reads "every
+write made through the UI, and how it ended": someone who believes that will
+read an empty Tasks list as evidence that nothing happened. Everything the
+Accounts screen writes *through the apiserver* — role and state changes — is
+recorded normally; it is only the `/auth/*` routes above that are not.
+
 The `window.__FRAME_TOKEN__` prose below describes the pre-`authd` world,
 where a Secret-issued ServiceAccount token was injected directly into the
 page. That path predates the routes above and is not how the console
