@@ -254,6 +254,24 @@ func TestBootstrapRejectsMalformedEmail(t *testing.T) {
 	}
 }
 
+// handleInvite checks maxEmailLength; handleBootstrap checked only
+// emailPattern, which matches a local part of any length. So the same
+// address got a clean, actionable 400 from one route and, from the other,
+// an opaque admission failure surfacing as a 500 — after the bootstrap
+// Secret had already been consulted. Same rule, same answer, both doors.
+func TestBootstrapRejectsAnOverLongEmail(t *testing.T) {
+	srv, c := bootstrapServer(t, true)
+	tooLong := strings.Repeat("a", 250) + "@x.io" // 255 bytes, one past maxEmailLength
+	rec := do(t, srv, http.MethodPost, "/auth/bootstrap",
+		`{"token":"s3cret-bootstrap","email":"`+tooLong+`"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bootstrap with a %d-byte email = %d, want 400", len(tooLong), rec.Code)
+	}
+	if n := countUsers(t, c); n != 0 {
+		t.Fatalf("a refused bootstrap created an account: %d users, want 0", n)
+	}
+}
+
 func TestPasswordLoginRefusedWhenDisabled(t *testing.T) {
 	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
 	u.Spec.PasswordAuth = framev1beta1.PasswordDisabled
