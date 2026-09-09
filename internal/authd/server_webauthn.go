@@ -9,6 +9,13 @@ import (
 
 const challengeCookie = "frame_challenge"
 
+// finishLogin is an indirection over Authenticator.FinishLogin, so a test can
+// exercise handleLoginFinish's post-ceremony half — which is where the state
+// check lives — without signing a real WebAuthn assertion. Same idiom, and
+// same reason, as verifyPassword in server_session.go. Production code always
+// calls through this var unmodified.
+var finishLogin = (*Authenticator).FinishLogin
+
 // setChallenge parks the sealed ceremony state in a short-lived cookie. Same
 // attributes as the session cookie: the challenge is signed, but there is no
 // reason to let script read it either.
@@ -46,7 +53,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	u, err := s.cfg.Auth.FinishLogin(r.Context(), c.Value, body)
+	u, err := finishLogin(s.cfg.Auth, r.Context(), c.Value, body)
 	if err != nil {
 		// A counter regression means a possible cloned authenticator. It is
 		// logged loudly and refused, but the credential is deliberately left
@@ -55,6 +62,14 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrCounterRegression) {
 			slog.Error("possible cloned authenticator: sign counter did not advance", "error", err)
 		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Possession of the key is not the whole question. Refused after the
+	// ceremony rather than before it, because before it there is no account
+	// to ask about: the login is usernameless and the assertion is what names
+	// the holder. Same bare 401 as every other failure here.
+	if err := requireIssuable(u); err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
