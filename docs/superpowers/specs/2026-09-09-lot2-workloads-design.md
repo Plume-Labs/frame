@@ -135,9 +135,45 @@ follow that discipline.
 
 | Tier | Gains |
 |---|---|
-| viewer | nothing — pod state is already readable |
-| operator | `pods/log` (get), `pods` (delete), `deployments`/`statefulsets` (patch) and their `scale` subresource |
+| viewer | the reads the tree needs beyond today's: `daemonsets`, `jobs`, `replicasets` |
+| operator | `pods/log` (get), `pods` (delete); `deployments`/`statefulsets` patch and `scale` **only in namespaces that enforce Pod Security** — see below |
 | admin | `pods/exec` (create), and update/patch on exactly the kinds the Workloads screen shows: `pods`, `deployments`, `statefulsets`, `daemonsets`, `jobs` |
+
+### Restart and scale require Pod Security first
+
+`patch` on Deployments was **removed from this repo on 2026-08-10** and the
+removal is documented in `deploy/kubernetes/base/rbac.yaml`: it is "the single
+grant that turned the unauthenticated UI into cluster-admin", because patching a
+pod template to add `securityContext.privileged: true` and a `hostPath: /` volume
+is root on the node, and no namespace on this cluster carries a
+`pod-security.kubernetes.io/enforce` label to stop it. RBAC cannot restrict a
+patch to one JSON path, so "may set the restartedAt annotation" and "may make the
+pod privileged" are the same grant. An `ApplicationsView` Restart button has
+returned 403 ever since.
+
+The same comment names the way to earn it back, and this lot takes it: enforce
+Pod Security, then grant the patch only where the privileged payload is blocked.
+
+- Application namespaces get `pod-security.kubernetes.io/enforce: baseline`.
+  Infrastructure namespaces are **exempt** — Ceph, the node-tuning agent and the
+  Talos tooling legitimately need privileged pods, and labelling them would break
+  the cluster.
+- The grant is a **RoleBinding per enforced namespace**, not a ClusterRoleBinding.
+  A cluster-wide grant would hand back the escalation through the exempt
+  namespaces, which is the whole hole.
+- Restart and scale therefore work on application workloads and return 403 on
+  infrastructure ones. That asymmetry is deliberate and the screen says so rather
+  than showing a button that fails.
+
+**Labelling order matters, and getting it wrong breaks deploys at the worst
+moment.** Enforcing does not evict running pods; it refuses the next admission.
+A workload that has always violated the policy therefore keeps running and fails
+the next time it restarts — during an incident, not during this change. So each
+namespace is labelled `warn` and `audit` first, the violations are read and
+resolved, and only then is `enforce` applied. This lot is not finished until that
+pass has been run against every namespace it labels.
+
+This also repairs the Restart button that has been broken since August.
 
 **Logs start at operator, not viewer.** A viewer sees state; logs are the most
 likely place for a credential to appear in plain text. Widening this later is
