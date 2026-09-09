@@ -1425,8 +1425,10 @@ func TestInviteAcceptIsRefusedOnceAPasswordExists(t *testing.T) {
 	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
 
 	var bob framev1beta1.FrameUser
+	// Derive the name rather than spelling it: frameUserNameForEmail appends a
+	// hash suffix, so a literal "bob-at-example.com" is NotFound here.
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Name: "bob-at-example.com", Namespace: "cluster-control"}, &bob); err != nil {
+		client.ObjectKey{Name: frameUserNameForEmail("bob@example.com"), Namespace: "cluster-control"}, &bob); err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	bob.Status.PasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaA"
@@ -1450,8 +1452,10 @@ func TestInviteAcceptPathRefusesADisabledAccount(t *testing.T) {
 	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
 
 	var bob framev1beta1.FrameUser
+	// Derive the name rather than spelling it: frameUserNameForEmail appends a
+	// hash suffix, so a literal "bob-at-example.com" is NotFound here.
 	if err := c.Get(context.Background(),
-		client.ObjectKey{Name: "bob-at-example.com", Namespace: "cluster-control"}, &bob); err != nil {
+		client.ObjectKey{Name: frameUserNameForEmail("bob@example.com"), Namespace: "cluster-control"}, &bob); err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	bob.Spec.State = framev1beta1.StateDisabled
