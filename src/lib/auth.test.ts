@@ -4,6 +4,8 @@ import {
   currentSession,
   ensureToken,
   enrolPasskey,
+  identityFromToken,
+  isAdminToken,
   loginWithPasskey,
   loginWithPassword,
   AuthUnreachableError,
@@ -313,5 +315,41 @@ describe('a session that lapses', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('unauthorized', { status: 401 })))
     await currentSession()
     expect(lost).not.toHaveBeenCalled()
+  })
+})
+
+// A real ES256 token's payload, base64url with the padding stripped — the
+// shape authd's issuer actually emits (jose serialises unpadded). The
+// signature is not checked here and must not be: see identityFromToken.
+function tokenWith(claims: Record<string, unknown>): string {
+  // btoa, not Buffer: this project takes no Node dependency (no @types/node
+  // is installed), and btoa/atob are the DOM globals identityFromToken
+  // itself decodes with, so the test encodes with the exact inverse of what
+  // it's testing.
+  const b64url = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${b64url('{"alg":"ES256"}')}.${b64url(JSON.stringify(claims))}.c2ln`
+}
+
+describe('identityFromToken', () => {
+  it('reads the email and groups an authd token carries', () => {
+    const id = identityFromToken(tokenWith({ email: 'alice@example.com', groups: ['admins'] }))
+    expect(id).toEqual({ email: 'alice@example.com', groups: ['admins'] })
+  })
+
+  // authd's issuer puts the group in unprefixed — frame-uiproxy is what adds
+  // `frame:` on the way to the apiserver. Matching the prefixed form here
+  // would hide the Accounts screen from every admin.
+  it('matches the unprefixed group authd mints, not the impersonated one', () => {
+    expect(isAdminToken(tokenWith({ email: 'a@b.c', groups: ['admins'] }))).toBe(true)
+    expect(isAdminToken(tokenWith({ email: 'a@b.c', groups: ['frame:admins'] }))).toBe(false)
+    expect(isAdminToken(tokenWith({ email: 'a@b.c', groups: ['viewers'] }))).toBe(false)
+  })
+
+  it('returns undefined rather than throwing on anything that is not a token', () => {
+    expect(identityFromToken('')).toBeUndefined()
+    expect(identityFromToken('not.a.token')).toBeUndefined()
+    expect(identityFromToken('only-one-part')).toBeUndefined()
+    expect(identityFromToken(tokenWith({ groups: ['admins'] }))).toBeUndefined()
+    expect(isAdminToken('garbage')).toBe(false)
   })
 })
