@@ -114,7 +114,14 @@ func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, n
 	// for it), so "who may disable" is exactly as privilege-affecting as "who
 	// may demote", and leaving it ungoverned would hand anyone with `patch
 	// frameusers` the ability to lock every colleague out one at a time.
-	if oldObj.Spec.State != newObj.Spec.State {
+	//
+	// Compared by isEnabled, not by string equality: "" and "enabled" are the
+	// same meaning (see isEnabled below), and this is the one place in the
+	// file whose entire subject is that equivalence. A raw
+	// oldObj.Spec.State != newObj.Spec.State here would refuse a "" ->
+	// "enabled" write — a semantic no-op — with a message that itself renders
+	// both sides as "enabled", which is confusing to read and wrong to log.
+	if isEnabled(oldObj.Spec.State) != isEnabled(newObj.Spec.State) {
 		action := fmt.Sprintf("change spec.state from %q to %q",
 			stateOrEnabled(oldObj.Spec.State), stateOrEnabled(newObj.Spec.State))
 		if err := requireAdminRequester(ctx, action); err != nil {
@@ -123,8 +130,13 @@ func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, n
 	}
 	// Disabling an admin removes them from the pool of people who can
 	// authorize anything, exactly as a demotion does, so the last-admin rule
-	// covers it too.
-	if newObj.Spec.Role == framev1beta1.RoleAdmin &&
+	// covers it too. Keyed on oldObj.Spec.Role, not newObj.Spec.Role: the
+	// rule means "this account is an admin and is being switched off", and
+	// the two roles differ in exactly one write — a promotion combined with a
+	// disable (e.g. viewer/enabled -> admin/disabled) — which removes nobody
+	// from the admin pool and must not be refused by a rule about removing
+	// admins.
+	if oldObj.Spec.Role == framev1beta1.RoleAdmin &&
 		isEnabled(oldObj.Spec.State) && !isEnabled(newObj.Spec.State) {
 		return nil, v.requireAnotherAdmin(ctx, oldObj.Name)
 	}
@@ -211,6 +223,17 @@ func requireAdminRequester(ctx context.Context, action string) error {
 // role. Used only to detect the bootstrap window (no admin exists yet) so
 // that ValidateCreate can tell it apart from every later create, which must
 // come from an existing admin.
+//
+// Deliberately counts disabled admins, unlike requireAnotherAdmin. The two
+// functions answer different questions: requireAnotherAdmin asks whether
+// someone can still *sign in* to authorize the cluster, so a disabled admin
+// must not count. anyAdminExists asks whether the admin role has ever been
+// claimed, so that create stays shut once it has. If anyAdminExists ignored
+// disabled admins, a cluster whose sole admin is disabled would look
+// admin-less to this check and reopen the create-an-admin bootstrap window to
+// any caller — a second way to mint an admin, and a worse failure than the
+// lockout that state was meant to relieve. Do not "fix" this to match
+// requireAnotherAdmin; that is the regression, not the inconsistency.
 //
 // Fails closed the same way requireAnotherAdmin does: a listing failure is
 // returned as an error rather than treated as "no admin", which would widen
