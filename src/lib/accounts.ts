@@ -62,12 +62,31 @@ async function failure(res: Response, fallback: string): Promise<Error> {
  * The invitation token in the current URL, if this is the invitation page.
  *
  * Takes the location apart rather than reading it, so it is testable under
- * node — and scoped to `/invite`, so a stray `?token=` on any other screen
+ * node — and scoped to `/invite`, so a stray `#token=` on any other screen
  * cannot divert the console into spending an invitation.
+ *
+ * Reads the *fragment*, not the query string. A fragment is never sent to a
+ * server, which keeps this token — a bearer credential good for one
+ * enrolment against a named account — out of every access log on the way,
+ * and out of the same-origin `Referer` that each asset the `/invite` page
+ * loads would otherwise carry. authd builds the link to match
+ * (`internal/authd/server_invite.go`), with `url.QueryEscape`, whose output
+ * is exactly what `URLSearchParams` decodes; the two are chosen as a pair.
  */
-export function inviteTokenFromLocation(pathname: string, search: string): string | undefined {
+export function inviteTokenFromLocation(pathname: string, hash: string): string | undefined {
   if (pathname !== '/invite') return undefined
-  const token = new URLSearchParams(search).get('token')
+  // Fragment or nothing. `location.hash` is either empty or starts with '#',
+  // so refusing everything else costs nothing legitimate — and it is the
+  // only place the fragment-only rule can actually be enforced. Without it
+  // a caller that regressed to passing `location.search` would keep working
+  // silently, because `URLSearchParams` strips a leading '?' for you, and
+  // the query-string shape this change exists to remove would be back with
+  // every test still green.
+  if (!hash.startsWith('#')) return undefined
+  // The leading '#' is stripped by hand: `URLSearchParams` strips a leading
+  // '?' but not a '#', so passing it through would look for a parameter
+  // named '#token'.
+  const token = new URLSearchParams(hash.slice(1)).get('token')
   return token ? token : undefined
 }
 

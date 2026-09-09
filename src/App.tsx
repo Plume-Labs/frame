@@ -471,7 +471,7 @@ function App() {
   // gate. `onFinished` below clears it explicitly once the invitee is done
   // reading that screen — a memoized `[]` value never would have.
   const [inviteToken, setInviteToken] = useState(() =>
-    inviteTokenFromLocation(globalThis.location.pathname, globalThis.location.search),
+    inviteTokenFromLocation(globalThis.location.pathname, globalThis.location.hash),
   )
 
   if (sessionState.phase === 'checking') {

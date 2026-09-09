@@ -27,7 +27,7 @@ import { Cpu, Fingerprint } from '@phosphor-icons/react'
  * Once the key exists the invitation is dead by construction (authd refuses
  * it the moment the account holds a credential), which is why the URL is
  * rewritten the moment enrolment succeeds, whichever branch follows: a
- * reload of /invite?token=… would otherwise meet a 410 and read as a bug.
+ * reload of /invite#token=… would otherwise meet a 410 and read as a bug.
  */
 export function InviteAcceptView({
   token,
@@ -51,7 +51,7 @@ export function InviteAcceptView({
    * enrolment. The success path already rewrote the URL before rendering the
    * `finished` branch, but the *error* branch offers the same "Go to sign in"
    * button and used to call `onFinished` bare — so taking that exit left
-   * `?token=` in the address bar and in history, and a reload re-entered the
+   * `#token=` in the address bar and in history, and a reload re-entered the
    * invitation screen instead of the login gate. That is the branch a person
    * actually meets when a link is spent or expired, which is exactly when
    * the stale URL is most misleading.

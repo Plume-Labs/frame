@@ -60,29 +60,38 @@ beforeEach(() => {
 })
 
 describe('inviteTokenFromLocation', () => {
-  it('finds the token on the invitation page', () => {
-    expect(inviteTokenFromLocation('/invite', '?token=abc.def')).toBe('abc.def')
+  it('finds the token in the fragment on the invitation page', () => {
+    expect(inviteTokenFromLocation('/invite', '#token=abc.def')).toBe('abc.def')
+  })
+
+  // The fragment is the point, not an implementation detail: it is never sent
+  // to a server, so the token stays out of access logs and out of the
+  // same-origin Referer of every asset /invite loads. Reading the query
+  // string would put a live bearer credential back into all of them, and
+  // nothing else in the suite would notice.
+  it('does not read a token from the query string', () => {
+    expect(inviteTokenFromLocation('/invite', '?token=abc.def')).toBeUndefined()
   })
 
   // Scoped to /invite on purpose: without the path check, any screen reached
-  // with a stray ?token= in the URL would try to spend an invitation instead
+  // with a stray #token= in the URL would try to spend an invitation instead
   // of rendering.
   it('ignores a token anywhere but the invitation page', () => {
-    expect(inviteTokenFromLocation('/', '?token=abc.def')).toBeUndefined()
-    expect(inviteTokenFromLocation('/nodes', '?token=abc.def')).toBeUndefined()
+    expect(inviteTokenFromLocation('/', '#token=abc.def')).toBeUndefined()
+    expect(inviteTokenFromLocation('/nodes', '#token=abc.def')).toBeUndefined()
   })
 
   it('is undefined when there is no token', () => {
     expect(inviteTokenFromLocation('/invite', '')).toBeUndefined()
-    expect(inviteTokenFromLocation('/invite', '?token=')).toBeUndefined()
+    expect(inviteTokenFromLocation('/invite', '#token=')).toBeUndefined()
   })
 })
 
 describe('inviteAccount', () => {
   it('posts the address and role and returns the link', async () => {
-    const calls = stubFetch(json({ url: 'https://frame.example/invite?token=sealed' }))
+    const calls = stubFetch(json({ url: 'https://frame.example/invite#token=sealed' }))
     const url = await inviteAccount('bob@example.com', 'viewer')
-    expect(url).toBe('https://frame.example/invite?token=sealed')
+    expect(url).toBe('https://frame.example/invite#token=sealed')
     expect(calls[0].url).toBe('/auth/invite')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ email: 'bob@example.com', role: 'viewer' })
   })
