@@ -519,3 +519,60 @@ func TestOrdinarySessionStillWorksOnRegisterRoutes(t *testing.T) {
 		t.Fatalf("register/begin with an ordinary session = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestEnrolCookieCanReachRegisterFinish pins the permissive reader on the
+// *last* step of enrolment, not just the first. Every other test in this
+// package that exercises the enrol cookie stops at /auth/register/begin —
+// nothing before this drove /auth/register/finish with it. That is a real
+// gap, not a redundant belt-and-braces test: handleRegisterFinish reads its
+// own sessionUserFor call independently of handleRegisterBegin's, so
+// reverting line 109 of server_webauthn.go from sessionUserFor back to the
+// strict sessionUser leaves every other test in the suite green — begin
+// would still work, and nothing else calls finish — while the invitation
+// flow silently dead-ends at the last step for every real invitee.
+//
+// A garbage WebAuthn attestation body is enough to pin the reader: it drives
+// FinishRegistration to fail the ceremony (400), which is a different,
+// later failure than sessionUserFor rejecting the cookie before the ceremony
+// is even reached (401). This test cannot fabricate a real signed
+// attestation — that needs a live authenticator — so 400 is the strongest
+// assertion available from here, and it is exactly the one that
+// distinguishes "the cookie was admitted" from "the cookie was refused."
+func TestEnrolCookieCanReachRegisterFinish(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	acceptRec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if acceptRec.Code != http.StatusNoContent {
+		t.Fatalf("accept = %d, want 204: %s", acceptRec.Code, acceptRec.Body.String())
+	}
+	enrol := sessionCookieFrom(t, acceptRec)
+
+	beginRec := doWithCookie(t, srv, "/auth/register/begin", "", enrol)
+	if beginRec.Code != http.StatusOK {
+		t.Fatalf("register/begin with the enrol cookie = %d, want 200: %s", beginRec.Code, beginRec.Body.String())
+	}
+	var challenge *http.Cookie
+	for _, c := range beginRec.Result().Cookies() {
+		if c.Name == challengeCookie {
+			challenge = c
+		}
+	}
+	if challenge == nil {
+		t.Fatal("register/begin did not set a challenge cookie")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/register/finish", strings.NewReader("not-a-real-attestation"))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(enrol)
+	req.AddCookie(challenge)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("register/finish with the enrol cookie and a garbage body = %d, want 400 — "+
+			"400 means the cookie was admitted and only the ceremony itself failed; "+
+			"401 would mean handleRegisterFinish rejected the enrol cookie before ever "+
+			"reaching the ceremony: %s", rec.Code, rec.Body.String())
+	}
+}

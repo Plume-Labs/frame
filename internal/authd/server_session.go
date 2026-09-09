@@ -96,26 +96,32 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// setSession seals a cookie lasting cfg.SessionTTL for u and writes it onto
-// the response. It reports whether that succeeded; on failure it has already
-// written a 500 itself, and every caller must stop immediately rather than go
-// on to write its own success status on top (the bug this return value exists
-// to prevent: a 500 followed by an unconditional 204, and the
-// "superfluous response.WriteHeader call" warning that comes with it).
+// setSession seals a cookie lasting cfg.SessionTTL under PurposeSession for u
+// and writes it onto the response. It reports whether that succeeded; on
+// failure it has already written a 500 itself, and every caller must stop
+// immediately rather than go on to write its own success status on top (the
+// bug this return value exists to prevent: a 500 followed by an
+// unconditional 204, and the "superfluous response.WriteHeader call" warning
+// that comes with it).
 func (s *Server) setSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bool {
-	return s.setSessionFor(w, u, s.cfg.SessionTTL)
+	return s.setSessionFor(w, u, PurposeSession, s.cfg.SessionTTL)
 }
 
-// setSessionFor is setSession with an explicit lifetime, always sealed under
-// PurposeSession. Its only caller today is setSession itself: the
-// accepted-invitation cookie is deliberately not minted through this path —
-// see setEnrolSession in server_invite.go — because it needs a different
-// purpose, not just a different TTL, for sessionUser to be able to tell the
-// two apart. The TTL is inside the sealed payload as well as on the cookie,
-// so shortening it is a real constraint and not a suggestion the browser
-// could ignore.
-func (s *Server) setSessionFor(w http.ResponseWriter, u *framev1beta1.FrameUser, ttl time.Duration) bool {
-	sealed, err := s.cfg.Codec.Seal(PurposeSession, []byte(u.Spec.Email), ttl)
+// setSessionFor seals a cookie for u under purpose, valid for ttl, and writes
+// it as the frame_session cookie. It is the one place that builds that
+// cookie: every session-shaped credential this package hands out — a full
+// sign-in (setSession, above) and an accepted invitation's enrolment window
+// (setEnrolSession, server_invite.go) alike — goes through here, so the two
+// can never drift on name, Path, HttpOnly, Secure, or SameSite; a change to
+// one is a change to both, by construction rather than by remembering to
+// update two copies. Only the purpose and the TTL are allowed to differ
+// between callers, and both are folded into the sealed payload itself, not
+// just the cookie's own fields, so neither is a suggestion the browser could
+// ignore. Reports whether sealing succeeded, on the same contract as every
+// other setter here: on failure it has already written a 500, and the caller
+// must stop immediately.
+func (s *Server) setSessionFor(w http.ResponseWriter, u *framev1beta1.FrameUser, purpose Purpose, ttl time.Duration) bool {
+	sealed, err := s.cfg.Codec.Seal(purpose, []byte(u.Spec.Email), ttl)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return false
