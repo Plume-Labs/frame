@@ -74,7 +74,8 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	// credential material, and only authd's frameusers/status RBAC reaches
 	// it. A v1alpha1 client still spells it spec.passwordHash; the conversion
 	// webhook moves it, so this read sees either origin.
-	usable := err == nil && u.Spec.PasswordAuth == framev1beta1.PasswordEnabled && hashIsUsable(u.Status.PasswordHash)
+	usable := err == nil && requireIssuable(u) == nil &&
+		u.Spec.PasswordAuth == framev1beta1.PasswordEnabled && hashIsUsable(u.Status.PasswordHash)
 	hash := dummyPasswordHash
 	if usable {
 		hash = u.Status.PasswordHash
@@ -119,23 +120,15 @@ func (s *Server) setSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bo
 }
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	email, err := s.cfg.Codec.Open(PurposeSession, c.Value)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	u, err := s.cfg.Store.ByEmail(r.Context(), string(email))
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	u, ok := s.sessionUser(w, r)
+	if !ok {
 		return
 	}
 	// Minted fresh from the current role, so a demotion takes effect within one
-	// token lifetime instead of lasting as long as the session.
+	// token lifetime instead of lasting as long as the session. The same is
+	// true of a deactivation: sessionUser above refuses a disabled account, so
+	// the fifteen-minute token is also the longest an open session survives
+	// being switched off.
 	token, err := s.cfg.Issuer.Mint(u.Spec.Email, u.Spec.Role, s.cfg.TokenTTL)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -160,6 +153,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 
 // sessionUser resolves the signed-in account, writing the 401 itself so every
 // caller is a two-liner that cannot forget to stop on failure.
+//
+// The state check is here rather than in each caller because this is the one
+// place a cookie becomes an account: putting it here means a route added later
+// cannot forget it, and a disabled account cannot enrol a further key on a
+// cookie it was already holding when it was switched off.
 func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*framev1beta1.FrameUser, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
@@ -173,6 +171,10 @@ func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*framev1be
 	}
 	u, err := s.cfg.Store.ByEmail(r.Context(), string(email))
 	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	if err := requireIssuable(u); err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, false
 	}
