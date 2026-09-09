@@ -395,4 +395,98 @@ var _ = Describe("FrameUser webhook", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("cannot verify remaining admins"))
 	})
+
+	// disabledUser is `user` switched off. The helper exists so a spec reads
+	// as a sentence rather than as two statements.
+	disabledUser := func(name, role string) *framev1beta1.FrameUser {
+		u := user(name, role)
+		u.Spec.State = framev1beta1.StateDisabled
+		return u
+	}
+
+	It("refuses a non-admin switching an account off", func() {
+		alice := user("alice", framev1beta1.RoleViewer)
+		v := newValidator(alice, user("root", framev1beta1.RoleAdmin))
+		off := alice.DeepCopy()
+		off.Spec.State = framev1beta1.StateDisabled
+
+		_, err := v.ValidateUpdate(requestBy("frame:viewers"), alice, off)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("spec.state"))
+		Expect(err.Error()).To(ContainSubstring("not an admin"))
+	})
+
+	It("lets an admin switch an account off and back on", func() {
+		alice := user("alice", framev1beta1.RoleViewer)
+		v := newValidator(alice, user("root", framev1beta1.RoleAdmin))
+		off := alice.DeepCopy()
+		off.Spec.State = framev1beta1.StateDisabled
+
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), alice, off)
+		Expect(err).NotTo(HaveOccurred())
+
+		on := off.DeepCopy()
+		on.Spec.State = framev1beta1.StateEnabled
+		_, err = v.ValidateUpdate(requestBy("frame:admins"), off, on)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("refuses disabling the only admin", func() {
+		alice := user("alice", framev1beta1.RoleAdmin)
+		v := newValidator(alice, user("bob", framev1beta1.RoleViewer))
+		off := alice.DeepCopy()
+		off.Spec.State = framev1beta1.StateDisabled
+
+		// An admin requester, so this exercises the last-admin rule rather
+		// than the authorization one in front of it.
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), alice, off)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("last admin"))
+	})
+
+	It("allows disabling an admin when another enabled admin remains", func() {
+		alice := user("alice", framev1beta1.RoleAdmin)
+		v := newValidator(alice, user("carol", framev1beta1.RoleAdmin))
+		off := alice.DeepCopy()
+		off.Spec.State = framev1beta1.StateDisabled
+
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), alice, off)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// The discriminating one. A disabled admin cannot obtain a token — authd
+	// refuses every identity-issuing path for it — so counting it as "another
+	// admin" would let the last usable admin be demoted, deleted or disabled
+	// behind an account nobody can sign in to. Before requireAnotherAdmin
+	// looked at spec.state, this passed and locked the cluster out of its own
+	// console.
+	It("does not count a disabled admin as the admin who remains", func() {
+		alice := user("alice", framev1beta1.RoleAdmin)
+		v := newValidator(alice, disabledUser("dave", framev1beta1.RoleAdmin))
+
+		demoted := alice.DeepCopy()
+		demoted.Spec.Role = framev1beta1.RoleViewer
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), alice, demoted)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("last admin"))
+
+		_, err = v.ValidateDelete(requestBy("frame:admins"), alice)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("last admin"))
+
+		off := alice.DeepCopy()
+		off.Spec.State = framev1beta1.StateDisabled
+		_, err = v.ValidateUpdate(requestBy("frame:admins"), alice, off)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("last admin"))
+	})
+
+	// A create cannot take anyone's access away, and refusing one would break
+	// /auth/invite, which creates under authd's ServiceAccount. Pinned so the
+	// asymmetry is a decision rather than an omission.
+	It("does not guard spec.state on create", func() {
+		v := newValidator(user("root", framev1beta1.RoleAdmin))
+		_, err := v.ValidateCreate(requestBy("frame:viewers"), disabledUser("newbie", framev1beta1.RoleViewer))
+		Expect(err).NotTo(HaveOccurred())
+	})
 })

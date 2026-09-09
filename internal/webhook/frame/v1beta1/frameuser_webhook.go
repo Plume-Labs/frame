@@ -108,11 +108,47 @@ func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, n
 			return nil, err
 		}
 	}
+	// spec.state takes the same guard as spec.role, for the same reason.
+	// Switching an account off ends every session it holds within one token
+	// lifetime (requireIssuable in internal/authd/state.go refuses /auth/token
+	// for it), so "who may disable" is exactly as privilege-affecting as "who
+	// may demote", and leaving it ungoverned would hand anyone with `patch
+	// frameusers` the ability to lock every colleague out one at a time.
+	if oldObj.Spec.State != newObj.Spec.State {
+		action := fmt.Sprintf("change spec.state from %q to %q",
+			stateOrEnabled(oldObj.Spec.State), stateOrEnabled(newObj.Spec.State))
+		if err := requireAdminRequester(ctx, action); err != nil {
+			return nil, err
+		}
+	}
+	// Disabling an admin removes them from the pool of people who can
+	// authorize anything, exactly as a demotion does, so the last-admin rule
+	// covers it too.
+	if newObj.Spec.Role == framev1beta1.RoleAdmin &&
+		isEnabled(oldObj.Spec.State) && !isEnabled(newObj.Spec.State) {
+		return nil, v.requireAnotherAdmin(ctx, oldObj.Name)
+	}
 	// Only a demotion can remove an admin; anything else leaves the count alone.
 	if oldObj.Spec.Role != framev1beta1.RoleAdmin || newObj.Spec.Role == framev1beta1.RoleAdmin {
 		return nil, nil
 	}
 	return nil, v.requireAnotherAdmin(ctx, oldObj.Name)
+}
+
+// isEnabled reads spec.state the way authd does: the empty string is enabled,
+// because the CRD defaults the field and its enum admits no third word, so ""
+// only ever means "written by something that did not go through defaulting".
+// The two readings must agree — a webhook that counted "" as disabled would
+// refuse writes authd would have honoured, and vice versa.
+func isEnabled(state string) bool { return state != framev1beta1.StateDisabled }
+
+// stateOrEnabled renders spec.state for a human-readable refusal, spelling the
+// empty string as what it actually means.
+func stateOrEnabled(state string) string {
+	if state == "" {
+		return framev1beta1.StateEnabled
+	}
+	return state
 }
 
 // Groups that count as "already an admin" for the purpose of changing a role.
@@ -272,7 +308,14 @@ func guardPasswordHash(ctx context.Context, oldHash, newHash string) error {
 			"refused for the same reason")
 }
 
-// requireAnotherAdmin fails unless some admin other than `excluding` exists.
+// requireAnotherAdmin fails unless some *enabled* admin other than `excluding`
+// exists.
+//
+// Enabled is load-bearing, not decoration. A disabled admin cannot obtain a
+// token by any route — authd refuses all four identity-issuing paths for it —
+// so counting one as the admin who remains would allow the last usable admin
+// to be demoted, deleted or switched off, leaving a console nobody can enter
+// and a recovery that runs through the node's kubeconfig.
 func (v *FrameUserCustomValidator) requireAnotherAdmin(ctx context.Context, excluding string) error {
 	var users framev1beta1.FrameUserList
 	if err := v.Client.List(ctx, &users); err != nil {
@@ -281,9 +324,9 @@ func (v *FrameUserCustomValidator) requireAnotherAdmin(ctx context.Context, excl
 		return fmt.Errorf("cannot verify remaining admins: %w", err)
 	}
 	for _, u := range users.Items {
-		if u.Name != excluding && u.Spec.Role == framev1beta1.RoleAdmin {
+		if u.Name != excluding && u.Spec.Role == framev1beta1.RoleAdmin && isEnabled(u.Spec.State) {
 			return nil
 		}
 	}
-	return fmt.Errorf("refusing to remove the last admin (%s): no other account holds the admin role", excluding)
+	return fmt.Errorf("refusing to remove the last admin (%s): no other enabled account holds the admin role", excluding)
 }
