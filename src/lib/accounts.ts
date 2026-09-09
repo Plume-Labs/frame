@@ -171,12 +171,13 @@ export async function setAccountState(name: string, email: string, state: 'enabl
  * The check below is `a.state === 'enabled'`, not the server's
  * `isEnabled = state != "disabled"` — those two are not the same test, and
  * they diverge on `""`. They agree here anyway, but only because `state`
- * never arrives as `""`: every `Account` this function is meant to see comes
- * from `listAccounts()`, whose reshape already applies `i.spec.state ??
- * 'enabled'`, so by the time a value reaches this function it is always
- * exactly `'enabled'` or `'disabled'`. Do not call this with an `Account`
- * assembled some other way without re-checking that; the equivalence is a
- * property of `listAccounts()`'s output, not of this function's own logic.
+ * never arrives as `""` from the apiserver: the CRD declares
+ * `enum: [enabled, disabled]` with `default: enabled`, so an explicit `""`
+ * is refused at admission and an absent value is defaulted before we ever
+ * read it. Note this is NOT what `listAccounts()`'s `i.spec.state ??
+ * 'enabled'` buys us -- `??` substitutes only for null and undefined and
+ * would pass `""` straight through. The guarantee is the CRD's, so it holds
+ * for any `Account` built from an apiserver read and for no other kind.
  */
 export function isOnlyEnabledAdmin(accounts: Account[], email: string): boolean {
   const enabledAdmins = accounts.filter((a) => a.role === 'admin' && a.state === 'enabled')
