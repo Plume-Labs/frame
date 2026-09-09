@@ -8,11 +8,15 @@
  * matters lives where a test can reach it, and `AccountsView`,
  * `InviteAcceptView` and `PasskeysDialog` only call it.
  *
- * Errors carry authd's own message rather than a status code. Each of these
- * routes has exactly one refusal a person can act on — invite: "operator or
- * viewer only"; accept: "already been used"; revoke: "would leave the account
- * unreachable" — and rewriting those into "request failed" would throw away
- * the only useful part.
+ * Errors carry authd's own message rather than a status code, forwarded
+ * verbatim — never rewritten here. Each of these routes has exactly one
+ * refusal a person can act on: invite refuses a role other than operator or
+ * viewer; accept refuses a token whose account already holds a credential;
+ * revoke refuses removing an account's last credential. Collapsing any of
+ * those into "request failed" would throw away the only useful part, and
+ * rewording them client-side would let the message drift from whatever the
+ * server actually decided to say — as it already has once (Task 5's review
+ * changed accept's wording after this module was first written).
  */
 
 /** One enrolled authenticator, as `GET /auth/credentials` returns it. */
@@ -75,14 +79,6 @@ export async function acceptInvitation(token: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
   })
-  if (res.status === 410) {
-    // authd's own wording here is "this account already has a credential" —
-    // accurate about the account's state, but it reads like a report, not an
-    // explanation of what happened to *this* link. Rewritten to name the
-    // thing the invitee actually did: used the link already (or someone else
-    // did, on their behalf).
-    throw new Error('this invitation link has already been used')
-  }
   if (!res.ok) throw await failure(res, 'this invitation could not be accepted')
 }
 
