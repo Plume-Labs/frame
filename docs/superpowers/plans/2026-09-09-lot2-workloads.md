@@ -22,7 +22,7 @@ The rest keeps going through `frame-uiproxy` on the path it already serves. Thre
 - Console writes go through `k8sFetch` (`src/lib/frame-sdk.ts`), which retries once on 401 with a fresh token and sends `X-Frame-Action`. **A bare `fetch` for a write is a defect** — it skips the retry and leaves no audit label. `src/lib/frame-sdk.test.ts` has a structural guard (`has no bare fetch() left in the module`) that fails on any `fetch(` not preceded by a letter or a dot; `globalThis.fetch(`, `proxyFetch(` and `k8sFetch(` are the three allowed spellings.
 - **Namespaces: assert the full request path in tests, never `url.includes()`.** The Accounts screen shipped reading `frameusers` in `default` because a test matched a substring; the failure mode is a silently empty list. `frameListPath(plural, ns?)` / `coreListPath(plural, ns?)` take a namespace override. Any new client that pins a namespace must have its full path asserted, spelled out as a constant (see `FRAMEUSERS_PATH` in `src/lib/accounts.test.ts`).
 - `config/rbac/*_role.yaml` and `charts/frame/templates/rbac-tier-roles.yaml` are hand-maintained copies of the same rules. **`make helm-parity` has a KNOWN pre-existing failure** on a cpu-request drift (`10m` vs `100m`) in files this branch does not touch — do not chase it; confirm the diff it reports is only that. This lot changes no per-kind tier role, so neither file is edited.
-- **No verb that can write a pod template may be granted cluster-wide by this lot.** That means `patch` **and** `update` on `pods`, `deployments`, `statefulsets`, `daemonsets` and `jobs`, and the `scale` subresource with them. `patch` on `apps/deployments` was removed on 2026-08-10 as "the single grant that turned the unauthenticated UI into cluster-admin" (`deploy/kubernetes/base/rbac.yaml`), because RBAC cannot bound a write to one JSON path and a pod template can carry `privileged: true` with a `hostPath: /` volume — and the YAML editor's `update` is the same escalation through a different door. Task 6 enforces `baseline` Pod Security on the application namespaces; Task 7 binds all of them there and nowhere else, through two unaggregated ClusterRoles with **no tier label** and a `RoleBinding` per namespace. `pods/exec` is the one exception and stays cluster-wide, because a shell gives an admin only what an existing pod already has and cannot create a pod the cluster would refuse. Nothing later in the plan may relabel, aggregate or widen any of it.
+- **No verb that can write a pod template may be granted cluster-wide by this lot.** That means `patch` **and** `update` on `pods`, `deployments`, `statefulsets`, `daemonsets` and `jobs`, and the `scale` subresource with them. `patch` on `apps/deployments` was removed on 2026-08-10 as "the single grant that turned the unauthenticated UI into cluster-admin" (`deploy/kubernetes/base/rbac.yaml`), because RBAC cannot bound a write to one JSON path and a pod template can carry `privileged: true` with a `hostPath: /` volume — and the YAML editor's `update` is the same escalation through a different door. Task 6 enforces `baseline` Pod Security on the application namespaces; Task 7 binds all of them there and nowhere else, through two unaggregated ClusterRoles with **no tier label** and a `RoleBinding` per namespace. `pods/exec` is the one exception and stays cluster-wide, because a shell creates no pod and so bounding it by Pod Security would close nothing. Say what that means rather than hearing it as reassurance: a shell **inherits** whatever privilege the target pod holds, so exec into one of the deliberately privileged pods in an exempt namespace — Ceph, the node-tuning agent, the Talos tooling — is root on the node. That is why exec is admin-only and every session is recorded. Nothing later in the plan may relabel, aggregate or widen any of it.
 - `deploy/kubernetes/base/rbac.yaml` requires **every rule to carry a comment naming its call site in `src/`**. Follow that discipline for every rule added. Rules that could not be tied to a call site were deleted from that file in an earlier audit; do not re-add anything speculatively.
 - CRDs live in `config/crd/bases/` and `charts/frame/files/crds/`. `make manifests` regenerates the first and calls `make helm-sync-crds`; `make helm-crds-check` fails on drift. Never hand-edit either copy.
 - `internal/controller/frame` bootstraps envtest through a Ginkgo suite (`TestControllers`) and Go orders test files alphabetically: **a plain `func TestX` in that package panics on a nil client.** Schema assertions go inside a `Describe`/`DescribeTable`.
@@ -1954,7 +1954,7 @@ Four things about this file before touching it.
 
 So a cluster-wide grant would hand the escalation straight back through the exempt namespaces, which is the entire hole. The grant is therefore a **`RoleBinding` per enforced namespace**, in a file of its own, carrying **no tier label at all** — an unaggregated, namespaced exception with its reason written down beside it. These are the only rules in this repository shaped that way, and that is the point: the shape is what confines them to the namespaces where the payload is refused at admission.
 
-**The YAML editor's `update`/`patch` goes the same way, and this is not scope creep.** Cluster-wide, it is the identical escalation through a different door: an admin writes `privileged: true` and a `hostPath: /` volume into a pod template in an exempt namespace and holds node root. Leaving it cluster-wide while namespacing restart would make the design argue with itself one section apart. `pods/exec` is the one workload grant that *stays* cluster-wide, and that is a distinction rather than an inconsistency — a shell gives an admin whatever an existing pod already has and cannot create a pod the cluster would otherwise refuse, so Pod Security has no bearing on it.
+**The YAML editor's `update`/`patch` goes the same way, and this is not scope creep.** Cluster-wide, it is the identical escalation through a different door: an admin writes `privileged: true` and a `hostPath: /` volume into a pod template in an exempt namespace and holds node root. Leaving it cluster-wide while namespacing restart would make the design argue with itself one section apart. `pods/exec` is the one workload grant that *stays* cluster-wide, and the distinction is that a shell creates no pod, so namespacing it would close nothing. It is not a claim that exec is harmless: a shell **inherits** the target pod's privilege, and several exempt namespaces run deliberately privileged pods, so exec into one of those is root on the node by inheritance rather than by creation. That is the reason exec is admin-only and every session is recorded, and the reason widening it below admin is a different decision from widening anything else here.
 
 **Two ClusterRoles, not one**, because restart and scale are an operator action while the editor is admin-only and a `RoleBinding` carries one `roleRef` and one subject list. Same file, same mechanism, fourteen bindings.
 
@@ -2016,9 +2016,11 @@ func TestOperatorsCanOperateWorkloadsAndViewersCannot(t *testing.T) {
 }
 
 // Exec is admin-only per the decision that opened this lot's design, and it is
-// the one workload grant that stays cluster-wide — a shell gives an admin
-// whatever an existing pod already has, and cannot create a pod the cluster
-// would otherwise refuse, so Pod Security has no bearing on it.
+// the one workload grant that stays cluster-wide — a shell creates no pod, so
+// bounding it to the enforced namespaces would close nothing. It inherits the
+// target pod's privilege instead: exec into one of the deliberately privileged
+// pods in an exempt namespace is root on the node, which is why this is
+// admin-only and recorded rather than why it is safe.
 //
 // Asserted at both tiers: "an admin can" alone passes against a rule
 // mislabelled `tier: viewer`, which grants a shell to everyone.
@@ -2522,11 +2524,13 @@ rules:
   # rbac-workload-operator.yaml, bound only into the namespaces enforcing
   # `baseline`.
   #
-  # `pods/exec` stays cluster-wide, and that is not an inconsistency. Exec
-  # gives an admin whatever an *existing* pod already has; it cannot create a
-  # pod that the cluster would otherwise refuse, so Pod Security has no bearing
-  # on it and namespacing it would remove a capability without closing
-  # anything.
+  # `pods/exec` stays cluster-wide, because a shell creates no pod: bounding it
+  # to the enforced namespaces would remove a capability without closing
+  # anything. That is not a claim that it is harmless — a shell *inherits* the
+  # target pod's privilege, and exec into one of the deliberately privileged
+  # pods in an exempt namespace (Ceph, the node-tuning agent, the Talos
+  # tooling) is root on the node. Hence admin-only, and hence every session is
+  # recorded.
   #
   # Also deliberately absent: `create` and `delete` on those kinds anywhere.
   # Creating a resource from the console and deleting a controller are both out
@@ -2567,10 +2571,11 @@ Create `deploy/kubernetes/base/rbac-workload-operator.yaml`. **Two** ClusterRole
 # privileged grant is earned with Pod Security rather than accepted, and that
 # principle does not stop at the operator tier.
 #
-# `pods/exec` is NOT here, and that is not an oversight: exec gives an admin
-# whatever an existing pod already has and cannot create a pod the cluster
-# would refuse, so Pod Security has no bearing on it. It stays cluster-wide in
-# base/rbac.yaml's cluster-control-admin.
+# `pods/exec` is NOT here, and that is not an oversight: a shell creates no pod,
+# so binding it per namespace would close nothing. It inherits the target pod's
+# privilege instead — exec into a privileged pod in an exempt namespace is root
+# on the node — which is why it is admin-only and recorded, not why it is safe.
+# It stays cluster-wide in base/rbac.yaml's cluster-control-admin.
 #
 # The filename says "operator" and the file holds an admin role too. It is not
 # renamed because fifteen references and a kustomization entry point at it;
@@ -6528,9 +6533,15 @@ tier was satisfied only by the twenty-seven per-kind Frame CRD roles.
 The rule behind that column is one line: **no verb that can write a pod template
 is granted cluster-wide.** `patch`, `update` and the `scale` subresource are all
 bounded to the namespaces where `baseline` refuses a privileged pod. `pods/exec`
-is the single exception and is not an inconsistency — a shell gives an admin
-whatever an existing pod already holds and cannot create a pod the cluster would
-refuse, so Pod Security has no bearing on it.
+is the single exception, because a shell creates no pod and bounding it would
+close nothing. State the corollary plainly rather than leaving it to be
+inferred: a shell **inherits** the target pod's privilege, so exec into one of
+the deliberately privileged pods in an exempt namespace — Ceph's OSDs, the
+node-tuning agent, the Talos tooling — is root on the node. Pod Security has no
+bearing there precisely because the privilege is already present. That is the
+argument for keeping exec admin-only and recorded, and anyone weighing whether
+to widen it below admin should weigh it against that sentence, not against the
+first half of it.
 
 **Reads are not bounded.** The console shows any workload's YAML anywhere the
 tree shows the workload, and writes only where the policy is enforced. The
@@ -6772,7 +6783,9 @@ pod or the cluster itself.
   application workloads and 403 on infrastructure ones; reads are untouched, so
   the console shows any workload's YAML anywhere and writes only where the
   policy is enforced. `pods/exec` is the one workload grant that stays
-  cluster-wide, because a shell cannot create a pod the cluster would refuse.
+  cluster-wide, because a shell creates no pod — but it inherits the target
+  pod's, so a shell in a privileged infrastructure pod is node root, which is
+  why exec is admin-only and every session is recorded.
   It also repaired the Applications screen's Restart button, dead since that
   removal. The
   cluster-wide grant that the 2026-08-09 security review called for on *every*
