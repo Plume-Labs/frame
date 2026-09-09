@@ -518,6 +518,17 @@ characters), `role`
 is passkey-only unless someone deliberately opens the other door). On
 `v1alpha1` only, `passwordHash` is also a spec field; see status below.
 
+`state` (`enabled` | `disabled`, **defaults to `enabled`**) decides whether
+`authd` may issue the account an identity at all. It is a flag rather than an
+absence on purpose: revoking every passkey would deactivate an account too,
+but destructively, and only re-enrolment in person would undo it. One
+function in `internal/authd` (`requireIssuable`) enforces it, and all four
+identity-issuing paths — `POST /auth/token`, password login, passkey login,
+invitation acceptance — call it. The load-bearing one is `/auth/token`: the
+console calls it every fifteen minutes, so disabling an account cuts a
+session that is already open within one token lifetime, without touching the
+cookie.
+
 **Status:** `passwordHash` (argon2id PHC string, read and written only by
 `authd`) and `credentials[]` — enrolled WebAuthn authenticators, each with the
 base64url credential `id`, the COSE `publicKey`, the `signCount` as of the last
@@ -565,6 +576,22 @@ that changes `status.passwordHash` (see above). This is the one webhook in the
 tree that declares `matchPolicy: Equivalent` explicitly rather than inheriting
 the apiserver default, because the hash guard only reaches a `v1alpha1`
 request if the apiserver converts it first.
+
+Validation also refuses a non-admin changing `spec.state`, for the same reason
+it refuses a role change, and refuses disabling the last admin. "Last admin"
+now means the last **enabled** admin: a disabled admin cannot obtain a token
+by any route, so counting one would allow the last usable admin to be
+demoted, deleted or switched off behind an account nobody can sign in to.
+
+**This field was added after the freeze**, on 2026-09-09, and it is a field
+on an existing kind rather than a new kind — a stronger break than
+NodeTuning's or FrameTask's. It ships with the four debts those raised
+already paid: the RBAC tiers for `frameusers` already exist, no controller
+was added, this reference moved with it, and it arrives with a test that
+proves the *effect* (a disabled account is refused an identity on all four
+paths) rather than the field's presence. It exists on both served versions
+and is carried in both directions of the conversion, so `v1alpha1` is not
+lossy for it.
 
 **Deployment status:** `authd` is consumed now — the `frame-uiproxy` sidecar
 verifies its tokens and impersonates the `FrameUser` it names (see

@@ -11,16 +11,20 @@ metadata:
   namespace: cluster-control
 rules:
   # Read accounts to authenticate; write status to record credentials and
-  # rotate sign counters. Create is for bootstrap only. What stops this SA
-  # itself minting a second admin is authd's own AdminCount() > 0 check
+  # rotate sign counters. Create backs two routes now: /auth/bootstrap (the
+  # first admin) and /auth/invite (an operator or viewer, holding no
+  # credential). What stops this SA itself minting a second admin is not
+  # this Role at all — it is authd's own AdminCount() > 0 check
   # (handleBootstrap in internal/authd/server_bootstrap.go), which closes
-  # /auth/bootstrap the instant the first admin exists — the admission
-  # webhook is never even reached on that path. The webhook
+  # /auth/bootstrap the instant the first admin exists, and handleInvite's
+  # own refusal of any role but operator/viewer (internal/authd/server_invite.go)
+  # before a create is ever attempted. The admission webhook
   # (requireAdminRequester, internal/webhook/frame/v1beta1/frameuser_webhook.go)
   # is the backstop for anyone else who ends up holding `create` on
-  # frameusers — e.g. frameuser-editor-role bound by hand — refusing a
-  # create carrying `spec.role: admin` from anyone who is not already an
-  # admin, once any admin exists.
+  # frameusers — e.g. frameuser-editor-role bound by hand, or this SA if
+  # either of its own guards were ever removed — refusing a create carrying
+  # `spec.role: admin` from anyone who is not already an admin, once any
+  # admin exists.
   - apiGroups: [frame.plume-labs.io]
     resources: [frameusers]
     verbs: [get, list, watch, create]
