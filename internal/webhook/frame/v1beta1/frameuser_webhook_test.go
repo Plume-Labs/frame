@@ -41,7 +41,10 @@ import (
 // state must itself read as enabled for the admin-disable branch in
 // ValidateUpdate to fire at all, and the counting side carol, whose unset
 // state must count as enabled inside requireAnotherAdmin's loop for the
-// write to be permitted. If this fixture starts setting
+// write to be permitted. "refuses disabling the only admin" leans on the
+// same subject-side reading: alice's unset state is what makes the branch
+// fire, so a strict-equality isEnabled would leave that spec green for the
+// wrong reason. If this fixture starts setting
 // State: framev1beta1.StateEnabled explicitly, that coverage of the "" case
 // disappears without turning the suite red, and isEnabled could regress to
 // `state == StateEnabled` unnoticed.
