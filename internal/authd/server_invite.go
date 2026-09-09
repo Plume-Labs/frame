@@ -189,31 +189,18 @@ func (s *Server) inviteeAlreadyExists(ctx context.Context, email string) (bool, 
 const enrolSessionTTL = 15 * time.Minute
 
 // setEnrolSession seals a PurposeEnrol cookie for u — deliberately not
-// PurposeSession — and writes it under the same cookie name and attributes
-// as a full session. sessionUser (used by every route except
+// PurposeSession — through the shared setSessionFor (server_session.go),
+// which is what keeps this cookie's name and attributes byte-identical to a
+// full session's without a second copy of that cookie block to drift out of
+// sync: only the purpose and the TTL differ, and setSessionFor is where that
+// difference is made. sessionUser (used by every route except
 // handleRegisterBegin and handleRegisterFinish, see sessionUserFor) opens
 // only PurposeSession, so this cookie is refused everywhere but the two
 // routes that need it to reach a first credential: it cannot mint an
 // id_token from /auth/token, and it cannot call /auth/invite, no matter what
-// role the account holds. Reports whether sealing succeeded, on the same
-// contract as setSession/setSessionFor: on failure it has already written a
-// 500, and the caller must stop immediately.
+// role the account holds.
 func (s *Server) setEnrolSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bool {
-	sealed, err := s.cfg.Codec.Seal(PurposeEnrol, []byte(u.Spec.Email), enrolSessionTTL)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return false
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    sealed,
-		Path:     "/",
-		HttpOnly: true, // unreadable from JavaScript: an XSS cannot steal the session
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(enrolSessionTTL.Seconds()),
-	})
-	return true
+	return s.setSessionFor(w, u, PurposeEnrol, enrolSessionTTL)
 }
 
 // handleInviteAccept spends an invitation.
