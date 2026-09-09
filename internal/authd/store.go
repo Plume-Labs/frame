@@ -14,6 +14,11 @@ import (
 // credential, so a caller cannot use the error to tell which addresses exist.
 var ErrUserNotFound = errors.New("no such user")
 
+// ErrLastCredential is the refusal to strip an account of its last way in. It
+// is a distinct error so an HTTP caller can tell a deliberate refusal (409)
+// from an apiserver failure (500) without matching on message text.
+var ErrLastCredential = errors.New("refusing to remove an account's last credential")
+
 // Store is authd's view of the FrameUser resources.
 type Store struct {
 	client    client.Client
@@ -143,7 +148,8 @@ func (s *Store) RemoveCredential(ctx context.Context, u *framev1beta1.FrameUser,
 		return ErrUserNotFound
 	}
 	if len(kept) == 0 && u.Spec.PasswordAuth != framev1beta1.PasswordEnabled {
-		return fmt.Errorf("refusing to remove the last key of %s: password sign-in is disabled, so the account would become unreachable", u.Spec.Email)
+		return fmt.Errorf("%w: %s has no password sign-in, so the account would become unreachable",
+			ErrLastCredential, u.Spec.Email)
 	}
 	u.Status.Credentials = kept
 	return s.client.Status().Update(ctx, u)
