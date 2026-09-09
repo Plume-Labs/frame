@@ -116,6 +116,77 @@ var _ = Describe("FrameUser webhook", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	// spec.email is the field the whole identity chain resolves through:
+	// setSessionFor seals the address into the session cookie, and
+	// sessionUser hands it to Store.ByEmail, which matches exactly and
+	// returns the first match in list order. So a principal holding nothing
+	// but `patch frameusers` who repoints *their own* account's spec.email at
+	// an admin's address signs in with their own passkey (ByCredentialID
+	// correctly finds their object), and one /auth/token later holds a token
+	// minted with the admin's email and role. That is the same escalation
+	// shape as the spec.role hole the previous lot closed, through the one
+	// identity-bearing field admission did not guard.
+	It("allows an admin to change an account's email", func() {
+		bob := user("bob", framev1beta1.RoleViewer)
+		v := newValidator(user("alice", framev1beta1.RoleAdmin), bob)
+		renamed := bob.DeepCopy()
+		renamed.Spec.Email = "robert@example.com"
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), bob, renamed)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("refuses a non-admin changing their own email", func() {
+		bob := user("bob", framev1beta1.RoleViewer)
+		v := newValidator(user("alice", framev1beta1.RoleAdmin), bob)
+		hijack := bob.DeepCopy()
+		hijack.Spec.Email = "alice@example.com"
+		_, err := v.ValidateUpdate(requestBy("frame:viewers"), bob, hijack)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("is not an admin"))
+		Expect(err.Error()).To(ContainSubstring("spec.email"))
+	})
+
+	// Case-insensitively, because the collision that matters is not "the same
+	// string" but "the same mailbox". Exact-match uniqueness would admit
+	// Alice@Example.com alongside alice@example.com, and Store.ByEmail —
+	// exact by design, so that a verified credential resolves to the account
+	// that actually holds it — would then resolve the two by list order.
+	It("refuses a create claiming an address another account already holds, in any case", func() {
+		v := newValidator(user("alice", framev1beta1.RoleAdmin))
+		mallory := user("mallory", framev1beta1.RoleViewer)
+		mallory.Spec.Email = "ALICE@Example.com"
+		_, err := v.ValidateCreate(requestBy("frame:admins"), mallory)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("already claimed"))
+		Expect(err.Error()).To(ContainSubstring("alice"))
+	})
+
+	It("refuses an update moving onto an address another account already holds, in any case", func() {
+		alice := user("alice", framev1beta1.RoleAdmin)
+		bob := user("bob", framev1beta1.RoleViewer)
+		v := newValidator(alice, bob)
+		hijack := bob.DeepCopy()
+		hijack.Spec.Email = "Alice@EXAMPLE.com"
+		// An admin requester, so this exercises the uniqueness rule rather
+		// than the authorization guard in front of it.
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), bob, hijack)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("already claimed"))
+	})
+
+	// The rule is about *another* account's address. Rewriting an account's
+	// own email to a different casing of itself is not a collision, and
+	// refusing it would make the object unfixable by the only rule meant to
+	// protect it.
+	It("does not treat an account's own address as a collision", func() {
+		alice := user("alice", framev1beta1.RoleAdmin)
+		v := newValidator(alice, user("carol", framev1beta1.RoleAdmin))
+		recased := alice.DeepCopy()
+		recased.Spec.Email = "Alice@Example.com"
+		_, err := v.ValidateUpdate(requestBy("frame:admins"), alice, recased)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("allows deleting a non-admin even if no admin exists", func() {
 		bob := user("bob", framev1beta1.RoleViewer)
 		v := newValidator(bob)
