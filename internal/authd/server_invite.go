@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -177,4 +178,60 @@ func (s *Server) inviteeAlreadyExists(ctx context.Context, email string) (bool, 
 		}
 	}
 	return false, nil
+}
+
+// enrolSessionTTL is how long the session an accepted invitation grants lasts.
+// Long enough to find a key and enrol it; short enough that a link forwarded
+// to the wrong person, or left in a browser's history on a shared machine, is
+// not a standing account.
+const enrolSessionTTL = 15 * time.Minute
+
+// handleInviteAccept spends an invitation.
+//
+// Single-use by construction rather than by a stored flag: the link is refused
+// the moment the account holds any credential, and the only thing the session
+// it grants can do is enrol one. There is no table to clean up, no revocation
+// list to keep in step, and nothing that can disagree with the account itself
+// about whether the link has been spent.
+//
+// Every failure that is not "already used" answers the same 401 with the same
+// wording. An invitation link travels through chat and inboxes, so telling a
+// holder of a wrong link whether the address exists, whether it expired, or
+// whether the token was ever real would be an account-enumeration oracle
+// reachable without any session at all.
+func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	email, err := s.cfg.Codec.Open(PurposeInvite, body.Token)
+	if err != nil {
+		http.Error(w, "this invitation link is invalid or has expired", http.StatusUnauthorized)
+		return
+	}
+	u, err := s.cfg.Store.ByEmail(r.Context(), string(email))
+	if err != nil {
+		http.Error(w, "this invitation link is invalid or has expired", http.StatusUnauthorized)
+		return
+	}
+	// The fourth of the four identity-issuing paths; see requireIssuable in
+	// state.go. 403 rather than 401 here: the caller has already produced a
+	// valid, unexpired invitation for this exact account, so saying it is
+	// switched off tells them nothing they could not already infer, and
+	// leaving them at "invalid or expired" would send them chasing the link.
+	if err := requireIssuable(u); err != nil {
+		http.Error(w, "this account is disabled", http.StatusForbidden)
+		return
+	}
+	if len(u.Status.Credentials) > 0 || u.Status.PasswordHash != "" {
+		http.Error(w, "this invitation has already been used", http.StatusGone)
+		return
+	}
+	if !s.setSessionFor(w, u, enrolSessionTTL) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
@@ -259,5 +260,173 @@ func TestAnInvitationTokenIsNotASession(t *testing.T) {
 	}
 	if _, err := testCodec().Open(PurposeInvite, sealed); err == nil {
 		t.Fatal("a session cookie opened as an invitation")
+	}
+}
+
+// inviteFor drives a real /auth/invite as an admin and returns the token from
+// the link. Going through the route rather than sealing a token by hand is
+// what makes the tests below cover the pair rather than one half of it.
+func inviteFor(t *testing.T, srv *Server, admin *framev1beta1.FrameUser, email, role string) string {
+	t.Helper()
+	rec := doWithCookie(t, srv, "/auth/invite",
+		`{"email":"`+email+`","role":"`+role+`"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invite = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return inviteURLToken(t, body.URL)
+}
+
+func TestInviteAcceptGrantsAShortSessionThatCanEnrol(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("accept = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	session := sessionCookieFrom(t, rec)
+	if session.MaxAge != int(enrolSessionTTL.Seconds()) {
+		t.Fatalf("accepted session Max-Age = %d, want %d — an accepted invitation is a "+
+			"window to enrol, not a working day", session.MaxAge, int(enrolSessionTTL.Seconds()))
+	}
+
+	// The session is not merely present; it is the one thing the invitee
+	// needs. /auth/register/begin is the only route to a first credential.
+	begin := doWithCookie(t, srv, "/auth/register/begin", "", session)
+	if begin.Code != http.StatusOK {
+		t.Fatalf("register/begin on an accepted invitation = %d, want 200: %s", begin.Code, begin.Body.String())
+	}
+}
+
+// TestSecondInviteAcceptIsRefusedOnceAKeyIsEnrolled is the single-use proof.
+// The first acceptance succeeds; a credential is then added through the store,
+// exactly as a completed enrolment would; the same link is presented again and
+// must be refused. Delete the credential check in handleInviteAccept and this
+// returns 204 — the link would be a standing key to the account.
+func TestSecondInviteAcceptIsRefusedOnceAKeyIsEnrolled(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, c := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	if rec := do(t, srv, http.MethodPost, "/auth/invite/accept",
+		`{"token":"`+token+`"}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("first accept = %d, want 204", rec.Code)
+	}
+
+	store := NewStore(c, "cluster-control")
+	bob, err := store.ByEmail(context.Background(), "bob@example.com")
+	if err != nil {
+		t.Fatalf("ByEmail: %v", err)
+	}
+	if err := store.AddCredential(context.Background(), bob, framev1beta1.WebAuthnCredential{
+		ID: "ZW5yb2xsZWQ", PublicKey: "cGs", AddedAt: metav1.Now(), Label: "YubiKey 5C",
+	}); err != nil {
+		t.Fatalf("AddCredential: %v", err)
+	}
+
+	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("second accept = %d, want 410", rec.Code)
+	}
+	if hasSessionCookie(rec) {
+		t.Fatal("a spent invitation still handed out a session")
+	}
+}
+
+// The password branch of the same guard. No route sets a password today, so
+// this state is unreachable — which is exactly why it is pinned: "any
+// credential" must keep meaning any credential when one arrives.
+func TestInviteAcceptIsRefusedOnceAPasswordExists(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, c := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	var bob framev1beta1.FrameUser
+	// Derive the name rather than spelling it: frameUserNameForEmail appends a
+	// hash suffix, so a literal "bob-at-example.com" is NotFound here.
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Name: frameUserNameForEmail("bob@example.com"), Namespace: "cluster-control"}, &bob); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	bob.Status.PasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaA"
+	if err := c.Status().Update(context.Background(), &bob); err != nil {
+		t.Fatalf("status update: %v", err)
+	}
+
+	if rec := do(t, srv, http.MethodPost, "/auth/invite/accept",
+		`{"token":"`+token+`"}`); rec.Code != http.StatusGone {
+		t.Fatalf("accept for an account holding a password = %d, want 410", rec.Code)
+	}
+}
+
+// TestInviteAcceptPathRefusesADisabledAccount covers path 4 of 4:
+// POST /auth/invite/accept. Same shape as the three in state_test.go, and
+// named the same way, because the defect guarded against is "the check exists
+// in three places out of four".
+func TestInviteAcceptPathRefusesADisabledAccount(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, c := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	var bob framev1beta1.FrameUser
+	// Derive the name rather than spelling it: frameUserNameForEmail appends a
+	// hash suffix, so a literal "bob-at-example.com" is NotFound here.
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Name: frameUserNameForEmail("bob@example.com"), Namespace: "cluster-control"}, &bob); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	bob.Spec.State = framev1beta1.StateDisabled
+	if err := c.Update(context.Background(), &bob); err != nil {
+		t.Fatalf("disable bob: %v", err)
+	}
+
+	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("accept for a disabled account = %d, want 403", rec.Code)
+	}
+	if hasSessionCookie(rec) {
+		t.Fatal("a disabled account was handed a session cookie")
+	}
+}
+
+func TestInviteAcceptRefusesForgedExpiredAndUnknown(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+
+	expired, err := testCodec().Seal(PurposeInvite, []byte("bob@example.com"), -time.Second)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	// A well-formed, unexpired token for an account that does not exist —
+	// deleted between invitation and acceptance.
+	unknown, err := testCodec().Seal(PurposeInvite, []byte("ghost@example.com"), time.Hour)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	sessionShaped, err := testCodec().Seal(PurposeSession, []byte("root@example.com"), time.Hour)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+
+	for name, token := range map[string]string{
+		"forged":        "forged.token",
+		"expired":       expired,
+		"unknown":       unknown,
+		"session-shape": sessionShaped,
+	} {
+		rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("accept with a %s token = %d, want 401", name, rec.Code)
+		}
+		if hasSessionCookie(rec) {
+			t.Fatalf("a %s token produced a session cookie", name)
+		}
 	}
 }

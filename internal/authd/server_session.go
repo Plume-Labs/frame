@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -95,14 +96,23 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// setSession seals a session cookie for u and writes it onto the response.
-// It reports whether that succeeded; on failure it has already written a 500
-// itself, and every caller must stop immediately rather than go on to write
-// its own success status on top (the bug this return value exists to
-// prevent: a 500 followed by an unconditional 204, and the
+// setSession seals a 12-hour session cookie for u and writes it onto the
+// response. It reports whether that succeeded; on failure it has already
+// written a 500 itself, and every caller must stop immediately rather than go
+// on to write its own success status on top (the bug this return value exists
+// to prevent: a 500 followed by an unconditional 204, and the
 // "superfluous response.WriteHeader call" warning that comes with it).
 func (s *Server) setSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bool {
-	sealed, err := s.cfg.Codec.Seal(PurposeSession, []byte(u.Spec.Email), s.cfg.SessionTTL)
+	return s.setSessionFor(w, u, s.cfg.SessionTTL)
+}
+
+// setSessionFor is setSession with an explicit lifetime, for the one caller
+// that does not want a working day: an accepted invitation grants only long
+// enough to enrol a key (see enrolSessionTTL). The TTL is inside the sealed
+// payload as well as on the cookie, so shortening it is a real constraint and
+// not a suggestion the browser could ignore.
+func (s *Server) setSessionFor(w http.ResponseWriter, u *framev1beta1.FrameUser, ttl time.Duration) bool {
+	sealed, err := s.cfg.Codec.Seal(PurposeSession, []byte(u.Spec.Email), ttl)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return false
@@ -114,7 +124,7 @@ func (s *Server) setSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bo
 		HttpOnly: true, // unreadable from JavaScript: an XSS cannot steal the session
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(s.cfg.SessionTTL.Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 	})
 	return true
 }
