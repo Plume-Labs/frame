@@ -155,8 +155,9 @@ func (s *Server) deleteBootstrapSecret(r *http.Request) {
 // (first 8 hex characters of sha256 of the lowercased address) is appended
 // to make two distinct addresses derive distinct names regardless of what
 // sanitization does to their readable prefix. This does not replace an
-// email-uniqueness check — see Store.ByEmail — it only keeps the *name*
-// collision-free once uniqueness has already been established by email.
+// email-uniqueness check — see the invite route's own case-insensitive
+// lookup — it only keeps the *name* collision-free once uniqueness has
+// already been established by email.
 func frameUserNameForEmail(email string) string {
 	lower := strings.ToLower(email)
 	spelled := strings.ReplaceAll(lower, "@", "-at-")
@@ -178,12 +179,12 @@ func frameUserNameForEmail(email string) string {
 	sum := sha256.Sum256([]byte(lower))
 	suffix := "-" + hex.EncodeToString(sum[:])[:8]
 
+	// base was already Trim-ed above, so it starts and ends alphanumeric;
+	// truncating it can only shorten it, never empty it, so there is no
+	// second "base == ''" case to guard here.
 	const maxNameLength = 253
 	if len(base)+len(suffix) > maxNameLength {
 		base = strings.TrimRight(base[:maxNameLength-len(suffix)], "-.")
-	}
-	if base == "" {
-		return ""
 	}
 	return base + suffix
 }

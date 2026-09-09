@@ -47,6 +47,46 @@ func TestByEmailFindsAndMisses(t *testing.T) {
 	}
 }
 
+// TestByEmailDoesNotConflateAccountsThatDifferOnlyByCase pins ByEmail as an
+// identity-resolution lookup, not a duplicate-detection one: given two
+// accounts whose addresses differ only in case (a pair the admission webhook
+// does not itself refuse for an out-of-band kubectl write — see
+// requireAdminRequester's own doc comment), a query for one account's exact
+// address must resolve to that account and no other, never to whichever
+// case-variant happens to sort first in Store.list.
+//
+// A version of ByEmail that matches with strings.EqualFold instead of ==
+// fails this: it returns the first EqualFold match regardless of which
+// account the caller actually asked for, so — depending on object-name
+// ordering — querying the viewer's exact address could resolve to the admin
+// account instead. That is exactly the escalation this test exists to catch:
+// a session sealed for the viewer's address being handed the admin's
+// FrameUser on the next request.
+func TestByEmailDoesNotConflateAccountsThatDifferOnlyByCase(t *testing.T) {
+	viewer := fixture("bob-viewer", "bob@example.com", framev1beta1.RoleViewer)
+	admin := fixture("bob-admin", "Bob@Example.com", framev1beta1.RoleAdmin)
+	s := storeWith(t, viewer, admin)
+
+	got, err := s.ByEmail(context.Background(), "bob@example.com")
+	if err != nil {
+		t.Fatalf("ByEmail(bob@example.com): %v", err)
+	}
+	if got.Name != "bob-viewer" || got.Spec.Role != framev1beta1.RoleViewer {
+		t.Fatalf("ByEmail(bob@example.com) resolved to %q (role %q), want bob-viewer (role viewer) — "+
+			"an exact-address lookup must not return whichever case-variant sorts first",
+			got.Name, got.Spec.Role)
+	}
+
+	got, err = s.ByEmail(context.Background(), "Bob@Example.com")
+	if err != nil {
+		t.Fatalf("ByEmail(Bob@Example.com): %v", err)
+	}
+	if got.Name != "bob-admin" || got.Spec.Role != framev1beta1.RoleAdmin {
+		t.Fatalf("ByEmail(Bob@Example.com) resolved to %q (role %q), want bob-admin (role admin)",
+			got.Name, got.Spec.Role)
+	}
+}
+
 func TestByCredentialID(t *testing.T) {
 	cred := framev1beta1.WebAuthnCredential{ID: "cred-1", PublicKey: "pk", SignCount: 7}
 	s := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred))
