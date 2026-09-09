@@ -2974,6 +2974,53 @@ class TalosClient {
   }
 }
 
+/** A FrameUser CR as the apiserver returns it — the shape `src/lib/accounts.ts` reshapes into `Account`. */
+export interface FrameUserCR {
+  metadata: { name: string }
+  spec: { email: string; role: string; state?: string }
+}
+
+/**
+ * Reads and role/state writes for FrameUser accounts.
+ *
+ * Exists so the Accounts screen goes through `k8sFetch` like every other
+ * screen, instead of a bare `fetch` reading `window.__FRAME_TOKEN__` once and
+ * giving up on a 401. `k8sFetch` forces a fresh token and retries exactly
+ * once on 401 (see its comment above) — the case that matters here is a role
+ * change or a revoke landing while the cached token still looks fresh: a bare
+ * `fetch` repeats the same rejected token until the tab is reloaded, and this
+ * doesn't. `email` on the write methods is not sent anywhere; it only phrases
+ * `X-Frame-Action` so the Tasks screen records *what* changed
+ * ("set bob@example.com to admin"), not just *that* something did
+ * ("patch frameusers/bob" — the same string for a promotion and a demotion,
+ * which is not an audit trail worth having for the most privileged writes in
+ * the product).
+ */
+class UserClient {
+  async list(): Promise<FrameUserCR[]> {
+    const res = await k8sFetch<ListResponse<FrameUserCR>>(frameListPath('frameusers'))
+    return res.items ?? []
+  }
+
+  async setRole(name: string, email: string, role: string): Promise<void> {
+    await k8sFetch<undefined>(`${frameListPath('frameusers')}/${name}`, {
+      action: `set ${email} to ${role}`,
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: { role } },
+    })
+  }
+
+  async setState(name: string, email: string, state: string): Promise<void> {
+    await k8sFetch<undefined>(`${frameListPath('frameusers')}/${name}`, {
+      action: `${state === 'disabled' ? 'disable' : 'enable'} ${email}`,
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: { state } },
+    })
+  }
+}
+
 // ── Main client ───────────────────────────────────────────────────────────────
 
 export interface FrameClientOptions {
@@ -2994,6 +3041,7 @@ export class FrameClient {
   public readonly apps: ApplicationClient
   public readonly cluster: ClusterClient
   public readonly talos: TalosClient
+  public readonly users: UserClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -3003,6 +3051,7 @@ export class FrameClient {
     this.apps      = new ApplicationClient()
     this.cluster   = new ClusterClient()
     this.talos     = new TalosClient(opts.namespace)
+    this.users     = new UserClient()
   }
 
   async health(): Promise<HealthStatus> {

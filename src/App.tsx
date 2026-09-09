@@ -2,7 +2,7 @@ import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } 
 import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
 import { useClusterSimulation } from '@/hooks/useClusterSimulation'
-import { currentSession, ensureToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
+import { currentSession, ensureToken, identityFromToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
 import { inviteTokenFromLocation } from '@/lib/accounts'
 import { loadConfig } from '@/lib/frame-config'
 
@@ -452,15 +452,26 @@ function App() {
     () => (sessionState.phase === 'signed-in' ? isAdminToken(sessionState.session.token) : false),
     [sessionState],
   )
+  // Who AccountsView is allowed to say "you" about, so it can decline to
+  // offer a demotion or a disable that would strand the signed-in admin
+  // (see isOnlyEnabledAdmin in @/lib/accounts). Same decode, same trust level
+  // as `admin` above — a courtesy, not a security boundary.
+  const selfEmail = useMemo(
+    () => (sessionState.phase === 'signed-in' ? identityFromToken(sessionState.session.token)?.email : undefined),
+    [sessionState],
+  )
   const visibleNav = useMemo(
     () =>
       NAV.map((group) => ({ ...group, items: group.items.filter((i) => i.id !== 'accounts' || admin) }))
         .filter((group) => group.items.length > 0),
     [admin],
   )
-  const inviteToken = useMemo(
-    () => inviteTokenFromLocation(globalThis.location.pathname, globalThis.location.search),
-    [],
+  // State, not a memo: InviteAcceptView's designed ending has no session to
+  // transition on (see its module doc), so nothing else naturally lifts this
+  // gate. `onFinished` below clears it explicitly once the invitee is done
+  // reading that screen — a memoized `[]` value never would have.
+  const [inviteToken, setInviteToken] = useState(() =>
+    inviteTokenFromLocation(globalThis.location.pathname, globalThis.location.search),
   )
 
   if (sessionState.phase === 'checking') {
@@ -476,6 +487,7 @@ function App() {
       <InviteAcceptView
         token={inviteToken}
         onEnrolled={(session) => setSessionState({ phase: 'signed-in', session })}
+        onFinished={() => setInviteToken(undefined)}
       />
     )
   }
@@ -587,7 +599,13 @@ function App() {
       case 'tasks':
         return <TasksView />
       case 'accounts':
-        return <AccountsView />
+        // Unreachable today: navigation is component state (`screen`), not
+        // URL routing, and `visibleNav` already excludes this entry for a
+        // non-admin. Gated anyway as a regression guard for the day
+        // something drives `screen` from outside the sidebar's own clicks —
+        // a deep link, browser history, a future router — since the real
+        // authorization is server-side regardless of what renders here.
+        return admin ? <AccountsView currentEmail={selfEmail} /> : null
       case 'settings':
         return <SettingsView />
 
