@@ -176,6 +176,7 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 		populatedDisks, emptyDisks, nilDisks    int
 		nonEmptyHash                            int
 		populatedCreds                          int
+		nonEmptyState                           int
 	)
 	for range fuzzIterations {
 		job := &v1beta1.FrameJob{}
@@ -208,6 +209,9 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 		if len(user.Status.Credentials) > 0 {
 			populatedCreds++
 		}
+		if user.Spec.State != "" {
+			nonEmptyState++
+		}
 	}
 
 	// nil and populated are the two branches every rebuild function has. The
@@ -225,6 +229,7 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 		{"nil discoveredDisks", nilDisks},
 		{"non-empty status.passwordHash", nonEmptyHash},
 		{"populated credentials", populatedCreds},
+		{"non-empty spec.state", nonEmptyState},
 	} {
 		if c.count == 0 {
 			t.Errorf("the corpus produced no %s in %d objects — "+

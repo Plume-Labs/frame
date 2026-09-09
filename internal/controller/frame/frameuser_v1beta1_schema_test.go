@@ -160,6 +160,55 @@ var _ = Describe("FrameUser v1beta1 schema", func() {
 		Expect(back.Spec.PasswordAuth).To(Equal(framev1beta1.PasswordDisabled))
 	})
 
+	// ---- lot 0c: spec.state ----
+
+	// The absence case is written with rawSpec, not with a typed object whose
+	// State is "": a typed client serialises a zero-valued field unless it is
+	// tagged omitempty, so a typed "absent" case tests the Go tag as much as
+	// the schema. An unstructured spec carrying only email and role has no
+	// `state` key at all, which is the thing the default is supposed to fill.
+	It("defaults state to enabled, so an account that never mentions it can sign in", func() {
+		raw := rawSpec("fu-default-state", map[string]any{
+			"email": "admin@example.test",
+			"role":  "admin",
+		})
+		Expect(k8sClient.Create(ctx, raw)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, raw) })
+
+		back := &framev1beta1.FrameUser{}
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: "fu-default-state", Namespace: "default"}, back)).To(Succeed())
+		Expect(back.Spec.State).To(Equal(framev1beta1.StateEnabled))
+	})
+
+	It("stores state: disabled as written", func() {
+		u := sampleShaped("fu-state-disabled")
+		u.Spec.State = framev1beta1.StateDisabled
+		Expect(k8sClient.Create(ctx, u)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, u) })
+
+		back := &framev1beta1.FrameUser{}
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: "fu-state-disabled", Namespace: "default"}, back)).To(Succeed())
+		Expect(back.Spec.State).To(Equal(framev1beta1.StateDisabled))
+	})
+
+	// The closed set is what lets internal/authd read an empty state as
+	// enabled without that being a hole: there is no third word for the
+	// apiserver to hand it. `+kubebuilder:validation:Required` would not have
+	// bought this — it does not reject "" — and no MinLength is needed either,
+	// because "" is not in the enum.
+	It("rejects any state other than enabled or disabled", func() {
+		raw := rawSpec("fu-state-suspended", map[string]any{
+			"email": "admin@example.test",
+			"role":  "admin",
+			"state": "suspended",
+		})
+		err := k8sClient.Create(ctx, raw)
+		Expect(err).To(HaveOccurred())
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected a validation error, got %v", err)
+	})
+
 	// ---- F11: the hash moves out of spec ----
 
 	It("drops a spec.passwordHash written on the wire (F11)", func() {

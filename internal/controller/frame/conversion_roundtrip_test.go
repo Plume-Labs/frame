@@ -464,6 +464,15 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 					Email:        "operator@frame.test",
 					Role:         framev1alpha1.RoleOperator,
 					PasswordAuth: framev1alpha1.PasswordEnabled,
+					// Set explicitly and to the non-default value, for the same
+					// reason PasswordAuth is: state defaults to enabled, and a
+					// fixture that left it "" would have the apiserver fill it
+					// in on the v1alpha1 write itself (writeThroughAPIServer
+					// mutates alpha in place), leaving fixture and back both
+					// "enabled" by defaulting rather than by the conversion
+					// under test — a round trip that would pass even with
+					// State dropped from ConvertTo/ConvertFrom entirely.
+					State:        framev1alpha1.StateDisabled,
 					PasswordHash: hash,
 				},
 				Status: framev1alpha1.FrameUserStatus{

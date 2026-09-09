@@ -93,6 +93,20 @@ spec:
                 - operator
                 - viewer
                 type: string
+              state:
+                default: enabled
+                description: |-
+                  State decides whether authd may issue this account an identity at all.
+
+                  This deprecated version carries it for one reason: v1beta1 is the
+                  storage version and TestHubRoundTripIsLossless fuzzes
+                  v1beta1 -> v1alpha1 -> v1beta1 demanding exact equality, so a field this
+                  version lacks is a field a round trip through this version destroys.
+                  The same reasoning put observedGeneration here before the freeze.
+                enum:
+                - enabled
+                - disabled
+                type: string
             required:
             - email
             - role
@@ -230,6 +244,25 @@ spec:
                 - admin
                 - operator
                 - viewer
+                type: string
+              state:
+                default: enabled
+                description: |-
+                  State decides whether authd may issue this account an identity at all.
+
+                  Deactivation is a flag rather than an absence. Revoking every passkey
+                  would have avoided touching a kind the roadmap declared frozen, but it
+                  makes deactivation destructive and reversible only by re-enrolment — the
+                  person has to be in the room with their key again to come back.
+
+                  The enum is what makes the empty string safe to read as "enabled" in
+                  internal/authd: the apiserver defaults an absent value and refuses every
+                  word but these two, so authd never sees a third state it would have to
+                  guess about. No MinLength is needed — "" is not in the enum — and
+                  not reject an empty string from a typed client.
+                enum:
+                - enabled
+                - disabled
                 type: string
             required:
             - email
