@@ -60,8 +60,19 @@ func TestInviteRequiresAnAdminSession(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("invite from a viewer = %d, want 403", rec.Code)
 	}
-	if n := countUsers(t, c); n != 1 {
-		t.Fatalf("a refused invite created an account: %d users, want 1", n)
+
+	operator := fixture("carol", "carol@example.com", framev1beta1.RoleOperator)
+	if err := c.Create(context.Background(), operator); err != nil {
+		t.Fatalf("seed operator: %v", err)
+	}
+	rec = doWithCookie(t, srv, "/auth/invite",
+		`{"email":"new@example.com","role":"viewer"}`, sessionFor(t, srv, operator))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("invite from an operator = %d, want 403", rec.Code)
+	}
+
+	if n := countUsers(t, c); n != 2 {
+		t.Fatalf("a refused invite created an account: %d users, want 2 (viewer + operator fixtures)", n)
 	}
 }
 
@@ -73,6 +84,12 @@ func TestInviteCreatesAPasskeylessAccountAndReturnsALink(t *testing.T) {
 		`{"email":"Bob@Example.com","role":"viewer"}`, sessionFor(t, srv, admin))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("invite = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	// The response body is a bearer credential (the sealed invite token), like
+	// every session cookie this package hands out — it must not sit in a
+	// shared cache or the browser's back-forward cache.
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want %q", got, "no-store")
 	}
 
 	var body struct {
@@ -110,8 +127,14 @@ func TestInviteCreatesAPasskeylessAccountAndReturnsALink(t *testing.T) {
 	if len(created.Status.Credentials) != 0 {
 		t.Fatalf("an invited account arrived holding credentials: %v", created.Status.Credentials)
 	}
-	if created.Name != "bob-at-example.com" {
-		t.Fatalf("object name = %q, want the lowercased derivation", created.Name)
+	// The object name is the lowercased, "-at-"-spelled derivation of the
+	// email, plus a hash suffix that keeps two distinct addresses from ever
+	// deriving the same name (frameUserNameForEmail). The suffix itself is
+	// not pinned here — only that the readable prefix is right and a
+	// disambiguating suffix is actually present.
+	const wantPrefix = "bob-at-example.com-"
+	if !strings.HasPrefix(created.Name, wantPrefix) || len(created.Name) == len(wantPrefix) {
+		t.Fatalf("object name = %q, want %q plus a disambiguating suffix", created.Name, wantPrefix)
 	}
 }
 
@@ -141,11 +164,18 @@ func TestInviteRefusesAMalformedEmailAndAnUnknownRole(t *testing.T) {
 	srv, c := bootstrapServer(t, false, admin)
 	session := sessionFor(t, srv, admin)
 
+	// A 255-byte local part pushes the address one byte past maxEmailLength
+	// (254, mirroring the CRD's own MaxLength on spec.email). Nothing else
+	// in this handler rejects it — emailPattern alone matches a local part
+	// of any length — so without the length check this row is the one that
+	// would turn green and hide it.
+	tooLongEmail := strings.Repeat("a", 250) + "@x.io"
 	for _, body := range []string{
 		`{"email":"not-an-email","role":"viewer"}`,
 		`{"email":"","role":"viewer"}`,
 		`{"email":"new@example.com","role":"editor"}`,
 		`{"email":"new@example.com","role":""}`,
+		`{"email":"` + tooLongEmail + `","role":"viewer"}`,
 	} {
 		if rec := doWithCookie(t, srv, "/auth/invite", body, session); rec.Code != http.StatusBadRequest {
 			t.Fatalf("invite %s = %d, want 400", body, rec.Code)
@@ -154,17 +184,52 @@ func TestInviteRefusesAMalformedEmailAndAnUnknownRole(t *testing.T) {
 	if n := countUsers(t, c); n != 1 {
 		t.Fatalf("a refused invite created an account: %d users, want 1", n)
 	}
+
+	// An unknown role is not a request to become an admin, so it must not
+	// be answered with advice about promoting to admin — that advice is
+	// gated on body.Role == RoleAdmin specifically, not on "any refused
+	// role".
+	rec := doWithCookie(t, srv, "/auth/invite",
+		`{"email":"new@example.com","role":"editor"}`, session)
+	if strings.Contains(rec.Body.String(), "Accounts screen") {
+		t.Fatalf("a typo'd role got admin-promotion advice: %q", rec.Body.String())
+	}
 }
 
+// The fixture's object name — "bob-at-example.com" — is deliberately the
+// pre-disambiguation derivation, not what frameUserNameForEmail produces
+// today (which appends a hash suffix). This is the live cluster's bootstrap
+// admin's shape: an account created before invite existed, under whatever
+// name derivation was in force then. Identity here is Spec.Email, checked by
+// Store.ByEmail before Create ever runs — not the derived object name, which
+// this fixture deliberately does not match. A version that disambiguated the
+// name (so two distinct addresses can never collide) without also adding
+// that email pre-check would compute a fresh, different name for this same
+// address, see no name collision at Create, and silently create a second
+// FrameUser with the same Spec.Email — this test would then observe 200, not
+// 409, and fail.
 func TestInviteRefusesADuplicate(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
-	srv, _ := bootstrapServer(t, false, admin,
+	srv, c := bootstrapServer(t, false, admin,
 		fixture("bob-at-example.com", "bob@example.com", framev1beta1.RoleViewer))
 
 	rec := doWithCookie(t, srv, "/auth/invite",
 		`{"email":"bob@example.com","role":"viewer"}`, sessionFor(t, srv, admin))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("inviting an existing account = %d, want 409", rec.Code)
+	}
+	if n := countUsers(t, c); n != 2 {
+		t.Fatalf("a refused duplicate invite created another account: %d users, want 2 (admin + bob)", n)
+	}
+
+	// Case must not be a way around the same check.
+	rec = doWithCookie(t, srv, "/auth/invite",
+		`{"email":"Bob@Example.com","role":"viewer"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("inviting an existing account under a different case = %d, want 409", rec.Code)
+	}
+	if n := countUsers(t, c); n != 2 {
+		t.Fatalf("a case-varied duplicate invite created another account: %d users, want 2", n)
 	}
 }
 
