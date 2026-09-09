@@ -335,6 +335,55 @@ export async function logout(): Promise<void> {
   }
 }
 
+/** Who a token says its holder is. */
+export interface Identity {
+  email: string
+  groups: string[]
+}
+
+/**
+ * Read the `email` and `groups` claims off an id_token.
+ *
+ * This decodes; it does not verify — and that is correct here and nowhere
+ * else. The signature is checked by `frame-uiproxy` on every request the
+ * token is sent with, and by the apiserver behind it. Nothing in the browser
+ * is a security decision: hiding the Accounts screen from a non-admin is a
+ * courtesy, and forging a token in devtools buys nothing, because every write
+ * it would reveal is refused server-side by RBAC and by the FrameUser
+ * admission webhook.
+ *
+ * The group is matched **unprefixed**. `GroupForRole` in
+ * `internal/authd/issuer.go` mints `admins`; the `frame:` prefix is applied by
+ * the proxy on the way to the apiserver, so it never appears in the claim the
+ * browser holds.
+ */
+export function identityFromToken(token: string): Identity | undefined {
+  const parts = token.split('.')
+  if (parts.length !== 3) return undefined
+  try {
+    const payload = parts[1]
+    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4)
+    const claims = JSON.parse(atob(padded.replace(/-/g, '+').replace(/_/g, '/'))) as {
+      email?: unknown
+      groups?: unknown
+    }
+    if (typeof claims.email !== 'string' || claims.email === '') return undefined
+    const groups = Array.isArray(claims.groups)
+      ? claims.groups.filter((g): g is string => typeof g === 'string')
+      : []
+    return { email: claims.email, groups }
+  } catch {
+    // A malformed token is "not signed in enough to be an admin", not a crash:
+    // the console must still render its login gate.
+    return undefined
+  }
+}
+
+/** True when the token's groups claim carries authd's admin group. */
+export function isAdminToken(token: string): boolean {
+  return identityFromToken(token)?.groups.includes('admins') ?? false
+}
+
 export function __resetForTests(): void {
   session = undefined
   publish(undefined)
