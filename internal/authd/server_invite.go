@@ -180,19 +180,56 @@ func (s *Server) inviteeAlreadyExists(ctx context.Context, email string) (bool, 
 	return false, nil
 }
 
-// enrolSessionTTL is how long the session an accepted invitation grants lasts.
-// Long enough to find a key and enrol it; short enough that a link forwarded
-// to the wrong person, or left in a browser's history on a shared machine, is
-// not a standing account.
+// enrolSessionTTL is how long the enrolment cookie an accepted invitation
+// grants lasts. Long enough to find a key and enrol it; short enough that a
+// link forwarded to the wrong person, or left in a browser's history on a
+// shared machine, is not a standing account. It bounds one acceptance, not
+// the invitation as a whole: see setEnrolSession and the note on
+// handleInviteAccept about what actually spends the link.
 const enrolSessionTTL = 15 * time.Minute
+
+// setEnrolSession seals a PurposeEnrol cookie for u — deliberately not
+// PurposeSession — and writes it under the same cookie name and attributes
+// as a full session. sessionUser (used by every route except
+// handleRegisterBegin and handleRegisterFinish, see sessionUserFor) opens
+// only PurposeSession, so this cookie is refused everywhere but the two
+// routes that need it to reach a first credential: it cannot mint an
+// id_token from /auth/token, and it cannot call /auth/invite, no matter what
+// role the account holds. Reports whether sealing succeeded, on the same
+// contract as setSession/setSessionFor: on failure it has already written a
+// 500, and the caller must stop immediately.
+func (s *Server) setEnrolSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bool {
+	sealed, err := s.cfg.Codec.Seal(PurposeEnrol, []byte(u.Spec.Email), enrolSessionTTL)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    sealed,
+		Path:     "/",
+		HttpOnly: true, // unreadable from JavaScript: an XSS cannot steal the session
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(enrolSessionTTL.Seconds()),
+	})
+	return true
+}
 
 // handleInviteAccept spends an invitation.
 //
-// Single-use by construction rather than by a stored flag: the link is refused
-// the moment the account holds any credential, and the only thing the session
-// it grants can do is enrol one. There is no table to clean up, no revocation
-// list to keep in step, and nothing that can disagree with the account itself
-// about whether the link has been spent.
+// Single-use by construction rather than by a stored flag: the link is
+// refused the moment the account holds any credential. There is no table to
+// clean up, no revocation list to keep in step, and nothing that can
+// disagree with the account itself about whether the link has been spent.
+// Note what that construction actually pins: the link is spendable until the
+// first *enrolment*, not until the first *acceptance* — accepting the same
+// unspent link twice, with no credential added in between, succeeds both
+// times (see TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending). Each
+// acceptance grants its own PurposeEnrol cookie, and neither of those can do
+// anything beyond enrolling a credential — see setEnrolSession — so two live
+// enrolment windows for an account that still holds no key is not a standing
+// credential the way a second full session would be.
 //
 // Every failure that is not "already used" answers the same 401 with the same
 // wording. An invitation link travels through chat and inboxes, so telling a
@@ -227,10 +264,15 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(u.Status.Credentials) > 0 || u.Status.PasswordHash != "" {
-		http.Error(w, "this invitation has already been used", http.StatusGone)
+		// "already been used" would overstate it for the password branch:
+		// no route sets a password today, so if this ever fires for a
+		// password it did not necessarily come from this invitation. What is
+		// actually true, and all that matters here, is that the account
+		// already has a credential.
+		http.Error(w, "this account already has a credential", http.StatusGone)
 		return
 	}
-	if !s.setSessionFor(w, u, enrolSessionTTL) {
+	if !s.setEnrolSession(w, u) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

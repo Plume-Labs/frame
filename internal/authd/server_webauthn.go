@@ -82,8 +82,13 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 // handleRegisterBegin enrols an additional key for whoever is already signed
 // in. Enrolling for someone else is not possible here by construction: the
 // account comes from the session cookie, never from the request body.
+//
+// Uses the permissive reader: this is one of the two routes (with
+// handleRegisterFinish) that must also accept the PurposeEnrol cookie an
+// accepted invitation grants, since enrolling a first passkey is the entire
+// point of that cookie. Every other route keeps the strict sessionUser.
 func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.sessionUser(w, r)
+	u, ok := s.sessionUserFor(w, r, PurposeSession, PurposeEnrol)
 	if !ok {
 		return
 	}
@@ -97,8 +102,11 @@ func (s *Server) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(options)
 }
 
+// Uses the permissive reader for the same reason as handleRegisterBegin: an
+// accepted invitation must be able to complete enrolment on the PurposeEnrol
+// cookie it was granted.
 func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.sessionUser(w, r)
+	u, ok := s.sessionUserFor(w, r, PurposeSession, PurposeEnrol)
 	if !ok {
 		return
 	}

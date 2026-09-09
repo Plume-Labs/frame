@@ -360,9 +360,15 @@ func TestInviteAcceptIsRefusedOnceAPasswordExists(t *testing.T) {
 		t.Fatalf("status update: %v", err)
 	}
 
-	if rec := do(t, srv, http.MethodPost, "/auth/invite/accept",
-		`{"token":"`+token+`"}`); rec.Code != http.StatusGone {
+	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if rec.Code != http.StatusGone {
 		t.Fatalf("accept for an account holding a password = %d, want 410", rec.Code)
+	}
+	// Unlike the credential branch's own test, this one previously stopped at
+	// the status code: a regression that minted the cookie before checking
+	// PasswordHash would still return 410 here and pass unnoticed.
+	if hasSessionCookie(rec) {
+		t.Fatal("a spent invitation still handed out a session")
 	}
 }
 
@@ -421,12 +427,95 @@ func TestInviteAcceptRefusesForgedExpiredAndUnknown(t *testing.T) {
 		"unknown":       unknown,
 		"session-shape": sessionShaped,
 	} {
-		rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("accept with a %s token = %d, want 401", name, rec.Code)
-		}
-		if hasSessionCookie(rec) {
-			t.Fatalf("a %s token produced a session cookie", name)
-		}
+		// t.Run so a failure in one case is reported against that case, and
+		// map iteration order (randomised by Go) does not hide the other
+		// cases behind a single Fatalf that stops the loop.
+		t.Run(name, func(t *testing.T) {
+			rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("accept with a %s token = %d, want 401", name, rec.Code)
+			}
+			if hasSessionCookie(rec) {
+				t.Fatalf("a %s token produced a session cookie", name)
+			}
+		})
+	}
+}
+
+// TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending pins today's behaviour:
+// accepting the same link twice, with no credential enrolled in between, is
+// not refused — both calls return 204. This is deliberate, not an oversight:
+// handleInviteAccept's guard is "does the account hold a credential", not
+// "has this link been presented before", so re-loading the invite page or
+// retrying a flaky network call does not burn the invitation. It is only
+// safe because each acceptance grants its own PurposeEnrol cookie that can
+// do nothing but enrol a credential (see TestAnAcceptedInvitationCannotMintATokenOrInvite);
+// two such cookies live at once is not the standing access a second full
+// session would be. If this test's expectation ever needs to become 410 on
+// the second call, that is a deliberate design change, not a silent one.
+func TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	first := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if first.Code != http.StatusNoContent {
+		t.Fatalf("first accept = %d, want 204: %s", first.Code, first.Body.String())
+	}
+	second := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if second.Code != http.StatusNoContent {
+		t.Fatalf("second accept of an unspent link = %d, want 204: %s", second.Code, second.Body.String())
+	}
+}
+
+// TestAnAcceptedInvitationCannotMintATokenOrInvite is the fix for the defect
+// the review found: setSessionFor originally sealed the accept-minted cookie
+// under PurposeSession, the same purpose as a full sign-in, so it worked on
+// every session-consuming route — including /auth/token, which would hand
+// the holder a minted id_token, and /auth/invite, which would let a
+// sufficiently-privileged invitee invite further accounts. Neither the
+// account's role nor the short cookie TTL stopped that: the TTL only bounded
+// how long a single enrolment window lasted, and it was trivially renewable
+// by accepting again (see TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending),
+// making the link a renewable day-long console credential rather than the
+// enrolment-only credential the design intended. Sealing under PurposeEnrol
+// and restricting sessionUser to PurposeSession closes both paths: this test
+// is the one that would have caught it, since /auth/token is exactly the
+// route a full session — but not an enrolment cookie — must be able to reach.
+func TestAnAcceptedInvitationCannotMintATokenOrInvite(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+
+	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("accept = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	enrolSession := sessionCookieFrom(t, rec)
+
+	if tokenRec := doWithCookie(t, srv, "/auth/token", "", enrolSession); tokenRec.Code != http.StatusUnauthorized {
+		t.Fatalf("/auth/token with an enrolment-only cookie = %d, want 401: %s",
+			tokenRec.Code, tokenRec.Body.String())
+	}
+	if inviteRec := doWithCookie(t, srv, "/auth/invite",
+		`{"email":"carol@example.com","role":"viewer"}`, enrolSession); inviteRec.Code != http.StatusUnauthorized {
+		t.Fatalf("/auth/invite with an enrolment-only cookie = %d, want 401: %s",
+			inviteRec.Code, inviteRec.Body.String())
+	}
+}
+
+// TestOrdinarySessionStillWorksOnRegisterRoutes guards the permissive
+// reader against the opposite mistake: sessionUserFor must still accept a
+// normal PurposeSession cookie on the register routes, not just the new
+// PurposeEnrol one, or ordinary passkey management (adding a second key from
+// an already-signed-in session) would break.
+func TestOrdinarySessionStillWorksOnRegisterRoutes(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+	session := sessionFor(t, srv, admin)
+
+	rec := doWithCookie(t, srv, "/auth/register/begin", "", session)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register/begin with an ordinary session = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
