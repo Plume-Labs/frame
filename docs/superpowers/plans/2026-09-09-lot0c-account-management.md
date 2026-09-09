@@ -1615,7 +1615,7 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(u.Status.Credentials) > 0 || u.Status.PasswordHash != "" {
-		http.Error(w, "this invitation has already been used", http.StatusGone)
+		http.Error(w, "this account already has a credential", http.StatusGone)
 		return
 	}
 	if !s.setSessionFor(w, u, enrolSessionTTL) {
@@ -2195,7 +2195,7 @@ describe('acceptInvitation', () => {
   })
 
   it('says the link is spent on 410, rather than repeating the status', async () => {
-    stubFetch(new Response('this invitation has already been used', { status: 410 }))
+    stubFetch(new Response('this account already has a credential', { status: 410 }))
     await expect(acceptInvitation('sealed')).rejects.toThrow(/already been used/)
   })
 
