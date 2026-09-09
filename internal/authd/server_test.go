@@ -86,6 +86,9 @@ func do(t *testing.T, srv *Server, method, path, body string) *httptest.Response
 const (
 	bootstrapServerToken      = "s3cret-bootstrap"
 	bootstrapServerSecretName = "frame-auth-bootstrap"
+	// testConsoleOrigin is what an invitation link is built on. Fixed here
+	// rather than threaded through as a parameter that never varies.
+	testConsoleOrigin = "https://frame.example"
 )
 
 // bootstrapServer builds a Server whose Store and ServerConfig.Client share the
@@ -126,6 +129,7 @@ func bootstrapServer(t *testing.T, seedSecret bool, users ...*framev1beta1.Frame
 		Client:              c,
 		Namespace:           "cluster-control",
 		TokenTTL:            15 * time.Minute,
+		ConsoleOrigin:       testConsoleOrigin,
 	})
 	if err != nil {
 		t.Fatalf("server: %v", err)

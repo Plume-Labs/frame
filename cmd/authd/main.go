@@ -118,6 +118,7 @@ func run() error {
 		Client:              kc,
 		Namespace:           cfg.namespace,
 		TokenTTL:            cfg.tokenTTL,
+		ConsoleOrigin:       cfg.rpOrigin,
 	})
 	if err != nil {
 		return fmt.Errorf("building server: %w", err)

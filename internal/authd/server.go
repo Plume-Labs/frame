@@ -39,6 +39,15 @@ type ServerConfig struct {
 	Namespace  string
 	TokenTTL   time.Duration
 	SessionTTL time.Duration
+	// ConsoleOrigin is the browser origin an invitation link points at, e.g.
+	// "https://frame.example". cmd/authd feeds it RP_ORIGIN — the value
+	// WebAuthn already requires to be the console's exact origin — so this
+	// adds no environment variable and cannot drift from the origin the
+	// browser will actually be on.
+	ConsoleOrigin string
+	// InviteTTL bounds how long an invitation link is good for. Defaults to
+	// 24 hours in NewServer.
+	InviteTTL time.Duration
 }
 
 // Server is authd's HTTP surface: WebAuthn and password login, session
@@ -52,6 +61,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.SessionTTL == 0 {
 		cfg.SessionTTL = 12 * time.Hour
 	}
+	if cfg.InviteTTL == 0 {
+		cfg.InviteTTL = 24 * time.Hour
+	}
 	s := &Server{cfg: cfg, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /.well-known/openid-configuration", s.handleDiscovery)
 	s.mux.HandleFunc("GET /keys", s.handleJWKS)
@@ -64,6 +76,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.mux.HandleFunc("POST /auth/login/finish", s.handleLoginFinish)
 	s.mux.HandleFunc("POST /auth/register/begin", s.handleRegisterBegin)
 	s.mux.HandleFunc("POST /auth/register/finish", s.handleRegisterFinish)
+	s.mux.HandleFunc("POST /auth/invite", s.handleInvite)
 	return s, nil
 }
 
