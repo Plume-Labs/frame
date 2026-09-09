@@ -39,6 +39,22 @@ function stubBrowser(overrides: Record<string, string> = {}) {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
+/**
+ * The exact path every FrameUser read and write must take.
+ *
+ * Spelled out in full, namespace segment included, rather than matched on
+ * `.includes('/frameusers')`. The substring form is what let a whole branch
+ * ship with the Accounts screen pointed at the wrong namespace: FrameUsers
+ * exist only where authd runs (`cluster-control` — its Role is namespaced
+ * there, so it cannot create them anywhere else), while the SDK was building
+ * the path from `config().frameNamespace`, whose default is `default` and
+ * which nothing in the repo or the docs ever sets. Every test still passed,
+ * because `/apis/.../namespaces/default/frameusers` contains `/frameusers`
+ * just as happily as the correct path does. On a real cluster the list came
+ * back empty with no error and both PATCHes 404'd.
+ */
+const FRAMEUSERS_PATH = '/apis/frame.plume-labs.io/v1beta1/namespaces/cluster-control/frameusers'
+
 beforeEach(() => {
   vi.unstubAllGlobals()
 })
@@ -158,10 +174,12 @@ describe('revokeCredential', () => {
 describe('listAccounts', () => {
   it('reshapes the FrameUser list, defaults an unset state to enabled, and reads each key count', async () => {
     stubBrowser()
+    const urls: string[] = []
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string) => {
         const url = String(input)
+        urls.push(url)
         if (url.includes('/frameusers')) {
           return new Response(
             JSON.stringify({
@@ -191,6 +209,8 @@ describe('listAccounts', () => {
       { name: 'alice', email: 'alice@example.com', role: 'admin', state: 'enabled', keyCount: 1 },
       { name: 'bob', email: 'bob@example.com', role: 'viewer', state: 'enabled', keyCount: 0 },
     ])
+    // The list is read from authd's namespace, not the configurable one.
+    expect(urls[0]).toBe(FRAMEUSERS_PATH)
   })
 
   // The account list must not render "0 keys" for an account whose key count
@@ -224,7 +244,7 @@ describe('setAccountRole', () => {
     stubBrowser()
     const calls = stubFetch(new Response(null, { status: 204 }))
     await setAccountRole('bob', 'bob@example.com', 'admin')
-    expect(calls[0].url).toContain('/frameusers/bob')
+    expect(calls[0].url).toBe(`${FRAMEUSERS_PATH}/bob`)
     expect(calls[0].init?.method).toBe('PATCH')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { role: 'admin' } })
     // The action names what changed, not the mechanics of the request — a
@@ -239,6 +259,7 @@ describe('setAccountState', () => {
     stubBrowser()
     const disableCalls = stubFetch(new Response(null, { status: 204 }))
     await setAccountState('bob', 'bob@example.com', 'disabled')
+    expect(disableCalls[0].url).toBe(`${FRAMEUSERS_PATH}/bob`)
     expect(JSON.parse(String(disableCalls[0].init?.body))).toEqual({ spec: { state: 'disabled' } })
     expect((disableCalls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe(
       'disable bob@example.com',
