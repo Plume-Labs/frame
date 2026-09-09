@@ -315,13 +315,25 @@ func TestDummyPasswordHashIsValidAndVerifiable(t *testing.T) {
 // TestPasswordLoginAlwaysVerifiesExactlyOnce is the structural,
 // timing-independent counterpart to the timing-oracle fix: it proves
 // handlePasswordLogin calls verifyPassword exactly once per request on every
-// failure path (unknown email, password disabled, wrong password), not just
-// that the dummy hash constant happens to be valid. A regression to the
-// original `err != nil || u.Spec.PasswordAuth != Enabled || !VerifyPassword(...)`
+// failure path (unknown email, password disabled, wrong password, disabled
+// account), not just that the dummy hash constant happens to be valid. A
+// regression to the original
+// `err != nil || u.Spec.PasswordAuth != Enabled || !VerifyPassword(...)`
 // short-circuit would make this test fail with 0 calls for the first two
 // cases, even though TestUnknownEmailAndWrongPasswordAreIndistinguishable and
 // TestDummyPasswordHashIsValidAndVerifiable would both still pass — neither
 // of those actually observes whether verifyPassword ran.
+//
+// The "disabled account" case guards the requireIssuable clause the same
+// way: it uses the correct password against a real hash, so the only thing
+// standing between this request and a session is spec.state. A caller that
+// "simplified" handlePasswordLogin into an early
+// `if requireIssuable(u) != nil { http.Error(w, "unauthorized", 401); return }`
+// before reaching verifyPassword would still return 401 — TestPasswordLoginPathRefusesADisabledAccount
+// would not catch it — but it would answer in microseconds instead of paying
+// the ~100ms argon2id cost every other refusal here pays, reopening exactly
+// the timing oracle this function's design comment exists to close. calls
+// != 1 is what catches that; the status code alone would not.
 func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
 	enabled := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
 	enabled.Spec.PasswordAuth = framev1beta1.PasswordEnabled
@@ -334,6 +346,11 @@ func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
 	disabled := fixture("bob", "bob@example.com", framev1beta1.RoleViewer)
 	disabled.Spec.PasswordAuth = framev1beta1.PasswordDisabled
 
+	disabledAccount := fixture("carol", "carol@example.com", framev1beta1.RoleAdmin)
+	disabledAccount.Spec.PasswordAuth = framev1beta1.PasswordEnabled
+	disabledAccount.Status.PasswordHash = hash
+	disabledAccount.Spec.State = framev1beta1.StateDisabled
+
 	cases := []struct {
 		name string
 		srv  *Server
@@ -342,6 +359,9 @@ func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
 		{"unknown email", testServer(t, enabled), `{"email":"ghost@example.com","password":"nope"}`},
 		{"password disabled", testServer(t, disabled), `{"email":"bob@example.com","password":"nope"}`},
 		{"wrong password", testServer(t, enabled), `{"email":"alice@example.com","password":"nope"}`},
+		// Correct password, real hash — only spec.state stands between this
+		// request and a session.
+		{"disabled account", testServer(t, disabledAccount), `{"email":"carol@example.com","password":"hunter2"}`},
 	}
 
 	original := verifyPassword
