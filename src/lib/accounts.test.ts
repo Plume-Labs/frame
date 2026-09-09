@@ -3,8 +3,13 @@ import {
   acceptInvitation,
   inviteAccount,
   inviteTokenFromLocation,
+  isOnlyEnabledAdmin,
+  listAccounts,
   listCredentials,
   revokeCredential,
+  setAccountRole,
+  setAccountState,
+  type Account,
 } from '@/lib/accounts'
 
 /** Records what was fetched, so a test can assert on the request as well as the answer. */
@@ -18,6 +23,17 @@ function stubFetch(response: Response | ((input: string, init?: RequestInit) => 
     }),
   )
   return calls
+}
+
+/**
+ * `listAccounts`/`setAccountRole`/`setAccountState` go through
+ * `createFrameClient().users`, which reads `window.__FRAME_NAMESPACE__` and
+ * `window.__FRAME_TOKEN__` (see `frame-sdk.ts`). `window` doesn't exist under
+ * vitest's `environment: 'node'`, so it must be stubbed before any of those
+ * three run — matching `stubBrowser()` in `frame-sdk.test.ts`.
+ */
+function stubBrowser(overrides: Record<string, string> = {}) {
+  vi.stubGlobal('window', overrides)
 }
 
 const json = (body: unknown, status = 200) =>
@@ -136,5 +152,145 @@ describe('revokeCredential', () => {
       ),
     )
     await expect(revokeCredential('k1')).rejects.toThrow(/last credential/)
+  })
+})
+
+describe('listAccounts', () => {
+  it('reshapes the FrameUser list, defaults an unset state to enabled, and reads each key count', async () => {
+    stubBrowser()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        const url = String(input)
+        if (url.includes('/frameusers')) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                { metadata: { name: 'alice' }, spec: { email: 'alice@example.com', role: 'admin', state: 'enabled' } },
+                // No state at all — the apiserver default, or a CR written before the field existed.
+                { metadata: { name: 'bob' }, spec: { email: 'bob@example.com', role: 'viewer' } },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        if (url.includes('user=bob')) {
+          return new Response(JSON.stringify({ credentials: [] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        return new Response(
+          JSON.stringify({ credentials: [{ id: 'k1', label: 'YubiKey', addedAt: 't', signCount: 1 }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }),
+    )
+
+    expect(await listAccounts()).toEqual([
+      { name: 'alice', email: 'alice@example.com', role: 'admin', state: 'enabled', keyCount: 1 },
+      { name: 'bob', email: 'bob@example.com', role: 'viewer', state: 'enabled', keyCount: 0 },
+    ])
+  })
+
+  // The account list must not render "0 keys" for an account whose key count
+  // it actually failed to read — that is a lie, not an unknown, and the two
+  // must stay distinguishable in what this function returns.
+  it('reports -1, not 0, when a key count could not be read', async () => {
+    stubBrowser()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        const url = String(input)
+        if (url.includes('/frameusers')) {
+          return new Response(
+            JSON.stringify({
+              items: [{ metadata: { name: 'carol' }, spec: { email: 'carol@example.com', role: 'viewer' } }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response('authd unreachable', { status: 502 })
+      }),
+    )
+
+    const [account] = await listAccounts()
+    expect(account.keyCount).toBe(-1)
+  })
+})
+
+describe('setAccountRole', () => {
+  it('PATCHes spec.role and labels the action for the audit trail', async () => {
+    stubBrowser()
+    const calls = stubFetch(new Response(null, { status: 204 }))
+    await setAccountRole('bob', 'bob@example.com', 'admin')
+    expect(calls[0].url).toContain('/frameusers/bob')
+    expect(calls[0].init?.method).toBe('PATCH')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { role: 'admin' } })
+    // The action names what changed, not the mechanics of the request — a
+    // promotion and a demotion must not collapse into the same Tasks-screen
+    // entry ("patch frameusers/bob") the way an unlabelled PATCH would.
+    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set bob@example.com to admin')
+  })
+})
+
+describe('setAccountState', () => {
+  it('labels a disable distinctly from an enable', async () => {
+    stubBrowser()
+    const disableCalls = stubFetch(new Response(null, { status: 204 }))
+    await setAccountState('bob', 'bob@example.com', 'disabled')
+    expect(JSON.parse(String(disableCalls[0].init?.body))).toEqual({ spec: { state: 'disabled' } })
+    expect((disableCalls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe(
+      'disable bob@example.com',
+    )
+
+    const enableCalls = stubFetch(new Response(null, { status: 204 }))
+    await setAccountState('bob', 'bob@example.com', 'enabled')
+    expect((enableCalls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe(
+      'enable bob@example.com',
+    )
+  })
+})
+
+describe('isOnlyEnabledAdmin', () => {
+  const account = (over: Partial<Account>): Account => ({
+    name: over.email ?? 'x',
+    email: 'x@example.com',
+    role: 'viewer',
+    state: 'enabled',
+    keyCount: 0,
+    ...over,
+  })
+
+  it('is true for the sole enabled admin among other accounts', () => {
+    const accounts = [
+      account({ email: 'admin@example.com', role: 'admin' }),
+      account({ email: 'viewer@example.com', role: 'viewer' }),
+    ]
+    expect(isOnlyEnabledAdmin(accounts, 'admin@example.com')).toBe(true)
+  })
+
+  it('is false when another enabled admin exists', () => {
+    const accounts = [
+      account({ email: 'a@example.com', role: 'admin' }),
+      account({ email: 'b@example.com', role: 'admin' }),
+    ]
+    expect(isOnlyEnabledAdmin(accounts, 'a@example.com')).toBe(false)
+  })
+
+  // Matches requireAnotherAdmin in frameuser_webhook.go, not anyAdminExists:
+  // a disabled admin cannot sign in to authorize anything, so they are not a
+  // backup and must not make this false.
+  it('does not count a disabled admin as a backup', () => {
+    const accounts = [
+      account({ email: 'a@example.com', role: 'admin', state: 'enabled' }),
+      account({ email: 'b@example.com', role: 'admin', state: 'disabled' }),
+    ]
+    expect(isOnlyEnabledAdmin(accounts, 'a@example.com')).toBe(true)
+  })
+
+  it('is false for an account that is not an admin at all', () => {
+    const accounts = [account({ email: 'a@example.com', role: 'viewer' })]
+    expect(isOnlyEnabledAdmin(accounts, 'a@example.com')).toBe(false)
   })
 })

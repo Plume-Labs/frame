@@ -9,6 +9,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,18 +31,30 @@ import { Fingerprint, Plus, Trash } from '@phosphor-icons/react'
  * lot 0c added that route, and this component's previous "enrolled this
  * session" caveat was the visible shape of its absence. Revoking is refused
  * by authd (409) when it would leave a passkey-only account with no way in,
- * so the last key cannot be removed by accident from here.
+ * so the last key cannot be removed by accident from here — but a revoke
+ * still asks first, since even a non-last key is a working sign-in method
+ * removed with no undo.
  */
 export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [label, setLabel] = useState('')
   const [enrolling, setEnrolling] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [keys, setKeys] = useState<CredentialSummary[]>([])
+  const [pendingRevoke, setPendingRevoke] = useState<CredentialSummary | undefined>(undefined)
 
   const refreshKeys = () => {
     listCredentials()
-      .then(setKeys)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .then((k) => {
+        setKeys(k)
+        setError(undefined)
+      })
+      .catch((err: unknown) => {
+        // A failed read must not leave the previous list on screen under a
+        // new error: that reads as "here are your keys" when it is actually
+        // "the last read failed and this may be stale or wrong".
+        setKeys([])
+        setError(err instanceof Error ? err.message : String(err))
+      })
   }
 
   useEffect(() => {
@@ -71,6 +93,7 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -121,7 +144,13 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                   className="flex items-center justify-between rounded border border-border bg-secondary/30 px-2 py-1.5 text-xs font-mono"
                 >
                   <span className="truncate">{key.label || key.id}</span>
-                  <Button variant="ghost" size="sm" onClick={() => void handleRevoke(key.id)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Revoke ${key.label || key.id}`}
+                    title={`Revoke ${key.label || key.id}`}
+                    onClick={() => setPendingRevoke(key)}
+                  >
                     <Trash />
                   </Button>
                 </li>
@@ -137,5 +166,34 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={!!pendingRevoke} onOpenChange={(next) => !next && setPendingRevoke(undefined)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="font-mono">
+            Revoke {pendingRevoke?.label || pendingRevoke?.id}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            You will no longer be able to sign in with this key. This cannot be undone. (authd
+            refuses to remove your last key, so this is safe to confirm even if it turns out to be
+            your only one.)
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              if (!pendingRevoke) return
+              const id = pendingRevoke.id
+              setPendingRevoke(undefined)
+              void handleRevoke(id)
+            }}
+          >
+            Revoke
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
