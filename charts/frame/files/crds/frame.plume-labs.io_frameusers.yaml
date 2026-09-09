@@ -258,8 +258,9 @@ spec:
                   The enum is what makes the empty string safe to read as "enabled" in
                   internal/authd: the apiserver defaults an absent value and refuses every
                   word but these two, so authd never sees a third state it would have to
-                  guess about. No MinLength is needed — "" is not in the enum — and
-                  not reject an empty string from a typed client.
+                  guess about. No MinLength is needed — "" is not in the enum — and the
+                  kubebuilder Required marker would not have helped, since it does not
+                  reject an empty string from a typed client.
                 enum:
                 - enabled
                 - disabled
