@@ -8,6 +8,29 @@ Frame exposes the Kubernetes CRD API directly — there is no intermediate REST 
 
 ## Authentication
 
+`authd` is the identity provider for the Cluster Control UI. It issues
+`frame_session` cookies from a password or a passkey, mints short-lived
+bearer tokens from that cookie, and is where an admin invites a second
+person. The routes:
+
+| Route | Caller | Answer |
+|---|---|---|
+| `POST /auth/bootstrap` | one-shot token | Creates the first admin, then closes forever. |
+| `POST /auth/login/password` | anyone | 204 + `frame_session` (12h). Disabled account: 401. |
+| `POST /auth/login/begin` / `finish` | anyone | Usernameless WebAuthn. Disabled account: 401. |
+| `POST /auth/token` | session | `{id_token, expires_in}`. Disabled account: 401. |
+| `POST /auth/logout` | session | 204, clears the cookie. |
+| `POST /auth/register/begin` / `finish` | session (an ordinary one, or an accepted invitation's enrolment session) | Enrols a key for the session's owner, never for anyone named in the body. |
+| `POST /auth/invite` | admin session | `{url}` — an account with no credential, plus a 24h single-use link. `role` is `operator` or `viewer` only. |
+| `POST /auth/invite/accept` | invitation token | 204 + a 15-minute **enrolment session**, sealed under its own purpose. It reaches only the two WebAuthn enrolment routes above — it cannot mint a token and cannot call `/auth/invite`. The invitee holds no ordinary session after enrolling and signs in normally, the same as anyone else. 410 (`this account already has a credential`) once the account holds any credential — not "this invitation has already been used": the same guard also fires for a password, which need not have come from this invitation. |
+| `GET /auth/credentials` | session (`?user=` for an admin) | The enrolled keys, without public-key material. |
+| `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would leave a passkey-only account with no way in. |
+
+The `window.__FRAME_TOKEN__` prose below describes the pre-`authd` world,
+where a Secret-issued ServiceAccount token was injected directly into the
+page. That path predates the routes above and is not how the console
+authenticates today; rewriting it is not this lot's job.
+
 ### Development (kubectl proxy)
 
 ```bash

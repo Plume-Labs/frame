@@ -485,6 +485,46 @@ fine — there is no chicken-and-egg.
    design (`AdminCount() > 0` closes it before the token is even checked) —
    sign in as that account instead.
 
+### Inviting a second person
+
+1. Sign in as an admin, open **Accounts**, choose **Invite**, give an address
+   and `viewer` or `operator`.
+2. Copy the link and send it however you already talk to that person. Frame
+   sends no mail: there is no mail path in this cluster, and adding one is a
+   separate project.
+3. They open the link and enrol a key. The link then dies — refused because
+   the account holds a credential, not because a flag was flipped. Nothing
+   needs cleaning up. **They do not land signed in.** The link's session is
+   an enrolment session, sealed under its own purpose and good only for the
+   two WebAuthn enrolment routes — it cannot mint a token and it cannot call
+   `/auth/invite`. Once the key is enrolled, they hold no session at all and
+   sign in normally, the same as anyone else (see `src/components/InviteAcceptView.tsx`).
+4. To make someone an admin, invite them as an operator or viewer first and
+   change the role in the table. An invitation cannot create an admin:
+   `authd` acts under its own ServiceAccount, and admission refuses a
+   `spec.role: admin` create from anyone who is not already an admin — the
+   guard that stops everything holding `create frameusers` from minting one.
+5. To cut someone off, set their `spec.state` to `disabled` in the Accounts
+   table. Their keys stay enrolled; re-enabling restores them without a new
+   ceremony. An open session stops working within one token lifetime (15
+   minutes by default), because every identity-issuing route in `authd`
+   checks `spec.state` before it will mint or re-mint anything for that
+   account (see [crd-reference.md](crd-reference.md), "FrameUser").
+
+> **The check that has never once been run end to end.** Invite a viewer.
+> Accept it in a separate browser profile. Enrol a key. Sign in as them,
+> attempt to cordon a node, and confirm a **403** and a `FrameTask` recording
+> the refusal. Then disable the account from the admin's Accounts screen and
+> confirm the viewer's console returns to the login gate within one token
+> lifetime without anyone clearing a cookie. While in there, also open the
+> viewer's passkeys dialog and use the revoke confirmation — it is the first
+> place in this codebase that opens a confirmation dialog on top of an
+> already-open dialog (`src/components/PasskeysDialog.tsx`), nothing else in
+> the repo does that, and a `.tsx` component cannot be exercised by the test
+> suites available here, so it needs a human's eyes once. **Until all of
+> this has been done on the cluster, per-user identity is proven only in
+> envtest and by `SubjectAccessReview`.**
+
 **Rollback** is re-applying the previous kustomization (the old
 `deployment.yaml` + `rbac.yaml`, before this lot). Accounts created in step 5
 survive it — `FrameUser` objects are ordinary CRs, untouched by which sidecar

@@ -1,6 +1,6 @@
 # Lot 0c — inviting a second human
 
-**Status:** design approved 2026-09-09. Implementation not started.
+**Status:** design approved 2026-09-09; implemented on `feat/lot0-identity-tasks`. The end-to-end cluster check in docs/deployment.md ("Inviting a second person") has not been executed.
 
 ## Why
 
