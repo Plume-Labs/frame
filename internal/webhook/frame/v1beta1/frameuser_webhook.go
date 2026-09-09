@@ -19,6 +19,7 @@ package v1beta1
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -65,6 +66,12 @@ func (v *FrameUserCustomValidator) ValidateCreate(ctx context.Context, obj *fram
 	// admission runs (PrepareForCreate precedes validating admission), so this
 	// can only be non-empty on a v1alpha1 create carrying spec.passwordHash.
 	if err := guardPasswordHash(ctx, "", obj.Status.PasswordHash); err != nil {
+		return nil, err
+	}
+	// Before the role branch, so it covers every create and not just the
+	// admin ones: an invited viewer claiming an admin's address is the whole
+	// attack, and it carries spec.role: viewer.
+	if err := v.requireEmailUnclaimed(ctx, obj.Spec.Email, obj.Name); err != nil {
 		return nil, err
 	}
 	if obj.Spec.Role != framev1beta1.RoleAdmin {
@@ -125,6 +132,36 @@ func (v *FrameUserCustomValidator) ValidateUpdate(ctx context.Context, oldObj, n
 		action := fmt.Sprintf("change spec.state from %q to %q",
 			stateOrEnabled(oldObj.Spec.State), stateOrEnabled(newObj.Spec.State))
 		if err := requireAdminRequester(ctx, action); err != nil {
+			return nil, err
+		}
+	}
+	// spec.email takes the same guard as spec.role and spec.state, and closes
+	// the last identity-bearing field that had none.
+	//
+	// The address is not a label on the account; it *is* the account, as far
+	// as every later resolution is concerned. setSessionFor seals it into the
+	// session cookie, and sessionUser hands it to Store.ByEmail — which
+	// matches exactly and returns the first match in list order, semantics
+	// this branch reaffirmed and documented as load-bearing. So a principal
+	// holding only `patch frameusers` could repoint *their own* FrameUser's
+	// spec.email at an admin's address, sign in with their own passkey
+	// (ByCredentialID still finds their object, correctly), and have the next
+	// /auth/token mint a token carrying the admin's email and role. RBAC is
+	// the first half of the answer; this is the half that holds when RBAC is
+	// wrong, exactly as for spec.role.
+	//
+	// Compared exactly, not with EqualFold: a case-only rewrite still changes
+	// the stored string, and ByEmail matches exactly, so "alice@example.com"
+	// -> "Alice@example.com" is a real change of who that record resolves as.
+	if oldObj.Spec.Email != newObj.Spec.Email {
+		action := fmt.Sprintf("change spec.email from %q to %q", oldObj.Spec.Email, newObj.Spec.Email)
+		if err := requireAdminRequester(ctx, action); err != nil {
+			return nil, err
+		}
+		// Only on a change. Checking every update would freeze an object that
+		// already collides — including the ability to disable it — which is
+		// the opposite of what a rule protecting identity should do.
+		if err := v.requireEmailUnclaimed(ctx, newObj.Spec.Email, newObj.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -339,6 +376,54 @@ func guardPasswordHash(ctx context.Context, oldHash, newHash string) error {
 // so counting one as the admin who remains would allow the last usable admin
 // to be demoted, deleted or switched off, leaving a console nobody can enter
 // and a recovery that runs through the node's kubeconfig.
+// requireEmailUnclaimed refuses a write that would leave two FrameUsers
+// claiming the same mailbox, excluding the object making the write from the
+// comparison so that an account's own address never collides with itself.
+//
+// Case-insensitive, and that is the point rather than a convenience. The
+// collision that matters is not "the same string", it is "the same mailbox":
+// exact-match uniqueness would happily admit "Alice@Example.com" beside
+// "alice@example.com", and Store.ByEmail — exact by design, so that a
+// verified credential resolves to the account that actually holds it, never
+// to a case-variant — would then resolve the pair by whichever object name
+// sorts first in the list. Uniqueness here is what makes ByEmail's
+// exactness safe: it guarantees the exact match is also the only match.
+//
+// This is the create-side complement of authd's own inviteeAlreadyExists
+// (internal/authd/server_invite.go), which asks the identical question one
+// layer up so an admin gets a 409 naming the conflict instead of an opaque
+// admission failure. That check governs one route on one writer; this one
+// governs every writer, including kubectl and any principal holding
+// `create`/`patch frameusers` directly, which is the threat model the rest
+// of this file is written to.
+//
+// Fails closed, like requireAnotherAdmin and anyAdminExists: an unreadable
+// list is not evidence that an address is free.
+func (v *FrameUserCustomValidator) requireEmailUnclaimed(ctx context.Context, email, excluding string) error {
+	// An empty address cannot collide and is not this rule's business: the
+	// CRD's own Pattern on spec.email is what refuses it, and duplicating
+	// that judgement here would give the same write two different refusals
+	// depending on which validator ran first.
+	if email == "" {
+		return nil
+	}
+	var users framev1beta1.FrameUserList
+	if err := v.Client.List(ctx, &users); err != nil {
+		return fmt.Errorf("cannot verify that %q is unclaimed: %w", email, err)
+	}
+	for _, u := range users.Items {
+		if u.Name != excluding && strings.EqualFold(u.Spec.Email, email) {
+			return fmt.Errorf(
+				"refusing to set spec.email to %q: that address is already claimed by FrameUser %q. "+
+					"Two accounts sharing an address, in any casing, resolve to each other by list "+
+					"order at sign-in, so whoever holds either credential can be issued the other's "+
+					"identity and role",
+				email, u.Name)
+		}
+	}
+	return nil
+}
+
 func (v *FrameUserCustomValidator) requireAnotherAdmin(ctx context.Context, excluding string) error {
 	var users framev1beta1.FrameUserList
 	if err := v.Client.List(ctx, &users); err != nil {
