@@ -4,11 +4,13 @@
 
 **Goal:** A person signed in to the Frame console can see every workload on the cluster, read a pod's logs, open a shell in a container, restart a deployment, scale it, delete a pod and edit a resource — under their own identity, with the writes recorded, and without reaching for `kubectl`.
 
-**Architecture:** Everything keeps going through `frame-uiproxy` on the path it already serves. Three things in the proxy make that possible: `statusRecorder` gains `http.Hijacker` so Go's `ReverseProxy` can perform an HTTP upgrade; `FrameTask`'s `ObjectRef` gains `subresource` so an exec is distinguishable from a pod create; and the recorder learns to open a session-shaped record for a WebSocket exec and close it when the socket closes. A browser cannot set a request header on `new WebSocket()`, so the token rides the `base64url.bearer.authorization.k8s.io.` subprotocol, which the proxy consumes and strips. On the console side every piece of logic that can be tested lives in `src/lib` (`workloads.ts`, `exec-protocol.ts`, `pod-logs.ts`, `manifest-diff.ts`); the components are the untested shell around them, by construction.
+**Architecture:** One thing has to happen before any of it: `patch` on Deployments was removed from this repository on 2026-08-10 as "the single grant that turned the unauthenticated UI into cluster-admin", and restart and scale cannot exist without it. Task 6 earns it back the way that removal said to — `baseline` Pod Security enforced on the application namespaces, infrastructure namespaces deliberately exempt — and Task 7 binds the grant with a `RoleBinding` into exactly the enforced namespaces, carrying no tier label so the aggregation cannot widen it. Restart and scale therefore work on application workloads and 403 on infrastructure ones, and the screen says so.
 
-**Tech Stack:** Go 1.26.1, `net/http` + `net/http/httputil`, controller-runtime v0.23.x, envtest + Ginkgo, kubebuilder v4 multigroup layout, React 19 + Vite + vitest (node environment), `@xterm/xterm`, kustomize, Helm, nginx.
+The rest keeps going through `frame-uiproxy` on the path it already serves. Three things in the proxy make that possible: `statusRecorder` gains `http.Hijacker` so Go's `ReverseProxy` can perform an HTTP upgrade; `FrameTask`'s `ObjectRef` gains `subresource` so an exec is distinguishable from a pod create; and the recorder learns to open a session-shaped record for a WebSocket exec and close it when the socket closes. A browser cannot set a request header on `new WebSocket()`, so the token rides the `base64url.bearer.authorization.k8s.io.` subprotocol, which the proxy consumes and strips. On the console side every piece of logic that can be tested lives in `src/lib` (`workloads.ts`, `exec-protocol.ts`, `pod-logs.ts`, `manifest-diff.ts`); the components are the untested shell around them, by construction.
 
-**Spec:** `docs/superpowers/specs/2026-09-09-lot2-workloads-design.md`
+**Tech Stack:** Go 1.26.1, `net/http` + `net/http/httputil`, controller-runtime v0.23.x, envtest + Ginkgo, kubebuilder v4 multigroup layout, React 19 + Vite + vitest (node environment), `@xterm/xterm`, Kubernetes Pod Security Admission, kustomize, Helm, nginx.
+
+**Spec:** `docs/superpowers/specs/2026-09-09-lot2-workloads-design.md`, including the amendment in commit `2f5f408` ("Restart and scale require Pod Security first"), which this plan implements as Tasks 6 and 7.
 
 ## Global Constraints
 
@@ -20,6 +22,7 @@
 - Console writes go through `k8sFetch` (`src/lib/frame-sdk.ts`), which retries once on 401 with a fresh token and sends `X-Frame-Action`. **A bare `fetch` for a write is a defect** — it skips the retry and leaves no audit label. `src/lib/frame-sdk.test.ts` has a structural guard (`has no bare fetch() left in the module`) that fails on any `fetch(` not preceded by a letter or a dot; `globalThis.fetch(`, `proxyFetch(` and `k8sFetch(` are the three allowed spellings.
 - **Namespaces: assert the full request path in tests, never `url.includes()`.** The Accounts screen shipped reading `frameusers` in `default` because a test matched a substring; the failure mode is a silently empty list. `frameListPath(plural, ns?)` / `coreListPath(plural, ns?)` take a namespace override. Any new client that pins a namespace must have its full path asserted, spelled out as a constant (see `FRAMEUSERS_PATH` in `src/lib/accounts.test.ts`).
 - `config/rbac/*_role.yaml` and `charts/frame/templates/rbac-tier-roles.yaml` are hand-maintained copies of the same rules. **`make helm-parity` has a KNOWN pre-existing failure** on a cpu-request drift (`10m` vs `100m`) in files this branch does not touch — do not chase it; confirm the diff it reports is only that. This lot changes no per-kind tier role, so neither file is edited.
+- **`patch` on `apps/deployments` is not a grant this lot may make cluster-wide.** It was removed on 2026-08-10 as "the single grant that turned the unauthenticated UI into cluster-admin" (`deploy/kubernetes/base/rbac.yaml`), because RBAC cannot bound a patch to one JSON path and a pod template can carry `privileged: true` with a `hostPath: /` volume. Task 6 enforces `baseline` Pod Security on the application namespaces and Task 7 binds the grant there and nowhere else, with a `RoleBinding` per namespace and **no tier label**. Nothing later in the plan may relabel, aggregate or widen it.
 - `deploy/kubernetes/base/rbac.yaml` requires **every rule to carry a comment naming its call site in `src/`**. Follow that discipline for every rule added. Rules that could not be tied to a call site were deleted from that file in an earlier audit; do not re-add anything speculatively.
 - CRDs live in `config/crd/bases/` and `charts/frame/files/crds/`. `make manifests` regenerates the first and calls `make helm-sync-crds`; `make helm-crds-check` fails on drift. Never hand-edit either copy.
 - `internal/controller/frame` bootstraps envtest through a Ginkgo suite (`TestControllers`) and Go orders test files alphabetically: **a plain `func TestX` in that package panics on a nil client.** Schema assertions go inside a `Describe`/`DescribeTable`.
@@ -920,7 +923,7 @@ Three things stand in the way, and each is a small, testable rule:
 2. **The verb must be `create`.** That is what the apiserver authorizes (`create pods/exec`) whatever HTTP method carries the request, and the record must use the same word the RBAC rule uses or the two cannot be read together.
 3. **A browser cannot set `X-Frame-Action` on a WebSocket.** `new WebSocket()` takes a URL and a subprotocol list and nothing else. The label every other write supplies cannot exist here, so the recorder builds it from the path and the `container` query parameter.
 
-This task also adds the one rule the manifest editor depends on: **a `dryRun` request leaves no `FrameTask`.** The YAML editor validates an edit with `PUT ?dryRun=All` before it computes the audit label for the real write (Task 12), and a dry run changes nothing — recording it would double every edit in the trail with a row that did nothing.
+This task also adds the one rule the manifest editor depends on: **a `dryRun` request leaves no `FrameTask`.** The YAML editor validates an edit with `PUT ?dryRun=All` before it computes the audit label for the real write (Task 13), and a dry run changes nothing — recording it would double every edit in the trail with a row that did nothing.
 
 **Files:**
 - Modify: `internal/uiproxy/proxy.go` (`ServeHTTP`, plus a new `isExecUpgrade`)
@@ -937,7 +940,7 @@ This task also adds the one rule the manifest editor depends on: **a `dryRun` re
   func isDryRun(q url.Values) bool
   func execAction(ref framev1beta1.ObjectRef, q url.Values) string
   ```
-  Task 12's manifest editor relies on `?dryRun=All` leaving no record.
+  Task 13's manifest editor relies on `?dryRun=All` leaving no record.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1282,7 +1285,7 @@ Two hops in front of the proxy also have to be taught to carry an upgrade: nginx
   const bearerProtocolPrefix = "base64url.bearer.authorization.k8s.io."
   func tokenFromProtocols(values []string) (token string, remaining []string)
   ```
-  Task 8 builds the browser side of the same convention (`execSubprotocols`).
+  Task 9 builds the browser side of the same convention (`execSubprotocols`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1583,27 +1586,384 @@ git add internal/uiproxy deploy/docker/nginx.conf vite.config.ts && git commit -
 
 ---
 
-### Task 6: RBAC for the three tiers
+### Task 6: Pod Security on the application namespaces
+
+**This task must land before Task 7, and Task 7 must not be started without it.** Task 7 grants `patch` on Deployments and StatefulSets. That grant was removed from this repository on 2026-08-10 and `deploy/kubernetes/base/rbac.yaml` documents the removal at length: it is "the single grant that turned the unauthenticated UI into cluster-admin", because patching a pod template to add `securityContext.privileged: true` and a `hostPath: /` volume is root on the node, and **no namespace on this cluster carries a `pod-security.kubernetes.io/enforce` label to stop it**. RBAC cannot bound a patch to one JSON path, so "may set the restartedAt annotation" and "may make the pod privileged" are the same grant.
+
+The same comment names the safe way to earn it back, and this lot takes it: enforce Pod Security first, then grant the patch only where the privileged payload is refused at admission.
+
+**Enforcing does not evict anything.** It refuses the *next* admission. A workload that has always violated the policy keeps running and fails the next time it restarts — which is during an incident, not during this change. That is why this task labels `warn` and `audit` first, reads the violations, resolves them, and only then flips to `enforce`. Two commits, in that order. Do not collapse them.
+
+**Files:**
+- Create: `deploy/kubernetes/pod-security/kustomization.yaml`
+- Create: `deploy/kubernetes/pod-security/namespaces.yaml`
+- Modify (Step 6, second commit): `deploy/kubernetes/pod-security/namespaces.yaml`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces:
+  ```
+  deploy/kubernetes/pod-security/namespaces.yaml
+  ```
+  the single source of truth for **which namespaces are enforced**, one `kind: Namespace`
+  document per namespace, each with `metadata.name` on its own line. Task 7 binds a
+  RoleBinding into exactly these namespaces and Task 8 mirrors the list into
+  `OPERABLE_NAMESPACES` in `src/lib/workloads.ts`; both have tests that read this file, so its
+  shape is load-bearing — keep one `  name: <ns>` line per document and nothing else indented
+  two spaces under `metadata`.
+
+  The enforced set, derived below:
+  `default`, `inference`, `neura`, `neura-batch`, `neura-database`, `neura-inference`, `neura-training`.
+
+- [ ] **Step 1: Enumerate, from the manifests rather than from memory**
+
+Do not guess which namespaces can take `baseline`. Read what actually ships:
+
+```bash
+grep -rn -A3 '^kind: Namespace' deploy/ --include='*.yaml' | grep -E 'name:'
+grep -rhoP '^\s+namespace:\s*\K[a-z0-9-]+' deploy/ --include='*.yaml' | sort -u
+for f in $(grep -rl -E 'privileged: true|hostPID: true|hostNetwork: true|hostPath:' deploy/ --include='*.yaml'); do
+  echo "$(grep -m1 -oP '^\s+namespace:\s*\K[a-z0-9-]+' "$f") :: $f"
+done | sort -u
+```
+
+The third command is the one that decides. Its output at the time of writing, minus one false
+positive (`deploy/kubernetes/base/rbac.yaml` matches only because its comment quotes
+`hostPath: /`):
+
+| Namespace | Why it cannot take `baseline` |
+|---|---|
+| `kube-system` | `node-tuning-agent` (`hostPID`, the whole point of the agent), `kmod-rdma-loader`, `nvidia-mps`, `cpu-manager-policy`, `dpdk-init`, `multus`, `rdma-device-plugin`, `rdma-network-tuning`, `sriov-device-plugin` |
+| `monitoring` | `node-exporter` (`hostPath` on `/proc`, `/sys`), `dcgm-exporter` |
+| `alluxio` | `burst-buffer-nvme` (`hostPath` on the NVMe mount) |
+| `cilium` | the CNI |
+| `ptp` | `ptp-sync` (`hostNetwork`, for PTP hardware timestamps) |
+
+Four more hold privileged workloads that are installed by their own operator or chart rather
+than by a manifest in this repository, so the grep cannot see them and they are classified by
+what they are: `rook-ceph` (OSDs are privileged with `hostPath` block devices), `gpu-operator`
+(the NVIDIA driver and container-toolkit DaemonSets), `node-feature-discovery` (the worker reads
+the host), `velero` (the node agent mounts `/var/lib/kubelet/pods`), plus `falco` and `tetragon`
+(both eBPF/kernel), and `checkpoint-system` (CRIU needs privileged).
+
+Everything else — `argo`, `argocd`, `flux-system`, `volcano-system`, `yunikorn`, `redis-cache`,
+`data-fabric`, `sriov-network-operator`, `cluster-control`, `frame-system` — is left alone too,
+for a different and simpler reason: **not labelling a namespace also means not granting it.**
+The RoleBinding in Task 7 goes only where the label goes, so an unlabelled namespace is exactly
+as operable from the console as it is today, which is not at all. There is no need to decide
+whether Argo could survive `baseline` in order to ship this.
+
+That leaves the application namespaces, which are what the Workloads screen exists to operate:
+`default`, `inference`, `neura`, `neura-batch`, `neura-database`, `neura-inference`,
+`neura-training`. None of them appears in the grep above.
+
+- [ ] **Step 2: Write the manifest, in warn-and-audit mode only**
+
+Create `deploy/kubernetes/pod-security/namespaces.yaml`. **No `enforce` label in this commit** —
+that is Step 6, after the violations have been read:
+
+```yaml
+# Pod Security Admission on the application namespaces.
+#
+# This exists to earn back one RBAC grant. `patch` on apps/deployments and
+# apps/statefulsets was removed on 2026-08-10 (see
+# ../base/rbac.yaml) because patching a pod template to add
+# `securityContext.privileged: true` and a `hostPath: /` volume is root on the
+# node, and nothing on this cluster refused such a pod. RBAC cannot bound a
+# patch to one JSON path, so the only way to hold "may restart a deployment"
+# without also holding "may take the node" is to make the second one fail at
+# admission. That is what `baseline` does.
+#
+# ── WHICH NAMESPACES ARE HERE, AND WHICH ARE DELIBERATELY NOT ────────────────
+#
+# Only application namespaces. Infrastructure namespaces are absent because
+# their workloads legitimately need what `baseline` forbids: kube-system runs
+# the node-tuning agent with hostPID and six host-network/host-path
+# DaemonSets, monitoring runs node-exporter on hostPath /proc, alluxio mounts
+# the NVMe device, ptp needs hostNetwork, cilium is the CNI, and rook-ceph,
+# gpu-operator, node-feature-discovery, velero, falco, tetragon and
+# checkpoint-system all ship privileged pods from their own charts. Labelling
+# any of them would refuse their pods at the next restart and take the cluster
+# apart one node at a time.
+#
+# Absence here is not a gap. The RoleBinding that grants restart and scale
+# (../base/rbac-workload-operator.yaml) is bound namespace by namespace into
+# exactly this list, so a namespace that is not labelled is also not granted —
+# it stays as operable from the console as it is today, which is not at all.
+#
+# ── VERSION PIN ──────────────────────────────────────────────────────────────
+#
+# `*-version: v1.29` rather than the default `latest`, so that upgrading the
+# cluster cannot silently tighten what is admitted. v1.29 is `Chart.yaml`'s own
+# `kubeVersion` floor (">=1.29.0-0"), so it can only ever be at or below the
+# running version — a pin above it would be ignored with a warning. `baseline`
+# has been stable since 1.25; there is no behaviour being given up here.
+#
+# ── ORDER ────────────────────────────────────────────────────────────────────
+#
+# `warn` and `audit` only, on purpose, until the violations have been read.
+# Enforcing does not evict a running pod; it refuses the next admission — so a
+# workload that has always violated the policy keeps running and fails the next
+# time it restarts, which is during an incident rather than during this change.
+# `enforce` is added in a second commit, after `kubectl label
+# --dry-run=server` has been run against every namespace below and come back
+# clean. See docs/deployment.md, "Turning Pod Security on".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: default
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: inference
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-batch
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-database
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-inference
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-training
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+```
+
+Create `deploy/kubernetes/pod-security/kustomization.yaml`:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Its own kustomize target, NOT wired into `../base`, for the same reason
+# `../containment` is not: `../base/kustomization.yaml` used to carry a
+# namespace transformer, and a Namespace object rewritten by one is renamed
+# rather than relocated. It also has to be applyable and reversible on its own,
+# because the two-phase rollout below is the whole point.
+#
+# Apply order — and the middle step is not optional:
+#
+#   1. kubectl apply -k deploy/kubernetes/pod-security     # warn + audit
+#   2. read the violations (see docs/deployment.md, "Turning Pod Security on")
+#      and resolve every one
+#   3. add the `enforce` labels, apply again
+#   4. kubectl apply -f deploy/kubernetes/base/rbac-workload-operator.yaml
+#
+# Doing 4 before 3 hands an operator the escalation this exists to close.
+# Doing 3 before 2 breaks a deploy at the next restart of whatever was already
+# violating, which will not be today.
+#
+# No `namespace:` field: every object here is a Namespace and names itself.
+
+resources:
+  - namespaces.yaml
+```
+
+```bash
+kubectl --dry-run=client apply -k deploy/kubernetes/pod-security
+```
+
+Expected: seven `namespace/... configured (dry run)` lines and no error. This only checks that the YAML parses and the objects are well formed; it contacts nothing.
+
+- [ ] **Step 3: Commit the warn-and-audit phase**
+
+```bash
+git add deploy/kubernetes/pod-security && git commit -m "feat(security): warn and audit baseline Pod Security on the application namespaces"
+```
+
+- [ ] **Step 4: Apply it and read the violations**
+
+This step touches the cluster. It is the reason the task exists, and it must be done before Step 6.
+
+```bash
+kubectl apply -k deploy/kubernetes/pod-security
+```
+
+Then ask the apiserver, for each namespace, what `enforce` *would* refuse. A server-side dry run
+of the enforce label makes PodSecurity evaluate every pod already running in the namespace and
+return a warning naming each one and the rule it breaks — which is the only way to learn this
+without restarting anything:
+
+```bash
+for ns in default inference neura neura-batch neura-database neura-inference neura-training; do
+  echo "── $ns"
+  kubectl label --dry-run=server --overwrite namespace "$ns" \
+    pod-security.kubernetes.io/enforce=baseline \
+    pod-security.kubernetes.io/enforce-version=v1.29
+done
+```
+
+A clean namespace prints only `namespace/<ns> labeled (server dry run)`. A dirty one prints, before that line:
+
+```
+Warning: existing pods in namespace "neura" violate the new PodSecurity enforce level "baseline:v1.29"
+Warning: api-7d9f8-x1: hostPath volumes
+```
+
+The `audit` label from Step 2 is the other half, and it is the one that catches a violating pod
+created *after* this sweep: it writes a `pod-security.kubernetes.io/audit-violations` annotation
+into the apiserver's audit log. That log is only readable if audit logging is configured on this
+cluster's apiserver, so treat the dry run above as the primary instrument and the audit
+annotation as the backstop:
+
+```bash
+kubectl get events -A --field-selector reason=FailedCreate -o wide | head -30
+```
+
+- [ ] **Step 5: Resolve every violation found**
+
+**Treat this as part of the task, not as a formality.** If Step 4 printed nothing, record that —
+`kubectl label --dry-run=server` output for all seven namespaces, pasted into the commit message
+of Step 7 — and move on. If it printed something, each violation is one of a small set and each
+has a fix that does not need `baseline` relaxed:
+
+| Warning | What it means | Fix |
+|---|---|---|
+| `hostPath volumes` | a pod mounts a host directory | replace with a PVC, or move the workload to an unlabelled namespace |
+| `privileged` | `securityContext.privileged: true` | the workload is infrastructure and belongs in an unlabelled namespace |
+| `host namespaces` | `hostNetwork`/`hostPID`/`hostIPC` | same |
+| `non-default capabilities` | `capabilities.add` beyond the baseline set | drop the capability, or justify moving the namespace out of the enforced list |
+| `hostPort` | a container binds a host port | use a Service |
+
+If a violation cannot be fixed, the honest resolution is to **remove that namespace from
+`namespaces.yaml`**, not to weaken the policy — and then it is also not granted in Task 7, and
+Task 8's `OPERABLE_NAMESPACES` must lose it too or the drift test there fails. That coupling is
+deliberate: a namespace that cannot take `baseline` is a namespace where the Restart button must
+not appear.
+
+- [ ] **Step 6: Add `enforce`, and only now**
+
+Re-run Step 4's dry-run loop and confirm it is clean. Then add the two enforce labels to **every**
+document in `deploy/kubernetes/pod-security/namespaces.yaml`, beside the warn and audit ones:
+
+```yaml
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
+```
+
+and update the file's `── ORDER ──` comment block to record that the pass was run:
+
+```yaml
+# `enforce` was added on <date>, after `kubectl label --dry-run=server` came
+# back clean for all seven namespaces. `warn` and `audit` are kept alongside it
+# deliberately: enforce refuses, warn explains, and a person applying a rejected
+# manifest wants both.
+```
+
+```bash
+kubectl apply -k deploy/kubernetes/pod-security
+kubectl get ns default inference neura neura-batch neura-database neura-inference neura-training \
+  -o custom-columns='NS:.metadata.name,ENFORCE:.metadata.labels.pod-security\.kubernetes\.io/enforce'
+```
+
+Expected: `baseline` in every row. A blank cell is a namespace the apply did not reach, and it is
+also a namespace where Task 7's RoleBinding must not go.
+
+Then prove the policy actually refuses the payload it exists to refuse — this is the
+discriminating check for the whole task, and the one thing that distinguishes "labels applied"
+from "escalation closed":
+
+```bash
+kubectl -n neura run pod-security-probe --image=busybox --restart=Never --dry-run=server \
+  --overrides='{"spec":{"hostPID":true,"containers":[{"name":"probe","image":"busybox","securityContext":{"privileged":true}}]}}' \
+  -- sleep 1
+```
+
+Expected: a **refusal**, naming `violates PodSecurity "baseline:v1.29"`, `privileged` and `host
+namespaces`. If this command succeeds, the label is not doing anything and Task 7 must not be
+started — that is the exact state the 2026-08-10 removal was protecting against.
+
+- [ ] **Step 7: Commit the enforce phase**
+
+```bash
+git add deploy/kubernetes/pod-security && git commit -m "feat(security): enforce baseline Pod Security, after a clean warn pass"
+```
+
+Put the Step 4 dry-run output, or "clean for all seven", in the commit body. It is the evidence
+that the order was respected, and it is the only place that evidence will exist.
+
+---
+
+### Task 7: RBAC for the three tiers
 
 The spec's table:
 
 | Tier | Gains |
 |---|---|
 | viewer | nothing new for *pod state* — but the tree also shows DaemonSets and Jobs, which the viewer role does not currently grant, and it attaches a Deployment's pods through their ReplicaSet, which it does not grant either. Those three reads are viewer-tier. |
-| operator | `pods/log` (get), `pods` (delete), `deployments`/`statefulsets` (patch) and their existing `scale` subresource |
+| operator | `pods/log` (get) and `pods` (delete) at the tier; `deployments`/`statefulsets` **patch** and their `scale` subresource **not at the tier at all** — see below |
 | admin | `pods/exec` (create), and update/patch on exactly the kinds the Workloads screen shows: `pods`, `deployments`, `statefulsets`, `daemonsets`, `jobs` |
 
-Three things about this file before touching it.
+Four things about this file before touching it.
 
 **Every rule carries a comment naming its call site in `src/`.** That is the discipline the 2026-08-10 audit left behind, and rules that could not be tied to one were deleted rather than kept defensively.
 
 **There is no admin-tier ClusterRole here yet.** `frame-admin` aggregates `tier: admin`, which today is satisfied only by the twenty-seven per-kind Frame CRD roles. The console's admin grants need a new `cluster-control-admin` ClusterRole carrying that label — put it in this file beside its two siblings, not in `config/rbac/`, which is controller-gen's and per-kind.
 
-**Restoring `patch` on Deployments/StatefulSets re-opens a documented escalation.** The same file removed it on 2026-08-10 with a long note: patch a Deployment's pod template to add `securityContext.privileged: true` and a `hostPath: /` volume and you have root on the node, and no namespace on this cluster carries a `pod-security.kubernetes.io/enforce` label to stop it. RBAC cannot restrict a patch to one JSON path, so "may set the restartedAt annotation" and "may make the pod privileged" are the same grant. The spec puts Restart at the operator tier knowingly; the note must be rewritten to say the grant is back and why, not deleted. It also un-breaks `ApplicationClient.restart()`, whose button has returned 403 since that audit.
+**Restart and scale are a namespaced exception, and they will not fit the pattern the rest of this file uses.** Every other grant here is a labelled ClusterRole picked up by one of the three aggregated `frame-*` roles, which makes it cluster-wide. `patch` on Deployments cannot be cluster-wide: it was removed on 2026-08-10 as "the single grant that turned the unauthenticated UI into cluster-admin", because patching a pod template to add `securityContext.privileged: true` and a `hostPath: /` volume is root on the node. Task 6 closes that by enforcing `baseline` Pod Security — **but only on the application namespaces**, because Ceph, the node-tuning agent, the CNI and the Talos tooling legitimately need privileged pods and labelling their namespaces would take the cluster apart.
+
+So a cluster-wide grant would hand the escalation straight back through the exempt namespaces, which is the entire hole. The grant is therefore a **`RoleBinding` per enforced namespace**, in a file of its own, carrying **no tier label at all** — an unaggregated, namespaced exception with its reason written down beside it. It is the only rule in this repository shaped that way, and that is the point: the shape is what confines it to the namespaces where the payload is refused at admission.
+
+Consequence, and it is deliberate: restart and scale work on application workloads and **403 on infrastructure ones**. Task 14 makes the screen say so rather than offering a button that fails.
+
+**It also un-breaks `ApplicationClient.restart()`**, whose Restart button in `ApplicationsView.tsx` has returned 403 since 2026-08-10 — but only for the enforced namespaces. Verify it in Step 7.
 
 **Files:**
-- Modify: `deploy/kubernetes/base/rbac.yaml` (`cluster-control-viewer` rules; `cluster-control-operator` rules and the `apps` note; a new `cluster-control-admin` ClusterRole after `cluster-control-operator`)
+- Modify: `deploy/kubernetes/base/rbac.yaml` (`cluster-control-viewer` rules; `cluster-control-operator` rules and the `apps` note; a new `cluster-control-admin` ClusterRole after `cluster-control-operator`; **remove** the existing cluster-wide `deployments/scale`+`statefulsets/scale` rule)
+- Create: `deploy/kubernetes/base/rbac-workload-operator.yaml`
+- Modify: `deploy/kubernetes/base/kustomization.yaml` (add the new file to `resources`, after `rbac-tier-bindings.yaml`)
 - Test: `test/manifests/rbac_tiers_test.go`
+- Test: `test/manifests/rbac_workload_operator_test.go` (new)
 
 **This is testable, and there is already a harness for it.** `test/manifests`
 parses the shipped YAML — `config/rbac/*_role.yaml` plus
@@ -1614,8 +1974,10 @@ reviews and every Go test while the manifests granted nobody the rights to use
 any of it. Do not replace it with a `grep`.
 
 **Interfaces:**
-- Consumes: the call-site names produced by Tasks 8 and 11 (`WorkloadClient.tree`, `.logs`, `.restart`, `.scale`, `.deletePod`, `.applyManifest`; `execUrl` in `src/lib/exec-protocol.ts`). Those files do not exist yet — the comments name where the call site *will* be, which is what the file's own convention already does for `frame-sdk.ts` line numbers that move.
-- Produces: a `cluster-control-admin` ClusterRole labelled `rbac.frame.plume-labs.io/tier: admin`, picked up by the existing `frame-admin` aggregation in `rbac-tier-bindings.yaml`.
+- Consumes: `deploy/kubernetes/pod-security/namespaces.yaml` (Task 6) — the enforced set, which is exactly the set of namespaces that get a RoleBinding. Also the call-site names produced by Tasks 9 and 12 (`WorkloadClient.tree`, `.logs`, `.restart`, `.scale`, `.deletePod`, `.applyManifest`; `execUrl` in `src/lib/exec-protocol.ts`). Those files do not exist yet — the comments name where the call site *will* be, which is what this file's own convention already does for `frame-sdk.ts` line numbers that move.
+- Produces:
+  - a `cluster-control-admin` ClusterRole labelled `rbac.frame.plume-labs.io/tier: admin`, picked up by the existing `frame-admin` aggregation in `rbac-tier-bindings.yaml`;
+  - a `cluster-control-workload-operator` ClusterRole carrying **no** tier label, plus one `RoleBinding` of the same name in each enforced namespace, subjecting `frame:operators` and `frame:admins`. Task 8 mirrors the namespace list into `OPERABLE_NAMESPACES` and Task 14 uses it to disable the buttons where the grant does not reach.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1629,8 +1991,6 @@ Append to `test/manifests/rbac_tiers_test.go`:
 var lot2OperatorWrites = []Access{
 	{Group: "", Resource: "pods/log", Verb: "get", Why: "the Logs tab, WorkloadClient.logs()"},
 	{Group: "", Resource: "pods", Verb: "delete", Why: "Delete pod, WorkloadClient.deletePod()"},
-	{Group: "apps", Resource: "deployments", Verb: "patch", Why: "Restart, WorkloadClient.restart()"},
-	{Group: "apps", Resource: "statefulsets", Verb: "patch", Why: "Restart, WorkloadClient.restart()"},
 }
 
 func TestOperatorsCanOperateWorkloadsAndViewersCannot(t *testing.T) {
@@ -1690,6 +2050,33 @@ func TestViewersCanReadTheWholeWorkloadTree(t *testing.T) {
 	}
 }
 
+// The grant Task 6 exists to make safe must NOT reach any aggregated tier.
+// Restart and scale are bound namespace by namespace, into exactly the
+// namespaces where `baseline` Pod Security refuses the privileged payload; a
+// tier label on cluster-control-workload-operator would make the aggregation
+// pick it up and grant it everywhere, including rook-ceph and kube-system,
+// which is the escalation the 2026-08-10 removal closed.
+//
+// Asserted at all three tiers, because "not at editor" alone passes against a
+// role mislabelled `tier: admin`.
+func TestRestartAndScaleAreNotAggregatedIntoAnyTier(t *testing.T) {
+	roles := ClusterRoles(t, tierRoleFiles(t)...)
+	for _, tier := range []string{"viewer", "editor", "admin"} {
+		rules := AggregatedRules(roles, tier)
+		for _, a := range []Access{
+			{Group: "apps", Resource: "deployments", Verb: "patch", Why: "Restart"},
+			{Group: "apps", Resource: "statefulsets", Verb: "patch", Why: "Restart"},
+			{Group: "apps", Resource: "deployments/scale", Verb: "patch", Why: "Scale"},
+			{Group: "apps", Resource: "statefulsets/scale", Verb: "patch", Why: "Scale"},
+		} {
+			if Grants(rules, a) {
+				t.Errorf("frame-%s aggregates %s cluster-wide — %s must be bound per namespace, "+
+					"or an operator can patch a pod template in rook-ceph or kube-system and hold node root", tier, a, a.Why)
+			}
+		}
+	}
+}
+
 // The bound the spec draws around the YAML editor. "Edit any resource" would
 // mean cluster-wide update for admins, which is a far larger grant than this
 // screen needs and could not be tied to a call site the way
@@ -1709,13 +2096,143 @@ func TestTheManifestEditorIsNotAClusterWideGrant(t *testing.T) {
 }
 ```
 
+Create `test/manifests/rbac_workload_operator_test.go` — the namespaced exception needs its own guard, because none of the helpers above look at RoleBindings against a namespace list:
+
+```go
+package manifests
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"testing"
+)
+
+// enforcedNamespaces reads deploy/kubernetes/pod-security/namespaces.yaml —
+// the single source of truth for where `baseline` is enforced, and therefore
+// for where restart and scale may be granted at all.
+//
+// Parsed rather than duplicated: a second hand-maintained list is how the two
+// drift, and the drift is silent in the direction that matters (a RoleBinding
+// in a namespace that is not enforced hands back the escalation, and nothing
+// else in the repository would notice).
+func enforcedNamespaces(t *testing.T) []string {
+	t.Helper()
+	path := filepath.Join(Root(t), "deploy", "kubernetes", "pod-security", "namespaces.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var out []string
+	for _, m := range regexp.MustCompile(`(?m)^  name: (\S+)$`).FindAllStringSubmatch(string(raw), -1) {
+		out = append(out, m[1])
+	}
+	if len(out) == 0 {
+		t.Fatalf("parsed no namespaces out of %s — the fixture is not reading what it claims", path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The whole shape of the exception, in one test: one RoleBinding per enforced
+// namespace, and none anywhere else.
+//
+// The second half is the load-bearing one. A RoleBinding in an unenforced
+// namespace — rook-ceph, kube-system, monitoring — is a grant to patch a pod
+// template where nothing refuses `privileged: true` with a `hostPath: /`
+// volume, which is node root for every operator. That is precisely the state
+// the 2026-08-10 removal closed, and it would be invisible: the RBAC would
+// look tidy, the tier tests would stay green, and the console would simply
+// work in one more namespace.
+func TestWorkloadOperatorIsBoundOnlyWhereBaselineIsEnforced(t *testing.T) {
+	root := Root(t)
+	file := filepath.Join(root, "deploy", "kubernetes", "base", "rbac-workload-operator.yaml")
+	bindings := RoleBindings(t, file)
+	want := enforcedNamespaces(t)
+
+	seen := map[string]bool{}
+	for key, rb := range bindings {
+		if rb.RoleRef.Name != "cluster-control-workload-operator" {
+			continue
+		}
+		seen[rb.Namespace] = true
+		subs := SubjectNames(rb.Subjects)
+		if !Has(subs, "Group:frame:operators") || !Has(subs, "Group:frame:admins") {
+			t.Errorf("RoleBinding %s reaches neither operators nor admins (subjects: %s)", key, Join(subs))
+		}
+		if Has(subs, "Group:frame:viewers") {
+			t.Errorf("RoleBinding %s names frame:viewers — restart and scale are actions, not reads", key)
+		}
+		if Has(subs, "ServiceAccount:cluster-control-ui") {
+			t.Errorf("RoleBinding %s subjects the ServiceAccount, which is not the identity "+
+				"an impersonated request carries", key)
+		}
+	}
+
+	for _, ns := range want {
+		if !seen[ns] {
+			t.Errorf("no cluster-control-workload-operator RoleBinding in %q — baseline is enforced "+
+				"there, so restart and scale should work and will 403", ns)
+		}
+		delete(seen, ns)
+	}
+	for ns := range seen {
+		t.Errorf("cluster-control-workload-operator is bound in %q, which is not in "+
+			"deploy/kubernetes/pod-security/namespaces.yaml — nothing refuses a privileged pod there, "+
+			"so this grant is node root for every operator", ns)
+	}
+}
+
+// The ClusterRole the bindings point at must stay unaggregated and must stay
+// small. A tier label on it undoes the namespacing in one line; a `pods` or a
+// `secrets` rule on it widens a namespaced grant into something else.
+func TestWorkloadOperatorRoleIsUnaggregatedAndNarrow(t *testing.T) {
+	file := filepath.Join(Root(t), "deploy", "kubernetes", "base", "rbac-workload-operator.yaml")
+	roles := ClusterRoles(t, file)
+	cr, ok := roles["cluster-control-workload-operator"]
+	if !ok {
+		t.Fatal("cluster-control-workload-operator is not defined in rbac-workload-operator.yaml")
+	}
+	if tier, has := cr.Labels[TierLabel]; has {
+		t.Fatalf("it carries %s=%s — the aggregation would grant it cluster-wide, "+
+			"which is exactly what binding it per namespace exists to prevent", TierLabel, tier)
+	}
+	for _, a := range []Access{
+		{Group: "apps", Resource: "deployments", Verb: "patch"},
+		{Group: "apps", Resource: "statefulsets", Verb: "patch"},
+		{Group: "apps", Resource: "deployments/scale", Verb: "patch"},
+		{Group: "apps", Resource: "statefulsets/scale", Verb: "patch"},
+	} {
+		if !Grants(cr.Rules, a) {
+			t.Errorf("cluster-control-workload-operator does not grant %s — restart or scale 403s everywhere", a)
+		}
+	}
+	for _, a := range []Access{
+		{Group: "apps", Resource: "deployments", Verb: "delete"},
+		{Group: "apps", Resource: "daemonsets", Verb: "patch"},
+		{Group: "", Resource: "pods", Verb: "delete"},
+		{Group: "", Resource: "secrets", Verb: "get"},
+	} {
+		if Grants(cr.Rules, a) {
+			t.Errorf("cluster-control-workload-operator grants %s — it is restart and scale, nothing else", a)
+		}
+	}
+}
+```
+
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-go test ./test/manifests/ -run 'Lot2|Workload|Exec|Manifest|Operate' -v
+go test ./test/manifests/ -run 'Lot2|Workload|Exec|Manifest|Operate|Restart' -v
 ```
 
-Expected: `TestOperatorsCanOperateWorkloadsAndViewersCannot`, `TestOnlyAdminsExecAndEditManifests` and `TestViewersCanReadTheWholeWorkloadTree` all failing with `frame-editor does not aggregate …` / `frame-admin does not aggregate …` lines naming each missing grant. `TestTheManifestEditorIsNotAClusterWideGrant` passes already, which is correct — it is the guard against the fix going too far, not against the gap.
+Expected:
+
+- `TestOperatorsCanOperateWorkloadsAndViewersCannot`, `TestOnlyAdminsExecAndEditManifests` and `TestViewersCanReadTheWholeWorkloadTree` failing with `frame-editor does not aggregate …` / `frame-admin does not aggregate …` lines naming each missing grant.
+- `TestWorkloadOperatorIsBoundOnlyWhereBaselineIsEnforced` and `TestWorkloadOperatorRoleIsUnaggregatedAndNarrow` failing on the missing file.
+- `TestRestartAndScaleAreNotAggregatedIntoAnyTier` **failing on `deployments/scale` and `statefulsets/scale` at the editor tier**, which is the pre-existing cluster-wide scale grant this task moves out. That failure is the useful one: it is the current state of the repository, not a mistake in the test.
+- `TestTheManifestEditorIsNotAClusterWideGrant` passing already, which is correct — it guards against the fix going too far, not against the gap.
 
 - [ ] **Step 3: Add the viewer reads**
 
@@ -1775,28 +2292,55 @@ In `cluster-control-operator`'s `rules`, immediately after the existing `pods/ev
     verbs: [delete]
 ```
 
-Then replace the long `apps` note above the `get, list, watch` rule. The paragraph beginning "`patch` REMOVED 2026-08-10" stays as history; append to it and add the rule:
+**`patch` does not come back here.** The paragraph beginning "`patch` REMOVED 2026-08-10" stays exactly as it is — it is still true of this role. Append to it, and to nothing else:
 
 ```yaml
-  # 2026-09-09, lot 2: `patch` is back, deliberately, and the escalation above
-  # is back with it. Rollout restart is the single most common operator action
-  # on this cluster and the reason the lot exists; keeping it out would leave
-  # `kubectl` as the only way to do it, which is exactly the identity-and-record
-  # hole this whole programme closes. The cost is unchanged and unmitigated:
-  # anyone in frame:operators can patch a pod template to `privileged: true`
-  # with a `hostPath: /` volume and hold node root, because RBAC cannot bound a
-  # patch to one JSON path. The mitigation named in the 2026-08-09 security
-  # review — PodSecurity `baseline` or `restricted` enforced on every namespace
-  # — is still not applied and is still the thing that would make this grant
-  # safe rather than merely accepted.
+  # 2026-09-09, lot 2: the note above still stands for this ClusterRole, and
+  # this is where the fix landed instead.
   #
-  # It also un-breaks ApplicationClient.restart() (frame-sdk.ts), whose Restart
-  # button in ApplicationsView.tsx has returned 403 since 2026-08-10.
+  # Restart and scale are granted, but not here and not cluster-wide: a
+  # `cluster-control-workload-operator` ClusterRole in
+  # rbac-workload-operator.yaml, bound by a RoleBinding into each namespace
+  # that carries `pod-security.kubernetes.io/enforce: baseline`
+  # (deploy/kubernetes/pod-security/namespaces.yaml). That is the "safe way to
+  # earn it back" this comment named: the privileged-pod payload is refused at
+  # admission in exactly the namespaces where the patch is allowed.
   #
-  # Restart (Workloads → Restart) — frame-sdk.ts WorkloadClient.restart().
+  # It is not labelled with a tier, so the aggregation does not pick it up. A
+  # tier label there would make it cluster-wide again and would reach
+  # rook-ceph, kube-system and monitoring, which are deliberately unlabelled
+  # because Ceph, the node-tuning agent and node-exporter need privileged pods.
+  # test/manifests/rbac_workload_operator_test.go asserts both halves.
+```
+
+**And the existing cluster-wide `scale` rule goes with it.** Delete this rule from `cluster-control-operator`:
+
+```yaml
+  # Scale button — frame-sdk.ts:2332-2339. The `/scale` subresource can only
+  # change the replica count, so unlike a full patch it cannot touch the pod
+  # template. This is the reason the two are split.
   - apiGroups: [apps]
-    resources: [deployments, statefulsets]
+    resources: [deployments/scale, statefulsets/scale]
     verbs: [patch]
+```
+
+and leave a tombstone in its place, because deleting a working grant needs a reason a future reader can find:
+
+```yaml
+  # `deployments/scale` and `statefulsets/scale` REMOVED 2026-09-09, lot 2, and
+  # moved to rbac-workload-operator.yaml alongside the Restart patch.
+  #
+  # Not because scaling is dangerous — the `/scale` subresource can only change
+  # a replica count and cannot touch a pod template, which is why the two used
+  # to be split. It moves because the spec requires restart and scale to behave
+  # the same way from the screen: both available on application workloads, both
+  # 403 on infrastructure ones. Leaving scale cluster-wide would give the
+  # Workloads panel two buttons with two different reachs and no way for the UI
+  # to explain which is which.
+  #
+  # The visible cost: scaling anything in an unlabelled namespace (rook-ceph,
+  # monitoring, kube-system) now 403s where it used to work. `kubectl scale`
+  # still does it for anyone with a real kubeconfig.
 ```
 
 and add the tree reads the operator tier needs in its own right (the aggregation gives it the viewer role's rules too, so these are a union, not a second grant — but this role is documented as possibly still bound somewhere outside the repo, so it carries its own reads the way it already carries `nodes`/`pods`/`events`):
@@ -1887,33 +2431,247 @@ rules:
   # exists is exactly what the 2026-08-10 audit removed from this file.
 ```
 
-- [ ] **Step 6: Run the tests**
+- [ ] **Step 6: Add the namespaced exception**
+
+Create `deploy/kubernetes/base/rbac-workload-operator.yaml`. One ClusterRole with **no tier label**, and one RoleBinding per namespace in `deploy/kubernetes/pod-security/namespaces.yaml`:
+
+```yaml
+# Restart and scale, granted only where a privileged pod is refused.
+#
+# ── WHY THIS FILE EXISTS AT ALL ──────────────────────────────────────────────
+#
+# `patch` on apps/deployments was removed from base/rbac.yaml on 2026-08-10 as
+# "the single grant that turned the unauthenticated UI into cluster-admin":
+# patching a pod template to add `securityContext.privileged: true` and a
+# `hostPath: /` volume is root on the node, and RBAC cannot bound a patch to
+# one JSON path, so "may set the restartedAt annotation" and "may take the
+# node" are the same grant.
+#
+# That comment named the way to earn it back — enforce Pod Security — and this
+# lot took it. deploy/kubernetes/pod-security/namespaces.yaml labels the
+# application namespaces `pod-security.kubernetes.io/enforce: baseline`, which
+# refuses exactly that payload at admission. The grant below goes into those
+# namespaces and no others.
+#
+# ── WHY IT IS SHAPED UNLIKE EVERYTHING ELSE IN THIS DIRECTORY ────────────────
+#
+# Every other console grant is a ClusterRole carrying
+# `rbac.frame.plume-labs.io/tier`, aggregated into frame-viewer/-editor/-admin
+# and therefore cluster-wide. This one carries **no tier label** and is reached
+# only through the RoleBindings below.
+#
+# It has to be. Pod Security is enforced on the application namespaces only —
+# rook-ceph, kube-system, monitoring, alluxio, ptp, cilium, gpu-operator,
+# node-feature-discovery, velero, falco, tetragon and checkpoint-system all run
+# privileged pods legitimately and cannot be labelled without breaking the
+# cluster. A cluster-wide grant would therefore reach precisely the namespaces
+# where nothing refuses the payload, which is the entire hole. The namespacing
+# is not tidiness; it is the control.
+#
+# Consequence, and it is deliberate: restart and scale work on application
+# workloads and 403 on infrastructure ones. The Workloads panel says so rather
+# than offering a button that fails (src/lib/workloads.ts,
+# OPERABLE_NAMESPACES).
+#
+# ── KEEPING THE TWO LISTS IN STEP ────────────────────────────────────────────
+#
+# The namespaces below must equal the namespaces in
+# ../pod-security/namespaces.yaml. Adding one here without labelling it hands
+# back the escalation; labelling one there without a binding here leaves a
+# Restart button that 403s.
+# test/manifests/rbac_workload_operator_test.go parses both files and fails on
+# either mismatch, and src/lib/workloads.test.ts does the same for the UI's
+# copy.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-control-workload-operator
+  # No `rbac.frame.plume-labs.io/tier` label, on purpose. See above. A tier
+  # label here is a one-line reintroduction of the 2026-08-10 escalation.
+rules:
+  # Rollout restart (Workloads → Restart, and ApplicationsView's Restart
+  # button, dead since 2026-08-10) — frame-sdk.ts WorkloadClient.restart() and
+  # ApplicationClient.restart(). Bumps the pod template's restartedAt
+  # annotation, so the controller's own update strategy is respected.
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [patch]
+  # Scale (Workloads → Scale, and ApplicationsView) — frame-sdk.ts
+  # WorkloadClient.scale() and ApplicationClient.scale(). The subresource can
+  # only change a replica count; it is here rather than in the tier role so
+  # that scale and restart reach exactly the same namespaces.
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [patch]
+  # Deliberately absent: daemonsets (nothing restarts one from the console —
+  # the panel offers Restart only for a Deployment or StatefulSet controller),
+  # any `delete`, any `update`, and every core resource. Pod delete stays in
+  # cluster-control-operator, where it is a pod-scoped action rather than a
+  # pod-template one.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: default
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: inference
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-batch
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-database
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-inference
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-training
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+```
+
+Add it to `deploy/kubernetes/base/kustomization.yaml`'s `resources`, immediately after `rbac-tier-bindings.yaml`:
+
+```yaml
+  # Restart and scale, bound per namespace rather than cluster-wide — see the
+  # header of the file for why that shape is the control and not a style
+  # choice.
+  - rbac-workload-operator.yaml
+```
+
+- [ ] **Step 7: Run the tests**
 
 ```bash
 go test ./test/manifests/ -v
 ```
 
-Expected: the whole package green, the four new tests included, and the pre-existing ones untouched. The label is the entire mechanism — a `cluster-control-admin` without `rbac.frame.plume-labs.io/tier: admin` renders perfectly, applies cleanly and grants nobody anything — and `AggregatedRules` is what notices, because it filters on exactly that label.
+Expected: the whole package green, the six new tests included, and the pre-existing ones untouched.
+
+Two of them are load-bearing in a way worth restating, because both failures are silent on a cluster:
+
+- **The tier label is the entire mechanism.** A `cluster-control-admin` without
+  `rbac.frame.plume-labs.io/tier: admin` renders perfectly, applies cleanly and grants nobody
+  anything; `AggregatedRules` is what notices, because it filters on exactly that label.
+- **The absence of a tier label on `cluster-control-workload-operator` is equally the mechanism.**
+  With one, the aggregation makes restart and scale cluster-wide, they reach `rook-ceph` and
+  `kube-system` where nothing refuses a privileged pod, and every screen keeps working — which is
+  why `TestRestartAndScaleAreNotAggregatedIntoAnyTier` asserts the negative at all three tiers.
 
 Then confirm nothing else moved, and that the kustomization still builds:
 
 ```bash
-git diff --stat deploy/kubernetes/base/rbac.yaml test/manifests/rbac_tiers_test.go
+git diff --stat deploy test/manifests
 make kustomize && ./bin/kustomize build deploy/kubernetes/base > /dev/null && echo 'kustomize ok'
+./bin/kustomize build deploy/kubernetes/base | grep -c 'cluster-control-workload-operator'
 make helm-parity 2>&1 | tail -20
 ```
 
-Expected: only those two files changed; `kustomize ok`; `helm-parity` reporting the known pre-existing cpu-request drift (`10m` vs `100m`) and **nothing else** — this file is not in the chart, so a new diff there would mean something unintended moved.
+Expected: only `deploy/kubernetes/base/rbac.yaml`, `deploy/kubernetes/base/rbac-workload-operator.yaml`, `deploy/kubernetes/base/kustomization.yaml` and the two test files changed; `kustomize ok`; **8** occurrences of `cluster-control-workload-operator` in the rendered base (one ClusterRole plus seven RoleBindings — a lower number means the kustomization does not include the file, so the grant would never be applied and every Restart button would 403 with the RBAC looking correct in git); and `helm-parity` reporting the known pre-existing cpu-request drift (`10m` vs `100m`) and **nothing else** — these files are not in the chart, so a new diff there would mean something unintended moved.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Confirm the Restart button that has been dead since August**
+
+`ApplicationClient.restart()` (`src/lib/frame-sdk.ts`) is wired to the Restart button in
+`ApplicationsView.tsx`, and it has returned 403 for everyone — admins included — since the
+2026-08-10 removal. It comes back to life with this grant, in the enforced namespaces only.
 
 ```bash
-git add deploy/kubernetes/base/rbac.yaml test/manifests/rbac_tiers_test.go && git commit -m "feat(rbac): logs and pod delete at operator, exec and the editor at admin"
+kubectl auth can-i patch deployments.apps -n neura --as-group=frame:operators --as=alice@example.com
+kubectl auth can-i patch deployments.apps -n rook-ceph --as-group=frame:operators --as=alice@example.com
+```
+
+Expected: `yes` then `no`. The second is not a defect — it is the whole design, and the reason
+Task 14 disables the button there instead of letting it fail. Then open the **Applications**
+screen as an operator and restart something in `neura`: it should succeed and leave a
+`restart deployment neura/<name>` row on the Tasks screen. Record the result; this is a cluster
+check, so if it has not been run, say so rather than assuming.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add deploy/kubernetes/base test/manifests && git commit -m "feat(rbac): logs and pod delete at operator, restart and scale per enforced namespace"
 ```
 
 ---
 
-### Task 7: `src/lib/workloads.ts` — the tree, the infrastructure list, the ownership warning
+### Task 8: `src/lib/workloads.ts` — the tree, the infrastructure list, the ownership warning
 
 Everything the Workloads screen decides that is not rendering. It lives in `src/lib` because that is the only place vitest can reach: the suite runs `environment: 'node'` with `include: ['src/**/*.test.ts']`, so a `.tsx` test would sit in the repository looking like coverage and never execute.
 
@@ -1922,7 +2680,7 @@ Everything the Workloads screen decides that is not rendering. It lives in `src/
 - Create: `src/lib/workloads.test.ts`
 
 **Interfaces:**
-- Consumes: nothing.
+- Consumes: `deploy/kubernetes/pod-security/namespaces.yaml` (Task 6) — read as text by the test, to keep `OPERABLE_NAMESPACES` from drifting away from where the grant actually reaches.
 - Produces:
   ```ts
   export type WorkloadKind = 'Deployment' | 'StatefulSet' | 'DaemonSet' | 'Job'
@@ -1963,6 +2721,8 @@ Everything the Workloads screen decides that is not rendering. It lives in `src/
 
   export const INFRASTRUCTURE_NAMESPACES: readonly string[]
   export function isInfrastructureNamespace(ns: string): boolean
+  export const OPERABLE_NAMESPACES: readonly string[]
+  export function canOperateWorkloads(ns: string): boolean
   export function controllerKey(namespace: string, kind: WorkloadKind, name: string): string
   export function controllerKeyForPod(
     pod: WorkloadPod,
@@ -1978,16 +2738,19 @@ Everything the Workloads screen decides that is not rendering. It lives in `src/
     annotations?: Record<string, string>
   }): string | undefined
   ```
-  Task 11 (`WorkloadClient`) produces these types from the apiserver; Task 12 renders them.
+  Task 12 (`WorkloadClient`) produces these types from the apiserver; Task 13 renders them; Task 14 uses `canOperateWorkloads` to decide whether the Restart and Scale buttons are offered at all.
 
 - [ ] **Step 1: Write the failing tests**
 
 Create `src/lib/workloads.test.ts`:
 
 ```ts
+/// <reference types="vite/client" />
 import { describe, it, expect } from 'vitest'
 import {
+  OPERABLE_NAMESPACES,
   buildWorkloadTree,
+  canOperateWorkloads,
   controllerKey,
   controllerKeyForPod,
   isInfrastructureNamespace,
@@ -1996,6 +2759,10 @@ import {
   type WorkloadController,
   type WorkloadPod,
 } from './workloads'
+// The manifest that decides where `baseline` Pod Security is enforced, and so
+// where restart and scale are granted at all. Read as text rather than
+// re-typed: see the test at the bottom of this file.
+import podSecuritySource from '../../deploy/kubernetes/pod-security/namespaces.yaml?raw'
 
 function pod(over: Partial<WorkloadPod> = {}): WorkloadPod {
   return {
@@ -2131,6 +2898,45 @@ describe('buildWorkloadTree', () => {
     })
     expect(tree.map((n) => n.namespace)).toEqual(['inference', 'neura', 'kube-system', 'rook-ceph'])
     expect(tree.map((n) => n.infrastructure)).toEqual([false, false, true, true])
+  })
+})
+
+describe('OPERABLE_NAMESPACES', () => {
+  // The drift guard, and the reason this list is not just
+  // `!isInfrastructureNamespace(ns)`.
+  //
+  // Restart and scale are granted by a RoleBinding in each namespace that
+  // carries `pod-security.kubernetes.io/enforce: baseline`
+  // (deploy/kubernetes/base/rbac-workload-operator.yaml). A namespace that is
+  // neither enforced nor obviously infrastructure — `sandbox`, say — would pass
+  // a `!isInfrastructureNamespace` check, be offered a Restart button, and 403.
+  // The only honest predicate is the enforced list itself, and the only way to
+  // keep a second copy of it honest is to compare it to the first.
+  //
+  // A broken version — one namespace added to the manifest and not here, or
+  // removed here and not there — prints the two sorted arrays side by side.
+  it('is exactly the set of namespaces where baseline is enforced', () => {
+    const fromManifest = [...podSecuritySource.matchAll(/^ {2}name: (\S+)$/gm)].map((m) => m[1])
+    expect(fromManifest.length).toBeGreaterThan(0)
+    expect([...fromManifest].sort()).toEqual([...OPERABLE_NAMESPACES].sort())
+  })
+
+  it('answers for a namespace on each side', () => {
+    expect(canOperateWorkloads('neura')).toBe(true)
+    expect(canOperateWorkloads('rook-ceph')).toBe(false)
+    // Neither enforced nor infrastructure: the case a `!isInfrastructure`
+    // predicate gets wrong, and the case that produces a button that 403s.
+    expect(canOperateWorkloads('sandbox')).toBe(false)
+  })
+
+  // Not a tautology — it is the invariant that keeps the two lists from ever
+  // being satisfiable at once. A namespace cannot both be folded as
+  // infrastructure and carry the grant; if one ever does, one of the two
+  // decisions is wrong and this says which pair to look at.
+  it('never overlaps the folded infrastructure list', () => {
+    for (const ns of OPERABLE_NAMESPACES) {
+      expect(isInfrastructureNamespace(ns)).toBe(false)
+    }
   })
 })
 
@@ -2277,6 +3083,44 @@ export function isInfrastructureNamespace(ns: string): boolean {
   return ns.startsWith('kube-') || ns.endsWith('-system')
 }
 
+/**
+ * Namespaces where restart and scale are actually granted.
+ *
+ * Mirrors `deploy/kubernetes/pod-security/namespaces.yaml` — the namespaces
+ * carrying `pod-security.kubernetes.io/enforce: baseline`, which is exactly
+ * where `deploy/kubernetes/base/rbac-workload-operator.yaml` binds the grant.
+ * The two are kept in step by a test in `workloads.test.ts` that parses the
+ * manifest, because a second hand-maintained list drifts.
+ *
+ * This is deliberately **not** `!isInfrastructureNamespace(ns)`. That predicate
+ * decides what the tree folds and is a heuristic with two shape rules; this one
+ * decides whether a button is offered, and offering one where the grant does
+ * not reach produces a 403 the person cannot do anything about. A namespace
+ * that is neither enforced nor recognisably infrastructure — a `sandbox`, a
+ * one-off — must fall on the "no button" side, and only an explicit list does
+ * that.
+ */
+export const OPERABLE_NAMESPACES: readonly string[] = [
+  'default',
+  'inference',
+  'neura',
+  'neura-batch',
+  'neura-database',
+  'neura-inference',
+  'neura-training',
+]
+
+/**
+ * True where the console may restart or scale a workload.
+ *
+ * False everywhere else, including namespaces the tree happily shows: reading
+ * is cluster-wide, operating is not, and the screen says which is which rather
+ * than offering a button that returns 403.
+ */
+export function canOperateWorkloads(ns: string): boolean {
+  return OPERABLE_NAMESPACES.includes(ns)
+}
+
 export function controllerKey(namespace: string, kind: WorkloadKind, name: string): string {
   return `${namespace}/${kind}/${name}`
 }
@@ -2415,7 +3259,7 @@ export function ownershipWarning(meta: {
 npx vitest run src/lib/workloads.test.ts
 ```
 
-Expected: PASS, 13 cases.
+Expected: PASS, 16 cases. If the `?raw` import fails to resolve, the manifest from Task 6 is missing — this task depends on it, and the dependency is the point.
 
 - [ ] **Step 5: Commit**
 
@@ -2425,7 +3269,7 @@ git add src/lib/workloads.ts src/lib/workloads.test.ts && git commit -m "feat(ui
 
 ---
 
-### Task 8: `src/lib/exec-protocol.ts` — the wire format of a shell
+### Task 9: `src/lib/exec-protocol.ts` — the wire format of a shell
 
 Kubernetes multiplexes an exec over one WebSocket by prefixing every frame with a channel byte. That is pure logic, it is the part that is easy to get subtly wrong, and it belongs outside the component — which, being `.tsx`, no test in this repository executes.
 
@@ -2836,11 +3680,11 @@ git add src/lib/exec-protocol.ts src/lib/exec-protocol.test.ts && git commit -m 
 
 ---
 
-### Task 9: `src/lib/pod-logs.ts` — the log path and the stream reader
+### Task 10: `src/lib/pod-logs.ts` — the log path and the stream reader
 
 `GET pods/<name>/log?follow=true` is an ordinary chunked HTTP response, not a WebSocket. Chunk boundaries fall wherever the network puts them, so turning that stream into lines is the piece worth testing, and it is the piece a component cannot carry.
 
-**Logs leave no `FrameTask`.** The recorder ignores reads by design and a log read is a read, so there will be no record that anyone read one — which matters, because reading a pod's logs can mean reading a secret. That is stated in the spec, restated in `docs/deployment.md` by Task 13, and the mitigation is the operator-tier grant from Task 6, not the audit trail.
+**Logs leave no `FrameTask`.** The recorder ignores reads by design and a log read is a read, so there will be no record that anyone read one — which matters, because reading a pod's logs can mean reading a secret. That is stated in the spec, restated in `docs/deployment.md` by Task 14, and the mitigation is the operator-tier grant from Task 7, not the audit trail.
 
 **Files:**
 - Create: `src/lib/pod-logs.ts`
@@ -3084,11 +3928,11 @@ git add src/lib/pod-logs.ts src/lib/pod-logs.test.ts && git commit -m "feat(ui):
 
 ---
 
-### Task 10: `src/lib/manifest-diff.ts` — the audit label for an edit
+### Task 11: `src/lib/manifest-diff.ts` — the audit label for an edit
 
 The YAML editor is the one action in this lot that could have made the audit trail useless. `update deployments/api` is the same string for a replica bump and for adding a `hostPath: /` volume. So the console computes the **changed field paths** between the object it read and the object being written, and puts them in the label.
 
-Where the "object being written" comes from is Task 12's business: the editor holds YAML text, and the apiserver — not a parser in this repository — turns it into an object, via a `PUT ?dryRun=All` whose response is what would be stored. This module is only the comparison, and the cap.
+Where the "object being written" comes from is Task 13's business: the editor holds YAML text, and the apiserver — not a parser in this repository — turns it into an object, via a `PUT ?dryRun=All` whose response is what would be stored. This module is only the comparison, and the cap.
 
 **The cap is load-bearing.** `FrameTaskSpec.Action` is `maxLength: 200`. Over that, the apiserver refuses the `FrameTask` create; the recorder logs the error and the user's edit succeeds anyway. So the failure mode of an over-long label is **an edit with no record at all** — silently, and exactly on the large edits that most deserve one.
 
@@ -3356,7 +4200,7 @@ git add src/lib/manifest-diff.ts src/lib/manifest-diff.test.ts && git commit -m 
 
 ---
 
-### Task 11: `WorkloadClient` — the reads and the four writes
+### Task 12: `WorkloadClient` — the reads and the four writes
 
 The SDK half. Every write goes through `k8sFetch`, which is what supplies the 401-retry and the `X-Frame-Action` header; a bare `fetch` here would be a defect and `frame-sdk.test.ts` has a structural guard that catches one.
 
@@ -3367,7 +4211,7 @@ Two small additions to `k8sFetch` make the manifest editor possible without a YA
 - Test: `src/lib/frame-sdk.test.ts`
 
 **Interfaces:**
-- Consumes: `buildWorkloadTree`, `EditableKind`, `NamespaceNode`, `OwnerRef`, `WorkloadController`, `WorkloadKind`, `WorkloadPod` (Task 7); `podLogPath`, `PodLogQuery` (Task 9); `changedFieldPaths`, `editActionLabel` (Task 10); the dry-run rule from Task 4.
+- Consumes: `buildWorkloadTree`, `EditableKind`, `NamespaceNode`, `OwnerRef`, `WorkloadController`, `WorkloadKind`, `WorkloadPod` (Task 8); `podLogPath`, `PodLogQuery` (Task 10); `changedFieldPaths`, `editActionLabel` (Task 11); the dry-run rule from Task 4.
 - Produces:
   ```ts
   // src/lib/frame-sdk.ts
@@ -3997,11 +4841,11 @@ git add src/lib/frame-sdk.ts src/lib/frame-sdk.test.ts && git commit -m "feat(sd
 
 ---
 
-### Task 12: the Workloads screen and the Logs tab
+### Task 13: the Workloads screen and the Logs tab
 
 The tree — namespace → controller → pods — with infrastructure namespaces collapsed behind a switch, a detail panel per pod, and the first of its three tabs.
 
-**These files carry no test coverage, and that is structural, not an omission.** Vitest runs `environment: 'node'` and only picks up `.test.ts`, so a `.tsx` spec would sit in the repository looking like coverage and never execute. Every decision worth testing was moved into `src/lib` by Tasks 7, 9, 10 and 11; what is left here is rendering, and it is checked by `npm run build` and by looking at it.
+**These files carry no test coverage, and that is structural, not an omission.** Vitest runs `environment: 'node'` and only picks up `.test.ts`, so a `.tsx` spec would sit in the repository looking like coverage and never execute. Every decision worth testing was moved into `src/lib` by Tasks 8, 10, 11 and 12; what is left here is rendering, and it is checked by `npm run build` and by looking at it.
 
 **Files:**
 - Create: `src/components/workloads/WorkloadsView.tsx`
@@ -4010,7 +4854,7 @@ The tree — namespace → controller → pods — with infrastructure namespace
 - Modify: `src/App.tsx` (`TabId`, the icon import, the lazy import, the NAV entry, the `renderTab` case)
 
 **Interfaces:**
-- Consumes: `createFrameClient().workloads` — `tree()`, `logs(q)` (Task 11); `workloadWatchPaths()` (Task 11); `NamespaceNode`, `ControllerNode`, `WorkloadController`, `WorkloadPod` (Task 7); `pumpLogLines` (Task 9).
+- Consumes: `createFrameClient().workloads` — `tree()`, `logs(q)` (Task 12); `workloadWatchPaths()` (Task 12); `NamespaceNode`, `ControllerNode`, `WorkloadController`, `WorkloadPod` (Task 8); `pumpLogLines` (Task 10).
 - Produces:
   ```tsx
   // src/components/workloads/WorkloadsView.tsx
@@ -4028,7 +4872,7 @@ The tree — namespace → controller → pods — with infrastructure namespace
   // src/components/workloads/LogsTab.tsx
   export function LogsTab(props: { pod: WorkloadPod }): JSX.Element
   ```
-  Task 13 adds `TerminalTab` and `YamlTab` and mounts them in `PodDetailPanel`'s remaining two tabs, and adds the write actions to its header.
+  Task 14 adds `TerminalTab` and `YamlTab` and mounts them in `PodDetailPanel`'s remaining two tabs, and adds the write actions to its header.
 
 - [ ] **Step 1: Write the tree**
 
@@ -4274,7 +5118,7 @@ export function WorkloadsView() {
 
 - [ ] **Step 2: Write the detail panel**
 
-Create `src/components/workloads/PodDetailPanel.tsx`. The Terminal and YAML tabs are placeholders in this task and are filled in by Task 13 — they are named here so the tab strip is built once:
+Create `src/components/workloads/PodDetailPanel.tsx`. The Terminal and YAML tabs are placeholders in this task and are filled in by Task 14 — they are named here so the tab strip is built once:
 
 ```tsx
 import { X } from '@phosphor-icons/react'
@@ -4362,11 +5206,11 @@ export function PodDetailPanel({
             <LogsTab pod={pod} />
           </TabsContent>
           <TabsContent value="terminal">
-            {/* Filled in by Task 13. */}
+            {/* Filled in by Task 14. */}
             <p className="font-mono text-xs text-muted-foreground">Not built yet.</p>
           </TabsContent>
           <TabsContent value="yaml">
-            {/* Filled in by Task 13. */}
+            {/* Filled in by Task 14. */}
             <p className="font-mono text-xs text-muted-foreground">Not built yet.</p>
           </TabsContent>
         </Tabs>
@@ -4376,7 +5220,7 @@ export function PodDetailPanel({
 }
 ```
 
-`admin` and `onChanged` are declared and unused in this task. `tsconfig.json` sets neither `noUnusedLocals` nor `noUnusedParameters`, so `tsc -b` accepts it; `npm run lint` may warn. **Do not delete the props** — the signature is what Task 13 consumes, and re-adding a prop is how a panel ends up with two ways of being told the same thing.
+`admin` and `onChanged` are declared and unused in this task. `tsconfig.json` sets neither `noUnusedLocals` nor `noUnusedParameters`, so `tsc -b` accepts it; `npm run lint` may warn. **Do not delete the props** — the signature is what Task 14 consumes, and re-adding a prop is how a panel ends up with two ways of being told the same thing.
 
 - [ ] **Step 3: Write the Logs tab**
 
@@ -4577,7 +5421,7 @@ git add src/components/workloads src/App.tsx && git commit -m "feat(ui): a Workl
 
 ---
 
-### Task 13: the Terminal tab, the YAML tab, and the four write actions
+### Task 14: the Terminal tab, the YAML tab, and the four write actions
 
 The rest of the panel: a real terminal, an editable manifest, and the four things a person came here to do — each behind a confirmation naming the object and the consequence, each carrying an `X-Frame-Action` label.
 
@@ -4591,7 +5435,7 @@ This is the task that adds the lot's only two dependencies.
 - Modify: `src/components/workloads/PodDetailPanel.tsx` (mount the three, and the action bar)
 
 **Interfaces:**
-- Consumes: `execSubprotocols`, `execUrl`, `decodeFrame`, `frameText`, `encodeStdin`, `encodeResize`, `execExitMessage`, `CHANNEL_STDOUT`, `CHANNEL_STDERR`, `CHANNEL_ERROR` (Task 8); `ownershipWarning`, `EditableKind` (Task 7); `workloads.manifest/object/applyManifest/restart/scale/deletePod` (Task 11); `ensureToken` from `@/lib/auth`; `PodSelection` (Task 12).
+- Consumes: `execSubprotocols`, `execUrl`, `decodeFrame`, `frameText`, `encodeStdin`, `encodeResize`, `execExitMessage`, `CHANNEL_STDOUT`, `CHANNEL_STDERR`, `CHANNEL_ERROR` (Task 9); `ownershipWarning`, `canOperateWorkloads`, `EditableKind` (Task 8); `workloads.manifest/object/applyManifest/restart/scale/deletePod` (Task 12); `ensureToken` from `@/lib/auth`; `PodSelection` (Task 13).
 - Produces:
   ```tsx
   export function TerminalTab(props: { pod: WorkloadPod; admin: boolean }): JSX.Element
@@ -4960,8 +5804,9 @@ export function YamlTab({
               Apply your changes to {kind.toLowerCase()} {namespace}/{name}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              The manifest is validated against the apiserver first, and only written if it is
-              accepted. The fields you changed are recorded on the Tasks screen.
+              The manifest is validated against the apiserver first, as a dry run that stores
+              nothing and is not itself recorded, and only written if it is accepted. One row
+              appears on the Tasks screen, naming the fields you changed.
               {warning ? ` ${warning}` : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -4998,6 +5843,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { PodSelection } from '@/components/workloads/PodDetailPanel'
 import { createFrameClient } from '@/lib/frame-sdk'
+import { canOperateWorkloads } from '@/lib/workloads'
 
 const frame = createFrameClient()
 
@@ -5011,6 +5857,17 @@ type Pending = 'restart' | 'scale' | 'delete' | undefined
  * actions behind one button: under a controller the pod is replaced, on a bare
  * pod the deletion is final. The person clicking has to know which one they
  * have.
+ *
+ * Restart and Scale are not offered outside the namespaces where they are
+ * granted, and the screen says why instead of leaving a button that returns
+ * 403. The grant is a RoleBinding in each namespace enforcing `baseline` Pod
+ * Security (`deploy/kubernetes/base/rbac-workload-operator.yaml`), because
+ * patching a pod template is node root wherever a privileged pod is still
+ * admitted — so the asymmetry is the security control, not a rollout gap, and
+ * it will not go away.
+ *
+ * Delete pod is not gated: `pods delete` is a cluster-wide operator grant and
+ * deleting a pod cannot mint a privileged one.
  */
 export function WorkloadActions({
   selection,
@@ -5040,7 +5897,14 @@ export function WorkloadActions({
     }
   }
 
+  // Whether the grant reaches this namespace at all, decided from the same
+  // list the RoleBindings are generated from — not from "is this
+  // infrastructure", which would offer the button in a namespace that is
+  // merely unlabelled.
+  const operable = canOperateWorkloads(pod.namespace)
+
   const restartable =
+    operable &&
     controller &&
     (controller.kind === 'Deployment' ||
       controller.kind === 'StatefulSet' ||
@@ -5051,6 +5915,14 @@ export function WorkloadActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {!operable && controller && (
+        <span className="font-mono text-[10px] text-muted-foreground max-w-md">
+          Restart and scale are not available in <strong>{pod.namespace}</strong>. They are granted
+          only where Pod Security enforces <code>baseline</code>, because changing a pod template is
+          root on the node anywhere a privileged pod is still admitted. Use <code>kubectl</code> for
+          infrastructure workloads.
+        </span>
+      )}
       {restartable && (
         <Button
           size="sm"
@@ -5062,7 +5934,7 @@ export function WorkloadActions({
           Restart {controller.kind.toLowerCase()}
         </Button>
       )}
-      {controller?.scalable && (
+      {operable && controller?.scalable && (
         <Button
           size="sm"
           variant="outline"
@@ -5217,7 +6089,7 @@ and replace the two placeholder `TabsContent` bodies:
           </TabsContent>
 ```
 
-If Step 2 of Task 12 renamed `admin`/`onChanged` to `_admin`/`_onChanged` to satisfy `noUnusedParameters`, put the names back now — both are used here.
+If Step 2 of Task 13 renamed `admin`/`onChanged` to `_admin`/`_onChanged` to satisfy `noUnusedParameters`, put the names back now — both are used here.
 
 - [ ] **Step 6: Run the checks**
 
@@ -5244,7 +6116,7 @@ git add package.json package-lock.json src/components/workloads && git commit -m
 
 ---
 
-### Task 14: the documentation, and the check that has never been run
+### Task 15: the documentation, and the check that has never been run
 
 **Files:**
 - Modify: `docs/crd-reference.md` (the `## FrameTask` section, from line 608)
@@ -5267,6 +6139,8 @@ grep -c 'pods/exec' docs/api.md docs/deployment.md
 grep -c 'taskNamespace' docs/deployment.md
 grep -c 'base64url.bearer' docs/api.md
 grep -c 'Operating a workload' docs/deployment.md
+grep -c 'pod-security.kubernetes.io' docs/deployment.md
+grep -c 'dryRun' docs/crd-reference.md docs/api.md docs/deployment.md
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -5306,7 +6180,16 @@ The Workloads screen talks to ordinary Kubernetes endpoints through
 | Read a manifest | `GET` the object with `Accept: application/yaml` |
 | Write a manifest | `PUT` the object with `Content-Type: application/yaml`, twice: once with `?dryRun=All`, then for real |
 
-Three things about that list are not obvious.
+**The dry run leaves no `FrameTask`, and that is a rule rather than an
+accident.** `TaskRecorder.Start` refuses any request carrying a `dryRun`
+parameter (`internal/uiproxy/recorder.go`), because a dry run stores nothing —
+recording it would put two rows in the trail for one edit, one of which changed
+nothing. So an edit is **one** row. Reading the trail: two rows for one edit
+means that rule was lost; *no* row after a successful edit means the action
+label overflowed `FrameTaskSpec.Action`'s 200-character cap and the apiserver
+refused the record, which the recorder logs and the user never sees.
+
+Four things about that list are not obvious.
 
 **YAML is the apiserver's, not the console's.** `application/yaml` is a
 supported representation of every resource, for both `Accept` and
@@ -5346,11 +6229,12 @@ Lot 2 (2026-09-09) added the Workloads screen, and with it a
 `deploy/kubernetes/base/rbac.yaml` carried `tier: admin` at all, and the admin
 tier was satisfied only by the twenty-seven per-kind Frame CRD roles.
 
-| Tier | Gains |
-|---|---|
-| viewer | `apps/daemonsets`, `apps/replicasets`, `batch/jobs` read — the rest of the workload tree |
-| operator | `pods/log` get, `pods` delete, `apps/deployments`+`statefulsets` patch |
-| admin | `pods/exec` create; `update`/`patch` on `pods`, `deployments`, `statefulsets`, `daemonsets`, `jobs` |
+| Tier | Gains | Where |
+|---|---|---|
+| viewer | `apps/daemonsets`, `apps/replicasets`, `batch/jobs` read | cluster-wide |
+| operator | `pods/log` get, `pods` delete | cluster-wide |
+| operator | `apps/deployments`+`statefulsets` **patch** and their `scale` subresource | **only the namespaces enforcing `baseline`** |
+| admin | `pods/exec` create; `update`/`patch` on `pods`, `deployments`, `statefulsets`, `daemonsets`, `jobs` | cluster-wide |
 
 **Logs start at operator, not viewer.** A viewer sees state; a log is the most
 likely place in a cluster for a credential to appear in plain text. It is a
@@ -5359,17 +6243,42 @@ but note what makes it load-bearing: **reading logs leaves no `FrameTask`.** The
 recorder ignores reads by design, so there will be no record that anyone read
 one. The mitigation is this tier boundary, not the audit trail.
 
-**`patch` on Deployments and StatefulSets is back, and so is the escalation it
-carries.** It was removed on 2026-08-10 because RBAC cannot bound a patch to
+**`patch` on Deployments and StatefulSets is back, and it is earned rather than
+accepted.** It was removed on 2026-08-10 because RBAC cannot bound a patch to
 one JSON path: "may set the restartedAt annotation" and "may patch the pod
 template to `privileged: true` with a `hostPath: /` volume" are the same grant,
-and no namespace on this cluster carries a `pod-security.kubernetes.io/enforce`
-label to stop the second. Rollout restart is the most common operator action on
-this cluster and the reason lot 2 exists, so the grant is back and the risk is
-accepted rather than mitigated. The thing that would make it safe — PodSecurity
-`baseline` or `restricted` enforced on every namespace, from the 2026-08-09
-security review — is still not applied. It also un-breaks the Applications
-screen's Restart button, which has returned 403 since that audit.
+and no namespace on this cluster carried a `pod-security.kubernetes.io/enforce`
+label to refuse the second. That comment named the safe way to earn it back,
+and lot 2 took it rather than accepting the risk: `baseline` Pod Security is
+enforced on the application namespaces
+(`deploy/kubernetes/pod-security/namespaces.yaml`), and the grant is a
+**RoleBinding into exactly those namespaces**
+(`deploy/kubernetes/base/rbac-workload-operator.yaml`), carrying **no tier
+label** so the aggregation cannot make it cluster-wide.
+
+The shape is the control. Infrastructure namespaces are not labelled — Ceph's
+OSDs, the node-tuning agent's `hostPID`, node-exporter's `hostPath`, the CNI
+and the Talos tooling all need what `baseline` forbids — so a cluster-wide
+grant would reach precisely the namespaces where nothing refuses the payload.
+`go test ./test/manifests/` asserts both halves: that the RoleBinding exists in
+every enforced namespace, and that it exists in no other.
+
+**Restart and scale therefore work on application workloads and return 403 on
+infrastructure ones.** That asymmetry is permanent and deliberate; the
+Workloads panel says so rather than offering a button that fails. `kubectl`
+remains the way to restart an infrastructure workload.
+
+**One residual, stated rather than discovered.** The admin tier keeps
+`update`/`patch` on those kinds cluster-wide, for the YAML editor — so an
+*admin* can still write a privileged pod template into an unlabelled namespace.
+That is not a regression (an admin already holds `create pods/exec` everywhere,
+which is root inside any privileged pod that exists) and it is not what the
+2026-08-10 removal was about, which was the operator tier. Narrowing the admin
+editor the same way is a follow-up, not part of this lot.
+
+**This repaired the Applications screen's Restart button**, which had returned
+403 for everyone including admins since that audit — in the enforced namespaces
+only.
 
 **Exec is admin-only, and the session is recorded but its contents are not.**
 Who, which pod and container, when, and for how long — never what was typed or
@@ -5387,6 +6296,58 @@ halves: that admins have those five, and that they do not have `secrets`,
 `configmaps`, `clusterroles` or `customresourcedefinitions`.
 ```
 
+and, immediately before the end-to-end check, a subsection of its own:
+
+```markdown
+### Turning Pod Security on
+
+`deploy/kubernetes/pod-security/` labels the application namespaces —
+`default`, `inference`, `neura`, `neura-batch`, `neura-database`,
+`neura-inference`, `neura-training` — with `baseline`, pinned to `v1.29` so a
+cluster upgrade cannot silently tighten what is admitted. Infrastructure
+namespaces are deliberately absent: `kube-system`, `monitoring`, `alluxio`,
+`ptp`, `cilium`, `rook-ceph`, `gpu-operator`, `node-feature-discovery`,
+`velero`, `falco`, `tetragon` and `checkpoint-system` all run pods that
+`baseline` forbids, and labelling them would refuse those pods at their next
+restart.
+
+**Enforcing does not evict anything. It refuses the next admission.** A
+workload that has always violated the policy keeps running and fails the next
+time it restarts — which is during an incident, not during the change. So the
+rollout is two steps and the middle one is not optional:
+
+```bash
+# 1. warn + audit only, which is what the committed manifest carries first
+kubectl apply -k deploy/kubernetes/pod-security
+
+# 2. ask the apiserver what enforcing WOULD refuse, without refusing anything
+for ns in default inference neura neura-batch neura-database neura-inference neura-training; do
+  echo "── $ns"
+  kubectl label --dry-run=server --overwrite namespace "$ns" \
+    pod-security.kubernetes.io/enforce=baseline \
+    pod-security.kubernetes.io/enforce-version=v1.29
+done
+```
+
+A clean namespace prints only `namespace/<ns> labeled (server dry run)`. A
+dirty one prints a `Warning:` line per offending pod, naming the rule it
+breaks. Resolve every one — replace a `hostPath` with a PVC, drop a
+capability, or move the workload to an unlabelled namespace — and only then
+add the `enforce` labels and apply again.
+
+The `audit` label is the backstop for a violation created after that sweep: it
+writes a `pod-security.kubernetes.io/audit-violations` annotation into the
+apiserver audit log, which is readable only if audit logging is configured on
+this cluster's apiserver. Treat the server-side dry run as the instrument and
+the annotation as the safety net, not the other way round.
+
+Removing a namespace from that manifest is not only a Pod Security change: it
+also removes the RoleBinding that grants restart and scale there, and
+`OPERABLE_NAMESPACES` in `src/lib/workloads.ts` must lose it too or the
+Workloads panel offers a button that 403s. A test in each language fails on
+the mismatch, in both directions.
+```
+
 and, immediately after it, plainly labelled as **not yet executed**:
 
 ```markdown
@@ -5398,35 +6359,63 @@ physical — a session that will not close, a resize that leaves the display
 offset, a `Ctrl-C` that does not reach the process. Until someone has done
 this, the terminal is unproven.
 
-1. Sign in as an operator. Open **Workloads**, expand `neura`, pick a pod, read
+1. Before anything else, prove Pod Security is doing its job — everything below
+   assumes it. In an enforced namespace, ask for the exact payload the grant
+   would otherwise permit:
+
+   ```bash
+   kubectl -n neura run pod-security-probe --image=busybox --restart=Never --dry-run=server \
+     --overrides='{"spec":{"hostPID":true,"containers":[{"name":"probe","image":"busybox","securityContext":{"privileged":true}}]}}' \
+     -- sleep 1
+   ```
+
+   Expected: a refusal naming `violates PodSecurity "baseline:v1.29"`. **If this
+   succeeds, stop** — the label is not in force and the operator grant is node
+   root, which is the state the 2026-08-10 removal existed to prevent.
+2. Sign in as an operator. Open **Workloads**, expand `neura`, pick a pod, read
    its logs with **Follow** on. Confirm lines arrive without reloading, and that
    the pane is still live after five minutes of silence — that is the
    `proxy_read_timeout` in `deploy/docker/nginx.conf` being right or wrong.
-2. Switch **Previous container** on for a pod that has restarted. Confirm the
+3. Switch **Previous container** on for a pod that has restarted. Confirm the
    output is the dead instance's, not the running one's.
-3. Confirm the **Terminal** tab tells that operator it needs an admin account,
+4. Confirm the **Terminal** tab tells that operator it needs an admin account,
    and confirm the apiserver agrees: opening one anyway must fail, not connect.
-4. Sign in as an admin. Open a shell. Run `top`, resize the browser window, and
+5. Sign in as an admin. Open a shell. Run `top`, resize the browser window, and
    confirm the program reflows — that is channel 4 reaching the pty. Press
    `Ctrl-C` and confirm it reaches the process. Close the tab.
-5. Open **Tasks**. Confirm there is one row for the session, that it names the
+6. Open **Tasks**. Confirm there is one row for the session, that it names the
    pod and container, that its outcome is `Succeeded · 101`, and that the
    interval between `startedAt` and `finishedAt` matches how long the shell was
    open. A row saying `500`, or no row at all, is `statusRecorder.Hijack` or
    `isExecUpgrade`.
-6. Restart a Deployment from the panel, then scale it to zero and back.
-   Confirm each leaves one row on Tasks naming the action rather than the
+7. Restart a Deployment in `neura` from the panel, then scale it to zero and
+   back. Confirm each leaves one row on Tasks naming the action rather than the
    request — `restart deployment neura/api`, not `patch deployments/api`.
-7. Edit a Deployment's `spec.replicas` in the **YAML** tab and apply. Confirm
-   the Tasks row reads `edit deployment neura/api: spec.replicas` and that
-   there is exactly **one** row, not two — two means the dry run is being
-   recorded.
-8. Open the same object in two browser tabs, apply in one, then apply in the
-   other. Confirm the second reports that someone else changed it and wrote
-   nothing. That is the `resourceVersion` doing its job; a success here means
-   an edit can silently overwrite another.
-9. Open an object Argo CD manages and confirm the editor says so before the
-   edit, not after.
+8. Open a pod in `rook-ceph` or `monitoring`. Confirm the panel shows **no**
+   Restart or Scale button and says why, rather than offering one that returns
+   403. Then confirm the apiserver agrees:
+
+   ```bash
+   kubectl auth can-i patch deployments.apps -n neura     --as-group=frame:operators --as=alice@example.com
+   kubectl auth can-i patch deployments.apps -n rook-ceph --as-group=frame:operators --as=alice@example.com
+   ```
+
+   Expected: `yes`, then `no`. A `yes` on the second means the grant escaped
+   its namespaces and every operator holds node root.
+9. Open the **Applications** screen as an operator and restart something in
+   `neura`. That button has returned 403 since 2026-08-10 and this lot is what
+   repairs it; confirm it now succeeds and leaves a Tasks row.
+10. Edit a Deployment's `spec.replicas` in the **YAML** tab and apply. Confirm
+    the Tasks row reads `edit deployment neura/api: spec.replicas` and that
+    there is exactly **one** row, not two. Two means the dry run is being
+    recorded; **none at all after a successful apply** means the label
+    overflowed the 200-character cap and the apiserver refused the record.
+11. Open the same object in two browser tabs, apply in one, then apply in the
+    other. Confirm the second reports that someone else changed it and wrote
+    nothing. That is the `resourceVersion` doing its job; a success here means
+    an edit can silently overwrite another.
+12. Open an object Argo CD manages and confirm the editor says so before the
+    edit, not after.
 ```
 
 **`docs/development.md`**, after the `AUTH_PROXY_TARGET` paragraph:
@@ -5452,6 +6441,20 @@ pod or the cluster itself.
   opened in a pod (`create pods/<name>/exec`) distinguishable from a pod being
   created (`create pods/<name>`), without which the decision to record exec
   sessions had no visible effect. See [crd-reference.md](crd-reference.md).
+- ✅ **Pod Security is enforced on the application namespaces** (2026-09-09,
+  lot 2): `baseline`, pinned to `v1.29`, on `default`, `inference` and the five
+  `neura-*` namespaces
+  (`deploy/kubernetes/pod-security/namespaces.yaml`). Infrastructure namespaces
+  are deliberately exempt — Ceph, the node-tuning agent, the CNI, node-exporter
+  and the Talos tooling all need what `baseline` forbids. This is what earned
+  back the `apps/deployments` `patch` grant removed on 2026-08-10 as "the single
+  grant that turned the unauthenticated UI into cluster-admin": it is now bound
+  by a `RoleBinding` into exactly the enforced namespaces, so restart and scale
+  work on application workloads and 403 on infrastructure ones. It also repaired
+  the Applications screen's Restart button, dead since that removal. The
+  cluster-wide grant that the 2026-08-09 security review called for on *every*
+  namespace is still not that — the exempt list is real and permanent. See
+  [deployment.md](deployment.md), "Turning Pod Security on".
 - ✅ **The cluster is operable from the console** (2026-09-09, lot 2): a
   workload tree, pod logs, an interactive shell, rollout restart, scale, delete
   a pod and an editable manifest — under the signed-in person's own identity,
@@ -5476,6 +6479,8 @@ grep -c 'subresource' docs/crd-reference.md
 grep -c 'pods/exec' docs/api.md docs/deployment.md
 grep -c 'base64url.bearer' docs/api.md
 grep -c 'Operating a workload' docs/deployment.md
+grep -c 'pod-security.kubernetes.io' docs/deployment.md
+grep -c 'dryRun' docs/crd-reference.md docs/api.md
 make test
 go test ./test/manifests/
 npm run build && npx vitest run
@@ -5504,8 +6509,23 @@ Stated here rather than discovered in review:
   hand-rolled 101 between two `httptest` servers, which proves the proxy
   carries an upgrade and nothing about `v4.channel.k8s.io`, xterm, or a pty.
 - **The RBAC tests read manifests, not a cluster.** `test/manifests` proves the
-  shipped YAML aggregates what it should; only `kubectl auth can-i --as-group`
-  against the cluster proves the apiserver agrees.
+  shipped YAML aggregates what it should, that the workload-operator grant is
+  bound in every enforced namespace and in no other, and that it carries no tier
+  label. Only `kubectl auth can-i --as-group` against the cluster proves the
+  apiserver agrees.
+- **Nothing in the test suite proves Pod Security is in force.** The manifest is
+  checked for shape and the two lists are checked against each other, but
+  "`baseline` refuses a privileged pod in `neura`" is a live-cluster fact. Task
+  6's Step 6 probe and step 1 of the end-to-end check are the only things that
+  establish it, and until one of them has been run the operator `patch` grant is
+  a grant with no guard — which is the state the 2026-08-10 removal existed to
+  prevent. **Task 7 must not be applied to a cluster where that probe has not
+  been run.**
+- **The violation sweep in Task 6 is a live-cluster step with an unknown
+  answer.** The plan assumes nothing about how many violations the seven
+  namespaces hold; resolving whatever is found is part of that task, and it may
+  turn out that a namespace has to leave the enforced list — in which case it
+  also leaves the RoleBinding set and `OPERABLE_NAMESPACES`.
 - **The nginx change is checked by `nginx -t`, not by a WebSocket through it.**
   A syntactically valid `map` is not a working upgrade path.
 - **The end-to-end check in `docs/deployment.md` is written down and labelled
