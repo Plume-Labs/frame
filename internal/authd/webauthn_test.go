@@ -2,12 +2,16 @@ package authd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -171,5 +175,64 @@ func TestRecordLoginCounterRotatesSignCountWhenClean(t *testing.T) {
 	}
 	if got.Status.Credentials[0].SignCount != 9 {
 		t.Fatalf("sign count not rotated: got %d, want 9", got.Status.Credentials[0].SignCount)
+	}
+}
+
+// WebAuthn Level 2 caps user.id at 64 bytes and browsers enforce it;
+// go-webauthn does not check it, so an over-long handle is not an error here
+// — it is a TypeError out of navigator.credentials.create() on the one
+// screen nobody has run, surfacing in the acceptance page's error banner
+// with nothing to act on.
+//
+// WebAuthnID() returns the object name verbatim, and that name is
+// frameUserNameForEmail's output: sanitize(lower(email)) with "@" spelled
+// "-at-" (+3) plus this branch's "-" and 8 hex characters (+9). So every
+// address over 52 characters used to derive a handle past the cap. The
+// 253-byte RFC 1123 bound is still the outer limit on a Kubernetes object
+// name; 64 is the tighter one that actually governs, and it is asserted
+// through WebAuthnID rather than on the string, because it is the handle —
+// not the name — the browser rejects.
+func TestDerivedNamesAreValidWebAuthnHandles(t *testing.T) {
+	const maxWebAuthnUserIDLength = 64
+
+	// 60 characters before the "@", so the address is well past 52 and the
+	// pre-cap derivation would land at 60+12+11 = 83 bytes.
+	long := strings.Repeat("a", 60) + "@really-long-department.example.com"
+	name := frameUserNameForEmail(long)
+
+	handle := webauthnUser{u: &framev1beta1.FrameUser{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}}.WebAuthnID()
+
+	if len(handle) == 0 {
+		t.Fatal("derived an empty WebAuthn handle")
+	}
+	if len(handle) > maxWebAuthnUserIDLength {
+		t.Fatalf("WebAuthn handle is %d bytes, past the %d-byte cap browsers enforce: %q",
+			len(handle), maxWebAuthnUserIDLength, handle)
+	}
+
+	// Truncation must take the readable prefix, never the hash: the suffix is
+	// the entire reason two addresses cannot derive one name, so a cap that
+	// trimmed the tail would reintroduce the collision it was added to close
+	// — and would do it only for long addresses, where collisions are most
+	// likely because the readable part is what gets cut.
+	sum := sha256.Sum256([]byte(strings.ToLower(long)))
+	wantSuffix := "-" + hex.EncodeToString(sum[:])[:8]
+	if !strings.HasSuffix(name, wantSuffix) {
+		t.Fatalf("name %q does not end in its hash suffix %q", name, wantSuffix)
+	}
+
+	// Two addresses whose first 60 characters are identical: everything that
+	// survives truncation is shared, so only the hash can still tell them
+	// apart.
+	other := strings.Repeat("a", 60) + "@really-long-department.example.org"
+	if got := frameUserNameForEmail(other); got == name {
+		t.Fatalf("two distinct addresses derived the same name %q", got)
+	}
+
+	// The cap must not cost anything for an ordinary address.
+	if got := frameUserNameForEmail("bob@example.com"); !strings.HasPrefix(got, "bob-at-example.com-") {
+		t.Fatalf("a short address lost its readable prefix: %q", got)
 	}
 }

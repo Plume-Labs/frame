@@ -179,10 +179,34 @@ func frameUserNameForEmail(email string) string {
 	sum := sha256.Sum256([]byte(lower))
 	suffix := "-" + hex.EncodeToString(sum[:])[:8]
 
+	// 64, not RFC 1123's 253, because the name is used verbatim as the
+	// WebAuthn user handle: webauthnUser.WebAuthnID() (webauthn.go) returns
+	// []byte(u.Name), and WebAuthn Level 2 caps user.id at 64 bytes. Browsers
+	// enforce that cap; go-webauthn does not check it. So an over-long name
+	// is not an error anywhere in Go — it is a TypeError out of
+	// navigator.credentials.create(), landing in the acceptance page's error
+	// banner with nothing the invitee can act on.
+	//
+	// The arithmetic is what makes 253 the wrong bound: "@" is spelled
+	// "-at-" (+3) and the hash suffix is "-" plus 8 hex characters (+9), so
+	// any address over 52 characters used to derive a handle past the cap —
+	// well inside what RFC 5321 allows and what the invite route accepts
+	// (maxEmailLength, 254). 253 remains the outer bound a Kubernetes object
+	// name must satisfy; 64 is the tighter one that now governs, and
+	// satisfying it satisfies both.
+	//
+	// The readable prefix is what gets cut, never the suffix: that hash is
+	// the entire reason two distinct addresses cannot derive one name, and
+	// trimming the tail instead would reintroduce the collision precisely
+	// where it is most likely — long addresses, whose shared readable
+	// prefixes are what survive truncation.
+	//
 	// base was already Trim-ed above, so it starts and ends alphanumeric;
 	// truncating it can only shorten it, never empty it, so there is no
-	// second "base == ''" case to guard here.
-	const maxNameLength = 253
+	// second "base == ''" case to guard here. Slicing by byte is safe because
+	// the loop above emits only ASCII — every rune outside [a-z0-9-.] became
+	// '-' — so no multi-byte character can be cut in half.
+	const maxNameLength = 64
 	if len(base)+len(suffix) > maxNameLength {
 		base = strings.TrimRight(base[:maxNameLength-len(suffix)], "-.")
 	}
