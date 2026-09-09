@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -33,19 +32,25 @@ func (s *Store) list(ctx context.Context) ([]framev1beta1.FrameUser, error) {
 	return users.Items, nil
 }
 
-// ByEmail matches case-insensitively: Kubernetes object names are already
-// lowercased (frameUserNameForEmail), and two accounts that only differ by
-// the case of their email would otherwise be indistinguishable to a caller
-// but distinguishable to this lookup — exactly the gap that let
-// "Bob@Example.com" and "bob@example.com" collide as the same identity in
-// name but not in this comparison.
+// ByEmail resolves an identity from a caller-supplied address by exact
+// match. Every caller of this method is answering "which account holds the
+// credential/session that was just verified" (sessionUser, password login),
+// not "does an account claiming this address already exist" — an
+// identity-resolution lookup must return the one account the caller actually
+// authenticated as, never whichever case-variant happens to sort first in
+// the list. Folding case here would let "bob@example.com" and
+// "Bob@Example.com" — two distinct accounts, if such a pair ever exists —
+// resolve to each other depending on object-name ordering, independent of
+// which one the caller's credential actually belongs to. A duplicate-address
+// check is a different question, answered separately where it's asked (see
+// the invite route's own case-insensitive lookup).
 func (s *Store) ByEmail(ctx context.Context, email string) (*framev1beta1.FrameUser, error) {
 	items, err := s.list(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for i := range items {
-		if strings.EqualFold(items[i].Spec.Email, email) {
+		if items[i].Spec.Email == email {
 			return &items[i], nil
 		}
 	}

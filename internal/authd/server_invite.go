@@ -1,11 +1,12 @@
 package authd
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,18 +70,26 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Identity here is the email, not the derived object name (see
-	// Store.ByEmail and frameUserNameForEmail's own comment): two accounts
-	// must never share an email, case-insensitively, regardless of what
-	// their names happen to sanitize to. Checked before Create so the
-	// common case — inviting someone twice — gets a message about the
-	// email that is actually in conflict, not the internal object name.
-	switch _, err := s.cfg.Store.ByEmail(r.Context(), body.Email); {
-	case err == nil:
-		http.Error(w, "an account with that email already exists", http.StatusConflict)
-		return
-	case !errors.Is(err, ErrUserNotFound):
+	// frameUserNameForEmail's own comment): two accounts must never share an
+	// address, case-insensitively, regardless of what their names happen to
+	// sanitize to. Checked before Create so the common case — inviting
+	// someone twice — gets a message about the email that is actually in
+	// conflict, not the internal object name.
+	//
+	// Deliberately not Store.ByEmail: that method answers "which account
+	// holds the credential/session just verified" and must match by exact
+	// address only, or two accounts differing solely by case could resolve
+	// to each other depending on which sorts first — an identity-resolution
+	// bug, not a duplicate-detection one. "Does anyone already claim this
+	// address, any case" is a different question, asked only here.
+	exists, err := s.inviteeAlreadyExists(r.Context(), body.Email)
+	if err != nil {
 		slog.Error("invite: failed to check for an existing account", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		http.Error(w, "an account with that email already exists", http.StatusConflict)
 		return
 	}
 
@@ -103,13 +112,16 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.cfg.Store.Create(r.Context(), user); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			// Backstop, not the primary guard: the ByEmail check above is
+			// Backstop, not the primary guard: inviteeAlreadyExists above is
 			// what normally catches a duplicate invite, by the identity that
-			// actually matters. This only fires if two requests race between
-			// that check and this Create — the name collision it reports is
-			// real (frameUserNameForEmail is now hash-suffixed and
-			// collision-resistant per distinct email) but the window is a
-			// race, not steady-state behavior.
+			// actually matters. This still fires in two cases the pre-check
+			// cannot rule out: two requests racing between that check and
+			// this Create, or an out-of-band object (created straight
+			// through the apiserver, bypassing authd entirely) already
+			// occupying the derived name under a *different* Spec.Email —
+			// frameUserNameForEmail's hash suffix makes that name collision
+			// vanishingly unlikely for two distinct addresses, but does not
+			// make it impossible.
 			http.Error(w, "an account with that name already exists", http.StatusConflict)
 			return
 		}
@@ -139,4 +151,30 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"url": s.cfg.ConsoleOrigin + "/invite?token=" + url.QueryEscape(sealed),
 	})
+}
+
+// inviteeAlreadyExists reports whether any account already claims email,
+// matching case-insensitively.
+//
+// This is deliberately not Store.ByEmail. ByEmail resolves an identity from
+// a caller-supplied credential (a session cookie, a login attempt) and must
+// return exactly the account the caller authenticated as, by exact address —
+// folding case there would let two accounts differing only in case resolve
+// to each other depending on which sorts first in Store.list, independent of
+// which one actually holds the verified credential. "Does an account already
+// claim this address, under any casing" is a different question: it doesn't
+// resolve to an identity, it only needs a yes/no, and it is asked exactly
+// once, here, by the one route that creates new accounts from a
+// caller-supplied address rather than an already-verified one.
+func (s *Server) inviteeAlreadyExists(ctx context.Context, email string) (bool, error) {
+	items, err := s.cfg.Store.list(ctx)
+	if err != nil {
+		return false, err
+	}
+	for i := range items {
+		if strings.EqualFold(items[i].Spec.Email, email) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
