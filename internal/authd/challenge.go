@@ -43,6 +43,12 @@ const (
 	// PurposeChallenge seals/opens the "frame_challenge" cookie value used by
 	// the WebAuthn registration and login ceremonies.
 	PurposeChallenge Purpose = "challenge"
+	// PurposeInvite seals/opens the token in an invitation link. It is the
+	// only sealed value that travels in a URL rather than a cookie, which is
+	// exactly why it must not verify as either of the other two: an
+	// invitation link is pasted into chat, forwarded, and left in browser
+	// history, and none of that may turn it into a session.
+	PurposeInvite Purpose = "invite"
 )
 
 // Seal returns "<base64url payload>.<base64url signature>". The expiry is part
