@@ -365,7 +365,19 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 setPendingRevoke(undefined)
                 void act(async () => {
                   await revokeCredential(key.id, email)
-                  setKeys(await listCredentials(email))
+                  // The revoke already succeeded — a failure here is only in
+                  // re-reading the list, and must not leave the just-revoked
+                  // key looking live under an unrelated error message. Same
+                  // fix as showKeys/refreshKeys: clear the list and flag it,
+                  // rather than silently keeping the stale (pre-revoke) one.
+                  try {
+                    setKeys(await listCredentials(email))
+                    setKeysError(false)
+                  } catch (err) {
+                    setKeys([])
+                    setKeysError(true)
+                    throw err
+                  }
                 })
               }}
             >
