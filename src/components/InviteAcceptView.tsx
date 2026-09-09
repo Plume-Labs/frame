@@ -119,6 +119,18 @@ export function InviteAcceptView({
                 <Fingerprint />
                 {busy ? 'Waiting for authenticator…' : 'Enrol a passkey'}
               </Button>
+              {error && (
+                // A failure here is not always retryable — a spent or expired
+                // link answers the same way every time (see the module doc)
+                // — so this screen must not be a dead end the way `finished`
+                // used to be before it. Same exit, offered alongside the
+                // retry rather than instead of it, since some failures (a
+                // dropped connection, a cancelled ceremony that got treated
+                // as an error) genuinely are worth trying again first.
+                <Button variant="outline" className="w-full font-mono" onClick={onFinished}>
+                  Go to sign in
+                </Button>
+              )}
             </>
           )}
         </CardContent>

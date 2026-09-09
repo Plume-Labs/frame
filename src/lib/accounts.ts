@@ -166,8 +166,17 @@ export async function setAccountState(name: string, email: string, state: 'enabl
  * would be correct but unreachable-looking ("why won't this dropdown work")
  * without a reason shown next to it. `disabled` and `role !== 'admin'` both
  * count as "not an enabled admin" — a disabled admin cannot sign in to
- * authorize anything, exactly like a non-admin, which is the same reading
- * `isEnabled`/`requireAnotherAdmin` use server-side.
+ * authorize anything, exactly like a non-admin.
+ *
+ * The check below is `a.state === 'enabled'`, not the server's
+ * `isEnabled = state != "disabled"` — those two are not the same test, and
+ * they diverge on `""`. They agree here anyway, but only because `state`
+ * never arrives as `""`: every `Account` this function is meant to see comes
+ * from `listAccounts()`, whose reshape already applies `i.spec.state ??
+ * 'enabled'`, so by the time a value reaches this function it is always
+ * exactly `'enabled'` or `'disabled'`. Do not call this with an `Account`
+ * assembled some other way without re-checking that; the equivalence is a
+ * property of `listAccounts()`'s output, not of this function's own logic.
  */
 export function isOnlyEnabledAdmin(accounts: Account[], email: string): boolean {
   const enabledAdmins = accounts.filter((a) => a.role === 'admin' && a.state === 'enabled')
