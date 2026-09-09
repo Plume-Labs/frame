@@ -96,8 +96,8 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// setSession seals a 12-hour session cookie for u and writes it onto the
-// response. It reports whether that succeeded; on failure it has already
+// setSession seals a cookie lasting cfg.SessionTTL for u and writes it onto
+// the response. It reports whether that succeeded; on failure it has already
 // written a 500 itself, and every caller must stop immediately rather than go
 // on to write its own success status on top (the bug this return value exists
 // to prevent: a 500 followed by an unconditional 204, and the
@@ -106,11 +106,14 @@ func (s *Server) setSession(w http.ResponseWriter, u *framev1beta1.FrameUser) bo
 	return s.setSessionFor(w, u, s.cfg.SessionTTL)
 }
 
-// setSessionFor is setSession with an explicit lifetime, for the one caller
-// that does not want a working day: an accepted invitation grants only long
-// enough to enrol a key (see enrolSessionTTL). The TTL is inside the sealed
-// payload as well as on the cookie, so shortening it is a real constraint and
-// not a suggestion the browser could ignore.
+// setSessionFor is setSession with an explicit lifetime, always sealed under
+// PurposeSession. Its only caller today is setSession itself: the
+// accepted-invitation cookie is deliberately not minted through this path —
+// see setEnrolSession in server_invite.go — because it needs a different
+// purpose, not just a different TTL, for sessionUser to be able to tell the
+// two apart. The TTL is inside the sealed payload as well as on the cookie,
+// so shortening it is a real constraint and not a suggestion the browser
+// could ignore.
 func (s *Server) setSessionFor(w http.ResponseWriter, u *framev1beta1.FrameUser, ttl time.Duration) bool {
 	sealed, err := s.cfg.Codec.Seal(PurposeSession, []byte(u.Spec.Email), ttl)
 	if err != nil {
@@ -168,14 +171,39 @@ func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {
 // place a cookie becomes an account: putting it here means a route added later
 // cannot forget it, and a disabled account cannot enrol a further key on a
 // cookie it was already holding when it was switched off.
+//
+// This is the strict reader: it accepts only a PurposeSession cookie. An
+// accepted-invitation cookie is sealed under PurposeEnrol precisely so it
+// fails here — /auth/token and /auth/invite must never honour it, or
+// accepting a link would be indistinguishable from a full sign-in for as
+// long as the link keeps working.
 func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*framev1beta1.FrameUser, bool) {
+	return s.sessionUserFor(w, r, PurposeSession)
+}
+
+// sessionUserFor is sessionUser generalized over which sealed purposes the
+// cookie may have been sealed under, tried in order. It exists for exactly
+// one pair of callers — handleRegisterBegin and handleRegisterFinish — which
+// must accept both an ordinary session and the narrower PurposeEnrol cookie
+// an accepted invitation grants, since enrolling a first passkey is the one
+// thing that cookie is for. Every other route keeps using the strict
+// sessionUser above.
+func (s *Server) sessionUserFor(w http.ResponseWriter, r *http.Request, purposes ...Purpose) (*framev1beta1.FrameUser, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, false
 	}
-	email, err := s.cfg.Codec.Open(PurposeSession, c.Value)
-	if err != nil {
+	var email []byte
+	opened := false
+	for _, purpose := range purposes {
+		if e, err := s.cfg.Codec.Open(purpose, c.Value); err == nil {
+			email = e
+			opened = true
+			break
+		}
+	}
+	if !opened {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return nil, false
 	}

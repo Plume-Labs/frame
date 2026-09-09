@@ -49,6 +49,16 @@ const (
 	// invitation link is pasted into chat, forwarded, and left in browser
 	// history, and none of that may turn it into a session.
 	PurposeInvite Purpose = "invite"
+	// PurposeEnrol seals/opens the cookie an accepted invitation grants.
+	// Deliberately not PurposeSession: it travels under the same cookie name
+	// so the browser handles it identically, but sessionUser opens only
+	// PurposeSession, so this cookie is refused by every route except the
+	// two that call the wider sessionUserFor reader (register/begin,
+	// register/finish). Without this separation, accepting an invitation
+	// would hand out a full session — able to mint an id_token or invite
+	// further accounts — for as long as the invitation link keeps working,
+	// rather than a credential that can only be used to enrol a first key.
+	PurposeEnrol Purpose = "enrol"
 )
 
 // Seal returns "<base64url payload>.<base64url signature>". The expiry is part
