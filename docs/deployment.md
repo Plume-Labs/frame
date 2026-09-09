@@ -555,6 +555,29 @@ is bound to the domain it was created for, not to the account.
    checks `spec.state` before it will mint or re-mint anything for that
    account (see [crd-reference.md](crd-reference.md), "FrameUser").
 
+**None of the writes in steps 1-3 appear on the Tasks screen.** Invitation,
+acceptance, enrolment, revocation and the original bootstrap all go to
+`authd` directly, by `fetch` from the browser to `/auth/*`. They never pass
+through `frame-uiproxy`, and it is the proxy — not the apiserver, and not
+`authd` — that records a `FrameTask` for each write it forwards
+(`internal/uiproxy/recorder.go`). So creating someone's account and removing
+their sign-in credential, the two most privilege-affecting things this
+console can do, leave no `FrameTask` at all.
+
+They are not unrecorded: `authd` logs each of them, so
+`kubectl -n cluster-control logs deploy/cluster-control-auth` is where that
+trail lives. But the Tasks screen advertises itself as "every write made
+through the UI", and for these five routes it is not — a reader who takes
+that promise literally will look at an empty Tasks list and conclude the
+invitation never happened. Role and state changes from the Accounts table
+*do* appear there, because those go through the proxy to the apiserver; only
+the `authd` routes are missing.
+
+Making `authd` write `FrameTask`s would close the gap, and is deliberately
+not done here: it would give the identity provider a second write path into
+the cluster API and a reason to hold `create frametasks`, which is a design
+change rather than a documentation fix.
+
 > **The check that has never once been run end to end.** Invite a viewer.
 > Accept it in a separate browser profile and enrol a key — per step 3
 > above, that ends the enrolment session, not a signed-in one. Sign in as
