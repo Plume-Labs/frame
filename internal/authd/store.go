@@ -57,8 +57,9 @@ func (s *Store) ByEmail(ctx context.Context, email string) (*framev1beta1.FrameU
 	return nil, ErrUserNotFound
 }
 
-// Create writes a brand-new FrameUser. Only /auth/bootstrap calls this — every
-// other write in this package goes through Status().Update via
+// Create writes a brand-new FrameUser. Two callers reach it: /auth/bootstrap
+// for the first admin, and /auth/invite for everyone after. Every other write
+// in this package goes through Status().Update via
 // AddCredential/UpdateSignCount/RemoveCredential, because every other write
 // is authd editing an account that already exists.
 func (s *Store) Create(ctx context.Context, u *framev1beta1.FrameUser) error {
