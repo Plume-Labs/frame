@@ -242,7 +242,19 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
             <DialogTitle className="font-mono">Invite someone</DialogTitle>
             <DialogDescription>
               Creates an account with no credential and returns a link. Copy it to them yourself —
-              Frame sends no mail. The link expires in 24 hours and dies the moment they enrol a key.
+              {/*
+                No number here on purpose. The lifetime is
+                ServerConfig.InviteTTL (internal/authd/server.go), which
+                defaults to 24 hours but exists to be set; a literal "24
+                hours" in this copy agrees with it only for as long as
+                nothing does. Rendering the real value would mean widening
+                the /auth/invite response, its SDK type and its tests, and
+                formatting a duration for humans — a lot of machinery for a
+                reassurance clause whose job is only "this does not sit
+                around forever". Saying that without a number cannot go
+                stale.
+              */}
+              Frame sends no mail. The link is short-lived, and dies the moment they enrol a key.
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-3" onSubmit={handleInvite}>
