@@ -2,7 +2,9 @@ package authd
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -141,12 +143,20 @@ func (s *Server) deleteBootstrapSecret(r *http.Request) {
 // subdomain: lowercase alphanumerics, '-' and '.', starting/ending
 // alphanumeric) — most obviously because of the '@' — so this lowercases the
 // address, spells out the '@' as "-at-", and replaces every other disallowed
-// character with '-'. It is deterministic and collision-resistant for
-// realistic email addresses; it does not guarantee global uniqueness for
-// pathological inputs (e.g. "a@b" and "a-at-b" would collide), which is an
-// accepted tradeoff here because this function is exercised by exactly one
-// caller — the bootstrap handler, which only ever runs once, to create the
-// single first admin.
+// character with '-'.
+//
+// That sanitization alone is not collision-resistant: "bob+ops@example.com"
+// and "bob-ops@example.com" sanitize to the same string, and truncation at
+// the Kubernetes name length limit creates a second collision class. This
+// function now has two callers — the bootstrap handler (runs once, before
+// any account exists) and the invite handler (runs whenever an admin asks) —
+// so a collision is no longer a one-time, self-inflicted accident; it is a
+// live possibility every time an account is created. A short hash suffix
+// (first 8 hex characters of sha256 of the lowercased address) is appended
+// to make two distinct addresses derive distinct names regardless of what
+// sanitization does to their readable prefix. This does not replace an
+// email-uniqueness check — see Store.ByEmail — it only keeps the *name*
+// collision-free once uniqueness has already been established by email.
 func frameUserNameForEmail(email string) string {
 	lower := strings.ToLower(email)
 	spelled := strings.ReplaceAll(lower, "@", "-at-")
@@ -160,10 +170,20 @@ func frameUserNameForEmail(email string) string {
 			b.WriteRune('-')
 		}
 	}
-	name := strings.Trim(b.String(), "-.")
-	const maxNameLength = 253
-	if len(name) > maxNameLength {
-		name = strings.TrimRight(name[:maxNameLength], "-.")
+	base := strings.Trim(b.String(), "-.")
+	if base == "" {
+		return ""
 	}
-	return name
+
+	sum := sha256.Sum256([]byte(lower))
+	suffix := "-" + hex.EncodeToString(sum[:])[:8]
+
+	const maxNameLength = 253
+	if len(base)+len(suffix) > maxNameLength {
+		base = strings.TrimRight(base[:maxNameLength-len(suffix)], "-.")
+	}
+	if base == "" {
+		return ""
+	}
+	return base + suffix
 }

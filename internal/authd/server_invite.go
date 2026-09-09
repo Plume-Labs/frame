@@ -2,6 +2,7 @@ package authd
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -55,11 +56,34 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Role != framev1beta1.RoleOperator && body.Role != framev1beta1.RoleViewer {
-		http.Error(w, "an invitation may only create an operator or a viewer. "+
-			"Create the account as one of those, then promote it from the Accounts screen, "+
-			"which acts under your own identity rather than authd's", http.StatusBadRequest)
+		msg := "an invitation may only create an operator or a viewer."
+		if body.Role == framev1beta1.RoleAdmin {
+			// Only the admin case gets the promotion pointer: a typo'd or
+			// empty role is not asking to be an admin, and telling it "go to
+			// the Accounts screen" answers a question it didn't ask.
+			msg += " Create the account as one of those, then promote it from the Accounts screen, " +
+				"which acts under your own identity rather than authd's"
+		}
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+
+	// Identity here is the email, not the derived object name (see
+	// Store.ByEmail and frameUserNameForEmail's own comment): two accounts
+	// must never share an email, case-insensitively, regardless of what
+	// their names happen to sanitize to. Checked before Create so the
+	// common case — inviting someone twice — gets a message about the
+	// email that is actually in conflict, not the internal object name.
+	switch _, err := s.cfg.Store.ByEmail(r.Context(), body.Email); {
+	case err == nil:
+		http.Error(w, "an account with that email already exists", http.StatusConflict)
+		return
+	case !errors.Is(err, ErrUserNotFound):
+		slog.Error("invite: failed to check for an existing account", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	name := frameUserNameForEmail(body.Email)
 	if name == "" {
 		http.Error(w, "invalid request: email", http.StatusBadRequest)
@@ -79,13 +103,13 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.cfg.Store.Create(r.Context(), user); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			// frameUserNameForEmail is deterministic, so this is either the
-			// same address invited twice or the collision its own comment
-			// warns about ("a@b" and "a-at-b" derive the same name). It stops
-			// being a one-caller function here — bootstrap ran once, invite
-			// runs whenever an admin asks — so the collision is answered
-			// rather than assumed away. Both cases are the caller's to
-			// resolve and neither is an authd failure.
+			// Backstop, not the primary guard: the ByEmail check above is
+			// what normally catches a duplicate invite, by the identity that
+			// actually matters. This only fires if two requests race between
+			// that check and this Create — the name collision it reports is
+			// real (frameUserNameForEmail is now hash-suffixed and
+			// collision-resistant per distinct email) but the window is a
+			// race, not steady-state behavior.
 			http.Error(w, "an account with that name already exists", http.StatusConflict)
 			return
 		}
@@ -104,6 +128,12 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// The body carries a bearer credential — the sealed invitation token —
+	// like every other route in this package that hands one out. The others
+	// all travel as a Set-Cookie the browser is trusted to manage; this one
+	// is JSON, which a proxy or the browser's own back-forward cache could
+	// otherwise retain.
+	w.Header().Set("Cache-Control", "no-store")
 	// The link is returned, never sent: there is no mail path in this cluster,
 	// and inventing one would be a second project. The admin copies it.
 	_ = json.NewEncoder(w).Encode(map[string]any{

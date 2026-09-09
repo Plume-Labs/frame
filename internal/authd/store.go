@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -32,13 +33,19 @@ func (s *Store) list(ctx context.Context) ([]framev1beta1.FrameUser, error) {
 	return users.Items, nil
 }
 
+// ByEmail matches case-insensitively: Kubernetes object names are already
+// lowercased (frameUserNameForEmail), and two accounts that only differ by
+// the case of their email would otherwise be indistinguishable to a caller
+// but distinguishable to this lookup — exactly the gap that let
+// "Bob@Example.com" and "bob@example.com" collide as the same identity in
+// name but not in this comparison.
 func (s *Store) ByEmail(ctx context.Context, email string) (*framev1beta1.FrameUser, error) {
 	items, err := s.list(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for i := range items {
-		if items[i].Spec.Email == email {
+		if strings.EqualFold(items[i].Spec.Email, email) {
 			return &items[i], nil
 		}
 	}
