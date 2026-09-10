@@ -15,12 +15,16 @@ package manifests
 import (
 	"bufio"
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
@@ -35,6 +39,33 @@ func Root(t *testing.T) string {
 		t.Fatal("cannot resolve this file's path")
 	}
 	return filepath.Join(filepath.Dir(thisFile), "..", "..")
+}
+
+// AllYAMLFiles walks dir and returns every *.yaml/*.yml file under it,
+// sorted. Used for a manifest-wide scan rather than a hand-picked file list —
+// a file a scan misses because nobody added it to a list is exactly how the
+// gap this package exists to catch stays invisible.
+func AllYAMLFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".yaml", ".yml":
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // docs splits a multi-document YAML file into its non-empty documents.
@@ -119,6 +150,64 @@ func Roles(t *testing.T, paths ...string) map[string]rbacv1.Role {
 				t.Fatalf("%s: %v", p, err)
 			}
 			out[r.Namespace+"/"+r.Name] = r
+		}
+	}
+	return out
+}
+
+// PodSecurityEnforceLabel and PodSecurityEnforceVersionLabel are the Pod
+// Security Admission labels that actually refuse a privileged pod. A
+// Namespace can carry `warn`/`audit` alone — that is a deliberate, documented
+// first phase of the rollout (see pod-security/namespaces.yaml's own header)
+// — and must not be mistaken for "enforced": nothing refuses admission until
+// `enforce` itself is set to `baseline`.
+const (
+	PodSecurityEnforceLabel        = "pod-security.kubernetes.io/enforce"
+	PodSecurityEnforceVersionLabel = "pod-security.kubernetes.io/enforce-version"
+)
+
+// EnforceVersionPinRe matches a pinned PSA version label (`v1.29`, `v1.30`,
+// …) but not `latest` or an empty string — either of which would let a
+// cluster upgrade silently tighten what `baseline` admits.
+var EnforceVersionPinRe = regexp.MustCompile(`^v\d+\.\d+$`)
+
+// Namespaces returns every Namespace object found in the given files, keyed
+// by name.
+func Namespaces(t *testing.T, paths ...string) map[string]corev1.Namespace {
+	t.Helper()
+	out := map[string]corev1.Namespace{}
+	for _, p := range paths {
+		for _, d := range docs(t, p) {
+			var tm typeMeta
+			if err := yaml.Unmarshal(d, &tm); err != nil || tm.Kind != "Namespace" {
+				continue
+			}
+			var ns corev1.Namespace
+			if err := yaml.Unmarshal(d, &ns); err != nil {
+				t.Fatalf("%s: %v", p, err)
+			}
+			out[ns.Name] = ns
+		}
+	}
+	return out
+}
+
+// ClusterRoleBindings returns every ClusterRoleBinding found in the given
+// files, keyed by name.
+func ClusterRoleBindings(t *testing.T, paths ...string) map[string]rbacv1.ClusterRoleBinding {
+	t.Helper()
+	out := map[string]rbacv1.ClusterRoleBinding{}
+	for _, p := range paths {
+		for _, d := range docs(t, p) {
+			var tm typeMeta
+			if err := yaml.Unmarshal(d, &tm); err != nil || tm.Kind != "ClusterRoleBinding" {
+				continue
+			}
+			var crb rbacv1.ClusterRoleBinding
+			if err := yaml.Unmarshal(d, &crb); err != nil {
+				t.Fatalf("%s: %v", p, err)
+			}
+			out[crb.Name] = crb
 		}
 	}
 	return out
