@@ -7,8 +7,16 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 
-// tierRoleFiles is every file that defines a ClusterRole carrying a tier
-// label, i.e. everything the three aggregated `frame-*` ClusterRoles pick up.
+// tierRoleFiles is every file whose ClusterRoles must be checked for a tier
+// label — i.e. everything AggregatedRules has to scan to know what the three
+// `frame-*` ClusterRoles pick up. That includes files that hold no tier label
+// today, such as rbac-workload-operator.yaml: the whole point of
+// TestWorkloadWritesAreNotAggregatedIntoAnyTier is to prove those roles never
+// gain one, and it cannot prove that about a file it never opens. A file
+// missing from this list is a blind spot no test running against this list
+// can detect — the roles it defines are invisible to AggregatedRules, so a
+// tier label added there later would pass every test here while making the
+// grant cluster-wide.
 func tierRoleFiles(t *testing.T) []string {
 	t.Helper()
 	root := Root(t)
@@ -16,7 +24,9 @@ func tierRoleFiles(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return append(paths, filepath.Join(root, "deploy", "kubernetes", "base", "rbac.yaml"))
+	paths = append(paths, filepath.Join(root, "deploy", "kubernetes", "base", "rbac.yaml"))
+	paths = append(paths, filepath.Join(root, "deploy", "kubernetes", "base", "rbac-workload-operator.yaml"))
+	return paths
 }
 
 // consoleWrites is every write the console makes that is not a Frame CRD, each
