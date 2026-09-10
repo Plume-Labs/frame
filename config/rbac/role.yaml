@@ -64,7 +64,9 @@ rules:
   - create
   - delete
   - get
+  - list
   - update
+  - watch
 - apiGroups:
   - apps
   resources:
@@ -111,6 +113,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framejobs/finalizers
+  - framemachines/finalizers
   - framenodes/finalizers
   - frameresourcequotas/finalizers
   - nodetunings/finalizers
@@ -123,6 +126,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framejobs/status
+  - framemachines/status
   - framenodes/status
   - frameresourcequotas/status
   - nodetunings/status
@@ -133,6 +137,16 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framemachines
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - frame.plume-labs.io
   resources:
