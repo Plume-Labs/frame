@@ -30,9 +30,39 @@
 # on the node — which is why it is admin-only and recorded, not why it is safe.
 # It stays cluster-wide in base/rbac.yaml's cluster-control-admin.
 #
+# ── WHAT `baseline` DOES NOT BOUND ───────────────────────────────────────────
+#
+# `baseline` Pod Security bounds host escape and nothing else. What it refuses
+# at admission: `securityContext.privileged`, `hostPath` volumes, the host
+# namespaces (`hostNetwork`, `hostPID`, `hostIPC`), `hostPort`, and added
+# Linux capabilities beyond the default set. That is the payload this file's
+# whole argument rests on, and `baseline` does refuse it.
+#
+# It does not bound, and admission accepts all of the following inside the
+# seven namespaces below: a `volumes.secret` mount, `envFrom.secretRef`,
+# `containers[].command`/`args`, `serviceAccountName`, or `runAsUser`. None of
+# those fields are host escape, so `baseline` — and `restricted`, which does
+# not bound Secret mounts either — has nothing to say about them.
+#
+# The residual reach, stated plainly: an account in `frame:operators` can
+# `patch` a Deployment in `neura-database` (or any of the other six) to mount
+# any Secret in that namespace or add `envFrom.secretRef`, set
+# `command: ["sh","-c","env; sleep 1d"]`, and read the result straight back
+# through the cluster-wide `pods/log get` this same file's sibling role grants
+# — or swap `serviceAccountName` to assume any ServiceAccount identity in the
+# namespace. None of that is a `baseline` violation, and `secrets` appears in
+# no tier role anywhere in this repository, so this design grants indirectly,
+# through a pod's own spec, exactly what it refuses to grant directly. Closing
+# it needs a validating webhook on the patch body, or moving restart and scale
+# to the admin tier — both larger than this task, and a decision for the
+# humans, not something this file's shape resolves on its own.
+#
 # The filename says "operator" and the file holds an admin role too. It is not
-# renamed because fifteen references and a kustomization entry point at it;
-# read it as "the workload grants", which is what its two roles are.
+# renamed because the kustomization entry and several comments elsewhere in
+# this repository already spell this path out by name, and a rename earns a
+# broken reference for every one of them that a grep missed rather than a
+# clearer file; read it as "the workload grants", which is what its two roles
+# are.
 #
 # ── TWO ROLES, ONE MECHANISM ─────────────────────────────────────────────────
 #
