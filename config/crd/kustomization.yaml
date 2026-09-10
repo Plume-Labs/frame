@@ -12,6 +12,7 @@ resources:
 - bases/frame.plume-labs.io_nodetunings.yaml
 - bases/frame.plume-labs.io_frametasks.yaml
 - bases/services.plume-labs.io_frameservices.yaml
+- bases/frame.plume-labs.io_framemachines.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

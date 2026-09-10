@@ -1,0 +1,428 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: framemachines.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: FrameMachine
+    listKind: FrameMachineList
+    plural: framemachines
+    shortNames:
+    - fm
+    singular: framemachine
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.bmc.address
+      name: Address
+      type: string
+    - jsonPath: .status.powerState
+      name: Power
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Reachable")].status
+      name: Reachable
+      type: string
+    - jsonPath: .status.inventory.model
+      name: Model
+      type: string
+    - jsonPath: .spec.nodeRef
+      name: Node
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameMachine is the Schema for the framemachines API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: FrameMachineSpec defines the desired state of FrameMachine.
+            properties:
+              bmc:
+                description: BMCSpec locates the machine's baseboard management controller.
+                properties:
+                  address:
+                    description: |-
+                      Address is the IP of the management port.
+
+                      It is an IP literal and not a hostname on purpose. The controller
+                      connects to this address carrying the credentials named below, which
+                      makes this field a server-side request forgery primitive; requiring a
+                      literal takes name resolution out of that path. Loopback is the
+                      operator's own pod and link-local is where cloud metadata services
+                      live, so both are refused.
+
+                      MaxLength is what lets the CEL cost estimator bound isIP(), the same
+                      reason FrameNodeSpec.IP carries one. 45 matches that field.
+                    maxLength: 45
+                    type: string
+                    x-kubernetes-validations:
+                    - message: bmc.address must be a valid IP address
+                      rule: isIP(self)
+                    - message: bmc.address must not be a loopback address
+                      rule: '!cidr(''127.0.0.0/8'').containsIP(self)'
+                    - message: bmc.address must not be a link-local address
+                      rule: '!cidr(''169.254.0.0/16'').containsIP(self)'
+                  credentialsRef:
+                    description: |-
+                      CredentialsRef names a Secret in the same namespace holding the keys
+                      `username` and `password`. Only the controller reads it; no console
+                      tier is granted `secrets`.
+                    maxLength: 253
+                    type: string
+                  tls:
+                    description: TLS is required, and one of its two fields must be
+                      set.
+                    properties:
+                      caBundleRef:
+                        description: |-
+                          CABundleRef names a ConfigMap in the same namespace holding the CA that
+                          signed the BMC's certificate under the key `ca.crt`.
+                        maxLength: 253
+                        type: string
+                      insecureSkipVerify:
+                        description: InsecureSkipVerify disables certificate verification
+                          entirely.
+                        type: boolean
+                    type: object
+                required:
+                - address
+                - credentialsRef
+                - tls
+                type: object
+                x-kubernetes-validations:
+                - message: bmc.tls must set either insecureSkipVerify or caBundleRef
+                  rule: self.tls.insecureSkipVerify == true || has(self.tls.caBundleRef)
+              nodeRef:
+                description: |-
+                  NodeRef names the Kubernetes node this chassis carries, when it carries
+                  one. It names a Kubernetes node and not a FrameNode deliberately:
+                  FrameNode's provisioning flow is Talos-shaped and the estate moved to a
+                  Debian-based image (see docs/provisioning.md), whereas a Kubernetes node
+                  name is true regardless of how the machine was installed.
+                maxLength: 253
+                type: string
+              powerRequest:
+                description: |-
+                  PowerRequestSpec is an action, not a desired state.
+
+                  A controller holding "desired: On" would turn a machine back on after
+                  someone pressed its physical power button — it would fight the person
+                  standing at the rack — and could not express a restart at all, since the
+                  state before and after is identical. The controller acts only when
+                  RequestedAt is later than status.lastPowerActionAt. The same pattern is
+                  already in this codebase: lot 2 restarts a Deployment by writing
+                  restartedAt.
+                properties:
+                  action:
+                    description: |-
+                      PowerAction is a request to change the machine's power state, clear its
+                      event log, or set its identification LED.
+                    enum:
+                    - "On"
+                    - GracefulShutdown
+                    - ForceOff
+                    - ForceRestart
+                    - ClearSEL
+                    - IndicatorLedOn
+                    - IndicatorLedOff
+                    type: string
+                  requestedAt:
+                    format: date-time
+                    type: string
+                required:
+                - action
+                - requestedAt
+                type: object
+            required:
+            - bmc
+            type: object
+          status:
+            description: |-
+              FrameMachineStatus defines the observed state of FrameMachine.
+
+              No status.phase: the Ready-equivalent condition is Reachable, and its reason
+              carries why — Probed when it succeeded, and one of TLSError, AuthFailed,
+              Timeout, Unsupported, CredentialsUnavailable or ProbeFailed when it did not.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              eventLog:
+                description: |-
+                  EventLog holds the most recent entries only. etcd is not a log store: a
+                  machine up for years can hold thousands, and twenty-five is enough to
+                  answer "why did it reboot", which is the question the log is for.
+                items:
+                  description: EventLogEntry is one line of the machine's event log.
+                  properties:
+                    created:
+                      format: date-time
+                      type: string
+                    id:
+                      type: string
+                    message:
+                      type: string
+                    severity:
+                      type: string
+                  type: object
+                maxItems: 25
+                type: array
+              eventLogCounts:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                description: |-
+                  EventLogCounts is the count per severity across the whole log, not just
+                  the retained entries.
+                type: object
+              eventLogTotal:
+                format: int32
+                type: integer
+              indicatorLED:
+                type: string
+              inventory:
+                description: MachineInventory is what the machine is made of.
+                properties:
+                  biosVersion:
+                    type: string
+                  bmcFirmware:
+                    type: string
+                  drives:
+                    items:
+                      description: DriveInfo describes one drive the BMC can see.
+                      properties:
+                        health:
+                          type: string
+                        model:
+                          type: string
+                        name:
+                          type: string
+                        protocol:
+                          type: string
+                        sizeGB:
+                          format: int32
+                          type: integer
+                      type: object
+                    maxItems: 32
+                    type: array
+                  manufacturer:
+                    type: string
+                  memoryModules:
+                    items:
+                      description: MemoryModuleInfo describes one installed DIMM and
+                        where it sits.
+                      properties:
+                        manufacturer:
+                          type: string
+                        sizeMiB:
+                          format: int32
+                          type: integer
+                        slot:
+                          type: string
+                        type:
+                          type: string
+                      type: object
+                    maxItems: 48
+                    type: array
+                  model:
+                    type: string
+                  networkAdapters:
+                    items:
+                      description: NetworkAdapterInfo describes one network port.
+                      properties:
+                        mac:
+                          type: string
+                        name:
+                          type: string
+                        status:
+                          type: string
+                      type: object
+                    maxItems: 16
+                    type: array
+                  processors:
+                    items:
+                      description: ProcessorInfo describes one installed CPU.
+                      properties:
+                        cores:
+                          format: int32
+                          type: integer
+                        model:
+                          type: string
+                        socket:
+                          type: string
+                        threads:
+                          format: int32
+                          type: integer
+                      type: object
+                    maxItems: 8
+                    type: array
+                  serialNumber:
+                    type: string
+                  totalMemoryGiB:
+                    format: int32
+                    type: integer
+                type: object
+              lastPowerAction:
+                type: string
+              lastPowerActionAt:
+                description: |-
+                  LastPowerActionAt is the guard: a powerRequest is executed only when its
+                  requestedAt is strictly later than this.
+                format: date-time
+                type: string
+              lastProbeAt:
+                description: |-
+                  LastProbeAt is when the values above were read. Every panel renders it:
+                  a sensor value with no timestamp is a lie the moment the BMC stops
+                  answering.
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              powerState:
+                type: string
+              sensors:
+                description: MachineSensors is what the machine currently reads.
+                properties:
+                  fans:
+                    items:
+                      description: |-
+                        FanReading is one fan. Units is what the BMC reported the reading in —
+                        iLO4 commonly says Percent where other vendors say RPM, so the number is
+                        meaningless without it.
+                      properties:
+                        health:
+                          type: string
+                        name:
+                          type: string
+                        reading:
+                          format: int32
+                          type: integer
+                        units:
+                          type: string
+                      type: object
+                    maxItems: 32
+                    type: array
+                  powerConsumedWatts:
+                    format: int32
+                    type: integer
+                  powerSupplies:
+                    items:
+                      description: PowerSupplyReading is one PSU.
+                      properties:
+                        health:
+                          type: string
+                        lastPowerOutputWatts:
+                          format: int32
+                          type: integer
+                        name:
+                          type: string
+                        state:
+                          type: string
+                      type: object
+                    maxItems: 8
+                    type: array
+                  temperatures:
+                    items:
+                      description: TemperatureReading is one temperature sensor.
+                      properties:
+                        celsius:
+                          format: int32
+                          type: integer
+                        health:
+                          type: string
+                        name:
+                          type: string
+                        upperCritical:
+                          format: int32
+                          type: integer
+                      type: object
+                    maxItems: 64
+                    type: array
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
