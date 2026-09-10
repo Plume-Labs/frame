@@ -38,6 +38,57 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
   nothing is lossy. It is what makes deactivation non-destructive — the
   alternative was revoking every passkey, which is reversible only by
   re-enrolment in person. See [crd-reference.md](crd-reference.md).
+- ✅ **`FrameTask.spec.target.subresource`**, added post-freeze (2026-09-09,
+  lot 2): the second field added to a frozen kind, and the cheapest of them —
+  `FrameTask` is `v1beta1`-only with no conversion webhook, so nothing is lossy
+  and no conversion function exists to keep in step. It is what makes a shell
+  opened in a pod (`create pods/<name>/exec`) distinguishable from a pod being
+  created (`create pods/<name>`), without which the decision to record exec
+  sessions had no visible effect. See [crd-reference.md](crd-reference.md).
+- ✅ **Pod Security is enforced on the application namespaces** (2026-09-09,
+  lot 2): `baseline`, pinned to `v1.29`, declared for `default`, `inference`
+  and the five `neura-*` namespaces
+  (`deploy/kubernetes/pod-security/namespaces.yaml`) — but only three of the
+  seven exist on this cluster today (`default`, `inference`, `neura`); the
+  other four carry `enforce` from the moment they are created rather than
+  being labelled after the fact. Two live application namespaces,
+  `neura-jobs` and `neura-sandbox`, are deliberately **not** in this list —
+  they belong to Neura's own Helm chart, and labelling them here would be a
+  server-side-apply ownership conflict — so neither shows a Restart or Scale
+  button. Infrastructure namespaces are deliberately exempt too — Ceph, the
+  node-tuning agent, the CNI, node-exporter and the Talos tooling all need
+  what `baseline` forbids. This is what earned back the `apps/deployments`
+  `patch` grant removed on 2026-08-10 as "the single grant that turned the
+  unauthenticated UI into cluster-admin": it is now bound by a `RoleBinding`
+  into exactly the enforced namespaces — and so is the YAML editor's
+  `update`/`patch`, which cluster-wide is the same escalation through a
+  different door. Restart, scale and saving a manifest therefore work on
+  application workloads and 403 on infrastructure ones; reads are untouched, so
+  the console shows any workload's YAML anywhere and writes only where the
+  policy is enforced. `pods/exec` is the one workload grant that stays
+  cluster-wide, because a shell creates no pod — but it inherits the target
+  pod's, so a shell in a privileged infrastructure pod is node root, which is
+  why exec is admin-only and every session is recorded. `baseline` bounds host
+  escape only, not a Secret mount, a command override or a service account
+  swap — see [deployment.md](deployment.md), "Operating a workload: which tier
+  gets what", for the residual reach that leaves open.
+  It also repaired the Applications screen's Restart button, dead since that
+  removal. The
+  cluster-wide grant that the 2026-08-09 security review called for on *every*
+  namespace is still not that — the exempt list is real and permanent. See
+  [deployment.md](deployment.md), "Turning Pod Security on".
+- ✅ **The cluster is operable from the console** (2026-09-09, lot 2): a
+  workload tree, pod logs, an interactive shell, rollout restart, scale, delete
+  a pod and an editable manifest — under the signed-in person's own identity,
+  with every write recorded. Port-forward, resource creation, log download,
+  cross-pod log search and batch actions are deliberately out
+  ([the design](superpowers/specs/2026-09-09-lot2-workloads-design.md)). The
+  terminal has **never been opened against the cluster**; see
+  [deployment.md](deployment.md), "The check that has never once been run end
+  to end". Two known gaps ship with it: `deploy/docker/nginx.conf` and
+  `vite.config.ts` carry no automated test for the WebSocket upgrade path, and
+  switching pods while a shell is open or a YAML edit is unsaved discards both
+  silently, with no confirmation.
 - ✅ Every CRD with a controller produces real cluster effects, with finalizers, Kubernetes Events and Prometheus metrics — all except FrameUser and FrameTask, neither of which is reconciled; see [crd-reference.md](crd-reference.md)
 - ✅ Validating/defaulting webhooks + envtest coverage threshold ≥ 45% on `internal/controller`, tracked in CI
 - ✅ UI (13 tabbed screens behind an Overview landing, plus a Tasks view) and SDK reach the Kubernetes API through the in-pod `frame-uiproxy` sidecar, which impersonates the signed-in `FrameUser` — the direct-ServiceAccount-token path this bullet used to describe as "Prod" is gone; see [deployment.md](deployment.md)'s RBAC section. (Local development against a developer's own kubeconfig via `kubectl proxy` is a separate workflow, outside the deployed pod, but it is **not** unaffected, as this sentence claimed until 2026-09-08: the console now calls `currentSession()` before it renders anything, and `kubectl proxy` serves no `/auth`. `npm run dev` needs authd reachable too — a port-forward, or `AUTH_PROXY_TARGET`. See [development.md](development.md).)

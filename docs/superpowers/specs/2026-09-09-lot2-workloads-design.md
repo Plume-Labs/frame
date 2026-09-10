@@ -1,6 +1,6 @@
 # Lot 2 — operating workloads from the console: design
 
-**Status:** design approved 2026-09-09. Not implemented.
+**Status:** design approved 2026-09-09; implemented on `feat/lot2-workloads`. The end-to-end cluster check in docs/deployment.md ("The check that has never once been run end to end") **has not been executed** — no shell has been opened from the console against a real apiserver, and no `FrameTask` for a session has been observed.
 
 **Goal:** a person signed in to the Frame console can see every workload on the
 cluster, read a pod's logs, open a shell in a container, restart a deployment,

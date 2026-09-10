@@ -225,6 +225,69 @@ kubectl delete framejob llm-finetune-v4 -n neura-prod
 
 ---
 
+## Operating a workload from the console
+
+The Workloads screen talks to ordinary Kubernetes endpoints through
+`frame-uiproxy`, like everything else. Nothing here is a Frame API.
+
+| What | Request |
+|---|---|
+| The tree | `GET /apis/apps/v1/{deployments,statefulsets,daemonsets,replicasets}`, `GET /apis/batch/v1/jobs`, `GET /api/v1/pods` — all cluster-wide |
+| Logs | `GET /api/v1/namespaces/{ns}/pods/{pod}/log?container=&follow=&previous=&tailLines=` |
+| Shell | `GET /api/v1/namespaces/{ns}/pods/{pod}/exec?container=&stdin=true&stdout=true&tty=true&command=…`, upgraded to a WebSocket |
+| Restart | `PATCH` the controller, `application/strategic-merge-patch+json`, bumping `spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]` |
+| Scale | `PATCH …/{name}/scale`, `application/merge-patch+json` |
+| Delete a pod | `DELETE /api/v1/namespaces/{ns}/pods/{pod}` |
+| Read a manifest | `GET` the object with `Accept: application/yaml` |
+| Write a manifest | `PUT` the object with `Content-Type: application/yaml`, twice: once with `?dryRun=All`, then for real |
+
+**The dry run leaves no `FrameTask`, and that is a rule rather than an
+accident.** `TaskRecorder.Start` refuses any request carrying a `dryRun`
+parameter (`internal/uiproxy/recorder.go`), because a dry run stores nothing —
+recording it would put two rows in the trail for one edit, one of which changed
+nothing. So an edit is **one** row. Reading the trail: two rows for one edit
+means that rule was lost; *no* row after a successful edit means the action
+label overflowed `FrameTaskSpec.Action`'s 200-character cap and the apiserver
+refused the record, which the recorder logs and the user never sees.
+
+Four things about that list are not obvious.
+
+**YAML is the apiserver's, not the console's.** `application/yaml` is a
+supported representation of every resource, for both `Accept` and
+`Content-Type`, so the console ships no YAML parser and no serialiser. That is
+also what makes the audit label trustworthy: the "after" side of the diff is
+the apiserver's own reading of the edited text, returned by the dry run, rather
+than this repository's guess at it.
+
+**The edit carries the `resourceVersion` that was read**, because it is still in
+the YAML the person edited. A concurrent change therefore produces a **409**
+instead of silently overwriting someone else's work. Do not strip it.
+
+**The shell's token rides a subprotocol.** `new WebSocket(url, protocols)`
+accepts no request headers, so the bearer token cannot travel in
+`Authorization`. The console offers two subprotocols —
+`v4.channel.k8s.io` and
+`base64url.bearer.authorization.k8s.io.<unpadded-base64url-token>` — which is
+Kubernetes' own convention for this. Here `frame-uiproxy` consumes and
+**strips** the second one: the token is authd's, the apiserver would neither
+accept it nor recognise the entry, and forwarding it would write a live
+credential into the apiserver's audit log on every shell.
+
+Once upgraded, every frame is binary and begins with a channel byte: 0 stdin,
+1 stdout, 2 stderr, 3 a `metav1.Status` for the exit, 4 a terminal resize
+(`{"Width":n,"Height":n}` — capitalised, because the apiserver unmarshals it
+into a Go struct with no json tags). `stderr` is never requested, because the
+apiserver rejects it alongside `tty=true`.
+
+The handshake always arrives as an HTTP GET — `new WebSocket()` can issue
+nothing else — and the apiserver authorizes the whole exchange as `create
+pods/exec` regardless. That is why `pods/exec` is the one grant in
+[deployment.md](deployment.md)'s RBAC section that stays cluster-wide, and why
+the `FrameTask` this opens records `verb: create` rather than `get` (see
+[crd-reference.md](crd-reference.md), "FrameTask").
+
+---
+
 ## CRD API endpoints
 
 Eight are under `frame.plume-labs.io/v1beta1`; `FrameService` is under the

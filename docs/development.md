@@ -122,6 +122,15 @@ AUTH_PROXY_TARGET=https://frame.example.internal npm run dev
 The dev proxy sets `secure: false`, because authd's in-cluster certificate
 names its Service, not `localhost`.
 
+**The Terminal tab does not work under `kubectl proxy`.** A shell authenticates
+by offering the authd token as a WebSocket subprotocol, which
+`frame-uiproxy` consumes and strips. `kubectl proxy` is not that proxy: it
+authenticates with your own kubeconfig and forwards the subprotocol untouched,
+so the apiserver sees a bearer token it cannot verify and refuses the
+handshake. Logs, the tree and every write work locally; the terminal needs the
+real sidecar, which means a port-forward to a deployed `cluster-control-ui`
+pod or the cluster itself.
+
 Note that `kubectl proxy` authenticates as *your* kubeconfig, so the RBAC the
 console sees locally is yours, not the impersonated `frame:` group's. A
 screen that works locally can still 403 in the cluster; `deploy/kubernetes`'s
