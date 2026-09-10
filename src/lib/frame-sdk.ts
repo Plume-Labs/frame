@@ -1079,13 +1079,25 @@ interface FrameTaskCR {
   metadata: { name: string; creationTimestamp?: string }
   spec: {
     user: string; verb: string; action?: string
-    target: { group?: string; resource: string; namespace?: string; name: string }
+    target: { group?: string; resource: string; namespace?: string; name: string; subresource?: string }
   }
   status?: { phase?: string; httpCode?: number; startedAt?: string; finishedAt?: string }
 }
 
-function refLabel(r: { resource: string; namespace?: string; name: string }): string {
-  return r.namespace ? `${r.namespace}/${r.resource}/${r.name}` : `${r.resource}/${r.name}`
+/**
+ * `namespace/resource/name[/subresource]`, matching how FrameTaskSpec.ObjectRef
+ * names things: plural resources off the request path, not Kinds. The
+ * subresource is the difference between "create pods/api-0" — a pod being
+ * created — and "create pods/api-0/exec", a shell being opened in one.
+ */
+function refLabel(r: {
+  resource: string
+  namespace?: string
+  name: string
+  subresource?: string
+}): string {
+  const base = r.namespace ? `${r.namespace}/${r.resource}/${r.name}` : `${r.resource}/${r.name}`
+  return r.subresource ? `${base}/${r.subresource}` : base
 }
 
 /**

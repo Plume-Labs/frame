@@ -43,6 +43,21 @@ type ObjectRef struct {
 	Namespace string `json:"namespace,omitempty"`
 	// +kubebuilder:validation:Required
 	Name string `json:"name"`
+	// Subresource is the trailing segment of the request path when there is
+	// one — "exec", "log", "scale", "eviction" — and empty for a request on
+	// the object itself.
+	//
+	// Without it a shell opened in a pod records as "create pods/<name>", the
+	// same string a pod create produces, so the decision to record exec
+	// sessions has no effect anyone can see. FrameTask is post-freeze,
+	// v1beta1-only and has no conversion webhook, so an optional field costs
+	// no compatibility and needs no conversion function.
+	//
+	// 63 is the longest subresource Kubernetes has; the cap is here so a
+	// hand-built path cannot store an arbitrary string in the audit trail.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	Subresource string `json:"subresource,omitempty"`
 }
 
 // FrameTaskSpec is the record of one mutating request the UI made.

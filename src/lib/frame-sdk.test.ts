@@ -732,6 +732,22 @@ describe('crToTask', () => {
     })
     expect(t.phase).toBe('Running')
   })
+
+  // The whole reason ObjectRef gained a subresource. Rendered without it, a
+  // shell opened in a pod and a pod created from the console print the same
+  // target, and the Tasks screen cannot tell one from the other.
+  it('renders the subresource, so an exec reads as an exec', () => {
+    const t = crToTask({
+      metadata: { name: 'task-exec' },
+      spec: {
+        user: 'alice@example.com',
+        verb: 'create',
+        action: 'open a shell in neura/api-0 (api)',
+        target: { resource: 'pods', namespace: 'neura', name: 'api-0', subresource: 'exec' },
+      },
+    })
+    expect(t.target).toBe('neura/pods/api-0/exec')
+  })
 })
 
 // Not in the whole-branch review's list, found while fixing I2: every

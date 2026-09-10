@@ -22,19 +22,25 @@ func TestParsePath(t *testing.T) {
 		ok   bool
 	}{
 		{"/api/v1/nodes/w2", framev1beta1.ObjectRef{Resource: "nodes", Name: "w2"}, true},
+		// The subresource is the difference between draining a pod and
+		// deleting one, and between opening a shell and creating a pod.
 		{"/api/v1/namespaces/neura/pods/api-0/eviction",
-			framev1beta1.ObjectRef{Resource: "pods", Namespace: "neura", Name: "api-0"}, true},
+			framev1beta1.ObjectRef{Resource: "pods", Namespace: "neura", Name: "api-0", Subresource: "eviction"}, true},
+		{"/api/v1/namespaces/neura/pods/api-0/exec",
+			framev1beta1.ObjectRef{Resource: "pods", Namespace: "neura", Name: "api-0", Subresource: "exec"}, true},
+		{"/api/v1/namespaces/neura/pods/api-0/log",
+			framev1beta1.ObjectRef{Resource: "pods", Namespace: "neura", Name: "api-0", Subresource: "log"}, true},
 		{"/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/framejobs/j-1",
 			framev1beta1.ObjectRef{Group: "frame.plume-labs.io", Resource: "framejobs", Namespace: "frame-system", Name: "j-1"}, true},
 		{"/apis/apps/v1/namespaces/neura/deployments/api/scale",
-			framev1beta1.ObjectRef{Group: "apps", Resource: "deployments", Namespace: "neura", Name: "api"}, true},
+			framev1beta1.ObjectRef{Group: "apps", Resource: "deployments", Namespace: "neura", Name: "api", Subresource: "scale"}, true},
 		// A create has no name in the path; the record still has to exist.
 		{"/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/framejobs",
 			framev1beta1.ObjectRef{Group: "frame.plume-labs.io", Resource: "framejobs", Namespace: "frame-system", Name: "-"}, true},
 		{"/healthz", framev1beta1.ObjectRef{}, false},
 	}
 	for _, tc := range cases {
-		got, _, ok := parsePath(tc.path)
+		got, ok := parsePath(tc.path)
 		if ok != tc.ok {
 			t.Fatalf("%s: ok = %v", tc.path, ok)
 		}

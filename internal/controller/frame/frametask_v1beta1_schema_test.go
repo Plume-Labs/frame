@@ -23,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -97,5 +98,32 @@ var _ = Describe("FrameTask v1beta1 schema", func() {
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "expected a validation error, got: %v", err)
 		Expect(err.Error()).To(ContainSubstring("spec"),
 			"the rejection must name spec, not some other rule")
+	})
+
+	// Asserted through a round trip against a real apiserver, not on the Go
+	// struct, because that is the only thing that can fail. A CRD that was not
+	// regenerated *prunes* an unknown field silently: the create succeeds and
+	// the value comes back empty. `subresource: ""` on the read is exactly what
+	// a forgotten `make manifests` looks like, and nothing else in the tree
+	// would notice it.
+	It("stores target.subresource, so an exec is not recorded as a pod create", func() {
+		obj := &framev1beta1.FrameTask{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "task-exec-", Namespace: "default"},
+			Spec: framev1beta1.FrameTaskSpec{
+				User: "alice@example.com",
+				Verb: "create",
+				Target: framev1beta1.ObjectRef{
+					Resource: "pods", Namespace: "neura", Name: "api-0", Subresource: "exec",
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, obj)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, obj) })
+
+		back := &framev1beta1.FrameTask{}
+		Expect(k8sClient.Get(ctx,
+			types.NamespacedName{Name: obj.Name, Namespace: "default"}, back)).To(Succeed())
+		Expect(back.Spec.Target.Subresource).To(Equal("exec"),
+			"the apiserver pruned it — config/crd/bases was not regenerated")
 	})
 })
