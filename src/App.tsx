@@ -22,6 +22,7 @@ const OverviewView = lazy(() => import('@/components/OverviewView').then((m) => 
 const ClusterNodesView = lazy(() => import('@/components/ClusterNodesView').then((m) => ({ default: m.ClusterNodesView })))
 const FrameNodesView = lazy(() => import('@/components/FrameNodesView').then((m) => ({ default: m.FrameNodesView })))
 const RacksView = lazy(() => import('@/components/RacksView').then((m) => ({ default: m.RacksView })))
+const HardwareView = lazy(() => import('@/components/hardware/HardwareView').then((m) => ({ default: m.HardwareView })))
 const WorkloadsView = lazy(() => import('@/components/workloads/WorkloadsView').then((m) => ({ default: m.WorkloadsView })))
 const ApplicationsView = lazy(() => import('@/components/ApplicationsView').then((m) => ({ default: m.ApplicationsView })))
 const FrameJobsView = lazy(() => import('@/components/FrameJobsView').then((m) => ({ default: m.FrameJobsView })))
@@ -88,6 +89,11 @@ import {
   TreeStructure,
   Users,
 } from '@phosphor-icons/react'
+// Server: phosphor-icons has no server/chassis glyph in the version pinned
+// here; lucide-react is already a project dependency (see package.json),
+// just unused elsewhere, so this borrows one icon rather than approximating
+// with an unrelated phosphor glyph.
+import { Server } from 'lucide-react'
 
 /**
  * Navigation model.
@@ -119,6 +125,7 @@ type TabId =
   | 'nodes'
   | 'provisioned-nodes'
   | 'racks'
+  | 'hardware'
   | 'gpu'
   | 'storage'
   | 'network'
@@ -226,6 +233,13 @@ const NAV: NavGroup[] = [
           { id: 'provisioned-nodes', label: 'Provisioned' },
           { id: 'racks', label: 'Racks' },
         ],
+      },
+      {
+        id: 'hardware',
+        label: 'Hardware',
+        icon: <Server />,
+        description: 'Physical chassis over Redfish: inventory, sensors, event log and power',
+        tabs: [{ id: 'hardware', label: 'Machines' }],
       },
     ],
   },
@@ -555,6 +569,8 @@ function App() {
         return <FrameNodesView />
       case 'racks':
         return <RacksView />
+      case 'hardware':
+        return <HardwareView />
       // ── Resources ───────────────────────────────────────────────────────
       case 'gpu':
         return <GpuView />
