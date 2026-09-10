@@ -4,6 +4,26 @@
 # Grants edit access to FrameMachine resources including creation, modification, and deletion.
 # This role is intended for operators who manage machine configurations and lifecycle
 # without administrative capabilities like bulk deletion.
+#
+# NOT IN THE AGGREGATION (lot 1, hardware/Redfish, task 6). This role carries
+# no `rbac.frame.plume-labs.io/tier` label, so `frame-editor` does not pick it
+# up and `frame:operators` does not hold it, following the same fix already
+# applied to frameuser-editor-role (see that file's header, whole-branch
+# review C4).
+#
+# The console's design for FrameMachine is admin-only writes: spec.powerRequest,
+# reached through `patch`, is the one field the console can write, and it is
+# granted to the admin tier alone in deploy/kubernetes/base/rbac.yaml — never
+# editor. Restarting a Deployment is bounded by an update strategy; powering
+# off a chassis is bounded by nothing, and the chassis may be carrying the
+# cluster that hosts the console making the request. This role's `tier: editor`
+# label would have silently reopened that: `frame-editor` would aggregate
+# `create`/`update`/`patch`/`delete` on framemachines regardless of what
+# rbac.yaml grants, since aggregation is by label across every ClusterRole in
+# the cluster, not by file. See test/manifests/framemachine_rbac_test.go,
+# TestViewersCanReadFrameMachinesAndNothingElseTiersCanWrite.
+#
+# Bind it deliberately if you want it, to a group, never to a user.
 
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -11,7 +31,6 @@ metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
-    rbac.frame.plume-labs.io/tier: editor
   name: framemachine-editor-role
 rules:
 - apiGroups:
