@@ -24,11 +24,13 @@ const SEVERITY_ORDER: Record<SensorSeverity, number> = { critical: 0, warning: 1
  * newest-first sort, so this renders `machine.eventLog` in the order it
  * arrives rather than re-sorting it).
  *
- * `eventLogCounts`/`eventLogTotal` cover the *whole* log on the BMC, not
- * just the 25 retained entries — etcd is not a log store, so a machine that
- * has been up for years can carry thousands. Showing "Critical: 4" beside
- * three visible lines with nothing said about the gap reads as a broken
- * screen; the sentence above the counts is what keeps it from being one.
+ * `eventLogCounts` covers only the entries the last probe actually retrieved
+ * from the BMC — one page, not necessarily the whole log: on the captured
+ * iLO4 the machine reports 175 entries total (`eventLogTotal`) but the
+ * collection returns only 30 with no way to page further, so
+ * `eventLogCounts` sums to 30, not 175. The sentence above the counts says
+ * exactly that — entries retrieved vs. the machine's own total — rather
+ * than claiming coverage this field doesn't have.
  */
 export function MachineEventLog({ machine }: { machine: Machine }) {
   const counts = Object.entries(machine.eventLogCounts).sort(
@@ -40,9 +42,9 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
       <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-2">
         <div className="text-muted-foreground">
           {machine.eventLogTotal} entrée{machine.eventLogTotal === 1 ? '' : 's'} au total sur le journal
-          du BMC. Seules les {Math.min(25, machine.eventLog.length)} plus récentes sont affichées
-          ci-dessous — les compteurs qui suivent portent sur le journal entier, pas sur ce qui est
-          visible.
+          du BMC. Les {machine.eventLog.length} entrées ci-dessous sont celles que la dernière
+          lecture a effectivement récupérées — les compteurs qui suivent portent sur ces
+          entrées récupérées, pas sur le journal entier de la machine.
         </div>
         {counts.length > 0 && (
           <div className="flex flex-wrap gap-2">

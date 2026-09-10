@@ -45,11 +45,23 @@ export function InventoryTab({ machine }: { machine: Machine }) {
         />
       </Section>
 
-      <Section icon={<HardDrives />} title={`Drives (${inventory.drives.length})`}>
-        <Table
-          columns={['Name', 'Model', 'Size', 'Protocol', 'Health']}
-          rows={inventory.drives.map((d) => [d.name, d.model, `${d.sizeGB} GB`, d.protocol, d.health])}
-        />
+      {/* internal/redfish deliberately never walks HPE's SmartStorage OEM
+          tree (see client.go's comment at Drives' population site), so
+          `drives` is always empty on this BMC family — not because the
+          machine has no disks. "Drives (0) — none reported" would be a
+          false statement about the machine; this says what is actually
+          true, which is a gap in what we collect, not in what is there. */}
+      <Section icon={<HardDrives />} title="Drives">
+        {inventory.drives.length === 0 ? (
+          <div className="text-muted-foreground pl-5">
+            Drive inventory is not collected from this BMC family.
+          </div>
+        ) : (
+          <Table
+            columns={['Name', 'Model', 'Size', 'Protocol', 'Health']}
+            rows={inventory.drives.map((d) => [d.name, d.model, `${d.sizeGB} GB`, d.protocol, d.health])}
+          />
+        )}
       </Section>
 
       <Section icon={<Network />} title={`Network adapters (${inventory.networkAdapters.length})`}>

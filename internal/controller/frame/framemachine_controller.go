@@ -45,12 +45,6 @@ import (
 // package would call Ready.
 const conditionReachable = "Reachable"
 
-// eventLogRetainCount mirrors the +kubebuilder:validation:MaxItems=25 on
-// FrameMachineStatus.EventLog. etcd is not a log store: a machine up for
-// years can hold thousands of entries, and twenty-five recent ones are
-// enough to answer "why did it reboot".
-const eventLogRetainCount = 25
-
 // FrameMachineReconciler polls a FrameMachine's BMC over Redfish and records
 // what it read, and when.
 type FrameMachineReconciler struct {
@@ -64,7 +58,7 @@ type FrameMachineReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // Reconcile polls the machine's BMC and records what it read.
@@ -100,7 +94,17 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// power action is never lost even when the probe doesn't succeed.
 	patch := client.MergeFrom(fm.DeepCopy())
 
+	// runPowerRequest never returns a non-nil error today — every branch of
+	// its internal switch ends in `return true, nil`, action failure and
+	// all — but if that ever changes, the patch below must still run: by
+	// this point runPowerRequest may already have mutated
+	// fm.Status.LastPowerAction/LastPowerActionAt on fm directly (not
+	// through patch), and returning before Status().Patch would silently
+	// drop that mutation instead of persisting it.
 	if _, err := r.runPowerRequest(ctx, &fm, rc); err != nil {
+		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
+			return ctrl.Result{}, perr
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -196,7 +200,17 @@ func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev
 // fits LastPowerActionError's MaxLength without the apiserver rejecting the
 // status write.
 func truncateError(err error, n int) string {
-	s := err.Error()
+	return truncateString(err.Error(), n)
+}
+
+// truncateString cuts s to at most n runes. mapEventLog uses it on
+// EventLogEntry.Message (MaxLength=512): the message is free text from the
+// BMC's own log, this package doesn't control its length, and a single
+// entry over the limit must not turn into a rejected status write — the
+// whole point of giving the field a MaxLength was to make growth bounded
+// and predictable, not to add a new way for one long line to fail the
+// patch.
+func truncateString(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
@@ -357,24 +371,34 @@ func mapSensors(s *redfish.Sensors) *framev1beta1.MachineSensors {
 	return out
 }
 
-// mapEventLog retains only the most recent eventLogRetainCount entries,
-// matching FrameMachineStatus.EventLog's +kubebuilder:validation:MaxItems=25.
+// mapEventLog retains only the most recent redfish.EventLogRetainCount
+// entries, matching FrameMachineStatus.EventLog's
+// +kubebuilder:validation:MaxItems=25 (kept as a literal there — a
+// kubebuilder marker cannot reference a Go constant — so that number and
+// redfish.EventLogRetainCount must be kept in sync by hand).
 // internal/redfish sorts Snapshot.Log newest-first (decode.go's readLog
 // sorts by Created.After before returning), so index 0 is the newest entry
 // and keeping the head is what keeps the newest ones. The whole reason this
 // retains 25 entries at all is to answer "why did this machine reboot" — a
 // question about the newest entries — so keeping the tail would silently
 // retain the oldest quarter-century of history instead.
+// eventLogMessageMaxLength mirrors EventLogEntry.Message's
+// +kubebuilder:validation:MaxLength (framemachine_types.go). A message this
+// package didn't truncate itself would fail the whole status Patch on the
+// one entry that happens to be long, rather than being cut the way
+// LastPowerActionError already is.
+const eventLogMessageMaxLength = 512
+
 func mapEventLog(entries []redfish.LogEntry) []framev1beta1.EventLogEntry {
-	if len(entries) > eventLogRetainCount {
-		entries = entries[:eventLogRetainCount]
+	if len(entries) > redfish.EventLogRetainCount {
+		entries = entries[:redfish.EventLogRetainCount]
 	}
 	out := make([]framev1beta1.EventLogEntry, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, framev1beta1.EventLogEntry{
 			ID:       e.ID,
 			Severity: e.Severity,
-			Message:  e.Message,
+			Message:  truncateString(e.Message, eventLogMessageMaxLength),
 			Created:  metav1.NewTime(e.Created),
 		})
 	}

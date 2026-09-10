@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -272,6 +273,30 @@ var _ = Describe("FrameMachine controller", func() {
 		// last one kept — index 25 onward (older) does not survive.
 		Expect(got.Status.EventLog[0].ID).To(Equal("0"))
 		Expect(got.Status.EventLog[24].ID).To(Equal("24"))
+	})
+
+	// EventLogEntry.Message carries a MaxLength=512: without mapEventLog
+	// truncating it first, one over-long BMC message would make the
+	// apiserver reject this whole status Patch. Proven against envtest, not
+	// truncateString in isolation.
+	It("truncates an over-long event log message instead of failing the whole status write", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-longmsg-creds"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMachine("fm-longmsg"))).To(Succeed())
+		fake.snapshot.Log = []redfish.LogEntry{{
+			ID:       "1",
+			Severity: "Warning",
+			Message:  strings.Repeat("x", 600),
+			Created:  time.Now(),
+		}}
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-longmsg", Namespace: "default"}}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.EventLog).To(HaveLen(1))
+		Expect(len(got.Status.EventLog[0].Message)).To(Equal(512))
 	})
 
 	It("reports a timeout distinctly from other probe failures", func() {

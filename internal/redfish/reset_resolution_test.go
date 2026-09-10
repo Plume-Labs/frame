@@ -107,3 +107,42 @@ func TestResetReturnsErrUnsupportedWhenNeitherGracefulShutdownNorPushPowerButton
 		t.Fatalf("err = %v, want ErrUnsupported", err)
 	}
 }
+
+// AllowableResetTypes used to be consulted only for GracefulShutdown; every
+// other requested type passed straight through regardless of what the
+// machine actually listed. C1 and C2 are evidence this firmware's Actions
+// diverge from assumption more broadly than that, so all four actions the
+// controller can request (On, GracefulShutdown, ForceOff, ForceRestart) are
+// now checked: a type the machine's own AllowableValues doesn't list is
+// refused before it is ever sent.
+func TestResetRefusesATypeTheMachineDoesNotList(t *testing.T) {
+	doc := `{
+		"Id": "1", "PowerState": "On", "IndicatorLED": "Off",
+		"Actions": {"#ComputerSystem.Reset": {
+			"target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/",
+			"ResetType@Redfish.AllowableValues": ["ForceOff", "ForceRestart"]
+		}},
+		"LogServices": {"@odata.id": "/redfish/v1/Systems/1/LogServices/"}
+	}`
+	srv, _ := resetServer(t, doc)
+	err := insecureClient(srv.URL).Reset(context.Background(), "On")
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
+// A firmware that never populates AllowableValues at all (the synthetic
+// ilo4 fixture, used here via resetServer's default fullRoutes()) has
+// nothing for resolveResetType to check a request against, so every request
+// must still pass through unchecked — refusing everything an
+// AllowableValues-less firmware doesn't explicitly enumerate would make
+// Reset permanently unusable against it.
+func TestResetPassesThroughWhenTheMachineListsNoAllowableValuesAtAll(t *testing.T) {
+	srv, posted := resetServer(t, "")
+	if err := insecureClient(srv.URL).Reset(context.Background(), "On"); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if v := <-posted; v != "On" {
+		t.Errorf("ResetType = %q, want On", v)
+	}
+}

@@ -238,10 +238,18 @@ spec:
                       format: date-time
                       type: string
                     id:
+                      maxLength: 64
                       type: string
                     message:
+                      description: |-
+                        Message is free text from the BMC's own log and this package does not
+                        control its length. MaxLength bounds it so twenty-five unbounded
+                        messages cannot grow the status past etcd's object size limit and
+                        reject the whole status write.
+                      maxLength: 512
                       type: string
                     severity:
+                      maxLength: 32
                       type: string
                   type: object
                 maxItems: 25
@@ -251,8 +259,13 @@ spec:
                   format: int32
                   type: integer
                 description: |-
-                  EventLogCounts is the count per severity across the whole log, not just
-                  the retained entries.
+                  EventLogCounts is the count per severity across the entries this probe
+                  actually retrieved from the BMC — one page, not necessarily the whole
+                  log. On the captured iLO4 the machine's own log holds 175 entries but
+                  the collection returns only 30 with no way to page further, so
+                  EventLogCounts here sums to 30, not 175. EventLogTotal is the number to
+                  read for "how many entries does the machine say it holds"; this field
+                  never claims to cover more than what it counted.
                 type: object
               eventLogTotal:
                 format: int32
@@ -263,20 +276,26 @@ spec:
                 description: MachineInventory is what the machine is made of.
                 properties:
                   biosVersion:
+                    maxLength: 128
                     type: string
                   bmcFirmware:
+                    maxLength: 128
                     type: string
                   drives:
                     items:
                       description: DriveInfo describes one drive the BMC can see.
                       properties:
                         health:
+                          maxLength: 64
                           type: string
                         model:
+                          maxLength: 256
                           type: string
                         name:
+                          maxLength: 256
                           type: string
                         protocol:
+                          maxLength: 64
                           type: string
                         sizeGB:
                           format: int32
@@ -285,6 +304,7 @@ spec:
                     maxItems: 32
                     type: array
                   manufacturer:
+                    maxLength: 256
                     type: string
                   memoryModules:
                     items:
@@ -292,28 +312,35 @@ spec:
                         where it sits.
                       properties:
                         manufacturer:
+                          maxLength: 256
                           type: string
                         sizeMiB:
                           format: int32
                           type: integer
                         slot:
+                          maxLength: 64
                           type: string
                         type:
+                          maxLength: 64
                           type: string
                       type: object
                     maxItems: 48
                     type: array
                   model:
+                    maxLength: 256
                     type: string
                   networkAdapters:
                     items:
                       description: NetworkAdapterInfo describes one network port.
                       properties:
                         mac:
+                          maxLength: 64
                           type: string
                         name:
+                          maxLength: 256
                           type: string
                         status:
+                          maxLength: 64
                           type: string
                       type: object
                     maxItems: 16
@@ -326,8 +353,10 @@ spec:
                           format: int32
                           type: integer
                         model:
+                          maxLength: 256
                           type: string
                         socket:
+                          maxLength: 64
                           type: string
                         threads:
                           format: int32
@@ -336,6 +365,7 @@ spec:
                     maxItems: 8
                     type: array
                   serialNumber:
+                    maxLength: 128
                     type: string
                   totalMemoryGiB:
                     format: int32
@@ -396,14 +426,24 @@ spec:
                         name:
                           type: string
                         reading:
+                          description: |-
+                            Reading carries no `omitempty`, for the same reason
+                            TemperatureReading.Celsius doesn't: a stopped fan reading 0 must stay
+                            distinguishable from a fan bay this decoder never populated.
                           format: int32
                           type: integer
                         units:
                           type: string
+                      required:
+                      - reading
                       type: object
                     maxItems: 32
                     type: array
                   powerConsumedWatts:
+                    description: |-
+                      PowerConsumedWatts carries no `omitempty`: 0 W is the machine's own
+                      reading while powered off or mid-POST (see PROVENANCE.md), and must
+                      stay distinguishable from a reading this decoder never took.
                     format: int32
                     type: integer
                   powerSupplies:
@@ -427,6 +467,13 @@ spec:
                       description: TemperatureReading is one temperature sensor.
                       properties:
                         celsius:
+                          description: |-
+                            Celsius carries no `omitempty`: a stopped-but-present sensor can
+                            genuinely read 0, and dropping the field on that value would make it
+                            indistinguishable from a sensor never populated at all — the exact
+                            inversion of what this lot exists to prevent (see internal/redfish's
+                            absent-sensor handling for the socket-vs-reading distinction this
+                            guards separately).
                           format: int32
                           type: integer
                         health:
@@ -436,9 +483,13 @@ spec:
                         upperCritical:
                           format: int32
                           type: integer
+                      required:
+                      - celsius
                       type: object
                     maxItems: 64
                     type: array
+                required:
+                - powerConsumedWatts
                 type: object
               sensorsValidAt:
                 description: |-

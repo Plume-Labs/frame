@@ -353,6 +353,66 @@ func TestResetPostsTheActionTarget(t *testing.T) {
 	}
 }
 
+// A system document with no LogServices link at all has nothing for
+// ClearLog to discover a target from, and it must refuse rather than fall
+// back to a guessed one.
+func TestClearLogReturnsErrUnsupportedWhenLogServicesIsAbsent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/redfish/v1/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Systems":{"@odata.id":"/redfish/v1/Systems/"}}`))
+	})
+	mux.HandleFunc("/redfish/v1/Systems/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Members@odata.count":1,"Members":[{"@odata.id":"/redfish/v1/Systems/1/"}]}`))
+	})
+	mux.HandleFunc("/redfish/v1/Systems/1/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Id":"1","PowerState":"On","IndicatorLED":"Off",` +
+			`"Actions":{"#ComputerSystem.Reset":{"target":"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/"}}}`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	err := insecureClient(srv.URL).ClearLog(context.Background())
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
+// A LogService document exposing no #LogService.ClearLog action at all must
+// also refuse, distinctly from a transport error.
+func TestClearLogReturnsErrUnsupportedWhenTheActionIsAbsent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/redfish/v1/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Systems":{"@odata.id":"/redfish/v1/Systems/"}}`))
+	})
+	mux.HandleFunc("/redfish/v1/Systems/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Members@odata.count":1,"Members":[{"@odata.id":"/redfish/v1/Systems/1/"}]}`))
+	})
+	mux.HandleFunc("/redfish/v1/Systems/1/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Id":"1","PowerState":"On","IndicatorLED":"Off",` +
+			`"Actions":{"#ComputerSystem.Reset":{"target":"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/"}},` +
+			`"LogServices":{"@odata.id":"/redfish/v1/Systems/1/LogServices/"}}`))
+	})
+	mux.HandleFunc("/redfish/v1/Systems/1/LogServices/IML/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Id":"IML"}`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	err := insecureClient(srv.URL).ClearLog(context.Background())
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
 // Finding 2's GracefulShutdown-resolution tests live in
 // reset_resolution_test.go; Findings 1, 3 and 4's real-hardware tests live
 // in real_hardware_test.go.

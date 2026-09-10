@@ -1037,7 +1037,7 @@ metadata:
   namespace: default
 spec:
   bmc:
-    address: 192.0.2.60
+    address: 192.0.2.236
     credentialsRef: ml350-g9-ilo
     tls:
       insecureSkipVerify: true

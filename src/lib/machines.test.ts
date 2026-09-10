@@ -379,6 +379,23 @@ describe('sensorAvailability', () => {
     expect(sensorAvailability(m)).not.toEqual({ kind: 'in-post' })
     expect(sensorAvailability(m)).toEqual({ kind: 'available' })
   })
+
+  // Minor fix: postState === 'PowerOff' can only be seen past the
+  // powerState !== 'On' branch above in the contradictory case where
+  // powerState says On — a state applySnapshot cannot currently produce,
+  // but one this function used to render as 'in-post' ("Démarrage en
+  // cours"), the opposite of what postState itself says. Only 'InPost'
+  // should map to 'in-post' here.
+  it('does not treat a contradictory On/PowerOff pair as in-post', () => {
+    const m = toMachine(
+      reachable({
+        powerState: 'On',
+        postState: 'PowerOff',
+        sensorsValidAt: '2026-09-10T09:00:00Z',
+      }),
+    )
+    expect(sensorAvailability(m)).not.toEqual({ kind: 'in-post' })
+  })
 })
 
 describe('DISRUPTIVE_POWER_ACTIONS', () => {
