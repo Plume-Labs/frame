@@ -244,14 +244,33 @@ type FrameMachineStatus struct {
 	// +optional
 	PowerState string `json:"powerState,omitempty"`
 
+	// PostState is the machine's power-on-self-test state as the BMC
+	// reports it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	PostState string `json:"postState,omitempty"`
+
 	// +optional
 	IndicatorLED string `json:"indicatorLED,omitempty"`
 
 	// +optional
 	Inventory *MachineInventory `json:"inventory,omitempty"`
 
+	// Sensors is nil whenever the last probe found the readings untrustworthy
+	// (see SensorsValidAt) rather than kept alongside a caveat nobody reads —
+	// see the controller's applySnapshot for why clearing, not flagging, is
+	// the deliberate choice.
 	// +optional
 	Sensors *MachineSensors `json:"sensors,omitempty"`
+
+	// SensorsValidAt is when Sensors was last read in a state where the
+	// machine could actually produce it. It is deliberately distinct from
+	// LastProbeAt: a probe can succeed against a powered-off machine and
+	// come back with a full set of readings that describe an earlier moment
+	// (see internal/redfish.Snapshot.SensorsTrustworthy) — LastProbeAt still
+	// advances on that probe, but SensorsValidAt does not.
+	// +optional
+	SensorsValidAt *metav1.Time `json:"sensorsValidAt,omitempty"`
 
 	// EventLog holds the most recent entries only. etcd is not a log store: a
 	// machine up for years can hold thousands, and twenty-five is enough to

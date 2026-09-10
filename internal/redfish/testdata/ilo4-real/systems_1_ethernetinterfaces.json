@@ -1,0 +1,44 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/EthernetInterfaces",
+    "@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces/",
+    "@odata.type": "#EthernetInterfaceCollection.EthernetInterfaceCollection",
+    "Description": "Collection of System Network Interfaces",
+    "MemberType": "EthernetInterface.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces/1/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces/2/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces/3/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces/4/"
+        }
+    ],
+    "Members@odata.count": 4,
+    "Name": "System Network Interfaces",
+    "Total": 4,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/EthernetInterfaces/1/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/EthernetInterfaces/2/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/EthernetInterfaces/3/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/EthernetInterfaces/4/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Systems/1/EthernetInterfaces/"
+        }
+    }
+}

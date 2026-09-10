@@ -322,6 +322,10 @@ func (in *FrameMachineStatus) DeepCopyInto(out *FrameMachineStatus) {
 		*out = new(MachineSensors)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.SensorsValidAt != nil {
+		in, out := &in.SensorsValidAt, &out.SensorsValidAt
+		*out = (*in).DeepCopy()
+	}
 	if in.EventLog != nil {
 		in, out := &in.EventLog, &out.EventLog
 		*out = make([]EventLogEntry, len(*in))

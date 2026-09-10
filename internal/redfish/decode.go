@@ -71,9 +71,26 @@ type computerSystemJSON struct {
 	Actions struct {
 		Reset struct {
 			Target string `json:"target"`
+			// AllowableValues is what this specific machine's firmware
+			// accepts as ResetType, not what the Redfish spec allows in
+			// general. The captured iLO4 lists On, ForceOff, ForceRestart,
+			// Nmi and PushPowerButton — no GracefulShutdown (Finding 2).
+			AllowableValues []string `json:"ResetType@Redfish.AllowableValues"`
 		} `json:"#ComputerSystem.Reset"`
 	} `json:"Actions"`
 	LogServices odataRef `json:"LogServices"`
+
+	// Oem.Hp.PostState is where an iLO4 reports power-on-self-test progress.
+	// It is the only reliable indicator, together with PowerState, of
+	// whether Thermal/Power sensor readings describe the machine now or an
+	// earlier moment the BMC is still replaying (Finding 1 — see
+	// Snapshot.SensorsTrustworthy). iLO4 names the OEM block `Hp`; `Hpe` is
+	// iLO5 and is not decoded here.
+	Oem struct {
+		Hp struct {
+			PostState string `json:"PostState"`
+		} `json:"Hp"`
+	} `json:"Oem"`
 }
 
 type temperatureJSON struct {
@@ -144,13 +161,11 @@ type processorJSON struct {
 	Status       statusBlock `json:"Status"`
 }
 
-type memoryJSON struct {
-	DeviceLocator    string      `json:"DeviceLocator"`
-	CapacityMiB      int32       `json:"CapacityMiB"`
-	MemoryDeviceType string      `json:"MemoryDeviceType"`
-	Manufacturer     string      `json:"Manufacturer"`
-	Status           statusBlock `json:"Status"`
-}
+// memoryJSON is declared in decode_memory.go, alongside readMemory and
+// memoryModuleFrom: the older HPE schema an iLO4 actually sends (Finding 3)
+// needs enough explanation that keeping it with its own type and reader,
+// away from the rest of this file's DMTF-schema decoding, is worth a
+// dedicated file rather than pushing decode.go over this lot's line ceiling.
 
 type ethernetInterfaceJSON struct {
 	Name       string      `json:"Name"`
@@ -395,32 +410,7 @@ func (c *client) readProcessors(ctx context.Context, collectionPath string, snap
 	}
 }
 
-func (c *client) readMemory(ctx context.Context, collectionPath string, snap *Snapshot) error {
-	refs, err := c.collectionMembers(ctx, collectionPath)
-	switch {
-	case err == nil:
-		for _, ref := range refs {
-			var m memoryJSON
-			if gerr := c.get(ctx, ref, &m); gerr != nil {
-				if errors.Is(gerr, errNotFound) {
-					continue
-				}
-				return fmt.Errorf("redfish: read memory module %s: %w", ref, gerr)
-			}
-			snap.Inventory.MemoryModules = append(snap.Inventory.MemoryModules, MemoryModule{
-				Slot:         m.DeviceLocator,
-				SizeMiB:      m.CapacityMiB,
-				Type:         m.MemoryDeviceType,
-				Manufacturer: m.Manufacturer,
-			})
-		}
-		return nil
-	case errors.Is(err, errNotFound):
-		return nil
-	default:
-		return fmt.Errorf("redfish: read memory: %w", err)
-	}
-}
+// readMemory is declared in decode_memory.go.
 
 func (c *client) readEthernetInterfaces(ctx context.Context, collectionPath string, snap *Snapshot) error {
 	refs, err := c.collectionMembers(ctx, collectionPath)

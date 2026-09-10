@@ -1,0 +1,26 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/Processors",
+    "@odata.id": "/redfish/v1/Systems/1/Processors/",
+    "@odata.type": "#ProcessorCollection.ProcessorCollection",
+    "Description": "Processors view",
+    "MemberType": "Processor.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Processors/1/"
+        }
+    ],
+    "Members@odata.count": 1,
+    "Name": "Processors Collection",
+    "Total": 1,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/Processors/1/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Systems/1/Processors/"
+        }
+    }
+}

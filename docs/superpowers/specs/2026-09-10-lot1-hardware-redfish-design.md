@@ -250,6 +250,22 @@ aggregates them. Making FrameMachine the one kind an admin cannot fully
 manage from `kubectl` would be the anomaly among Frame's CRDs, not the
 safeguard — the safeguard is that editor cannot reach `patch` at all.
 
+**Power actions require the BMC account to hold `VirtualPowerAndResetPriv`.**
+Verified against the captures (`reset_403_insufficient_privilege.json`,
+`testdata/ilo4-real/PROVENANCE.md`): an account holding only `LoginPriv` reads
+the entire inventory — Systems, Chassis, Memory, Processors, EthernetInterfaces,
+the log — without error, and is refused with
+`403 Base.0.10.InsufficientPrivilege` on `ComputerSystem.Reset` alone.
+Privileges are visible per-account at
+`/redfish/v1/AccountService/Accounts/<n>/` under `Oem.Hp.Privileges`. This
+argues for two BMC accounts — read-only for polling, privileged for power
+actions — which would shrink what a leaked polling credential can do. This lot
+deliberately does not add a second `credentialsRef` to `BMCSpec` for it: one
+account holding both privileges already works end to end, and a second
+credential reference is a design decision in its own right (which action uses
+which Secret, what happens when only one is configured) that does not belong
+inside this lot's scope creep.
+
 ### Registering a machine is a `kubectl` step
 
 The console does not create `FrameMachine` objects, because creating one is
@@ -276,19 +292,77 @@ right and neither is smuggled in here.
 - in `src/lib`, where vitest can reach it: sensor severity thresholds, event-log
   severity mapping, and the staleness calculation
 
-## What will not be proven
+## What a real iLO4 turned out to do
 
-**A real iLO4.** Recorded fixtures prove that the parsing is correct about the
-fixtures. iLO4 speaks a 2015-era Redfish — older `@odata.type` values, absent
-fields, and sensor collections that vary with firmware revision. The first
-contact with the real machine will find things no fixture predicted; this lot
-ships with that check written down and labelled unexecuted, the way lots 0c and
-2 did.
+**A real iLO4 has now been queried — partially.** 2026-09-10, a neighbouring
+session captured three power states (`_poweroff`, `_inpost`,
+`_postcomplete`) off an HP ProLiant ML350 Gen9, iLO 4 v2.77, BIOS P92 v2.80.
+The captures are real HTTP response bodies, not fixtures written from the
+spec — `internal/redfish/testdata/ilo4-real/`, provenance and caveats in that
+directory's `PROVENANCE.md` — and four things they showed contradicted
+already-reviewed code written against the DMTF specification. Real
+observations override synthetic fixtures wherever the two disagree; the
+following are facts about this hardware, not predictions.
+
+**Finding 1 (Critical) — the BMC serves frozen sensor readings as live ones.**
+The machine was powered off for twenty minutes in a 20°C room. Every one of
+the three captures reports CPU1 at 40°C with `Status.State: "Enabled"` and 46
+temperature sensors online — powered off, mid-POST, and finished alike. There
+is nothing in the reading itself, its reported health, or the sensor count
+that distinguishes a measurement from a memory; a guard on `Status.State`
+would pass exactly the dangerous case, since it is `"Enabled"` in all three.
+The only sound signal is `PowerState` together with the HPE OEM
+`Oem.Hp.PostState`: `Snapshot.SensorsTrustworthy` is true only when
+`PowerState == "On"` and `PostState` is outside `PowerOff`/`InPost`. The
+controller clears `status.sensors` rather than keeping it beside a caveat when
+untrustworthy — see `applySnapshot` in
+`internal/controller/frame/framemachine_controller.go` for why keeping a
+frozen reading next to "powered off" is worse than showing nothing.
+
+**Finding 2 (Critical) — `GracefulShutdown` is not an allowable `ResetType`.**
+The captured `Actions.#ComputerSystem.Reset["ResetType@Redfish.AllowableValues"]`
+is `On, ForceOff, ForceRestart, Nmi, PushPowerButton` — no
+`GracefulShutdown`. The CRD enum keeps the name, because it is what a person
+means and the enum is a frozen API; the client now resolves it against what
+the machine actually lists, substituting `PushPowerButton` (the ACPI
+power-button request an installed OS acts on) when `GracefulShutdown` itself
+is absent, and refusing with `ErrUnsupported` when neither is listed.
+`ForceOff` is never substituted automatically — it is a hard cut, not a
+graceful one.
+
+**Finding 3 (Important) — the memory schema is the older one.** iLO4 answers
+`GET /redfish/v1/Systems/1/Memory/` with members named `proc1dimm1` etc. and
+fields `SizeMB`, `MaximumFrequencyMHz`, `DIMMType`, `Rank`, `DIMMStatus` — not
+the DMTF `CapacityMiB`, `MemoryDeviceType`, `DeviceLocator` this lot originally
+decoded. `SizeMB` is misnamed: its unit is MiB, the same one `CapacityMiB`
+uses. `OperatingSpeedMhz` is never populated, even after POST completes. The
+decoder now prefers the DMTF field and falls back to the older one, so a
+newer iLO that does speak the current schema still decodes correctly.
+
+**Finding 4 (Minor) — paths need their trailing slash.** `GET
+/redfish/v1/Systems/1` (no trailing slash) answers `308` rather than the
+resource. Go's `http.Client` follows a 308 for both GET and POST and
+preserves the body, so this was already functionally benign, but the client
+no longer depends on that redirect: every request path is normalised before
+it is sent.
+
+**What is still unseen.** The captured machine has no operating system
+installed — POST stops at `InPostDiscoveryComplete` for lack of a boot
+device — so the `PostState` (and sensor behaviour) a *booted* machine reports
+has never been observed. `Snapshot.SensorsTrustworthy`'s logic treats an
+unrecognised `PostState` on a powered-on machine as trustworthy for exactly
+this reason: refusing every unknown value would make sensors permanently
+unavailable on the first machine that actually boots. Whether that state
+matches this assumption is unproven.
+
+iLO4 speaks a 2015-era Redfish in other ways too that three captures of one
+machine cannot rule out: firmware-revision variation this lot has not seen,
+resources this machine doesn't populate (no GPU, no drives beyond what
+SmartStorage's OEM tree would show), and the two BMCs this estate also holds —
+the iDRAC7 on the Dell and whatever the unidentified IBM runs — which speak
+Redfish in principle. Whether they speak the same Redfish, or the same
+version of it, is a question for those machines, not for this design.
 
 `.tsx` files are executed by no test in this repo — vitest runs
 `environment: 'node'` with a `.test.ts`-only include — so the detail panel
 carries no coverage.
-
-And the estate itself: the iDRAC7 on the Dell and whatever the unidentified IBM
-runs are not covered by anything here. They speak Redfish in principle. Whether
-they speak the same Redfish is a question for the machine, not for the design.

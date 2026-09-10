@@ -239,11 +239,37 @@ func probeFailureReason(err error) string {
 
 // applySnapshot maps a Redfish Snapshot onto FrameMachineStatus, field by
 // field against internal/redfish/types.go.
+//
+// PowerState, PostState, the inventory and the event log are always written
+// — a probe that reached the machine learned all of those regardless of
+// where POST is. Sensors is the one field that depends on
+// snap.SensorsTrustworthy (Finding 1, internal/redfish/client.go): the
+// captured iLO4 replays a cached Thermal/Power reading as if it were live
+// whenever the machine is not powered on, or is still mid-POST — CPU1 at
+// 40 C, Status.State "Enabled", twenty minutes after the machine was powered
+// off in a 20 C room. Untrustworthy sensors are cleared rather than kept
+// beside a caveat: a powered-off machine is a fact the console can state
+// plainly, and a frozen 40 C rendered next to "powered off" invites the
+// reader to believe the number. This is not the unreachable-BMC case — there
+// (the probe-failure branch in Reconcile) the controller keeps the last
+// reading beside its age, because nothing better is known; here something
+// better is known, and it is that the reading is fiction. SensorsValidAt is
+// left where it was in that case: it records when a trustworthy reading was
+// last taken, and this probe did not take one.
 func applySnapshot(status *framev1beta1.FrameMachineStatus, snap *redfish.Snapshot) {
 	status.PowerState = snap.PowerState
+	status.PostState = snap.PostState
 	status.IndicatorLED = snap.IndicatorLED
 	status.Inventory = mapInventory(&snap.Inventory)
-	status.Sensors = mapSensors(&snap.Sensors)
+
+	if snap.SensorsTrustworthy {
+		status.Sensors = mapSensors(&snap.Sensors)
+		validAt := metav1.Now()
+		status.SensorsValidAt = &validAt
+	} else {
+		status.Sensors = nil
+	}
+
 	status.EventLog = mapEventLog(snap.Log)
 	status.EventLogCounts = mapLogCounts(snap.LogCounts)
 	status.EventLogTotal = int32(snap.LogTotal)

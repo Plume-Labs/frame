@@ -117,4 +117,29 @@ type Snapshot struct {
 	Log          []LogEntry
 	LogTotal     int
 	LogCounts    map[string]int
+
+	// PostState is the machine's power-on-self-test state, read from the HPE
+	// OEM block. iLO4 names that block `Hp`; `Hpe` is iLO5 and does not appear
+	// here.
+	PostState string
+
+	// SensorsTrustworthy says whether Sensors describes the machine now or an
+	// earlier moment the BMC is still replaying. It is false whenever the
+	// machine is not powered on, and while it is still in POST.
+	//
+	// This exists because the readings themselves cannot be told apart. On
+	// the captured hardware CPU1 reports 40 C with Status.State "Enabled"
+	// whether the machine is off, mid-POST, or finished — twenty minutes
+	// after being powered down, in a room at 20 C. Neither the value, nor
+	// the health, nor the sensor count distinguishes a measurement from a
+	// memory. See internal/redfish/testdata/ilo4-real/PROVENANCE.md.
+	SensorsTrustworthy bool
+
+	// AllowableResetTypes is what the machine's
+	// Actions.#ComputerSystem.Reset["ResetType@Redfish.AllowableValues"]
+	// advertises. It exists so Reset can resolve a caller's request (in
+	// particular GracefulShutdown, which the captured iLO4 does not list at
+	// all) against what this specific machine actually accepts, rather than
+	// sending a string the BMC will reject.
+	AllowableResetTypes []string
 }

@@ -1,0 +1,26 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Chassis",
+    "@odata.id": "/redfish/v1/Chassis/",
+    "@odata.type": "#ChassisCollection.ChassisCollection",
+    "Description": "Computer System Chassis View",
+    "MemberType": "Chassis.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Chassis/1/"
+        }
+    ],
+    "Members@odata.count": 1,
+    "Name": "Computer System Chassis",
+    "Total": 1,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Chassis/1/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Chassis/"
+        }
+    }
+}

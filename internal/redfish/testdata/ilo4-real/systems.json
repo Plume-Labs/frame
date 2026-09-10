@@ -1,0 +1,26 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems",
+    "@odata.id": "/redfish/v1/Systems/",
+    "@odata.type": "#ComputerSystemCollection.ComputerSystemCollection",
+    "Description": "Computer Systems view",
+    "MemberType": "ComputerSystem.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/"
+        }
+    ],
+    "Members@odata.count": 1,
+    "Name": "Computer Systems",
+    "Total": 1,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Systems/"
+        }
+    }
+}

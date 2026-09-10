@@ -38,9 +38,17 @@ import (
 // a firmware that does not expose a resource simply does not answer for it.
 func serveFixtures(t *testing.T, routes map[string]string) *httptest.Server {
 	t.Helper()
+	return serveFixturesFrom(t, "ilo4", routes)
+}
+
+// serveFixturesFrom is serveFixtures generalised over the fixture directory,
+// so the real ilo4-real captures (see testdata/ilo4-real/PROVENANCE.md) can
+// be routed the same anchored, 404-catch-all way as the synthetic ilo4 ones.
+func serveFixturesFrom(t *testing.T, dir string, routes map[string]string) *httptest.Server {
+	t.Helper()
 	mux := http.NewServeMux()
 	for path, file := range routes {
-		body, err := os.ReadFile(filepath.Join("testdata", "ilo4", file))
+		body, err := os.ReadFile(filepath.Join("testdata", dir, file))
 		if err != nil {
 			t.Fatalf("fixture %s: %v", file, err)
 		}
@@ -56,6 +64,9 @@ func serveFixtures(t *testing.T, routes map[string]string) *httptest.Server {
 	t.Cleanup(srv.Close)
 	return srv
 }
+
+// realRoutes and serveRealFixtures, which route the real ilo4-real captures,
+// live in real_hardware_test.go alongside the tests that use them.
 
 func fullRoutes() map[string]string {
 	return map[string]string{
@@ -245,13 +256,19 @@ func TestProbeReportsTLSFailureDistinctly(t *testing.T) {
 	}
 }
 
-func TestResetPostsTheActionTarget(t *testing.T) {
-	var got struct {
-		ResetType string `json:"ResetType"`
-	}
+// resetServer wires fullRoutes() (the synthetic ilo4 fixtures) plus a
+// ComputerSystem.Reset action handler that records the ResetType it was
+// posted, so Finding 2's tests can assert on what actually went over the
+// wire without caring about the transport plumbing TestResetPostsTheAction
+// Target already covers.
+func resetServer(t *testing.T, systemDocOverride string) (*httptest.Server, <-chan string) {
+	t.Helper()
 	posted := make(chan string, 1)
 
 	routes := fullRoutes()
+	if systemDocOverride != "" {
+		delete(routes, "/redfish/v1/Systems/1/")
+	}
 	mux := http.NewServeMux()
 	for path, file := range routes {
 		body, err := os.ReadFile(filepath.Join("testdata", "ilo4", file))
@@ -260,9 +277,16 @@ func TestResetPostsTheActionTarget(t *testing.T) {
 		}
 		mux.HandleFunc(path+"{$}", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) })
 	}
+	if systemDocOverride != "" {
+		body := []byte(systemDocOverride)
+		mux.HandleFunc("/redfish/v1/Systems/1/{$}", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) })
+	}
 	mux.HandleFunc("/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/{$}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
+		}
+		var got struct {
+			ResetType string `json:"ResetType"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		posted <- got.ResetType
@@ -273,11 +297,23 @@ func TestResetPostsTheActionTarget(t *testing.T) {
 	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
+	return srv, posted
+}
 
-	if err := insecureClient(srv.URL).Reset(context.Background(), "GracefulShutdown"); err != nil {
+// TestResetPostsTheActionTarget covers the transport, independently of
+// Finding 2's GracefulShutdown resolution: ForceRestart is never
+// special-cased, so this proves Reset reaches the right target with the
+// right method regardless of what the machine's AllowableValues say.
+func TestResetPostsTheActionTarget(t *testing.T) {
+	srv, posted := resetServer(t, "")
+	if err := insecureClient(srv.URL).Reset(context.Background(), "ForceRestart"); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if v := <-posted; v != "GracefulShutdown" {
-		t.Errorf("ResetType = %q, want GracefulShutdown", v)
+	if v := <-posted; v != "ForceRestart" {
+		t.Errorf("ResetType = %q, want ForceRestart", v)
 	}
 }
+
+// Finding 2's GracefulShutdown-resolution tests live in
+// reset_resolution_test.go; Findings 1, 3 and 4's real-hardware tests live
+// in real_hardware_test.go.

@@ -102,7 +102,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 		reader = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+normalizePath(path), reader)
 	if err != nil {
 		return fmt.Errorf("redfish: build request for %s: %w", path, err)
 	}
@@ -139,6 +139,25 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("redfish: decode %s: %w", path, err)
 	}
 	return nil
+}
+
+// normalizePath ensures path ends with a trailing slash before it is sent to
+// the BMC. Finding 4: the captured iLO4 answers a path missing its trailing
+// slash with an HTTP 308 rather than the resource (e.g. GET
+// /redfish/v1/Systems/1 vs .../Systems/1/). Go's http.Client follows 308 for
+// both GET and POST and preserves the body, so relying on that redirect
+// already works — this removes the dependency rather than fixing a bug:
+// every request this package issues should ask for the resource it means,
+// not for a redirect to it, regardless of whether the path came from a
+// hardcoded literal or was read back out of a Redfish "@odata.id" field that
+// might not carry the trailing slash on some other firmware. A path
+// carrying a query string is left alone: appending "/" before "?" would ask
+// for a different, wrong resource.
+func normalizePath(path string) string {
+	if path == "" || strings.HasSuffix(path, "/") || strings.ContainsRune(path, '?') {
+		return path
+	}
+	return path + "/"
 }
 
 func (c *client) get(ctx context.Context, path string, out any) error {
@@ -179,8 +198,10 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 	}
 
 	snap := &Snapshot{
-		PowerState:   sys.PowerState,
-		IndicatorLED: sys.IndicatorLED,
+		PowerState:          sys.PowerState,
+		PostState:           sys.Oem.Hp.PostState,
+		AllowableResetTypes: sys.Actions.Reset.AllowableValues,
+		IndicatorLED:        sys.IndicatorLED,
 		Inventory: Inventory{
 			Manufacturer:   sys.Manufacturer,
 			Model:          sys.Model,
@@ -196,6 +217,27 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 		},
 		LogCounts: map[string]int{},
 	}
+
+	// Finding 1: the captured iLO4 replays cached Thermal/Power readings as
+	// if they were live, whatever the machine's actual state — CPU1 reports
+	// 40 C with Status.State "Enabled" whether the machine is off, mid-POST,
+	// or finished, twenty minutes after being powered down in a room at
+	// 20 C. Status.State and the reading itself cannot tell a measurement
+	// from a memory (see Snapshot.SensorsTrustworthy and
+	// testdata/ilo4-real/PROVENANCE.md), so trustworthiness is derived from
+	// PowerState and the OEM PostState instead: powered-on is the necessary
+	// condition, and PowerOff/InPost are the two states observed to still
+	// serve stale data while powered on.
+	//
+	// An unrecognised PostState on a powered-on machine is treated as
+	// trustworthy. The captured machine has no operating system installed —
+	// POST stops at InPostDiscoveryComplete for lack of a boot device — so
+	// the PostState a booted machine reports has never been seen. Refusing
+	// every unknown value would make sensors permanently unavailable on the
+	// first machine that actually boots, which is a worse failure mode than
+	// occasionally trusting a state this package has not catalogued yet.
+	snap.SensorsTrustworthy = snap.PowerState == "On" &&
+		snap.PostState != "PowerOff" && snap.PostState != "InPost"
 
 	if err := c.readManager(ctx, snap); err != nil {
 		return nil, err
@@ -219,6 +261,12 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 // document advertises. If the document has no such action, the BMC doesn't
 // support it and Reset returns ErrUnsupported rather than attempting a POST
 // to a guessed URL.
+//
+// resetType is resolved against what this machine's
+// Actions.#ComputerSystem.Reset actually lists in
+// ResetType@Redfish.AllowableValues before it is sent — see resolveResetType
+// for why GracefulShutdown is the one value this needs to do that for
+// (Finding 2).
 func (c *client) Reset(ctx context.Context, resetType string) error {
 	systemPath, err := c.resolveSystemPath(ctx)
 	if err != nil {
@@ -234,10 +282,53 @@ func (c *client) Reset(ctx context.Context, resetType string) error {
 		return ErrUnsupported
 	}
 
+	resolved, err := resolveResetType(resetType, sys.Actions.Reset.AllowableValues)
+	if err != nil {
+		return err
+	}
+
 	body := struct {
 		ResetType string `json:"ResetType"`
-	}{ResetType: resetType}
+	}{ResetType: resolved}
 	return c.post(ctx, target, body)
+}
+
+// resolveResetType maps a caller's requested ResetType onto one the machine
+// actually accepts. Only GracefulShutdown needs mapping: the CRD enum keeps
+// that name because it is what a person means and the enum is a frozen API,
+// but it is not itself a Redfish ResetType on the captured hardware — an
+// iLO4's Actions#ComputerSystem.Reset lists On, ForceOff, ForceRestart, Nmi
+// and PushPowerButton and nothing else (Finding 2). PushPowerButton is the
+// ACPI power-button request an installed operating system acts on, which is
+// what "graceful" means in practice, so it is the substitute when
+// GracefulShutdown itself is not listed. ForceOff is never substituted
+// automatically: it is a hard cut, not a graceful one, and choosing it would
+// silently turn a request that asked to be graceful into one that was not,
+// with no way for the caller to know that happened.
+//
+// Every other requested type passes through unchanged — this package does
+// not second-guess On/ForceOff/ForceRestart/Nmi/PushPowerButton against the
+// allow list, only the one value this lot found is never actually offered.
+func resolveResetType(requested string, allowable []string) (string, error) {
+	if requested != "GracefulShutdown" {
+		return requested, nil
+	}
+	if containsString(allowable, "GracefulShutdown") {
+		return "GracefulShutdown", nil
+	}
+	if containsString(allowable, "PushPowerButton") {
+		return "PushPowerButton", nil
+	}
+	return "", ErrUnsupported
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // ClearLog POSTs a LogService.ClearLog action to the integrated management

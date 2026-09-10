@@ -1,0 +1,32 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/",
+    "@odata.type": "#LogService.1.0.0.LogService",
+    "Actions": {
+        "#LogService.ClearLog": {
+            "target": "/redfish/v1/Systems/1/LogServices/IML/Actions/LogService.ClearLog/"
+        }
+    },
+    "AvailableActions": [
+        {
+            "Action": "ClearLog"
+        }
+    ],
+    "Entries": {
+        "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/"
+    },
+    "Id": "IML",
+    "Name": "Integrated Management Log",
+    "OverWritePolicy": "WrapsWhenFull",
+    "Type": "LogService.1.0.0",
+    "links": {
+        "Entries": [
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Systems/1/LogServices/IML/"
+        }
+    }
+}

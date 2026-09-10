@@ -1,0 +1,126 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/Processors/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/Processors/1/",
+    "@odata.type": "#Processor.1.0.0.Processor",
+    "Id": "1",
+    "InstructionSet": "x86-64",
+    "Manufacturer": "Intel(R) Corporation",
+    "MaxSpeedMHz": 4000,
+    "Model": "Intel(R) Xeon(R) CPU E5-2609 v3 @ 1.90GHz",
+    "Name": "Processors",
+    "Oem": {
+        "Hp": {
+            "@odata.type": "#HpProcessorExt.1.0.0.HpProcessorExt",
+            "AssetTag": "UNKNOWN",
+            "Cache": [
+                {
+                    "Associativity": "8waySetAssociative",
+                    "CacheSpeedns": 0,
+                    "CurrentSRAMType": [
+                        "Synchronous"
+                    ],
+                    "EccType": "SingleBitECC",
+                    "InstalledSizeKB": 384,
+                    "Location": "Internal",
+                    "MaximumSizeKB": 384,
+                    "Name": "L1-Cache",
+                    "Policy": "WriteBack",
+                    "Socketed": false,
+                    "SupportedSRAMType": [
+                        "Synchronous"
+                    ],
+                    "SystemCacheType": "Unified"
+                },
+                {
+                    "Associativity": "8waySetAssociative",
+                    "CacheSpeedns": 0,
+                    "CurrentSRAMType": [
+                        "Synchronous"
+                    ],
+                    "EccType": "SingleBitECC",
+                    "InstalledSizeKB": 1536,
+                    "Location": "Internal",
+                    "MaximumSizeKB": 1536,
+                    "Name": "L2-Cache",
+                    "Policy": "Varies",
+                    "Socketed": false,
+                    "SupportedSRAMType": [
+                        "Synchronous"
+                    ],
+                    "SystemCacheType": "Unified"
+                },
+                {
+                    "Associativity": "20waySetAssociative",
+                    "CacheSpeedns": 0,
+                    "CurrentSRAMType": [
+                        "Synchronous"
+                    ],
+                    "EccType": "SingleBitECC",
+                    "InstalledSizeKB": 15360,
+                    "Location": "Internal",
+                    "MaximumSizeKB": 15360,
+                    "Name": "L3-Cache",
+                    "Policy": "Varies",
+                    "Socketed": false,
+                    "SupportedSRAMType": [
+                        "Synchronous"
+                    ],
+                    "SystemCacheType": "Unified"
+                }
+            ],
+            "Characteristics": [
+                "64Bit",
+                "MultiCore",
+                "HwThread",
+                "ExecuteProtection",
+                "EnhancedVirtualization",
+                "PowerPerfControl"
+            ],
+            "ConfigStatus": {
+                "Populated": true,
+                "State": "Enabled"
+            },
+            "CoresEnabled": 6,
+            "ExternalClockMHz": 100,
+            "MicrocodePatches": [
+                {
+                    "CpuId": "0x000306F2",
+                    "Date": "2020-05-27T00:00:00Z",
+                    "PatchId": "0x00000044"
+                },
+                {
+                    "CpuId": "0x000406F1",
+                    "Date": "2020-05-14T00:00:00Z",
+                    "PatchId": "0x0B00003A"
+                }
+            ],
+            "PartNumber": "",
+            "RatedSpeedMHz": 1900,
+            "SerialNumber": "",
+            "Type": "HpProcessorExt.1.0.0",
+            "VoltageVoltsX10": 16
+        }
+    },
+    "ProcessorArchitecture": "x86",
+    "ProcessorId": {
+        "EffectiveFamily": "179",
+        "EffectiveModel": "15",
+        "IdentificationRegisters": "0x06f20003fbffbfeb",
+        "MicrocodeInfo": null,
+        "Step": "2",
+        "VendorId": "Intel"
+    },
+    "ProcessorType": "CPU",
+    "Socket": "Proc 1",
+    "Status": {
+        "Health": "OK"
+    },
+    "TotalCores": 6,
+    "TotalThreads": 6,
+    "Type": "Processor.1.0.0",
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Systems/1/Processors/1/"
+        }
+    }
+}
