@@ -110,6 +110,24 @@ func isMutating(method string) bool {
 	return false
 }
 
+// isExecUpgrade reports whether this is the console opening a shell.
+//
+// Narrow on purpose. Reads are not recorded, and this is the one exception:
+// it requires a GET *and* a WebSocket upgrade *and* the exec subresource. Any
+// two of the three would let ordinary traffic through — "GET on pods" is every
+// screen refresh in the console, and an unrecorded exec is exactly the thing
+// this lot exists to prevent.
+func isExecUpgrade(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	ref, ok := parsePath(r.URL.Path)
+	return ok && ref.Subresource == "exec"
+}
+
 // statusRecorder remembers the code so the task can be closed with it.
 type statusRecorder struct {
 	http.ResponseWriter
@@ -215,7 +233,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	sr := &statusRecorder{ResponseWriter: w}
 	var task string
-	if p.recorder != nil && isMutating(r.Method) {
+	// An exec is a GET, so isMutating alone would leave the longest-lived and
+	// most privileged action in the product with no record at all.
+	if p.recorder != nil && (isMutating(r.Method) || isExecUpgrade(r)) {
 		task = p.recorder.Start(r.Context(), id, r)
 	}
 	if task != "" {
