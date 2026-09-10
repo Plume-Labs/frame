@@ -666,6 +666,18 @@ export function frameListPath(plural: string, ns?: string): string {
   return apiBase(plural, ns)
 }
 
+/**
+ * Where the FrameTask trail is read from.
+ *
+ * Not `frameListPath('frametasks')`: that resolves through `frameNs()` to
+ * `config().frameNamespace`, and the proxy writes to `config().taskNamespace`.
+ * One exported function rather than the literal repeated in the SDK and in
+ * `TasksView`, so the screen and its watch can never drift apart.
+ */
+export function taskListPath(): string {
+  return frameListPath('frametasks', config().taskNamespace)
+}
+
 /** The list endpoint for a core Kubernetes collection, e.g. `nodes`, `events`. */
 export function coreListPath(plural: string, ns?: string): string {
   return ns ? `/api/v1/namespaces/${ns}/${plural}` : `/api/v1/${plural}`
@@ -3090,7 +3102,7 @@ export class FrameClient {
   /** Who did what through the UI proxy, and how each write ended. */
   tasks = {
     list: async (limit = 200): Promise<TaskRecord[]> => {
-      const res = await k8sFetch<{ items: FrameTaskCR[] }>(`${frameListPath('frametasks')}?limit=${limit}`)
+      const res = await k8sFetch<{ items: FrameTaskCR[] }>(`${taskListPath()}?limit=${limit}`)
       return res.items
         .map(crToTask)
         .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))

@@ -808,3 +808,44 @@ describe('integration proxy requests carry the bearer token', () => {
     expect(bare.map((b: { n: number; line: string }) => `${b.n}: ${b.line.trim()}`)).toEqual([])
   })
 })
+
+// Carried in from lot 0c's whole-branch review. `frame-uiproxy` creates every
+// FrameTask in TASK_NAMESPACE — `frame-system`, from cmd/uiproxy/main.go and
+// deploy/kubernetes/base/deployment.yaml — while this client built the path
+// from `config().frameNamespace`, whose default is `default`. The Tasks screen
+// has shown an empty list since it shipped: a 200 with `items: []`, no error,
+// nothing to notice.
+//
+// The path is spelled out in full, namespace segment included. A
+// `url.includes('/frametasks')` assertion passes just as happily against
+// `/apis/.../namespaces/default/frametasks`, which is the bug — the same
+// substring trap that let the Accounts screen ship pointed at the wrong
+// namespace (see FRAMEUSERS_PATH in accounts.test.ts).
+describe('FrameTask reads', () => {
+  const FRAMETASKS_PATH =
+    '/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/frametasks'
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  it('reads from the namespace the recorder writes to', async () => {
+    vi.stubGlobal('window', globalThis)
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+
+    await createFrameClient().tasks.list()
+
+    expect(urls).toEqual([`${FRAMETASKS_PATH}?limit=200`])
+  })
+})

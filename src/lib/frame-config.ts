@@ -26,6 +26,19 @@ export interface Integration {
 export interface FrameConfig {
   /** Namespace holding the Frame CRs (FrameJob, FrameNode, SchedulingPolicy…). */
   frameNamespace: string
+  /**
+   * Namespace `frame-uiproxy` records FrameTasks into — its `TASK_NAMESPACE`
+   * environment variable, defaulted to `frame-system` in
+   * `cmd/uiproxy/main.go` and set explicitly in
+   * `deploy/kubernetes/base/deployment.yaml`.
+   *
+   * Separate from `frameNamespace` because it is a different decision made by
+   * a different component: the Frame CRs live wherever an operator puts them,
+   * while the task trail lives wherever the proxy was told to write it. They
+   * were the same value here, and were not on the cluster, so the Tasks screen
+   * listed an empty collection with no error from the day it shipped.
+   */
+  taskNamespace: string
   integrations: {
     cephOsd: Integration
     cephMon: Integration
@@ -61,6 +74,7 @@ export interface FrameConfig {
 
 export const DEFAULT_CONFIG: FrameConfig = {
   frameNamespace: 'default',
+  taskNamespace: 'frame-system',
   integrations: {
     cephOsd: { namespace: 'rook-ceph', selector: 'app=rook-ceph-osd' },
     cephMon: { namespace: 'rook-ceph', selector: 'app=rook-ceph-mon' },
@@ -133,6 +147,7 @@ function merge(stored: unknown): FrameConfig {
   }
   return {
     frameNamespace: s.frameNamespace || DEFAULT_CONFIG.frameNamespace,
+    taskNamespace: s.taskNamespace || DEFAULT_CONFIG.taskNamespace,
     integrations,
     namespaces: { ...DEFAULT_CONFIG.namespaces, ...(s.namespaces ?? {}) },
     network: {

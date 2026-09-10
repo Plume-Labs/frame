@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { TaskRecord, createFrameClient, frameListPath } from '@/lib/frame-sdk'
+import { TaskRecord, createFrameClient, taskListPath } from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,7 +33,7 @@ export function TasksView() {
   const { state, reload } = useLiveResource<TaskRecord[]>(
     () => frame.tasks.list(200),
     [],
-    [frameListPath('frametasks')],
+    [taskListPath()],
   )
   const tasks = state.phase === 'ready' ? state.data : []
   const [query, setQuery] = useState('')
