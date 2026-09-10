@@ -72,6 +72,7 @@ import {
   Calendar,
   ChartBar,
   ChartLine,
+  ComputerTower,
   Cpu,
   Database,
   Detective,
@@ -89,11 +90,6 @@ import {
   TreeStructure,
   Users,
 } from '@phosphor-icons/react'
-// Server: phosphor-icons has no server/chassis glyph in the version pinned
-// here; lucide-react is already a project dependency (see package.json),
-// just unused elsewhere, so this borrows one icon rather than approximating
-// with an unrelated phosphor glyph.
-import { Server } from 'lucide-react'
 
 /**
  * Navigation model.
@@ -237,7 +233,7 @@ const NAV: NavGroup[] = [
       {
         id: 'hardware',
         label: 'Hardware',
-        icon: <Server />,
+        icon: <ComputerTower />,
         description: 'Physical chassis over Redfish: inventory, sensors, event log and power',
         tabs: [{ id: 'hardware', label: 'Machines' }],
       },

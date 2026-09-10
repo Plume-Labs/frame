@@ -230,6 +230,13 @@ export function eventSeverity(raw: string): SensorSeverity {
 
 const STALE_AFTER_MS = 150_000 // two polling intervals plus a half
 
+// Shared wording for "there is nothing here because it has never been
+// read" — `stalenessLabel` uses it for a null timestamp; screens reuse the
+// same constant for a structurally different absence (e.g. `inventory ===
+// null`) that means the same thing to an operator, so the phrasing cannot
+// drift between the two independently of each other.
+export const NEVER_READ_LABEL = 'jamais relevé'
+
 // `at` is whichever timestamp is under judgment — a machine's own liveness
 // is `lastProbeAt`, but a sensor reading's age is `sensorsValidAt`, and the
 // two diverge: a probe can succeed against a powered-off machine (advancing
@@ -242,7 +249,7 @@ export function isStale(at: string | null, now: Date): boolean {
 }
 
 export function stalenessLabel(at: string | null, now: Date): string {
-  if (at === null) return 'jamais relevé'
+  if (at === null) return NEVER_READ_LABEL
   const seconds = Math.floor((now.getTime() - new Date(at).getTime()) / 1000)
   if (seconds < 60) return `il y a ${seconds} s`
   const minutes = Math.floor(seconds / 60)

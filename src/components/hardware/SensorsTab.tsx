@@ -75,6 +75,16 @@ export function SensorsTab({ machine }: { machine: Machine }) {
       )
     case 'available':
       return <Readings machine={machine} />
+
+    default: {
+      // Compile error if SensorAvailability (machines.ts) gains a kind with
+      // no case above — without this, an unhandled kind falls through to
+      // `undefined` and the screen renders a blank panel, the exact failure
+      // this component exists to prevent (see App.tsx's `renderTab` for the
+      // same pattern).
+      const unhandled: never = availability
+      return unhandled
+    }
   }
 }
 

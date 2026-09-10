@@ -9,7 +9,7 @@ import { LiveStates } from '@/components/LiveStates'
 import { MachineDetail } from '@/components/hardware/MachineDetail'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { createFrameClient } from '@/lib/frame-sdk'
-import { isStale, stalenessLabel, type Machine } from '@/lib/machines'
+import { isStale, NEVER_READ_LABEL, stalenessLabel, type Machine } from '@/lib/machines'
 
 const frame = createFrameClient()
 
@@ -105,7 +105,7 @@ export function HardwareView() {
                   >
                     <span className="flex-1 truncate">{m.name}</span>
                     <span className="text-muted-foreground w-48 truncate">
-                      {m.inventory?.model ?? 'jamais relevé'}
+                      {m.inventory?.model ?? NEVER_READ_LABEL}
                     </span>
                     <Badge variant="outline" className="font-mono text-[10px]">
                       {m.powerState || 'Unknown'}
