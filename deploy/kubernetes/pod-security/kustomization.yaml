@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Its own kustomize target, NOT wired into `../base`, for the same reason
+# `../containment` is not: `../base/kustomization.yaml` used to carry a
+# namespace transformer, and a Namespace object rewritten by one is renamed
+# rather than relocated. It also has to be applyable and reversible on its own,
+# because the two-phase rollout below is the whole point.
+#
+# Apply order — and the middle step is not optional:
+#
+#   1. kubectl apply -k deploy/kubernetes/pod-security     # warn + audit
+#   2. read the violations (see docs/deployment.md, "Turning Pod Security on")
+#      and resolve every one
+#   3. add the `enforce` labels, apply again
+#   4. kubectl apply -f deploy/kubernetes/base/rbac-workload-operator.yaml
+#
+# Doing 4 before 3 hands an operator the escalation this exists to close.
+# Doing 3 before 2 breaks a deploy at the next restart of whatever was already
+# violating, which will not be today.
+#
+# No `namespace:` field: every object here is a Namespace and names itself.
+
+resources:
+  - namespaces.yaml
