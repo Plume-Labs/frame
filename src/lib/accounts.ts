@@ -103,6 +103,30 @@ export async function inviteAccount(email: string, role: InvitableRole): Promise
 }
 
 /**
+ * Whether the Accounts screen should offer a fresh invitation link for `a`.
+ *
+ * `keyCount === 0` and nothing looser: `POST /auth/invite/link` also refuses
+ * an account holding a password (410) or a disabled account (403), but this
+ * predicate only needs to cover what `Account` can actually observe from
+ * here. `-1` — a failed key read, not "holds no key" — must read as false,
+ * the same "-1 is not 0" distinction `keyCount`'s own doc comment draws; a
+ * `<= 0` here would silently re-admit it. `state === 'enabled'` mirrors
+ * `isOnlyEnabledAdmin`'s own check for the same reason: the CRD's
+ * `enum: [enabled, disabled]` with `default: enabled` guarantees `state`
+ * never arrives as `''` from the apiserver, so this and the server's
+ * `isEnabled` agree in practice even though they are not the same test.
+ *
+ * A disabled, credential-less account is the likeliest real refusal this
+ * button meets — nothing here would ever expose it, since `Store.ByEmail`
+ * runs before `requireIssuable` — so keeping the offer's own predicate
+ * tested is what stops a regression to `<= 0` or a dropped state check from
+ * quietly re-offering a control the server would refuse anyway.
+ */
+export function canReissueInvitation(a: Account): boolean {
+  return a.keyCount === 0 && a.state === 'enabled'
+}
+
+/**
  * Mint a fresh invitation link for an account that already exists — for when
  * the one link `inviteAccount` returned expired (24h) or was never captured
  * before the dialog that showed it once was closed. The only other way back

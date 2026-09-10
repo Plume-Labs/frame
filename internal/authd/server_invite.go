@@ -3,6 +3,7 @@ package authd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -204,8 +205,20 @@ func (s *Server) handleInviteLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u, err := s.cfg.Store.ByEmail(r.Context(), body.Email)
-	if err != nil {
+	switch {
+	case err == nil:
+		// fall through to the guards below
+	case errors.Is(err, ErrUserNotFound):
 		http.Error(w, "no account with that email", http.StatusNotFound)
+		return
+	default:
+		// Distinct from ErrUserNotFound: an admin reading "no account with
+		// that email" about an address visible in the table above has one
+		// obvious recourse — delete the FrameUser and re-invite, the exact
+		// destructive path this route exists to remove. A transient list
+		// failure is not "no such account" and must not be answered as one.
+		slog.Error("invite link: failed to look up the account", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	// 403 rather than 401: unlike handleInviteAccept, this route is already
