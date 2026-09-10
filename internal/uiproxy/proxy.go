@@ -208,6 +208,20 @@ func unauthorized(w http.ResponseWriter, detail string) {
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tok := bearer(r)
+	// A WebSocket carries its token as a subprotocol instead, because the
+	// browser API that opens one accepts no headers. Whatever the source, the
+	// entry is removed here: the apiserver did not offer that subprotocol and
+	// would refuse the handshake, and forwarding it would write a live
+	// credential into the apiserver's audit log on every shell.
+	if wsToken, remaining := tokenFromProtocols(r.Header.Values("Sec-WebSocket-Protocol")); wsToken != "" {
+		if tok == "" {
+			tok = wsToken
+		}
+		r.Header.Del("Sec-WebSocket-Protocol")
+		if len(remaining) > 0 {
+			r.Header.Set("Sec-WebSocket-Protocol", strings.Join(remaining, ", "))
+		}
+	}
 	if tok == "" {
 		unauthorized(w, "the request carried no bearer token")
 		return
