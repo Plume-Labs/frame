@@ -282,6 +282,16 @@ type FrameMachineStatus struct {
 	// +optional
 	LastPowerActionAt *metav1.Time `json:"lastPowerActionAt,omitempty"`
 
+	// LastPowerActionError carries why the last power action failed, and is
+	// cleared when one succeeds. Without it a failed action is
+	// indistinguishable from a successful one: lastPowerActionAt advances
+	// either way — deliberately, so a failing action is not retried every
+	// sixty seconds forever — and the Event that carries the failure ages
+	// out while the timestamp does not.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	LastPowerActionError string `json:"lastPowerActionError,omitempty"`
+
 	// +listType=map
 	// +listMapKey=type
 	// +optional

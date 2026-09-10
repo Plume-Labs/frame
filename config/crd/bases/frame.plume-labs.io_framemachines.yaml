@@ -349,6 +349,16 @@ spec:
                   requestedAt is strictly later than this.
                 format: date-time
                 type: string
+              lastPowerActionError:
+                description: |-
+                  LastPowerActionError carries why the last power action failed, and is
+                  cleared when one succeeds. Without it a failed action is
+                  indistinguishable from a successful one: lastPowerActionAt advances
+                  either way — deliberately, so a failing action is not retried every
+                  sixty seconds forever — and the Event that carries the failure ages
+                  out while the timestamp does not.
+                maxLength: 256
+                type: string
               lastProbeAt:
                 description: |-
                   LastProbeAt is when the values above were read. Every panel renders it:
