@@ -1,0 +1,25 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/Memory/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm1/",
+    "@odata.type": "#HpMemory.1.0.0.HpMemory",
+    "DIMMStatus": "GoodInUse",
+    "DIMMTechnology": "RDIMM",
+    "DIMMType": "DDR4",
+    "DataWidth": 64,
+    "ErrorCorrection": "MultiBitECC",
+    "HPMemoryType": "Unknown",
+    "Id": "proc1dimm1",
+    "MaximumFrequencyMHz": 2133,
+    "MinimumVoltageVoltsX10": 12,
+    "Name": "proc1dimm1",
+    "Rank": 2,
+    "SizeMB": 16384,
+    "SocketLocator": "PROC 1 DIMM 1",
+    "TotalWidth": 72,
+    "Type": "HpMemory.1.0.0",
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Systems/1/Memory/proc1dimm1/"
+        }
+    }
+}

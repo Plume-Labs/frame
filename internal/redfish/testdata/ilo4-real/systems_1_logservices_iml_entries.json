@@ -1,0 +1,1130 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries",
+    "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/?page=1",
+    "@odata.type": "#LogEntryCollection.LogEntryCollection",
+    "Description": "Integrated Management Logs view",
+    "Items": [
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/1/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-20T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "1",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 322,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-20T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 322,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/1/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/2/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-21T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "2",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 323,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-21T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 323,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/2/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/3/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-22T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "3",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 324,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-22T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 324,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/3/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/4/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-23T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "4",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 325,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-23T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 325,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/4/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/5/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-24T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "5",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 326,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-24T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 326,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/5/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/6/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-25T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "6",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 327,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-25T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 327,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/6/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/7/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-25T05:51:00Z",
+            "EntryType": "Oem",
+            "Id": "7",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 328,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-25T05:51:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 328,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/7/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/8/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-26T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "8",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 329,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-26T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 329,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/8/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/9/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-27T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "9",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 330,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-27T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 330,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/9/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/10/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-28T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "10",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 331,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-28T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 331,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/10/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/11/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-06-29T03:02:00Z",
+            "EntryType": "Oem",
+            "Id": "11",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 332,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-06-29T03:02:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 332,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/11/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/12/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T12:32:00Z",
+            "EntryType": "Oem",
+            "Id": "12",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 5,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 333,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T12:57:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 333,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/12/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/13/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T12:43:00Z",
+            "EntryType": "Oem",
+            "Id": "13",
+            "Message": "Option ROM POST Information: 1729-Slot 0 Drive Array - Disk Performance Optimization Scan In Progress - RAID 4/5/ADG performance may be higher after completion.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 334,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T12:43:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 334,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/13/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/14/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T12:51:00Z",
+            "EntryType": "Oem",
+            "Id": "14",
+            "Message": "Option ROM POST Information: 1778-Slot 0 Drive Array resuming Automatic Data Recovery(Rebuild) process",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 335,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T12:57:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 335,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/14/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/15/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T14:40:00Z",
+            "EntryType": "Oem",
+            "Id": "15",
+            "Message": "Firmware flashed (iLO 4 2.77)",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 32,
+                    "Code": 2,
+                    "EventNumber": 336,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T14:40:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 336,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/15/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/16/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T14:43:00Z",
+            "EntryType": "Oem",
+            "Id": "16",
+            "Message": "Network Adapter Link Down (Slot 0, Port 4)",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 17,
+                    "Code": 2,
+                    "EventNumber": 337,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T14:43:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 337,
+            "Severity": "Critical",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/16/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/17/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T14:43:00Z",
+            "EntryType": "Oem",
+            "Id": "17",
+            "Message": "Network Adapter Link Down (Slot 0, Port 2)",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 17,
+                    "Code": 2,
+                    "EventNumber": 338,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T14:43:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 338,
+            "Severity": "Critical",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/17/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/18/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T14:43:00Z",
+            "EntryType": "Oem",
+            "Id": "18",
+            "Message": "Network Adapter Link Down (Slot 0, Port 3)",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 17,
+                    "Code": 2,
+                    "EventNumber": 339,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T14:43:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 339,
+            "Severity": "Critical",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/18/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/19/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T13:53:00Z",
+            "EntryType": "Oem",
+            "Id": "19",
+            "Message": "Option ROM POST Information: 1729-Slot 0 Drive Array - Disk Performance Optimization Scan In Progress - RAID 4/5/ADG performance may be higher after completion.",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 340,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T13:55:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 340,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/19/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/20/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T13:53:00Z",
+            "EntryType": "Oem",
+            "Id": "20",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 341,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T13:55:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 341,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/20/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/21/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T14:01:00Z",
+            "EntryType": "Oem",
+            "Id": "21",
+            "Message": "Option ROM POST Information: 1729-Slot 0 Drive Array - Disk Performance Optimization Scan In Progress - RAID 4/5/ADG performance may be higher after completion.",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 342,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T14:41:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 342,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/21/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/22/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2021-08-03T14:01:00Z",
+            "EntryType": "Oem",
+            "Id": "22",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 343,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2021-08-03T14:41:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 343,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/22/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/23/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-09-28T11:29:00Z",
+            "EntryType": "Oem",
+            "Id": "23",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 344,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-09-28T11:29:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 344,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/23/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/24/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-09-28T12:30:00Z",
+            "EntryType": "Oem",
+            "Id": "24",
+            "Message": "System Power Supply: Input Power Loss or Unplugged Power Cord, Verify Power Supply Input (Power Supply 2)",
+            "Name": "Integrated Management Log",
+            "Number": 4,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 1,
+                    "EventNumber": 345,
+                    "Repaired": true,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-09-28T12:37:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 345,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/24/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/25/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-09-28T11:30:00Z",
+            "EntryType": "Oem",
+            "Id": "25",
+            "Message": "POST Error: 1624-Power Supply Unplugged - Power Supply 2 is unplugged. Action: Ensure the Power Supply is plugged in.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 346,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-09-28T11:30:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 346,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/25/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/26/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-09-28T11:30:00Z",
+            "EntryType": "Oem",
+            "Id": "26",
+            "Message": "POST Error: 1627-IMPORTANT: Power Supply Solution Not Fully Redundant",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 347,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-20T05:51:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 347,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/26/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/27/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-09-28T12:30:00Z",
+            "EntryType": "Oem",
+            "Id": "27",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 348,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-09-28T12:31:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 348,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/27/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/28/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T16:38:00Z",
+            "EntryType": "Oem",
+            "Id": "28",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 4,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 349,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T16:56:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 349,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/28/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/29/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T17:38:00Z",
+            "EntryType": "Oem",
+            "Id": "29",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 6,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 350,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T17:57:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 350,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/29/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/30/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T16:48:00Z",
+            "EntryType": "Oem",
+            "Id": "30",
+            "Message": "Option ROM POST Information: 1778-Slot 0 Drive Array resuming Automatic Data Recovery(Rebuild) process",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 351,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T16:56:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 351,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/30/"
+                }
+            }
+        }
+    ],
+    "MemberType": "LogEntry.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/1/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/2/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/3/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/4/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/5/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/6/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/7/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/8/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/9/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/10/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/11/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/12/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/13/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/14/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/15/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/16/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/17/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/18/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/19/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/20/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/21/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/22/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/23/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/24/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/25/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/26/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/27/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/28/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/29/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/30/"
+        }
+    ],
+    "Members@odata.count": 175,
+    "Name": "Integrated Management Logs",
+    "Total": 175,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/1/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/2/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/3/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/4/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/5/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/6/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/7/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/8/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/9/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/10/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/11/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/12/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/13/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/14/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/15/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/16/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/17/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/18/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/19/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/20/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/21/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/22/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/23/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/24/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/25/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/26/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/27/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/28/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/29/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/30/"
+            }
+        ],
+        "NextPage": {
+            "count": 30,
+            "page": 2
+        },
+        "self": {
+            "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/?page=1"
+        }
+    }
+}

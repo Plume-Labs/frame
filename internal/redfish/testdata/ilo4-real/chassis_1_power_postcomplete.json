@@ -1,0 +1,142 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Chassis/Members/1/Power$entity",
+    "@odata.id": "/redfish/v1/Chassis/1/Power/",
+    "@odata.type": "#Power.1.0.1.Power",
+    "Id": "Power",
+    "Name": "PowerMetrics",
+    "Oem": {
+        "Hp": {
+            "@odata.type": "#HpPowerMetricsExt.1.2.0.HpPowerMetricsExt",
+            "SNMPPowerThresholdAlert": {
+                "DurationInMin": 0,
+                "ThresholdWatts": 0,
+                "Trigger": "Disabled"
+            },
+            "Type": "HpPowerMetricsExt.1.2.0",
+            "links": {
+                "FastPowerMeter": {
+                    "href": "/redfish/v1/Chassis/1/Power/FastPowerMeter/"
+                },
+                "FederatedGroupCapping": {
+                    "href": "/redfish/v1/Chassis/1/Power/FederatedGroupCapping/"
+                },
+                "PowerMeter": {
+                    "href": "/redfish/v1/Chassis/1/Power/PowerMeter/"
+                }
+            }
+        }
+    },
+    "PowerCapacityWatts": 1000,
+    "PowerConsumedWatts": 122,
+    "PowerControl": [
+        {
+            "PowerCapacityWatts": 1000,
+            "PowerConsumedWatts": 122,
+            "PowerLimit": {
+                "LimitInWatts": null
+            },
+            "PowerMetrics": {
+                "AverageConsumedWatts": 1,
+                "IntervalInMin": 20,
+                "MaxConsumedWatts": 126,
+                "MinConsumedWatts": 122
+            }
+        }
+    ],
+    "PowerLimit": {
+        "LimitInWatts": null
+    },
+    "PowerMetrics": {
+        "AverageConsumedWatts": 1,
+        "IntervalInMin": 20,
+        "MaxConsumedWatts": 126,
+        "MinConsumedWatts": 122
+    },
+    "PowerSupplies": [
+        {
+            "FirmwareVersion": "1.00",
+            "LastPowerOutputWatts": 116,
+            "LineInputVoltage": 222,
+            "LineInputVoltageType": "ACHighLine",
+            "Model": "720478-B21",
+            "Name": "HpServerPowerSupply",
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpServerPowerSupply.1.0.0.HpServerPowerSupply",
+                    "AveragePowerOutputWatts": 116,
+                    "BayNumber": 1,
+                    "HotplugCapable": true,
+                    "MaxPowerOutputWatts": 120,
+                    "Mismatched": false,
+                    "PowerSupplyStatus": {
+                        "State": "Ok"
+                    },
+                    "Type": "HpServerPowerSupply.1.0.0",
+                    "iPDUCapable": false
+                }
+            },
+            "PowerCapacityWatts": 500,
+            "PowerSupplyType": "AC",
+            "SerialNumber": "5DMWA0CLL9FEEM",
+            "SparePartNumber": "754377-001",
+            "Status": {
+                "Health": "OK",
+                "State": "Enabled"
+            }
+        },
+        {
+            "FirmwareVersion": "1.00",
+            "LastPowerOutputWatts": 6,
+            "LineInputVoltage": 223,
+            "LineInputVoltageType": "ACHighLine",
+            "Model": "720478-B21",
+            "Name": "HpServerPowerSupply",
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpServerPowerSupply.1.0.0.HpServerPowerSupply",
+                    "AveragePowerOutputWatts": 6,
+                    "BayNumber": 2,
+                    "HotplugCapable": true,
+                    "MaxPowerOutputWatts": 6,
+                    "Mismatched": false,
+                    "PowerSupplyStatus": {
+                        "State": "Ok"
+                    },
+                    "Type": "HpServerPowerSupply.1.0.0",
+                    "iPDUCapable": false
+                }
+            },
+            "PowerCapacityWatts": 500,
+            "PowerSupplyType": "AC",
+            "SerialNumber": "5DMWA0CLL2403K",
+            "SparePartNumber": "754377-001",
+            "Status": {
+                "Health": "OK",
+                "State": "Enabled"
+            }
+        }
+    ],
+    "Redundancy": [
+        {
+            "MaxNumSupported": 2,
+            "MemberId": "0",
+            "MinNumNeeded": 2,
+            "Mode": "Failover",
+            "Name": "PowerSupply Redundancy Group 1",
+            "RedundancySet": [
+                {
+                    "@odata.id": "/redfish/v1/Chassis/1/Power#/PowerSupplies/0"
+                },
+                {
+                    "@odata.id": "/redfish/v1/Chassis/1/Power#/PowerSupplies/1"
+                }
+            ]
+        }
+    ],
+    "Type": "PowerMetrics.0.11.0",
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Chassis/1/Power/"
+        }
+    }
+}

@@ -37,54 +37,7 @@ import (
 	"github.com/rmocq/frame/internal/redfish"
 )
 
-// fakeRedfish is the seam the whole controller is tested through: no network,
-// no fixtures, just the two outcomes the controller has to tell apart.
-type fakeRedfish struct {
-	snapshot *redfish.Snapshot
-	probeErr error
-
-	// resetErr, when set, is returned by the next Reset call and then
-	// cleared — a single-shot failure, so a spec can drive one attempt into
-	// error and the next into success without a second fake.
-	resetErr error
-
-	resets   []string
-	clearLog int
-	ledCalls []bool
-}
-
-func (f *fakeRedfish) Probe(context.Context) (*redfish.Snapshot, error) {
-	if f.probeErr != nil {
-		return nil, f.probeErr
-	}
-	return f.snapshot, nil
-}
-func (f *fakeRedfish) Reset(_ context.Context, t string) error {
-	f.resets = append(f.resets, t)
-	if f.resetErr != nil {
-		err := f.resetErr
-		f.resetErr = nil
-		return err
-	}
-	return nil
-}
-func (f *fakeRedfish) ClearLog(context.Context) error { f.clearLog++; return nil }
-func (f *fakeRedfish) SetIndicatorLED(_ context.Context, on bool) error {
-	f.ledCalls = append(f.ledCalls, on)
-	return nil
-}
-
-// fakeTimeoutError satisfies net.Error without pulling in a real network
-// timeout, so probeFailureReason's net.Error branch can be driven
-// deterministically. net.Error still requires the deprecated Temporary()
-// method as of this Go version — omitting it makes errors.As silently
-// return false rather than fail to compile, since the assertion happens by
-// reflection against the interface, not at compile time.
-type fakeTimeoutError struct{}
-
-func (fakeTimeoutError) Error() string   { return "i/o timeout" }
-func (fakeTimeoutError) Timeout() bool   { return true }
-func (fakeTimeoutError) Temporary() bool { return true }
+// fakeRedfish and fakeTimeoutError live in framemachine_fake_test.go.
 
 var _ = Describe("FrameMachine controller", func() {
 	var (
@@ -114,8 +67,17 @@ var _ = Describe("FrameMachine controller", func() {
 
 	BeforeEach(func() {
 		fake = &fakeRedfish{snapshot: &redfish.Snapshot{
-			PowerState:   "On",
-			IndicatorLED: "Off",
+			PowerState: "On",
+			// PostState/SensorsTrustworthy stand in for a fully booted,
+			// finished-POST machine — the shape every controller spec except
+			// the Finding 1 one below has always assumed. See
+			// internal/redfish.Snapshot.SensorsTrustworthy: false is what a
+			// zero-value Snapshot would carry, which would make every
+			// existing "reads its Sensors" assertion below fail against
+			// applySnapshot's new clearing branch for the wrong reason.
+			PostState:          "InPostDiscoveryComplete",
+			SensorsTrustworthy: true,
+			IndicatorLED:       "Off",
 			Inventory: redfish.Inventory{
 				Model:          "ProLiant ML350 Gen9",
 				SerialNumber:   "CZJ1234567",
@@ -167,6 +129,57 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(got.Status.EventLogCounts).To(HaveKeyWithValue("Critical", int32(1)))
 		Expect(got.Status.LastProbeAt).NotTo(BeNil())
 		Expect(meta.IsStatusConditionTrue(got.Status.Conditions, "Reachable")).To(BeTrue())
+	})
+
+	// Finding 1 (internal/redfish/client.go): the captured iLO4 replays a
+	// cached sensor reading as live regardless of power state. This is the
+	// discriminating test named in the brief: it drives a snapshot with
+	// SensorsTrustworthy false but non-empty Sensors — the exact shape a
+	// pre-fix applySnapshot would render as a plausible, healthy reading —
+	// and proves the controller clears it instead. It fails on the pre-fix
+	// code (the clearing branch removed) exactly as
+	// setcondition_regression_test.go's sibling specs do for their own
+	// defects: see task-6b-report.md for the recorded red/green runs.
+	It("clears untrustworthy sensors instead of storing a stale reading beside a caveat", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-untrusted-creds"))).To(Succeed())
+		fm := newMachine("fm-untrusted")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-untrusted", Namespace: "default"}}
+
+		// First probe: trustworthy, so SensorsValidAt gets set. This is the
+		// value the second (untrustworthy) probe must leave untouched.
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		var afterFirst framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &afterFirst)).To(Succeed())
+		Expect(afterFirst.Status.Sensors).NotTo(BeNil())
+		Expect(afterFirst.Status.SensorsValidAt).NotTo(BeNil())
+		firstValidAt := afterFirst.Status.SensorsValidAt.DeepCopy()
+
+		// Second probe: powered off, mid-POST-shaped — SensorsTrustworthy
+		// false — but the fake still hands back a full, plausible-looking
+		// Sensors block, exactly as the real BMC does (Finding 1's captures:
+		// CPU1 at 40C, Status.State Enabled, whichever power state).
+		fake.snapshot.PowerState = "Off"
+		fake.snapshot.PostState = "PowerOff"
+		fake.snapshot.SensorsTrustworthy = false
+		fake.snapshot.Sensors = redfish.Sensors{
+			Temperatures: []redfish.Temperature{{Name: "02-CPU 1", Celsius: 40, Health: "OK"}},
+		}
+		time.Sleep(time.Millisecond) // guarantee SensorsValidAt would move if the bug reintroduces itself
+
+		_, err = r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.Sensors).To(BeNil())
+		Expect(got.Status.PostState).To(Equal("PowerOff"))
+		Expect(got.Status.PowerState).To(Equal("Off"))
+		Expect(got.Status.SensorsValidAt.Time).To(BeTemporally("==", firstValidAt.Time))
+		// LastProbeAt still advances: the probe succeeded and read the
+		// machine, it just didn't read trustworthy sensors.
+		Expect(got.Status.LastProbeAt).NotTo(BeNil())
 	})
 
 	It("keeps the last reading when a probe fails, and says why", func() {

@@ -369,10 +369,20 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              postState:
+                description: |-
+                  PostState is the machine's power-on-self-test state as the BMC
+                  reports it.
+                maxLength: 64
+                type: string
               powerState:
                 type: string
               sensors:
-                description: MachineSensors is what the machine currently reads.
+                description: |-
+                  Sensors is nil whenever the last probe found the readings untrustworthy
+                  (see SensorsValidAt) rather than kept alongside a caveat nobody reads —
+                  see the controller's applySnapshot for why clearing, not flagging, is
+                  the deliberate choice.
                 properties:
                   fans:
                     items:
@@ -430,6 +440,16 @@ spec:
                     maxItems: 64
                     type: array
                 type: object
+              sensorsValidAt:
+                description: |-
+                  SensorsValidAt is when Sensors was last read in a state where the
+                  machine could actually produce it. It is deliberately distinct from
+                  LastProbeAt: a probe can succeed against a powered-off machine and
+                  come back with a full set of readings that describe an earlier moment
+                  (see internal/redfish.Snapshot.SensorsTrustworthy) — LastProbeAt still
+                  advances on that probe, but SensorsValidAt does not.
+                format: date-time
+                type: string
             type: object
         type: object
     served: true

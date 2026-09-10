@@ -1,0 +1,27 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/EthernetInterfaces/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/EthernetInterfaces/1/",
+    "@odata.type": "#EthernetInterface.1.0.0.EthernetInterface",
+    "FullDuplex": false,
+    "IPv4Addresses": [
+        {
+            "Address": null
+        }
+    ],
+    "IPv6Addresses": [
+        {
+            "Address": null
+        }
+    ],
+    "Id": "1",
+    "MacAddress": "58:20:B1:09:CC:D8",
+    "Name": "System Ethernet Interface",
+    "SpeedMbps": null,
+    "Type": "EthernetNetworkInterface.0.92.0",
+    "UEFIDevicePath": "PciRoot(0x0)/Pci(0x1C,0x4)/Pci(0x0,0x0)",
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Systems/1/EthernetInterfaces/1/"
+        }
+    }
+}

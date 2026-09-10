@@ -1,0 +1,69 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/Memory",
+    "@odata.id": "/redfish/v1/Systems/1/Memory/",
+    "@odata.type": "#HpMemoryCollection.HpMemoryCollection",
+    "Description": "Memory DIMM Collection",
+    "MemberType": "HpMemory.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm1/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm2/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm4/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm5/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm9/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/Memory/proc1dimm12/"
+        }
+    ],
+    "Members@odata.count": 6,
+    "Name": "Memory DIMM Collection",
+    "Oem": {
+        "Hp": {
+            "@odata.type": "#HpAdvancedMemoryProtection.1.0.0.HpAdvancedMemoryProtection",
+            "AmpModeActive": "AdvancedECC",
+            "AmpModeStatus": "AdvancedECC",
+            "AmpModeSupported": [
+                "AdvancedECC",
+                "OnlineSpareRank",
+                "IntrasocketMirroring"
+            ],
+            "Type": "HpAdvancedMemoryProtection.1.0.0"
+        }
+    },
+    "Total": 6,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/Memory/proc1dimm1/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/Memory/proc1dimm2/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/Memory/proc1dimm4/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/Memory/proc1dimm5/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/Memory/proc1dimm9/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/Memory/proc1dimm12/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Systems/1/Memory/"
+        }
+    }
+}
