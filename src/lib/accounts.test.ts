@@ -6,6 +6,7 @@ import {
   isOnlyEnabledAdmin,
   listAccounts,
   listCredentials,
+  reissueInvitation,
   revokeCredential,
   setAccountRole,
   setAccountState,
@@ -112,6 +113,41 @@ describe('inviteAccount', () => {
     stubFetch(new Response('', { status: 500 }))
     await expect(inviteAccount('bob@example.com', 'viewer')).rejects.toThrow(
       /could not create the invitation \(500\)/,
+    )
+  })
+})
+
+describe('reissueInvitation', () => {
+  it('posts only the address and returns the link', async () => {
+    const calls = stubFetch(json({ url: 'https://frame.example/invite#token=sealed2' }))
+    const url = await reissueInvitation('bob@example.com')
+    expect(url).toBe('https://frame.example/invite#token=sealed2')
+    expect(calls[0].url).toBe('/auth/invite/link')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ email: 'bob@example.com' })
+  })
+
+  it("surfaces authd's own message when the account is unknown", async () => {
+    stubFetch(new Response('no account with that email', { status: 404 }))
+    await expect(reissueInvitation('ghost@example.com')).rejects.toThrow(/no account with that email/)
+  })
+
+  // 410: the account already enrolled a credential, so a link for it would
+  // be refused at acceptance anyway — authd's wording is the useful part.
+  it("surfaces authd's own message when the account already has a credential", async () => {
+    stubFetch(new Response('this account already has a credential', { status: 410 }))
+    await expect(reissueInvitation('bob@example.com')).rejects.toThrow(/already has a credential/)
+  })
+
+  // 403: a disabled account cannot be issued an identity.
+  it("surfaces authd's own message when the account is disabled", async () => {
+    stubFetch(new Response('this account is disabled', { status: 403 }))
+    await expect(reissueInvitation('bob@example.com')).rejects.toThrow(/this account is disabled/)
+  })
+
+  it('falls back to a status-bearing message when the response body is empty', async () => {
+    stubFetch(new Response('', { status: 500 }))
+    await expect(reissueInvitation('bob@example.com')).rejects.toThrow(
+      /could not create the invitation link \(500\)/,
     )
   })
 })

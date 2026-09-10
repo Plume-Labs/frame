@@ -596,3 +596,181 @@ func TestEnrolCookieCanReachRegisterFinish(t *testing.T) {
 			"reaching the ceremony: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestInviteLinkRequiresAnAdminSession is the /auth/invite/link counterpart
+// to TestInviteRequiresAnAdminSession above: an anonymous caller gets 401,
+// and a caller with a valid session that is not an admin — viewer or
+// operator — gets 403. This is the mutant "the admin gate was dropped (or
+// only checked for an anonymous caller)": a version that checked only
+// sessionUser's ok and skipped the role comparison would let the viewer and
+// operator cases below through as 200.
+func TestInviteLinkRequiresAnAdminSession(t *testing.T) {
+	viewer := fixture("bob", "bob@example.com", framev1beta1.RoleViewer)
+	target := fixture("dana-at-example.com", "dana@example.com", framev1beta1.RoleViewer)
+	srv, c := bootstrapServer(t, false, viewer, target)
+
+	if rec := do(t, srv, http.MethodPost, "/auth/invite/link",
+		`{"email":"dana@example.com"}`); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("invite/link with no session = %d, want 401", rec.Code)
+	}
+	rec := doWithCookie(t, srv, "/auth/invite/link",
+		`{"email":"dana@example.com"}`, sessionFor(t, srv, viewer))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("invite/link from a viewer = %d, want 403", rec.Code)
+	}
+
+	operator := fixture("carol", "carol@example.com", framev1beta1.RoleOperator)
+	if err := c.Create(context.Background(), operator); err != nil {
+		t.Fatalf("seed operator: %v", err)
+	}
+	rec = doWithCookie(t, srv, "/auth/invite/link",
+		`{"email":"dana@example.com"}`, sessionFor(t, srv, operator))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("invite/link from an operator = %d, want 403", rec.Code)
+	}
+}
+
+// TestInviteLinkReturnsAFreshLinkForAnExistingAccount is the 200 path: an
+// admin re-requesting a link for an account that already exists and holds no
+// credential gets a link shaped exactly like handleInvite's — Cache-Control:
+// no-store, the token in the fragment (never the query string), sealed under
+// PurposeInvite, and opening to the target's own address.
+func TestInviteLinkReturnsAFreshLinkForAnExistingAccount(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	target := fixture("bob-at-example.com", "bob@example.com", framev1beta1.RoleViewer)
+	srv, _ := bootstrapServer(t, false, admin, target)
+
+	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"bob@example.com"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("invite/link = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want %q — the body carries a bearer credential", got, "no-store")
+	}
+
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The mutant "the token rides in the query string, not the fragment":
+	// a '?' anywhere in the URL means the token would be sent to a server on
+	// every request the /invite page makes and logged along the way.
+	if strings.Contains(body.URL, "?") {
+		t.Fatalf("invite/link url = %q, want the token in the fragment and nothing in the query string", body.URL)
+	}
+	if !strings.HasPrefix(body.URL, testConsoleOrigin+"/invite#token=") {
+		t.Fatalf("invite/link url = %q, want %s/invite#token=…", body.URL, testConsoleOrigin)
+	}
+
+	// The mutant "sealed under the wrong purpose": a token sealed under
+	// PurposeSession (or any purpose but PurposeInvite) fails to open here,
+	// and — the other half of the same mutant — must not open as a session
+	// either.
+	payload, err := testCodec().Open(PurposeInvite, inviteURLToken(t, body.URL))
+	if err != nil {
+		t.Fatalf("the link's token does not open under PurposeInvite: %v", err)
+	}
+	if string(payload) != "bob@example.com" {
+		t.Fatalf("token carries %q, want the target account's address", payload)
+	}
+	if _, err := testCodec().Open(PurposeSession, inviteURLToken(t, body.URL)); err == nil {
+		t.Fatal("the link's token opened as a session")
+	}
+}
+
+// TestInviteLinkReturns404ForAnUnknownEmail covers the case the gap
+// description calls out first: no account holds the address at all.
+func TestInviteLinkReturns404ForAnUnknownEmail(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, _ := bootstrapServer(t, false, admin)
+
+	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"ghost@example.com"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("invite/link for an unknown email = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestInviteLinkResolvesByEmailExactlyNotCaseInsensitively pins the
+// constraint that ByEmail must be used unmodified: a lookup by a
+// differently-cased address must miss, even though the account exists under
+// another casing. Store.ByEmail's own history records folding case there as
+// a Critical defect (see TestByEmailDoesNotConflateAccountsThatDifferOnlyByCase
+// in store_test.go); a version of this handler that pre-normalized the
+// input, or swapped in a case-insensitive lookup, would turn this into a
+// 200 instead of the 404 that ByEmail's exact-match contract requires.
+func TestInviteLinkResolvesByEmailExactlyNotCaseInsensitively(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	target := fixture("bob-at-example.com", "bob@example.com", framev1beta1.RoleViewer)
+	srv, _ := bootstrapServer(t, false, admin, target)
+
+	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"Bob@Example.com"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("invite/link for a differently-cased address = %d, want 404 (ByEmail is exact-match only)", rec.Code)
+	}
+}
+
+// TestInviteLinkRefusesAnAccountThatAlreadyHasACredential is the 410 guard:
+// an account that has already enrolled a passkey must not be handed another
+// invitation link, using the exact condition and wording
+// handleInviteAccept uses for the same state. Deleting this guard would
+// turn this into a 200 that mints a link acceptance would refuse anyway.
+func TestInviteLinkRefusesAnAccountThatAlreadyHasACredential(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	target := fixture("bob-at-example.com", "bob@example.com", framev1beta1.RoleViewer,
+		framev1beta1.WebAuthnCredential{ID: "ZW5yb2xsZWQ", PublicKey: "cGs", AddedAt: metav1.Now(), Label: "YubiKey 5C"})
+	srv, _ := bootstrapServer(t, false, admin, target)
+
+	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"bob@example.com"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("invite/link for an enrolled account = %d, want 410: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "this account already has a credential") {
+		t.Fatalf("body = %q, want the same wording handleInviteAccept uses", rec.Body.String())
+	}
+}
+
+// TestInviteLinkRefusesAnAccountThatAlreadyHasAPassword is the password
+// branch of the same 410 guard.
+func TestInviteLinkRefusesAnAccountThatAlreadyHasAPassword(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	srv, c := bootstrapServer(t, false, admin)
+
+	var bob framev1beta1.FrameUser
+	target := fixture("bob-at-example.com", "bob@example.com", framev1beta1.RoleViewer)
+	if err := c.Create(context.Background(), target); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Name: "bob-at-example.com", Namespace: "cluster-control"}, &bob); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	bob.Status.PasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNoaGFzaA"
+	if err := c.Status().Update(context.Background(), &bob); err != nil {
+		t.Fatalf("status update: %v", err)
+	}
+
+	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"bob@example.com"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("invite/link for an account holding a password = %d, want 410: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestInviteLinkRefusesADisabledAccount is the 403 guard: a disabled account
+// cannot be issued an identity, so a link for it is useless. Deleting the
+// requireIssuable check would turn this into a 200.
+func TestInviteLinkRefusesADisabledAccount(t *testing.T) {
+	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
+	target := fixture("bob-at-example.com", "bob@example.com", framev1beta1.RoleViewer)
+	target.Spec.State = framev1beta1.StateDisabled
+	srv, _ := bootstrapServer(t, false, admin, target)
+
+	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"bob@example.com"}`, sessionFor(t, srv, admin))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("invite/link for a disabled account = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "this account is disabled") {
+		t.Fatalf("body = %q, want the same wording handleInviteAccept uses", rec.Body.String())
+	}
+}

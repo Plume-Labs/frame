@@ -103,6 +103,27 @@ export async function inviteAccount(email: string, role: InvitableRole): Promise
 }
 
 /**
+ * Mint a fresh invitation link for an account that already exists — for when
+ * the one link `inviteAccount` returned expired (24h) or was never captured
+ * before the dialog that showed it once was closed. The only other way back
+ * to enrolment is deleting the FrameUser and inviting again.
+ *
+ * Same shape as `inviteAccount`: authd's own message is forwarded verbatim
+ * on a refusal (an unknown email, an account that already holds a
+ * credential, or a disabled account) rather than rewritten here.
+ */
+export async function reissueInvitation(email: string): Promise<string> {
+  const res = await fetch('/auth/invite/link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+  if (!res.ok) throw await failure(res, 'could not create the invitation link')
+  const body = (await res.json()) as { url: string }
+  return body.url
+}
+
+/**
  * Spend an invitation. On success the browser holds a fifteen-minute session
  * whose only use is `enrolPasskey` — long enough to enrol, short enough that a
  * forwarded link is not a standing account.
