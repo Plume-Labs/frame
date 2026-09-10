@@ -619,12 +619,20 @@ the code that writes this kind — there is nothing else that does.
 **Spec:** `user` (the impersonated Kubernetes username — the `FrameUser`'s
 email; required, 1–254 characters), `verb` (`create` | `update` | `patch` |
 `delete` — reads are never recorded), `target` (an `ObjectRef`: `group`,
-`resource`, `namespace`, `name` — `resource` is the plural path segment the
-proxy parsed the request URL into, not a `Kind`, since deriving a `Kind`
-from it would need a RESTMapper for nothing the Tasks screen renders),
+`resource`, `namespace`, `name`, `subresource` — `resource` is the plural path
+segment the proxy parsed the request URL into, not a `Kind`, since deriving a
+`Kind` from it would need a RESTMapper for nothing the Tasks screen renders),
 and `action` (an optional human label from the UI's `X-Frame-Action` header
 — "cordon node w2" — absent when the request did not come from the console,
 in which case the Tasks screen falls back to `<verb> <target>`).
+
+> `target.subresource` is the trailing segment of the request path when there is one — `exec`, `log`, `scale`, `eviction` — and empty for a request on the object itself. It exists because without it a shell opened in a pod records as `create pods/<name>`, the same string a pod create produces, so the product's decision to record exec sessions would have had no visible effect. **Added post-freeze, on 2026-09-09 (lot 2), and it is a field on an existing kind** — the same class of break as `FrameUser.spec.state`, and cheaper: `FrameTask` is `v1beta1`-only with no conversion webhook, so there is no second version to keep lossless and no conversion function to write.
+>
+> One consequence worth stating: `verb` for an exec is `create`, not `get`, even though the request arrives as an HTTP GET. A browser opens an exec as a WebSocket upgrade and `new WebSocket()` can issue nothing else; the apiserver authorizes it as `create pods/exec` regardless, and the record uses the word the RBAC rule uses so the two can be read together.
+
+**A `FrameTask` for an exec is a session, not a request.** It opens when the WebSocket is established and closes when the socket closes, so `status.startedAt` and `status.finishedAt` bracket the whole shell and a three-hour session is visible as three hours. `status.httpCode` is **101** for a session that opened — `Succeeded`, not `Failed`, despite being below 200. `spec.action` is built by the recorder rather than supplied by the console (`open a shell in <ns>/<pod> (<container>)`), because a WebSocket carries no `X-Frame-Action` header.
+
+**A dry run leaves no `FrameTask` at all.** The manifest editor validates every edit with a `PUT ?dryRun=All` before it writes, which is also how it learns which fields changed; a dry run stores nothing, so recording it would put two rows in the trail for one edit.
 
 There was a `ref` field here, pointing at an object carrying the action's own
 progress. It is gone, and the reason is worth stating so it is not re-added
