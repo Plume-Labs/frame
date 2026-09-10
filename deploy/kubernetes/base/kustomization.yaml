@@ -21,6 +21,30 @@ resources:
   # cluster-wide — see the header of the file for why that shape is the control
   # and not a style choice.
   - rbac-workload-operator.yaml
+  # The control that earns rbac-workload-operator.yaml back: baseline Pod
+  # Security on the same namespaces its RoleBindings bind into. Whole-branch
+  # review Critical 1 (2026-09-10) found the two shipped separately — this
+  # file added the RoleBindings while ../pod-security stayed a standalone
+  # target nothing referenced, so the default deploy path (Argo CD syncing
+  # this overlay) granted `patch` on Deployments/StatefulSets with nothing
+  # refusing a privileged pod.
+  #
+  # Referenced as the directory, not `../pod-security/namespaces.yaml`
+  # directly: kustomize's default LoadRestrictionsRootOnly refuses a resource
+  # entry that escapes this kustomization's own directory ("file ... is not
+  # in or below ..."), and fails the whole build, not just this entry. A
+  # directory carrying its own kustomization.yaml is exempt — it recurses as
+  # a nested base with its own root — so this still resolves to the exact
+  # same on-disk file (../pod-security/kustomization.yaml names it, and that
+  # file is untouched: no move, no copy).
+  #
+  # ../pod-security's own two-phase apply order (warn+audit, sweep, THEN
+  # enforce) does not apply once it is folded into this atomic render — the
+  # labels namespaces.yaml carries are already post-sweep (see
+  # docs/deployment.md, "Turning Pod Security on").
+  # test/manifests/rbac_workload_operator_test.go and src/lib/workloads.test.ts
+  # both read namespaces.yaml at its current path — do not move or copy it.
+  - ../pod-security
   - config.yaml
   - deployment.yaml
   - service.yaml
