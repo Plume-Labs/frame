@@ -111,6 +111,32 @@ type SchedulingPolicyStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// OwnedPriorityClass is the name of the cluster-scoped PriorityClass this
+	// SchedulingPolicy created and is therefore allowed to update and delete.
+	// Empty means this SchedulingPolicy owns no PriorityClass, whatever
+	// spec.priorityClass says and whatever any PriorityClass in the cluster
+	// happens to be labelled with.
+	//
+	// This field, not a label, is what ownership means — the same reading
+	// FrameService's binding uses for Secrets (see the "Ownership: a record,
+	// not a label" note in internal/controller/services/binding.go). The
+	// reason is the same and it is not theoretical here: the two
+	// PriorityClasses this controller took over on the live cluster now carry
+	// frame.plume-labs.io/policy-name themselves, written during the takeover,
+	// so a label check would read its own footprint back as proof and keep
+	// the takeover. A status subresource is writable only by the controller's
+	// RBAC — schedulingpolicy_editor_role grants get and nothing else on
+	// schedulingpolicies/status — so a namespaced editor who can create a
+	// SchedulingPolicy naming any cluster-scoped PriorityClass cannot also
+	// forge the record that would let this controller act on it.
+	//
+	// New in v1beta1 and deliberately not projected onto v1alpha1: v1alpha1
+	// has no such field, and a v1alpha1 round trip that dropped it would only
+	// ever make the controller disown a PriorityClass, never adopt one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	OwnedPriorityClass string `json:"ownedPriorityClass,omitempty"`
 }
 
 // This is the conversion hub and the storage version. The marker arrived here

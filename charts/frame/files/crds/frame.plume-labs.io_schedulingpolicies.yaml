@@ -190,6 +190,26 @@ spec:
                   about this kind's condition vocabulary.
                 format: int64
                 type: integer
+              ownedPriorityClass:
+                description: |-
+                  OwnedPriorityClass mirrors v1beta1's field of the same name: the
+                  cluster-scoped PriorityClass this SchedulingPolicy created, and the
+                  only one it is allowed to update or delete. See the note on
+                  v1beta1.SchedulingPolicyStatus.OwnedPriorityClass for what it is for.
+
+                  It is here, rather than stashed in an annotation the way v1beta1-only
+                  FrameJob fields are (framejobContainerAnnotation in conversion.go),
+                  because of what this particular field is: an authority. The annotation
+                  hatch turns object metadata into a channel into the converted object,
+                  and metadata is writable by anyone holding patch on the CR — which is
+                  exactly the namespaced right this field exists to stop from reaching a
+                  cluster-scoped delete. Carrying it as a real status field keeps it
+                  behind the status subresource at both versions, which is the same
+                  protection at v1alpha1 as at v1beta1, and keeps the hub round trip
+                  exactly lossless without a per-field exception in
+                  TestHubRoundTripIsLossless.
+                maxLength: 253
+                type: string
             type: object
         required:
         - spec
@@ -374,6 +394,32 @@ spec:
                   about this kind's condition vocabulary.
                 format: int64
                 type: integer
+              ownedPriorityClass:
+                description: |-
+                  OwnedPriorityClass is the name of the cluster-scoped PriorityClass this
+                  SchedulingPolicy created and is therefore allowed to update and delete.
+                  Empty means this SchedulingPolicy owns no PriorityClass, whatever
+                  spec.priorityClass says and whatever any PriorityClass in the cluster
+                  happens to be labelled with.
+
+                  This field, not a label, is what ownership means — the same reading
+                  FrameService's binding uses for Secrets (see the "Ownership: a record,
+                  not a label" note in internal/controller/services/binding.go). The
+                  reason is the same and it is not theoretical here: the two
+                  PriorityClasses this controller took over on the live cluster now carry
+                  frame.plume-labs.io/policy-name themselves, written during the takeover,
+                  so a label check would read its own footprint back as proof and keep
+                  the takeover. A status subresource is writable only by the controller's
+                  RBAC — schedulingpolicy_editor_role grants get and nothing else on
+                  schedulingpolicies/status — so a namespaced editor who can create a
+                  SchedulingPolicy naming any cluster-scoped PriorityClass cannot also
+                  forge the record that would let this controller act on it.
+
+                  New in v1beta1 and deliberately not projected onto v1alpha1: v1alpha1
+                  has no such field, and a v1alpha1 round trip that dropped it would only
+                  ever make the controller disown a PriorityClass, never adopt one.
+                maxLength: 253
+                type: string
             type: object
         required:
         - spec
