@@ -504,7 +504,7 @@ func TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending(t *testing.T) {
 // route a full session — but not an enrolment cookie — must be able to reach.
 func TestAnAcceptedInvitationCannotMintATokenOrInvite(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
-	srv, _ := bootstrapServer(t, false, admin)
+	srv, c := bootstrapServer(t, false, admin)
 	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
 
 	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
@@ -521,6 +521,31 @@ func TestAnAcceptedInvitationCannotMintATokenOrInvite(t *testing.T) {
 		`{"email":"carol@example.com","role":"viewer"}`, enrolSession); inviteRec.Code != http.StatusUnauthorized {
 		t.Fatalf("/auth/invite with an enrolment-only cookie = %d, want 401: %s",
 			inviteRec.Code, inviteRec.Body.String())
+	}
+
+	// /auth/invite/link is the same class of route as /auth/invite, and this
+	// is not hypothetical for this account specifically: nothing requires a
+	// credential before a promotion, so an admin can call setAccountRole on
+	// bob — who still holds none — before ever handing out this very link,
+	// exactly as the Accounts screen allows. Promoting bob here proves the
+	// guard is sessionUser's strict cookie-purpose check, not bob's role: if
+	// handleInviteLink ever regressed to
+	// sessionUserFor(PurposeSession, PurposeEnrol), this request would then
+	// succeed, and an enrolment-only cookie on a since-promoted admin could
+	// mint further invitation links indefinitely.
+	var bob framev1beta1.FrameUser
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Name: frameUserNameForEmail("bob@example.com"), Namespace: "cluster-control"}, &bob); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	bob.Spec.Role = framev1beta1.RoleAdmin
+	if err := c.Update(context.Background(), &bob); err != nil {
+		t.Fatalf("promote bob to admin: %v", err)
+	}
+	if linkRec := doWithCookie(t, srv, "/auth/invite/link",
+		`{"email":"carol@example.com"}`, enrolSession); linkRec.Code != http.StatusUnauthorized {
+		t.Fatalf("/auth/invite/link with an enrolment-only cookie = %d, want 401: %s",
+			linkRec.Code, linkRec.Body.String())
 	}
 }
 
@@ -690,6 +715,13 @@ func TestInviteLinkReturns404ForAnUnknownEmail(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("invite/link for an unknown email = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
+	// The status alone is also what ServeMux answers for a route that does
+	// not exist at all — which is exactly why this assertion was missing its
+	// bite in the red phase before the route was registered. The body is
+	// what actually proves the handler ran and reached ByEmail's miss.
+	if !strings.Contains(rec.Body.String(), "no account with that email") {
+		t.Fatalf("body = %q, want it to say no account holds that address", rec.Body.String())
+	}
 }
 
 // TestInviteLinkResolvesByEmailExactlyNotCaseInsensitively pins the
@@ -708,6 +740,9 @@ func TestInviteLinkResolvesByEmailExactlyNotCaseInsensitively(t *testing.T) {
 	rec := doWithCookie(t, srv, "/auth/invite/link", `{"email":"Bob@Example.com"}`, sessionFor(t, srv, admin))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("invite/link for a differently-cased address = %d, want 404 (ByEmail is exact-match only)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "no account with that email") {
+		t.Fatalf("body = %q, want it to say no account holds that address", rec.Body.String())
 	}
 }
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   acceptInvitation,
+  canReissueInvitation,
   inviteAccount,
   inviteTokenFromLocation,
   isOnlyEnabledAdmin,
@@ -358,5 +359,35 @@ describe('isOnlyEnabledAdmin', () => {
   it('is false for an account that is not an admin at all', () => {
     const accounts = [account({ email: 'a@example.com', role: 'viewer' })]
     expect(isOnlyEnabledAdmin(accounts, 'a@example.com')).toBe(false)
+  })
+})
+
+describe('canReissueInvitation', () => {
+  const account = (over: Partial<Account>): Account => ({
+    name: 'bob',
+    email: 'bob@example.com',
+    role: 'viewer',
+    state: 'enabled',
+    keyCount: 0,
+    ...over,
+  })
+
+  it('is true for an enabled account holding no key', () => {
+    expect(canReissueInvitation(account({ keyCount: 0 }))).toBe(true)
+  })
+
+  // -1 means the key read failed, not "holds no key" — the same distinction
+  // `keyCount`'s own doc comment draws. A `<= 0` predicate would re-admit
+  // this and offer a link for an account that may already be enrolled.
+  it('is false when the key count failed to load', () => {
+    expect(canReissueInvitation(account({ keyCount: -1 }))).toBe(false)
+  })
+
+  it('is false for an account already holding a key', () => {
+    expect(canReissueInvitation(account({ keyCount: 1 }))).toBe(false)
+  })
+
+  it('is false for a disabled account, even with no key', () => {
+    expect(canReissueInvitation(account({ keyCount: 0, state: 'disabled' }))).toBe(false)
   })
 })

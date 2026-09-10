@@ -1,5 +1,6 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
+  canReissueInvitation,
   inviteAccount,
   isOnlyEnabledAdmin,
   listAccounts,
@@ -67,6 +68,14 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
   // "shown once" framing to display a freshly reissued link, but skips the
   // email/role form since the account already exists.
   const [reissueFor, setReissueFor] = useState<string | undefined>(undefined)
+  // Which account's link is currently in flight, read back after the
+  // `await` below to tell a stale response apart from the one the dialog is
+  // currently showing. A ref, not state: it must be current at the instant
+  // the request resolves, not just at the render that started it — two
+  // quick clicks on different rows must not let the first row's response
+  // land under the second row's now-open title after the second request
+  // has already started.
+  const reissuePending = useRef<string | undefined>(undefined)
   const [keysFor, setKeysFor] = useState<string | undefined>(undefined)
   const [keys, setKeys] = useState<CredentialSummary[]>([])
   // Distinct from `keys.length === 0`: a failed read must not read as "this
@@ -113,14 +122,18 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
   }
 
   async function handleReissue(email: string) {
+    reissuePending.current = email
     setReissueFor(email)
     setInviteLink(undefined)
     setInviteOpen(true)
     try {
       // The link is shown, never sent — same as a fresh invitation.
-      setInviteLink(await reissueInvitation(email))
+      const url = await reissueInvitation(email)
+      if (reissuePending.current !== email) return // superseded by a later click
+      setInviteLink(url)
       setError(undefined)
     } catch (err) {
+      if (reissuePending.current !== email) return
       setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -128,6 +141,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
   function closeInviteDialog() {
     setInviteOpen(false)
     setReissueFor(undefined)
+    reissuePending.current = undefined
   }
 
   async function showKeys(email: string) {
@@ -151,6 +165,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         <Button
           className="font-mono gap-1.5"
           onClick={() => {
+            reissuePending.current = undefined
             setReissueFor(undefined)
             setInviteLink(undefined)
             setInviteOpen(true)
@@ -229,14 +244,8 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                     </Button>
                   </td>
                   <td className="text-right">
-                    {/*
-                      keyCount === 0 is "holds no credential" — the one state a
-                      fresh link is useful for. -1 means the key read failed,
-                      not that the account holds none, so the button is
-                      withheld rather than risk minting a link for an account
-                      that may already be enrolled.
-                    */}
-                    {a.keyCount === 0 && (
+                    {/* See canReissueInvitation's own doc comment for what this excludes and why. */}
+                    {canReissueInvitation(a) && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -317,6 +326,23 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
               Frame sends no mail. The link is short-lived, and dies the moment they enrol a key.
             </DialogDescription>
           </DialogHeader>
+          {/*
+            Duplicated from the CardContent error paragraph below, not moved:
+            Radix renders DialogContent in a portal and marks the rest of the
+            page inert while it's open, so a refusal (a disabled account, or
+            one that already holds a credential — the button above is meant
+            to keep both unreachable, but the server is the real guard) set
+            only at :165 would land outside the open dialog's accessible
+            subtree — dimmed for a sighted admin, invisible to a screen
+            reader, and with the reissue dialog skipping its form entirely
+            (see !reissueFor below), the only thing rendered would be the
+            title and description, forever.
+          */}
+          {error && (
+            <p role="alert" className="text-xs font-mono text-destructive break-words">
+              {error}
+            </p>
+          )}
           {!reissueFor && (
             <form className="space-y-3" onSubmit={handleInvite}>
               <div className="space-y-1.5">
