@@ -525,14 +525,21 @@ work, the same as any other unenforced namespace.
 
 **Enforcing does not evict anything. It refuses the next admission.** A
 workload that has always violated the policy keeps running and fails the next
-time it restarts — which is during an incident, not during the change. So the
-rollout is two steps and the middle one is not optional:
+time it restarts — which is during an incident, not during the change. That is
+why the dry-run sweep has to run **before** anything that adds `enforce` —
+not after, whatever this doc said before whole-branch review Important 5.
+`deploy/kubernetes/pod-security/namespaces.yaml` has carried `enforce` on all
+seven namespaces since commit `58ca5f6`, not `warn`/`audit` alone, so the
+order below is what to run before applying that file — or before syncing any
+overlay, since `deploy/kubernetes/base/kustomization.yaml` now renders it too
+(see the comment on its `../pod-security` resource entry) — for the first
+time, and before adding any new namespace to the list:
 
 ```bash
-# 1. warn + audit only, which is what the committed manifest carries first
-kubectl apply -k deploy/kubernetes/pod-security
-
-# 2. ask the apiserver what enforcing WOULD refuse, without refusing anything
+# 1. ask the apiserver what enforcing WOULD refuse, without refusing anything.
+# Run this first — before `kubectl apply -k deploy/kubernetes/pod-security`,
+# before syncing an overlay that renders it, and before adding a namespace to
+# namespaces.yaml with `enforce` already set.
 for ns in default inference neura neura-batch neura-database neura-inference neura-training; do
   echo "── $ns"
   kubectl label --dry-run=server --overwrite namespace "$ns" \
@@ -544,8 +551,13 @@ done
 A clean namespace prints only `namespace/<ns> labeled (server dry run)`. A
 dirty one prints a `Warning:` line per offending pod, naming the rule it
 breaks. Resolve every one — replace a `hostPath` with a PVC, drop a
-capability, or move the workload to an unlabelled namespace — and only then
-add the `enforce` labels and apply again.
+capability, or move the workload to an unlabelled namespace — before
+applying anything.
+
+```bash
+# 2. only once every namespace above came back clean:
+kubectl apply -k deploy/kubernetes/pod-security
+```
 
 The `audit` label is the backstop for a violation created after that sweep: it
 writes a `pod-security.kubernetes.io/audit-violations` annotation into the
@@ -602,8 +614,12 @@ between steps 5, 8 and 10 in one sitting.
    root, which is the state the 2026-08-10 removal existed to prevent.
 2. Sign in as an operator. Open **Workloads**, expand `neura`, pick a pod, read
    its logs with **Follow** on. Confirm lines arrive without reloading, and that
-   the pane is still live after five minutes of silence — that is the
-   `proxy_read_timeout` in `deploy/docker/nginx.conf` being right or wrong.
+   the pane is still live after five minutes of silence — that depends on two
+   hops agreeing, not one: `proxy_read_timeout` in `deploy/docker/nginx.conf`
+   (the pod's own nginx) and the `nginx.ingress.kubernetes.io/proxy-read-timeout`
+   annotation on `deploy/kubernetes/base/ingress.yaml` (the ingress in front of
+   it). Either being wrong cuts the connection at the same point, so a silent
+   cut here does not by itself say which one to fix.
 3. Switch **Previous container** on for a pod that has restarted. Confirm the
    output is the dead instance's, not the running one's.
 4. Confirm the **Terminal** tab tells that operator it needs an admin account,
