@@ -1,9 +1,11 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
+  canReissueInvitation,
   inviteAccount,
   isOnlyEnabledAdmin,
   listAccounts,
   listCredentials,
+  reissueInvitation,
   revokeCredential,
   setAccountRole,
   setAccountState,
@@ -61,6 +63,19 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<InvitableRole>('viewer')
   const [inviteLink, setInviteLink] = useState<string | undefined>(undefined)
+  // Set only when the dialog was opened from a row's "New link" button rather
+  // than the top-level "Invite" button — reuses the same dialog and the same
+  // "shown once" framing to display a freshly reissued link, but skips the
+  // email/role form since the account already exists.
+  const [reissueFor, setReissueFor] = useState<string | undefined>(undefined)
+  // Which account's link is currently in flight, read back after the
+  // `await` below to tell a stale response apart from the one the dialog is
+  // currently showing. A ref, not state: it must be current at the instant
+  // the request resolves, not just at the render that started it — two
+  // quick clicks on different rows must not let the first row's response
+  // land under the second row's now-open title after the second request
+  // has already started.
+  const reissuePending = useRef<string | undefined>(undefined)
   const [keysFor, setKeysFor] = useState<string | undefined>(undefined)
   const [keys, setKeys] = useState<CredentialSummary[]>([])
   // Distinct from `keys.length === 0`: a failed read must not read as "this
@@ -106,6 +121,29 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
     }
   }
 
+  async function handleReissue(email: string) {
+    reissuePending.current = email
+    setReissueFor(email)
+    setInviteLink(undefined)
+    setInviteOpen(true)
+    try {
+      // The link is shown, never sent — same as a fresh invitation.
+      const url = await reissueInvitation(email)
+      if (reissuePending.current !== email) return // superseded by a later click
+      setInviteLink(url)
+      setError(undefined)
+    } catch (err) {
+      if (reissuePending.current !== email) return
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  function closeInviteDialog() {
+    setInviteOpen(false)
+    setReissueFor(undefined)
+    reissuePending.current = undefined
+  }
+
   async function showKeys(email: string) {
     setKeysFor(email)
     setKeysError(false)
@@ -124,7 +162,15 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="font-mono text-sm">Accounts</CardTitle>
-        <Button className="font-mono gap-1.5" onClick={() => { setInviteLink(undefined); setInviteOpen(true) }}>
+        <Button
+          className="font-mono gap-1.5"
+          onClick={() => {
+            reissuePending.current = undefined
+            setReissueFor(undefined)
+            setInviteLink(undefined)
+            setInviteOpen(true)
+          }}
+        >
           <UserPlus />
           Invite
         </Button>
@@ -142,6 +188,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
               <th className="text-left font-normal">Role</th>
               <th className="text-left font-normal">State</th>
               <th className="text-right font-normal">Keys</th>
+              <th className="text-right font-normal" />
             </tr>
           </thead>
           <tbody>
@@ -196,6 +243,19 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                       {a.keyCount < 0 ? '?' : a.keyCount} {a.keyCount === 1 ? 'key' : 'keys'}
                     </Button>
                   </td>
+                  <td className="text-right">
+                    {/* See canReissueInvitation's own doc comment for what this excludes and why. */}
+                    {canReissueInvitation(a) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="font-mono"
+                        onClick={() => void handleReissue(a.email)}
+                      >
+                        New link
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               )
             })}
@@ -236,12 +296,21 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         )}
       </CardContent>
 
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+      <Dialog open={inviteOpen} onOpenChange={(open) => (open ? setInviteOpen(true) : closeInviteDialog())}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-mono">Invite someone</DialogTitle>
+            <DialogTitle className="font-mono">
+              {reissueFor ? `New link for ${reissueFor}` : 'Invite someone'}
+            </DialogTitle>
             <DialogDescription>
-              Creates an account with no credential and returns a link. Copy it to them yourself —
+              {reissueFor ? (
+                <>
+                  Replaces the earlier link, which may have expired or was never captured. Copy it to
+                  them yourself —{' '}
+                </>
+              ) : (
+                <>Creates an account with no credential and returns a link. Copy it to them yourself — </>
+              )}
               {/*
                 No number here on purpose. The lifetime is
                 ServerConfig.InviteTTL (internal/authd/server.go), which
@@ -257,45 +326,64 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
               Frame sends no mail. The link is short-lived, and dies the moment they enrol a key.
             </DialogDescription>
           </DialogHeader>
-          <form className="space-y-3" onSubmit={handleInvite}>
-            <div className="space-y-1.5">
-              <Label htmlFor="invite-email">Email</Label>
-              <Input
-                id="invite-email"
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                required
-                autoFocus
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="invite-role">Role</Label>
-              <select
-                id="invite-role"
-                className="w-full bg-transparent border border-border rounded px-2 py-1.5 text-sm font-mono"
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as InvitableRole)}
-              >
-                <option value="viewer">viewer</option>
-                <option value="operator">operator</option>
-              </select>
-              <p className="text-[10px] text-muted-foreground">
-                An invitation cannot create an admin — authd acts under its own identity, and only an
-                admin may mint one. Invite, then change the role in the table above.
-              </p>
-            </div>
-            <Button type="submit" className="w-full font-mono" disabled={!inviteEmail.trim()}>
-              Create invitation
-            </Button>
-          </form>
+          {/*
+            Duplicated from the CardContent error paragraph below, not moved:
+            Radix renders DialogContent in a portal and marks the rest of the
+            page inert while it's open, so a refusal (a disabled account, or
+            one that already holds a credential — the button above is meant
+            to keep both unreachable, but the server is the real guard) set
+            only at :165 would land outside the open dialog's accessible
+            subtree — dimmed for a sighted admin, invisible to a screen
+            reader, and with the reissue dialog skipping its form entirely
+            (see !reissueFor below), the only thing rendered would be the
+            title and description, forever.
+          */}
+          {error && (
+            <p role="alert" className="text-xs font-mono text-destructive break-words">
+              {error}
+            </p>
+          )}
+          {!reissueFor && (
+            <form className="space-y-3" onSubmit={handleInvite}>
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-email">Email</Label>
+                <Input
+                  id="invite-email"
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-role">Role</Label>
+                <select
+                  id="invite-role"
+                  className="w-full bg-transparent border border-border rounded px-2 py-1.5 text-sm font-mono"
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as InvitableRole)}
+                >
+                  <option value="viewer">viewer</option>
+                  <option value="operator">operator</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground">
+                  An invitation cannot create an admin — authd acts under its own identity, and only an
+                  admin may mint one. Invite, then change the role in the table above.
+                </p>
+              </div>
+              <Button type="submit" className="w-full font-mono" disabled={!inviteEmail.trim()}>
+                Create invitation
+              </Button>
+            </form>
+          )}
           {inviteLink && (
             <p className="text-xs font-mono break-all rounded border border-border bg-secondary/30 p-2">
               {inviteLink}
             </p>
           )}
           <DialogFooter>
-            <Button variant="outline" className="font-mono" onClick={() => setInviteOpen(false)}>
+            <Button variant="outline" className="font-mono" onClick={closeInviteDialog}>
               Close
             </Button>
           </DialogFooter>
