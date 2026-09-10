@@ -43,6 +43,11 @@ type fakeRedfish struct {
 	snapshot *redfish.Snapshot
 	probeErr error
 
+	// resetErr, when set, is returned by the next Reset call and then
+	// cleared — a single-shot failure, so a spec can drive one attempt into
+	// error and the next into success without a second fake.
+	resetErr error
+
 	resets   []string
 	clearLog int
 	ledCalls []bool
@@ -56,6 +61,11 @@ func (f *fakeRedfish) Probe(context.Context) (*redfish.Snapshot, error) {
 }
 func (f *fakeRedfish) Reset(_ context.Context, t string) error {
 	f.resets = append(f.resets, t)
+	if f.resetErr != nil {
+		err := f.resetErr
+		f.resetErr = nil
+		return err
+	}
 	return nil
 }
 func (f *fakeRedfish) ClearLog(context.Context) error { f.clearLog++; return nil }
@@ -378,5 +388,74 @@ var _ = Describe("FrameMachine controller", func() {
 		_, err = r.Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.clearLog).To(Equal(1))
+	})
+
+	// The defect this guards against: lastPowerActionAt advances on failure
+	// too (deliberately — see runPowerRequest), and the Warning Event that
+	// also carries the failure ages out within the hour. Without
+	// LastPowerActionError, an operator looking at the object later sees
+	// "ForceOff at <time>" and nothing else — indistinguishable from a
+	// success. This spec fails on the pre-fix code: it doesn't set the
+	// field, so the first Expect on it fails.
+	It("records why a power action failed, and clears the record on the next success", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-pwr-err-creds"))).To(Succeed())
+		fm := newMachine("fm-pwr-err")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-pwr-err", Namespace: "default"}}
+
+		fake.resetErr = errors.New("BMC rejected the reset")
+		fm.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionForceOff,
+			RequestedAt: metav1.Now(),
+		}
+		Expect(k8sClient.Update(ctx, fm)).To(Succeed())
+
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.resets).To(Equal([]string{"ForceOff"}))
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		// The action is recorded as having happened, even though it failed:
+		// that is the point of the timestamp guard (see runPowerRequest) —
+		// but it means the error has to live somewhere durable too.
+		Expect(got.Status.LastPowerAction).To(Equal("ForceOff"))
+		Expect(got.Status.LastPowerActionAt).NotTo(BeNil())
+		Expect(got.Status.LastPowerActionError).To(ContainSubstring("BMC rejected the reset"))
+
+		// A second, newer request that succeeds clears the earlier failure.
+		got.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionForceOff,
+			RequestedAt: metav1.NewTime(time.Now().Add(time.Second)),
+		}
+		Expect(k8sClient.Update(ctx, &got)).To(Succeed())
+
+		_, err = r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.resets).To(Equal([]string{"ForceOff", "ForceOff"}))
+
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.LastPowerActionError).To(BeEmpty())
+	})
+
+	// The CRD's +kubebuilder:validation:Enum on PowerAction makes an
+	// out-of-enum value unreachable through the API server (envtest enforces
+	// it, same as a real apiserver would), so this drives runPowerRequest
+	// directly rather than through k8sClient.Update, to prove the default
+	// branch of the action switch runs without panicking at least once.
+	It("records an out-of-enum action instead of panicking", func() {
+		fm := newMachine("fm-badaction")
+		fm.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerAction("Frobnicate"),
+			RequestedAt: metav1.Now(),
+		}
+
+		acted, err := r.runPowerRequest(ctx, fm, fake)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(acted).To(BeTrue())
+		Expect(fm.Status.LastPowerActionError).To(ContainSubstring("Frobnicate"))
+		Expect(fake.resets).To(BeEmpty())
+		Expect(fake.clearLog).To(Equal(0))
+		Expect(fake.ledCalls).To(BeEmpty())
 	})
 })

@@ -166,19 +166,42 @@ func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev
 	// The timestamp advances whether or not the action succeeded. A failed
 	// action that left the timestamp behind would be retried on every
 	// reconcile, once a minute, forever — and "force off, repeatedly, until
-	// it works" is not a behaviour anyone asked for. The failure is reported
-	// on the condition instead.
+	// it works" is not a behaviour anyone asked for. The failure is carried
+	// by status.lastPowerActionError and a Warning Event, deliberately not
+	// by the Reachable condition: Reachable describes whether the BMC
+	// answers, and a power action can fail while the BMC is perfectly
+	// reachable — flipping Reachable would be lying about a different thing.
 	now := metav1.Now()
 	fm.Status.LastPowerAction = string(req.Action)
 	fm.Status.LastPowerActionAt = &now
 
 	if err != nil {
+		// Truncated to LastPowerActionError's MaxLength=256: an over-long
+		// value is rejected by the apiserver, which would turn a failed
+		// power action into a failed status write, losing the record
+		// entirely rather than just losing the tail of the message.
+		fm.Status.LastPowerActionError = truncateError(err, 256)
 		r.Recorder.Event(fm, corev1.EventTypeWarning, "PowerActionFailed",
 			fmt.Sprintf("%s: %v", req.Action, err))
 		return true, nil
 	}
+	// A later success clears an earlier failure — without this, the field
+	// would keep reporting an error the machine has since recovered from.
+	fm.Status.LastPowerActionError = ""
 	r.Recorder.Event(fm, corev1.EventTypeNormal, "PowerAction", string(req.Action))
 	return true, nil
+}
+
+// truncateError renders err's text, cut to at most n runes, so it always
+// fits LastPowerActionError's MaxLength without the apiserver rejecting the
+// status write.
+func truncateError(err error, n int) string {
+	s := err.Error()
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // setCondition writes the Reachable condition via meta.SetStatusCondition
