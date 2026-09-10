@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Cpu, HardDrives, Memory, Network } from '@phosphor-icons/react'
 
-import type { Machine } from '@/lib/machines'
+import { NEVER_READ_LABEL, type Machine } from '@/lib/machines'
 
 /**
  * Static hardware inventory: what Redfish reported the last time the
@@ -15,7 +15,9 @@ export function InventoryTab({ machine }: { machine: Machine }) {
   const { inventory } = machine
 
   if (!inventory) {
-    return <div className="py-8 text-center font-mono text-sm text-muted-foreground">jamais relevé</div>
+    return (
+      <div className="py-8 text-center font-mono text-sm text-muted-foreground">{NEVER_READ_LABEL}</div>
+    )
   }
 
   return (
