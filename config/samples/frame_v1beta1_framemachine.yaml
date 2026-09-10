@@ -1,0 +1,20 @@
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameMachine
+metadata:
+  name: ml350-g9
+  namespace: default
+  labels:
+    app.kubernetes.io/name: frame
+spec:
+  bmc:
+    # The IP of the management port. A hostname is refused: see the field's
+    # doc comment on why.
+    address: 192.168.2.60
+    # A Secret in this namespace with the keys `username` and `password`.
+    # Never commit real credentials — create it with `kubectl create secret`.
+    credentialsRef: ml350-g9-ilo
+    tls:
+      # An iLO4 ships a self-signed certificate. Choosing the bypass here is
+      # deliberate and visible; the alternative is caBundleRef.
+      insecureSkipVerify: true
+  nodeRef: ""

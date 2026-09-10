@@ -8,4 +8,5 @@ resources:
 - frame_v1beta1_talosupgrade.yaml
 - frame_v1beta1_frameuser.yaml
 - services_v1beta1_frameservice.yaml
+- frame_v1beta1_framemachine.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
