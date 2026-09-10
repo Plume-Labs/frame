@@ -865,3 +865,201 @@ describe('FrameTask reads', () => {
     expect(urls).toEqual([`${FRAMETASKS_PATH}?limit=200`])
   })
 })
+
+// Every path is spelled out in full. A `url.includes('/deployments')` test
+// passes against `/apis/apps/v1/namespaces/default/deployments`, which is the
+// exact failure the Accounts screen shipped with — a list that comes back
+// empty, with a 200 and no error to notice.
+describe('WorkloadClient', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  interface Seen {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+  }
+
+  function capture(respond: (url: string) => Response): Seen[] {
+    vi.stubGlobal('window', globalThis)
+    const seen: Seen[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        seen.push({
+          url,
+          method: init?.method ?? 'GET',
+          headers: (init?.headers as Record<string, string>) ?? {},
+          body: init?.body as string | undefined,
+        })
+        return respond(url)
+      }),
+    )
+    return seen
+  }
+
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+
+  it('reads the five collections the tree is built from, cluster-wide', async () => {
+    const seen = capture(() => json({ items: [] }))
+    await createFrameClient().workloads.tree()
+    expect(seen.map((s) => s.url).sort()).toEqual([
+      '/api/v1/pods',
+      '/apis/apps/v1/daemonsets',
+      '/apis/apps/v1/deployments',
+      '/apis/apps/v1/replicasets',
+      '/apis/apps/v1/statefulsets',
+      '/apis/batch/v1/jobs',
+    ])
+  })
+
+  it('attaches a Deployment pod through its ReplicaSet', async () => {
+    const seen = capture((url) => {
+      if (url === '/apis/apps/v1/deployments') {
+        return json({
+          items: [
+            {
+              metadata: { name: 'api', namespace: 'neura' },
+              spec: { replicas: 2 },
+              status: { readyReplicas: 2 },
+            },
+          ],
+        })
+      }
+      if (url === '/apis/apps/v1/replicasets') {
+        return json({
+          items: [
+            {
+              metadata: {
+                name: 'api-7d9f8',
+                namespace: 'neura',
+                ownerReferences: [{ kind: 'Deployment', name: 'api', controller: true }],
+              },
+            },
+          ],
+        })
+      }
+      if (url === '/api/v1/pods') {
+        return json({
+          items: [
+            {
+              metadata: {
+                name: 'api-7d9f8-x1',
+                namespace: 'neura',
+                ownerReferences: [{ kind: 'ReplicaSet', name: 'api-7d9f8', controller: true }],
+              },
+              spec: { nodeName: 'w2', containers: [{ name: 'api' }] },
+              status: { phase: 'Running', containerStatuses: [{ restartCount: 3 }] },
+            },
+          ],
+        })
+      }
+      return json({ items: [] })
+    })
+
+    const tree = await createFrameClient().workloads.tree()
+    expect(seen.length).toBe(6)
+    expect(tree).toHaveLength(1)
+    expect(tree[0].controllers[0].controller.name).toBe('api')
+    expect(tree[0].controllers[0].pods.map((p) => p.name)).toEqual(['api-7d9f8-x1'])
+    expect(tree[0].controllers[0].pods[0].restarts).toBe(3)
+    expect(tree[0].barePods).toEqual([])
+  })
+
+  it('restarts by patching the pod template annotation, and says so', async () => {
+    const seen = capture(() => json({}))
+    await createFrameClient().workloads.restart('Deployment', 'neura', 'api')
+    expect(seen[0].url).toBe('/apis/apps/v1/namespaces/neura/deployments/api')
+    expect(seen[0].method).toBe('PATCH')
+    expect(seen[0].headers['Content-Type']).toBe('application/strategic-merge-patch+json')
+    expect(seen[0].headers['X-Frame-Action']).toBe('restart deployment neura/api')
+    expect(seen[0].body).toContain('kubectl.kubernetes.io/restartedAt')
+  })
+
+  it('scales through the scale subresource, naming the target count', async () => {
+    const seen = capture(() => json({}))
+    await createFrameClient().workloads.scale('StatefulSet', 'neura', 'postgres', 0)
+    expect(seen[0].url).toBe('/apis/apps/v1/namespaces/neura/statefulsets/postgres/scale')
+    expect(seen[0].method).toBe('PATCH')
+    // Scaling to zero is a stop, and the label has to be able to say so — a
+    // falsy check on `replicas` would drop the number and record "scale … to".
+    expect(seen[0].headers['X-Frame-Action']).toBe('scale statefulset neura/postgres to 0')
+    expect(seen[0].body).toBe('{"spec":{"replicas":0}}')
+  })
+
+  it('deletes one pod by name', async () => {
+    const seen = capture(() => json({}))
+    await createFrameClient().workloads.deletePod('neura', 'api-7d9f8-x1')
+    expect(seen[0].url).toBe('/api/v1/namespaces/neura/pods/api-7d9f8-x1')
+    expect(seen[0].method).toBe('DELETE')
+    expect(seen[0].headers['X-Frame-Action']).toBe('delete pod neura/api-7d9f8-x1')
+  })
+
+  it('asks the apiserver for YAML rather than serialising any here', async () => {
+    const seen = capture(
+      () => new Response('kind: Deployment\n', { status: 200, headers: { 'content-type': 'application/yaml' } }),
+    )
+    const text = await createFrameClient().workloads.manifest('Deployment', 'neura', 'api')
+    expect(seen[0].url).toBe('/apis/apps/v1/namespaces/neura/deployments/api')
+    expect(seen[0].headers['Accept']).toBe('application/yaml')
+    expect(text).toBe('kind: Deployment\n')
+  })
+
+  // The two-request shape is what makes the audit label possible without a
+  // YAML parser: the dry run is the apiserver telling us what it would store,
+  // and the diff is computed against that. Collapse it to one request and the
+  // label can only ever be "update deployments/api" — the same string for a
+  // replica bump and for adding a hostPath volume.
+  it('validates the edit, then writes it with the fields that changed', async () => {
+    const before = { metadata: { name: 'api', resourceVersion: '7' }, spec: { replicas: 2 } }
+    const after = { metadata: { name: 'api', resourceVersion: '7' }, spec: { replicas: 5 } }
+    const seen = capture((url) => (url.includes('dryRun') ? json(after) : json(after)))
+
+    await createFrameClient().workloads.applyManifest({
+      kind: 'Deployment',
+      namespace: 'neura',
+      name: 'api',
+      before,
+      yaml: 'spec:\n  replicas: 5\n',
+    })
+
+    expect(seen).toHaveLength(2)
+    expect(seen[0].url).toBe('/apis/apps/v1/namespaces/neura/deployments/api?dryRun=All')
+    expect(seen[0].method).toBe('PUT')
+    expect(seen[0].headers['Content-Type']).toBe('application/yaml')
+    // The dry run leaves no FrameTask (TaskRecorder.Start skips it), so a
+    // label on it would be a label on nothing.
+    expect(seen[0].headers['X-Frame-Action']).toBeUndefined()
+
+    expect(seen[1].url).toBe('/apis/apps/v1/namespaces/neura/deployments/api')
+    expect(seen[1].method).toBe('PUT')
+    expect(seen[1].headers['X-Frame-Action']).toBe('edit deployment neura/api: spec.replicas')
+    // The user's text, byte for byte — not a re-serialisation of anything.
+    expect(seen[1].body).toBe('spec:\n  replicas: 5\n')
+  })
+
+  // A log stream is a read, so it carries no action — but it must still carry
+  // the token. The uiproxy rejects a request with no bearer before RBAC is
+  // ever consulted, which is how every integration panel in this console once
+  // answered 401 for everyone (see the suite below this one).
+  it('sends the log request to the right container of the right pod, with the token', async () => {
+    const seen = capture(() => new Response('line\n', { status: 200 }))
+    ;(globalThis as Record<string, unknown>).__FRAME_TOKEN__ = 'tok'
+
+    await createFrameClient().workloads.logs({
+      namespace: 'neura', pod: 'api-0', container: 'api', previous: true,
+    })
+
+    expect(seen[0].url).toBe('/api/v1/namespaces/neura/pods/api-0/log?container=api&previous=true')
+    expect(seen[0].headers['Authorization']).toBe('Bearer tok')
+    expect(seen[0].headers['X-Frame-Action']).toBeUndefined()
+  })
+})
