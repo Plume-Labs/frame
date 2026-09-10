@@ -587,31 +587,18 @@ spec:
 
 Add `- frame_v1beta1_framemachine.yaml` to `resources` in `config/samples/kustomization.yaml`, before the scaffold marker.
 
-- [ ] **Step 4: Grant the manager what the controller will need**
+The manager's own grants are **not** part of this task. `+kubebuilder:rbac` markers belong on the reconciler that needs them, and the reconciler arrives in Task 4; putting them in a types file to make them appear sooner would leave a marker nowhere near the code it authorises. `config/rbac/role.yaml` therefore carries no `framemachines` rule until Task 4, and nothing runs in between that would need one.
 
-The manager's aggregate role is generated from `+kubebuilder:rbac` markers. Add these above the `Reconcile` method you will create in Task 4 — put them in the type file for now so `make manifests` picks them up, then move them onto the reconciler in Task 4:
-
-```go
-// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-```
-
-Run: `make manifests`
-Expected: `config/rbac/role.yaml` gains `framemachines` rules. It already carries `secrets` and `configmaps` for other controllers; confirm rather than duplicate.
-
-- [ ] **Step 5: Prove the manifests still render**
+- [ ] **Step 4: Prove the manifests still render**
 
 Run: `kustomize build config/default > /dev/null && echo RENDER_OK`
 Expected: `RENDER_OK`, no error. (If `kustomize` is not on PATH, use `make manifests` plus `bin/kustomize build config/default > /dev/null`.)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add config/rbac/ config/samples/
-git commit -m "feat(rbac): tier roles, manager grants and a sample for FrameMachine
+git commit -m "feat(rbac): tier roles and a sample for FrameMachine
 
 The sample's credentialsRef names a Secret that is never committed; the TLS
 block chooses the bypass explicitly rather than defaulting to it."
@@ -1131,7 +1118,6 @@ leaves that part of the snapshot empty rather than failing the probe."
 - Create: `internal/controller/frame/framemachine_controller.go`
 - Create: `internal/controller/frame/framemachine_controller_test.go`
 - Modify: `cmd/main.go` (register the reconciler alongside the others, around line 313)
-- Modify: `api/frame/v1beta1/framemachine_types.go` (move the `+kubebuilder:rbac` markers added in Task 2 onto the reconciler)
 
 **Interfaces:**
 - Consumes: `framev1beta1.FrameMachine` and its status types (Task 1); `redfish.Client`, `redfish.Snapshot`, `redfish.ErrAuth`, `redfish.ErrTLS`, `redfish.ErrUnsupported` (Task 3).
@@ -1244,6 +1230,9 @@ var _ = Describe("FrameMachine controller", func() {
 		r = &FrameMachineReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
+			// Task 5's power path emits Events. A nil Recorder panics there,
+			// and the panic would surface three tasks after the omission.
+			Recorder: record.NewFakeRecorder(32),
 			NewClient: func(context.Context, client.Client, string, framev1beta1.BMCSpec) (redfish.Client, error) {
 				return fake, nil
 			},
@@ -1350,7 +1339,8 @@ var _ = Describe("FrameMachine controller", func() {
 
 The import block above is incomplete on purpose only in that it omits what
 your editor will add for you; the specs need `"errors"`,
-`"k8s.io/apimachinery/pkg/api/meta"` and
+`"k8s.io/apimachinery/pkg/api/meta"`,
+`"k8s.io/client-go/tools/record"` and
 `"sigs.k8s.io/controller-runtime/pkg/client"` alongside what is listed.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1360,7 +1350,19 @@ Expected: compilation failure — `FrameMachineReconciler` does not exist.
 
 - [ ] **Step 3: Implement the reconciler**
 
-Create `internal/controller/frame/framemachine_controller.go` with the licence header and the `+kubebuilder:rbac` markers moved off the type file. Behaviour, in order:
+Create `internal/controller/frame/framemachine_controller.go` with the licence header and these `+kubebuilder:rbac` markers above `Reconcile` — Task 2 deliberately left them for you, so this is where `config/rbac/role.yaml` gains its `framemachines` rules:
+
+```go
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+```
+
+`secrets` and `configmaps` may already be granted for other controllers — run `make manifests` and confirm rather than duplicate.
+
+Behaviour, in order:
 
 1. `Get` the `FrameMachine`; on `IsNotFound`, return without error.
 2. Build the Redfish client through `r.NewClient`. On error, set `Reachable=False` with reason `CredentialsUnavailable`, message from the error, patch status, and return `ctrl.Result{RequeueAfter: 5 * time.Minute}, nil`.
