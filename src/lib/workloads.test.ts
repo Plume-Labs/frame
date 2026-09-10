@@ -154,7 +154,40 @@ describe('buildWorkloadTree', () => {
   })
 })
 
+interface PodSecurityNamespaceDoc {
+  name: string
+  labels: Record<string, string>
+}
+
+// Splits the manifest into its per-Namespace documents and pulls out each
+// one's name and `pod-security.kubernetes.io/*` labels — not just any
+// `name:` line under `metadata`, which is what the drift guard below used to
+// do and which cannot tell an enforced namespace from one carrying
+// `warn`/`audit` only (the two-phase rollout's own documented first step, see
+// namespaces.yaml's header). Whole-branch review Important 4: a namespace
+// added mid-rollout, before its `enforce` label landed, would have passed
+// silently and been offered a Restart button that 403s.
+function parsePodSecurityNamespaces(source: string): PodSecurityNamespaceDoc[] {
+  return source
+    .split(/\n---\n/)
+    .map((doc) => {
+      const name = doc.match(/^ {2}name: (\S+)$/m)?.[1]
+      if (!name) return undefined
+      const labels: Record<string, string> = {}
+      for (const m of doc.matchAll(/^ {4}(pod-security\.kubernetes\.io\/\S+): (\S+)$/gm)) {
+        labels[m[1]] = m[2]
+      }
+      return { name, labels }
+    })
+    .filter((d): d is PodSecurityNamespaceDoc => d !== undefined)
+}
+
 describe('OPERABLE_NAMESPACES', () => {
+  const namespaceDocs = parsePodSecurityNamespaces(podSecuritySource)
+  const enforcedFromManifest = namespaceDocs
+    .filter((d) => d.labels['pod-security.kubernetes.io/enforce'] === 'baseline')
+    .map((d) => d.name)
+
   // The drift guard, and the reason this list is not just
   // `!isInfrastructureNamespace(ns)`.
   //
@@ -167,11 +200,27 @@ describe('OPERABLE_NAMESPACES', () => {
   // keep a second copy of it honest is to compare it to the first.
   //
   // A broken version — one namespace added to the manifest and not here, or
-  // removed here and not there — prints the two sorted arrays side by side.
-  it('is exactly the set of namespaces where baseline is enforced', () => {
-    const fromManifest = [...podSecuritySource.matchAll(/^ {2}name: (\S+)$/gm)].map((m) => m[1])
-    expect(fromManifest.length).toBeGreaterThan(0)
-    expect([...fromManifest].sort()).toEqual([...OPERABLE_NAMESPACES].sort())
+  // removed here and not there — prints the two sorted arrays side by side. So
+  // does a namespace carrying `warn`/`audit` but not yet `enforce`: it now has
+  // to be excluded from `enforcedFromManifest` above, and the assertion below
+  // fails until either the label lands or OPERABLE_NAMESPACES drops it.
+  it('is exactly the set of namespaces that carry pod-security.kubernetes.io/enforce: baseline', () => {
+    expect(namespaceDocs.length).toBeGreaterThan(0)
+    expect(enforcedFromManifest.length).toBeGreaterThan(0)
+    expect([...enforcedFromManifest].sort()).toEqual([...OPERABLE_NAMESPACES].sort())
+  })
+
+  // The other half of Important 4: `enforce: baseline` with no version pin
+  // (or `enforce-version: latest`) would pass the assertion above and still
+  // let a cluster upgrade silently change what baseline admits, in exactly
+  // the namespaces this grant depends on it not changing.
+  it('pins enforce-version for every operable namespace', () => {
+    for (const ns of OPERABLE_NAMESPACES) {
+      const doc = namespaceDocs.find((d) => d.name === ns)
+      expect(doc, `${ns} is in OPERABLE_NAMESPACES but not in the manifest`).toBeDefined()
+      expect(doc?.labels['pod-security.kubernetes.io/enforce']).toBe('baseline')
+      expect(doc?.labels['pod-security.kubernetes.io/enforce-version']).toMatch(/^v\d+\.\d+$/)
+    }
   })
 
   it('answers for a namespace on each side', () => {

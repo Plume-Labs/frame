@@ -1,9 +1,7 @@
 package manifests
 
 import (
-	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"testing"
 )
@@ -16,22 +14,58 @@ import (
 // drift, and the drift is silent in the direction that matters (a RoleBinding
 // in a namespace that is not enforced hands back the escalation, and nothing
 // else in the repository would notice).
+//
+// Whole-branch review Important 4: this used to collect every `name:` under
+// `metadata` regardless of what labels the Namespace carried, so a namespace
+// added with `warn`/`audit` only — exactly the two-phase rollout's own first
+// step — would have been counted as enforced. It now requires the `enforce`
+// label itself, and only that label; `warn`/`audit` decide nothing here.
 func enforcedNamespaces(t *testing.T) []string {
 	t.Helper()
 	path := filepath.Join(Root(t), "deploy", "kubernetes", "pod-security", "namespaces.yaml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+	nsByName := Namespaces(t, path)
+	if len(nsByName) == 0 {
+		t.Fatalf("parsed no namespaces out of %s — the fixture is not reading what it claims", path)
 	}
 	var out []string
-	for _, m := range regexp.MustCompile(`(?m)^  name: (\S+)$`).FindAllStringSubmatch(string(raw), -1) {
-		out = append(out, m[1])
+	for name, ns := range nsByName {
+		if ns.Labels[PodSecurityEnforceLabel] != "baseline" {
+			continue
+		}
+		out = append(out, name)
 	}
 	if len(out) == 0 {
-		t.Fatalf("parsed no namespaces out of %s — the fixture is not reading what it claims", path)
+		t.Fatalf("parsed no namespace carrying %s=baseline out of %s — the fixture is not reading "+
+			"what it claims", PodSecurityEnforceLabel, path)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestPodSecurityEnforceIsPinnedPerNamespace is the other half of Important
+// 4: enforcedNamespaces() above only asks whether `enforce` is `baseline` —
+// it does not check that the version is pinned, so a namespace with
+// `enforce: baseline` and no `enforce-version` (or `enforce-version: latest`)
+// would pass it silently and let a cluster upgrade change what `baseline`
+// admits without anyone deciding that.
+func TestPodSecurityEnforceIsPinnedPerNamespace(t *testing.T) {
+	path := filepath.Join(Root(t), "deploy", "kubernetes", "pod-security", "namespaces.yaml")
+	nsByName := Namespaces(t, path)
+	if len(nsByName) == 0 {
+		t.Fatalf("parsed no namespaces out of %s — the fixture is not reading what it claims", path)
+	}
+	for name, ns := range nsByName {
+		if got := ns.Labels[PodSecurityEnforceLabel]; got != "baseline" {
+			t.Errorf("namespace %q has %s=%q, not baseline — nothing in this file refuses a "+
+				"privileged pod there", name, PodSecurityEnforceLabel, got)
+			continue
+		}
+		version := ns.Labels[PodSecurityEnforceVersionLabel]
+		if !EnforceVersionPinRe.MatchString(version) {
+			t.Errorf("namespace %q has %s=%q, not a pinned version — a cluster upgrade could "+
+				"silently change what baseline admits there", name, PodSecurityEnforceVersionLabel, version)
+		}
+	}
 }
 
 // workloadRoles is every ClusterRole that may write a pod template, with the
