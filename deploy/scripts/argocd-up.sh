@@ -25,6 +25,16 @@ say "Argo CD $ARGOCD_VERSION"
 helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
 helm repo update argo >/dev/null 2>&1 || true
 
+# Les limites ne sont pas decoratives : sans elles le controleur a sature le
+# plan de controle deux fois. En aout 2026 (~760m brules a vide) puis le
+# 2026-09-10, ou un pic a ete mesure a 976m sur un controleur qui ne
+# reconciliait rien — il ne peut pas lire le depot, faute de credentials.
+#
+# La correction d'aout avait ete posee en `kubectl patch`, donc effacee au
+# premier re-run de ce script. C'est pour ca qu'elle vit ici desormais : sur un
+# objet gere par Helm, un patch imperatif ne survit pas.
+#
+# 500m est un plafond, pas un budget : 2 Applications se reconcilient en ~511ms.
 helm upgrade --install argocd argo/argo-cd \
   --version "$ARGOCD_VERSION" -n "$NS" --create-namespace \
   --set dex.enabled=false \
@@ -33,7 +43,19 @@ helm upgrade --install argocd argo/argo-cd \
   --set server.replicas=1 \
   --set repoServer.replicas=1 \
   --set redis.enabled=true \
-  --set redis-ha.enabled=false
+  --set redis-ha.enabled=false \
+  --set controller.resources.requests.cpu=100m \
+  --set controller.resources.requests.memory=256Mi \
+  --set controller.resources.limits.cpu=500m \
+  --set controller.resources.limits.memory=1Gi \
+  --set repoServer.resources.requests.cpu=50m \
+  --set repoServer.resources.requests.memory=128Mi \
+  --set repoServer.resources.limits.cpu=500m \
+  --set repoServer.resources.limits.memory=512Mi \
+  --set server.resources.requests.cpu=50m \
+  --set server.resources.requests.memory=128Mi \
+  --set server.resources.limits.cpu=300m \
+  --set server.resources.limits.memory=512Mi
 
 kubectl -n "$NS" rollout status deploy/argocd-server --timeout=180s
 kubectl -n "$NS" rollout status deploy/argocd-repo-server --timeout=180s
