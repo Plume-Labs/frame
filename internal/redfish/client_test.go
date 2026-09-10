@@ -230,6 +230,45 @@ func TestProbeToleratesAFirmwareThatOmitsResources(t *testing.T) {
 	}
 }
 
+// A 404 on /redfish/v1/ itself means whatever is at this address is not a
+// Redfish service at all (a web server, a switch, the wrong IP) — an
+// ordinary registration mistake, and one the reason must name distinctly
+// from a mid-probe resource gap.
+func TestProbeReportsUnsupportedWhenServiceRootIs404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	_, err := insecureClient(srv.URL).Probe(context.Background())
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
+// A service root that answers but names no Systems collection at all is the
+// other shape of "not a Redfish service" — some other JSON API happened to
+// answer 200 at this address and path.
+func TestProbeReportsUnsupportedWhenServiceRootHasNoSystemsLink(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/redfish/v1/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Chassis":{"@odata.id":"/redfish/v1/Chassis/"}}`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	_, err := insecureClient(srv.URL).Probe(context.Background())
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestProbeReportsAuthFailureDistinctly(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

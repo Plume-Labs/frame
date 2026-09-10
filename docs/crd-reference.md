@@ -535,10 +535,15 @@ enum keeps that name because it is what a person means and the enum is a
 frozen API; `internal/redfish/client.go`'s `resolveResetType` substitutes
 `PushPowerButton` — the ACPI power-button signal an installed operating
 system chooses whether to honour — when `GracefulShutdown` itself is not
-listed, and returns `ErrUnsupported` when neither is. `ForceOff` is never
-substituted automatically: it is a hard cut, not a graceful one, and
-substituting it silently would turn a request that asked to be graceful into
-one that was not, with no way for the caller to know.
+listed, and returns `ErrUnsupported` when neither is — which surfaces in
+`status.lastPowerActionError`, not in `Reachable`: this comes out of
+`Reset()`, and a power action's failure never touches the `Reachable`
+condition (see above). The `Reachable=Unsupported` reason is a distinct,
+probe-time diagnosis — the address answered but did not look like a Redfish
+service at all — not this. `ForceOff` is never substituted automatically: it
+is a hard cut, not a graceful one, and substituting it silently would turn a
+request that asked to be graceful into one that was not, with no way for the
+caller to know.
 
 **No `gofish`, and no other Redfish library.** `internal/redfish` is a
 hand-written `net/http` + `encoding/json` client behind a `Client`

@@ -986,11 +986,16 @@ below.**
 
 1. **The operator must reach the BMC's address at layer 3.** On a shared LOM
    port the BMC sits on the same `/24` as everything else and this is free;
-   on a separate management VLAN it needs a route. `NetworkPolicies` are
-   disabled on this cluster today, so egress from `frame-system` to a BMC
-   works regardless of which — if they are ever turned on (see "Turning Pod
-   Security on" above for the adjacent policy that already is), a BMC's
-   address is the first thing to add an allow rule for.
+   on a separate management VLAN it needs a route. **NetworkPolicy is not
+   blanket-disabled on this cluster** — a containment policy applies to the
+   `cluster-control` namespace (see "Containing the control-plane UI" in
+   [runbook.md](runbook.md), applied and verified enforced 2026-08-11) — but
+   nothing today restricts *this* traffic: that policy scopes ingress to the
+   UI, not `frame-system`'s egress, and no `NetworkPolicy` names
+   `frame-system` or a BMC's address at all. So the operator's egress to a
+   BMC is unrestricted in practice, not because policies are off everywhere,
+   but because none has ever been written for this path. If one ever is, a
+   BMC's address is the first thing it needs an allow rule for.
 2. **The BMC account needs `VirtualPowerAndResetPriv` to act, not just
    `LoginPriv` to read.** Verified against a real iLO4's captures
    (`internal/redfish/testdata/ilo4-real/reset_403_insufficient_privilege.json`,

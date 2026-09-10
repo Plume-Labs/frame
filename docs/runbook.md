@@ -315,7 +315,7 @@ responses captured from a real HP ProLiant ML350 Gen9 (iLO 4 v2.77) in
 | `TLSError` | Certificate verification failed. **Expected on a fresh iLO4** — it ships a self-signed certificate, and `spec.bmc.tls` has no permissive default. | Set `tls.insecureSkipVerify: true` if you accept that exposure, or point `tls.caBundleRef` at a ConfigMap holding the CA that signed the BMC's certificate. |
 | `AuthFailed` | The BMC answered `401`/`403` to a *read*. | Check `credentialsRef`'s Secret holds the right `username`/`password` for this BMC. |
 | `Timeout` | The BMC did not answer inside the client's 20-second budget, or the request otherwise timed out. | Check layer-3 reachability from wherever the controller runs — see [deployment.md](deployment.md), "Registering a machine's BMC", for the two prerequisites. |
-| `Unsupported` | The BMC exposes no `ComputerSystem.Reset` action at all, or none of a requested action's substitutes are in what it lists (see below). | Confirm this is genuinely a Redfish-capable BMC with that action enabled in firmware; retrying will not help. |
+| `Unsupported` | The address answered, but what's there does not look like a Redfish service: `/redfish/v1/` returned `404`, or it decoded with no `Systems` collection at all (`Probe` in `internal/redfish/client.go`). | Confirm `spec.bmc.address` is actually the BMC's management port, not the host OS or something else that happens to answer HTTPS on that IP; retrying will not help — this is a diagnosis, not a transient gap. |
 | `CredentialsUnavailable` | The controller could not even build a client: `credentialsRef` names a Secret that does not exist, or is missing a key. | Check the Secret exists in the `FrameMachine`'s own namespace and holds both `username` and `password`. |
 | `ProbeFailed` | Anything else — a malformed response, an unexpected HTTP status, a decode failure. | Read `status.conditions[].message`, then `kubectl logs -n frame-system deploy/frame-controller-manager` for the underlying error. |
 | `Probed` | Success. Not a failure — this is what `Reachable=True` carries. | — |
@@ -339,7 +339,12 @@ hardware.** The captured iLO4's `Actions.#ComputerSystem.Reset` lists `On`,
 means; `resolveResetType` (`internal/redfish/client.go`) substitutes
 `PushPowerButton` — the ACPI power-button signal an installed operating
 system chooses whether to honour — when `GracefulShutdown` itself is not
-listed, and returns `Unsupported` if neither is. `ForceOff` is never
+listed, and returns `ErrUnsupported` if neither is. **That particular
+`ErrUnsupported` never reaches the `Reachable` condition** — it comes out of
+`Reset()`, not `Probe()`, so it lands in `status.lastPowerActionError` like
+any other power-action failure (see above); the `Reachable=Unsupported` row
+in the table above is a different failure entirely, diagnosed at probe time
+against the service root, not against a reset request. `ForceOff` is never
 substituted automatically: it is a hard cut, not a graceful one. A machine
 with a hung kernel, or no operating system at all, will not act on
 `PushPowerButton`, and the console has no way to tell that apart from a slow
