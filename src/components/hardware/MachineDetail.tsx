@@ -5,13 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { InventoryTab } from '@/components/hardware/InventoryTab'
+import { MachineActions } from '@/components/hardware/MachineActions'
+import { MachineEventLog } from '@/components/hardware/MachineEventLog'
 import { SensorsTab } from '@/components/hardware/SensorsTab'
+import { isAdminToken } from '@/lib/auth'
 import { isStale, stalenessLabel, type Machine } from '@/lib/machines'
 
 /**
- * One physical machine: what it is (Inventaire) and what it is reporting
- * right now (Capteurs). Task 10 adds a third tab (event log) alongside
- * these two.
+ * One physical machine: what it is (Inventaire), what it is reporting right
+ * now (Capteurs), its event log (Journal), and the power/identify actions
+ * that act on it.
  *
  * Every panel renders `stalenessLabel(machine.lastProbeAt, …)` — the
  * machine's own liveness. `isStale` on that same clock greys the body: a
@@ -26,6 +29,11 @@ import { isStale, stalenessLabel, type Machine } from '@/lib/machines'
  * are shown verbatim rather than folded into a generic "unavailable" — a
  * `TLSError` on a freshly registered iLO4 is the expected first state, and
  * the message names exactly what to fix.
+ *
+ * The admin check mirrors `WorkloadsView`'s: the token is decoded, not
+ * verified, so this is a courtesy that hides the buttons — every power
+ * write is refused server-side by RBAC for a non-admin regardless of what
+ * this renders.
  */
 export function MachineDetail({
   machine,
@@ -36,6 +44,8 @@ export function MachineDetail({
 }) {
   const now = new Date()
   const stale = isStale(machine.lastProbeAt, now)
+  const token = (globalThis as Record<string, unknown>).__FRAME_TOKEN__
+  const admin = typeof token === 'string' ? isAdminToken(token) : false
 
   return (
     <Card>
@@ -74,6 +84,7 @@ export function MachineDetail({
             </div>
           </div>
         )}
+        <MachineActions machine={machine} admin={admin} />
       </CardHeader>
       <CardContent className={stale ? 'opacity-60' : undefined}>
         <Tabs defaultValue="inventory" className="gap-4">
@@ -84,12 +95,18 @@ export function MachineDetail({
             <TabsTrigger value="sensors" className="font-mono text-xs">
               Capteurs
             </TabsTrigger>
+            <TabsTrigger value="events" className="font-mono text-xs">
+              Journal
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="inventory">
             <InventoryTab machine={machine} />
           </TabsContent>
           <TabsContent value="sensors">
             <SensorsTab machine={machine} />
+          </TabsContent>
+          <TabsContent value="events">
+            <MachineEventLog machine={machine} />
           </TabsContent>
         </Tabs>
       </CardContent>
