@@ -49,6 +49,23 @@ describe('isInfrastructureNamespace', () => {
     }
   })
 
+  // Added 2026-09-10, after the screen was opened against the real cluster for
+  // the first time and showed these five as application namespaces. Each is a
+  // component the platform runs for itself, and none ends in `-system` or starts
+  // with `kube-`, so neither shape rule catches them — only the literal list
+  // does. A version of the list without them passes every other test here.
+  it('folds the platform components the shape rules cannot see', () => {
+    for (const ns of [
+      'alluxio',
+      'jupyterhub',
+      'postgres-operator',
+      'registry',
+      'volcano-monitoring',
+    ]) {
+      expect(isInfrastructureNamespace(ns)).toBe(true)
+    }
+  })
+
   it('leaves application namespaces open', () => {
     for (const ns of ['neura', 'default', 'inference', 'sandbox']) {
       expect(isInfrastructureNamespace(ns)).toBe(false)
