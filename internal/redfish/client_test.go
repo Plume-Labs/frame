@@ -28,9 +28,14 @@ import (
 	"testing"
 )
 
-// serveFixtures maps Redfish paths onto the recorded files. Anything not
-// mapped 404s, which is how the sparse case is expressed: a firmware that
-// does not expose a resource simply does not answer for it.
+// serveFixtures maps Redfish paths onto the recorded files. Each route is
+// registered anchored ("{$}") so it matches only its exact path: Go's
+// ServeMux otherwise treats a pattern ending in "/" as a subtree match,
+// which would silently absorb requests to any deeper, unmapped path (e.g.
+// a route for "/redfish/v1/Chassis/" would also answer for
+// "/redfish/v1/Chassis/1/Thermal/") and mask the 404 the sparse-firmware
+// tests depend on. The catch-all below is what actually produces that 404:
+// a firmware that does not expose a resource simply does not answer for it.
 func serveFixtures(t *testing.T, routes map[string]string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -39,11 +44,14 @@ func serveFixtures(t *testing.T, routes map[string]string) *httptest.Server {
 		if err != nil {
 			t.Fatalf("fixture %s: %v", file, err)
 		}
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc(path+"{$}", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 		})
 	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -59,6 +67,15 @@ func fullRoutes() map[string]string {
 		"/redfish/v1/Chassis/1/Power/":                   "chassis_1_power.json",
 		"/redfish/v1/Systems/1/LogServices/IML/Entries/": "log_entries.json",
 		"/redfish/v1/Managers/1/":                        "managers_1.json",
+		"/redfish/v1/Systems/1/Processors/":              "processors.json",
+		"/redfish/v1/Systems/1/Processors/1/":            "processor_1.json",
+		"/redfish/v1/Systems/1/Processors/2/":            "processor_2.json",
+		"/redfish/v1/Systems/1/Memory/":                  "memory.json",
+		"/redfish/v1/Systems/1/Memory/1/":                "memory_1.json",
+		"/redfish/v1/Systems/1/Memory/2/":                "memory_2.json",
+		"/redfish/v1/Systems/1/EthernetInterfaces/":      "ethernet_interfaces.json",
+		"/redfish/v1/Systems/1/EthernetInterfaces/1/":    "ethernet_interfaces_1.json",
+		"/redfish/v1/Systems/1/EthernetInterfaces/2/":    "ethernet_interfaces_2.json",
 	}
 }
 
@@ -96,6 +113,51 @@ func TestProbeReadsInventorySensorsAndLog(t *testing.T) {
 	}
 	if got := len(snap.Sensors.PowerSupplies); got != 2 {
 		t.Errorf("power supplies = %d, want 2", got)
+	}
+	if got := len(snap.Inventory.Processors); got != 2 {
+		t.Errorf("processors = %d, want 2", got)
+	} else {
+		if snap.Inventory.Processors[0].Model != "Intel(R) Xeon(R) CPU E5-2650 v4" {
+			t.Errorf("processor model = %q", snap.Inventory.Processors[0].Model)
+		}
+		if snap.Inventory.Processors[0].Socket != "Proc 1" {
+			t.Errorf("processor socket = %q, want Proc 1", snap.Inventory.Processors[0].Socket)
+		}
+		if snap.Inventory.Processors[0].Cores != 12 {
+			t.Errorf("processor cores = %d, want 12", snap.Inventory.Processors[0].Cores)
+		}
+		if snap.Inventory.Processors[0].Threads != 24 {
+			t.Errorf("processor threads = %d, want 24", snap.Inventory.Processors[0].Threads)
+		}
+	}
+	if got := len(snap.Inventory.MemoryModules); got != 2 {
+		t.Errorf("memory modules = %d, want 2", got)
+	} else {
+		if snap.Inventory.MemoryModules[0].Slot != "PROC 1 DIMM 1" {
+			t.Errorf("memory module slot = %q", snap.Inventory.MemoryModules[0].Slot)
+		}
+		if snap.Inventory.MemoryModules[0].SizeMiB != 16384 {
+			t.Errorf("memory module size = %d, want 16384", snap.Inventory.MemoryModules[0].SizeMiB)
+		}
+		if snap.Inventory.MemoryModules[0].Type != "DDR4" {
+			t.Errorf("memory module type = %q, want DDR4", snap.Inventory.MemoryModules[0].Type)
+		}
+	}
+	if got := len(snap.Inventory.NetworkAdapters); got != 2 {
+		t.Errorf("network adapters = %d, want 2", got)
+	} else {
+		if snap.Inventory.NetworkAdapters[0].MAC != "B4:B5:2F:00:11:22" {
+			t.Errorf("network adapter MAC = %q", snap.Inventory.NetworkAdapters[0].MAC)
+		}
+		if snap.Inventory.NetworkAdapters[0].Name != "Embedded LOM 1 Port 1" {
+			t.Errorf("network adapter name = %q", snap.Inventory.NetworkAdapters[0].Name)
+		}
+	}
+	// Drives is deliberately never populated by this package (see the
+	// comment at its population site in client.go); a sparse or full probe
+	// alike leaves it nil.
+	if snap.Inventory.Drives != nil {
+		t.Errorf("Drives = %v, want nil (not yet implemented)", snap.Inventory.Drives)
 	}
 }
 
@@ -196,15 +258,18 @@ func TestResetPostsTheActionTarget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fixture %s: %v", file, err)
 		}
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) })
+		mux.HandleFunc(path+"{$}", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) })
 	}
-	mux.HandleFunc("/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/{$}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		posted <- got.ResetType
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
 	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)

@@ -1,0 +1,9 @@
+{
+  "@odata.type": "#Processor.v1_0_0.Processor",
+  "Id": "1",
+  "Socket": "Proc 1",
+  "Model": "Intel(R) Xeon(R) CPU E5-2650 v4",
+  "TotalCores": 12,
+  "TotalThreads": 24,
+  "Status": { "Health": "OK", "State": "Enabled" }
+}
