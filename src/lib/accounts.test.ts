@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   acceptInvitation,
+  canReissueInvitation,
   inviteAccount,
   inviteTokenFromLocation,
   isOnlyEnabledAdmin,
   listAccounts,
   listCredentials,
+  reissueInvitation,
   revokeCredential,
   setAccountRole,
   setAccountState,
@@ -112,6 +114,41 @@ describe('inviteAccount', () => {
     stubFetch(new Response('', { status: 500 }))
     await expect(inviteAccount('bob@example.com', 'viewer')).rejects.toThrow(
       /could not create the invitation \(500\)/,
+    )
+  })
+})
+
+describe('reissueInvitation', () => {
+  it('posts only the address and returns the link', async () => {
+    const calls = stubFetch(json({ url: 'https://frame.example/invite#token=sealed2' }))
+    const url = await reissueInvitation('bob@example.com')
+    expect(url).toBe('https://frame.example/invite#token=sealed2')
+    expect(calls[0].url).toBe('/auth/invite/link')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ email: 'bob@example.com' })
+  })
+
+  it("surfaces authd's own message when the account is unknown", async () => {
+    stubFetch(new Response('no account with that email', { status: 404 }))
+    await expect(reissueInvitation('ghost@example.com')).rejects.toThrow(/no account with that email/)
+  })
+
+  // 410: the account already enrolled a credential, so a link for it would
+  // be refused at acceptance anyway — authd's wording is the useful part.
+  it("surfaces authd's own message when the account already has a credential", async () => {
+    stubFetch(new Response('this account already has a credential', { status: 410 }))
+    await expect(reissueInvitation('bob@example.com')).rejects.toThrow(/already has a credential/)
+  })
+
+  // 403: a disabled account cannot be issued an identity.
+  it("surfaces authd's own message when the account is disabled", async () => {
+    stubFetch(new Response('this account is disabled', { status: 403 }))
+    await expect(reissueInvitation('bob@example.com')).rejects.toThrow(/this account is disabled/)
+  })
+
+  it('falls back to a status-bearing message when the response body is empty', async () => {
+    stubFetch(new Response('', { status: 500 }))
+    await expect(reissueInvitation('bob@example.com')).rejects.toThrow(
+      /could not create the invitation link \(500\)/,
     )
   })
 })
@@ -322,5 +359,35 @@ describe('isOnlyEnabledAdmin', () => {
   it('is false for an account that is not an admin at all', () => {
     const accounts = [account({ email: 'a@example.com', role: 'viewer' })]
     expect(isOnlyEnabledAdmin(accounts, 'a@example.com')).toBe(false)
+  })
+})
+
+describe('canReissueInvitation', () => {
+  const account = (over: Partial<Account>): Account => ({
+    name: 'bob',
+    email: 'bob@example.com',
+    role: 'viewer',
+    state: 'enabled',
+    keyCount: 0,
+    ...over,
+  })
+
+  it('is true for an enabled account holding no key', () => {
+    expect(canReissueInvitation(account({ keyCount: 0 }))).toBe(true)
+  })
+
+  // -1 means the key read failed, not "holds no key" — the same distinction
+  // `keyCount`'s own doc comment draws. A `<= 0` predicate would re-admit
+  // this and offer a link for an account that may already be enrolled.
+  it('is false when the key count failed to load', () => {
+    expect(canReissueInvitation(account({ keyCount: -1 }))).toBe(false)
+  })
+
+  it('is false for an account already holding a key', () => {
+    expect(canReissueInvitation(account({ keyCount: 1 }))).toBe(false)
+  })
+
+  it('is false for a disabled account, even with no key', () => {
+    expect(canReissueInvitation(account({ keyCount: 0, state: 'disabled' }))).toBe(false)
   })
 })
