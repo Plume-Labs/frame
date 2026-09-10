@@ -22,6 +22,7 @@ const OverviewView = lazy(() => import('@/components/OverviewView').then((m) => 
 const ClusterNodesView = lazy(() => import('@/components/ClusterNodesView').then((m) => ({ default: m.ClusterNodesView })))
 const FrameNodesView = lazy(() => import('@/components/FrameNodesView').then((m) => ({ default: m.FrameNodesView })))
 const RacksView = lazy(() => import('@/components/RacksView').then((m) => ({ default: m.RacksView })))
+const WorkloadsView = lazy(() => import('@/components/workloads/WorkloadsView').then((m) => ({ default: m.WorkloadsView })))
 const ApplicationsView = lazy(() => import('@/components/ApplicationsView').then((m) => ({ default: m.ApplicationsView })))
 const FrameJobsView = lazy(() => import('@/components/FrameJobsView').then((m) => ({ default: m.FrameJobsView })))
 const FrameSchedulerView = lazy(() => import('@/components/FrameSchedulerView').then((m) => ({ default: m.FrameSchedulerView })))
@@ -84,6 +85,7 @@ import {
   SignOut,
   Speedometer,
   SquaresFour,
+  TreeStructure,
   Users,
 } from '@phosphor-icons/react'
 
@@ -107,6 +109,7 @@ import {
  */
 type TabId =
   | 'overview'
+  | 'workloads'
   | 'applications'
   | 'jobs'
   | 'lineage'
@@ -173,6 +176,13 @@ const NAV: NavGroup[] = [
   {
     label: 'Workloads',
     items: [
+      {
+        id: 'workloads',
+        label: 'Workloads',
+        icon: <TreeStructure />,
+        description: 'Every workload on the cluster — logs, a shell, restart, scale and the manifest',
+        tabs: [{ id: 'workloads', label: 'Workloads' }],
+      },
       {
         id: 'applications',
         label: 'Applications',
@@ -516,6 +526,8 @@ function App() {
         return <OverviewView />
 
       // ── Workloads ───────────────────────────────────────────────────────
+      case 'workloads':
+        return <WorkloadsView />
       case 'applications':
         return <ApplicationsView />
       case 'jobs':
