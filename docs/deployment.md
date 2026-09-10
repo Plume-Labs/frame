@@ -417,9 +417,24 @@ logs — or swap `serviceAccountName` to assume any ServiceAccount identity in
 the namespace. No tier in this repository is granted `secrets` anywhere, so
 this design grants indirectly, through a pod's own spec, exactly what it
 refuses to grant directly. This is documented in full in the file itself
-(`deploy/kubernetes/base/rbac-workload-operator.yaml`); closing it needs a
-validating webhook on the patch body, or moving restart and scale to the admin
-tier — both open decisions, not something this lot resolves.
+(`deploy/kubernetes/base/rbac-workload-operator.yaml`).
+
+**This gap was weighed and accepted on 2026-09-10.** The two ways to close it
+were moving restart and scale to the admin tier — which costs an operator the
+daily operation the Workloads screen exists for — and a validating webhook that
+refuses any patch touching more than the `restartedAt` annotation or the replica
+count, which is a project of its own. Neither was judged worth its price against
+a tier held only by people the cluster's administrator invited deliberately, and
+whose every write leaves a `FrameTask` naming who patched what. The mitigation is
+therefore the tier itself plus the audit trail, not admission control.
+
+Two things follow, and whoever grants `frame:operators` should know both. An
+operator can read any Secret in `default`, `inference` and the five `neura-*`
+namespaces, so grant that tier on the same footing you would grant read access to
+those Secrets directly. And if the day comes that the tier is handed to someone
+who should not have that reach — a contractor, an automation account, a wider
+team — this decision is the one to revisit first, before inventing a narrower
+grant that RBAC cannot express.
 
 **Reads are not bounded.** The console shows any workload's YAML anywhere the
 tree shows the workload, and writes only where the policy is enforced. The

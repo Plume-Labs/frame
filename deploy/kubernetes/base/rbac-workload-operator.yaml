@@ -54,8 +54,15 @@
 # no tier role anywhere in this repository, so this design grants indirectly,
 # through a pod's own spec, exactly what it refuses to grant directly. Closing
 # it needs a validating webhook on the patch body, or moving restart and scale
-# to the admin tier — both larger than this task, and a decision for the
-# humans, not something this file's shape resolves on its own.
+# to the admin tier — both larger than this task.
+#
+# DECIDED 2026-09-10: accepted as it stands. Neither closure was judged worth
+# its price against a tier held only by deliberately invited people, whose every
+# write leaves a FrameTask naming who patched what. The mitigation is the tier
+# plus the audit trail, not admission control. Grant frame:operators on the same
+# footing you would grant read access to the Secrets in those seven namespaces,
+# because that is what it carries. Revisit this before widening who holds it.
+# See docs/deployment.md, "Operating a workload: which tier gets what".
 #
 # The filename says "operator" and the file holds an admin role too. It is not
 # renamed because the kustomization entry and several comments elsewhere in
