@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowClockwise,
   CaretDown,
@@ -45,12 +45,47 @@ export function WorkloadsView() {
     [],
     workloadWatchPaths(),
   )
-  const tree = state.phase === 'ready' ? state.data : []
+  // Memoized on `state` itself (not derived inline) so its reference is
+  // stable across re-renders that don't carry new data — both the tree
+  // useEffect below and the `visible` useMemo depend on it, and a ternary
+  // recomputed inline defeats both.
+  const tree = useMemo(() => (state.phase === 'ready' ? state.data : []), [state])
 
   const [showInfrastructure, setShowInfrastructure] = useState(false)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [selection, setSelection] = useState<PodSelection | undefined>()
+
+  // Keeps the open panel's `selection` pointing at the pod and controller the
+  // *latest* tree resolved, not the objects captured the moment the row was
+  // clicked. Without this, a write performed from inside the panel itself —
+  // scale, restart, delete — calls `reload()`, the tree refreshes, but
+  // `selection` (set once, on click) never re-reads it: the panel's `key` is
+  // pod identity only, so it does not remount, and every value the panel
+  // renders straight from `selection.controller` (replica counts, readiness,
+  // restart counts) goes stale the moment it changes on the cluster.
+  //
+  // Deliberately a functional `setSelection` update with `tree` as the only
+  // dependency, so it needs no `selection` in the dependency array and cannot
+  // loop on its own output. When the pod is missing from the refreshed tree —
+  // the tree hasn't loaded yet, or the pod genuinely no longer exists — the
+  // previous selection is kept rather than cleared, so a delete-in-progress or
+  // a not-yet-caught-up watch doesn't yank the panel out from under the user;
+  // `onClose` is still how the panel actually goes away.
+  useEffect(() => {
+    setSelection((prev) => {
+      if (!prev) return prev
+      const ns = tree.find((n) => n.namespace === prev.pod.namespace)
+      if (!ns) return prev
+      for (const c of ns.controllers) {
+        const match = c.pods.find((p) => p.name === prev.pod.name)
+        if (match) return { pod: match, controller: c.controller }
+      }
+      const bare = ns.barePods.find((p) => p.name === prev.pod.name)
+      if (bare) return { pod: bare, controller: undefined }
+      return prev
+    })
+  }, [tree])
 
   // The admin gate on the terminal tab. A courtesy, not a control: the token
   // is decoded rather than verified, and `create pods/exec` is refused
