@@ -2756,14 +2756,30 @@ export function workloadPath(kind: EditableKind, namespace: string, name?: strin
   return name ? `${base}/${name}` : base
 }
 
-/** The list paths the Workloads screen watches for live updates. */
+/**
+ * The list paths the Workloads screen watches for live updates.
+ *
+ * `Pod` deliberately absent (whole-branch review Important 7): cluster-wide
+ * pod churn — Argo workflows, Jobs, evictions — is exactly the "something
+ * that churns per second" k8s-watch.ts's own header says needs an incremental
+ * cache instead of a watch-triggers-refetch screen, and every event here was
+ * coalesced at 250ms into a fresh WorkloadClient.tree() call that issues six
+ * unpaginated cluster-wide GETs, including every pod and every ReplicaSet
+ * (~10 per Deployment) — the same "33 whole-cluster pod lists totalling
+ * 13.6 MB" burst `inFlightGets`'s own comment above measured, from one
+ * screen re-firing on pod churn this time rather than several screens
+ * duplicating each other. Dropping it does not stop the
+ * tree from noticing pod changes: it still refreshes on the next controller
+ * event (a Deployment's status reflects its pods) or when the screen is
+ * reopened. Before adding this back, read k8s-watch.ts's header first — that
+ * boundary is why it was removed, not an oversight.
+ */
 export function workloadWatchPaths(): string[] {
   return [
     WORKLOAD_COLLECTIONS.Deployment,
     WORKLOAD_COLLECTIONS.StatefulSet,
     WORKLOAD_COLLECTIONS.DaemonSet,
     WORKLOAD_COLLECTIONS.Job,
-    WORKLOAD_COLLECTIONS.Pod,
   ]
 }
 

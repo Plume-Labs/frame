@@ -1,6 +1,13 @@
 /// <reference types="vite/client" />
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { __testing, createFrameClient, FrameAPIError, projectToFull, type MetricSeries } from './frame-sdk'
+import {
+  __testing,
+  createFrameClient,
+  FrameAPIError,
+  projectToFull,
+  workloadWatchPaths,
+  type MetricSeries,
+} from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
 // Raw source, for the structural guard at the bottom of this file.
@@ -1139,5 +1146,24 @@ describe('WorkloadClient', () => {
     )
 
     expect(seen[0].signal).toBe(controller.signal)
+  })
+})
+
+describe('workloadWatchPaths', () => {
+  // Whole-branch review Important 7: this used to include the pod collection,
+  // so cluster-wide pod churn (Argo workflows, Jobs, evictions) re-triggered
+  // WorkloadsView's tree() — six unpaginated cluster-wide GETs including every
+  // ReplicaSet — every time any pod anywhere changed. `Pod` is gone; the four
+  // controller collections stay, because losing one of those would mean the
+  // tree stops refreshing when a Deployment or Job actually changes.
+  it('watches the four controller collections and not pods', () => {
+    const paths = workloadWatchPaths()
+    expect(paths).toEqual([
+      '/apis/apps/v1/deployments',
+      '/apis/apps/v1/statefulsets',
+      '/apis/apps/v1/daemonsets',
+      '/apis/batch/v1/jobs',
+    ])
+    expect(paths).not.toContain('/api/v1/pods')
   })
 })
