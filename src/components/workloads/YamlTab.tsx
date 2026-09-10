@@ -14,7 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { FrameAPIError, createFrameClient } from '@/lib/frame-sdk'
-import { canOperateWorkloads, ownershipWarning, type EditableKind } from '@/lib/workloads'
+import { canEditManifest, ownershipWarning, type EditableKind } from '@/lib/workloads'
 
 const frame = createFrameClient()
 
@@ -35,22 +35,39 @@ const frame = createFrameClient()
  * template is `privileged: true` plus a `hostPath: /` volume in a namespace
  * where nothing refuses it, which is node root.
  *
- * That second bound applies to **saving**, never to reading. The tab renders
+ * It is also bounded by tier, and that bound is not optional either
+ * (whole-branch review Important 3): the grant behind Apply is
+ * `cluster-control-workload-admin`, bound only to `frame:admins`
+ * (test/manifests/rbac_workload_operator_test.go asserts `frame:operators` is
+ * not a subject). `canOperateWorkloads(namespace)` alone is the *operator*
+ * predicate — restart and scale's grant, not this one — so gating Apply on it
+ * by itself would enable the button for an operator, who then 403s after
+ * typing an edit. `admin` is threaded down from WorkloadsView's own decoded
+ * token (a courtesy, not a control — see that file's comment on it) purely so
+ * this component can make the same mistake the rest of the panel already
+ * avoids.
+ *
+ * Both bounds apply to **saving**, never to reading. The tab renders
  * everywhere the tree shows a workload, because looking at a DaemonSet's
  * manifest in `kube-system` is one of the more useful things this screen does
  * and the `get` behind it is granted cluster-wide. Only the Save button is
  * disabled, and it says why — a button that 403s after someone has typed an
- * edit is worse than a button that was never offered.
+ * edit is worse than a button that was never offered. The two reasons a
+ * person can land on read-only are named separately, because "you are not an
+ * administrator" and "writes do not reach this namespace" call for different
+ * next steps.
  */
 export function YamlTab({
   kind,
   namespace,
   name,
+  admin,
   onSaved,
 }: {
   kind: EditableKind
   namespace: string
   name: string
+  admin: boolean
   onSaved: () => void
 }) {
   const [text, setText] = useState('')
@@ -60,9 +77,10 @@ export function YamlTab({
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
 
-  // Saving is granted only where Pod Security enforces `baseline`. Reading is
-  // not gated at all — see this component's doc comment.
-  const writable = canOperateWorkloads(namespace)
+  // Saving needs both: the admin tier (the grant's actual subject) and a
+  // namespace where Pod Security enforces `baseline` (the grant's actual
+  // reach). Reading is not gated at all — see this component's doc comment.
+  const writable = canEditManifest(admin, namespace)
 
   const load = useCallback(async () => {
     setError(undefined)
@@ -145,6 +163,11 @@ export function YamlTab({
         <span className="font-mono text-[10px] text-muted-foreground max-w-lg">
           {writable ? (
             'Applied as a whole-object update, carrying the version you read.'
+          ) : !admin ? (
+            <>
+              Read-only: saving a manifest is an administrator action. Your account is not an
+              admin — restart and scale, if this namespace grants them, are still yours.
+            </>
           ) : (
             <>
               Read-only in <strong>{namespace}</strong>. Saving is granted only where Pod Security

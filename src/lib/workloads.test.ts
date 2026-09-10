@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import {
   OPERABLE_NAMESPACES,
   buildWorkloadTree,
+  canEditManifest,
   canOperateWorkloads,
   controllerKey,
   controllerKeyForPod,
@@ -239,6 +240,29 @@ describe('OPERABLE_NAMESPACES', () => {
     for (const ns of OPERABLE_NAMESPACES) {
       expect(isInfrastructureNamespace(ns)).toBe(false)
     }
+  })
+})
+
+describe('canEditManifest', () => {
+  // Whole-branch review Important 3: YamlTab.tsx used to gate its Apply
+  // button on `canOperateWorkloads(namespace)` alone — the operator grant's
+  // predicate — while the manifest editor's actual grant,
+  // cluster-control-workload-admin, is bound to frame:admins only. This case
+  // is the bug: an operator (admin: false) standing in an operable namespace
+  // would have seen Apply enabled and 403 after typing an edit. A version
+  // that reverted to `namespace-only` would pass every other case here and
+  // still fail this one.
+  it('requires the admin tier even in an operable namespace', () => {
+    expect(canEditManifest(false, 'neura')).toBe(false)
+    expect(canEditManifest(true, 'neura')).toBe(true)
+  })
+
+  it('requires an operable namespace even for an admin', () => {
+    expect(canEditManifest(true, 'rook-ceph')).toBe(false)
+  })
+
+  it('is false when neither gate is open', () => {
+    expect(canEditManifest(false, 'rook-ceph')).toBe(false)
   })
 })
 

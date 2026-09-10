@@ -137,6 +137,27 @@ export function canOperateWorkloads(ns: string): boolean {
   return OPERABLE_NAMESPACES.includes(ns)
 }
 
+/**
+ * True where the YAML editor's Apply button may actually succeed.
+ *
+ * Two independent gates, both required. `admin` is the tier
+ * `cluster-control-workload-admin` is bound to — `frame:admins` only, per
+ * `test/manifests/rbac_workload_operator_test.go:53` — and
+ * `canOperateWorkloads(namespace)` is the namespace that grant's RoleBindings
+ * actually reach. Whole-branch review Important 3: `YamlTab.tsx` used to gate
+ * Apply on `canOperateWorkloads(namespace)` alone, which is the *operator*
+ * grant's predicate (restart/scale), not the admin grant's — so an operator
+ * standing in an operable namespace saw an enabled Apply button that 403s
+ * after they had already typed an edit.
+ *
+ * Lives here rather than inline in the component for the same reason
+ * `canOperateWorkloads` does: vitest never runs a `.tsx` spec (see this
+ * file's header), so a decision embedded in JSX cannot be pinned by a test.
+ */
+export function canEditManifest(admin: boolean, namespace: string): boolean {
+  return admin && canOperateWorkloads(namespace)
+}
+
 export function controllerKey(namespace: string, kind: WorkloadKind, name: string): string {
   return `${namespace}/${kind}/${name}`
 }
