@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -62,6 +63,18 @@ func (f *fakeRedfish) SetIndicatorLED(_ context.Context, on bool) error {
 	f.ledCalls = append(f.ledCalls, on)
 	return nil
 }
+
+// fakeTimeoutError satisfies net.Error without pulling in a real network
+// timeout, so probeFailureReason's net.Error branch can be driven
+// deterministically. net.Error still requires the deprecated Temporary()
+// method as of this Go version — omitting it makes errors.As silently
+// return false rather than fail to compile, since the assertion happens by
+// reflection against the interface, not at compile time.
+type fakeTimeoutError struct{}
+
+func (fakeTimeoutError) Error() string   { return "i/o timeout" }
+func (fakeTimeoutError) Timeout() bool   { return true }
+func (fakeTimeoutError) Temporary() bool { return true }
 
 var _ = Describe("FrameMachine controller", func() {
 	var (
@@ -203,12 +216,24 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(cond.Reason).To(Equal("CredentialsUnavailable"))
 	})
 
-	It("truncates the retained log to the schema's cap", func() {
+	It("truncates the retained log to the schema's cap, keeping the newest entries", func() {
 		Expect(k8sClient.Create(ctx, newSecret("fm-long-creds"))).To(Succeed())
 		Expect(k8sClient.Create(ctx, newMachine("fm-long"))).To(Succeed())
+		// internal/redfish hands the controller Log sorted newest-first
+		// (decode.go's readLog sorts by Created.After), so index 0 here
+		// stands in for "just happened" and Created strictly decreases as
+		// the index rises, exactly like the real client's output. A test
+		// that only counted survivors would pass whichever end got kept;
+		// asserting which IDs survive is what makes this discriminating.
 		entries := make([]redfish.LogEntry, 0, 40)
+		now := time.Now()
 		for i := 0; i < 40; i++ {
-			entries = append(entries, redfish.LogEntry{ID: "e", Severity: "OK", Message: "m"})
+			entries = append(entries, redfish.LogEntry{
+				ID:       strconv.Itoa(i),
+				Severity: "OK",
+				Message:  "m",
+				Created:  now.Add(-time.Duration(i) * time.Minute),
+			})
 		}
 		fake.snapshot.Log = entries
 
@@ -218,6 +243,39 @@ var _ = Describe("FrameMachine controller", func() {
 
 		var got framev1beta1.FrameMachine
 		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
-		Expect(len(got.Status.EventLog)).To(Equal(25))
+		Expect(got.Status.EventLog).To(HaveLen(25))
+		// The retained window is the 25 newest, not the 25 oldest: index 0
+		// ("just happened") survives, and index 24 (the 25th newest) is the
+		// last one kept — index 25 onward (older) does not survive.
+		Expect(got.Status.EventLog[0].ID).To(Equal("0"))
+		Expect(got.Status.EventLog[24].ID).To(Equal("24"))
+	})
+
+	It("reports a timeout distinctly from other probe failures", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-timeout-creds"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMachine("fm-timeout"))).To(Succeed())
+		fake.probeErr = fakeTimeoutError{}
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-timeout", Namespace: "default"}}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(meta.FindStatusCondition(got.Status.Conditions, "Reachable").Reason).To(Equal("Timeout"))
+	})
+
+	It("falls back to ProbeFailed for an error none of the sentinels explain", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-unknown-creds"))).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMachine("fm-unknown"))).To(Succeed())
+		fake.probeErr = errors.New("boom")
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-unknown", Namespace: "default"}}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(meta.FindStatusCondition(got.Status.Conditions, "Reachable").Reason).To(Equal("ProbeFailed"))
 	})
 })

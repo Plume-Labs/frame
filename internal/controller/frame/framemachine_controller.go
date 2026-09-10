@@ -260,11 +260,15 @@ func mapSensors(s *redfish.Sensors) *framev1beta1.MachineSensors {
 
 // mapEventLog retains only the most recent eventLogRetainCount entries,
 // matching FrameMachineStatus.EventLog's +kubebuilder:validation:MaxItems=25.
-// snap.Log is already oldest-first-truncated by the Redfish client to the
-// entries worth keeping, so retaining the tail keeps the most recent ones.
+// internal/redfish sorts Snapshot.Log newest-first (decode.go's readLog
+// sorts by Created.After before returning), so index 0 is the newest entry
+// and keeping the head is what keeps the newest ones. The whole reason this
+// retains 25 entries at all is to answer "why did this machine reboot" — a
+// question about the newest entries — so keeping the tail would silently
+// retain the oldest quarter-century of history instead.
 func mapEventLog(entries []redfish.LogEntry) []framev1beta1.EventLogEntry {
 	if len(entries) > eventLogRetainCount {
-		entries = entries[len(entries)-eventLogRetainCount:]
+		entries = entries[:eventLogRetainCount]
 	}
 	out := make([]framev1beta1.EventLogEntry, 0, len(entries))
 	for _, e := range entries {
