@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { LogsTab } from '@/components/workloads/LogsTab'
+import { TerminalTab } from '@/components/workloads/TerminalTab'
+import { WorkloadActions } from '@/components/workloads/WorkloadActions'
+import { YamlTab } from '@/components/workloads/YamlTab'
 import { formatAge } from '@/lib/thresholds'
 import type { WorkloadController, WorkloadPod } from '@/lib/workloads'
 
@@ -65,6 +68,7 @@ export function PodDetailPanel({
             </span>
           )}
         </div>
+        <WorkloadActions selection={selection} onChanged={onChanged} />
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="logs" className="gap-4">
@@ -83,12 +87,10 @@ export function PodDetailPanel({
             <LogsTab pod={pod} />
           </TabsContent>
           <TabsContent value="terminal">
-            {/* Filled in by Task 14. */}
-            <p className="font-mono text-xs text-muted-foreground">Not built yet.</p>
+            <TerminalTab pod={pod} admin={admin} />
           </TabsContent>
           <TabsContent value="yaml">
-            {/* Filled in by Task 14. */}
-            <p className="font-mono text-xs text-muted-foreground">Not built yet.</p>
+            <YamlTab kind="Pod" namespace={pod.namespace} name={pod.name} onSaved={onChanged} />
           </TabsContent>
         </Tabs>
       </CardContent>
