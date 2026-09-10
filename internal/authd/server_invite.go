@@ -168,6 +168,75 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleInviteLink mints a fresh invitation link for an account that
+// already exists. handleInvite's link is good for InviteTTL and is shown
+// exactly once; if it expires, or the admin closes the dialog before
+// copying it, this is the only way to reach enrolment again short of
+// deleting and re-inviting the FrameUser.
+//
+// Same admin gate as handleInvite, the same identity lookup handleInviteAccept
+// uses (Store.ByEmail, exact address — never inviteeAlreadyExists's
+// case-insensitive existence check, which answers a different question), and
+// the same two guards handleInviteAccept applies before it will hand a
+// credential to whoever holds the link: requireIssuable and "does the
+// account already hold one". Checking both here, with the real reason, is
+// better than minting a link that reaches the same refusal only once
+// presented — see handleInviteAccept's own comment on why every failure
+// there collapses to one wording; this route is not reachable without an
+// admin session, so that account-enumeration concern does not apply here and
+// each guard keeps its own status and message.
+func (s *Server) handleInviteLink(w http.ResponseWriter, r *http.Request) {
+	caller, ok := s.sessionUser(w, r)
+	if !ok {
+		return
+	}
+	if caller.Spec.Role != framev1beta1.RoleAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	u, err := s.cfg.Store.ByEmail(r.Context(), body.Email)
+	if err != nil {
+		http.Error(w, "no account with that email", http.StatusNotFound)
+		return
+	}
+	// 403 rather than 401: unlike handleInviteAccept, this route is already
+	// behind an admin session, so naming the disabled state tells the caller
+	// nothing an unauthenticated holder of a link could exploit.
+	if err := requireIssuable(u); err != nil {
+		http.Error(w, "this account is disabled", http.StatusForbidden)
+		return
+	}
+	if len(u.Status.Credentials) > 0 || u.Status.PasswordHash != "" {
+		http.Error(w, "this account already has a credential", http.StatusGone)
+		return
+	}
+
+	sealed, err := s.cfg.Codec.Seal(PurposeInvite, []byte(u.Spec.Email), s.cfg.InviteTTL)
+	if err != nil {
+		slog.Error("invite link: failed to seal the invitation token", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// Same reasoning as handleInvite: this body carries a bearer credential.
+	w.Header().Set("Cache-Control", "no-store")
+	// Fragment, not query string — see handleInvite's comment on why, and on
+	// why url.QueryEscape (not PathEscape) is the pair that matches
+	// inviteTokenFromLocation's URLSearchParams parsing on the console side.
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"url": s.cfg.ConsoleOrigin + "/invite#token=" + url.QueryEscape(sealed),
+	})
+}
+
 // inviteeAlreadyExists reports whether any account already claims email,
 // matching case-insensitively.
 //
