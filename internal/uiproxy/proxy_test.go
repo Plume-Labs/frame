@@ -403,12 +403,7 @@ func TestAnUpgradeIsRecordedAs101NotAsAServerError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Force the recorder on for this GET; Task 4 makes ServeHTTP decide
-		// this for itself.
-		r.Method = http.MethodPatch
-		p.ServeHTTP(w, r)
-	}))
+	front := httptest.NewServer(p)
 	defer front.Close()
 
 	res, conn, _ := dialUpgrade(t, strings.TrimPrefix(front.URL, "http://"),
@@ -436,5 +431,51 @@ func TestAnUpgradeIsRecordedAs101NotAsAServerError(t *testing.T) {
 	}
 	if code != http.StatusSwitchingProtocols {
 		t.Fatalf("finishedCode = %d, want 101", code)
+	}
+}
+
+// ServeHTTP decides what gets recorded, and it must reach the same conclusion
+// the recorder does. Left on `isMutating` alone, the exec upgrade is a GET and
+// Start is never called — so the recorder's own rule above would be dead code
+// and no shell would appear on the Tasks screen.
+func TestServeHTTPOpensARecordForAnExecUpgrade(t *testing.T) {
+	up := echoUpgrade(t)
+	defer up.Close()
+	u, err := url.Parse(up.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &stubRecorder{startName: "task-shell"}
+	p, err := New(Options{
+		Verifier: stubVerifier{id: Identity{User: "alice@example.com", Groups: []string{"admins"}}},
+		Recorder: rec,
+		Upstream: u,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	res, conn, _ := dialUpgrade(t, strings.TrimPrefix(front.URL, "http://"),
+		"/api/v1/namespaces/neura/pods/api-0/exec?container=api")
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %d, want 101", res.StatusCode)
+	}
+	_ = conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		called, code := rec.finished()
+		if called {
+			if code != http.StatusSwitchingProtocols {
+				t.Fatalf("finishedCode = %d, want 101", code)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no record was opened or closed for the exec session")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

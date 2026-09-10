@@ -2,8 +2,10 @@ package uiproxy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,7 +33,7 @@ func NewRecorder(c client.Client, namespace string, log *slog.Logger) *TaskRecor
 	return &TaskRecorder{c: c, ns: namespace, log: log}
 }
 
-func verbFor(method string) string {
+func verbForMethod(method string) string {
 	switch method {
 	case http.MethodPost:
 		return framev1beta1.TaskVerbCreate
@@ -43,6 +45,51 @@ func verbFor(method string) string {
 		return framev1beta1.TaskVerbDelete
 	}
 	return ""
+}
+
+// verbForRequest is verbForMethod plus the one case where the HTTP method is
+// not what the apiserver authorizes: an exec arrives from a browser as a GET
+// (`new WebSocket()` can issue nothing else) and is authorized as `create
+// pods/exec`. The record says `create` so it can be read against the RBAC rule
+// that allowed it.
+func verbForRequest(r *http.Request, ref framev1beta1.ObjectRef) string {
+	if ref.Subresource == "exec" && isExecUpgrade(r) {
+		return framev1beta1.TaskVerbCreate
+	}
+	return verbForMethod(r.Method)
+}
+
+// maxAction is FrameTaskSpec.Action's CRD cap. Past it the apiserver refuses
+// the FrameTask create, the recorder logs the error, and the action proceeds
+// with no record — the cost of overflowing is a silent hole in the trail.
+const maxAction = 200
+
+// execAction names the session the way a person would. The console cannot
+// supply an X-Frame-Action here: `new WebSocket()` takes a URL and a
+// subprotocol list, and no header, so the label every other write carries has
+// nowhere to travel and the recorder builds it instead.
+func execAction(ref framev1beta1.ObjectRef, q url.Values) string {
+	s := fmt.Sprintf("open a shell in %s/%s", ref.Namespace, ref.Name)
+	if c := q.Get("container"); c != "" {
+		s = fmt.Sprintf("%s (%s)", s, c)
+	}
+	if len(s) > maxAction {
+		s = s[:maxAction]
+	}
+	return s
+}
+
+// isDryRun reports whether the request asked the apiserver to validate without
+// storing. A dry run changes nothing, so it is not a write to record: the
+// manifest editor makes one before every real edit, to learn what would be
+// stored, and recording both would put two rows in the trail for one action.
+func isDryRun(q url.Values) bool {
+	for _, v := range q["dryRun"] {
+		if v != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePath turns a Kubernetes request path into a reference.
@@ -88,10 +135,21 @@ func parsePath(p string) (framev1beta1.ObjectRef, bool) {
 }
 
 func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) string {
-	verb := verbFor(r.Method)
 	ref, ok := parsePath(r.URL.Path)
-	if verb == "" || !ok {
+	if !ok {
 		return ""
+	}
+	q := r.URL.Query()
+	if isDryRun(q) {
+		return ""
+	}
+	verb := verbForRequest(r, ref)
+	if verb == "" {
+		return ""
+	}
+	action := r.Header.Get("X-Frame-Action")
+	if action == "" && ref.Subresource == "exec" && isExecUpgrade(r) {
+		action = execAction(ref, q)
 	}
 	task := &framev1beta1.FrameTask{
 		ObjectMeta: metav1.ObjectMeta{GenerateName: "task-", Namespace: t.ns},
@@ -99,7 +157,7 @@ func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) 
 			User:   id.User,
 			Verb:   verb,
 			Target: ref,
-			Action: r.Header.Get("X-Frame-Action"),
+			Action: action,
 		},
 	}
 	if err := t.c.Create(ctx, task); err != nil {

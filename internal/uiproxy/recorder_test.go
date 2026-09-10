@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,10 +161,12 @@ func TestPurgeKeepsRunningAndRecentTasks(t *testing.T) {
 func TestFinishTreats101AsASuccessfulSession(t *testing.T) {
 	rec, c := newRecorderFixture(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/neura/pods/api-0/exec", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
 	name := rec.Start(context.Background(),
 		Identity{User: "alice@example.com", Groups: []string{"admins"}}, req)
 	if name == "" {
-		t.Skip("Start does not yet record an exec upgrade; see Task 4")
+		t.Fatal("an exec session left no record")
 	}
 
 	rec.Finish(context.Background(), name, http.StatusSwitchingProtocols)
@@ -174,5 +178,110 @@ func TestFinishTreats101AsASuccessfulSession(t *testing.T) {
 	}
 	if task.Status.Phase != framev1beta1.TaskPhaseSucceeded {
 		t.Fatalf("Phase = %q, want Succeeded — 101 is a session that opened", task.Status.Phase)
+	}
+}
+
+// The one action in the product that most deserves a record. A browser opens
+// an exec as a WebSocket upgrade, which `new WebSocket()` can only issue as a
+// GET — so the mutating-method test that gates every other record says no, and
+// without this rule a shell leaves nothing behind at all.
+func TestStartRecordsAnExecOpenedOverAWebSocket(t *testing.T) {
+	rec, c := newRecorderFixture(t)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/namespaces/neura/pods/api-0/exec?container=api&stdin=true&stdout=true&tty=true", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+
+	name := rec.Start(context.Background(),
+		Identity{User: "alice@example.com", Groups: []string{"admins"}}, req)
+	if name == "" {
+		t.Fatal("an exec session left no record")
+	}
+	var task framev1beta1.FrameTask
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Name: name, Namespace: "frame-system"}, &task); err != nil {
+		t.Fatal(err)
+	}
+	// `create` is the verb the apiserver authorizes for pods/exec whatever
+	// method carries it. Recording "get" would make the trail disagree with
+	// the RBAC rule that allowed it.
+	if task.Spec.Verb != framev1beta1.TaskVerbCreate {
+		t.Fatalf("Verb = %q, want create", task.Spec.Verb)
+	}
+	if task.Spec.Target.Subresource != "exec" {
+		t.Fatalf("Subresource = %q, want exec", task.Spec.Target.Subresource)
+	}
+	if task.Spec.Action != "open a shell in neura/api-0 (api)" {
+		t.Fatalf("Action = %q", task.Spec.Action)
+	}
+	if task.Status.StartedAt == nil {
+		t.Fatal("StartedAt not set — a session with no start has no duration")
+	}
+}
+
+// A plain GET must stay unrecorded. Reads are not recorded by design, and the
+// exec rule is the narrowest possible exception to that: an upgrade, on the
+// exec subresource. Widening it to "any GET on pods" would put a row in the
+// trail for every screen refresh in the console.
+func TestStartStillIgnoresOrdinaryReads(t *testing.T) {
+	rec, _ := newRecorderFixture(t)
+	for _, tc := range []struct {
+		name string
+		req  *http.Request
+	}{
+		{"plain list", httptest.NewRequest(http.MethodGet, "/api/v1/pods", nil)},
+		{"pod log", httptest.NewRequest(http.MethodGet,
+			"/api/v1/namespaces/neura/pods/api-0/log?follow=true", nil)},
+		{"exec path with no upgrade", httptest.NewRequest(http.MethodGet,
+			"/api/v1/namespaces/neura/pods/api-0/exec", nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if name := rec.Start(context.Background(), Identity{User: "a@b.c"}, tc.req); name != "" {
+				t.Fatalf("recorded %q for a read", name)
+			}
+		})
+	}
+}
+
+// The manifest editor PUTs the edited object once with ?dryRun=All to learn
+// what the apiserver would store — that is how it computes the changed field
+// paths for the real write's label. A dry run changes nothing, so recording it
+// would put two rows in the trail for one edit, one of which did nothing.
+func TestStartIgnoresADryRun(t *testing.T) {
+	rec, _ := newRecorderFixture(t)
+	req := httptest.NewRequest(http.MethodPut,
+		"/apis/apps/v1/namespaces/neura/deployments/api?dryRun=All", nil)
+	if name := rec.Start(context.Background(), Identity{User: "a@b.c"}, req); name != "" {
+		t.Fatalf("recorded %q for a dry run", name)
+	}
+}
+
+// The same PUT without the parameter is a real write and must be recorded —
+// otherwise "skip dry runs" is indistinguishable from "skip PUTs".
+func TestStartRecordsTheSamePutWithoutDryRun(t *testing.T) {
+	rec, _ := newRecorderFixture(t)
+	req := httptest.NewRequest(http.MethodPut,
+		"/apis/apps/v1/namespaces/neura/deployments/api", nil)
+	if rec.Start(context.Background(), Identity{User: "a@b.c"}, req) == "" {
+		t.Fatal("a real update left no record")
+	}
+}
+
+func TestExecActionNamesThePodAndContainer(t *testing.T) {
+	ref := framev1beta1.ObjectRef{Resource: "pods", Namespace: "neura", Name: "api-0", Subresource: "exec"}
+	if got := execAction(ref, url.Values{"container": []string{"api"}}); got != "open a shell in neura/api-0 (api)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := execAction(ref, url.Values{}); got != "open a shell in neura/api-0" {
+		t.Fatalf("got %q", got)
+	}
+	// FrameTaskSpec.Action is capped at 200 characters by the CRD, and a
+	// container name arrives from a URL. Over the cap the apiserver refuses the
+	// FrameTask create outright, the recorder logs it, and the session runs
+	// with no record at all — the failure is silence, not an error the user
+	// sees.
+	long := execAction(ref, url.Values{"container": []string{strings.Repeat("x", 400)}})
+	if len(long) > 200 {
+		t.Fatalf("action is %d characters, over the CRD's 200-character cap", len(long))
 	}
 }
