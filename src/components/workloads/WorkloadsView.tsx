@@ -224,6 +224,11 @@ export function WorkloadsView() {
 
       {selection && (
         <PodDetailPanel
+          // Keyed on pod identity so switching pods remounts the panel rather
+          // than reusing it: without this, LogsTab's container/follow/previous
+          // state survives the switch and the next fetch can carry a stale
+          // container name into the new pod's request.
+          key={`${selection.pod.namespace}/${selection.pod.name}`}
           selection={selection}
           admin={admin}
           onChanged={reload}

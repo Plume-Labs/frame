@@ -882,6 +882,7 @@ describe('WorkloadClient', () => {
     method: string
     headers: Record<string, string>
     body?: string
+    signal?: AbortSignal | null
   }
 
   function capture(respond: (url: string) => Response): Seen[] {
@@ -896,6 +897,7 @@ describe('WorkloadClient', () => {
           method: init?.method ?? 'GET',
           headers: (init?.headers as Record<string, string>) ?? {},
           body: init?.body as string | undefined,
+          signal: init?.signal,
         })
         return respond(url)
       }),
@@ -1118,5 +1120,24 @@ describe('WorkloadClient', () => {
     expect(seen[0].url).toBe('/api/v1/namespaces/neura/pods/api-0/log?container=api&previous=true')
     expect(seen[0].headers['Authorization']).toBe('Bearer tok')
     expect(seen[0].headers['X-Frame-Action']).toBeUndefined()
+  })
+
+  // A caller that abandons a followed log stream (switches pods, closes the
+  // panel) has to actually close the connection, not just stop reading from
+  // it — cancelling a reader does nothing for a request whose headers haven't
+  // arrived yet, and leaves a `follow=true` apiserver watch open forever. The
+  // only way to do that is to hand the caller's AbortSignal to `fetch` itself,
+  // so this pins that it reaches the same request the URL and token do.
+  it('forwards the caller-supplied AbortSignal to the underlying fetch', async () => {
+    const seen = capture(() => new Response('line\n', { status: 200 }))
+    ;(globalThis as Record<string, unknown>).__FRAME_TOKEN__ = 'tok'
+    const controller = new AbortController()
+
+    await createFrameClient().workloads.logs(
+      { namespace: 'neura', pod: 'api-0', container: 'api', follow: true },
+      controller.signal,
+    )
+
+    expect(seen[0].signal).toBe(controller.signal)
   })
 })
