@@ -1,0 +1,12 @@
+{
+  "@odata.type": "#Thermal.1.0.0.Thermal",
+  "Temperatures": [
+    { "Name": "01-Inlet Ambient", "ReadingCelsius": 22, "UpperThresholdCritical": 42, "Status": { "Health": "OK" } },
+    { "Name": "04-P1 DIMM 1-6", "ReadingCelsius": 31, "Status": { "Health": "OK" } },
+    { "Name": "02-CPU 1", "ReadingCelsius": 40, "UpperThresholdCritical": 70, "Status": { "Health": "OK" } }
+  ],
+  "Fans": [
+    { "FanName": "Fan 1", "CurrentReading": 23, "Units": "Percent", "Status": { "Health": "OK" } },
+    { "FanName": "Fan 2", "CurrentReading": 23, "Units": "Percent", "Status": { "Health": "OK" } }
+  ]
+}

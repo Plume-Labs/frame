@@ -1,0 +1,8 @@
+{
+  "Members@odata.count": 3,
+  "Members": [
+    { "Id": "1", "Severity": "OK", "Created": "2026-08-30T09:11:00Z", "Message": "System Power Restored" },
+    { "Id": "2", "Severity": "Warning", "Created": "2026-09-02T04:02:11Z", "Message": "Corrected Memory Error threshold exceeded (Processor 1, DIMM 3)" },
+    { "Id": "3", "Severity": "Critical", "Created": "2026-09-05T18:44:02Z", "Message": "Fan 3 Failed" }
+  ]
+}
