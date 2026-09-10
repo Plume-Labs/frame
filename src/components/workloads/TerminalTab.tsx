@@ -100,7 +100,12 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
           if (message) term.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`)
         }
       }
-      ws.onerror = () => setError('The shell connection failed. Admin rights are required to open one.')
+      // No cause is named here on purpose: a WebSocket ErrorEvent carries none
+      // (see MDN — it is always a bare Event), and this tab is only reachable
+      // by an admin already, so "you lack permission" would be a guess that
+      // sends someone hunting a permissions problem during a real outage
+      // (frame-uiproxy down, apiserver unreachable) instead of paging on-call.
+      ws.onerror = () => setError('The shell connection failed. The proxy or the apiserver may be unreachable.')
       ws.onclose = () => {
         term.write('\r\n\x1b[90m— session closed —\x1b[0m\r\n')
       }

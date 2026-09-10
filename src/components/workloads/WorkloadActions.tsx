@@ -25,10 +25,18 @@ type Pending = 'restart' | 'scale' | 'delete' | undefined
  * Restart, scale and delete-a-pod, each behind a dialog that names the object
  * and the consequence.
  *
- * The delete dialog says two different things, because it is two different
- * actions behind one button: under a controller the pod is replaced, on a bare
- * pod the deletion is final. The person clicking has to know which one they
- * have.
+ * The delete dialog says up to three different things, because it can be three
+ * different actions behind one button. Under a controller this screen
+ * resolved — one of the four tracked kinds, placed by `buildWorkloadTree` — the
+ * pod is replaced and the dialog names what will replace it. Under an owner
+ * this screen could not resolve (an orphaned or hand-created ReplicaSet, or
+ * any controller kind the tree does not track), the dialog says an owner
+ * exists and the pod will most likely come back, without naming a controller
+ * it cannot vouch for — that judgment comes from `pod.owner`, read straight
+ * off the pod's own `ownerReferences`, not from tree placement, precisely so
+ * an owned-but-unresolved pod is never told apart from a genuinely bare one.
+ * On a truly bare pod — no `ownerReferences` at all — the deletion is final.
+ * The person clicking has to know which of the three they have.
  *
  * Restart and Scale are not offered outside the namespaces where they are
  * granted, and the screen says why instead of leaving a button that returns
@@ -112,7 +120,16 @@ export function WorkloadActions({
           variant="outline"
           className="font-mono"
           disabled={busy}
-          onClick={() => setPending('scale')}
+          onClick={() => {
+            // Seeded fresh at the moment the dialog opens, not left at
+            // whatever it was set to the first time this component rendered:
+            // `replicas` is local state and does not reinitialise itself when
+            // `controller` changes underneath it, so a scale performed
+            // earlier in this same panel session would otherwise leave the
+            // input defaulted to the pre-scale count on a second open.
+            setReplicas(String(controller.desiredReplicas))
+            setPending('scale')
+          }}
         >
           Scale
         </Button>
@@ -212,7 +229,9 @@ export function WorkloadActions({
             <AlertDialogDescription>
               {controller
                 ? `${controller.kind} ${controller.name} owns this pod, so it will be recreated straight away. This is how you restart one pod without restarting the rest.`
-                : 'Nothing owns this pod. Deleting it is final — no controller will bring it back, and whatever it was doing stops for good.'}
+                : pod.owner
+                  ? `${pod.owner.kind} ${pod.owner.name} owns this pod, but this screen did not resolve it to a workload it tracks. The pod will most likely be recreated shortly — this screen cannot say by what, or how soon.`
+                  : 'Nothing owns this pod. Deleting it is final — no controller will bring it back, and whatever it was doing stops for good.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
