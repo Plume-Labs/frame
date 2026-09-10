@@ -353,6 +353,14 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 				},
 				Status: framev1alpha1.SchedulingPolicyStatus{
 					ObservedGeneration: 1,
+					// The three ownership records, populated: they are the
+					// authority behind two cluster-scoped deletes, so a schema
+					// that pruned one would make the controller disown a
+					// PriorityClass or a Queue it created and leave the object
+					// behind with nothing that remembers it.
+					OwnedPriorityClass:  "neura-high",
+					OwnedQueue:          "neura-high",
+					OwnedQueueScheduler: "volcano",
 					Conditions: []metav1.Condition{{
 						Type:               "Ready",
 						Status:             metav1.ConditionTrue,

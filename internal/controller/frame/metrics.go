@@ -42,13 +42,20 @@ var (
 		Help: "Total number of successful SchedulingPolicy reconciles.",
 	})
 
-	// schedulingPolicyRefused counts SchedulingPolicies whose PriorityClass
-	// this controller declined to create, adopt or delete. A non-zero value
-	// is not an error rate: it is a count of cluster-scoped objects a
+	// schedulingPolicyRefused counts the cluster-scoped objects — a
+	// PriorityClass or a scheduler Queue — that this controller declined to
+	// create, adopt or delete on behalf of a SchedulingPolicy. A non-zero
+	// value is not an error rate: it is a count of cluster-scoped objects a
 	// namespaced SchedulingPolicy asked for and did not get.
+	//
+	// One counter for both resources rather than two, because the refusal is
+	// one mechanism (claim, refuse, release) applied twice; the reason label
+	// already says which resource — PriorityClassNotOwned, QueueReserved and
+	// so on. The name lost its priorityclass_ infix when the Queue joined it,
+	// which is a rename of a metric that has never been released.
 	schedulingPolicyRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "frame_schedulingpolicy_priorityclass_refused_total",
-		Help: "Total number of SchedulingPolicy reconciles that refused to act on a PriorityClass, by reason.",
+		Name: "frame_schedulingpolicy_refused_total",
+		Help: "Total number of SchedulingPolicy reconciles that refused to act on a cluster-scoped PriorityClass or Queue, by reason.",
 	}, []string{"reason"})
 )
 

@@ -25,6 +25,8 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -126,13 +128,20 @@ var _ = Describe("SchedulingPolicy Controller", func() {
 		Expect(cond.Reason).To(Equal("Applied"))
 	})
 
-	It("degrades Ready condition when queue CRD is missing (volcano scheduler)", func() {
-		// Volcano Queue CRD is not installed in envtest — controller must degrade gracefully.
+	It("degrades Ready condition when queue CRD is missing (yunikorn scheduler)", func() {
+		// This spec turns on the scheduler whose Queue CRD envtest does NOT
+		// have. It used to name volcano, and had to move: testdata/crds now
+		// installs scheduling.volcano.sh Queue so the ownership specs below
+		// can plant a real foreign Queue and watch it not be adopted. The
+		// yunikorn.apache.org Queue kind is still absent, which is what this
+		// spec is about — the controller must degrade, not fail, on a cluster
+		// that has no such CRD. Losing that coverage to the fixture would have
+		// been the fix quietly deleting a test.
 		weight := int32(2)
 		spV := &framev1beta1.SchedulingPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "volcano-policy", Namespace: ns},
 			Spec: framev1beta1.SchedulingPolicySpec{
-				Scheduler:   "volcano",
+				Scheduler:   "yunikorn",
 				QueueName:   "hpc",
 				QueueWeight: &weight,
 			},
@@ -423,6 +432,483 @@ var _ = Describe("SchedulingPolicy PriorityClass ownership", func() {
 		Expect(apierrors.IsNotFound(
 			k8sClient.Get(ctx, types.NamespacedName{Name: "somebody-elses"}, &schedulingv1.PriorityClass{}),
 		)).To(BeTrue())
+	})
+})
+
+var _ = Describe("SchedulingPolicy Queue ownership", func() {
+	const ns = "default"
+	ctx := context.Background()
+
+	// Volcano, not YuniKorn, throughout: it is the scheduler installed on the
+	// live cluster, its Queue is genuinely cluster-scoped there
+	// (`kubectl get crd queues.scheduling.volcano.sh -o jsonpath='{.spec.scope}'`
+	// says Cluster), and testdata/crds mirrors that scope. The YuniKorn kind
+	// is deliberately left uninstalled — the "CRD missing" spec above depends
+	// on it, and two specs at the bottom of this file use it to reach the
+	// kind-unavailable branches.
+	queueGVK := schema.GroupVersionKind{Group: "scheduling.volcano.sh", Version: "v1beta1", Kind: "Queue"}
+
+	r := func() *SchedulingPolicyReconciler {
+		return &SchedulingPolicyReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
+		}
+	}
+
+	blankQueue := func(name string) *unstructured.Unstructured {
+		q := &unstructured.Unstructured{}
+		q.SetGroupVersionKind(queueGVK)
+		q.SetName(name)
+		return q
+	}
+
+	deleteQueue := func(name string) { _ = k8sClient.Delete(ctx, blankQueue(name)) }
+
+	getQueue := func(name string) *unstructured.Unstructured {
+		GinkgoHelper()
+		q := blankQueue(name)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, q)).To(Succeed())
+		return q
+	}
+
+	queueGone := func(name string) bool {
+		return apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: name}, blankQueue(name)))
+	}
+
+	queueSpec := func(q *unstructured.Unstructured) map[string]any {
+		spec, _ := q.Object["spec"].(map[string]any)
+		return spec
+	}
+
+	// newPolicy creates a SchedulingPolicy naming a Volcano queue and nothing
+	// else — no priorityClass, so the PriorityClass claim is a no-op and every
+	// assertion below is about the Queue alone.
+	newPolicy := func(name, queueName string, weight int32) (*framev1beta1.SchedulingPolicy, reconcile.Request) {
+		w := weight
+		sp := &framev1beta1.SchedulingPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: framev1beta1.SchedulingPolicySpec{
+				Scheduler:   "volcano",
+				QueueName:   queueName,
+				QueueWeight: &w,
+			},
+		}
+		Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+		key := types.NamespacedName{Name: name, Namespace: ns}
+		DeferCleanup(func() {
+			fresh := &framev1beta1.SchedulingPolicy{}
+			if err := k8sClient.Get(ctx, key, fresh); err == nil {
+				fresh.Finalizers = nil
+				_ = k8sClient.Update(ctx, fresh)
+				_ = k8sClient.Delete(ctx, fresh)
+			}
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.SchedulingPolicy{}))
+			}, "5s").Should(BeTrue())
+		})
+		return sp, reconcile.Request{NamespacedName: key}
+	}
+
+	// newForeignQueue plants a Queue that belongs to somebody else, in the
+	// exact shape neura-ingest has on the live cluster right now: a Helm
+	// release's object, carrying Helm's ownership markers.
+	//
+	// weight is 100 and reclaimable false, which is what the policies below
+	// ask for too. That is deliberate, and it is the same reasoning as
+	// newForeignPriorityClass: if the spec differed, an unfixed controller
+	// would still take the object over, but the test could be read as
+	// catching a conflict rather than an adoption. Matching values make the
+	// takeover completely silent — which is what happened: neura-ingest kept
+	// its Helm labels and picked up frame.plume-labs.io/policy-name:
+	// neura-ingest with no error anywhere.
+	newForeignQueue := func(name string) *unstructured.Unstructured {
+		q := blankQueue(name)
+		q.SetLabels(map[string]string{
+			"app.kubernetes.io/managed-by": "Helm",
+			"app.kubernetes.io/instance":   "neura",
+			"helm.sh/chart":                "neura-0.1.0",
+		})
+		q.SetAnnotations(map[string]string{
+			"meta.helm.sh/release-name":      "neura",
+			"meta.helm.sh/release-namespace": "neura",
+		})
+		q.Object["spec"] = map[string]any{"weight": int64(100), "reclaimable": false}
+		Expect(k8sClient.Create(ctx, q)).To(Succeed())
+		DeferCleanup(func() { deleteQueue(name) })
+		return q
+	}
+
+	// startDeleting deletes the policy and reads back the copy the finalizer
+	// is holding, so reconcileDelete can be called on a genuinely deleting
+	// object rather than on a hand-built one.
+	startDeleting := func(sp *framev1beta1.SchedulingPolicy) *framev1beta1.SchedulingPolicy {
+		GinkgoHelper()
+		Expect(k8sClient.Delete(ctx, sp)).To(Succeed())
+		deleting := &framev1beta1.SchedulingPolicy{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), deleting)).To(Succeed())
+		Expect(deleting.DeletionTimestamp.IsZero()).To(BeFalse())
+		return deleting
+	}
+
+	Context("a Queue this policy did not create", func() {
+		const queueName = "foreign-ingest"
+
+		It("is refused, not adopted, and is still there unchanged afterwards", func() {
+			before := newForeignQueue(queueName)
+			sp, req := newPolicy("adopts-foreign-queue", queueName, 100)
+
+			// Twice: under the old ordering the first reconcile only added the
+			// finalizer and the second did the adoption.
+			_, err := r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The object itself first, field by field: "still there,
+			// unchanged" is the claim, and Frame's two policy labels appearing
+			// on somebody else's Queue is what adoption looks like from
+			// outside.
+			after := getQueue(queueName)
+			Expect(after.GetLabels()).NotTo(HaveKey(policyNameLabel))
+			Expect(after.GetLabels()).NotTo(HaveKey(policyNamespaceLabel))
+			Expect(after.GetLabels()).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "Helm"))
+			Expect(after.GetAnnotations()).To(HaveKeyWithValue("meta.helm.sh/release-name", "neura"))
+			Expect(queueSpec(after)).To(Equal(map[string]any{"weight": int64(100), "reclaimable": false}))
+			Expect(after.GetUID()).To(Equal(before.GetUID()))
+			Expect(after.GetResourceVersion()).To(Equal(before.GetResourceVersion()))
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+
+			// No finalizer: a refused policy holds no standing right to delete.
+			Expect(controllerutil.ContainsFinalizer(sp, schedulingPolicyFinalizer)).To(BeFalse())
+			Expect(sp.Status.OwnedQueue).To(BeEmpty())
+			Expect(sp.Status.OwnedQueueScheduler).To(BeEmpty())
+
+			// And the refusal is visible in status, not silent.
+			cond := findCondition(sp.Status.Conditions)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonQueueNotOwned))
+			Expect(cond.Message).To(ContainSubstring("Helm release neura/neura"))
+		})
+
+		It("survives the deletion of a policy that names it", func() {
+			// The live-cluster shape: a SchedulingPolicy written by the old
+			// build already carries the finalizer, and its status carries no
+			// ownership record because the old build never wrote one.
+			before := newForeignQueue(queueName)
+			sp, _ := newPolicy("deletes-foreign-queue", queueName, 100)
+			controllerutil.AddFinalizer(sp, schedulingPolicyFinalizer)
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(BeEmpty())
+
+			deleting := startDeleting(sp)
+			_, err := r().reconcileDelete(ctx, deleting)
+			Expect(err).NotTo(HaveOccurred())
+
+			after := getQueue(queueName)
+			Expect(after.GetUID()).To(Equal(before.GetUID()))
+			Expect(after.GetLabels()).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "Helm"))
+
+			// and the policy still finishes deleting — refusing must not wedge it.
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &framev1beta1.SchedulingPolicy{}))
+			}, "5s").Should(BeTrue())
+		})
+	})
+
+	Context("a Queue this policy did create", func() {
+		const queueName = "queue-owned-by-frame"
+
+		AfterEach(func() { deleteQueue(queueName) })
+
+		It("is created, recorded, and deleted with the policy", func() {
+			sp, req := newPolicy("owns-its-queue", queueName, 7)
+
+			_, err := r().Reconcile(ctx, req) // claim + finalizer
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r().Reconcile(ctx, req) // create the Queue
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(controllerutil.ContainsFinalizer(sp, schedulingPolicyFinalizer)).To(BeTrue())
+			Expect(sp.Status.OwnedQueue).To(Equal(queueName))
+			Expect(sp.Status.OwnedQueueScheduler).To(Equal("volcano"))
+			Expect(findCondition(sp.Status.Conditions).Reason).To(Equal("Applied"))
+
+			q := getQueue(queueName)
+			Expect(queueSpec(q)).To(HaveKeyWithValue("weight", int64(7)))
+			Expect(q.GetLabels()).To(HaveKeyWithValue(policyNameLabel, "owns-its-queue"))
+			Expect(q.GetLabels()).To(HaveKeyWithValue(policyNamespaceLabel, ns))
+
+			// and deleting the policy takes it away — the normal path must not
+			// have been broken by the refusal machinery.
+			deleting := startDeleting(sp)
+			_, err = r().reconcileDelete(ctx, deleting)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queueGone(queueName)).To(BeTrue())
+		})
+
+		It("is not deleted once it stops carrying this policy's marks", func() {
+			// The one case the record alone cannot see: our Queue was deleted
+			// out from under us and something else took the name. The record
+			// still says it is ours; the object says otherwise, and the object
+			// wins in the direction of not deleting.
+			sp, req := newPolicy("loses-its-marks", queueName, 7)
+			_, _ = r().Reconcile(ctx, req)
+			_, _ = r().Reconcile(ctx, req)
+			Expect(getQueue(queueName).GetLabels()).To(HaveKey(policyNameLabel))
+
+			stripped := getQueue(queueName)
+			stripped.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "somebody-else"})
+			Expect(k8sClient.Update(ctx, stripped)).To(Succeed())
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(Equal(queueName))
+			deleting := startDeleting(sp)
+			_, err := r().reconcileDelete(ctx, deleting)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(getQueue(queueName).GetUID()).To(Equal(stripped.GetUID()))
+		})
+	})
+
+	// The rename path gets four specs rather than one on purpose. It is the
+	// part of this change with no equivalent in the code it replaces — the old
+	// reconcileQueue never released anything, so every line here is new — and
+	// new code inside a fix is where the fix's own bug lives. Each spec pins a
+	// different half of claimQueue's ordering contract: check the new name
+	// free BEFORE releasing the old, release using the RECORD's scheduler
+	// rather than the spec's, and treat "no queue wanted" as a release rather
+	// than as nothing to do.
+	Context("renaming or dropping the queue a policy owns", func() {
+		const first = "renamer-first"
+		const second = "renamer-second"
+
+		AfterEach(func() {
+			deleteQueue(first)
+			deleteQueue(second)
+		})
+
+		// own drives a policy to steady state: Queue created, record written.
+		own := func(policy, queueName string) (*framev1beta1.SchedulingPolicy, reconcile.Request) {
+			GinkgoHelper()
+			sp, req := newPolicy(policy, queueName, 7)
+			_, err := r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(Equal(queueName))
+			Expect(getQueue(queueName).GetLabels()).To(HaveKeyWithValue(policyNameLabel, policy))
+			return sp, req
+		}
+
+		It("releases the old Queue and records the new one", func() {
+			sp, req := own("renames-its-queue", first)
+
+			sp.Spec.QueueName = second
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+
+			_, err := r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(Equal(second))
+			Expect(sp.Status.OwnedQueueScheduler).To(Equal("volcano"))
+			Expect(queueGone(first)).To(BeTrue())
+
+			// and the new name is actually built out on the next pass, rather
+			// than only recorded.
+			_, err = r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getQueue(second).GetLabels()).To(HaveKeyWithValue(policyNameLabel, "renames-its-queue"))
+		})
+
+		It("keeps the old Queue when the new name belongs to somebody else", func() {
+			// The ordering claim, stated as an outcome: the new name is
+			// checked free BEFORE the old one is released. Release-then-check
+			// would pass every other spec in this file and destroy a Queue
+			// here.
+			sp, req := own("renames-onto-foreign", first)
+			foreign := newForeignQueue(second)
+
+			sp.Spec.QueueName = second
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+
+			_, err := r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// The foreign Queue is untouched...
+			after := getQueue(second)
+			Expect(after.GetUID()).To(Equal(foreign.GetUID()))
+			Expect(after.GetResourceVersion()).To(Equal(foreign.GetResourceVersion()))
+			Expect(after.GetLabels()).NotTo(HaveKey(policyNameLabel))
+
+			// ...and so is the one this policy really owns, record included.
+			Expect(getQueue(first).GetLabels()).To(HaveKeyWithValue(policyNameLabel, "renames-onto-foreign"))
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(Equal(first))
+			Expect(findCondition(sp.Status.Conditions).Reason).To(Equal(reasonQueueNotOwned))
+		})
+
+		It("releases the Queue when spec.queueName is cleared", func() {
+			sp, req := own("clears-its-queue", first)
+
+			sp.Spec.QueueName = ""
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+
+			_, err := r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(queueGone(first)).To(BeTrue())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(BeEmpty())
+			Expect(sp.Status.OwnedQueueScheduler).To(BeEmpty())
+		})
+
+		It("releases the Volcano Queue when the scheduler moves to default", func() {
+			// spec.scheduler is now "default", which has no Queue kind at all.
+			// The release has to come off the RECORDED scheduler; a release
+			// that read spec.scheduler would resolve no kind and leak the
+			// Queue.
+			sp, req := own("drops-its-scheduler", first)
+
+			sp.Spec.Scheduler = "default"
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+
+			_, err := r().Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(queueGone(first)).To(BeTrue())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+			Expect(sp.Status.OwnedQueue).To(BeEmpty())
+		})
+	})
+
+	Context("a queue name the scheduler reserves", func() {
+		for _, reserved := range []string{"default", "root"} {
+			It("is refused, and is not deleted by any path: "+reserved, func() {
+				// Both names exist on the live cluster, created by Volcano and
+				// owned by nobody. "default" is the queue every PodGroup that
+				// names none lands in, and Volcano's own admission webhook
+				// refuses to delete it; "root" is the root of the hierarchy.
+				// Planted here with no Frame marks, as they are there.
+				planted := blankQueue(reserved)
+				planted.Object["spec"] = map[string]any{"weight": int64(1)}
+				Expect(k8sClient.Create(ctx, planted)).To(Succeed())
+				DeferCleanup(func() { deleteQueue(reserved) })
+
+				sp, req := newPolicy("names-reserved-"+reserved, reserved, 7)
+				_, err := r().Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = r().Reconcile(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), sp)).To(Succeed())
+				Expect(controllerutil.ContainsFinalizer(sp, schedulingPolicyFinalizer)).To(BeFalse())
+				Expect(sp.Status.OwnedQueue).To(BeEmpty())
+				cond := findCondition(sp.Status.Conditions)
+				Expect(cond).NotTo(BeNil())
+				Expect(cond.Reason).To(Equal(reasonQueueReserved))
+
+				// "whatever happens": even handed a forged ownership record
+				// and a finalizer, the delete path must not touch it.
+				controllerutil.AddFinalizer(sp, schedulingPolicyFinalizer)
+				Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+				deleting := startDeleting(sp)
+				deleting.Status.OwnedQueue = reserved
+				deleting.Status.OwnedQueueScheduler = "volcano"
+				_, err = r().reconcileDelete(ctx, deleting)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(getQueue(reserved).GetUID()).To(Equal(planted.GetUID()))
+			})
+		}
+	})
+
+	It("will not write to a Queue it has not recorded, whatever the spec says", func() {
+		// A direct call, because the only way to reach this state is to
+		// reorder Reconcile — which is exactly the change that would bring the
+		// bug back.
+		sp := &framev1beta1.SchedulingPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "unrecorded-queue", Namespace: ns},
+			Spec:       framev1beta1.SchedulingPolicySpec{Scheduler: "volcano", QueueName: "somebody-elses-queue"},
+		}
+		err := r().reconcileQueue(ctx, sp)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("refusing to write volcano Queue"))
+		Expect(queueGone("somebody-elses-queue")).To(BeTrue())
+	})
+
+	It("will not write to a Queue recorded under a different scheduler", func() {
+		// The name agrees and the scheduler does not. A guard that compared
+		// only the name would write a Volcano Queue on the strength of a
+		// YuniKorn record.
+		sp := &framev1beta1.SchedulingPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "cross-scheduler", Namespace: ns},
+			Spec:       framev1beta1.SchedulingPolicySpec{Scheduler: "volcano", QueueName: "cross-queue"},
+			Status: framev1beta1.SchedulingPolicyStatus{
+				OwnedQueue: "cross-queue", OwnedQueueScheduler: "yunikorn",
+			},
+		}
+		err := r().reconcileQueue(ctx, sp)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("refusing to write volcano Queue"))
+		Expect(queueGone("cross-queue")).To(BeTrue())
+	})
+
+	Context("an ownership record the cluster cannot resolve", func() {
+		const queueName = "unresolvable"
+
+		AfterEach(func() { deleteQueue(queueName) })
+
+		It("does not wedge deletion when the recorded kind is not installed", func() {
+			// yunikorn.apache.org has no CRD in this suite. reconcileDelete
+			// must finish anyway: a Delete that errors here leaves the
+			// finalizer on forever, over an object of a kind that cannot
+			// exist.
+			sp, _ := newPolicy("records-missing-kind", queueName, 7)
+			controllerutil.AddFinalizer(sp, schedulingPolicyFinalizer)
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+
+			deleting := startDeleting(sp)
+			deleting.Status.OwnedQueue = queueName
+			deleting.Status.OwnedQueueScheduler = "yunikorn"
+			_, err := r().reconcileDelete(ctx, deleting)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), &framev1beta1.SchedulingPolicy{}))
+			}, "5s").Should(BeTrue())
+		})
+
+		It("deletes nothing when the recorded scheduler has no Queue kind", func() {
+			// The discriminating half: a Volcano Queue really does sit at this
+			// name, and the record says the scheduler is "default", which owns
+			// no Queue kind. A release that fell back to spec.scheduler, or
+			// that guessed Volcano because Volcano is what is installed, would
+			// delete it.
+			planted := blankQueue(queueName)
+			planted.SetLabels(map[string]string{
+				policyNamespaceLabel: ns,
+				policyNameLabel:      "records-kindless-scheduler",
+			})
+			planted.Object["spec"] = map[string]any{"weight": int64(1)}
+			Expect(k8sClient.Create(ctx, planted)).To(Succeed())
+
+			sp, _ := newPolicy("records-kindless-scheduler", queueName, 7)
+			controllerutil.AddFinalizer(sp, schedulingPolicyFinalizer)
+			Expect(k8sClient.Update(ctx, sp)).To(Succeed())
+
+			deleting := startDeleting(sp)
+			deleting.Status.OwnedQueue = queueName
+			deleting.Status.OwnedQueueScheduler = "default"
+			_, err := r().reconcileDelete(ctx, deleting)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(getQueue(queueName).GetUID()).To(Equal(planted.GetUID()))
+		})
 	})
 })
 

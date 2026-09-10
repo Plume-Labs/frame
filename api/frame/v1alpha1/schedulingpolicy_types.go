@@ -108,6 +108,25 @@ type SchedulingPolicyStatus struct {
 	// +kubebuilder:validation:MaxLength=253
 	OwnedPriorityClass string `json:"ownedPriorityClass,omitempty"`
 
+	// OwnedQueue and OwnedQueueScheduler mirror v1beta1's fields of the same
+	// names: the cluster-scoped scheduler Queue this SchedulingPolicy created
+	// and the scheduler whose Queue kind it is. See the notes on
+	// v1beta1.SchedulingPolicyStatus.OwnedQueue and .OwnedQueueScheduler.
+	//
+	// Real status fields here rather than the annotation hatch, for exactly
+	// the reason spelled out on OwnedPriorityClass above: an annotation is
+	// writable by anyone holding patch on the CR, which is the namespaced
+	// right these records exist to keep away from a cluster-scoped delete.
+	// Carrying them at both versions also keeps the hub round trip lossless
+	// without a per-field exception in TestHubRoundTripIsLossless.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	OwnedQueue string `json:"ownedQueue,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	OwnedQueueScheduler string `json:"ownedQueueScheduler,omitempty"`
+
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 

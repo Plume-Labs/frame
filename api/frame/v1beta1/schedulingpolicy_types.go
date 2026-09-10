@@ -137,6 +137,46 @@ type SchedulingPolicyStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	OwnedPriorityClass string `json:"ownedPriorityClass,omitempty"`
+
+	// OwnedQueue is the name of the cluster-scoped scheduler Queue this
+	// SchedulingPolicy created, and the only one it is allowed to update or
+	// delete. Empty means this SchedulingPolicy owns no Queue, whatever
+	// spec.queueName says and whatever labels a Queue in the cluster happens
+	// to carry.
+	//
+	// It is the same record, for the same reason, as OwnedPriorityClass
+	// above: a Volcano Queue (scheduling.volcano.sh) is cluster-scoped, so a
+	// namespaced right to write a SchedulingPolicy naming one was a
+	// cluster-scoped create, update and delete on it. And the label check
+	// this record replaces is poisoned here too, and not by analogy: on the
+	// live cluster the Queue neura-ingest belongs to the Neura Helm release
+	// (meta.helm.sh/release-name: neura) and *also* carries
+	// frame.plume-labs.io/policy-name: neura-ingest, written while the old
+	// code adopted it. neura-high, created by kubectl apply, carries the same
+	// pair. Both would read as Frame's own under a label check.
+	//
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	OwnedQueue string `json:"ownedQueue,omitempty"`
+
+	// OwnedQueueScheduler names the scheduler whose Queue kind
+	// status.ownedQueue is an object of — the value spec.scheduler held when
+	// the claim was made.
+	//
+	// A Queue name alone does not identify an object the way a PriorityClass
+	// name does: PriorityClass is one fixed GroupKind, while "Queue" here is
+	// whichever of scheduling.volcano.sh or yunikorn.apache.org spec.scheduler
+	// selects. Recording only the name would mean that flipping spec.scheduler
+	// from volcano to yunikorn, keeping the name, sent the release at the
+	// wrong GroupKind — deleting nothing, and stranding the Volcano Queue this
+	// controller really did create.
+	//
+	// Not an enum, deliberately, though spec.scheduler is one: this is a
+	// record of what was claimed, and a status enum that later loses a value
+	// rejects writes to objects that are already stored.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	OwnedQueueScheduler string `json:"ownedQueueScheduler,omitempty"`
 }
 
 // This is the conversion hub and the storage version. The marker arrived here

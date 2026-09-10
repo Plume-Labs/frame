@@ -530,6 +530,8 @@ func (src *SchedulingPolicy) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.OwnedPriorityClass = src.Status.OwnedPriorityClass
+	dst.Status.OwnedQueue = src.Status.OwnedQueue
+	dst.Status.OwnedQueueScheduler = src.Status.OwnedQueueScheduler
 	dst.Status.Conditions = src.Status.Conditions
 
 	return nil
@@ -552,6 +554,8 @@ func (dst *SchedulingPolicy) ConvertFrom(srcRaw conversion.Hub) error {
 
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.OwnedPriorityClass = src.Status.OwnedPriorityClass
+	dst.Status.OwnedQueue = src.Status.OwnedQueue
+	dst.Status.OwnedQueueScheduler = src.Status.OwnedQueueScheduler
 	dst.Status.Conditions = src.Status.Conditions
 
 	return nil
