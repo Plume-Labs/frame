@@ -146,3 +146,27 @@ func TestPurgeKeepsRunningAndRecentTasks(t *testing.T) {
 		}
 	}
 }
+
+// A hijacked upgrade leaves 101 behind, which is below 200 and would read as
+// a failure under a plain 2xx test. Every shell that opened successfully would
+// be recorded as failed — the opposite of what the Tasks screen is for.
+func TestFinishTreats101AsASuccessfulSession(t *testing.T) {
+	rec, c := newRecorderFixture(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/neura/pods/api-0/exec", nil)
+	name := rec.Start(context.Background(),
+		Identity{User: "alice@example.com", Groups: []string{"admins"}}, req)
+	if name == "" {
+		t.Skip("Start does not yet record an exec upgrade; see Task 4")
+	}
+
+	rec.Finish(context.Background(), name, http.StatusSwitchingProtocols)
+
+	var task framev1beta1.FrameTask
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Name: name, Namespace: "frame-system"}, &task); err != nil {
+		t.Fatal(err)
+	}
+	if task.Status.Phase != framev1beta1.TaskPhaseSucceeded {
+		t.Fatalf("Phase = %q, want Succeeded — 101 is a session that opened", task.Status.Phase)
+	}
+}

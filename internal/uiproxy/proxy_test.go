@@ -1,13 +1,20 @@
 package uiproxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -19,19 +26,35 @@ type stubVerifier struct {
 
 func (s stubVerifier) Verify(context.Context, string) (Identity, error) { return s.id, s.err }
 
-// stubRecorder lets tests observe Start/Finish without a real client.
+// stubRecorder lets tests observe Start/Finish without a real client. The
+// mutex is not decoration: an upgraded request is closed from its own
+// goroutine after the client hangs up, so the test reads these fields while
+// the server may still be writing them.
 type stubRecorder struct {
+	mu        sync.Mutex
 	startName string
 
 	finishCalled bool
 	finishedCode int
 }
 
-func (s *stubRecorder) Start(context.Context, Identity, *http.Request) string { return s.startName }
+func (s *stubRecorder) Start(context.Context, Identity, *http.Request) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.startName
+}
 
 func (s *stubRecorder) Finish(_ context.Context, _ string, httpCode int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.finishCalled = true
 	s.finishedCode = httpCode
+}
+
+func (s *stubRecorder) finished() (bool, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.finishCalled, s.finishedCode
 }
 
 // panicTransport simulates a proxied call that never gets as far as writing
@@ -195,11 +218,12 @@ func TestFinishRunsAndReportsFailureWhenTheProxiedCallPanics(t *testing.T) {
 		p.ServeHTTP(httptest.NewRecorder(), req)
 	}()
 
-	if !rec.finishCalled {
+	called, code := rec.finished()
+	if !called {
 		t.Fatal("Finish was never called after the proxied call panicked")
 	}
-	if rec.finishedCode != http.StatusInternalServerError {
-		t.Fatalf("finishedCode = %d, want %d", rec.finishedCode, http.StatusInternalServerError)
+	if code != http.StatusInternalServerError {
+		t.Fatalf("finishedCode = %d, want %d", code, http.StatusInternalServerError)
 	}
 }
 
@@ -252,5 +276,165 @@ func TestUnauthorizedIsAMetav1Status(t *testing.T) {
 				t.Fatal("no message — the UI would show a bare status code")
 			}
 		})
+	}
+}
+
+// echoUpgrade is an upstream that accepts a protocol upgrade and echoes one
+// line back, the smallest thing that exercises the whole hijack path without
+// pulling in a WebSocket library. The framing does not matter — what is being
+// tested is that bytes flow in both directions after the 101.
+func echoUpgrade(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("the upstream's own writer is not an http.Hijacker")
+			return
+		}
+		conn, brw, err := hj.Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		resp := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+		if p := r.Header.Get("Sec-WebSocket-Protocol"); p != "" {
+			resp += "Sec-WebSocket-Protocol: " + p + "\r\n"
+		}
+		if _, err := brw.WriteString(resp + "\r\n"); err != nil {
+			return
+		}
+		if err := brw.Flush(); err != nil {
+			return
+		}
+		line, err := brw.ReadString('\n')
+		if err != nil {
+			return
+		}
+		_, _ = brw.WriteString("echo:" + line)
+		_ = brw.Flush()
+	}))
+}
+
+// dialUpgrade opens a raw connection to `addr` and performs a WebSocket-shaped
+// upgrade for `path`, returning the response and the buffered connection so
+// the caller can keep talking on it.
+func dialUpgrade(t *testing.T, addr, path string) (*http.Response, net.Conn, *bufio.Reader) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := "GET " + path + " HTTP/1.1\r\n" +
+		"Host: frame.test\r\n" +
+		"Authorization: Bearer good\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Upgrade: websocket\r\n\r\n"
+	if _, err := fmt.Fprint(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	res, err := http.ReadResponse(br, nil)
+	if err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	return res, conn, br
+}
+
+// The proxy must be able to carry a protocol upgrade, because a pod shell is
+// one and there is no second door.
+//
+// httputil.ReverseProxy type-asserts the ResponseWriter to http.Hijacker the
+// moment the upstream answers 101, and statusRecorder wraps that writer. Delete
+// statusRecorder.Hijack and this test reports 502 with a body reading
+// "can't switch protocols using non-Hijacker ResponseWriter type
+// *uiproxy.statusRecorder" — the exact failure the shipped code had, and the
+// same shape as the missing Flush before it.
+func TestCarriesAProtocolUpgradeThrough(t *testing.T) {
+	up := echoUpgrade(t)
+	defer up.Close()
+	p := newTestProxy(t, stubVerifier{id: Identity{User: "alice@example.com"}}, up.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	res, conn, br := dialUpgrade(t, strings.TrimPrefix(front.URL, "http://"),
+		"/api/v1/namespaces/neura/pods/api-0/exec")
+	defer func() { _ = conn.Close() }()
+
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("got %d (%s), want 101 — the upgrade never happened", res.StatusCode, body)
+	}
+	if _, err := fmt.Fprint(conn, "ping\n"); err != nil {
+		t.Fatal(err)
+	}
+	line, err := br.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "echo:ping\n" {
+		t.Fatalf("read %q after the upgrade, want %q", line, "echo:ping\n")
+	}
+}
+
+// ReverseProxy writes the 101 straight to the hijacked connection's
+// bufio.Writer and never calls WriteHeader, so the wrapper's `code` stays 0
+// unless Hijack sets it. 0 is what the deferred close in ServeHTTP turns into
+// a 500 — so without this the record of every successful shell would say the
+// server failed.
+func TestAnUpgradeIsRecordedAs101NotAsAServerError(t *testing.T) {
+	up := echoUpgrade(t)
+	defer up.Close()
+	u, err := url.Parse(up.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &stubRecorder{startName: "task-ws"}
+	p, err := New(Options{
+		Verifier: stubVerifier{id: Identity{User: "alice@example.com"}},
+		Recorder: rec,
+		Upstream: u,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Force the recorder on for this GET; Task 4 makes ServeHTTP decide
+		// this for itself.
+		r.Method = http.MethodPatch
+		p.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+
+	res, conn, _ := dialUpgrade(t, strings.TrimPrefix(front.URL, "http://"),
+		"/api/v1/namespaces/neura/pods/api-0/exec")
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %d, want 101", res.StatusCode)
+	}
+	_ = conn.Close()
+
+	// The record closes when the hijacked copy ends, which is after the client
+	// hangs up — give ServeHTTP a moment to return. Read through finished(),
+	// not the fields: this runs on the test goroutine while the server may
+	// still be writing them.
+	deadline := time.Now().Add(2 * time.Second)
+	var called bool
+	var code int
+	for time.Now().Before(deadline) {
+		if called, code = rec.finished(); called {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !called {
+		t.Fatal("the record was never closed after the upgraded connection ended")
+	}
+	if code != http.StatusSwitchingProtocols {
+		t.Fatalf("finishedCode = %d, want 101", code)
 	}
 }

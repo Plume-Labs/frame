@@ -121,7 +121,10 @@ func (t *TaskRecorder) Finish(ctx context.Context, name string, httpCode int) {
 		return
 	}
 	phase := framev1beta1.TaskPhaseSucceeded
-	if httpCode < 200 || httpCode >= 300 {
+	// 101 is what a hijacked upgrade leaves behind (statusRecorder.Hijack): the
+	// session opened. It is below 200, so a bare 2xx test would file every
+	// successful shell as a failure.
+	if httpCode != http.StatusSwitchingProtocols && (httpCode < 200 || httpCode >= 300) {
 		phase = framev1beta1.TaskPhaseFailed
 	}
 	task.Status.Phase = phase
