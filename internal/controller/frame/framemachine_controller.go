@@ -19,9 +19,11 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -90,8 +92,14 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
-	// Task 5 dispatches spec.powerRequest (Reset/ClearLog/SetIndicatorLED)
-	// through this call. It always reports "nothing to do" for now.
+	// Captured before runPowerRequest, which mutates fm.Status.LastPowerAction
+	// / LastPowerActionAt directly on fm: a patch captured after that
+	// mutation would diff against an already-mutated fm and silently write
+	// nothing for those fields. Reused across every branch below —
+	// including the one where the probe that follows then fails — so the
+	// power action is never lost even when the probe doesn't succeed.
+	patch := client.MergeFrom(fm.DeepCopy())
+
 	if _, err := r.runPowerRequest(ctx, &fm, rc); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -99,7 +107,6 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	snap, err := rc.Probe(ctx)
 	if err != nil {
 		reason := probeFailureReason(err)
-		patch := client.MergeFrom(fm.DeepCopy())
 		r.setCondition(&fm, metav1.ConditionFalse, reason, err.Error())
 		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
 			return ctrl.Result{}, perr
@@ -108,7 +115,6 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
-	patch := client.MergeFrom(fm.DeepCopy())
 	applySnapshot(&fm.Status, snap)
 	fm.Status.ObservedGeneration = fm.Generation
 	r.setCondition(&fm, metav1.ConditionTrue, "Probed", "")
@@ -119,16 +125,60 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 }
 
-// runPowerRequest executes a pending spec.powerRequest, when its
-// requestedAt is strictly later than status.lastPowerActionAt, and reports
-// whether it took an action.
+// runPowerRequest executes spec.powerRequest at most once. The guard is the
+// timestamp: acting on "newer than the last action" rather than on a desired
+// state is what stops the controller re-asserting a power state against
+// someone who pressed the physical button, and is what makes a restart
+// expressible at all — the state before and after is identical. The same
+// pattern restarts a Deployment in lot 2, by writing restartedAt.
 //
-// Task 5 owns the real dispatch (Reset/ClearLog/SetIndicatorLED, chosen by
-// spec.powerRequest.Action) and the requestedAt guard described on
-// PowerRequestSpec. This stub exists so Reconcile's call site and ordering
-// are fixed by this task, without taking on Task 5's scope.
-func (r *FrameMachineReconciler) runPowerRequest(_ context.Context, _ *framev1beta1.FrameMachine, _ redfish.Client) (bool, error) {
-	return false, nil
+// Returns true when it acted, so Reconcile knows the status carries a change
+// even if the probe that follows fails.
+func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev1beta1.FrameMachine, rc redfish.Client) (bool, error) {
+	req := fm.Spec.PowerRequest
+	if req == nil {
+		return false, nil
+	}
+	if last := fm.Status.LastPowerActionAt; last != nil && !req.RequestedAt.Time.After(last.Time) {
+		return false, nil
+	}
+
+	var err error
+	switch req.Action {
+	case framev1beta1.PowerActionOn:
+		err = rc.Reset(ctx, "On")
+	case framev1beta1.PowerActionGracefulShutdown:
+		err = rc.Reset(ctx, "GracefulShutdown")
+	case framev1beta1.PowerActionForceOff:
+		err = rc.Reset(ctx, "ForceOff")
+	case framev1beta1.PowerActionForceRestart:
+		err = rc.Reset(ctx, "ForceRestart")
+	case framev1beta1.PowerActionClearSEL:
+		err = rc.ClearLog(ctx)
+	case framev1beta1.PowerActionIndicatorLedOn:
+		err = rc.SetIndicatorLED(ctx, true)
+	case framev1beta1.PowerActionIndicatorLedOff:
+		err = rc.SetIndicatorLED(ctx, false)
+	default:
+		err = fmt.Errorf("unknown power action %q", req.Action)
+	}
+
+	// The timestamp advances whether or not the action succeeded. A failed
+	// action that left the timestamp behind would be retried on every
+	// reconcile, once a minute, forever — and "force off, repeatedly, until
+	// it works" is not a behaviour anyone asked for. The failure is reported
+	// on the condition instead.
+	now := metav1.Now()
+	fm.Status.LastPowerAction = string(req.Action)
+	fm.Status.LastPowerActionAt = &now
+
+	if err != nil {
+		r.Recorder.Event(fm, corev1.EventTypeWarning, "PowerActionFailed",
+			fmt.Sprintf("%s: %v", req.Action, err))
+		return true, nil
+	}
+	r.Recorder.Event(fm, corev1.EventTypeNormal, "PowerAction", string(req.Action))
+	return true, nil
 }
 
 // setCondition writes the Reachable condition via meta.SetStatusCondition

@@ -278,4 +278,105 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
 		Expect(meta.FindStatusCondition(got.Status.Conditions, "Reachable").Reason).To(Equal("ProbeFailed"))
 	})
+
+	It("executes a request whose timestamp is newer than the last action", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-pwr-creds"))).To(Succeed())
+		fm := newMachine("fm-pwr")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-pwr", Namespace: "default"}}
+
+		fm.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionGracefulShutdown,
+			RequestedAt: metav1.Now(),
+		}
+		Expect(k8sClient.Update(ctx, fm)).To(Succeed())
+
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.resets).To(Equal([]string{"GracefulShutdown"}))
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.LastPowerAction).To(Equal("GracefulShutdown"))
+		Expect(got.Status.LastPowerActionAt).NotTo(BeNil())
+	})
+
+	// The guard, and the reason the field is a timestamp rather than a desired
+	// state: a second reconcile of the same object must not shut the machine
+	// down twice.
+	It("does not repeat an action on the next reconcile", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-once-creds"))).To(Succeed())
+		fm := newMachine("fm-once")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-once", Namespace: "default"}}
+
+		fm.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionForceRestart,
+			RequestedAt: metav1.Now(),
+		}
+		Expect(k8sClient.Update(ctx, fm)).To(Succeed())
+
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(fake.resets).To(HaveLen(1))
+	})
+
+	It("ignores a request older than the last action it performed", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-stale-creds"))).To(Succeed())
+		fm := newMachine("fm-stale")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-stale", Namespace: "default"}}
+
+		now := metav1.Now()
+		earlier := metav1.NewTime(now.Add(-time.Hour))
+
+		var stored framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &stored)).To(Succeed())
+		stored.Status.LastPowerActionAt = &now
+		Expect(k8sClient.Status().Update(ctx, &stored)).To(Succeed())
+
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &stored)).To(Succeed())
+		stored.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionForceOff,
+			RequestedAt: earlier,
+		}
+		Expect(k8sClient.Update(ctx, &stored)).To(Succeed())
+
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.resets).To(BeEmpty())
+	})
+
+	It("routes the non-power actions to their own calls", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-led-creds"))).To(Succeed())
+		fm := newMachine("fm-led")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-led", Namespace: "default"}}
+
+		fm.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionIndicatorLedOn,
+			RequestedAt: metav1.Now(),
+		}
+		Expect(k8sClient.Update(ctx, fm)).To(Succeed())
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.ledCalls).To(Equal([]bool{true}))
+		Expect(fake.resets).To(BeEmpty())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		got.Spec.PowerRequest = &framev1beta1.PowerRequestSpec{
+			Action:      framev1beta1.PowerActionClearSEL,
+			RequestedAt: metav1.NewTime(time.Now().Add(time.Second)),
+		}
+		Expect(k8sClient.Update(ctx, &got)).To(Succeed())
+		_, err = r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.clearLog).To(Equal(1))
+	})
 })
