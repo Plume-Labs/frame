@@ -74,16 +74,27 @@ export function changedFieldPaths(before: unknown, after: unknown): string[] {
   return out.sort()
 }
 
-function truncate(s: string): string {
-  return s.length <= MAX_ACTION_LENGTH ? s : s.slice(0, MAX_ACTION_LENGTH)
-}
+const SEPARATOR = ': '
+
+/**
+ * The minimum characters guaranteed to "what changed", once truncation is
+ * needed.
+ *
+ * `FrameTask.ObjectRef` already carries kind, namespace and name as
+ * structured fields independently of `Action` — the head is the redundant
+ * half of the label. "What changed" exists nowhere else, so when the two
+ * can't both fit, the head gives way, not the body.
+ */
+const BODY_FLOOR = 60
 
 /**
  * The `X-Frame-Action` label for an edit.
  *
  * Three paths then a count: three is what fits alongside a namespaced name
- * inside the cap, and the count is more honest than a longer list truncated
- * mid-path.
+ * inside the cap in the common case, and the count is more honest than a
+ * longer list truncated mid-path. When a long namespace or resource name
+ * would otherwise crowd the fields out entirely, the head — not the body —
+ * is what gets truncated down to make room, per `BODY_FLOOR`.
  */
 export function editActionLabel(
   kind: string,
@@ -92,9 +103,20 @@ export function editActionLabel(
   paths: string[],
 ): string {
   const head = `edit ${kind.toLowerCase()} ${namespace}/${name}`
-  if (paths.length === 0) return truncate(`${head}: no field changed`)
-  const shown = paths.slice(0, 3)
-  const rest = paths.length - shown.length
-  const body = rest > 0 ? `${shown.join(', ')} +${rest} more` : shown.join(', ')
-  return truncate(`${head}: ${body}`)
+  const body = paths.length === 0
+    ? 'no field changed'
+    : (() => {
+        const shown = paths.slice(0, 3)
+        const rest = paths.length - shown.length
+        return rest > 0 ? `${shown.join(', ')} +${rest} more` : shown.join(', ')
+      })()
+
+  const full = `${head}${SEPARATOR}${body}`
+  if (full.length <= MAX_ACTION_LENGTH) return full
+
+  const maxHeadLength = Math.max(0, MAX_ACTION_LENGTH - SEPARATOR.length - BODY_FLOOR)
+  const truncatedHead = head.length > maxHeadLength ? head.slice(0, maxHeadLength) : head
+  const remainingForBody = Math.max(0, MAX_ACTION_LENGTH - SEPARATOR.length - truncatedHead.length)
+  const truncatedBody = body.length > remainingForBody ? body.slice(0, remainingForBody) : body
+  return `${truncatedHead}${SEPARATOR}${truncatedBody}`
 }
