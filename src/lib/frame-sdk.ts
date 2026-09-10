@@ -32,6 +32,7 @@ import {
 } from './workloads'
 import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
+import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -703,6 +704,23 @@ export function coreListPath(plural: string, ns?: string): string {
  */
 export function crdListPath(group: string, version: string, plural: string, ns?: string): string {
   return ns ? `/apis/${group}/${version}/namespaces/${ns}/${plural}` : `/apis/${group}/${version}/${plural}`
+}
+
+/** The list endpoint for FrameMachine CRs, for callers that want to watch it. */
+export function machinesPath(ns?: string): string {
+  return frameListPath('framemachines', ns)
+}
+
+/**
+ * The power write is an action stamped with the moment it was requested, not a
+ * desired state. A body carrying only the action would make a second press a
+ * no-op and a restart inexpressible; the controller acts only when this
+ * timestamp is newer than status.lastPowerActionAt.
+ */
+export function powerPatchBody(action: string): {
+  spec: { powerRequest: { action: string; requestedAt: string } }
+} {
+  return { spec: { powerRequest: { action, requestedAt: new Date().toISOString() } } }
 }
 
 function toK8sName(s: string): string {
@@ -3371,6 +3389,35 @@ class TalosClient {
   }
 }
 
+/**
+ * Reads FrameMachine inventory and writes power requests, mapping through
+ * `toMachine` (Task 7) rather than reshaping the CR here — every decision
+ * about what a reading means (staleness, sensor availability, severity)
+ * lives in `machines.ts`, which is the only place vitest can reach for it.
+ */
+class MachineClient {
+  constructor(private readonly ns?: string) {}
+
+  async list(): Promise<Machine[]> {
+    const res = await k8sFetch<ListResponse<MachineCR>>(machinesPath(this.ns))
+    return (res.items ?? []).map(toMachine).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** For `useLiveResource`, so the console watches the same collection it reads. */
+  watchPath(): string {
+    return machinesPath(this.ns)
+  }
+
+  async power(machine: Machine, action: string): Promise<void> {
+    await k8sFetch<undefined>(`${machinesPath(machine.namespace)}/${machine.name}`, {
+      action: powerActionLabel(action, machine.name),
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: powerPatchBody(action),
+    })
+  }
+}
+
 /** A FrameUser CR as the apiserver returns it — the shape `src/lib/accounts.ts` reshapes into `Account`. */
 export interface FrameUserCR {
   metadata: { name: string }
@@ -3464,6 +3511,7 @@ export class FrameClient {
   public readonly talos: TalosClient
   public readonly users: UserClient
   public readonly workloads: WorkloadClient
+  public readonly machines: MachineClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -3475,6 +3523,7 @@ export class FrameClient {
     this.talos     = new TalosClient(opts.namespace)
     this.users     = new UserClient()
     this.workloads = new WorkloadClient()
+    this.machines  = new MachineClient(opts.namespace)
   }
 
   async health(): Promise<HealthStatus> {

@@ -4,12 +4,15 @@ import {
   __testing,
   createFrameClient,
   FrameAPIError,
+  machinesPath,
+  powerPatchBody,
   projectToFull,
   workloadWatchPaths,
   type MetricSeries,
 } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
+import type { Machine } from './machines'
 // Raw source, for the structural guard at the bottom of this file.
 import frameSdkSource from './frame-sdk.ts?raw'
 
@@ -1165,5 +1168,119 @@ describe('workloadWatchPaths', () => {
       '/apis/batch/v1/jobs',
     ])
     expect(paths).not.toContain('/api/v1/pods')
+  })
+})
+
+// The brief for this client's test read `machinesPath()` (no namespace) as
+// `/apis/frame.plume-labs.io/v1beta1/framemachines` — the cluster-wide list
+// form. That contradicts both this file's own `frameListPath`/`apiBase`
+// convention (every other resource — framenodes, framejobs,
+// schedulingpolicies — resolves a bare call through `frameNs()` to the
+// configured default namespace, never to an all-namespaces list) and the
+// FrameMachine CRD itself (`scope: Namespaced`,
+// config/crd/bases/frame.plume-labs.io_framemachines.yaml). `machinesPath`
+// is implemented exactly as the brief's own Step 4 snippet specifies —
+// `frameListPath('framemachines', ns)` — so these tests assert what that
+// produces, not the brief's Step 2 literal.
+describe('machinesPath', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('resolves a bare call through the configured Frame namespace, like every other Frame CR list', () => {
+    stubBrowser()
+    expect(machinesPath()).toBe('/apis/frame.plume-labs.io/v1beta1/namespaces/default/framemachines')
+  })
+
+  it('targets an explicit namespace without touching window, for a write against one machine', () => {
+    expect(machinesPath('team-a')).toBe('/apis/frame.plume-labs.io/v1beta1/namespaces/team-a/framemachines')
+  })
+})
+
+describe('powerPatchBody', () => {
+  // The write is a timestamp, not a desired state — a body carrying only the
+  // action would make a second press a no-op, and a restart inexpressible.
+  it('builds a patch carrying both the action and the moment it was asked for', () => {
+    const before = Date.now()
+    const body = powerPatchBody('ForceRestart')
+    const at = Date.parse(body.spec.powerRequest.requestedAt)
+    expect(body.spec.powerRequest.action).toBe('ForceRestart')
+    expect(at).toBeGreaterThanOrEqual(before)
+    expect(at).toBeLessThanOrEqual(Date.now())
+  })
+})
+
+describe('MachineClient', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('lists machines mapped through toMachine, sorted by name', async () => {
+    stubBrowser()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({
+        items: [
+          { metadata: { name: 'w2', namespace: 'default' } },
+          { metadata: { name: 'w10', namespace: 'default' } },
+          { metadata: { name: 'w1', namespace: 'default' } },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )))
+
+    const machines = await createFrameClient().machines.list()
+
+    expect(machines.map((m) => m.name)).toEqual(['w1', 'w10', 'w2'])
+    // toMachine ran: a field it derives (not present on the wire) is set.
+    expect(machines[0].reachable).toBe(false)
+  })
+
+  it('watches the same collection it reads, for useLiveResource', () => {
+    stubBrowser()
+    expect(createFrameClient().machines.watchPath()).toBe(machinesPath())
+  })
+
+  it('writes the power request as a merge-patch, with the action bounded and dated through machines.ts', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    const machine = { name: 'ml350-g9', namespace: 'default' } as Machine
+    await createFrameClient().machines.power(machine, 'ForceRestart')
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe(
+      '/apis/frame.plume-labs.io/v1beta1/namespaces/default/framemachines/ml350-g9',
+    )
+    expect(calls[0].init?.method).toBe('PATCH')
+    const headers = calls[0].init?.headers as Record<string, string>
+    expect(headers['Content-Type']).toBe('application/merge-patch+json')
+    expect(headers['X-Frame-Action']).toBe('power: ForceRestart ml350-g9')
+
+    const body = JSON.parse(String(calls[0].init?.body)) as {
+      spec: { powerRequest: { action: string; requestedAt: string } }
+    }
+    expect(body.spec.powerRequest.action).toBe('ForceRestart')
+    expect(Date.parse(body.spec.powerRequest.requestedAt)).not.toBeNaN()
+  })
+
+  // The action header is capped at MAX_ACTION_LENGTH by `powerActionLabel`
+  // (machines.ts) before it ever reaches `k8sFetch`. Past that cap the
+  // uiproxy's FrameTask create is rejected outright and the write still
+  // succeeds — so the record of who asked for it disappears silently. This
+  // proves the cap is actually wired to this call site, not just present in
+  // machines.ts and unused here.
+  it('bounds the action header instead of silently losing the audit record on a long name', async () => {
+    stubBrowser()
+    const calls: Array<{ init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    const machine = { name: 'm'.repeat(400), namespace: 'default' } as Machine
+    await createFrameClient().machines.power(machine, 'ForceOff')
+
+    const headers = calls[0].init?.headers as Record<string, string>
+    expect(headers['X-Frame-Action'].length).toBe(MAX_ACTION_LENGTH)
   })
 })
