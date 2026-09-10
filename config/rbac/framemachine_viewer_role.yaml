@@ -1,9 +1,17 @@
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants read-only access to FrameMachine resources for monitoring and audit purposes.
+# This role is intended for users who need visibility into machines without
+# permissions to modify them.
+
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: frame
     app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: viewer
   name: framemachine-viewer-role
 rules:
 - apiGroups:
