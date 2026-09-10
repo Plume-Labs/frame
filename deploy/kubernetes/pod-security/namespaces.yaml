@@ -1,0 +1,114 @@
+# Pod Security Admission on the application namespaces.
+#
+# This exists to earn back one RBAC grant. `patch` on apps/deployments and
+# apps/statefulsets was removed on 2026-08-10 (see
+# ../base/rbac.yaml) because patching a pod template to add
+# `securityContext.privileged: true` and a `hostPath: /` volume is root on the
+# node, and nothing on this cluster refused such a pod. RBAC cannot bound a
+# patch to one JSON path, so the only way to hold "may restart a deployment"
+# without also holding "may take the node" is to make the second one fail at
+# admission. That is what `baseline` does.
+#
+# ── WHICH NAMESPACES ARE HERE, AND WHICH ARE DELIBERATELY NOT ────────────────
+#
+# Only application namespaces. Infrastructure namespaces are absent because
+# their workloads legitimately need what `baseline` forbids: kube-system runs
+# the node-tuning agent with hostPID and six host-network/host-path
+# DaemonSets, monitoring runs node-exporter on hostPath /proc, alluxio mounts
+# the NVMe device, ptp needs hostNetwork, cilium is the CNI, and rook-ceph,
+# gpu-operator, node-feature-discovery, velero, falco, tetragon and
+# checkpoint-system all ship privileged pods from their own charts. Labelling
+# any of them would refuse their pods at the next restart and take the cluster
+# apart one node at a time.
+#
+# Absence here is not a gap. The RoleBinding that grants restart and scale
+# (../base/rbac-workload-operator.yaml) is bound namespace by namespace into
+# exactly this list, so a namespace that is not labelled is also not granted —
+# it stays as operable from the console as it is today, which is not at all.
+#
+# ── VERSION PIN ──────────────────────────────────────────────────────────────
+#
+# `*-version: v1.29` rather than the default `latest`, so that upgrading the
+# cluster cannot silently tighten what is admitted. v1.29 is `Chart.yaml`'s own
+# `kubeVersion` floor (">=1.29.0-0"), so it can only ever be at or below the
+# running version — a pin above it would be ignored with a warning. `baseline`
+# has been stable since 1.25; there is no behaviour being given up here.
+#
+# ── ORDER ────────────────────────────────────────────────────────────────────
+#
+# `warn` and `audit` only, on purpose, until the violations have been read.
+# Enforcing does not evict a running pod; it refuses the next admission — so a
+# workload that has always violated the policy keeps running and fails the next
+# time it restarts, which is during an incident rather than during this change.
+# `enforce` is added in a second commit, after `kubectl label
+# --dry-run=server` has been run against every namespace below and come back
+# clean. See docs/deployment.md, "Turning Pod Security on".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: default
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: inference
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-batch
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-database
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-inference
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neura-training
+  labels:
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/warn-version: v1.29
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/audit-version: v1.29
