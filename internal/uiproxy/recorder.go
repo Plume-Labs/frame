@@ -53,7 +53,10 @@ func verbFor(method string) string {
 //
 // A create has no name in its path; the record still needs one field to
 // print, so it gets "-".
-func parsePath(p string) (framev1beta1.ObjectRef, string, bool) {
+//
+// It used to return the resource as a second value, which every caller
+// discarded — the reference already carries it.
+func parsePath(p string) (framev1beta1.ObjectRef, bool) {
 	seg := strings.Split(strings.Trim(p, "/"), "/")
 	var ref framev1beta1.ObjectRef
 	var rest []string
@@ -64,26 +67,29 @@ func parsePath(p string) (framev1beta1.ObjectRef, string, bool) {
 		ref.Group = seg[1]
 		rest = seg[3:]
 	default:
-		return framev1beta1.ObjectRef{}, "", false
+		return framev1beta1.ObjectRef{}, false
 	}
 	if len(rest) >= 2 && rest[0] == "namespaces" && len(rest) > 2 {
 		ref.Namespace = rest[1]
 		rest = rest[2:]
 	}
 	if len(rest) == 0 {
-		return framev1beta1.ObjectRef{}, "", false
+		return framev1beta1.ObjectRef{}, false
 	}
 	ref.Resource = rest[0]
 	ref.Name = "-"
 	if len(rest) >= 2 {
 		ref.Name = rest[1]
 	}
-	return ref, rest[0], true
+	if len(rest) >= 3 {
+		ref.Subresource = rest[2]
+	}
+	return ref, true
 }
 
 func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) string {
 	verb := verbFor(r.Method)
-	ref, _, ok := parsePath(r.URL.Path)
+	ref, ok := parsePath(r.URL.Path)
 	if verb == "" || !ok {
 		return ""
 	}
