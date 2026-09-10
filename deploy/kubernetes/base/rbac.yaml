@@ -36,6 +36,25 @@ rules:
   - apiGroups: [apps]
     resources: [deployments, statefulsets]
     verbs: [get, list, watch]
+  # The Workloads tree: namespace → controller → pods — frame-sdk.ts
+  # WorkloadClient.tree(), src/components/workloads/WorkloadsView.tsx.
+  # `deployments` and `statefulsets` above are already granted; these are the
+  # other two kinds the tree shows.
+  #
+  # `replicasets` is the same call site and is not optional decoration: a
+  # Deployment's pods are owned by a ReplicaSet, never by the Deployment, so
+  # without reading the ReplicaSet's ownerReferences the tree cannot attach a
+  # pod to the Deployment that made it. The alternative — stripping the
+  # pod-template hash off the ReplicaSet's name — is a guess that puts pods
+  # under the wrong controller for any Deployment whose own name ends in
+  # something hash-shaped.
+  - apiGroups: [apps]
+    resources: [daemonsets, replicasets]
+    verbs: [get, list, watch]
+  # Jobs in the same tree — frame-sdk.ts WorkloadClient.tree().
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
   # frame-sdk.ts:1123, :1125 — ClusterStorageView / OverviewView / ResilienceView
   - apiGroups: [ceph.rook.io]
     resources: [cephclusters, cephblockpools]
@@ -165,6 +184,27 @@ rules:
   - apiGroups: [""]
     resources: [pods/eviction]
     verbs: [create]
+  # Pod logs (Workloads → Logs), including ?previous=true for the instance
+  # that crash-looped — frame-sdk.ts WorkloadClient.logs().
+  #
+  # Operator, not viewer, and that is a decision rather than an oversight: a
+  # log is the most likely place for a credential to be printed in plain text,
+  # and reads leave no FrameTask — the recorder ignores them by design, so
+  # there will be no record that anyone read one. The mitigation is this tier
+  # boundary, not the audit trail. Moving it down to the viewer role is one
+  # line if that judgement changes.
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # Delete a pod (Workloads → Delete pod) — frame-sdk.ts
+  # WorkloadClient.deletePod(). Distinct from the pods/eviction grant above:
+  # eviction honours PodDisruptionBudgets and is what a drain uses, while this
+  # is the deliberate "restart this one pod now" a person asks for from the
+  # pod's own panel. The console names the difference in the confirmation —
+  # under a controller the pod comes back, on a bare pod it does not.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
   # frame-sdk.ts:2275-2276 — ApplicationClient.list().
   #
   # `patch` REMOVED 2026-08-10. It is the single grant that turned the
@@ -191,15 +231,50 @@ rules:
   # The safe way to earn it back instead is PodSecurity `baseline` or
   # `restricted` enforced on every namespace, which blocks the privileged-pod
   # payload — see the 2026-08-09 security review, C1 fix 4.
+  #
+  # 2026-09-09, lot 2: the note above still stands for this ClusterRole, and
+  # this is where the fix landed instead.
+  #
+  # Restart and scale are granted, but not here and not cluster-wide: a
+  # `cluster-control-workload-operator` ClusterRole in
+  # rbac-workload-operator.yaml, bound by a RoleBinding into each namespace
+  # that carries `pod-security.kubernetes.io/enforce: baseline`
+  # (deploy/kubernetes/pod-security/namespaces.yaml). That is the "safe way to
+  # earn it back" this comment named: the privileged-pod payload is refused at
+  # admission in exactly the namespaces where the patch is allowed.
+  #
+  # It is not labelled with a tier, so the aggregation does not pick it up. A
+  # tier label there would make it cluster-wide again and would reach
+  # rook-ceph, kube-system and monitoring, which are deliberately unlabelled
+  # because Ceph, the node-tuning agent and node-exporter need privileged pods.
+  # test/manifests/rbac_workload_operator_test.go asserts both halves.
   - apiGroups: [apps]
     resources: [deployments, statefulsets]
     verbs: [get, list, watch]
-  # Scale button — frame-sdk.ts:2332-2339. The `/scale` subresource can only
-  # change the replica count, so unlike a full patch it cannot touch the pod
-  # template. This is the reason the two are split.
+  # `deployments/scale` and `statefulsets/scale` REMOVED 2026-09-09, lot 2, and
+  # moved to rbac-workload-operator.yaml alongside the Restart patch.
+  #
+  # Not because scaling is dangerous — the `/scale` subresource can only change
+  # a replica count and cannot touch a pod template, which is why the two used
+  # to be split. It moves because the spec requires restart and scale to behave
+  # the same way from the screen: both available on application workloads, both
+  # 403 on infrastructure ones. Leaving scale cluster-wide would give the
+  # Workloads panel two buttons with two different reachs and no way for the UI
+  # to explain which is which.
+  #
+  # The visible cost: scaling anything in an unlabelled namespace (rook-ceph,
+  # monitoring, kube-system) now 403s where it used to work. `kubectl scale`
+  # still does it for anyone with a real kubeconfig.
+  # The Workloads tree — frame-sdk.ts WorkloadClient.tree(). Same call site as
+  # the identical rules in cluster-control-viewer above; duplicated here for
+  # the same reason the core reads are, and a duplicate rule in an aggregated
+  # ClusterRole is a union that changes nobody's permissions.
   - apiGroups: [apps]
-    resources: [deployments/scale, statefulsets/scale]
-    verbs: [patch]
+    resources: [daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
   - apiGroups: [ceph.rook.io]
     resources: [cephclusters, cephblockpools]
     verbs: [get, list, watch]
@@ -261,6 +336,75 @@ rules:
   #     namespaced Roles in `deploy/kubernetes/containment/`, cutting the
   #     blast radius from every pod in the cluster to six observability
   #     namespaces (read) and `monitoring` alone (POST/DELETE)
+---
+# Role 3: admin — the one thing the console does cluster-wide that an operator
+# must not.
+#
+# New in lot 2 (2026-09-09). Until now nothing in this file carried
+# `tier: admin`: the `frame-admin` aggregated ClusterRole
+# (rbac-tier-bindings.yaml) selects viewer, editor and admin, and the admin
+# tier was satisfied only by the twenty-seven per-kind Frame CRD roles in
+# config/rbac. These are console grants on core and apps kinds, so they belong
+# here beside the viewer and operator roles, not in config/rbac, which is
+# controller-gen's and per-kind.
+#
+# It holds `pods/exec` and nothing else. The YAML editor's `update`/`patch` is
+# NOT here — see the tombstone at the end of this role.
+#
+# Same discipline as the two roles above: every rule names its call site in
+# `src/`.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-control-admin
+  labels:
+    rbac.frame.plume-labs.io/tier: admin
+rules:
+  # An interactive shell (Workloads → Terminal) —
+  # src/components/workloads/TerminalTab.tsx, over the URL built by execUrl()
+  # in src/lib/exec-protocol.ts.
+  #
+  # `create` is the verb the apiserver authorizes for pods/exec whatever HTTP
+  # method carries the request; a browser opens it as a WebSocket GET, and
+  # frame-uiproxy records it as a create for the same reason.
+  #
+  # Admin only, per the decision that opened the lot's design. A shell is
+  # every permission the container's own ServiceAccount holds, plus whatever is
+  # on its filesystem, and the session is recorded but its *contents* are not:
+  # keystroke recording was considered and rejected, because it would capture
+  # every secret typed or displayed and make the audit trail itself a sensitive
+  # store. The terminal tab says so where the person opening the session can
+  # read it.
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  #
+  # The YAML editor's `update`/`patch` on pods, deployments, statefulsets,
+  # daemonsets and jobs is deliberately NOT in this role, and this is the whole
+  # reason the tier tests assert its absence.
+  #
+  # Cluster-wide, it is the same escalation as the Deployment patch removed on
+  # 2026-08-10, through a different door: an admin writes
+  # `securityContext.privileged: true` and a `hostPath: /` volume into a pod
+  # template in a namespace where nothing refuses it, and holds node root. That
+  # this programme earns a privileged grant with Pod Security rather than
+  # accepting it is a principle, not a rule about one button, so the editor is
+  # bounded exactly as restart and scale are: a namespaced ClusterRole in
+  # rbac-workload-operator.yaml, bound only into the namespaces enforcing
+  # `baseline`.
+  #
+  # `pods/exec` stays cluster-wide, because a shell creates no pod: bounding it
+  # to the enforced namespaces would remove a capability without closing
+  # anything. That is not a claim that it is harmless — a shell *inherits* the
+  # target pod's privilege, and exec into one of the deliberately privileged
+  # pods in an exempt namespace (Ceph, the node-tuning agent, the Talos
+  # tooling) is root on the node. Hence admin-only, and hence every session is
+  # recorded.
+  #
+  # Also deliberately absent: `create` and `delete` on those kinds anywhere.
+  # Creating a resource from the console and deleting a controller are both out
+  # of scope for this lot (the spec says so), and a verb granted before a call
+  # site exists is exactly what the 2026-08-10 audit removed from this file.
 ---
 # The pod ServiceAccount no longer holds cluster-control-viewer or
 # cluster-control-operator directly (those ClusterRoleBindings are gone — the

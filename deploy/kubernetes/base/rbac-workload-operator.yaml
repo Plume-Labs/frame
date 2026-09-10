@@ -1,0 +1,314 @@
+# Restart, scale and the manifest editor: granted only where a privileged pod
+# is refused.
+#
+# ── WHY THIS FILE EXISTS AT ALL ──────────────────────────────────────────────
+#
+# `patch` on apps/deployments was removed from base/rbac.yaml on 2026-08-10 as
+# "the single grant that turned the unauthenticated UI into cluster-admin":
+# patching a pod template to add `securityContext.privileged: true` and a
+# `hostPath: /` volume is root on the node, and RBAC cannot bound a patch to
+# one JSON path, so "may set the restartedAt annotation" and "may take the
+# node" are the same grant.
+#
+# That comment named the way to earn it back — enforce Pod Security — and this
+# lot took it. deploy/kubernetes/pod-security/namespaces.yaml labels the
+# application namespaces `pod-security.kubernetes.io/enforce: baseline`, which
+# refuses exactly that payload at admission. The grants below go into those
+# namespaces and no others.
+#
+# The YAML editor's `update`/`patch` on the same kinds is here for the same
+# reason and not as an afterthought: cluster-wide, it is the identical
+# escalation through a different door — an admin writing `privileged: true`
+# with a `hostPath: /` into a pod template in an exempt namespace holds node
+# root just as surely. The principle this programme settled on is that a
+# privileged grant is earned with Pod Security rather than accepted, and that
+# principle does not stop at the operator tier.
+#
+# `pods/exec` is NOT here, and that is not an oversight: a shell creates no pod,
+# so binding it per namespace would close nothing. It inherits the target pod's
+# privilege instead — exec into a privileged pod in an exempt namespace is root
+# on the node — which is why it is admin-only and recorded, not why it is safe.
+# It stays cluster-wide in base/rbac.yaml's cluster-control-admin.
+#
+# The filename says "operator" and the file holds an admin role too. It is not
+# renamed because fifteen references and a kustomization entry point at it;
+# read it as "the workload grants", which is what its two roles are.
+#
+# ── TWO ROLES, ONE MECHANISM ─────────────────────────────────────────────────
+#
+# Restart and scale are an operator action; the manifest editor is admin-only.
+# A RoleBinding carries one roleRef and one subject list, so keeping that tier
+# split means two ClusterRoles and two sets of bindings. Collapsing them into
+# one would either hand every operator a manifest editor or take restart away
+# from operators; neither is what anyone decided.
+#
+# ── WHY IT IS SHAPED UNLIKE EVERYTHING ELSE IN THIS DIRECTORY ────────────────
+#
+# Every other console grant is a ClusterRole carrying
+# `rbac.frame.plume-labs.io/tier`, aggregated into frame-viewer/-editor/-admin
+# and therefore cluster-wide. This one carries **no tier label** and is reached
+# only through the RoleBindings below.
+#
+# It has to be. Pod Security is enforced on the application namespaces only —
+# rook-ceph, kube-system, monitoring, alluxio, ptp, cilium, gpu-operator,
+# node-feature-discovery, velero, falco, tetragon and checkpoint-system all run
+# privileged pods legitimately and cannot be labelled without breaking the
+# cluster. A cluster-wide grant would therefore reach precisely the namespaces
+# where nothing refuses the payload, which is the entire hole. The namespacing
+# is not tidiness; it is the control.
+#
+# Consequence, and it is deliberate: restart and scale work on application
+# workloads and 403 on infrastructure ones. The Workloads panel says so rather
+# than offering a button that fails (src/lib/workloads.ts,
+# OPERABLE_NAMESPACES).
+#
+# ── KEEPING THE TWO LISTS IN STEP ────────────────────────────────────────────
+#
+# The namespaces below must equal the namespaces in
+# ../pod-security/namespaces.yaml — for both binding sets. Adding one here
+# without labelling it hands back the escalation; labelling one there without a
+# binding here leaves a Restart button, or a Save button, that 403s.
+# test/manifests/rbac_workload_operator_test.go parses both files and fails on
+# either mismatch, and src/lib/workloads.test.ts does the same for the UI's
+# copy.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-control-workload-operator
+  # No `rbac.frame.plume-labs.io/tier` label, on purpose. See above. A tier
+  # label here is a one-line reintroduction of the 2026-08-10 escalation.
+rules:
+  # Rollout restart (Workloads → Restart, and ApplicationsView's Restart
+  # button, dead since 2026-08-10) — frame-sdk.ts WorkloadClient.restart() and
+  # ApplicationClient.restart(). Bumps the pod template's restartedAt
+  # annotation, so the controller's own update strategy is respected.
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [patch]
+  # Scale (Workloads → Scale, and ApplicationsView) — frame-sdk.ts
+  # WorkloadClient.scale() and ApplicationClient.scale(). The subresource can
+  # only change a replica count; it is here rather than in the tier role so
+  # that scale and restart reach exactly the same namespaces.
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [patch]
+  # Deliberately absent: daemonsets (nothing restarts one from the console —
+  # the panel offers Restart only for a Deployment or StatefulSet controller),
+  # any `delete`, any `update`, and every core resource. Pod delete stays in
+  # cluster-control-operator, where it is a pod-scoped action rather than a
+  # pod-template one. The editor's verbs are in the admin role below, not here:
+  # an operator restarts, an admin rewrites.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-control-workload-admin
+  # No `rbac.frame.plume-labs.io/tier` label either, and for the same reason:
+  # aggregated, this is cluster-wide `update` on every pod template on the
+  # cluster, which is node root in any namespace Pod Security does not cover.
+rules:
+  # The YAML editor (Workloads → YAML) — frame-sdk.ts
+  # WorkloadClient.applyManifest(), which PUTs the edited manifest carrying the
+  # resourceVersion it read.
+  #
+  # Bounded twice over. By kind: exactly the five the Workloads tree shows, so
+  # "edit any resource" — every Secret, every ClusterRole, every CRD — is not
+  # what this grants, and every rule still names a call site. And by namespace:
+  # the RoleBindings below reach only the namespaces enforcing `baseline`.
+  #
+  # `update` is the verb the editor uses (it sends a whole object); `patch` is
+  # granted beside it because an admin who could rewrite a workload but not
+  # restart it would be a strange tier, and both arrive at the same five kinds.
+  #
+  # The read is NOT bounded and is not here: `get` on these kinds is already in
+  # cluster-control-viewer, cluster-wide, and stays that way. The console can
+  # show any workload's YAML anywhere the tree shows the workload; it can save
+  # only where the policy is enforced. src/components/workloads/YamlTab.tsx
+  # disables the Save button — not the tab — outside those namespaces.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [update, patch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [update, patch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: default
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: inference
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-batch
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-database
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-inference
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-operator
+  namespace: neura-training
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
+subjects:
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+# The editor's bindings. `frame:admins` only — the tier split the two roles
+# exist to preserve. An operator restarts and scales here; an admin also
+# rewrites.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: default
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: inference
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: neura
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: neura-batch
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: neura-database
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: neura-inference
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-workload-admin
+  namespace: neura-training
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
+subjects:
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io

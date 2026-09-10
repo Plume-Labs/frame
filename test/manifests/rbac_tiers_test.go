@@ -25,11 +25,18 @@ func tierRoleFiles(t *testing.T) []string {
 // and was left both unbound and unlabelled, so the aggregation picked up the
 // viewer role and the 27 per-kind CRD roles and nothing else. Cordon — the
 // lot's headline example — 403'd for admins.
+// `deployments/scale`/`statefulsets/scale` patch used to be here — cluster-wide
+// on cluster-control-operator, aggregated into frame-editor. Lot 2 (2026-09-09)
+// moved it out: cluster-wide it is the same pod-template escalation the
+// 2026-08-10 removal closed for the full patch, through the `/scale`
+// subresource instead. It is now a namespaced grant in
+// rbac-workload-operator.yaml, bound only into the namespaces enforcing Pod
+// Security `baseline` — see TestWorkloadRolesAreUnaggregatedAndNarrow (grants
+// it on the namespaced role) and TestWorkloadWritesAreNotAggregatedIntoAnyTier
+// (asserts it is absent from every aggregated tier, this one included).
 var consoleWrites = []Access{
 	{Group: "", Resource: "nodes", Verb: "patch", Why: "cordon/uncordon, frame-sdk.ts:1036"},
 	{Group: "", Resource: "pods/eviction", Verb: "create", Why: "drain, frame-sdk.ts:1082"},
-	{Group: "apps", Resource: "deployments/scale", Verb: "patch", Why: "Scale button, frame-sdk.ts:2332"},
-	{Group: "apps", Resource: "statefulsets/scale", Verb: "patch", Why: "Scale button, frame-sdk.ts:2332"},
 	{Group: "scheduling.volcano.sh", Resource: "queues", Verb: "patch", Why: "share-weight tuning, frame-sdk.ts:1406"},
 	{Group: "bus.volcano.sh", Resource: "commands", Verb: "create", Why: "queue open/close, frame-sdk.ts:1433"},
 	{Group: "velero.io", Resource: "backups", Verb: "create", Why: "on-demand backup, Resilience screen"},
@@ -212,4 +219,144 @@ func writesAnything(rules []rbacv1.PolicyRule, writeVerbs map[string]bool) bool 
 		}
 	}
 	return false
+}
+
+// lot 2. Each access is asserted at the tier that should have it *and* at the
+// tier below, because only the pair discriminates: asserting "an admin can"
+// alone passes against a rule mislabelled `tier: viewer`, which grants it to
+// everyone, and that is exactly the defect (C4) this file was written after.
+var lot2OperatorWrites = []Access{
+	{Group: "", Resource: "pods/log", Verb: "get", Why: "the Logs tab, WorkloadClient.logs()"},
+	{Group: "", Resource: "pods", Verb: "delete", Why: "Delete pod, WorkloadClient.deletePod()"},
+}
+
+func TestOperatorsCanOperateWorkloadsAndViewersCannot(t *testing.T) {
+	roles := ClusterRoles(t, tierRoleFiles(t)...)
+	editor := AggregatedRules(roles, "editor")
+	viewer := AggregatedRules(roles, "viewer")
+
+	for _, a := range lot2OperatorWrites {
+		if !Grants(editor, a) {
+			t.Errorf("frame-editor does not aggregate %s — %s returns 403 for operators and admins", a, a.Why)
+		}
+		if Grants(viewer, a) {
+			t.Errorf("frame-viewer aggregates %s — a viewer can %s, and a log is where a secret gets printed", a, a.Why)
+		}
+	}
+}
+
+// Exec is admin-only per the decision that opened this lot's design, and it is
+// the one workload grant that stays cluster-wide — a shell creates no pod, so
+// bounding it to the enforced namespaces would close nothing. It inherits the
+// target pod's privilege instead: exec into one of the deliberately privileged
+// pods in an exempt namespace is root on the node, which is why this is
+// admin-only and recorded rather than why it is safe.
+//
+// Asserted at both tiers: "an admin can" alone passes against a rule
+// mislabelled `tier: viewer`, which grants a shell to everyone.
+func TestOnlyAdminsExec(t *testing.T) {
+	roles := ClusterRoles(t, tierRoleFiles(t)...)
+	admin := AggregatedRules(roles, "admin")
+	editor := AggregatedRules(roles, "editor")
+
+	a := Access{Group: "", Resource: "pods/exec", Verb: "create", Why: "the Terminal tab"}
+	if !Grants(admin, a) {
+		t.Errorf("frame-admin does not aggregate %s — %s is refused for everyone", a, a.Why)
+	}
+	if Grants(editor, a) {
+		t.Errorf("frame-editor aggregates %s — %s is admin-only by design", a, a.Why)
+	}
+}
+
+// The tree is blank for a viewer without these, and blank is how the Accounts
+// screen failed: a 200, an empty list, and nothing to notice.
+func TestViewersCanReadTheWholeWorkloadTree(t *testing.T) {
+	viewer := AggregatedRules(ClusterRoles(t, tierRoleFiles(t)...), "viewer")
+	for _, a := range []Access{
+		{Group: "apps", Resource: "daemonsets", Verb: "list", Why: "the DaemonSet rows of the tree"},
+		{Group: "apps", Resource: "replicasets", Verb: "list", Why: "attaching a Deployment's pods to it"},
+		{Group: "batch", Resource: "jobs", Verb: "list", Why: "the Job rows of the tree"},
+		{Group: "apps", Resource: "deployments", Verb: "watch", Why: "useLiveResource streams the tree"},
+		{Group: "", Resource: "pods", Verb: "watch", Why: "useLiveResource streams the tree"},
+	} {
+		if !Grants(viewer, a) {
+			t.Errorf("frame-viewer does not aggregate %s — %s", a, a.Why)
+		}
+	}
+}
+
+// Every grant that can write a pod template must NOT reach any aggregated
+// tier. All of them are bound namespace by namespace, into exactly the
+// namespaces where `baseline` Pod Security refuses the privileged payload; a
+// tier label on either workload ClusterRole would make the aggregation pick it
+// up and grant it everywhere, including rook-ceph and kube-system, which is the
+// escalation the 2026-08-10 removal closed.
+//
+// The editor's `update`/`patch` is in this list for the same reason restart is:
+// cluster-wide, it is the identical escalation through a different door — an
+// admin writes `privileged: true` and a `hostPath: /` into a pod template in an
+// exempt namespace and holds node root.
+//
+// Asserted at all three tiers, because "not at editor" alone passes against a
+// role mislabelled `tier: admin`.
+func TestWorkloadWritesAreNotAggregatedIntoAnyTier(t *testing.T) {
+	roles := ClusterRoles(t, tierRoleFiles(t)...)
+	for _, tier := range []string{"viewer", "editor", "admin"} {
+		rules := AggregatedRules(roles, tier)
+		for _, a := range []Access{
+			{Group: "apps", Resource: "deployments", Verb: "patch", Why: "Restart"},
+			{Group: "apps", Resource: "statefulsets", Verb: "patch", Why: "Restart"},
+			{Group: "apps", Resource: "deployments/scale", Verb: "patch", Why: "Scale"},
+			{Group: "apps", Resource: "statefulsets/scale", Verb: "patch", Why: "Scale"},
+			{Group: "", Resource: "pods", Verb: "update", Why: "the YAML tab"},
+			{Group: "", Resource: "pods", Verb: "patch", Why: "the YAML tab"},
+			{Group: "apps", Resource: "deployments", Verb: "update", Why: "the YAML tab"},
+			{Group: "apps", Resource: "statefulsets", Verb: "update", Why: "the YAML tab"},
+			{Group: "apps", Resource: "daemonsets", Verb: "update", Why: "the YAML tab"},
+			{Group: "apps", Resource: "daemonsets", Verb: "patch", Why: "the YAML tab"},
+			{Group: "batch", Resource: "jobs", Verb: "update", Why: "the YAML tab"},
+			{Group: "batch", Resource: "jobs", Verb: "patch", Why: "the YAML tab"},
+		} {
+			if Grants(rules, a) {
+				t.Errorf("frame-%s aggregates %s cluster-wide — %s must be bound per namespace, "+
+					"or a pod template can be rewritten in rook-ceph or kube-system and that is node root", tier, a, a.Why)
+			}
+		}
+	}
+}
+
+// The other half of the same rule: the tree must still be readable everywhere,
+// including in the namespaces where nothing may be written. Without this, a
+// zealous reading of the test above could be "satisfied" by removing the reads
+// as well, and the console would go blank on every infrastructure namespace.
+func TestReadsStayClusterWideEvenWhereWritesDoNot(t *testing.T) {
+	viewer := AggregatedRules(ClusterRoles(t, tierRoleFiles(t)...), "viewer")
+	for _, a := range []Access{
+		{Group: "apps", Resource: "deployments", Verb: "get", Why: "showing a rook-ceph deployment's YAML"},
+		{Group: "apps", Resource: "daemonsets", Verb: "get", Why: "showing a kube-system daemonset's YAML"},
+		{Group: "batch", Resource: "jobs", Verb: "get", Why: "showing a Job's YAML"},
+		{Group: "", Resource: "pods", Verb: "get", Why: "showing a pod's YAML"},
+	} {
+		if !Grants(viewer, a) {
+			t.Errorf("frame-viewer does not aggregate %s — %s", a, a.Why)
+		}
+	}
+}
+
+// The bound the spec draws around the YAML editor. "Edit any resource" would
+// mean cluster-wide update for admins, which is a far larger grant than this
+// screen needs and could not be tied to a call site the way
+// deploy/kubernetes/base/rbac.yaml requires.
+func TestTheManifestEditorIsNotAClusterWideGrant(t *testing.T) {
+	admin := AggregatedRules(ClusterRoles(t, tierRoleFiles(t)...), "admin")
+	for _, a := range []Access{
+		{Group: "", Resource: "secrets", Verb: "update"},
+		{Group: "", Resource: "configmaps", Verb: "update"},
+		{Group: "rbac.authorization.k8s.io", Resource: "clusterroles", Verb: "update"},
+		{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions", Verb: "update"},
+	} {
+		if Grants(admin, a) {
+			t.Errorf("frame-admin aggregates %s — the editor is bounded to the five kinds the tree shows", a)
+		}
+	}
 }

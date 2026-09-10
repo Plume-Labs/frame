@@ -17,6 +17,10 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - rbac-tier-bindings.yaml
+  # Restart, scale and the manifest editor, bound per namespace rather than
+  # cluster-wide — see the header of the file for why that shape is the control
+  # and not a style choice.
+  - rbac-workload-operator.yaml
   - config.yaml
   - deployment.yaml
   - service.yaml
