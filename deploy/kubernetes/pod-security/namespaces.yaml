@@ -43,6 +43,15 @@
 # `enforce` is added in a second commit, after `kubectl label
 # --dry-run=server` has been run against every namespace below and come back
 # clean. See docs/deployment.md, "Turning Pod Security on".
+#
+# `enforce` was added on 2026-09-10, after `kubectl label --dry-run=server`
+# came back clean for the three namespaces that exist on this cluster today
+# (default, inference, neura). The other four — neura-batch, neura-database,
+# neura-inference, neura-training — do not exist yet; they carry `enforce`
+# from the moment they are created, so the first pod ever admitted into them
+# is already checked. `warn` and `audit` are kept alongside `enforce`
+# deliberately: enforce refuses, warn explains, and a person applying a
+# rejected manifest wants both.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -52,6 +61,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
 ---
 apiVersion: v1
 kind: Namespace
@@ -62,6 +73,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
 ---
 apiVersion: v1
 kind: Namespace
@@ -72,6 +85,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
 ---
 apiVersion: v1
 kind: Namespace
@@ -82,6 +97,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
 ---
 apiVersion: v1
 kind: Namespace
@@ -92,6 +109,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
 ---
 apiVersion: v1
 kind: Namespace
@@ -102,6 +121,8 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
 ---
 apiVersion: v1
 kind: Namespace
@@ -112,3 +133,5 @@ metadata:
     pod-security.kubernetes.io/warn-version: v1.29
     pod-security.kubernetes.io/audit: baseline
     pod-security.kubernetes.io/audit-version: v1.29
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: v1.29
