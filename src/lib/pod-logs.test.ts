@@ -40,13 +40,16 @@ describe('podLogPath', () => {
 
   // follow and previous together are a contradiction — the dead instance
   // writes nothing more — and the apiserver answers 400. Asking for both would
-  // make "previous" appear broken for anyone who left follow on.
+  // make "previous" appear broken for anyone who left follow on. Asserted with
+  // `toBe` against the full path: a `toContain`/`not.toContain` pair here
+  // would still pass for a `podLogPath` that hardcoded the wrong namespace or
+  // pod in this branch, since neither is checked — the exact defect that has
+  // shipped a wrong namespace twice in this repo already.
   it('never asks to follow a dead instance', () => {
     const p = podLogPath({
       namespace: 'neura', pod: 'api-0', container: 'api', follow: true, previous: true,
     })
-    expect(p).toContain('previous=true')
-    expect(p).not.toContain('follow=true')
+    expect(p).toBe('/api/v1/namespaces/neura/pods/api-0/log?container=api&previous=true')
   })
 })
 
@@ -92,5 +95,23 @@ describe('pumpLogLines', () => {
     const lines: string[] = []
     await pumpLogLines(readerOf([]), (l) => lines.push(l))
     expect(lines).toEqual([])
+  })
+
+  // Many containers write CRLF. Splitting on '\n' alone bakes a trailing '\r'
+  // into every line, which then shows up as a stray character (or a broken
+  // regex match) anywhere the line is compared or rendered.
+  it('strips the trailing CR from CRLF-terminated lines', async () => {
+    const lines: string[] = []
+    await pumpLogLines(readerOf([enc('hello\r\nworld\r\n')]), (l) => lines.push(l))
+    expect(lines).toEqual(['hello', 'world'])
+  })
+
+  // Only the '\r' immediately before the '\n' is part of the line terminator.
+  // A '\r' earlier in the line is a progress-bar redraw and must survive
+  // untouched — stripping it would corrupt the line's actual content.
+  it('preserves a mid-line carriage return that is not part of a CRLF', async () => {
+    const lines: string[] = []
+    await pumpLogLines(readerOf([enc('a\rb\r\n')]), (l) => lines.push(l))
+    expect(lines).toEqual(['a\rb'])
   })
 })

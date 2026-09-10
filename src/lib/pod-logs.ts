@@ -52,12 +52,16 @@ export interface ByteReader {
 /**
  * Call `onLine` once per line, whatever the chunking.
  *
- * Two things it must do that a naive loop does not: keep a partial line across
- * reads (a chunk boundary lands mid-line constantly), and decode with
+ * Three things it must do that a naive loop does not: keep a partial line
+ * across reads (a chunk boundary lands mid-line constantly), decode with
  * `{ stream: true }` so a UTF-8 character split across two chunks is
- * reassembled rather than turned into two replacement characters. The trailing
- * flush emits the last line of a stream that ended without a newline — which
- * on a live container is the line someone is waiting for.
+ * reassembled rather than turned into two replacement characters, and strip a
+ * CRLF's trailing `\r` — many containers write CRLF — without touching a
+ * `\r` anywhere else in the line, which is a progress-bar redraw and must
+ * survive untouched. The trailing flush emits the last line of a stream that
+ * ended without a newline — which on a live container is the line someone is
+ * waiting for; it is not CR-stripped, since without a terminating `\n` there
+ * is no CRLF pair to strip.
  */
 export async function pumpLogLines(
   reader: ByteReader,
@@ -65,12 +69,15 @@ export async function pumpLogLines(
 ): Promise<void> {
   const decoder = new TextDecoder()
   let buffer = ''
+  const emitTerminated = (line: string) => {
+    onLine(line.endsWith('\r') ? line.slice(0, -1) : line)
+  }
   for (;;) {
     const { done, value } = await reader.read()
     if (value && value.length > 0) {
       buffer += decoder.decode(value, { stream: true })
       for (let nl = buffer.indexOf('\n'); nl !== -1; nl = buffer.indexOf('\n')) {
-        onLine(buffer.slice(0, nl))
+        emitTerminated(buffer.slice(0, nl))
         buffer = buffer.slice(nl + 1)
       }
     }
