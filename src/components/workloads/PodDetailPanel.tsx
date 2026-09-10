@@ -90,7 +90,7 @@ export function PodDetailPanel({
             <TerminalTab pod={pod} admin={admin} />
           </TabsContent>
           <TabsContent value="yaml">
-            <YamlTab kind="Pod" namespace={pod.namespace} name={pod.name} onSaved={onChanged} />
+            <YamlTab kind="Pod" namespace={pod.namespace} name={pod.name} admin={admin} onSaved={onChanged} />
           </TabsContent>
         </Tabs>
       </CardContent>

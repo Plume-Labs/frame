@@ -83,12 +83,14 @@ export function WorkloadActions({
   // merely unlabelled.
   const operable = canOperateWorkloads(pod.namespace)
 
+  // DaemonSet deliberately excluded: cluster-control-workload-operator does
+  // not grant `patch` on daemonsets (see the comment on that rule in
+  // deploy/kubernetes/base/rbac-workload-operator.yaml — restart is offered
+  // only for a Deployment or StatefulSet controller). Offering this button
+  // for a DaemonSet would 403 for every operator, and only silently work for
+  // an admin, whose tier does hold it — whole-branch review Important 2.
   const restartable =
-    operable &&
-    controller &&
-    (controller.kind === 'Deployment' ||
-      controller.kind === 'StatefulSet' ||
-      controller.kind === 'DaemonSet')
+    operable && controller && (controller.kind === 'Deployment' || controller.kind === 'StatefulSet')
 
   const target = Number(replicas)
   const targetValid = Number.isInteger(target) && target >= 0
@@ -164,7 +166,7 @@ export function WorkloadActions({
                 restartable &&
                 void run(`${controller.name} restarting`, () =>
                   frame.workloads.restart(
-                    controller.kind as 'Deployment' | 'StatefulSet' | 'DaemonSet',
+                    controller.kind as 'Deployment' | 'StatefulSet',
                     controller.namespace,
                     controller.name,
                   ),

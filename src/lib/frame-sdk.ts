@@ -2967,9 +2967,16 @@ class WorkloadClient {
    * Rolling-restart by bumping the pod template's `restartedAt` annotation
    * rather than deleting pods, so the controller's own update strategy —
    * surge, maxUnavailable, ordinal order for a StatefulSet — is respected.
+   *
+   * No `DaemonSet` here, deliberately (whole-branch review Important 2):
+   * `cluster-control-workload-operator` grants `patch` on
+   * `[deployments, statefulsets]` only (deploy/kubernetes/base/rbac-workload-operator.yaml),
+   * so a DaemonSet restart 403s for every operator — the same asymmetry
+   * WorkloadActions.tsx's `restartable` now matches instead of offering a
+   * button that fails for one tier and not the other.
    */
   async restart(
-    kind: 'Deployment' | 'StatefulSet' | 'DaemonSet',
+    kind: 'Deployment' | 'StatefulSet',
     namespace: string,
     name: string,
   ): Promise<void> {
