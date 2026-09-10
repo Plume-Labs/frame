@@ -130,8 +130,15 @@ func TestTheCachedTemperatureIsIdenticalInEveryPowerState(t *testing.T) {
 }
 
 // Finding 3: the captured iLO4 serves the older HPE Memory schema
-// (SizeMB/DIMMType/member-Id), not the DMTF one (CapacityMiB/
+// (SizeMB/DIMMType/SocketLocator), not the DMTF one (CapacityMiB/
 // MemoryDeviceType/DeviceLocator) this lot originally decoded.
+//
+// Slot is pinned to the human-readable SocketLocator form ("PROC 1 DIMM 1"),
+// not the member Id ("proc1dimm1") — round 1 review (task-6b-report.md):
+// this value is read by someone about to physically pull a DIMM out of a
+// chassis, and the label the hardware itself prints is what belongs on
+// screen, not an identifier they would have to decode first. Keyed by
+// SizeMiB rather than Slot here, since Slot is the thing under test.
 func TestProbeDecodesTheOlderHPMemorySchema(t *testing.T) {
 	srv := serveRealFixtures(t, "postcomplete")
 	snap, err := insecureClient(srv.URL).Probe(context.Background())
@@ -139,27 +146,28 @@ func TestProbeDecodesTheOlderHPMemorySchema(t *testing.T) {
 		t.Fatalf("Probe: %v", err)
 	}
 
-	byModel := make(map[string]redfishMemoryModuleForTest)
+	bySize := make(map[int32]redfishMemoryModuleForTest)
 	for _, m := range snap.Inventory.MemoryModules {
-		byModel[m.Slot] = redfishMemoryModuleForTest{sizeMiB: m.SizeMiB, typ: m.Type}
-	}
-	dimm1, ok := byModel["proc1dimm1"]
-	if !ok {
-		t.Fatalf("no memory module with Slot proc1dimm1 in %+v", snap.Inventory.MemoryModules)
-	}
-	if dimm1.sizeMiB != 16384 {
-		t.Errorf("proc1dimm1 SizeMiB = %d, want 16384", dimm1.sizeMiB)
-	}
-	if dimm1.typ != "DDR4" {
-		t.Errorf("proc1dimm1 Type = %q, want DDR4", dimm1.typ)
+		bySize[m.SizeMiB] = redfishMemoryModuleForTest{slot: m.Slot, typ: m.Type}
 	}
 
-	dimm2, ok := byModel["proc1dimm2"]
+	dimm1, ok := bySize[16384]
 	if !ok {
-		t.Fatalf("no memory module with Slot proc1dimm2 in %+v", snap.Inventory.MemoryModules)
+		t.Fatalf("no 16384 MiB memory module in %+v", snap.Inventory.MemoryModules)
 	}
-	if dimm2.sizeMiB != 8192 {
-		t.Errorf("proc1dimm2 SizeMiB = %d, want 8192", dimm2.sizeMiB)
+	if dimm1.slot != "PROC 1 DIMM 1" {
+		t.Errorf("16 GiB module Slot = %q, want the human-readable SocketLocator %q", dimm1.slot, "PROC 1 DIMM 1")
+	}
+	if dimm1.typ != "DDR4" {
+		t.Errorf("16 GiB module Type = %q, want DDR4", dimm1.typ)
+	}
+
+	dimm2, ok := bySize[8192]
+	if !ok {
+		t.Fatalf("no 8192 MiB memory module in %+v", snap.Inventory.MemoryModules)
+	}
+	if dimm2.slot != "PROC 1 DIMM 2" {
+		t.Errorf("8 GiB module Slot = %q, want the human-readable SocketLocator %q", dimm2.slot, "PROC 1 DIMM 2")
 	}
 	// Not every one of the six populated slots the collection lists was
 	// captured (see realRoutes) — only that the two that were decode
@@ -167,8 +175,8 @@ func TestProbeDecodesTheOlderHPMemorySchema(t *testing.T) {
 }
 
 type redfishMemoryModuleForTest struct {
-	sizeMiB int32
-	typ     string
+	slot string
+	typ  string
 }
 
 // Finding 4: the captured iLO4 answers a path missing its trailing slash

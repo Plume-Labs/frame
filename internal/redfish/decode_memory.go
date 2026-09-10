@@ -48,9 +48,19 @@ type memoryJSON struct {
 	// Older HPE schema, as served by iLO4. SizeMB is misnamed: despite the
 	// field name, its unit is MiB, the same one CapacityMiB uses — verified
 	// against the captures (a 16 GiB DIMM reports SizeMB: 16384).
-	ID       string `json:"Id"`
-	SizeMB   int32  `json:"SizeMB"`
-	DIMMType string `json:"DIMMType"`
+	//
+	// SocketLocator is the human-readable slot label ("PROC 1 DIMM 1"), the
+	// same label printed on the chassis silkscreen beside the physical
+	// socket — this is what Slot should carry (round 1 fix, see
+	// task-6b-report.md). Id is the machine-shaped member identifier
+	// ("proc1dimm1") and is Slot's last-resort fallback only, for an iLO
+	// revision that omits SocketLocator: someone pulling a DIMM under time
+	// pressure needs the label the hardware itself prints, not one they
+	// have to decode first.
+	ID            string `json:"Id"`
+	SizeMB        int32  `json:"SizeMB"`
+	DIMMType      string `json:"DIMMType"`
+	SocketLocator string `json:"SocketLocator"`
 }
 
 func (c *client) readMemory(ctx context.Context, collectionPath string, snap *Snapshot) error {
@@ -77,12 +87,18 @@ func (c *client) readMemory(ctx context.Context, collectionPath string, snap *Sn
 
 // memoryModuleFrom maps a decoded memoryJSON onto the exported MemoryModule,
 // preferring the DMTF field and falling back to the older HPE one that an
-// iLO4 actually populates (Finding 3). Slot falls back to the member's Id
-// (e.g. "proc1dimm1") rather than to any HPE-specific locator string, so the
-// fallback path stays anchored to a field every schema this package has seen
-// actually carries.
+// iLO4 actually populates (Finding 3). Slot has a three-deep fallback:
+// DeviceLocator (DMTF) first, then SocketLocator (HPE's own human-readable
+// label, e.g. "PROC 1 DIMM 1" — this is what a person pulling a DIMM reads
+// off the chassis), and only then the member Id (e.g. "proc1dimm1") for an
+// iLO revision that sends neither locator. Round 1 review corrected this
+// from Id-first: the slot label is the point of this field, and it should
+// be the label the hardware itself prints, not one that needs decoding.
 func memoryModuleFrom(m memoryJSON) MemoryModule {
 	slot := m.DeviceLocator
+	if slot == "" {
+		slot = m.SocketLocator
+	}
 	if slot == "" {
 		slot = m.ID
 	}
