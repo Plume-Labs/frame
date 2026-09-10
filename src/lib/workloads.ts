@@ -68,6 +68,7 @@ export interface NamespaceNode {
  * be amended without touching rendering code.
  */
 export const INFRASTRUCTURE_NAMESPACES: readonly string[] = [
+  'alluxio',
   'argo',
   'argocd',
   'cert-manager',
@@ -76,13 +77,17 @@ export const INFRASTRUCTURE_NAMESPACES: readonly string[] = [
   'frame-system',
   'gpu-operator',
   'ingress-nginx',
+  'jupyterhub',
   'local-path-storage',
   'metallb-system',
   'monitoring',
   'node-feature-discovery',
+  'postgres-operator',
+  'registry',
   'rook-ceph',
   'tetragon',
   'velero',
+  'volcano-monitoring',
 ]
 
 /**
