@@ -483,9 +483,15 @@ opening the session can read it.
 `statefulsets`, `daemonsets`, `jobs`. "Edit any resource" would mean granting
 admins `patch` across the whole cluster, every `Secret` and `ClusterRole`
 included, which is far larger than the screen needs and could not be tied to a
-call site the way that file requires. `go test ./test/manifests/` asserts both
-halves: that admins have those five, and that they do not have `secrets`,
-`configmaps`, `clusterroles` or `customresourcedefinitions`.
+call site the way that file requires. Two tests in `go test ./test/manifests/`
+cover this, and they bind different roles: `TestWorkloadRolesAreUnaggregatedAndNarrow`
+checks the namespaced `cluster-control-workload-admin` role itself for the
+five-kind grant's presence and for the absence of `secrets`, `configmaps` and
+`serviceaccounts`; `TestTheManifestEditorIsNotAClusterWideGrant` separately
+checks the aggregated cluster-wide `admin` tier for the absence of `secrets`,
+`configmaps`, `clusterroles` and `customresourcedefinitions`. The first proves
+the unaggregated role is narrow; the second proves aggregation never widens
+it.
 
 ### Turning Pod Security on
 

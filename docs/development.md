@@ -122,14 +122,32 @@ AUTH_PROXY_TARGET=https://frame.example.internal npm run dev
 The dev proxy sets `secure: false`, because authd's in-cluster certificate
 names its Service, not `localhost`.
 
-**The Terminal tab does not work under `kubectl proxy`.** A shell authenticates
-by offering the authd token as a WebSocket subprotocol, which
-`frame-uiproxy` consumes and strips. `kubectl proxy` is not that proxy: it
-authenticates with your own kubeconfig and forwards the subprotocol untouched,
-so the apiserver sees a bearer token it cannot verify and refuses the
-handshake. Logs, the tree and every write work locally; the terminal needs the
-real sidecar, which means a port-forward to a deployed `cluster-control-ui`
-pod or the cluster itself.
+**The Terminal tab is unverified under `kubectl proxy`, and untested here.** A
+shell authenticates by carrying the authd token as a WebSocket subprotocol
+(`base64url.bearer.authorization.k8s.io.<token>`); `frame-uiproxy` is the only
+thing in this repository that consumes and strips it
+(`internal/uiproxy/proxy.go`). `kubectl proxy` is a different program — none
+of this repository's code runs inside it — so nothing strips or even reads
+that subprotocol there. It authenticates its own outbound connection to the
+apiserver with *your* kubeconfig credential and forwards the browser's
+request, subprotocol included, unchanged.
+
+What that produces has not been tried against a real cluster in this lot, so
+say the likely outcome as likely, not as observed. Kubernetes' authenticator
+union tries authenticators in order and stops at the first success; a
+kubeconfig credential (a client certificate or its own bearer token)
+ordinarily succeeds before the apiserver would ever fall back to the
+WebSocket-subprotocol bearer entry the forwarded authd token rides in. So the
+more likely failure is not a refused handshake — it is that the shell opens
+anyway, under *your* kubeconfig identity and RBAC rather than the impersonated
+`frame:` group, which is quieter and more interesting than an outright
+refusal: the dev loop would silently exercise the wrong permission set rather
+than visibly fail. Logs, the tree and every write already run under your own
+kubeconfig locally (see below), so the terminal is the one screen where that
+substitution would matter, and nobody has checked which way it actually goes.
+Point the browser at a deployed `cluster-control-ui` pod (a port-forward) or
+the cluster itself to be certain the session runs under the impersonated
+identity rather than your own.
 
 Note that `kubectl proxy` authenticates as *your* kubeconfig, so the RBAC the
 console sees locally is yours, not the impersonated `frame:` group's. A
