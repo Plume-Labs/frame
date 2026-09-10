@@ -178,10 +178,25 @@ func (c *client) patch(ctx context.Context, path string, body any) error {
 // inventory) is read on a best-effort basis — a 404 leaves the corresponding
 // part of the snapshot at its zero value, because that is what an iLO4
 // firmware that doesn't expose the resource looks like.
+//
+// The service root itself gets a stricter check than "a 404 is tolerable":
+// a 404 on /redfish/v1/, or a root that decodes but exposes no Systems
+// collection at all, means whatever answered at spec.bmc.address is not a
+// Redfish service — a web server, a switch, or simply the wrong IP. That is
+// an ordinary registration mistake, not a transient firmware gap the way a
+// missing Chassis sub-resource further down is, so it is reported as
+// ErrUnsupported rather than falling through to the generic ProbeFailed a
+// JSON-decode error against the wrong kind of body would otherwise produce.
 func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 	root, err := c.readServiceRoot(ctx)
 	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, fmt.Errorf("redfish: %s answered no service root at /redfish/v1/: %w", c.baseURL, ErrUnsupported)
+		}
 		return nil, err
+	}
+	if root.Systems.ODataID == "" {
+		return nil, fmt.Errorf("redfish: %s's service root exposes no Systems collection, not a Redfish service: %w", c.baseURL, ErrUnsupported)
 	}
 
 	systemPath, err := c.firstMember(ctx, root.Systems.ODataID)
