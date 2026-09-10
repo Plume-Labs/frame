@@ -7,6 +7,14 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Match deploy/docker/nginx.conf's proxy_read_timeout/proxy_send_timeout
+    # (3600s). The browser reaches that nginx through this Ingress, and
+    # ingress-nginx's own default proxy-read-timeout is 60s and applies to
+    # WebSocket connections — a shell idle for a minute, or a `follow=true`
+    # log on a quiet pod, was cut here even with the pod's own nginx correctly
+    # configured (whole-branch review Important 6). Both hops have to agree.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: nginx
   tls:
