@@ -88,6 +88,26 @@ type SchedulingPolicyStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// OwnedPriorityClass mirrors v1beta1's field of the same name: the
+	// cluster-scoped PriorityClass this SchedulingPolicy created, and the
+	// only one it is allowed to update or delete. See the note on
+	// v1beta1.SchedulingPolicyStatus.OwnedPriorityClass for what it is for.
+	//
+	// It is here, rather than stashed in an annotation the way v1beta1-only
+	// FrameJob fields are (framejobContainerAnnotation in conversion.go),
+	// because of what this particular field is: an authority. The annotation
+	// hatch turns object metadata into a channel into the converted object,
+	// and metadata is writable by anyone holding patch on the CR — which is
+	// exactly the namespaced right this field exists to stop from reaching a
+	// cluster-scoped delete. Carrying it as a real status field keeps it
+	// behind the status subresource at both versions, which is the same
+	// protection at v1alpha1 as at v1beta1, and keeps the hub round trip
+	// exactly lossless without a per-field exception in
+	// TestHubRoundTripIsLossless.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	OwnedPriorityClass string `json:"ownedPriorityClass,omitempty"`
+
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 

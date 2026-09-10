@@ -41,6 +41,15 @@ var (
 		Name: "frame_schedulingpolicy_applied_total",
 		Help: "Total number of successful SchedulingPolicy reconciles.",
 	})
+
+	// schedulingPolicyRefused counts SchedulingPolicies whose PriorityClass
+	// this controller declined to create, adopt or delete. A non-zero value
+	// is not an error rate: it is a count of cluster-scoped objects a
+	// namespaced SchedulingPolicy asked for and did not get.
+	schedulingPolicyRefused = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "frame_schedulingpolicy_priorityclass_refused_total",
+		Help: "Total number of SchedulingPolicy reconciles that refused to act on a PriorityClass, by reason.",
+	}, []string{"reason"})
 )
 
 func init() {
@@ -53,5 +62,6 @@ func init() {
 		talosConfigApplied,
 		talosConfigFailed,
 		schedulingPolicyApplied,
+		schedulingPolicyRefused,
 	)
 }
