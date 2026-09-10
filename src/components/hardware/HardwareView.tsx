@@ -34,6 +34,20 @@ export function HardwareView() {
     () => frame.machines.list(),
     [],
     [frame.machines.watchPath()],
+    // The watch deliberately ignores BOOKMARKs (see the SDK), and every
+    // freshness marker on this screen and its detail panel is computed as
+    // `new Date()` at render — HardwareView, MachineDetail and SensorsTab
+    // alike. Without a re-render trigger of its own, a controller that
+    // stops writing (crash, node down, lost leader election — cmd/main.go
+    // documents this happening seventeen times in four days) freezes every
+    // one of those "last probe Ns ago" labels at whatever they read the
+    // moment the last watch event landed, which is exactly the moment
+    // someone reading temperatures during an incident needs them to keep
+    // advancing. Slow poll, same precedent and same reasoning as
+    // ClusterNodesView.tsx: the watch already covers every real change to
+    // the object, this only needs to force a re-render often enough that
+    // the clock on screen is never more than 30s stale relative to now.
+    30_000,
   )
   const machines = useMemo(() => (state.phase === 'ready' ? state.data : []), [state])
 

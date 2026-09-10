@@ -242,7 +242,8 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
                       </>
                     )
                   ) : (
-                    'Cette machine ne porte aucun nœud du cluster.'
+                    "Aucun nœud renseigné (spec.nodeRef non défini) — si cette machine porte bien " +
+                    "un nœud du cluster, quelqu'un a simplement oublié de le déclarer."
                   )}
                 </p>
               )}

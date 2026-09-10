@@ -264,7 +264,7 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	if sys.LogServices.ODataID != "" {
-		if err := c.readLog(ctx, sys.LogServices.ODataID+"IML/Entries/", snap); err != nil {
+		if err := c.readLog(ctx, joinPath(sys.LogServices.ODataID, "IML", "Entries"), snap); err != nil {
 			return nil, err
 		}
 	}
@@ -309,32 +309,46 @@ func (c *client) Reset(ctx context.Context, resetType string) error {
 }
 
 // resolveResetType maps a caller's requested ResetType onto one the machine
-// actually accepts. Only GracefulShutdown needs mapping: the CRD enum keeps
-// that name because it is what a person means and the enum is a frozen API,
-// but it is not itself a Redfish ResetType on the captured hardware — an
-// iLO4's Actions#ComputerSystem.Reset lists On, ForceOff, ForceRestart, Nmi
-// and PushPowerButton and nothing else (Finding 2). PushPowerButton is the
-// ACPI power-button request an installed operating system acts on, which is
-// what "graceful" means in practice, so it is the substitute when
+// actually accepts. All four actions the controller can request through
+// Reset (On, GracefulShutdown, ForceOff, ForceRestart) are now checked
+// against this machine's own Actions#ComputerSystem.Reset AllowableValues
+// before being sent, not only GracefulShutdown as this lot originally
+// shipped: Findings 1 and 2 are evidence this firmware diverges from the
+// DMTF spec more broadly than assumed, and a ResetType the machine doesn't
+// list should be refused up front the same way GracefulShutdown already
+// was, rather than sent and left for the BMC to reject.
+//
+// GracefulShutdown is resolved first and specially: it is not itself a
+// Redfish ResetType on the captured hardware — an iLO4's
+// Actions#ComputerSystem.Reset lists On, ForceOff, ForceRestart, Nmi and
+// PushPowerButton and nothing else (Finding 2). PushPowerButton is the ACPI
+// power-button request an installed operating system acts on, which is what
+// "graceful" means in practice, so it is the substitute when
 // GracefulShutdown itself is not listed. ForceOff is never substituted
 // automatically: it is a hard cut, not a graceful one, and choosing it would
 // silently turn a request that asked to be graceful into one that was not,
 // with no way for the caller to know that happened.
 //
-// Every other requested type passes through unchanged — this package does
-// not second-guess On/ForceOff/ForceRestart/Nmi/PushPowerButton against the
-// allow list, only the one value this lot found is never actually offered.
+// When AllowableValues is empty — a firmware that never populates the field
+// at all, as the synthetic ilo4 test fixture does not — there is nothing to
+// check a request against, so every request (including GracefulShutdown)
+// passes through unchecked, exactly as this function behaved before this
+// fix: refusing everything a firmware simply doesn't enumerate would make
+// Reset permanently unusable against it.
 func resolveResetType(requested string, allowable []string) (string, error) {
-	if requested != "GracefulShutdown" {
-		return requested, nil
+	if requested == "GracefulShutdown" && !containsString(allowable, "GracefulShutdown") {
+		if containsString(allowable, "PushPowerButton") {
+			return "PushPowerButton", nil
+		}
+		if len(allowable) == 0 {
+			return requested, nil
+		}
+		return "", ErrUnsupported
 	}
-	if containsString(allowable, "GracefulShutdown") {
-		return "GracefulShutdown", nil
+	if len(allowable) > 0 && !containsString(allowable, requested) {
+		return "", ErrUnsupported
 	}
-	if containsString(allowable, "PushPowerButton") {
-		return "PushPowerButton", nil
-	}
-	return "", ErrUnsupported
+	return requested, nil
 }
 
 func containsString(values []string, want string) bool {
@@ -346,15 +360,42 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-// ClearLog POSTs a LogService.ClearLog action to the integrated management
-// log for the machine's system.
+// ClearLog POSTs a LogService.ClearLog action to the target the IML log
+// service document itself advertises, discovered rather than guessed: this
+// package used to build the target from a string template
+// ("/redfish/v1/Systems/%s/LogServices/IML/Actions/LogService.ClearLog/"),
+// but the capture publishes the real one —
+// testdata/ilo4-real/systems_1_logservices_iml.json carries
+// Actions.#LogService.ClearLog.target — so there is no reason to guess it
+// for a destructive action. ClearLog returns ErrUnsupported when the system
+// document exposes no LogServices link at all, or when the IML document it
+// points at exposes no ClearLog action, rather than posting to a target
+// this package assembled itself.
 func (c *client) ClearLog(ctx context.Context) error {
 	systemPath, err := c.resolveSystemPath(ctx)
 	if err != nil {
 		return err
 	}
-	id := lastPathSegment(systemPath)
-	target := fmt.Sprintf("/redfish/v1/Systems/%s/LogServices/IML/Actions/LogService.ClearLog/", id)
+
+	var sys computerSystemJSON
+	if err := c.get(ctx, systemPath, &sys); err != nil {
+		return fmt.Errorf("redfish: read system document: %w", err)
+	}
+	if sys.LogServices.ODataID == "" {
+		return ErrUnsupported
+	}
+
+	var svc logServiceJSON
+	if err := c.get(ctx, joinPath(sys.LogServices.ODataID, "IML"), &svc); err != nil {
+		if errors.Is(err, errNotFound) {
+			return ErrUnsupported
+		}
+		return fmt.Errorf("redfish: read log service: %w", err)
+	}
+	target := svc.Actions.ClearLog.Target
+	if target == "" {
+		return ErrUnsupported
+	}
 
 	body := struct {
 		Action string `json:"Action"`

@@ -20,8 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"time"
+	"path"
 )
 
 // The types in this file mirror the on-the-wire shape of an iLO4's Redfish
@@ -132,20 +131,9 @@ type managerJSON struct {
 	Model           string `json:"Model"`
 }
 
-type logEntryJSON struct {
-	ID       string    `json:"Id"`
-	Severity string    `json:"Severity"`
-	Created  time.Time `json:"Created"`
-	Message  string    `json:"Message"`
-}
-
-type logCollectionJSON struct {
-	// A pointer distinguishes "the firmware didn't send a count" from "the
-	// firmware sent a count of zero" — LogTotal falls back to len(Members)
-	// only in the former case.
-	Count   *int           `json:"Members@odata.count"`
-	Members []logEntryJSON `json:"Members"`
-}
+// logEntryJSON, logCollectionJSON, logServiceJSON and readLog are declared in
+// decode_log.go, split out for the same reason decode_memory.go was: keeping
+// this file, and that one, well under this lot's line ceiling.
 
 // processorJSON, memoryJSON and ethernetInterfaceJSON mirror the standard
 // (non-OEM) Redfish Processor, Memory and EthernetInterface schemas. These
@@ -273,20 +261,40 @@ func (c *client) readSensors(ctx context.Context, chassisCollection string, snap
 	return c.readPower(ctx, chassisPath, snap)
 }
 
+// statusStateAbsent is the Status.State value an iLO4 uses for a sensor
+// socket that simply isn't populated — a temperature probe or fan bay that
+// isn't there, as opposed to one that is present and reads a low or zero
+// value. The captured chassis_1_thermal_postcomplete.json carries 21 of 46
+// temperature entries and 5 of 8 fans in this state; rendering them as
+// readings produces phantom rows at 0 with no health, sharing a blank React
+// key (C2). This is deliberately narrower than the Status.State guard this
+// lot rejected elsewhere (Finding 1): that guard would have to separate a
+// live reading from a replayed one, and State is "Enabled" in all three
+// power states for a real, present sensor — it says nothing about
+// liveness. What it does say, reliably, is whether the socket is populated
+// at all, which is the question here.
+const statusStateAbsent = "Absent"
+
 func (c *client) readThermal(ctx context.Context, chassisPath string, snap *Snapshot) error {
 	var th thermalJSON
-	err := c.get(ctx, chassisPath+"Thermal/", &th)
+	err := c.get(ctx, joinPath(chassisPath, "Thermal"), &th)
 	switch {
 	case err == nil:
 		for _, t := range th.Temperatures {
+			if t.Status.State == statusStateAbsent {
+				continue
+			}
 			snap.Sensors.Temperatures = append(snap.Sensors.Temperatures, Temperature{
 				Name:          t.Name,
 				Celsius:       t.ReadingCelsius,
-				UpperCritical: copyInt32(t.UpperThresholdCritical),
+				UpperCritical: sanitizeUpperCritical(t.UpperThresholdCritical),
 				Health:        t.Status.Health,
 			})
 		}
 		for _, f := range th.Fans {
+			if f.Status.State == statusStateAbsent {
+				continue
+			}
 			snap.Sensors.Fans = append(snap.Sensors.Fans, Fan{
 				Name:    f.FanName,
 				Reading: f.CurrentReading,
@@ -304,13 +312,16 @@ func (c *client) readThermal(ctx context.Context, chassisPath string, snap *Snap
 
 func (c *client) readPower(ctx context.Context, chassisPath string, snap *Snapshot) error {
 	var pw powerJSON
-	err := c.get(ctx, chassisPath+"Power/", &pw)
+	err := c.get(ctx, joinPath(chassisPath, "Power"), &pw)
 	switch {
 	case err == nil:
 		if len(pw.PowerControl) > 0 {
 			snap.Sensors.PowerConsumedWatts = pw.PowerControl[0].PowerConsumedWatts
 		}
 		for _, ps := range pw.PowerSupplies {
+			if ps.Status.State == statusStateAbsent {
+				continue
+			}
 			snap.Sensors.PowerSupplies = append(snap.Sensors.PowerSupplies, PowerSupply{
 				Name:                 ps.Name,
 				Health:               ps.Status.Health,
@@ -326,61 +337,26 @@ func (c *client) readPower(ctx context.Context, chassisPath string, snap *Snapsh
 	}
 }
 
-// readLog fills in the log fields of snap. LogCounts and Log are built from
-// every returned member; LogTotal is the collection's own count when the
-// firmware sent one, and len(Members) otherwise. Log keeps at most the 25
-// newest entries, newest first.
-func (c *client) readLog(ctx context.Context, path string, snap *Snapshot) error {
-	var col logCollectionJSON
-	err := c.get(ctx, path, &col)
-	switch {
-	case err == nil:
-		if col.Count != nil {
-			snap.LogTotal = *col.Count
-		} else {
-			snap.LogTotal = len(col.Members)
-		}
-
-		entries := make([]LogEntry, 0, len(col.Members))
-		for _, m := range col.Members {
-			snap.LogCounts[m.Severity]++
-			entries = append(entries, LogEntry{
-				ID:       m.ID,
-				Severity: m.Severity,
-				Message:  m.Message,
-				Created:  m.Created,
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Created.After(entries[j].Created)
-		})
-		if len(entries) > 25 {
-			entries = entries[:25]
-		}
-		snap.Log = entries
-		return nil
-	case errors.Is(err, errNotFound):
-		return nil
-	default:
-		return fmt.Errorf("redfish: read log: %w", err)
-	}
-}
-
 // readComponentInventory walks the three standard (non-OEM) Redfish
 // component collections this package knows how to read: Processors, Memory,
 // and EthernetInterfaces. Each is independent — a 404 on one collection
 // still lets the others populate.
+//
+// It joins onto systemPath itself — the path the caller already resolved via
+// the Systems collection's "@odata.id" — rather than rebuilding
+// "/redfish/v1/Systems/<id>/" from scratch. Reconstructing the base path was
+// itself a bug the two literal segments couldn't reveal here, since this
+// package only knows a numeric-looking iLO4 machine, but it duplicated a
+// path this method was already handed, and would silently diverge from it
+// the moment a Systems collection member's id wasn't a bare number.
 func (c *client) readComponentInventory(ctx context.Context, systemPath string, snap *Snapshot) error {
-	id := lastPathSegment(systemPath)
-	base := "/redfish/v1/Systems/" + id + "/"
-
-	if err := c.readProcessors(ctx, base+"Processors/", snap); err != nil {
+	if err := c.readProcessors(ctx, joinPath(systemPath, "Processors"), snap); err != nil {
 		return err
 	}
-	if err := c.readMemory(ctx, base+"Memory/", snap); err != nil {
+	if err := c.readMemory(ctx, joinPath(systemPath, "Memory"), snap); err != nil {
 		return err
 	}
-	return c.readEthernetInterfaces(ctx, base+"EthernetInterfaces/", snap)
+	return c.readEthernetInterfaces(ctx, joinPath(systemPath, "EthernetInterfaces"), snap)
 }
 
 func (c *client) readProcessors(ctx context.Context, collectionPath string, snap *Snapshot) error {
@@ -438,27 +414,34 @@ func (c *client) readEthernetInterfaces(ctx context.Context, collectionPath stri
 	}
 }
 
-// copyInt32 returns a fresh pointer holding the same value as p, or nil if p
-// is nil. Used when moving a decoded, possibly-absent number into an exported
-// value type so the exported struct never aliases the decoder's memory.
-func copyInt32(p *int32) *int32 {
-	if p == nil {
+// sanitizeUpperCritical copies a decoded UpperThresholdCritical, treating a
+// non-positive value as absent (nil) rather than as a real threshold. The
+// captured iLO4 sends UpperThresholdCritical: 0 on 23 of 46 temperature
+// sensors — including two live ones, "10-P/S 1" and "11-P/S 2", both
+// Health: OK at 40 C — and a non-nil zero makes src/lib/machines.ts's
+// temperatureSeverity read every reading at or above 0 C as critical (C2).
+// A genuine "alarm at 0 C or above" threshold would already be tripped on
+// every machine in the room, so 0 here means "this firmware did not
+// populate a threshold", never a real value to alarm on.
+func sanitizeUpperCritical(p *int32) *int32 {
+	if p == nil || *p <= 0 {
 		return nil
 	}
 	v := *p
 	return &v
 }
 
-// lastPathSegment returns the final non-empty segment of a Redfish
-// "@odata.id" style path, e.g. "/redfish/v1/Systems/1/" -> "1".
-func lastPathSegment(path string) string {
-	end := len(path)
-	for end > 0 && path[end-1] == '/' {
-		end--
-	}
-	start := end
-	for start > 0 && path[start-1] != '/' {
-		start--
-	}
-	return path[start:end]
+// joinPath joins a Redfish "@odata.id"-style base path with one or more
+// further segments, the way normalizePath's own doc comment already
+// promises callers: independent of whether base carries a trailing slash.
+// decode.go and client.go used to build these paths by string
+// concatenation (chassisPath+"Thermal/", ODataID+"IML/Entries/", a
+// hand-rebuilt "/redfish/v1/Systems/"+id+"/"+…) — correct only when the
+// "@odata.id" the BMC sent happened to carry a trailing slash, and silently
+// wrong (a 404, swallowed as "this firmware doesn't expose it") the moment
+// one doesn't. path.Join collapses the seam regardless of which shape the
+// base arrived in; normalizePath still adds the final trailing slash before
+// the request goes out.
+func joinPath(base string, elem ...string) string {
+	return path.Join(append([]string{base}, elem...)...)
 }

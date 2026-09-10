@@ -122,9 +122,17 @@ type FrameMachineSpec struct {
 	NodeRef string `json:"nodeRef,omitempty"`
 }
 
+// Inventory string fields below are free text the BMC reports, not
+// something this package controls the length of, so each carries a MaxLength
+// bound (256 unless the field is known to be short, e.g. a MAC address) —
+// without one, etcd's object size limit is the only backstop, and hitting it
+// rejects the whole status write rather than just truncating one field.
+
 // ProcessorInfo describes one installed CPU.
 type ProcessorInfo struct {
-	Socket  string `json:"socket,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	Socket string `json:"socket,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
 	Model   string `json:"model,omitempty"`
 	Cores   int32  `json:"cores,omitempty"`
 	Threads int32  `json:"threads,omitempty"`
@@ -132,35 +140,50 @@ type ProcessorInfo struct {
 
 // MemoryModuleInfo describes one installed DIMM and where it sits.
 type MemoryModuleInfo struct {
-	Slot         string `json:"slot,omitempty"`
-	SizeMiB      int32  `json:"sizeMiB,omitempty"`
-	Type         string `json:"type,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	Slot    string `json:"slot,omitempty"`
+	SizeMiB int32  `json:"sizeMiB,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	Type string `json:"type,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
 	Manufacturer string `json:"manufacturer,omitempty"`
 }
 
 // DriveInfo describes one drive the BMC can see.
 type DriveInfo struct {
-	Name     string `json:"name,omitempty"`
-	Model    string `json:"model,omitempty"`
-	SizeGB   int32  `json:"sizeGB,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	Name string `json:"name,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	Model  string `json:"model,omitempty"`
+	SizeGB int32  `json:"sizeGB,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
 	Protocol string `json:"protocol,omitempty"`
-	Health   string `json:"health,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	Health string `json:"health,omitempty"`
 }
 
 // NetworkAdapterInfo describes one network port.
 type NetworkAdapterInfo struct {
-	Name   string `json:"name,omitempty"`
-	MAC    string `json:"mac,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	Name string `json:"name,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	MAC string `json:"mac,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
 	Status string `json:"status,omitempty"`
 }
 
 // MachineInventory is what the machine is made of.
 type MachineInventory struct {
+	// +kubebuilder:validation:MaxLength=256
 	Manufacturer string `json:"manufacturer,omitempty"`
-	Model        string `json:"model,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	Model string `json:"model,omitempty"`
+	// +kubebuilder:validation:MaxLength=128
 	SerialNumber string `json:"serialNumber,omitempty"`
-	BIOSVersion  string `json:"biosVersion,omitempty"`
-	BMCFirmware  string `json:"bmcFirmware,omitempty"`
+	// +kubebuilder:validation:MaxLength=128
+	BIOSVersion string `json:"biosVersion,omitempty"`
+	// +kubebuilder:validation:MaxLength=128
+	BMCFirmware string `json:"bmcFirmware,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:MaxItems=8
@@ -183,8 +206,15 @@ type MachineInventory struct {
 
 // TemperatureReading is one temperature sensor.
 type TemperatureReading struct {
-	Name          string `json:"name,omitempty"`
-	Celsius       int32  `json:"celsius,omitempty"`
+	Name string `json:"name,omitempty"`
+
+	// Celsius carries no `omitempty`: a stopped-but-present sensor can
+	// genuinely read 0, and dropping the field on that value would make it
+	// indistinguishable from a sensor never populated at all — the exact
+	// inversion of what this lot exists to prevent (see internal/redfish's
+	// absent-sensor handling for the socket-vs-reading distinction this
+	// guards separately).
+	Celsius       int32  `json:"celsius"`
 	UpperCritical *int32 `json:"upperCritical,omitempty"`
 	Health        string `json:"health,omitempty"`
 }
@@ -193,8 +223,12 @@ type TemperatureReading struct {
 // iLO4 commonly says Percent where other vendors say RPM, so the number is
 // meaningless without it.
 type FanReading struct {
-	Name    string `json:"name,omitempty"`
-	Reading int32  `json:"reading,omitempty"`
+	Name string `json:"name,omitempty"`
+
+	// Reading carries no `omitempty`, for the same reason
+	// TemperatureReading.Celsius doesn't: a stopped fan reading 0 must stay
+	// distinguishable from a fan bay this decoder never populated.
+	Reading int32  `json:"reading"`
 	Units   string `json:"units,omitempty"`
 	Health  string `json:"health,omitempty"`
 }
@@ -221,15 +255,25 @@ type MachineSensors struct {
 	// +kubebuilder:validation:MaxItems=8
 	PowerSupplies []PowerSupplyReading `json:"powerSupplies,omitempty"`
 
-	PowerConsumedWatts int32 `json:"powerConsumedWatts,omitempty"`
+	// PowerConsumedWatts carries no `omitempty`: 0 W is the machine's own
+	// reading while powered off or mid-POST (see PROVENANCE.md), and must
+	// stay distinguishable from a reading this decoder never took.
+	PowerConsumedWatts int32 `json:"powerConsumedWatts"`
 }
 
 // EventLogEntry is one line of the machine's event log.
 type EventLogEntry struct {
-	ID       string      `json:"id,omitempty"`
-	Severity string      `json:"severity,omitempty"`
-	Message  string      `json:"message,omitempty"`
-	Created  metav1.Time `json:"created,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	ID string `json:"id,omitempty"`
+	// +kubebuilder:validation:MaxLength=32
+	Severity string `json:"severity,omitempty"`
+	// Message is free text from the BMC's own log and this package does not
+	// control its length. MaxLength bounds it so twenty-five unbounded
+	// messages cannot grow the status past etcd's object size limit and
+	// reject the whole status write.
+	// +kubebuilder:validation:MaxLength=512
+	Message string      `json:"message,omitempty"`
+	Created metav1.Time `json:"created,omitempty"`
 }
 
 // FrameMachineStatus defines the observed state of FrameMachine.
@@ -279,8 +323,13 @@ type FrameMachineStatus struct {
 	// +kubebuilder:validation:MaxItems=25
 	EventLog []EventLogEntry `json:"eventLog,omitempty"`
 
-	// EventLogCounts is the count per severity across the whole log, not just
-	// the retained entries.
+	// EventLogCounts is the count per severity across the entries this probe
+	// actually retrieved from the BMC — one page, not necessarily the whole
+	// log. On the captured iLO4 the machine's own log holds 175 entries but
+	// the collection returns only 30 with no way to page further, so
+	// EventLogCounts here sums to 30, not 175. EventLogTotal is the number to
+	// read for "how many entries does the machine say it holds"; this field
+	// never claims to cover more than what it counted.
 	// +optional
 	EventLogCounts map[string]int32 `json:"eventLogCounts,omitempty"`
 

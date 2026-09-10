@@ -30,6 +30,17 @@ var (
 	ErrUnsupported = errors.New("redfish: service does not expose the expected resources")
 )
 
+// EventLogRetainCount is how many of the newest event log entries this
+// package, the controller, and the CRD schema all agree to keep — one
+// source of truth for a number that used to exist independently in three
+// places (this package's readLog, the controller's mapEventLog, and
+// FrameMachineStatus.EventLog's kubebuilder MaxItems, which cannot reference
+// a Go constant and must keep the literal 25 in sync with this by hand).
+// etcd is not a log store: a machine up for years can hold thousands of
+// entries, and twenty-five recent ones are enough to answer "why did it
+// reboot".
+const EventLogRetainCount = 25
+
 type Processor struct {
 	Socket  string
 	Model   string

@@ -356,7 +356,13 @@ export function sensorAvailability(machine: Machine): SensorAvailability {
   // forever (the captured machine never booted an OS, so no "running"
   // PostState has ever been observed).
   if (machine.powerState !== 'On') return { kind: 'powered-off' }
-  if (machine.postState === 'PowerOff' || machine.postState === 'InPost') {
+  // Only postState === 'InPost' is checked here, deliberately not
+  // 'PowerOff' too: the branch above already returns 'powered-off' for
+  // every machine whose powerState isn't 'On', so postState === 'PowerOff'
+  // can only be seen here in the contradictory case where powerState says
+  // On — and rendering that as "in-post" (Démarrage en cours) would assert
+  // the opposite of what postState itself is saying.
+  if (machine.postState === 'InPost') {
     return { kind: 'in-post' }
   }
 

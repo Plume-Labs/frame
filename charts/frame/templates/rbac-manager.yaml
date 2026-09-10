@@ -63,13 +63,21 @@ rules:
 # needed for a get-by-name. No patch either: every write there goes through
 # CreateOrUpdate or Delete, never Patch.
 #
-# list and watch are granted anyway (lot 1, hardware/Redfish): the
-# FrameMachine controller reads a machine's BMC credentials from a Secret and
-# needs to react when that Secret changes, which needs an informer — see
-# framemachine_controller.go's own marker
-# (groups="",resources=secrets,verbs=get;list;watch). controller-gen unions
-# both controllers' markers into this one rule, so the verb set here is the
-# two controllers' needs combined, not either one's alone.
+# The FrameMachine controller (lot 1, hardware/Redfish) also reads a
+# Secret — a machine's BMC credentials, by name — and holds only `get` on it
+# (framemachine_controller.go's own marker,
+# groups="",resources=secrets,verbs=get): it has no Watches/Owns on Secrets
+# in its SetupWithManager, and cmd/main.go's Cache.DisableFor(corev1.Secret{})
+# means the lookup is always an uncached, by-name GET, never an informer.
+# `list`/`watch` were granted here for a release before this comment was
+# corrected, on the belief that reacting to a credential change needed an
+# informer; it didn't, and the whole-branch review that caught it is why
+# they are gone — enumeration means the right to read every Secret in the
+# namespace, which no console tier is meant to have. controller-gen unions
+# every controller's marker into this one rule, so the verb set here is
+# every controller's needs combined, not any one's alone; today that union
+# is exactly frameservice_controller.go's, since every Secret-reading
+# controller besides it holds `get` alone.
 - apiGroups:
   - ""
   resources:
@@ -78,9 +86,7 @@ rules:
   - create
   - delete
   - get
-  - list
   - update
-  - watch
 - apiGroups:
   - apps
   resources:

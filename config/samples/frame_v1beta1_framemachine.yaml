@@ -9,7 +9,7 @@ spec:
   bmc:
     # The IP of the management port. A hostname is refused: see the field's
     # doc comment on why.
-    address: 192.168.2.60
+    address: 192.168.2.236
     # A Secret in this namespace with the keys `username` and `password`.
     # Never commit real credentials — create it with `kubectl create secret`.
     credentialsRef: ml350-g9-ilo
