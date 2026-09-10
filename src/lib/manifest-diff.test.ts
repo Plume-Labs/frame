@@ -104,4 +104,20 @@ describe('editActionLabel', () => {
   it('says so when nothing changed', () => {
     expect(editActionLabel('Pod', 'neura', 'api-0', [])).toBe('edit pod neura/api-0: no field changed')
   })
+
+  // Realistic worst case: a 63-character namespace (the Kubernetes DNS label
+  // max) and a long resource name. `head` alone can approach or exceed 200
+  // characters here, so an implementation that truncates the *combined*
+  // string can spend the whole budget on the object's identity and say
+  // nothing about what changed — technically inside the cap, but useless.
+  // The length assertion alone would not catch that; the field-name assertion
+  // is the one that matters.
+  it('still names a changed field when the namespace and name are near the Kubernetes length limit', () => {
+    const namespace = 'a'.repeat(63) // the DNS-label max Kubernetes allows for a namespace
+    const name = 'x'.repeat(120) // long enough that head + separator alone exceed the 200-char cap
+    const paths = ['spec.replicas', 'spec.paused', 'metadata.labels', 'spec.template.spec.containers[0].image', 'status.conditions[0].reason']
+    const label = editActionLabel('Deployment', namespace, name, paths)
+    expect(label.length).toBeLessThanOrEqual(MAX_ACTION_LENGTH)
+    expect(label).toContain('spec.replicas')
+  })
 })
