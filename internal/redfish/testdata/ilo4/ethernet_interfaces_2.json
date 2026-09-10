@@ -1,0 +1,7 @@
+{
+  "@odata.type": "#EthernetInterface.v1_2_0.EthernetInterface",
+  "Id": "2",
+  "Name": "Embedded LOM 1 Port 2",
+  "MACAddress": "B4:B5:2F:00:11:23",
+  "Status": { "Health": "OK", "State": "Enabled" }
+}

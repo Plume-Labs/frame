@@ -1,0 +1,9 @@
+{
+  "@odata.type": "#Memory.v1_0_0.Memory",
+  "Id": "2",
+  "DeviceLocator": "PROC 1 DIMM 2",
+  "CapacityMiB": 16384,
+  "MemoryDeviceType": "DDR4",
+  "Manufacturer": "HPE",
+  "Status": { "Health": "OK", "State": "Enabled" }
+}
