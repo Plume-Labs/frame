@@ -31,7 +31,7 @@ import {
   type WorkloadPod,
 } from './workloads'
 import { podLogPath, type PodLogQuery } from './pod-logs'
-import { changedFieldPaths, editActionLabel } from './manifest-diff'
+import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -1141,6 +1141,25 @@ function refLabel(r: {
 }): string {
   const base = r.namespace ? `${r.namespace}/${r.resource}/${r.name}` : `${r.resource}/${r.name}`
   return r.subresource ? `${base}/${r.subresource}` : base
+}
+
+/**
+ * An `X-Frame-Action` label capped at `MAX_ACTION_LENGTH`, for writes that
+ * have no field-path body to shed the way `editActionLabel` does — a rolling
+ * restart, a scale, a pod delete are one short sentence, not "identity:
+ * change list", so there is nothing to trade off between and a plain
+ * truncation is the right shape.
+ *
+ * Kubernetes allows a 63-character namespace and, for most kinds, a
+ * 253-character object name, so an unbounded label built from `${verb}
+ * ${namespace}/${name}` can run past the CRD's cap. Past it the apiserver
+ * rejects the FrameTask create outright; `TaskRecorder.Start` logs the error
+ * and the user's write still succeeds — so the cost of skipping this is not a
+ * truncated record, it is no record at all, precisely for the longest-named
+ * resources.
+ */
+function boundedActionLabel(label: string): string {
+  return label.length > MAX_ACTION_LENGTH ? label.slice(0, MAX_ACTION_LENGTH) : label
 }
 
 /**
@@ -2680,7 +2699,9 @@ class ApplicationClient {
     await k8sFetch<undefined>(
       `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}`,
       {
-        action: `restart ${component.kind.toLowerCase()} ${component.namespace}/${component.name}`,
+        action: boundedActionLabel(
+          `restart ${component.kind.toLowerCase()} ${component.namespace}/${component.name}`,
+        ),
         method: 'PATCH',
         contentType: 'application/strategic-merge-patch+json',
         body: {
@@ -2702,7 +2723,9 @@ class ApplicationClient {
     await k8sFetch<undefined>(
       `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}/scale`,
       {
-        action: `scale ${component.kind.toLowerCase()} ${component.namespace}/${component.name} to ${replicas}`,
+        action: boundedActionLabel(
+          `scale ${component.kind.toLowerCase()} ${component.namespace}/${component.name} to ${replicas}`,
+        ),
         method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: { replicas } },
       },
     )
@@ -2945,7 +2968,7 @@ class WorkloadClient {
     name: string,
   ): Promise<void> {
     await k8sFetch<undefined>(workloadPath(kind, namespace, name), {
-      action: `restart ${kind.toLowerCase()} ${namespace}/${name}`,
+      action: boundedActionLabel(`restart ${kind.toLowerCase()} ${namespace}/${name}`),
       method: 'PATCH',
       contentType: 'application/strategic-merge-patch+json',
       body: {
@@ -2972,7 +2995,7 @@ class WorkloadClient {
     replicas: number,
   ): Promise<void> {
     await k8sFetch<undefined>(`${workloadPath(kind, namespace, name)}/scale`, {
-      action: `scale ${kind.toLowerCase()} ${namespace}/${name} to ${replicas}`,
+      action: boundedActionLabel(`scale ${kind.toLowerCase()} ${namespace}/${name} to ${replicas}`),
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
       body: { spec: { replicas } },
@@ -2981,7 +3004,7 @@ class WorkloadClient {
 
   async deletePod(namespace: string, name: string): Promise<void> {
     await k8sFetch<undefined>(workloadPath('Pod', namespace, name), {
-      action: `delete pod ${namespace}/${name}`,
+      action: boundedActionLabel(`delete pod ${namespace}/${name}`),
       method: 'DELETE',
     })
   }
@@ -3411,7 +3434,7 @@ export class FrameClient {
   public readonly cluster: ClusterClient
   public readonly talos: TalosClient
   public readonly users: UserClient
-  readonly workloads: WorkloadClient
+  public readonly workloads: WorkloadClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
