@@ -121,7 +121,7 @@ pod, the second is where cloud metadata services live.
 
 Whoever can create a `FrameMachine` can make the operator open a connection to
 any address it admits, carrying any Secret in the namespace. That is bounded
-by RBAC — creating these objects is admin-tier — and it is stated here so that
+by RBAC — creating these objects needs the admin tier — and it is stated here so that
 widening who may create them is understood as widening that.
 
 **`bmc.credentialsRef`** — the name of a Secret in the same namespace, holding
@@ -224,14 +224,20 @@ after the fact; this lot applies the lesson at the outset.
 
 ## Authorization
 
-| Tier | Gains |
-|---|---|
-| viewer | `get`/`list`/`watch` on `framemachines` — inventory, sensors, event log |
-| operator | nothing new |
-| admin | `patch` on `framemachines`, which is `spec.powerRequest` |
-| nobody | `secrets` |
+The RBAC tiers are `admin`, `editor` and `viewer`, and the aggregated roles
+select by the `rbac.frame.plume-labs.io/tier` label. **There is no "operator"
+tier** — `deploy/kubernetes/base/rbac-tier-bindings.yaml` says so in a comment
+because the confusion is easy: `frame:operators` is a *group*, and it binds to
+the **editor** ClusterRole.
 
-**Power is admin, not operator**, and the distinction is deliberate against the
+| Tier label | Bound group | Gains |
+|---|---|---|
+| `viewer` | `frame:viewers` | `get`/`list`/`watch` on `framemachines` — inventory, sensors, event log |
+| `editor` | `frame:operators` | nothing new |
+| `admin` | `frame:admins` | `patch` on `framemachines`, which is `spec.powerRequest` |
+| — | — | nobody gets `secrets` |
+
+**Power is admin, not editor**, and the distinction is deliberate against the
 decision taken the day before this design. Restarting a Deployment is bounded
 by an update strategy; powering off a chassis is bounded by nothing, and the
 chassis may be carrying the cluster that hosts the console making the request.
