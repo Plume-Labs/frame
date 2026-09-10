@@ -20,8 +20,8 @@ export default defineConfig({
     // `secure: false` (the in-cluster certificate names the Service, not
     // localhost). See docs/development.md.
     proxy: {
-      '/api': { target: 'http://localhost:8001', changeOrigin: true },
-      '/apis': { target: 'http://localhost:8001', changeOrigin: true },
+      '/api': { target: 'http://localhost:8001', changeOrigin: true, ws: true },
+      '/apis': { target: 'http://localhost:8001', changeOrigin: true, ws: true },
       '/auth': {
         target: process.env.AUTH_PROXY_TARGET || 'https://localhost:8443',
         changeOrigin: true,

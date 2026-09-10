@@ -3,6 +3,7 @@ package uiproxy
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -477,5 +478,67 @@ func TestServeHTTPOpensARecordForAnExecUpgrade(t *testing.T) {
 			t.Fatal("no record was opened or closed for the exec session")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A browser cannot set Authorization on a WebSocket, so without this the
+// exec handshake is refused by the proxy's own 401 and the terminal never
+// opens for anyone. Remove the subprotocol lookup and this test reports 401.
+func TestAcceptsTheBearerTokenFromTheWebSocketSubprotocol(t *testing.T) {
+	up := echoUpgrade(t)
+	defer up.Close()
+	p := newTestProxy(t, stubVerifier{id: Identity{User: "alice@example.com", Groups: []string{"admins"}}}, up.URL)
+	front := httptest.NewServer(p)
+	defer front.Close()
+
+	enc := base64.RawURLEncoding.EncodeToString([]byte("a.b.c"))
+	conn, err := net.Dial("tcp", strings.TrimPrefix(front.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	// No Authorization header — exactly what a browser can send.
+	req := "GET /api/v1/namespaces/neura/pods/api-0/exec HTTP/1.1\r\n" +
+		"Host: frame.test\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Sec-WebSocket-Protocol: v4.channel.k8s.io, " + bearerProtocolPrefix + enc + "\r\n\r\n"
+	if _, err := fmt.Fprint(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("got %d (%s), want 101", res.StatusCode, body)
+	}
+}
+
+// The console's token is authd's, not a credential the apiserver accepts.
+// Forwarded, the apiserver's own WebSocket handler would see a subprotocol it
+// did not offer and refuse the handshake — and the token would land in the
+// apiserver's audit log for every shell anyone opens.
+func TestStripsTheBearerSubprotocolBeforeForwarding(t *testing.T) {
+	var seen http.Header
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+	p := newTestProxy(t, stubVerifier{id: Identity{User: "alice@example.com"}}, up.URL)
+
+	enc := base64.RawURLEncoding.EncodeToString([]byte("a.b.c"))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/neura/pods/api-0/exec", nil)
+	req.Header.Set("Sec-WebSocket-Protocol", "v4.channel.k8s.io, "+bearerProtocolPrefix+enc)
+	p.ServeHTTP(httptest.NewRecorder(), req)
+
+	got := seen.Get("Sec-WebSocket-Protocol")
+	if strings.Contains(got, bearerProtocolPrefix) {
+		t.Fatalf("the console's bearer token reached the apiserver: %q", got)
+	}
+	if got != "v4.channel.k8s.io" {
+		t.Fatalf("Sec-WebSocket-Protocol = %q, want v4.channel.k8s.io — the real protocol must survive", got)
 	}
 }
