@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { __testing, createFrameClient, FrameAPIError, projectToFull, type MetricSeries } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
+import { MAX_ACTION_LENGTH } from './manifest-diff'
 // Raw source, for the structural guard at the bottom of this file.
 import frameSdkSource from './frame-sdk.ts?raw'
 
@@ -1018,6 +1019,28 @@ describe('WorkloadClient', () => {
     expect(seen[0].body).toContain('kubectl.kubernetes.io/restartedAt')
   })
 
+  // Kubernetes allows a 63-character namespace and, for most kinds, a
+  // 253-character object name — a raw template literal for the label
+  // exceeds FrameTaskSpec.Action's 200-character CRD cap for names nowhere
+  // near this extreme. Past the cap the apiserver rejects the FrameTask
+  // create outright: the recorder logs the error and the restart still
+  // succeeds, so an unbounded label costs the audit record entirely, not
+  // just its tail. The length assertion alone would pass a builder that
+  // returned an empty string, so this also pins that the verb and the
+  // object's identity survive the cap.
+  it('caps the restart action label so a long name still gets an audit record', async () => {
+    const seen = capture(() => json({}))
+    const namespace = 'a'.repeat(63)
+    const name = 'b'.repeat(253)
+
+    await createFrameClient().workloads.restart('StatefulSet', namespace, name)
+
+    const action = seen[0].headers['X-Frame-Action']
+    expect(action.length).toBeLessThanOrEqual(MAX_ACTION_LENGTH)
+    expect(action).toContain('restart statefulset')
+    expect(action).toContain(namespace)
+  })
+
   it('scales through the scale subresource, naming the target count', async () => {
     const seen = capture(() => json({}))
     await createFrameClient().workloads.scale('StatefulSet', 'neura', 'postgres', 0)
@@ -1055,7 +1078,7 @@ describe('WorkloadClient', () => {
   it('validates the edit, then writes it with the fields that changed', async () => {
     const before = { metadata: { name: 'api', resourceVersion: '7' }, spec: { replicas: 2 } }
     const after = { metadata: { name: 'api', resourceVersion: '7' }, spec: { replicas: 5 } }
-    const seen = capture((url) => (url.includes('dryRun') ? json(after) : json(after)))
+    const seen = capture(() => json(after))
 
     await createFrameClient().workloads.applyManifest({
       kind: 'Deployment',
