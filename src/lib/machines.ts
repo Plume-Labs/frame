@@ -12,6 +12,8 @@
 // value it cannot vouch for. The consequence here: a machine with no sensors
 // is the normal case, not an error, and the screen must be able to say why.
 
+import type { NamespaceNode } from './workloads'
+
 export type SensorSeverity = 'ok' | 'warning' | 'critical' | 'unknown'
 
 export interface ProcessorInfo {
@@ -260,6 +262,63 @@ export function stalenessLabel(at: string | null, now: Date): string {
 
 export function powerActionLabel(action: string, machineName: string): string {
   return `power: ${action} ${machineName}`.slice(0, 200)
+}
+
+/**
+ * The seven `PowerAction` values the CRD accepts
+ * (`api/frame/v1beta1/framemachine_types.go`), all offered by the console —
+ * the LED toggle is one button over two of them (`IndicatorLedOn`/
+ * `IndicatorLedOff`), chosen from the machine's current `indicatorLED`.
+ * `Nmi` and `PushPowerButton` are not members of this enum at all: they are
+ * Redfish `ResetType` values the operator's `resolveResetType`
+ * (`internal/redfish/client.go`) uses internally to talk to hardware whose
+ * `Actions#ComputerSystem.Reset` doesn't list `GracefulShutdown` — a detail
+ * of the wire protocol, never a choice offered here.
+ */
+export type PowerAction =
+  | 'On'
+  | 'GracefulShutdown'
+  | 'ForceOff'
+  | 'ForceRestart'
+  | 'ClearSEL'
+  | 'IndicatorLedOn'
+  | 'IndicatorLedOff'
+
+/**
+ * Actions that end or interrupt whatever the machine is currently doing —
+ * the ones where a cluster node's workload is a consequence, not a detail,
+ * and the confirmation dialog owes the person clicking a count of what runs
+ * there. `On`, the LED toggle and clearing the log touch nothing that is
+ * currently running.
+ */
+export const DISRUPTIVE_POWER_ACTIONS: ReadonlySet<PowerAction> = new Set<PowerAction>([
+  'GracefulShutdown',
+  'ForceOff',
+  'ForceRestart',
+])
+
+/**
+ * How many pods `tree` (the same shape `WorkloadClient.tree()` returns, and
+ * `WorkloadsView` already renders) places on `nodeName` — every pod under a
+ * tracked controller plus every bare pod, across every namespace.
+ *
+ * This is the one sentence an administrator reads before switching off a
+ * machine that may be carrying production, so it lives here rather than
+ * inside the dialog's fetch callback: a rename of `nodeName` or a pod
+ * landing in a bucket this function forgets to sum would otherwise fail
+ * silently — the dialog would just report a smaller number, with nothing
+ * turning red — whereas here it is one function vitest can pin against a
+ * fixture that covers every bucket `NamespaceNode` has.
+ */
+export function countPodsOnNode(tree: NamespaceNode[], nodeName: string): number {
+  return tree.reduce((total, ns) => {
+    const controllerPods = ns.controllers.reduce(
+      (n, c) => n + c.pods.filter((p) => p.nodeName === nodeName).length,
+      0,
+    )
+    const barePods = ns.barePods.filter((p) => p.nodeName === nodeName).length
+    return total + controllerPods + barePods
+  }, 0)
 }
 
 // What the screen can say about an absent sensor set, derived only from

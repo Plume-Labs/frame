@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  countPodsOnNode,
+  DISRUPTIVE_POWER_ACTIONS,
   eventSeverity,
   isStale,
   machineTemperatureReadings,
@@ -11,6 +13,7 @@ import {
   type Machine,
   type MachineCR,
 } from './machines'
+import type { NamespaceNode, WorkloadPod } from './workloads'
 
 describe('temperatureSeverity', () => {
   it('is critical at or above the reported upper critical threshold', () => {
@@ -375,5 +378,89 @@ describe('sensorAvailability', () => {
     )
     expect(sensorAvailability(m)).not.toEqual({ kind: 'in-post' })
     expect(sensorAvailability(m)).toEqual({ kind: 'available' })
+  })
+})
+
+describe('DISRUPTIVE_POWER_ACTIONS', () => {
+  it('is exactly the three actions that end or interrupt what the machine is doing', () => {
+    expect([...DISRUPTIVE_POWER_ACTIONS].sort()).toEqual(
+      ['ForceOff', 'ForceRestart', 'GracefulShutdown'].sort(),
+    )
+  })
+
+  it('excludes On, the LED toggle and clearing the log — none of them touch a running workload', () => {
+    expect(DISRUPTIVE_POWER_ACTIONS.has('On')).toBe(false)
+    expect(DISRUPTIVE_POWER_ACTIONS.has('ClearSEL')).toBe(false)
+    expect(DISRUPTIVE_POWER_ACTIONS.has('IndicatorLedOn')).toBe(false)
+    expect(DISRUPTIVE_POWER_ACTIONS.has('IndicatorLedOff')).toBe(false)
+  })
+})
+
+// countPodsOnNode is the one sentence an administrator reads before
+// switching off a machine that may be carrying production — see its doc
+// comment in machines.ts for why the arithmetic lives here rather than
+// inside MachineActions.tsx's fetch callback. This fixture exercises every
+// bucket NamespaceNode has (controlled pods, bare pods, an empty namespace)
+// and a tree with nothing in it at all, then proves the count actually
+// tracks nodeName rather than merely counting pods that happen to match.
+describe('countPodsOnNode', () => {
+  function pod(name: string, nodeName: string): WorkloadPod {
+    return { name, namespace: 'default', phase: 'Running', nodeName, restarts: 0, containers: ['app'] }
+  }
+
+  function tree(): NamespaceNode[] {
+    return [
+      {
+        namespace: 'default',
+        infrastructure: false,
+        controllers: [
+          {
+            controller: {
+              kind: 'Deployment',
+              name: 'web',
+              namespace: 'default',
+              desiredReplicas: 2,
+              readyReplicas: 2,
+              scalable: true,
+            },
+            pods: [pod('web-1', 'w2'), pod('web-2', 'other-node')],
+          },
+        ],
+        barePods: [pod('standalone', 'w2')],
+        podCount: 3,
+      },
+      {
+        // An empty namespace: no controllers, no bare pods. Must contribute
+        // zero without throwing on an empty `controllers`/`barePods` array.
+        namespace: 'empty-ns',
+        infrastructure: false,
+        controllers: [],
+        barePods: [],
+        podCount: 0,
+      },
+    ]
+  }
+
+  it('counts a pod under a controller and a bare pod on the target node, across namespaces', () => {
+    expect(countPodsOnNode(tree(), 'w2')).toBe(2)
+  })
+
+  it('does not count a pod scheduled on a different node', () => {
+    expect(countPodsOnNode(tree(), 'other-node')).toBe(1)
+  })
+
+  it('is zero for a node nothing is scheduled on, including through an empty namespace', () => {
+    expect(countPodsOnNode(tree(), 'no-such-node')).toBe(0)
+  })
+
+  it('is zero for an empty tree', () => {
+    expect(countPodsOnNode([], 'w2')).toBe(0)
+  })
+
+  it('moves when a pod moves — proves the filter reads nodeName rather than always matching', () => {
+    const withMovedPod = tree()
+    withMovedPod[0].controllers[0].pods[1] = pod('web-2', 'w2') // was 'other-node'
+    expect(countPodsOnNode(withMovedPod, 'w2')).toBe(3)
+    expect(countPodsOnNode(withMovedPod, 'other-node')).toBe(0)
   })
 })

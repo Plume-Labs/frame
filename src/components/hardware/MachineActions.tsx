@@ -14,44 +14,22 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { createFrameClient } from '@/lib/frame-sdk'
-import { stalenessLabel, type Machine } from '@/lib/machines'
+import {
+  countPodsOnNode,
+  DISRUPTIVE_POWER_ACTIONS,
+  stalenessLabel,
+  type Machine,
+  type PowerAction,
+} from '@/lib/machines'
 
 const frame = createFrameClient()
-
-/**
- * The six power/BMC actions the console offers, mapped 1:1 to
- * `PowerAction` in `api/frame/v1beta1/framemachine_types.go` minus the two
- * the brief says never to surface: `Nmi` (a debugging interrupt, not an
- * operator action) and `PushPowerButton` (what `GracefulShutdown` resolves
- * to on hardware whose Redfish `Actions#ComputerSystem.Reset` doesn't list
- * `GracefulShutdown` itself — see `resolveResetType` in
- * `internal/redfish/client.go`. The button stays labelled as a graceful
- * shutdown because that is what the operator means; the resolution is an
- * implementation detail of talking to this iLO4, not a different action.
- */
-type PowerAction =
-  | 'On'
-  | 'GracefulShutdown'
-  | 'ForceOff'
-  | 'ForceRestart'
-  | 'ClearSEL'
-  | 'IndicatorLedOn'
-  | 'IndicatorLedOff'
-
-/**
- * Actions that end or interrupt whatever the machine is currently doing —
- * the ones where a cluster node's workload is the consequence, not a
- * detail. `On`, the LED toggle and clearing the log touch nothing that is
- * running, so they get a plain confirmation with no pod count.
- */
-const DISRUPTIVE = new Set<PowerAction>(['GracefulShutdown', 'ForceOff', 'ForceRestart'])
 
 type NodeCarries = 'loading' | 'error' | number
 
 interface PendingAction {
   action: PowerAction
   label: string
-  /** Only set for a DISRUPTIVE action against a machine with a `nodeRef`. */
+  /** Only set for a `DISRUPTIVE_POWER_ACTIONS` member against a machine with a `nodeRef`. */
   nodeCarries?: NodeCarries
 }
 
@@ -60,15 +38,15 @@ interface PendingAction {
  * confirmation dialog that names what the action *does* rather than
  * restating the button's label as a question.
  *
- * For `GracefulShutdown`/`ForceOff`/`ForceRestart` against a machine that
- * carries a cluster node (`machine.nodeRef` non-empty), the dialog first
- * counts the pods scheduled on that node — via `frame.workloads.tree()`,
- * the same pod list the Workloads screen already fetches and filters by
- * `nodeName` client-side; there is no narrower read (the only
- * `fieldSelector=spec.nodeName` request in the SDK lives inside
- * `NodeClient.drain()`, which evicts pods as a side effect and is not
- * something a power dialog should call just to count) — and blocks the
- * confirm button until that count (or its failure) is known, so nobody
+ * For `DISRUPTIVE_POWER_ACTIONS` members (`GracefulShutdown`/`ForceOff`/
+ * `ForceRestart`) against a machine that carries a cluster node
+ * (`machine.nodeRef` non-empty), the dialog first counts the pods scheduled
+ * on that node — `countPodsOnNode` (machines.ts) over `frame.workloads.tree()`,
+ * the same pod list the Workloads screen already fetches; there is no
+ * narrower read (the only `fieldSelector=spec.nodeName` request in the SDK
+ * lives inside `NodeClient.drain()`, which evicts pods as a side effect and
+ * is not something a power dialog should call just to count) — and blocks
+ * the confirm button until that count (or its failure) is known, so nobody
  * approves powering off a machine before being told what runs on it. When
  * `nodeRef` is empty, the dialog says so in place of the count: the
  * absence is information too, not a reason to say nothing.
@@ -85,21 +63,14 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
   const [busy, setBusy] = useState(false)
 
   const openDialog = (action: PowerAction, label: string) => {
-    const disruptive = DISRUPTIVE.has(action)
+    const disruptive = DISRUPTIVE_POWER_ACTIONS.has(action)
     setPending({ action, label, nodeCarries: disruptive && machine.nodeRef ? 'loading' : undefined })
     if (!disruptive || !machine.nodeRef) return
 
     void frame.workloads
       .tree()
       .then((tree) => {
-        const count = tree.reduce((total, ns) => {
-          const controllerPods = ns.controllers.reduce(
-            (n, c) => n + c.pods.filter((p) => p.nodeName === machine.nodeRef).length,
-            0,
-          )
-          const barePods = ns.barePods.filter((p) => p.nodeName === machine.nodeRef).length
-          return total + controllerPods + barePods
-        }, 0)
+        const count = countPodsOnNode(tree, machine.nodeRef)
         // Guards against the dialog having been reassigned to a different
         // action (or closed and reopened) while this request was in
         // flight — a stale count for the wrong action is worse than none.
@@ -225,14 +196,25 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
             <AlertDialogDescription className="font-mono text-xs space-y-1">
               {pending?.action === 'ClearSEL' && (
                 <p>
-                  Efface l'historique du journal d'événements conservé par le BMC. Cette action est
-                  irréversible.
+                  Efface l'historique du journal d'événements conservé par le BMC. Ce journal existe
+                  pour répondre à « pourquoi cette machine a-t-elle redémarré » — c'est le seul
+                  enregistrement de diagnostic qui survit à une coupure d'alimentation. L'effacer
+                  détruit les preuves de l'incident qu'on est le plus susceptible d'être en train
+                  d'examiner depuis cet écran. Cette action est irréversible.
                 </p>
               )}
               {(pending?.action === 'IndicatorLedOn' || pending?.action === 'IndicatorLedOff') && (
                 <p>Ne modifie que le repère lumineux du châssis — aucun effet sur l'alimentation.</p>
               )}
               {pending?.action === 'On' && <p>Démarre la machine.</p>}
+              {pending?.action === 'GracefulShutdown' && (
+                <p>
+                  Demande au système d'exploitation de s'arrêter proprement — un signal ACPI
+                  (bouton d'alimentation), pas une garantie. Le système d'exploitation doit choisir
+                  d'y répondre : une machine dont le noyau est bloqué l'ignorera et restera allumée.
+                  Si elle ne répond pas, « Extinction forcée » est l'alternative.
+                </p>
+              )}
               {pending?.action === 'ForceOff' && (
                 <p>
                   Coupe l'alimentation immédiatement, sans laisser le système d'exploitation s'arrêter
@@ -245,7 +227,7 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
                   proprement.
                 </p>
               )}
-              {pending && DISRUPTIVE.has(pending.action) && (
+              {pending && DISRUPTIVE_POWER_ACTIONS.has(pending.action) && (
                 <p>
                   {machine.nodeRef ? (
                     pending.nodeCarries === 'loading' ? (
