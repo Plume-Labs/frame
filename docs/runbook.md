@@ -296,6 +296,99 @@ live knobs on its next 30 s tick. Anything restart-gated needs another approved
 restart to actually revert — a drop-in removed from disk is no more in effect
 than a drop-in added to it.
 
+## FrameMachine (hardware over Redfish)
+
+Lot 1, 2026-09-10. **Nothing below has been exercised against a live BMC** —
+see [deployment.md](deployment.md), "The check that has never once been run
+end to end", for what would prove it. What follows is measured against the
+controller's and the console's own logic (`internal/controller/frame/framemachine_controller.go`,
+`internal/redfish/client.go`, `src/lib/machines.ts`) and against 26 HTTP
+responses captured from a real HP ProLiant ML350 Gen9 (iLO 4 v2.77) in
+`internal/redfish/testdata/ilo4-real/`.
+
+### `Reachable=False`, by reason
+
+`status.conditions[].reason` where `type: Reachable`:
+
+| Reason | Meaning | What to do |
+|---|---|---|
+| `TLSError` | Certificate verification failed. **Expected on a fresh iLO4** — it ships a self-signed certificate, and `spec.bmc.tls` has no permissive default. | Set `tls.insecureSkipVerify: true` if you accept that exposure, or point `tls.caBundleRef` at a ConfigMap holding the CA that signed the BMC's certificate. |
+| `AuthFailed` | The BMC answered `401`/`403` to a *read*. | Check `credentialsRef`'s Secret holds the right `username`/`password` for this BMC. |
+| `Timeout` | The BMC did not answer inside the client's 20-second budget, or the request otherwise timed out. | Check layer-3 reachability from wherever the controller runs — see [deployment.md](deployment.md), "Registering a machine's BMC", for the two prerequisites. |
+| `Unsupported` | The BMC exposes no `ComputerSystem.Reset` action at all, or none of a requested action's substitutes are in what it lists (see below). | Confirm this is genuinely a Redfish-capable BMC with that action enabled in firmware; retrying will not help. |
+| `CredentialsUnavailable` | The controller could not even build a client: `credentialsRef` names a Secret that does not exist, or is missing a key. | Check the Secret exists in the `FrameMachine`'s own namespace and holds both `username` and `password`. |
+| `ProbeFailed` | Anything else — a malformed response, an unexpected HTTP status, a decode failure. | Read `status.conditions[].message`, then `kubectl logs -n frame-system deploy/frame-controller-manager` for the underlying error. |
+| `Probed` | Success. Not a failure — this is what `Reachable=True` carries. | — |
+
+(`probeFailureReason` in `internal/controller/frame/framemachine_controller.go`.)
+
+**A power action can fail while `Reachable` stays `True`.** The failure of a
+`spec.powerRequest` — including the `403 Base.0.10.InsufficientPrivilege` an
+account holding only `LoginPriv` gets on `ComputerSystem.Reset` — lands in
+`status.lastPowerActionError` and a `PowerActionFailed` Warning Event, never
+in the `Reachable` condition: `Reachable` answers "does the BMC answer at
+all", and a power action can fail for an unrelated reason (usually a
+privilege gap — see [deployment.md](deployment.md)'s "Registering a
+machine's BMC" for why the account needs `VirtualPowerAndResetPriv`, not
+just `LoginPriv`, to act rather than just read) while it does.
+
+**"Graceful shutdown" in the console is not a Redfish `ResetType` on this
+hardware.** The captured iLO4's `Actions.#ComputerSystem.Reset` lists `On`,
+`ForceOff`, `ForceRestart`, `Nmi` and `PushPowerButton` — no
+`GracefulShutdown`. The CRD keeps that name because it is what a person
+means; `resolveResetType` (`internal/redfish/client.go`) substitutes
+`PushPowerButton` — the ACPI power-button signal an installed operating
+system chooses whether to honour — when `GracefulShutdown` itself is not
+listed, and returns `Unsupported` if neither is. `ForceOff` is never
+substituted automatically: it is a hard cut, not a graceful one. A machine
+with a hung kernel, or no operating system at all, will not act on
+`PushPowerButton`, and the console has no way to tell that apart from a slow
+but working shutdown — the only currently-verified signal is
+`status.powerState` eventually reporting `Off`.
+
+### Why a machine can show no sensors and be perfectly healthy
+
+A real iLO4 replays its last cached Thermal/Power reading as a live one: the
+captured ML350 Gen9 reported CPU1 at 40°C, `Status.State: Enabled`, 46
+sensors online — powered off, mid-POST, and finished alike, twenty minutes
+after being unplugged in a 20°C room
+(`internal/redfish/testdata/ilo4-real/PROVENANCE.md`). Nothing in the
+reading, its reported health, or the sensor count tells a measurement from a
+memory. So the controller only ever stores a reading it can vouch for
+(`applySnapshot` in `internal/controller/frame/framemachine_controller.go`),
+clearing `status.sensors` to nil in every other case — the console's
+`sensorAvailability` (`src/lib/machines.ts`) distinguishes six states, and a
+missing sensor block is the *normal* rendering for five of them:
+
+| State | Meaning |
+|---|---|
+| `never-read` | No probe, ever, has found this machine in a state where its sensors meant anything. |
+| `powered-off` | `status.powerState !== 'On'`. |
+| `in-post` | Powered on, but `status.postState` is `PowerOff` or `InPost` — the two POST states this hardware is known to still serve stale readings under. |
+| `unreachable` | The BMC isn't answering now, and no earlier trustworthy reading survives to show instead. |
+| `last-known` | The BMC isn't answering now, but a trustworthy reading from an earlier probe survives. |
+| `available` | Powered on, past the two known-stale POST states, and the BMC just answered. |
+
+A stale reading is shown **deliberately, not hidden**: `last-known` still
+renders the retained sensors, with their age (`sensorsValidAt`) displayed
+beside them (`src/components/hardware/SensorsTab.tsx`) — a temperature with
+no age attached is a claim about the present, and this is exactly the panel
+someone reads during an incident. The rest of the machine's panel greys on a
+separate clock: `MachineDetail` fades its body once `status.lastProbeAt` —
+the machine's own liveness, not the sensors' — is more than 150 seconds old,
+two polling intervals plus a half (`src/lib/machines.ts`'s `STALE_AFTER_MS`).
+`sensorsValidAt` and `lastProbeAt` diverge on purpose: a probe against a
+powered-off machine still advances `lastProbeAt`, but does not touch
+`sensorsValidAt`, because it did not take a trustworthy sensor reading.
+
+**What is still unproven.** The captured ML350 has no operating system
+installed, so POST never advances past `InPostDiscoveryComplete` — no
+`PostState` a *booted* machine reports has ever been observed. The
+controller treats an unrecognised `PostState` on a powered-on machine as
+trustworthy for exactly this reason: refusing every unknown value would make
+sensors permanently unavailable on the first machine that actually boots.
+Whether that assumption holds is unproven until one does.
+
 ## Workload placement on the test cluster
 
 Two incidents, one rule: **nothing heavy runs on the control plane, and

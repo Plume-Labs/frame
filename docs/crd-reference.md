@@ -1,22 +1,26 @@
 # CRD Reference
 
-Ten CRDs across two API groups: nine in `frame.plume-labs.io` and
+Eleven CRDs across two API groups: ten in `frame.plume-labs.io` and
 `FrameService` in `services.plume-labs.io` — a separate group so the service
 catalog can move without blocking the `frame.plume-labs.io` freeze (see
 [roadmap.md](roadmap.md)). Generated CRDs live in `config/crd/bases/`; sample
 CRs in `config/samples/`. Each kind has a controller
 (`internal/controller/<group>/`) except FrameUser and FrameTask, and a
-webhook (`internal/webhook/<group>/v1beta1/`) except NodeTuning and
-FrameTask.
+webhook (`internal/webhook/<group>/v1beta1/`) except NodeTuning, FrameTask
+and FrameMachine.
 
-Eight of the ten are namespaced and serve both **`v1beta1`** (storage) and a
-deprecated `v1alpha1`. **NodeTuning and FrameTask are the exceptions**, each
-on its own axis: both postdate the freeze, so both have **no `v1alpha1`**
-(nothing to convert from) and **no webhook**. NodeTuning is additionally
-**cluster-scoped**; FrameTask is namespaced, like the eight frozen kinds.
-Both also report status as a `phase` rather than a `Ready` condition — see
-each one's section for why those are two different reasons, and read both as
-documented divergences, not a licence to add more.
+Eight of the eleven are namespaced and serve both **`v1beta1`** (storage) and
+a deprecated `v1alpha1`. **NodeTuning, FrameTask and FrameMachine are the
+exceptions**: all three postdate the freeze, so all three have **no
+`v1alpha1`** (nothing to convert from) and **no webhook**. NodeTuning is
+additionally **cluster-scoped**; FrameTask and FrameMachine are namespaced,
+like the eight frozen kinds. NodeTuning and FrameTask also report status as
+a `phase` rather than a `Ready` condition — see each one's section for why
+those are two different reasons, and read both as documented divergences,
+not a licence to add more. **FrameMachine is not a third instance of that
+divergence**: it has a controller and reports health through its own
+condition type — see its section below for why that type is `Reachable`
+rather than the shared `Ready`.
 
 > This page documents **`v1beta1`**, the storage version and the conversion
 > hub. What the freeze does and does not promise, the nine differences from
@@ -98,6 +102,15 @@ branch on it:
 | FrameService | diagnostic, not a lifecycle: `Reconciled`, `UnknownType`, `NotProvisionable`, `SizeRefused`, `ModelCacheMissing`, and whatever else the provider returns. Read `status`, not `reason`. |
 | FrameUser | none — it has no controller. |
 | FrameTask | not applicable — it has no `Ready` condition at all; read `status.phase` (`Running`, `Succeeded`, `Failed`) instead, see below. |
+
+> **FrameMachine writes a condition, but not this one.** Its controller
+> writes `Reachable`, not `Ready` — a deliberate choice (`conditionReachable`
+> in `internal/controller/frame/framemachine_controller.go`): a chassis can
+> answer its BMC while powered off, which is not a state any other
+> controller in this table would call `Ready`. `Reachable.reason` is
+> `Probed` on success; `TLSError`, `AuthFailed`, `Timeout`, `Unsupported`,
+> `CredentialsUnavailable` or `ProbeFailed` otherwise — see FrameMachine's
+> own section below and [runbook.md](runbook.md) for what each means.
 
 > **Enum members no controller ever wrote (R6).** `v1alpha1`'s `phase` enums
 > were wider than anything that ever populated them. FrameJob's `Pending` is
@@ -430,6 +443,129 @@ is the correct report for an unconfigured node. KSM and the MIG label need
 nothing installed. `deploy/scripts/node-tuning-install.sh` does the install,
 and the two other things `kubectl apply` cannot do — see
 [deployment.md](deployment.md).
+
+---
+
+## FrameMachine
+
+*Has a controller, **no** webhook and **no** `v1alpha1`* — it postdates the
+freeze, the same as NodeTuning and FrameTask, but unlike NodeTuning it is
+**namespaced**. Short name `fm`. Design in
+[`docs/superpowers/specs/2026-09-10-lot1-hardware-redfish-design.md`](superpowers/specs/2026-09-10-lot1-hardware-redfish-design.md),
+including "What a real iLO4 turned out to do" — the section every claim below
+traces back to.
+
+A physical server's baseboard management controller (BMC), polled over
+Redfish. This is deliberately a new kind rather than fields on `FrameNode`:
+`FrameNode` converts from `v1alpha1`, and every field added to it would have
+to round-trip through a conversion that cannot represent it, the same
+reasoning that gave `FrameTask` its own kind in lot 2.
+
+**Spec:** `bmc.address` (the management port's IP; CEL `isIP(self)`, capped
+at 45 characters to bound that rule's cost like `FrameNodeSpec.IP`, and
+loopback/link-local are refused — the field is a server-side-request-forgery
+primitive, since the controller connects to it carrying credentials, and
+requiring a literal IP takes name resolution out of that path), `bmc.credentialsRef`
+(a Secret in the same namespace holding `username`/`password`; only the
+controller reads it — see [deployment.md](deployment.md), "RBAC", for why no
+console tier holds `secrets`), `bmc.tls` (`insecureSkipVerify` or
+`caBundleRef` — one is **required**, CEL-enforced, deliberately with no
+permissive default: an iLO4 ships a self-signed certificate, so an
+unconfigured machine sits `Reachable=False` with `TLSError` until someone
+chooses), `powerRequest {action, requestedAt}` (one of `On`,
+`GracefulShutdown`, `ForceOff`, `ForceRestart`, `ClearSEL`,
+`IndicatorLedOn`, `IndicatorLedOff` — acted on only when `requestedAt` is
+strictly later than `status.lastPowerActionAt`, the same restartedAt-style
+timestamp pattern lot 2 uses to restart a Deployment, chosen because a
+converged "desired: On" would fight someone who pressed the physical power
+button and could not express a restart at all), `nodeRef` (optional, names a
+Kubernetes node, not a `FrameNode` — a Kubernetes node name is true
+regardless of how the machine was provisioned, where `FrameNode`'s flow is
+Talos-shaped and the estate has moved to a Debian-based image).
+
+**Status:** `powerState`, `postState` (the BMC's own POST-state string),
+`indicatorLED`, `inventory`, `sensors` (**nil whenever the reading cannot be
+trusted** — see below), `sensorsValidAt` (deliberately distinct from
+`lastProbeAt`: a probe can succeed against a powered-off machine and still
+not have taken a trustworthy sensor reading), `eventLog` (most recent 25
+entries — etcd is not a log store) plus `eventLogCounts`/`eventLogTotal`,
+`lastProbeAt`, `lastPowerAction`/`lastPowerActionAt` (the guard) and
+`lastPowerActionError` (cleared on the next success; carries why a power
+action failed **without** touching `Reachable`, since a power action can
+fail — most often on a privilege gap, see [deployment.md](deployment.md) —
+while the BMC answers everything else fine). No `status.phase` — see "No
+top-level `status.phase`" above; health is `Reachable`, not `Ready` (see the
+note there).
+
+**Why sensors go to nil instead of being kept beside a caveat.** A real
+iLO4 replays its last cached Thermal/Power reading as a live one — the
+captured ML350 Gen9 reported CPU1 at 40°C, `Status.State: Enabled`, with 46
+sensors online whether powered off, mid-POST or finished, twenty minutes
+after being unplugged in a 20°C room
+(`internal/redfish/testdata/ilo4-real/PROVENANCE.md`). Nothing in the
+reading, its reported health, or the sensor count distinguishes a
+measurement from a memory, so the controller derives trustworthiness from
+`PowerState` and the HPE OEM `PostState` instead
+(`Snapshot.SensorsTrustworthy`, `internal/redfish/client.go`) and clears
+`status.sensors` outright when it is not met, rather than shipping a frozen
+reading next to a flag nobody reads. See [runbook.md](runbook.md) for the
+six states the console's `sensorAvailability` distinguishes and why a
+*stale* (as opposed to untrustworthy) reading is shown, not hidden.
+
+**Conditions:** `Reachable` only, with reason `Probed` on success and one of
+`TLSError`, `AuthFailed`, `Timeout`, `Unsupported`, `CredentialsUnavailable`,
+`ProbeFailed` otherwise — full vocabulary and remediation in
+[runbook.md](runbook.md).
+
+**Printer columns:** `Address`, `Power`, `Reachable`, `Model`, `Node`, `Age`.
+
+**Controller** (`internal/controller/frame/framemachine_controller.go`):
+polls `RequeueAfter: 60s` on success, `5m` after a failed probe or a Redfish
+client it could not even build; a failed probe deliberately does not clear
+previously stored inventory, sensors or the event log — the console shows
+the last good reading beside its age rather than wiping the panel on a
+transient hiccup. `spec.powerRequest` is executed at most once per
+`requestedAt`, before the probe that follows in the same reconcile, so a
+power action is never lost even when that probe then fails.
+
+**"GracefulShutdown" is not itself a Redfish `ResetType` on this hardware.**
+The captured iLO4's `Actions.#ComputerSystem.Reset` lists `On`, `ForceOff`,
+`ForceRestart`, `Nmi` and `PushPowerButton` — no `GracefulShutdown`. The CRD
+enum keeps that name because it is what a person means and the enum is a
+frozen API; `internal/redfish/client.go`'s `resolveResetType` substitutes
+`PushPowerButton` — the ACPI power-button signal an installed operating
+system chooses whether to honour — when `GracefulShutdown` itself is not
+listed, and returns `ErrUnsupported` when neither is. `ForceOff` is never
+substituted automatically: it is a hard cut, not a graceful one, and
+substituting it silently would turn a request that asked to be graceful into
+one that was not, with no way for the caller to know.
+
+**No `gofish`, and no other Redfish library.** `internal/redfish` is a
+hand-written `net/http` + `encoding/json` client behind a `Client`
+interface, tested against `httptest.Server`s serving the recorded iLO4 JSON
+above. Seven endpoints against one firmware family is not where a
+general-purpose vendor-abstraction library pays for itself, and the risk it
+would answer — fields this firmware omits — is handled by pointer decoding
+directly instead.
+
+**Not in this lot, and deliberately:** remote console and virtual media (both
+sit behind iLO4's paid Advanced licence and don't speak Redfish anyway);
+in-band IPMI over KCS as a fallback (dead exactly when the lot exists for —
+a powered-off machine has no OS to expose `/dev/ipmi0` through — and not
+free, since reaching it needs a privileged DaemonSet Pod Security `baseline`
+refuses); discovery by scanning a subnet (machines are registered, not
+found). Full reasoning for all three in the design document.
+
+**Deployment status: nothing here has been exercised against a live BMC.**
+No HPE iLO was reachable when this lot was designed; a real ML350 Gen9 was
+reached once, on 2026-09-10, and 26 of its HTTP responses were captured
+across three power states to test the client against — but no console has
+ever been opened against a live machine, no power action has ever been sent
+to real hardware, and the captured machine carries no operating system, so
+the `PostState` (and sensor behaviour) a *booted* machine reports has never
+been observed. See [deployment.md](deployment.md), "Registering a machine's
+BMC" and "The check that has never once been run end to end", for the
+prerequisites and the unexecuted verification sequence.
 
 ---
 
@@ -829,15 +965,19 @@ requests (including `nvidia.com/gpu`) and a node selector derived from
 
 FrameNode and FrameJob have **defaulting + validation**; the other six —
 SchedulingPolicy, FrameResourceQuota, TalosMachineConfig, TalosUpgrade,
-FrameUser, and FrameService — have **validation** only. **NodeTuning and
-FrameTask have neither**: their bounds are CRD schema markers alone. For
-NodeTuning that means nothing rejects a selector that overlaps another's —
-the agent detects that at apply time and refuses the node instead. For
-FrameTask it means the schema's `MinLength`/`Required`/`Enum` markers (e.g.
-`spec.user` must be non-empty) are the only admission-time check there ever
-is — consistent with having no controller to defer anything to either.
-Validators enforce required fields and value ranges (or, for FrameService,
-dispatch to the provider's own parameter schema) before a CR is admitted.
+FrameUser, and FrameService — have **validation** only. **NodeTuning,
+FrameTask and FrameMachine have neither**: their bounds are CRD schema
+markers alone, CEL included. For NodeTuning that means nothing rejects a
+selector that overlaps another's — the agent detects that at apply time and
+refuses the node instead. For FrameTask it means the schema's
+`MinLength`/`Required`/`Enum` markers (e.g. `spec.user` must be non-empty)
+are the only admission-time check there ever is — consistent with having no
+controller to defer anything to either. FrameMachine's bounds (the CEL rules
+on `bmc.address` and `bmc.tls`) are likewise schema-only, and a controller
+that clears untrustworthy sensors rather than a webhook is what stands
+between a stale reading and the screen. Validators enforce required fields
+and value ranges (or, for FrameService, dispatch to the provider's own
+parameter schema) before a CR is admitted.
 Tests:
 `internal/webhook/frame/v1beta1/*_test.go` and
 `internal/webhook/services/v1beta1/*_test.go`.
