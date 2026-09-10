@@ -13,6 +13,14 @@ The gate is narrow on purpose: the freeze waits for S1's *model* to settle, prov
 
 Running both tracks with a single operator means alternating between them, not advancing both at once. Whichever gets attention, the other waits.
 
+> **The OS decision moved on 2026-09-10: Talos is out, a custom Debian-based
+> image is in.** Every Talos-shaped item below — `TalosMachineConfig`,
+> `TalosUpgrade`, and the provisioning half of `FrameNode` — is scoped
+> against a mechanism this estate no longer uses, and the auto-update track
+> loses the mechanism it assumed. What survives, what dies, and the order to
+> rebuild it in are in [provisioning.md](provisioning.md). Nothing below has
+> been rewritten to match yet.
+
 The bar for each phase is its **Exit criteria** — a phase is not done until those are demonstrable, not just coded.
 
 > **Specs, plans and reviews.** `docs/superpowers/` was emptied on 2026-08-17 of
