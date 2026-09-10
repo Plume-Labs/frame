@@ -88,6 +88,13 @@ rules:
   - apiGroups: [velero.io]
     resources: [backups, schedules, backupstoragelocations]
     verbs: [get, list, watch]
+  # Lot 1. The Hardware screen reads a chassis's inventory, sensors and event
+  # log; all three live in FrameMachine's status, which the operator fills by
+  # polling the BMC. Call sites: src/components/hardware/HardwareView.tsx and
+  # the MachineClient in src/lib/frame-sdk.ts.
+  - apiGroups: ["frame.plume-labs.io"]
+    resources: ["framemachines"]
+    verbs: ["get", "list", "watch"]
   #
   # REMOVED 2026-08-10, no call site anywhere in `src/`:
   #   core `services`, `namespaces`, `resourcequotas` — the UI reads Frame's
@@ -378,6 +385,16 @@ rules:
   - apiGroups: [""]
     resources: [pods/exec]
     verbs: [create]
+  #
+  # Lot 1. spec.powerRequest is the only writable field the console touches, and
+  # patch is the only verb that reaches it. Admin and not editor: restarting a
+  # Deployment is bounded by an update strategy, powering off a chassis is
+  # bounded by nothing, and the chassis may be carrying the cluster that hosts
+  # the console making the request.
+  # Call site: the power dialog in src/components/hardware/MachineActions.tsx.
+  - apiGroups: ["frame.plume-labs.io"]
+    resources: ["framemachines"]
+    verbs: ["patch"]
   #
   # The YAML editor's `update`/`patch` on pods, deployments, statefulsets,
   # daemonsets and jobs is deliberately NOT in this role, and this is the whole
