@@ -238,58 +238,142 @@ describe('toMachine', () => {
 })
 
 describe('sensorAvailability', () => {
-  const cr = (status: NonNullable<MachineCR['status']>): MachineCR => ({
+  const sampleSensors = {
+    temperatures: [{ name: 'CPU1', celsius: 40, upperCritical: 70, health: 'OK' }],
+    fans: [],
+    powerSupplies: [],
+    powerConsumedWatts: 120,
+  }
+
+  const reachable = (
+    status: NonNullable<MachineCR['status']>,
+    reachableStatus: 'True' | 'False' = 'True',
+  ): MachineCR => ({
     metadata: { name: 'ml350-g9', namespace: 'default' },
     spec: { bmc: { address: '192.168.2.60' } },
-    status: { conditions: [{ type: 'Reachable', status: 'True', reason: 'Probed' }], ...status },
+    status: {
+      conditions: [{ type: 'Reachable', status: reachableStatus, reason: 'Probed' }],
+      ...status,
+    },
   })
 
-  it('is powered-off for Off/PowerOff with no sensors', () => {
-    const m = toMachine(cr({ powerState: 'Off', postState: 'PowerOff' }))
+  // A freshly registered machine whose first-ever probe succeeded (BMC
+  // answered, so reachable) and found it powered off. applySnapshot writes
+  // PowerState/PostState on every successful probe but only sets
+  // SensorsValidAt when SensorsTrustworthy — which requires powerState
+  // 'On' — so this machine has reachable=true, powerState='Off', and
+  // sensorsValidAt still null: exactly the controller-producible state for
+  // "nobody has ever seen this machine work", which the amendment asked to
+  // discriminate from "it is off right now". never-read is checked before
+  // powered-off for this reason.
+  it('is never-read for a reachable machine probed once while off, never validly read', () => {
+    const m = toMachine(reachable({ powerState: 'Off', postState: 'PowerOff' }))
+    expect(m.sensorsValidAt).toBeNull()
+    expect(sensorAvailability(m)).toEqual({ kind: 'never-read' })
+  })
+
+  // Had a valid reading before (sensorsValidAt set), is now off: a later
+  // successful probe found powerState 'Off' and, per applySnapshot's else
+  // branch, cleared Sensors to nil while leaving SensorsValidAt where it
+  // was. Fully controller-producible.
+  it('is powered-off for Off/PowerOff with a sensor history but no current sensors', () => {
+    const m = toMachine(
+      reachable({
+        powerState: 'Off',
+        postState: 'PowerOff',
+        sensorsValidAt: '2026-09-10T09:00:00Z',
+      }),
+    )
     expect(sensorAvailability(m)).toEqual({ kind: 'powered-off' })
   })
 
-  it('is in-post for On/InPost with no sensors', () => {
-    const m = toMachine(cr({ powerState: 'On', postState: 'InPost' }))
+  it('is in-post for On/InPost with a sensor history but no current sensors', () => {
+    const m = toMachine(
+      reachable({
+        powerState: 'On',
+        postState: 'InPost',
+        sensorsValidAt: '2026-09-10T09:00:00Z',
+      }),
+    )
     expect(sensorAvailability(m)).toEqual({ kind: 'in-post' })
   })
 
   it('is available for On/InPostDiscoveryComplete with sensors present', () => {
     const m = toMachine(
-      cr({
+      reachable({
         powerState: 'On',
         postState: 'InPostDiscoveryComplete',
-        sensors: {
-          temperatures: [{ name: 'CPU1', celsius: 40, upperCritical: 70, health: 'OK' }],
-          fans: [],
-          powerSupplies: [],
-          powerConsumedWatts: 120,
-        },
+        sensorsValidAt: '2026-09-10T11:59:30Z',
+        sensors: sampleSensors,
       }),
     )
     expect(sensorAvailability(m)).toEqual({ kind: 'available' })
   })
 
-  it('is unreachable when the Reachable condition is False, regardless of power state', () => {
-    const m = toMachine({
-      metadata: { name: 'ml350-g9', namespace: 'default' },
-      spec: { bmc: { address: '192.168.2.60' } },
-      status: {
-        powerState: 'On',
-        postState: 'InPostDiscoveryComplete',
-        conditions: [{ type: 'Reachable', status: 'False', reason: 'Timeout' }],
-      },
-    })
+  // The controller's probe-failure branch does not clear status — it keeps
+  // the last reading beside its age rather than blanking the panel on a
+  // transient BMC hiccup. So an unreachable machine that was last seen On
+  // and POST-complete still carries its last sensor set. Fully
+  // controller-producible: this is the ordinary shape of "BMC stopped
+  // answering ten minutes ago".
+  it('is last-known when unreachable but a sensor reading survives from the last successful probe', () => {
+    const m = toMachine(
+      reachable(
+        {
+          powerState: 'On',
+          postState: 'InPostDiscoveryComplete',
+          sensorsValidAt: '2026-09-10T11:50:00Z',
+          sensors: sampleSensors,
+        },
+        'False',
+      ),
+    )
+    expect(sensorAvailability(m)).toEqual({ kind: 'last-known' })
+  })
+
+  // Exercises the branch's fallback when a caller feeds it a Machine whose
+  // fields are not correlated the way applySnapshot always writes them —
+  // the Machine type does not (and per the brief, should not) encode that
+  // correlation itself, only toMachine's producer does. Per the traced
+  // invariant (SensorsTrustworthy implies mapSensors is always non-nil),
+  // the real controller cannot currently reach powerState 'On' +
+  // postState 'InPostDiscoveryComplete' + sensors null in the same status;
+  // this pins the function's behaviour for the wider type-level contract
+  // rather than asserting the combination is controller-producible today —
+  // see the report's self-review for why this is disclosed rather than
+  // silently assumed.
+  it('is unreachable when nothing survives at all', () => {
+    const m: Machine = {
+      ...toMachine(
+        reachable(
+          {
+            powerState: 'On',
+            postState: 'InPostDiscoveryComplete',
+            sensorsValidAt: '2026-09-10T11:50:00Z',
+          },
+          'False',
+        ),
+      ),
+      sensors: null,
+    }
     expect(sensorAvailability(m)).toEqual({ kind: 'unreachable' })
   })
 
-  // On, POST finished, reachable — the one combination that would normally
-  // carry sensors — yet sensors is still null and sensorsValidAt has never
-  // been set. Nobody has ever seen this machine produce a valid reading,
-  // which is a different fact from "it is off right now".
-  it('is never-read for a reachable, POST-complete machine that has no sensors and no history', () => {
-    const m = toMachine(cr({ powerState: 'On', postState: 'InPostDiscoveryComplete' }))
-    expect(m.sensorsValidAt).toBeNull()
-    expect(sensorAvailability(m)).toEqual({ kind: 'never-read' })
+  // internal/redfish/client.go derives SensorsTrustworthy as an exclusion
+  // (powered on AND postState not in {PowerOff, InPost}), not an inclusion
+  // of the one known-good value, precisely so an unrecognised future
+  // PostState does not blind the console forever. This machine reports a
+  // plausible post-boot state this package has never catalogued.
+  it('treats an unrecognised PostState on a powered-on machine as trustworthy, not in-post', () => {
+    const m = toMachine(
+      reachable({
+        powerState: 'On',
+        postState: 'RunningOS', // invented, plausible, never seen in captures
+        sensorsValidAt: '2026-09-10T11:59:30Z',
+        sensors: sampleSensors,
+      }),
+    )
+    expect(sensorAvailability(m)).not.toEqual({ kind: 'in-post' })
+    expect(sensorAvailability(m)).toEqual({ kind: 'available' })
   })
 })

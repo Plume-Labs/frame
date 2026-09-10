@@ -257,22 +257,46 @@ export function powerActionLabel(action: string, machineName: string): string {
 
 // What the screen can say about an absent sensor set, derived only from
 // signals the operator actually reports — never guessed.
+//
+// 'last-known' exists because a failed probe does NOT clear status: the
+// controller's Reconcile deliberately keeps the last reading beside its
+// age rather than blanking the panel on a transient BMC hiccup (see
+// applySnapshot's doc comment in framemachine_controller.go). An
+// unreachable machine can therefore still be carrying a perfectly good —
+// merely aging — sensor set, and 'unreachable' alone would hide it from
+// any caller that gates rendering on this function.
 export type SensorAvailability =
   | { kind: 'available' }
   | { kind: 'powered-off' }
   | { kind: 'in-post' }
-  | { kind: 'unreachable' }
+  | { kind: 'last-known' } // BMC not answering now, but a valid reading survives
+  | { kind: 'unreachable' } // BMC not answering, and nothing survives either
   | { kind: 'never-read' }
 
 export function sensorAvailability(machine: Machine): SensorAvailability {
-  if (!machine.reachable) return { kind: 'unreachable' }
-  if (machine.sensors) return { kind: 'available' }
+  // sensorsValidAt is the one signal that means what its name says: it is
+  // set exactly when a probe last found the sensors trustworthy (see
+  // applySnapshot), and never cleared afterwards even if a later probe
+  // finds them untrustworthy again. Null here means no probe, ever, has
+  // found this machine in a state where its sensors meant anything — which
+  // is a stronger and more useful fact than "it happens to be off right
+  // now", so it is checked first regardless of the machine's current state.
+  if (machine.sensorsValidAt === null) return { kind: 'never-read' }
+
+  // Mirrors internal/redfish/client.go's SensorsTrustworthy as an exclusion,
+  // not an inclusion: PowerOff and InPost are the two states known to still
+  // serve stale data while powered on/off; everything else is treated as
+  // fine so an unrecognised future PostState does not blind the console
+  // forever (the captured machine never booted an OS, so no "running"
+  // PostState has ever been observed).
   if (machine.powerState !== 'On') return { kind: 'powered-off' }
-  if (machine.postState !== 'InPostDiscoveryComplete') return { kind: 'in-post' }
-  // Reachable, powered on, POST finished — the one combination in which the
-  // operator would normally have written sensors. Since it did not, this
-  // machine has no valid reading in its history at all: sensorsValidAt is
-  // null here in every case observed on real hardware. "Nobody has ever
-  // seen this machine work", as distinct from "it is off right now".
-  return { kind: 'never-read' }
+  if (machine.postState === 'PowerOff' || machine.postState === 'InPost') {
+    return { kind: 'in-post' }
+  }
+
+  if (!machine.reachable) {
+    return machine.sensors ? { kind: 'last-known' } : { kind: 'unreachable' }
+  }
+
+  return { kind: 'available' }
 }
