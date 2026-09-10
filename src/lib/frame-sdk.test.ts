@@ -974,6 +974,40 @@ describe('WorkloadClient', () => {
     expect(tree[0].barePods).toEqual([])
   })
 
+  // Task 8's review could not verify this, because it lives in this file:
+  // `scalable` must come from the kind, not from whether a replica-shaped
+  // field happens to be present on the object. A DaemonSet has no `scale`
+  // subresource even when its object carries `spec.replicas` — an
+  // implementation that read `cr.spec?.replicas !== undefined` instead of
+  // switching on `kind` would pass every Deployment-only test in this file
+  // and still offer a scale button that 404s.
+  it('derives scalable from the kind, not from a replica-shaped field on the object', async () => {
+    const seen = capture((url) => {
+      if (url === '/apis/apps/v1/daemonsets') {
+        return json({
+          items: [
+            {
+              metadata: { name: 'node-exporter', namespace: 'monitoring' },
+              // A real DaemonSet carries no `spec.replicas` — but nothing
+              // stops an object from having one, and a wrong implementation
+              // keyed off its presence would read this and say `true`.
+              spec: { replicas: 3 },
+              status: { desiredNumberScheduled: 3, numberReady: 3 },
+            },
+          ],
+        })
+      }
+      return json({ items: [] })
+    })
+
+    const tree = await createFrameClient().workloads.tree()
+    expect(seen.length).toBe(6)
+    const daemonset = tree
+      .flatMap((n) => n.controllers)
+      .find((c) => c.controller.kind === 'DaemonSet')
+    expect(daemonset?.controller.scalable).toBe(false)
+  })
+
   it('restarts by patching the pod template annotation, and says so', async () => {
     const seen = capture(() => json({}))
     await createFrameClient().workloads.restart('Deployment', 'neura', 'api')
