@@ -213,7 +213,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// entry is removed here: the apiserver did not offer that subprotocol and
 	// would refuse the handshake, and forwarding it would write a live
 	// credential into the apiserver's audit log on every shell.
-	if wsToken, remaining := tokenFromProtocols(r.Header.Values("Sec-WebSocket-Protocol")); wsToken != "" {
+	//
+	// Gated on sawBearer, not on a decoded token: a caller-chosen string that
+	// merely carries the prefix must be stripped too, decodable or not — the
+	// apiserver's own WebSocket auth handler recognises the prefix on sight,
+	// before it would ever try to decode what follows it.
+	if wsToken, remaining, sawBearer := tokenFromProtocols(r.Header.Values("Sec-WebSocket-Protocol")); sawBearer {
 		if tok == "" {
 			tok = wsToken
 		}
