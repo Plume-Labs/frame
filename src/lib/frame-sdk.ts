@@ -21,6 +21,17 @@
 
 import { config, CONFIG_NAMESPACE, type Integration } from './frame-config'
 import { currentSession } from './auth'
+import {
+  buildWorkloadTree,
+  type EditableKind,
+  type NamespaceNode,
+  type OwnerRef,
+  type WorkloadController,
+  type WorkloadKind,
+  type WorkloadPod,
+} from './workloads'
+import { podLogPath, type PodLogQuery } from './pod-logs'
+import { changedFieldPaths, editActionLabel } from './manifest-diff'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -735,6 +746,20 @@ interface K8sFetchOptions {
    * Only meaningful on a mutating verb: reads are not recorded.
    */
   action?: string
+  /**
+   * A body sent verbatim, instead of `JSON.stringify(body)`.
+   *
+   * The manifest editor's body is the user's own YAML text, and there is no
+   * YAML library in this repository to turn it into an object first — the
+   * apiserver parses `application/yaml` itself. Re-serialising here would mean
+   * writing something other than what the person read and edited.
+   */
+  rawBody?: string
+  /**
+   * An `Accept` header. Only the manifest editor sets it
+   * (`application/yaml`); everything else wants the default JSON.
+   */
+  accept?: string
 }
 
 async function k8sFetch<T>(
@@ -744,7 +769,7 @@ async function k8sFetch<T>(
   const method = opts.method ?? 'GET'
   // Only plain GETs dedupe. A write must always reach the apiserver, and two
   // writes to one path are not interchangeable the way two reads are.
-  if (method === 'GET' && opts.body === undefined) {
+  if (method === 'GET' && opts.body === undefined && opts.rawBody === undefined) {
     const pending = inFlightGets.get(path)
     if (pending) return pending as Promise<T>
     const p = k8sFetchUncached<T>(path, opts).finally(() => {
@@ -803,7 +828,8 @@ async function sendToApiserver(
   const headers: Record<string, string> = {}
   const tok = bearerToken()
   if (tok) headers['Authorization'] = `Bearer ${tok}`
-  if (opts.body !== undefined) {
+  if (opts.accept) headers['Accept'] = opts.accept
+  if (opts.body !== undefined || opts.rawBody !== undefined) {
     headers['Content-Type'] = opts.contentType ?? 'application/json'
   }
   // Read by internal/uiproxy/recorder.go and stored on the FrameTask. Header
@@ -814,7 +840,7 @@ async function sendToApiserver(
   return globalThis.fetch(path, {
     method: opts.method ?? 'GET',
     headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body: opts.rawBody ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
   })
 }
 
@@ -838,6 +864,23 @@ function proxyFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) }
   if (tok) headers['Authorization'] = `Bearer ${tok}`
   return globalThis.fetch(url, { ...init, headers })
+}
+
+/**
+ * `fetch` for an apiserver path whose response is not JSON — a YAML manifest,
+ * or a log stream that must stay a stream.
+ *
+ * `k8sFetch` parses; these two callers must not be parsed. It still carries
+ * the bearer token and still retries once on a 401 with a fresh one, which is
+ * the whole reason it is not a bare `fetch`: a tab left open past a token's
+ * life would otherwise show an empty log pane rather than reconnecting.
+ */
+async function rawFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await proxyFetch(path, init)
+  if (res.status !== 401) return res
+  const token = await refreshTokenForRetry()
+  if (!token) return res
+  return proxyFetch(path, init)
 }
 
 /**
@@ -2666,6 +2709,284 @@ class ApplicationClient {
   }
 }
 
+/** The collection endpoint for each kind the Workloads screen shows. */
+const WORKLOAD_COLLECTIONS: Record<EditableKind, string> = {
+  Pod: '/api/v1/pods',
+  Deployment: '/apis/apps/v1/deployments',
+  StatefulSet: '/apis/apps/v1/statefulsets',
+  DaemonSet: '/apis/apps/v1/daemonsets',
+  Job: '/apis/batch/v1/jobs',
+}
+
+/**
+ * The namespaced path for one object of a kind the Workloads screen shows.
+ *
+ * Built from the cluster-wide collection above by splicing the namespace in,
+ * so the two can never name different resources — the failure that made the
+ * Accounts screen read `frameusers` out of the wrong namespace was exactly a
+ * second place where a path was assembled.
+ */
+export function workloadPath(kind: EditableKind, namespace: string, name?: string): string {
+  const collection = WORKLOAD_COLLECTIONS[kind]
+  const cut = collection.lastIndexOf('/')
+  const base = `${collection.slice(0, cut)}/namespaces/${namespace}${collection.slice(cut)}`
+  return name ? `${base}/${name}` : base
+}
+
+/** The list paths the Workloads screen watches for live updates. */
+export function workloadWatchPaths(): string[] {
+  return [
+    WORKLOAD_COLLECTIONS.Deployment,
+    WORKLOAD_COLLECTIONS.StatefulSet,
+    WORKLOAD_COLLECTIONS.DaemonSet,
+    WORKLOAD_COLLECTIONS.Job,
+    WORKLOAD_COLLECTIONS.Pod,
+  ]
+}
+
+interface MetaCR {
+  name: string
+  namespace: string
+  creationTimestamp?: string
+  labels?: Record<string, string>
+  annotations?: Record<string, string>
+  ownerReferences?: Array<{ kind: string; name: string; controller?: boolean }>
+}
+
+interface WorkloadItemCR {
+  metadata: MetaCR
+  spec?: { replicas?: number; parallelism?: number; completions?: number }
+  status?: {
+    readyReplicas?: number
+    replicas?: number
+    numberReady?: number
+    desiredNumberScheduled?: number
+    succeeded?: number
+    active?: number
+  }
+}
+
+interface PodItemCR {
+  metadata: MetaCR
+  spec?: { nodeName?: string; containers?: Array<{ name: string }> }
+  status?: { phase?: string; containerStatuses?: Array<{ restartCount?: number }> }
+}
+
+/** The controlling ownerReference, which is the only one that means "belongs to". */
+function controllerOwner(meta: MetaCR): OwnerRef | undefined {
+  const refs = meta.ownerReferences ?? []
+  const owner = refs.find((r) => r.controller) ?? refs[0]
+  return owner ? { kind: owner.kind, name: owner.name } : undefined
+}
+
+function toController(kind: WorkloadKind, cr: WorkloadItemCR): WorkloadController {
+  // Each kind counts its readiness in its own fields: a DaemonSet's desired
+  // count is the number of matching nodes, not a replica setting, and a Job's
+  // is its completions. Reading `spec.replicas` for all four would report 0/0
+  // for half the tree.
+  const desired =
+    kind === 'DaemonSet'
+      ? (cr.status?.desiredNumberScheduled ?? 0)
+      : kind === 'Job'
+        ? (cr.spec?.completions ?? cr.spec?.parallelism ?? 1)
+        : (cr.spec?.replicas ?? 0)
+  const ready =
+    kind === 'DaemonSet'
+      ? (cr.status?.numberReady ?? 0)
+      : kind === 'Job'
+        ? (cr.status?.succeeded ?? 0)
+        : (cr.status?.readyReplicas ?? 0)
+  return {
+    kind,
+    name: cr.metadata.name,
+    namespace: cr.metadata.namespace,
+    desiredReplicas: desired,
+    readyReplicas: ready,
+    scalable: kind === 'Deployment' || kind === 'StatefulSet',
+  }
+}
+
+function toPod(cr: PodItemCR): WorkloadPod {
+  return {
+    name: cr.metadata.name,
+    namespace: cr.metadata.namespace,
+    phase: cr.status?.phase ?? 'Unknown',
+    nodeName: cr.spec?.nodeName ?? '',
+    restarts: (cr.status?.containerStatuses ?? []).reduce((n, s) => n + (s.restartCount ?? 0), 0),
+    containers: (cr.spec?.containers ?? []).map((c) => c.name),
+    createdAt: cr.metadata.creationTimestamp,
+    owner: controllerOwner(cr.metadata),
+  }
+}
+
+/**
+ * Operating the cluster's workloads: the tree, the logs, the manifest, and the
+ * four writes.
+ *
+ * Every write goes through `k8sFetch` with an `action`, which is what makes it
+ * appear on the Tasks screen as something a person did rather than as the
+ * request it was. A bare `fetch` here would skip the 401 retry and leave the
+ * record unlabelled, which is why the structural guard at the bottom of
+ * `frame-sdk.test.ts` exists.
+ */
+class WorkloadClient {
+  async tree(): Promise<NamespaceNode[]> {
+    const [deployments, statefulsets, daemonsets, jobs, replicasets, pods] = await Promise.all([
+      k8sFetch<ListResponse<WorkloadItemCR>>(WORKLOAD_COLLECTIONS.Deployment),
+      k8sFetch<ListResponse<WorkloadItemCR>>(WORKLOAD_COLLECTIONS.StatefulSet),
+      k8sFetch<ListResponse<WorkloadItemCR>>(WORKLOAD_COLLECTIONS.DaemonSet),
+      k8sFetch<ListResponse<WorkloadItemCR>>(WORKLOAD_COLLECTIONS.Job),
+      k8sFetch<ListResponse<{ metadata: MetaCR }>>('/apis/apps/v1/replicasets'),
+      k8sFetch<ListResponse<PodItemCR>>(WORKLOAD_COLLECTIONS.Pod),
+    ])
+
+    const controllers: WorkloadController[] = [
+      ...(deployments.items ?? []).map((c) => toController('Deployment', c)),
+      ...(statefulsets.items ?? []).map((c) => toController('StatefulSet', c)),
+      ...(daemonsets.items ?? []).map((c) => toController('DaemonSet', c)),
+      ...(jobs.items ?? []).map((c) => toController('Job', c)),
+    ]
+
+    // A Deployment's pods name a ReplicaSet as their owner, never the
+    // Deployment, so the tree needs this one extra hop to place them.
+    const replicaSetOwners = new Map<string, OwnerRef>()
+    for (const rs of replicasets.items ?? []) {
+      const owner = controllerOwner(rs.metadata)
+      if (owner) replicaSetOwners.set(`${rs.metadata.namespace}/${rs.metadata.name}`, owner)
+    }
+
+    return buildWorkloadTree({
+      controllers,
+      pods: (pods.items ?? []).map(toPod),
+      replicaSetOwners,
+    })
+  }
+
+  /**
+   * The raw log response, left as a stream so the caller can read it line by
+   * line with `pumpLogLines` while the container keeps writing.
+   *
+   * This is a read, so it carries no `action` and leaves no FrameTask — see
+   * the note at the top of `pod-logs.ts`.
+   */
+  logs(q: PodLogQuery): Promise<Response> {
+    return rawFetch(podLogPath(q))
+  }
+
+  /** The object as JSON — the diff's baseline, and where the ownership labels are read. */
+  object(kind: EditableKind, namespace: string, name: string): Promise<Record<string, unknown>> {
+    return k8sFetch<Record<string, unknown>>(workloadPath(kind, namespace, name))
+  }
+
+  /**
+   * The object as YAML, serialised by the apiserver.
+   *
+   * `Accept: application/yaml` is a supported representation for every
+   * resource, so the console ships no YAML serialiser and no parser — which is
+   * both two fewer dependencies and one fewer place for the editor's text to
+   * be silently rewritten.
+   */
+  async manifest(kind: EditableKind, namespace: string, name: string): Promise<string> {
+    const res = await rawFetch(workloadPath(kind, namespace, name), {
+      headers: { Accept: 'application/yaml' },
+    })
+    const text = await res.text()
+    if (!res.ok) throw new FrameAPIError(res.status, text)
+    return text
+  }
+
+  /**
+   * Write the edited manifest, labelled with what actually changed.
+   *
+   * Two requests, and both are necessary:
+   *
+   *  1. `PUT ?dryRun=All` — the apiserver parses the YAML and answers with the
+   *     object it *would* store. That is how the changed field paths are
+   *     computed with no YAML parser on this side, and it validates the edit
+   *     before anything is written. It leaves no FrameTask
+   *     (`TaskRecorder.Start` skips a dry run), so the trail shows one row per
+   *     edit.
+   *  2. the real `PUT`, carrying the label.
+   *
+   * `yaml` is the user's text, which still contains the `resourceVersion` that
+   * was read — so a concurrent change produces a 409 rather than silently
+   * overwriting someone else's work. Do not strip it.
+   */
+  async applyManifest(o: {
+    kind: EditableKind
+    namespace: string
+    name: string
+    before: unknown
+    yaml: string
+  }): Promise<void> {
+    const path = workloadPath(o.kind, o.namespace, o.name)
+    const after = await k8sFetch<unknown>(`${path}?dryRun=All`, {
+      method: 'PUT',
+      contentType: 'application/yaml',
+      rawBody: o.yaml,
+    })
+    const action = editActionLabel(o.kind, o.namespace, o.name, changedFieldPaths(o.before, after))
+    await k8sFetch<unknown>(path, {
+      method: 'PUT',
+      contentType: 'application/yaml',
+      rawBody: o.yaml,
+      action,
+    })
+  }
+
+  /**
+   * Rolling-restart by bumping the pod template's `restartedAt` annotation
+   * rather than deleting pods, so the controller's own update strategy —
+   * surge, maxUnavailable, ordinal order for a StatefulSet — is respected.
+   */
+  async restart(
+    kind: 'Deployment' | 'StatefulSet' | 'DaemonSet',
+    namespace: string,
+    name: string,
+  ): Promise<void> {
+    await k8sFetch<undefined>(workloadPath(kind, namespace, name), {
+      action: `restart ${kind.toLowerCase()} ${namespace}/${name}`,
+      method: 'PATCH',
+      contentType: 'application/strategic-merge-patch+json',
+      body: {
+        spec: {
+          template: {
+            metadata: {
+              annotations: { 'kubectl.kubernetes.io/restartedAt': new Date().toISOString() },
+            },
+          },
+        },
+      },
+    })
+  }
+
+  /**
+   * Scale through the `scale` subresource, which can only change the replica
+   * count — unlike a full patch, it cannot touch the pod template. That is why
+   * the two are separate grants in `deploy/kubernetes/base/rbac.yaml`.
+   */
+  async scale(
+    kind: 'Deployment' | 'StatefulSet',
+    namespace: string,
+    name: string,
+    replicas: number,
+  ): Promise<void> {
+    await k8sFetch<undefined>(`${workloadPath(kind, namespace, name)}/scale`, {
+      action: `scale ${kind.toLowerCase()} ${namespace}/${name} to ${replicas}`,
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: { replicas } },
+    })
+  }
+
+  async deletePod(namespace: string, name: string): Promise<void> {
+    await k8sFetch<undefined>(workloadPath('Pod', namespace, name), {
+      action: `delete pod ${namespace}/${name}`,
+      method: 'DELETE',
+    })
+  }
+}
+
 class NodeClient {
   constructor(private readonly ns?: string) {}
 
@@ -3090,6 +3411,7 @@ export class FrameClient {
   public readonly cluster: ClusterClient
   public readonly talos: TalosClient
   public readonly users: UserClient
+  readonly workloads: WorkloadClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -3100,6 +3422,7 @@ export class FrameClient {
     this.cluster   = new ClusterClient()
     this.talos     = new TalosClient(opts.namespace)
     this.users     = new UserClient()
+    this.workloads = new WorkloadClient()
   }
 
   async health(): Promise<HealthStatus> {
