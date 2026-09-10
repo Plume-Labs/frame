@@ -2891,9 +2891,15 @@ class WorkloadClient {
    *
    * This is a read, so it carries no `action` and leaves no FrameTask — see
    * the note at the top of `pod-logs.ts`.
+   *
+   * `signal` is optional and forwarded to `fetch` as-is. Without it, a caller
+   * that abandons the pod mid-request (switches pods, closes the panel) has
+   * no way to actually close the connection — cancelling the reader it gets
+   * back does nothing for a request whose headers haven't arrived yet, and a
+   * `follow=true` request leaves its apiserver log-watch open indefinitely.
    */
-  logs(q: PodLogQuery): Promise<Response> {
-    return rawFetch(podLogPath(q))
+  logs(q: PodLogQuery, signal?: AbortSignal): Promise<Response> {
+    return rawFetch(podLogPath(q), { signal })
   }
 
   /** The object as JSON — the diff's baseline, and where the ownership labels are read. */

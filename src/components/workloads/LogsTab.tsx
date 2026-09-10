@@ -48,14 +48,23 @@ export function LogsTab({ pod }: { pod: WorkloadPod }) {
       setLines([])
       setError(undefined)
       try {
-        const res = await frame.workloads.logs({
-          namespace: pod.namespace,
-          pod: pod.name,
-          container,
-          follow,
-          previous,
-          tailLines: 500,
-        })
+        const res = await frame.workloads.logs(
+          {
+            namespace: pod.namespace,
+            pod: pod.name,
+            container,
+            follow,
+            previous,
+            tailLines: 500,
+          },
+          signal,
+        )
+        // A request that lost the race with an abort can still resolve — the
+        // signal reached `fetch` itself, but a response already in flight when
+        // abort fired isn't guaranteed to surface as a rejection everywhere.
+        // Without this guard a superseded request's error overwrites whatever
+        // the pod the user is now looking at is showing.
+        if (signal.aborted) return
         if (!res.ok) {
           setError(`${res.status} ${await res.text()}`)
           return
