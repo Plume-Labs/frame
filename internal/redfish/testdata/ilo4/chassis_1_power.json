@@ -1,0 +1,8 @@
+{
+  "@odata.type": "#Power.1.0.0.Power",
+  "PowerControl": [ { "PowerConsumedWatts": 118 } ],
+  "PowerSupplies": [
+    { "Name": "HpeServerPowerSupply", "Status": { "Health": "OK", "State": "Enabled" }, "LastPowerOutputWatts": 60 },
+    { "Name": "HpeServerPowerSupply", "Status": { "Health": "OK", "State": "Enabled" }, "LastPowerOutputWatts": 58 }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "@odata.type": "#ComputerSystem.1.0.1.ComputerSystem",
+  "Id": "1",
+  "Manufacturer": "HPE",
+  "Model": "ProLiant ML350 Gen9",
+  "SerialNumber": "CZJ1234567",
+  "PowerState": "On",
+  "IndicatorLED": "Off",
+  "BiosVersion": "P92 v2.76",
+  "MemorySummary": { "TotalSystemMemoryGiB": 64 },
+  "ProcessorSummary": { "Count": 2, "Model": "Intel(R) Xeon(R) CPU E5-2650 v4" },
+  "Actions": {
+    "#ComputerSystem.Reset": {
+      "target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset/"
+    }
+  },
+  "LogServices": { "@odata.id": "/redfish/v1/Systems/1/LogServices/" }
+}
