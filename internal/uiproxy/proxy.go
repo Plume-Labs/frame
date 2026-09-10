@@ -10,10 +10,12 @@
 package uiproxy
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/textproto"
@@ -133,6 +135,32 @@ func (s *statusRecorder) Flush() {
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack is what makes a protocol upgrade possible at all: httputil.ReverseProxy
+// type-asserts the writer to http.Hijacker the moment the upstream answers 101,
+// and hands the request to its error handler when the assertion fails — a 502
+// reading "can't switch protocols using non-Hijacker ResponseWriter type
+// *uiproxy.statusRecorder". A pod shell is a WebSocket, so without this there
+// is no shell; the same wrapper had the same defect with Flush, whose comment
+// above says it "turns every watch into a buffered response". Anyone wrapping
+// this writer again must carry both methods forward.
+//
+// The status is set here rather than in WriteHeader because ReverseProxy writes
+// the 101 response line directly to the hijacked connection's bufio.Writer and
+// never calls WriteHeader at all. Left at 0, the deferred close in ServeHTTP
+// would record every successful session as a 500. Hijack is only reached after
+// the upstream answered 101, so naming that code here is a statement of fact,
+// not a guess.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("uiproxy: the underlying ResponseWriter is not an http.Hijacker")
+	}
+	if s.code == 0 {
+		s.code = http.StatusSwitchingProtocols
+	}
+	return h.Hijack()
 }
 
 // unauthorized answers the way the apiserver answers, with a metav1.Status
