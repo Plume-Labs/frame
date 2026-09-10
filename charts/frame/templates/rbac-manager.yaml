@@ -57,12 +57,19 @@ rules:
   - patch
   - update
   - watch
-# No list or watch on secrets: every Secret the manager touches is reached by
-# name, so enumeration is not needed and would mean the right to read every
-# Secret in the cluster. No patch either — every write goes through
-# CreateOrUpdate or Delete. See the marker comment on
-# internal/controller/services/frameservice_controller.go, which is the source
-# this rule is kept in parity with.
+# frameservice_controller.go reaches every Secret it touches by name and
+# deliberately holds no list/watch (see its marker comment) — enumeration
+# would mean the right to read every Secret in the cluster, and it isn't
+# needed for a get-by-name. No patch either: every write there goes through
+# CreateOrUpdate or Delete, never Patch.
+#
+# list and watch are granted anyway (lot 1, hardware/Redfish): the
+# FrameMachine controller reads a machine's BMC credentials from a Secret and
+# needs to react when that Secret changes, which needs an informer — see
+# framemachine_controller.go's own marker
+# (groups="",resources=secrets,verbs=get;list;watch). controller-gen unions
+# both controllers' markers into this one rule, so the verb set here is the
+# two controllers' needs combined, not either one's alone.
 - apiGroups:
   - ""
   resources:
@@ -71,7 +78,9 @@ rules:
   - create
   - delete
   - get
+  - list
   - update
+  - watch
 - apiGroups:
   - apps
   resources:
@@ -118,6 +127,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framejobs/finalizers
+  - framemachines/finalizers
   - framenodes/finalizers
   - frameresourcequotas/finalizers
   - nodetunings/finalizers
@@ -130,6 +140,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framejobs/status
+  - framemachines/status
   - framenodes/status
   - frameresourcequotas/status
   - nodetunings/status
@@ -140,6 +151,16 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framemachines
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - frame.plume-labs.io
   resources:

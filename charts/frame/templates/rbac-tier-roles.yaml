@@ -27,6 +27,18 @@ the only thing keeping the two hand-maintained copies in step.
 {{- $adminWritesStatus = true }}
 {{- end }}
 {{- /*
+framemachine's controller writes discovered inventory/sensors/events to
+status by polling the BMC, same as every other kind — lowerTiersGetStatus
+stays true. But status also carries the power-cycle outcome the controller
+records after acting on spec.powerRequest, and admin is the only tier the
+console lets write the power request in the first place (see
+frame.tierRoleCRDs above), so admin gets patch/update on the subresource too,
+matching config/rbac/framemachine_admin_role.yaml.
+*/}}
+{{- if eq .roleBase "framemachine" }}
+{{- $adminWritesStatus = true }}
+{{- end }}
+{{- /*
 Which of the three roles carry the aggregation label. Defaults to all three;
 `aggregate` in frame.tierRoleCRDs narrows it, and that helper is where the
 reasoning per kind lives. Rendering the label for a tier this kind excludes

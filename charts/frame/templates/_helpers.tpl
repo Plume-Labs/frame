@@ -52,11 +52,11 @@ whenever metrics.secure was set to false).
 {{- end -}}
 
 {{/*
-The nine CRD-tier RBAC sets (viewer/editor/admin per CRD). Kept as a fixed
+The ten CRD-tier RBAC sets (viewer/editor/admin per CRD). Kept as a fixed
 list because it mirrors the actual CRDs in api/ — not meant to be
 user-editable; the toggle is rbac.tierRoles.install, not this.
 
-Seven of the nine were scaffolded by kubebuilder. `frameuser` was not, and
+Eight of the ten were scaffolded by kubebuilder. `frameuser` was not, and
 had no tier at all until the API freeze — the one kind holding credential
 material was the one kind nobody could be scoped to. It is also the one entry
 that renders a different shape; see rbac-tier-roles.yaml. `frametask` was
@@ -65,7 +65,7 @@ tier is the plain shape every kind but frameuser gets.
 
 `aggregate` says which of the three roles carry the
 `rbac.frame.plume-labs.io/tier` label, i.e. which ones the three `frame-*`
-aggregated ClusterRoles pick up. Default is all three; two kinds are not.
+aggregated ClusterRoles pick up. Default is all three; three kinds are not.
 
   frameuser — admin only. `get frameusers` returns status.passwordHash, so
     the viewer tier is every account's argon2id hash (docs/deployment.md says
@@ -76,6 +76,17 @@ aggregated ClusterRoles pick up. Default is all three; two kinds are not.
   talosmachineconfig / talosupgrade — no editor. Rewriting a machine config
     or scheduling a reboot into a new OS image is an admin action;
     cluster-control-operator excludes Talos writes by name.
+  framemachine — no editor (lot 1, hardware/Redfish, task 6). spec.powerRequest
+    is the only console-writable field, reached only by `patch`, and it is
+    admin-only: restarting a Deployment is bounded by an update strategy,
+    powering off a chassis is bounded by nothing, and the chassis may be
+    carrying the cluster that hosts the console making the request. The
+    editor role still exists (create/update/patch/delete are legitimate
+    `kubectl` operations for someone who already holds them by other means)
+    but must never be labelled, or `frame-editor` aggregates
+    `patch framemachines` and hands operators power control. See
+    config/rbac/framemachine_editor_role.yaml's header and
+    test/manifests/framemachine_rbac_test.go.
 
 This list and config/rbac/*_role.yaml are two hand-maintained copies of one
 thing. `make helm-parity` compares them, including this label.
@@ -84,6 +95,10 @@ thing. `make helm-parity` compares them, including this label.
 - roleBase: framejob
   apiGroup: frame.plume-labs.io
   resource: framejobs
+- roleBase: framemachine
+  apiGroup: frame.plume-labs.io
+  resource: framemachines
+  aggregate: [admin, viewer]
 - roleBase: framenode
   apiGroup: frame.plume-labs.io
   resource: framenodes

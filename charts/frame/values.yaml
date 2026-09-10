@@ -28,7 +28,12 @@ resources:
     cpu: 500m
     memory: 128Mi
   requests:
-    cpu: 10m
+    # Parity fix, unrelated to lot 1: 10m left the manager with almost no CPU
+    # weight under contention, which is how it kept missing its
+    # leader-election renew deadline on a saturated control-plane node — see
+    # config/manager/manager.yaml's requests.cpu comment, the actual decision
+    # this default was meant to mirror and had drifted from since 2026-08-14.
+    cpu: 100m
     memory: 64Mi
 
 nodeSelector: {}

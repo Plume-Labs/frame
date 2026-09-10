@@ -234,13 +234,21 @@ the **editor** ClusterRole.
 |---|---|---|
 | `viewer` | `frame:viewers` | `get`/`list`/`watch` on `framemachines` — inventory, sensors, event log |
 | `editor` | `frame:operators` | nothing new |
-| `admin` | `frame:admins` | `patch` on `framemachines`, which is `spec.powerRequest` |
+| `admin` | `frame:admins` | the standard admin verb bundle on `framemachines` — the same `create`/`delete`/`deletecollection`/`get`/`list`/`patch`/`update`/`watch` shape every other Frame kind's admin tier gets, plus its `/status` subresource. `patch` is the verb that matters for the console: it is the one verb that reaches `spec.powerRequest`, i.e. power control. |
 | — | — | nobody gets `secrets` |
 
 **Power is admin, not editor**, and the distinction is deliberate against the
 decision taken the day before this design. Restarting a Deployment is bounded
 by an update strategy; powering off a chassis is bounded by nothing, and the
 chassis may be carrying the cluster that hosts the console making the request.
+Editor is denied the whole bundle, not just `patch`: `config/rbac/
+framemachine_editor_role.yaml` keeps the same `create`/`delete`/`patch`/
+`update` rules every other kind's editor role has (they are legitimate
+`kubectl` operations for someone who already holds them by other means), but
+carries no `rbac.frame.plume-labs.io/tier` label, so `frame-editor` never
+aggregates them. Making FrameMachine the one kind an admin cannot fully
+manage from `kubectl` would be the anomaly among Frame's CRDs, not the
+safeguard — the safeguard is that editor cannot reach `patch` at all.
 
 ### Registering a machine is a `kubectl` step
 
