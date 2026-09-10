@@ -111,6 +111,29 @@ kubectl create token frame-ui-sa -n cluster-control --duration=8760h
 
 The UI reads `window.__FRAME_TOKEN__` on startup. Set it before the `<script>` that loads the app bundle.
 
+### Where the console reads its own configuration
+
+The console reads a ConfigMap, `cluster-control-config` in `cluster-control`,
+at boot and merges it *over* its compiled defaults, so a fresh install works
+with no ConfigMap and a stored config that predates a new field still boots
+(`src/lib/frame-config.ts`). Every field is editable on the **Settings**
+screen.
+
+Two of its fields are namespaces that must match what is deployed, and they
+are not the same namespace:
+
+| Field | Default | Must match |
+|---|---|---|
+| `frameNamespace` | `default` | Wherever the Frame CRs (`FrameJob`, `FrameNode`, `SchedulingPolicy`, `FrameResourceQuota`) are created. |
+| `taskNamespace` | `frame-system` | `frame-uiproxy`'s `TASK_NAMESPACE` (`deploy/kubernetes/base/deployment.yaml`), which is where every `FrameTask` is written. |
+
+`taskNamespace` exists because those two were one value until 2026-09-09 and
+were never the same on the cluster: the proxy wrote to `frame-system` and the
+Tasks screen listed `default`, so it showed an empty table with no error from
+the day it shipped. If you change `TASK_NAMESPACE`, change this field too —
+nothing reconciles one against the other, and the symptom of a mismatch is
+silence.
+
 ---
 
 ## 5. Ingress

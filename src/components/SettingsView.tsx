@@ -213,6 +213,13 @@ export function SettingsView() {
             value={draft.frameNamespace}
             onChange={(v) => setDraft((d) => ({ ...d, frameNamespace: v }))}
           />
+          <Field
+            id="task-ns"
+            label="FrameTasks"
+            hint="Must match frame-uiproxy's TASK_NAMESPACE (deployment.yaml)"
+            value={draft.taskNamespace}
+            onChange={(v) => setDraft((d) => ({ ...d, taskNamespace: v }))}
+          />
           {(Object.keys(draft.namespaces) as Array<keyof FrameConfig['namespaces']>).map((key) => (
             <Field
               key={key}
