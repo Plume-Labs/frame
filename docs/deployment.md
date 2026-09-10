@@ -252,13 +252,15 @@ benefit.
 
 ### The viewer / editor / admin tiers
 
-Twenty-seven `ClusterRole`s, three per kind, across both API groups
-(`frame.plume-labs.io` and `services.plume-labs.io`) — nine kinds of ten.
+Thirty `ClusterRole`s, three per kind, across both API groups
+(`frame.plume-labs.io` and `services.plume-labs.io`) — ten kinds of eleven.
 `FrameTask` postdates the freeze the same as `NodeTuning`, but got the usual
 three (`config/rbac/frametask_*.yaml`, wired into `config/rbac/kustomization.yaml`)
 so a `FrameTask` — the record of who did what — is readable and manageable
 through the same viewer/editor/admin split as everything else, rather than
-only by whoever holds the ServiceAccount that writes it. **`NodeTuning`
+only by whoever holds the ServiceAccount that writes it. `FrameMachine`
+(lot 1, hardware/Redfish) got the same usual three
+(`config/rbac/framemachine_*.yaml`) for the same reason. **`NodeTuning`
 remains the sole exception, with no tier roles at all.** It postdates the
 freeze, and access to it is currently whatever a cluster-admin holds. Anyone
 able to write a `NodeTuning` and annotate a node can cause a rolling restart
@@ -325,6 +327,23 @@ only, and Talos writes are admin only — `cluster-control-operator`'s own
 header excludes them by name. The reason is one sentence and it is the whole
 of it: `get frameusers` is every password hash (see below), and `patch
 frameusers` is a promotion to admin one token lifetime later.
+
+**`framemachine-editor-role` carries no tier label either, for a different
+reason: power is admin-only, not editor.** Restarting a Deployment is bounded
+by an update strategy; powering off a chassis is bounded by nothing, and the
+chassis may be carrying the cluster that hosts the console making the
+request (see "Operating a workload" below for the same argument applied to
+exec). Labelling this role `tier: editor` would have silently reopened that
+through aggregation — `frame-editor` aggregates by label across every
+`ClusterRole` in the cluster, not by what `rbac.yaml` itself grants — so the
+role keeps the same `create`/`update`/`patch`/`delete` rules every other
+kind's editor role has (legitimate `kubectl` operations for someone who
+already holds them some other way) but no label to reach `frame:operators`
+with. `framemachine-admin-role` and `framemachine-viewer-role` are labelled
+normally and are in the aggregation; only the editor triplet's middle role
+is held back. See `config/rbac/framemachine_editor_role.yaml`'s own header
+and `test/manifests/framemachine_rbac_test.go`,
+`TestViewersCanReadFrameMachinesAndNothingElseTiersCanWrite`.
 
 That last one is closed twice over, deliberately. The label is RBAC — who may
 send the request. The FrameUser validating webhook is admission — what the
@@ -940,6 +959,158 @@ version is stored for any CRD in the cluster", for any operator, not just
 this one. That is cluster-admin power wearing a narrow name, and shipping a
 bindable `ClusterRole` for it would invite exactly the mistake this section
 is otherwise arguing against. Run the migration as a cluster administrator.
+
+---
+
+## Registering a machine's BMC
+
+Lot 1 (hardware over Redfish, 2026-09-10) added `FrameMachine`: a controller
+polls a physical server's baseboard management controller (BMC) over Redfish
+and writes inventory, sensors and the recent event log into `.status`; the
+console reads it, and a `patch` on `spec.powerRequest` is how the console
+powers the machine on, shuts it down or restarts it. Full design in
+[`docs/superpowers/specs/2026-09-10-lot1-hardware-redfish-design.md`](superpowers/specs/2026-09-10-lot1-hardware-redfish-design.md).
+
+**Registering a machine is a `kubectl` step, not a console form, and that is
+deliberate.** Creating a `FrameMachine` is useless without the Secret beside
+it holding the BMC's credentials, and — see "RBAC" above — **no console tier
+is granted `secrets`**. Giving the console a way to register one would need
+either a tier that can write Secrets directly (widening exactly the grant
+this project has repeatedly refused to hand out, see "RBAC" above) or a back
+door where the operator holds credentials on the caller's behalf and
+mediates the write on request. Both are decisions in their own right, and
+neither is taken here — this is documentation, not a place to smuggle one in.
+
+**Two prerequisites, both worth confirming before writing the manifest
+below.**
+
+1. **The operator must reach the BMC's address at layer 3.** On a shared LOM
+   port the BMC sits on the same `/24` as everything else and this is free;
+   on a separate management VLAN it needs a route. `NetworkPolicies` are
+   disabled on this cluster today, so egress from `frame-system` to a BMC
+   works regardless of which — if they are ever turned on (see "Turning Pod
+   Security on" above for the adjacent policy that already is), a BMC's
+   address is the first thing to add an allow rule for.
+2. **The BMC account needs `VirtualPowerAndResetPriv` to act, not just
+   `LoginPriv` to read.** Verified against a real iLO4's captures
+   (`internal/redfish/testdata/ilo4-real/reset_403_insufficient_privilege.json`,
+   that directory's `PROVENANCE.md`): an account holding only `LoginPriv`
+   reads the whole inventory — Systems, Chassis, Memory, Processors,
+   EthernetInterfaces, the log — without error, and is refused with `403
+   Base.0.10.InsufficientPrivilege` the moment a power action reaches
+   `ComputerSystem.Reset`. Privileges are visible per-account at
+   `/redfish/v1/AccountService/Accounts/<n>/` under `Oem.Hp.Privileges`. A
+   machine registered with a read-only account looks fully working — the
+   screen populates, sensors read, the event log shows — and every power
+   button on it fails silently until someone reads
+   `status.lastPowerActionError` (or the `PowerActionFailed` Warning Event)
+   and works out why.
+
+   That argues for **two BMC accounts** — one read-only for polling, one
+   privileged for power actions — so a leaked polling credential cannot act
+   on the machine. This lot deliberately does not add a second
+   `credentialsRef` to `spec.bmc` for it: one account holding both
+   privileges already works end to end, and which action would use which
+   Secret, and what happens when only one is configured, is a design
+   decision of its own — out of scope for a documentation task to smuggle
+   in.
+
+Register the machine — the Secret first, the object second:
+
+```bash
+# The credentials never enter the repo and never enter the console.
+kubectl create secret generic ml350-g9-ilo \
+  --namespace default \
+  --from-literal=username='<iLO user>' \
+  --from-literal=password='<iLO password>'
+
+kubectl apply -f - <<'EOF'
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameMachine
+metadata:
+  name: ml350-g9
+  namespace: default
+spec:
+  bmc:
+    address: 192.168.2.60
+    credentialsRef: ml350-g9-ilo
+    tls:
+      insecureSkipVerify: true
+EOF
+
+kubectl get framemachine ml350-g9 -o wide
+```
+
+`tls.insecureSkipVerify: true` is what an iLO4's factory self-signed
+certificate needs — there is no permissive default
+(`api/frame/v1beta1/framemachine_types.go`'s `BMCTLSSpec`); a machine
+registered without choosing this or `caBundleRef` is refused at admission by
+the CRD's own CEL rule. The manifest above, with placeholders in place of
+real values, is also `config/samples/frame_v1beta1_framemachine.yaml`.
+
+**A note on `--dry-run=client` for this manifest.** Unlike a built-in kind
+(a `Pod`, a `Deployment`), `kubectl apply --dry-run=client` on a CRD instance
+still needs a reachable apiserver — it resolves the kind through API
+discovery, not through client-side scheme, so a `FrameMachine` cannot be
+validated fully offline the way core kinds can. Run in this session with no
+cluster reachable, `kubectl apply --dry-run=client -f
+config/samples/frame_v1beta1_framemachine.yaml` failed with `dial tcp
+[::1]:8080: connect: connection refused`, not a local validation result — so
+run it against a real (even disposable) cluster with the CRD installed, not
+offline.
+
+Once applied, `kubectl get framemachine ml350-g9 -o wide` shows a
+`Reachable` column, and `status.conditions[].reason` carries why. See
+[runbook.md](runbook.md) for the full reason vocabulary — `TLSError` is the
+one to expect immediately after this step, since that self-signed
+certificate has to be accepted or trusted explicitly.
+
+### The check that has never once been run end to end
+
+No BMC was reachable when this lot was written or documented. What backs the
+claims above is 26 HTTP responses captured 2026-09-10 from a real HP
+ProLiant ML350 Gen9 running iLO 4 v2.77, in three power states
+(`internal/redfish/testdata/ilo4-real/`, provenance in that directory's
+`PROVENANCE.md`), and the Redfish client is tested against them. **No
+console has ever been opened against a live machine, no power action has
+ever been sent to real hardware, and the captured machine has no operating
+system installed** — so the `PostState` (and the sensor behaviour) a
+*booted* machine reports has never been observed, and the controller treats
+an unrecognised post state on a powered-on machine as trustworthy for
+exactly that reason (see runbook.md, "Why a machine can show no sensors and
+be perfectly healthy").
+
+1. Register the machine, as above.
+2. Watch `Reachable` go `True` with reason `Probed`:
+   `kubectl get framemachine ml350-g9 -w`.
+3. Read the model and serial number on the Hardware screen's Inventory tab,
+   and compare them against the sticker on the chassis.
+4. Compare a temperature reading on the Sensors tab against the same sensor
+   in the iLO's own web UI. Do this only once the machine is powered on and
+   past POST — see runbook.md's six sensor states for why the tab can
+   legitimately show nothing before then.
+5. Find the machine's most recent power-on in the Event log tab.
+6. Turn the identification LED on from the console and confirm it is lit on
+   the physical chassis; turn it off and confirm the same.
+7. Shut the machine down gracefully from the console. This resolves to the
+   Redfish `PushPowerButton` reset type, not `GracefulShutdown` (the
+   captured iLO4 does not list it — see `internal/redfish/client.go`'s
+   `resolveResetType`); an installed operating system is what is supposed to
+   honour that ACPI signal; the captured machine carries no OS, so whether a
+   real one on this hardware powers off promptly or needs a forced cut is
+   itself unverified.
+8. Confirm a `FrameTask` exists naming you (your `FrameUser` email) and the
+   action, on the Tasks screen.
+9. Power the machine back on from the console.
+10. Confirm the Event log tab gained an entry for the power-on.
+11. Unplug the BMC's management network cable and confirm the screen greys
+    itself and reports `Reachable=False` within about five minutes (the
+    controller's failure backoff), rather than showing stale data silently.
+
+Until this has been run, hardware over Redfish is proven only against
+recorded fixtures and by reading the controller and the console's logic —
+not against a machine that has ever booted an operating system or been
+switched by a click.
 
 ---
 
