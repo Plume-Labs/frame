@@ -1168,20 +1168,50 @@ hand a BMC boot arguments that point nowhere. The Helm chart takes this as
 `provisiond.media.url`, required at render time — see "Installing the
 operator via Helm" below.
 
-**`frame-provisiond`'s own `MEDIA_URL` environment variable** — measured,
-not a guess: neither `config/provisiond/deployment.yaml` nor
-`charts/frame/templates/provisiond-deployment.yaml` sets it; both set only
-`IMAGES_DIR`. `cmd/provisiond/main.go`'s `validateMediaURL` refuses to start
-without it, for the same reason the manager's flag exists — every image
-`BuildHandler` builds bakes this address into its own boot arguments as
-where to fetch its preseed from, and provisiond needs to know that address
-independently of the manager to build a correct image. Left unset, the pod
-crash-loops. Set it to the same value as `--provisiond-media-url` above:
+**`frame-provisiond`'s own `MEDIA_URL` environment variable** carries the
+same placeholder, from the same one value. Both manifests set it —
+`config/provisiond/deployment.yaml` and
+`charts/frame/templates/provisiond-deployment.yaml` — to
+`http://ci-placeholder.invalid:30581`, matching the manager's flag above
+exactly, because it is the same address seen from the other side: the
+manager hands it to a BMC's boot arguments, provisiond bakes it into the
+image those arguments point at. `cmd/provisiond/main.go`'s
+`validateMediaURL` refuses to start on an unset or malformed value, so left
+at the placeholder the pod starts and every install then fetches from a
+host that does not resolve.
+
+*An earlier version of this step said, as something measured, that neither
+manifest set `MEDIA_URL`. That was true when it was written and stopped
+being true in commit `ff407fd`, which wired it into both from one value. It
+also prescribed `kubectl set env` on a Helm-managed Deployment, which takes
+field ownership away from Helm and makes the next `helm upgrade` report a
+conflict — this estate has already lost a release to exactly that. And it
+named a Deployment called `provisiond`; the object is `frame-provisiond`
+(`config/default/kustomization.yaml` adds the `frame-` prefix).*
+
+Patch it the way you installed it, never with `kubectl set env`:
 
 ```bash
-kubectl set env deployment/provisiond -n frame-system MEDIA_URL=http://192.168.2.10:30581
-kubectl rollout status deployment/provisiond -n frame-system
+# Helm — one value feeds the manager's flag and provisiond's env var:
+helm upgrade frame charts/frame --reuse-values \
+  --set provisiond.media.url=http://192.168.2.10:30581
+
+# kustomize — edit the two literals in the tree, then re-apply:
+#   config/manager/manager.yaml       --provisiond-media-url=...
+#   config/provisiond/deployment.yaml MEDIA_URL
+kubectl apply -k config/default
+kubectl rollout status deployment/frame-provisiond -n frame-system
+kubectl rollout status deployment/frame-controller-manager -n frame-system
 ```
+
+> `--reuse-values` drops any value added to `values.yaml` since the last
+> install. Render offline first (`helm template ... | less`) if this release
+> is older than the chart.
+
+A cluster that will never provision a machine does not need either value:
+install with `--set provisiond.enabled=false`, and the manager starts
+without the flag. It refuses `FrameInstall` reconciliation instead, naming
+the missing setting on the object.
 
 Then confirm the media listener actually answers from where a BMC would
 reach it — not from inside the cluster, which proves nothing about the
@@ -1202,11 +1232,15 @@ curl -sf http://192.168.2.10:30581/healthz && echo "media listener reachable"
   It is also why the two values in step 2 are load-bearing rather than
   cosmetic: a wrong `MEDIA_URL` does not degrade the install, it stops it
   exactly where the local read used to stop.
-- **`interface=auto` is fixed into every built image.** Measured on hardware
-  with four NICs and one cabled: without it, d-i asks which interface to
-  configure before it can fetch the preseed that would have answered —
-  circular and silent, and it looks like the boot hung rather than like a
-  question nobody answered.
+- **`interface=auto` is fixed into every built image.** What was measured on
+  the ML350 Gen9 (four NICs, one cabled) is narrower than the explanation
+  this bullet used to give: **without `interface=auto` the boot did not
+  reach the preseed; with it, it did.** Nobody watched the console, so "d-i
+  is asking which interface to use" is a plausible reading of that symptom
+  and not a confirmed mechanism — the same standing this document gives the
+  `url=` result above, and the same wording `internal/provision/iso.go`'s
+  own comment carries. Either way the failure looks like a hung boot rather
+  than like a question nobody answered.
 - **A restart mid-install is a failed install, never a resumed one.** If the
   manager restarts while a `FrameInstall` is between `Preparing` and
   `Ready`, the controller marks it `Failed` on the next reconcile rather
@@ -1302,8 +1336,30 @@ KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
       when a named disk is absent.
 - [ ] `k3s server --cluster-init` produces a cluster whose kubeconfig, as
       rewritten by Frame, reaches it from another machine.
+- [ ] **The `preseed/run` script re-runs `netcfg` and the static address
+      takes.** A preseed fetched over the network cannot preseed the network
+      — Debian says so outright, and it is why `url=` works where a local
+      file did not: `netcfg` has to bring the machine online *before* the
+      preconfiguration file can be fetched at all. Frame ships Debian's
+      documented workaround (a `preseed/run` script carrying
+      `kill-all-dhcp; netcfg`), and what is proven here is only that the
+      rendered preseed carries the directive and that the script is served at
+      the address the preseed itself names. **Whether the re-run actually
+      takes the static address has never been observed on a machine.** If it
+      does not, the node comes up on a DHCP address and Frame waits at an
+      address nobody is on — after wiping every named disk. Watch the first
+      install's console, or check the node's address before believing the
+      phase timeout.
+- [ ] **The installed node's own kernel command line is clean.** Arguments
+      after `---` on a d-i kernel line are copied onto the installed
+      system's command line; Frame now inserts its arguments before the
+      separator, but nobody has read `/proc/cmdline` on an installed node to
+      confirm it. Check it once: `url=` must not be there.
+- [ ] The node's hostname is what the `FrameInstall` asked for, not
+      `debian`. `netcfg/hostname` is set and `late_command` writes
+      `/etc/hostname` directly as a belt; neither has been seen to work.
 
-Until these three run, this lot is proven only against fakes and captures.
+Until these run, this lot is proven only against fakes and captures.
 
 ---
 
