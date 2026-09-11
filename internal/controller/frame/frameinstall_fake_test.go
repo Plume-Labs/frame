@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/rmocq/frame/internal/provision"
@@ -39,6 +40,11 @@ import (
 // reproduced here by literal, the same way any fixture in this file stands
 // in for a piece of internal/provision it cannot reach directly.
 const fakeMarkerPath = "/etc/frame-install-uid"
+
+// fakeK3sKubeconfigPath mirrors provision.k3sKubeconfigPath the same way
+// fakeMarkerPath mirrors provision.markerPath: an unexported constant this
+// package cannot reach, restated where the fake needs it.
+const fakeK3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 
 // fakeK3sKubeconfig is a minimal but real kubeconfig shape:
 // provision.Join's ClusterInit path reads exactly this file over SSH and
@@ -196,6 +202,13 @@ func (i *fakeInstallImages) buildCount() int {
 // real machine answers `cat` on a file that is not there -- a fake that
 // answered every path would hide a caller that started reading the wrong
 // one.
+//
+// The kubeconfig is answered only to a privileged read, because that is
+// what the machine does: k3s writes it root-owned 0600 and Join sets no
+// --write-kubeconfig-mode. This fake used to serve it to Session.ReadFile,
+// which is a bare `cat` as the frame user -- so every cluster-init test was
+// green against a machine that does not exist. The install marker is chmod
+// 444 by the preseed and is served to either.
 type fakeInstallSession struct {
 	mu      sync.Mutex
 	hostKey string
@@ -208,20 +221,37 @@ func (s *fakeInstallSession) HostKey() string { return s.hostKey }
 
 func (s *fakeInstallSession) Run(_ context.Context, cmd string) (string, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.cmds = append(s.cmds, cmd)
+	s.mu.Unlock()
+	if path, ok := strings.CutPrefix(cmd, "sudo -n cat "); ok {
+		return s.read(path, true)
+	}
+	if path, ok := strings.CutPrefix(cmd, "cat "); ok {
+		return s.read(path, false)
+	}
 	return "", nil
 }
 
-func (s *fakeInstallSession) ReadFile(_ context.Context, path string) ([]byte, error) {
+func (s *fakeInstallSession) read(path string, privileged bool) (string, error) {
 	switch path {
 	case fakeMarkerPath:
-		return []byte(s.marker), nil
-	case "/etc/rancher/k3s/k3s.yaml":
-		return []byte(fakeK3sKubeconfig), nil
+		return s.marker, nil
+	case fakeK3sKubeconfigPath:
+		if !privileged {
+			return "", fmt.Errorf("cat: %s: Permission denied", path)
+		}
+		return fakeK3sKubeconfig, nil
 	default:
-		return nil, fmt.Errorf("fakeInstallSession: no such file: %s", path)
+		return "", fmt.Errorf("fakeInstallSession: no such file: %s", path)
 	}
+}
+
+func (s *fakeInstallSession) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	out, err := s.Run(ctx, "cat "+path)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(out), nil
 }
 
 func (s *fakeInstallSession) Close() error {

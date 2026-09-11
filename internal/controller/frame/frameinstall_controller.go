@@ -791,7 +791,6 @@ func toProvisionSpec(fi *framev1beta1.FrameInstall, sshPublicKey, joinToken stri
 		Layout: provision.Layout{
 			Kind:  provision.LayoutKind(fi.Spec.Layout.Kind),
 			Disks: disks,
-			Raw:   fi.Spec.Layout.Raw,
 		},
 		SSHPublicKey: sshPublicKey,
 		Cluster: provision.ClusterTarget{

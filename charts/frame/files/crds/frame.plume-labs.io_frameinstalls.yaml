@@ -108,7 +108,17 @@ spec:
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               layout:
-                description: InstallLayout is the disk layout recipe.
+                description: |-
+                  InstallLayout is the disk layout recipe.
+
+                  There is no raw escape hatch. It existed, and it could not do its job: a
+                  review round required it to be a single line (so the preseed's on-machine
+                  disk-size assertion could still be written), and a real partman recipe is
+                  multi-line. It was also the one kind whose CEL did not require disks,
+                  while PartmanRecipe refused it without them -- so the apiserver accepted a
+                  shape the code rejected one phase later, after the object existed and the
+                  operator believed it was valid. An unusual layout is added here as a named
+                  kind, reviewed, with tests.
                 properties:
                   disks:
                     items:
@@ -143,10 +153,6 @@ spec:
                     enum:
                     - single-disk
                     - mirror
-                    - raw
-                    type: string
-                  raw:
-                    maxLength: 4096
                     type: string
                 required:
                 - kind
@@ -156,8 +162,6 @@ spec:
                   rule: self.kind != 'mirror' || size(self.disks) == 2
                 - message: single-disk is exactly one disk
                   rule: self.kind != 'single-disk' || size(self.disks) == 1
-                - message: layout raw needs a recipe
-                  rule: self.kind != 'raw' || has(self.raw)
               machineRef:
                 description: MachineRef names the FrameMachine whose BMC drives this
                   installation.
@@ -174,10 +178,15 @@ spec:
                     x-kubernetes-validations:
                     - message: address must be a CIDR, e.g. 192.168.2.210/24
                       rule: isCIDR(self)
-                  bond:
-                    maxLength: 15
-                    type: string
                   dns:
+                    description: |-
+                      DNS resolvers, as IP addresses. There is no vlan or bond here on
+                      purpose: both were declared, validated by the apiserver, and then
+                      dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
+                      tagged VLAN installed untagged, silently. Task 1 removed them from
+                      provision.Network for exactly that reason and they survived one layer
+                      up, where the operator types. d-i bonding is not something to
+                      implement blind; add them back when a machine needs one.
                     items:
                       type: string
                     maxItems: 3
@@ -188,11 +197,6 @@ spec:
                     x-kubernetes-validations:
                     - message: gateway must be an IP address
                       rule: isIP(self)
-                  vlan:
-                    format: int32
-                    maximum: 4094
-                    minimum: 0
-                    type: integer
                 required:
                 - address
                 - gateway

@@ -40,13 +40,14 @@ type LayoutKind string
 const (
 	LayoutSingleDisk LayoutKind = "single-disk"
 	LayoutMirror     LayoutKind = "mirror"
-	LayoutRaw        LayoutKind = "raw"
 )
 
+// Layout has no raw escape hatch -- see InstallLayout's comment in
+// api/frame/v1beta1/frameinstall_types.go for why it was removed rather
+// than kept as a way out that could not express what it existed for.
 type Layout struct {
 	Kind  LayoutKind `yaml:"kind"`
 	Disks []Disk     `yaml:"disks"`
-	Raw   string     `yaml:"raw"` // a partman recipe; only when Kind == LayoutRaw
 }
 
 type Disk struct {
