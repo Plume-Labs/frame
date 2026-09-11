@@ -51,6 +51,22 @@ spec:
             # them back out of.
             - name: IMAGES_DIR
               value: /var/lib/frame/images
+            # A placeholder, exactly like config/manager/manager.yaml's
+            # --provisiond-media-url, and deliberately the same string: this
+            # is the same address seen from the other side (the manager
+            # hands it to a BMC's boot arguments; provisiond bakes it into
+            # the image those arguments point at), so the two must agree,
+            # and hack/helm-parity.sh's default CI_PLACEHOLDER_MEDIA_URL
+            # already matches this literal. There is no address this
+            # manifest could default to that is guaranteed reachable from a
+            # management network it knows nothing about, and provisiond
+            # refuses to start without a valid one (cmd/provisiond/main.go's
+            # validateMediaURL). Override with the base URL a machine's BMC
+            # can actually reach frame-provisiond's media listener at --
+            # the same value as manager.yaml's --provisiond-media-url --
+            # before applying this outside hack/helm-parity.sh.
+            - name: MEDIA_URL
+              value: http://ci-placeholder.invalid:30581
           ports:
             # The build API. Reachable only through the ClusterIP Service in
             # service.yaml -- never through the NodePort one.
