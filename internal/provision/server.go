@@ -74,6 +74,15 @@ func newToken() (string, error) {
 // RenderPreseed refuses private key material and anything shell-unsafe
 // before an image is ever built -- so serving it to the machine network is
 // the same risk as serving the image it came from.
+//
+// One thing in it is not nothing, and is named rather than glossed: the
+// install UID. It is the marker WaitForOurSystem checks, and moving the
+// preseed off the image put it on the wire in plaintext. It is 16 random
+// bytes behind an unguessable 32-hex path, valid for one installation and
+// meaningless after it -- so what it protects against is an unrelated
+// machine happening to answer at the target address, not an attacker who
+// can read this network. Design §7 says the same, and used to say the
+// stronger thing this route made untrue.
 func MediaHandler(dir string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /iso/{name}", func(w http.ResponseWriter, r *http.Request) {

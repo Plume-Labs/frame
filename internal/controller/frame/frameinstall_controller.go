@@ -18,8 +18,10 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -266,7 +268,30 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	spec := toProvisionSpec(&fi, sshPub, joinToken)
+	// The install UID is generated here, per run, and never written
+	// anywhere readable. It used to be string(fi.UID) -- the object's own
+	// metadata.uid, which every viewer-tier account can read with `kubectl
+	// get frameinstall -o yaml`, and which is now served over plaintext
+	// HTTP inside the rendered preseed rather than baked into an image.
+	//
+	// What the marker is for (design §7) is making trust-on-first-use
+	// proportionate: an impostor answering at the target address would have
+	// to present a UID that existed nowhere but inside this installation.
+	// A value anyone with read access can look up does not carry that, and
+	// three places in this codebase stated that it did.
+	//
+	// 16 bytes from crypto/rand, hex-encoded -- the same shape
+	// cmd/bootstrap's newInstallUID and provision's newToken use, for the
+	// same reason. It lives in this goroutine's Spec and nowhere else; a
+	// manager restart loses it, which is correct, because a restart
+	// mid-install is a failed install either way (failRestarted above).
+	installUID, err := newInstallUID()
+	if err != nil {
+		r.finishInstall(fi.Spec.MachineRef)
+		return r.failPending(ctx, &fi, fmt.Sprintf("generating an install UID: %v", err))
+	}
+
+	spec := toProvisionSpec(&fi, installUID, sshPub, joinToken)
 	opts := r.options(&fi, sshPriv)
 	key := client.ObjectKeyFromObject(&fi)
 	deps := provision.Deps{
@@ -775,13 +800,27 @@ func (r *FrameInstallReconciler) writeKubeconfigSecret(ctx context.Context, name
 
 // toProvisionSpec translates the CRD into the Kubernetes-free Spec
 // provision.Install actually runs against.
-func toProvisionSpec(fi *framev1beta1.FrameInstall, sshPublicKey, joinToken string) provision.Spec {
+// newInstallUID generates the value provision.Spec.UID carries: proof,
+// checked over SSH by provision.WaitForOurSystem, that the machine
+// answering at the target address is the one this exact run installed and
+// not merely something already listening there. It must be unguessable by
+// anything that can read the FrameInstall, which is why it is not derived
+// from the object.
+func newInstallUID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating install UID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func toProvisionSpec(fi *framev1beta1.FrameInstall, installUID, sshPublicKey, joinToken string) provision.Spec {
 	var disks []provision.Disk
 	for _, d := range fi.Spec.Layout.Disks {
 		disks = append(disks, provision.Disk{ByID: d.ByID, SizeBytes: d.SizeBytes})
 	}
 	return provision.Spec{
-		UID:      string(fi.UID),
+		UID:      installUID,
 		Hostname: fi.Spec.Hostname,
 		Network: provision.Network{
 			Address: fi.Spec.Network.Address,
