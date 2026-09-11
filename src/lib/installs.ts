@@ -53,12 +53,23 @@ export function phaseTone(p: InstallPhase): 'pending' | 'running' | 'good' | 'ba
 // One threshold for every phase either cries wolf on Installing, which
 // legitimately takes twenty minutes, or never fires on Preparing, which takes
 // seconds. So the budget is per phase.
+//
+// `Installed` is not a phase that takes time at all: the controller reports
+// it and reports `Joining` on the next statement, microseconds later
+// (internal/provision/install.go). Its budget was two minutes, which read
+// like "this step can take up to two minutes" and is not what it measures.
+// An object sitting in `Installed` for any observable interval means
+// nothing is driving it any more — the manager died, or its connection to
+// the apiserver did — and the only reason this is not zero is that
+// `phaseSince` is a cluster timestamp compared against a browser clock, so
+// anything below about a minute is reading skew rather than a stall. Same
+// floor `Pending` uses, for the same reason.
 const PHASE_BUDGET_MS: Partial<Record<InstallPhase, number>> = {
   Pending: 60_000,
   Preparing: 5 * 60_000,
   MediaAttached: 2 * 60_000,
   Installing: 60 * 60_000,
-  Installed: 2 * 60_000,
+  Installed: 60_000,
   Joining: 10 * 60_000,
 }
 

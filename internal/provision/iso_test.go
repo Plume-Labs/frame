@@ -303,3 +303,58 @@ func TestRemasterRefusesAnEmptyPreseedURLBeforeTouchingTheBaseImage(t *testing.T
 		t.Errorf("error = %q; it names the missing base image, which means the preseedURL check ran too late", err)
 	}
 }
+
+// Everything after "---" on a d-i kernel line is not for the installer: it
+// is copied onto the installed system's own kernel command line. Appended at
+// the end of the line, our arguments landed there -- meaningless on the
+// installed node, permanent across every future boot, and publishing the
+// preseed URL to anyone who can read /proc/cmdline on it.
+func TestRemasterPutsTheBootArgsBeforeTheInstallerSeparator(t *testing.T) {
+	base := realBaseISO(t)
+	out := filepath.Join(t.TempDir(), "g9.iso")
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/isolinux/txt.cfg", "/boot/grub/grub.cfg"} {
+		body := isoContains(t, out, path)
+		var checked int
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.Contains(line, "url="+testPreseedURL) {
+				continue
+			}
+			checked++
+			sep := strings.Index(line, "---")
+			if sep < 0 {
+				// A kernel line with no separator at all: appending is the
+				// only thing to do and there is nothing to assert.
+				continue
+			}
+			if strings.Index(line, "url=") > sep {
+				t.Errorf("%s: the boot arguments are after --- and will be copied to the installed system:\n%s", path, line)
+			}
+			if strings.Index(line, "interface=auto") > sep {
+				t.Errorf("%s: interface=auto is after ---:\n%s", path, line)
+			}
+		}
+		// Positive control: this file really does carry rewritten kernel
+		// lines, so "none of them are wrong" is a statement about something.
+		if checked == 0 {
+			t.Errorf("%s: no kernel line carries the preseed URL at all; nothing was checked", path)
+		}
+	}
+}
+
+// And what was already after "---" is still after it: this must not
+// reorder the installer's own tail.
+func TestRemasterKeepsWhatWasAlreadyAfterTheSeparator(t *testing.T) {
+	base := realBaseISO(t)
+	out := filepath.Join(t.TempDir(), "g9.iso")
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
+		t.Fatal(err)
+	}
+	body := isoContains(t, out, "/isolinux/txt.cfg")
+	if !strings.Contains(body, "--- quiet") {
+		t.Errorf("the installer's own trailing arguments were disturbed:\n%s", body)
+	}
+}

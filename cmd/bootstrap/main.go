@@ -72,9 +72,14 @@ const bootstrapSSHUser = "frame"
 
 // mediaAddr is where this process serves the installer image and preseed
 // to the BMC. Fixed, not a flag: Config.MediaBaseURL is the address the BMC
-// reaches this same listener at, and the port the two describe has to
-// agree by construction the same way frame-provisiond's MEDIA_ADDR and
-// MEDIA_URL do (cmd/provisiond/main.go).
+// reaches this same listener at.
+//
+// The two have to name the same port. That used to be asserted here as
+// holding "by construction" and nothing checked it -- the construction
+// being one const and one hand-written YAML field, which is not
+// construction at all. validateMediaBaseURL (config.go) now compares them,
+// because a mismatch produces the same twenty-minute silence a wrong host
+// does.
 const mediaAddr = ":8081"
 
 // defaultPhaseTimeouts and defaultPoll mirror the FrameInstall controller's

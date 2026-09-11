@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -173,6 +174,21 @@ func validateMediaBaseURL(raw string) error {
 		return fmt.Errorf(
 			"mediaBaseURL %q: names this laptop itself (%s); a BMC on the management network cannot reach it, and the failure that produces is a long silence ending in a timeout, not an error",
 			raw, u.Hostname())
+	}
+
+	// The port this command actually listens on and the port it tells the
+	// BMC to fetch from were documented as agreeing "by construction" and
+	// nothing checked it -- construction here being one const and one
+	// hand-written config field, which is not construction. A mismatch
+	// produces the same twenty-minute silence a wrong host does.
+	_, listenPort, err := net.SplitHostPort(mediaAddr)
+	if err != nil {
+		return fmt.Errorf("media listener address %q is malformed: %w", mediaAddr, err)
+	}
+	if u.Port() != listenPort {
+		return fmt.Errorf(
+			"mediaBaseURL %q names port %q, but frame bootstrap serves the installer image and preseed on port %s; the BMC would fetch from somewhere nothing is listening",
+			raw, u.Port(), listenPort)
 	}
 	return nil
 }

@@ -137,8 +137,8 @@ long and nearly blind is named as such rather than dressed up.
 | `Pending` | validation passes, including the destructive guard (§8) |
 | `Preparing` | the image is built and its URL answers |
 | `MediaAttached` | `InsertVirtualMedia`, then **re-reading** `VirtualMedia/2.Inserted: true`; boot override set to CD, once, with an explicit mode |
-| `Installing` | SSH answers at the target address, our key is accepted, **and** a marker file carries this `FrameInstall`'s UID |
-| `Installed` | media ejected, boot override cleared |
+| `Installing` | SSH answers at the target address, our key is accepted, **and** a marker file carries this run's install UID |
+| `Installed` | nothing — see below |
 | `Joining` | the k3s step returned |
 | `Ready` | a node of the expected name exists in the target cluster and is `Ready` |
 
@@ -166,12 +166,22 @@ served.* That is enough for what it is for — telling our machine apart from
 an unrelated one that happens to be at that address — and it is less than
 "nowhere but inside that image".
 
+**`Installed` is a report, not a phase.** *Corrected 2026-09-12 to match the
+code.* This table originally said `Installed` ends when the media is ejected
+and the boot override cleared. It does not: the installation reports
+`Installed` and reports `Joining` on the next statement, microseconds later,
+and the ejection happens somewhere else entirely (§10). `Installed` is one
+observable instant saying "the machine proved it is ours"; it carries no
+timeout because there is nothing for a timeout to bound, and an object seen
+sitting in it means nothing is driving the object any more.
+
 Between boot and the first SSH answer, Redfish offers only `PowerState` and
 `Oem.Hp.PostState`. Lot 1 established that this BMC replays cached sensor
 readings as live ones in that window, so nothing else there is trusted. The
 phase has a timeout and its failure names itself.
 
-Each phase carries its own timeout.
+Every phase that waits on something carries its own timeout. `Installed`
+does not wait on anything.
 
 ## 5. The installer image
 
@@ -311,11 +321,23 @@ which is true of every kind and is stated here so nobody assumes otherwise.
 
 Each phase times out; on expiry the object goes `Failed` naming the phase.
 
-Frame ejects the media and clears the boot override exactly once: on leaving
-`Installing` successfully, or on entering `Failed`. Both paths must do it —
-otherwise a machine that failed mid-install reboots into the installer
-forever. The override is set as one-shot, which is a second belt rather than
-the only one.
+Frame ejects the media and clears the boot override exactly once, from a
+single deferred cleanup that runs on **every** exit from the installation
+once the machine has been touched — success, failure, timeout or
+cancellation alike. *Corrected 2026-09-12 to match the code:* this paragraph
+originally described two separate paths ("on leaving `Installing`
+successfully, or on entering `Failed`"), which is the shape that leaves a
+third exit nobody listed rebooting into the installer forever. One exit path
+is why there is no such third case.
+
+Cleanup failing is itself an install failure: a machine left with media
+attached and a one-time boot override set is not a completed installation,
+whatever the earlier phases reported. The override is set as one-shot, which
+is a second belt rather than the only one.
+
+The kubeconfig of a cluster this installation created is saved the moment it
+exists, not when the installation succeeds — the phases after it can fail,
+and the credential exists in exactly one place.
 
 **No automatic retry.** Replaying a destructive operation without a human
 asking is a fault. A failure is retried by creating a new object.

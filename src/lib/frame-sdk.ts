@@ -12,10 +12,8 @@
  * // Submit a GPU training job
  * const job = await frame.jobs.submit({ name: 'llm-run-4', pipeline: 'training', gpuCount: 8 })
  *
- * // Provision a new node (creates a FrameNode CR, controller applies machineConfig)
- * const { crName } = await frame.nodes.discover('192.168.10.25')
- * // poll frame.nodes.getStatus(crName) until phase === 'Discovered', then:
- * await frame.nodes.patchSpec(crName, { ip: '192.168.10.25', role: 'worker', disk: '/dev/nvme0n1' })
+ * // Install an OS on an inventoried machine (creates a FrameInstall CR)
+ * await frame.installs.create('w3', installSpec)
  * ```
  */
 
@@ -63,14 +61,6 @@ export interface FrameNode {
   storage: number
   gpuCount: number
   gpuModel: string
-}
-
-export interface FrameNodeStatus {
-  phase: string
-  discoveredHostname?: string
-  discoveredTalosVersion?: string
-  discoveredDisks?: Array<{ name: string; size: string; type: string }>
-  discoveredNICs?: Array<{ name: string; mac: string; speed: string }>
 }
 
 export interface FrameNodeSpec {
@@ -3093,21 +3083,6 @@ class NodeClient {
       },
     })
     return { crName }
-  }
-
-  async getStatus(name: string): Promise<FrameNodeStatus> {
-    const cr = await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${name}`)
-    return {
-      // v1beta1 has no status.phase. The Ready condition's reason is the same
-      // string the field used to hold — Discovered, Provisioning, Online,
-      // Degraded, Offline — so the wizard's polling contract is unchanged.
-      // Empty means unreconciled, which is what an absent phase meant before.
-      phase:                  readyCondition(cr.status?.conditions)?.reason ?? '',
-      discoveredHostname:     cr.status?.discoveredHostname,
-      discoveredTalosVersion: cr.status?.discoveredTalosVersion,
-      discoveredDisks:        cr.status?.discoveredDisks,
-      discoveredNICs:         cr.status?.discoveredNICs,
-    }
   }
 
   async patchSpec(name: string, spec: FrameNodeSpec): Promise<void> {
