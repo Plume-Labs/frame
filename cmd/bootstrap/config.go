@@ -123,6 +123,16 @@ func LoadConfig(path string) (Config, error) {
 			cfg.Cluster.Mode)
 	}
 
+	// `out` is checked here, with the other four, on the same principle:
+	// a bad value refused late is refused after the disk is wiped. It is
+	// also the only output of this command that cannot be regenerated --
+	// the cluster's admin credential exists in exactly one place and this
+	// path is where it lands. An unwritable `out` discovered after Install
+	// returns means the cluster is up and unreachable, forever.
+	if err := checkOutWritable(cfg.Out); err != nil {
+		return Config{}, err
+	}
+
 	if strings.TrimSpace(cfg.SSHKeyPath) == "" {
 		return Config{}, fmt.Errorf("sshKeyPath is empty")
 	}
@@ -165,4 +175,40 @@ func validateMediaBaseURL(raw string) error {
 			raw, u.Hostname())
 	}
 	return nil
+}
+
+// checkOutWritable answers the only question that matters about `out`
+// before an install starts: can this process write there.
+//
+// It is a real write, not a permission calculation: os.Stat's mode bits say
+// nothing about a read-only mount, an immutable attribute, or a directory
+// this user cannot create in. A file that already exists is opened for
+// writing and closed; one that does not is created and removed again, so a
+// failed install does not leave an empty kubeconfig behind looking like a
+// half-written one.
+func checkOutWritable(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf(
+			"out is empty: it is where the new cluster's kubeconfig is written, and that credential exists nowhere else -- refusing before anything is wiped rather than after")
+	}
+
+	if info, err := os.Stat(path); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("out %s is a directory, not a file", path)
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("out %s already exists and is not writable: %w", path, err)
+		}
+		return f.Close()
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("out %s cannot be created: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Remove(path)
 }

@@ -106,6 +106,18 @@ type FrameInstallReconciler struct {
 	SSH    provision.SSHClient
 	Nodes  provision.NodeChecker
 
+	// ProvisiondMediaURL is the address a machine's BMC reaches
+	// frame-provisiond's media listener at. It is the same value Images was
+	// configured with; it is carried separately because Images is an
+	// interface and cannot be asked.
+	//
+	// Unset or malformed, this reconciler refuses in Pending, before
+	// anything is built or the machine is touched. It is deliberately NOT a
+	// manager start-up gate: it was one, which made a flag only this
+	// controller uses block a cluster that will never provision a machine
+	// from upgrading at all.
+	ProvisiondMediaURL string
+
 	// OperatorNamespace is where a cluster-init install's kubeconfig Secret
 	// is written -- the operator's own namespace, not the FrameInstall's,
 	// because the Secret's OwnerReference only means anything to the
@@ -215,6 +227,15 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	fm, err := r.getMachine(ctx, fi.Namespace, fi.Spec.MachineRef)
 	if err != nil {
 		return r.failPending(ctx, &fi, fmt.Sprintf("machine %q: %v", fi.Spec.MachineRef, err))
+	}
+
+	// Before the BMC is touched and before anything is built: an image
+	// whose boot arguments point nowhere a BMC can reach is an install that
+	// wipes nothing and hangs until its phase deadline, with nothing in the
+	// object saying the operator's cluster was never configured for this.
+	if err := provision.ValidateMediaURL(r.ProvisiondMediaURL); err != nil {
+		return r.failPending(ctx, &fi, fmt.Sprintf(
+			"frame-provisiond's media URL (the manager's -provisiond-media-url flag, the chart's provisiond.media.url) %v -- this cluster is not configured to provision machines", err))
 	}
 
 	if err := r.checkNotALiveClusterMember(ctx, fi.Spec.Hostname, fi.Spec.Network.Address); err != nil {
@@ -482,35 +503,46 @@ func (r *FrameInstallReconciler) finishStatus(ctx context.Context, key client.Ob
 	fi.Status.HostKey = res.HostKey
 	fi.Status.NodeName = res.NodeName
 
-	// Gated on Spec.Cluster.Mode, not on len(res.Kubeconfig) > 0: a
-	// ClusterJoin install produces no kubeconfig of its own by contract
-	// (types.go's NodeChecker doc comment -- Join returns nil for it), so
-	// the two conditions agree today, but "did this install start a new
-	// cluster" is the actual fact this branch is about. Testing the byte
-	// slice's length instead means a future, unrelated change to what
-	// Install happens to return could silently repoint this branch onto a
-	// condition that was never its contract.
-	if res.Phase == provision.PhaseReady && fi.Spec.Cluster.Mode == "init" {
+	// NOT gated on res.Phase == Ready. provision.Join returns the
+	// kubeconfig in the Joining phase; two later things can still fail the
+	// install -- the Ready poll timing out, and cleanup failing, which a
+	// Task 5 ruling deliberately made an install failure. In both cases
+	// res.Kubeconfig is populated and, gated on Ready, was thrown away: the
+	// cluster exists, has a node in it, and nobody can ever talk to it,
+	// because the only copy of its admin credential lived in a goroutine
+	// that has now returned. A failed install whose kubeconfig is saved can
+	// be recovered by hand; one whose kubeconfig is gone cannot be
+	// recovered at all.
+	//
+	// Mode == "init" is still the "did this install start a new cluster"
+	// test, for the reason it always was. len() is the "is there one to
+	// save" test, which under the new gating is a real question rather than
+	// a restatement of Mode.
+	if fi.Spec.Cluster.Mode == "init" && len(res.Kubeconfig) > 0 {
 		ns := r.OperatorNamespace
 		if ns == "" {
 			ns = fi.Namespace
 		}
 		if err := r.writeKubeconfigSecret(ctx, ns, &fi, res.Kubeconfig); err != nil {
-			// The install itself succeeded -- there is a Ready node -- but
-			// delivering the one thing that makes a cluster it just created
-			// usable at all did not, and that is a different, unrecoverable
-			// fact from Ready: the kubeconfig existed only in this
-			// goroutine's memory, gone the moment this call returns, and
-			// this reconciler's RBAC grants secrets create but not update,
-			// so even a second attempt through this exact path has nothing
-			// left to write. Ready is the print column an operator scans;
-			// leaving it there next to a note in status.message is how this
-			// specific, unrecoverable failure stays invisible.
-			log.Error(err, "install succeeded but its kubeconfig Secret could not be written", "frameinstall", key)
+			// A cluster exists and nobody can talk to it. The kubeconfig
+			// existed only in this goroutine's memory, gone the moment this
+			// call returns, and this reconciler's RBAC grants secrets
+			// create but not update, so there is nothing to retry with.
+			// Whatever phase Install reported, that is a failure, and one
+			// that cannot be recovered from -- so it must not be left
+			// looking like Ready in the print column an operator scans.
+			log.Error(err, "the cluster was created but its kubeconfig Secret could not be written", "frameinstall", key)
 			fi.Status.Phase = string(provision.PhaseFailed)
-			fi.Status.FailedPhase = string(provision.PhaseReady)
-			fi.Status.Message = truncateString(
-				fmt.Sprintf("install succeeded but saving kubeconfig Secret %s/%s-kubeconfig failed: %v", ns, fi.Name, err), 512)
+			// An install that already failed keeps the phase it failed in;
+			// only a run that got all the way through is newly failed here.
+			if fi.Status.FailedPhase == "" {
+				fi.Status.FailedPhase = string(provision.PhaseReady)
+			}
+			msg := fmt.Sprintf("the cluster was created but saving kubeconfig Secret %s/%s-kubeconfig failed, so nobody can talk to it: %v", ns, fi.Name, err)
+			if fi.Status.Message != "" {
+				msg = fi.Status.Message + "; additionally, " + msg
+			}
+			fi.Status.Message = truncateString(msg, 512)
 		} else {
 			fi.Status.KubeconfigSecret = fi.Name + "-kubeconfig"
 		}

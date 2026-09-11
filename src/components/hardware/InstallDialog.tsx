@@ -180,8 +180,8 @@ export function InstallDialog({
         bootMode,
         sshKeyRef: sshKeyRef.trim(),
       }
-      await frame.installs.create(hostname.trim(), spec)
-      toast.success(`Install created for ${selectedMachine.name}`)
+      const created = await frame.installs.create(hostname.trim(), spec)
+      toast.success(`Install ${created} created for ${selectedMachine.name}`)
       onOpenChange(false)
       onCreated()
     } catch (e) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -320,6 +321,38 @@ func (s *HTTPImageStore) Remove(ctx context.Context, token string) error {
 	if resp.StatusCode != http.StatusNoContent {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("remove %s: HTTP %d: %s", token, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// ValidateMediaURL refuses anything that is not a usable http(s) base URL a
+// BMC on the management network could fetch from.
+//
+// Checking presence alone only catches a missing value; it says nothing
+// about one that is wrong in a way that shows up only on hardware later --
+// a typo'd scheme (ftp://, or http:/ missing a slash), or a bare hostname
+// with no scheme, which url.Parse accepts without error and puts entirely
+// into Path, leaving Scheme and Host both empty. Every one of those builds
+// an image whose boot arguments point nowhere and fails twenty minutes in,
+// with nothing saying why.
+//
+// It lives here, beside the code that builds URLs from this value, so the
+// manager, frame-provisiond and the FrameInstall controller check the same
+// thing rather than three copies of it. Callers wrap the error with the
+// name of whatever they call this setting.
+func ValidateMediaURL(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return fmt.Errorf("is not set: every built image bakes this address into its own boot arguments, so an image built against it would fetch its preseed from nowhere")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%q: scheme must be http or https, got %q", raw, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%q: has no host", raw)
 	}
 	return nil
 }

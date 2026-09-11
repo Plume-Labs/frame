@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CONFIRM_SERIAL_HINT, CONFIRM_SERIAL_LABEL,
   canCreateInstall, confirmationMatches, elapsedLabel, installDialogMachineTexts,
-  isStalledInPhase, isTerminal, machineOptionLabel, phaseIndex, phaseTone,
+  installObjectName, isStalledInPhase, isTerminal, machineOptionLabel, phaseIndex, phaseTone,
+  randomNameSuffix,
   mapInstallPhase, textsMentioning, toInstall, type MachineChoice,
 } from './installs'
 
@@ -193,5 +194,49 @@ describe('who may create one', () => {
   it('is admin and nobody else', () => {
     expect(canCreateInstall(true)).toBe(true)
     expect(canCreateInstall(false)).toBe(false)
+  })
+})
+
+describe('installObjectName', () => {
+  // Design §3: a reinstallation is a second object and the first stays
+  // readable. Naming by hostname made a retry collide 409 with the very
+  // attempt it was retrying — the one case the design explicitly supports
+  // was the one the console could not do.
+  it('does not collide with a previous install of the same hostname', () => {
+    expect(installObjectName('w3', 'a1b2c3')).not.toBe(installObjectName('w3', 'd4e5f6'))
+  })
+
+  it('still reads as belonging to its hostname', () => {
+    expect(installObjectName('w3', 'a1b2c3')).toBe('w3-a1b2c3')
+  })
+
+  it('stays a legal object name and keeps the suffix when the hostname is long', () => {
+    const long = 'a'.repeat(80)
+    const name = installObjectName(long, 'a1b2c3')
+    expect(name.length).toBeLessThanOrEqual(63)
+    expect(name.endsWith('a1b2c3')).toBe(true)
+    expect(name).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/)
+    // And two long hostnames differing only past the cut are still distinct
+    // objects, which is the whole point of the suffix.
+    expect(installObjectName(long, 'a1b2c3')).not.toBe(installObjectName(long, 'ffffff'))
+  })
+
+  it('normalizes what a hostname field can hold', () => {
+    expect(installObjectName('W3.Rack1', 'a1b2c3')).toBe('w3-rack1-a1b2c3')
+    expect(installObjectName('', 'a1b2c3')).toBe('a1b2c3')
+  })
+})
+
+describe('randomNameSuffix', () => {
+  it('is six hex characters and does not repeat itself', () => {
+    const seen = new Set<string>()
+    for (let i = 0; i < 50; i++) {
+      const s = randomNameSuffix()
+      expect(s).toMatch(/^[0-9a-f]{6}$/)
+      seen.add(s)
+    }
+    // 50 draws from 16.7M: a duplicate is possible but a generator that
+    // returns a constant is what this catches.
+    expect(seen.size).toBeGreaterThan(45)
   })
 })

@@ -48,6 +48,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -195,21 +196,49 @@ func run() error {
 	defer stop()
 
 	res, installErr := provision.Install(ctx, deps, spec, opts)
+	return finish(os.Stdout, cfg.Out, res, installErr)
+}
+
+// finish decides what happens after provision.Install returns, and is a
+// function of its own so a test can drive the one ordering that matters
+// here without a BMC: the kubeconfig is written BEFORE installErr is looked
+// at.
+//
+// provision.Join returns the kubeconfig in the Joining phase, and two later
+// things can still fail the install -- the Ready poll timing out, and
+// cleanup failing, which a deliberate ruling made an install failure. In
+// both of those the kubeconfig is populated, and returning on installErr
+// first threw away the only copy of the new cluster's admin credential:
+// the cluster exists, it has a node, and nobody can ever talk to it. A
+// failed install whose kubeconfig is on disk can be looked at by hand; one
+// whose kubeconfig is gone cannot be.
+func finish(stdout io.Writer, out string, res provision.Result, installErr error) error {
+	var writeErr error
+	if len(res.Kubeconfig) > 0 {
+		if err := os.WriteFile(out, res.Kubeconfig, 0o600); err != nil {
+			writeErr = fmt.Errorf("writing kubeconfig to %s: %w", out, err)
+		} else {
+			fmt.Fprintf(stdout, "frame bootstrap: kubeconfig for the new cluster written to %s\n", out)
+		}
+	}
+
 	if installErr != nil {
 		if res.FailedPhase != "" {
-			return fmt.Errorf("install failed in phase %s: %w", res.FailedPhase, installErr)
+			installErr = fmt.Errorf("install failed in phase %s: %w", res.FailedPhase, installErr)
+		}
+		if writeErr != nil {
+			return fmt.Errorf("%w; additionally, %w", installErr, writeErr)
 		}
 		return installErr
 	}
-
+	if writeErr != nil {
+		return writeErr
+	}
 	if len(res.Kubeconfig) == 0 {
-		return fmt.Errorf("install reached %s with no kubeconfig produced; nothing to write to %s", res.Phase, cfg.Out)
-	}
-	if err := os.WriteFile(cfg.Out, res.Kubeconfig, 0o600); err != nil {
-		return fmt.Errorf("writing kubeconfig to %s: %w", cfg.Out, err)
+		return fmt.Errorf("install reached %s with no kubeconfig produced; nothing to write to %s", res.Phase, out)
 	}
 
-	fmt.Printf("frame bootstrap: node %s is Ready; kubeconfig written to %s\n", res.NodeName, cfg.Out)
+	fmt.Fprintf(stdout, "frame bootstrap: node %s is Ready\n", res.NodeName)
 	return nil
 }
 
