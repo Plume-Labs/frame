@@ -158,10 +158,10 @@ jobs:
           sbom: true
           provenance: mode=max
 
-  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all four images ─────
+  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all five images ─────
   #
-  # Frame builds four images, and only one of them is pushed by this workflow
-  # today. Scanning still covers all four, because a CVE in the operator is a
+  # Frame builds five images, and only one of them is pushed by this workflow
+  # today. Scanning still covers all five, because a CVE in the operator is a
   # CVE whether or not this workflow is what publishes it. The matrix names
   # each Dockerfile explicitly rather than deriving anything.
   #
@@ -170,9 +170,14 @@ jobs:
   # it — and uiproxy proved it by being added and not listed for the whole of
   # the per-user identity lot (whole-branch review, I4). That is the image
   # holding the impersonation grant, so it was the one image whose CVEs
-  # mattered most and the only one nobody scanned. If a fifth Dockerfile
-  # appears, add it here; `make docker-images` and `make scan` are the local
-  # equivalents and they do list all four.
+  # mattered most and the only one nobody scanned. provisiond is the second
+  # image this happened to (2026-09-11, provisioning/Debian lot, task 8
+  # review) — added to `make docker-images`/`scan` but left out of this
+  # matrix, the one that actually gates a release, and it is the one
+  # non-distroless image in the fleet, running xorriso against input a
+  # BMC-adjacent network can influence. If a sixth Dockerfile appears, add it
+  # here; `make docker-images` and `make scan` are the local equivalents and
+  # they do list all five.
   scan:
     name: Scan (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -196,6 +201,8 @@ jobs:
             dockerfile: Dockerfile.authd
           - name: uiproxy
             dockerfile: Dockerfile.uiproxy
+          - name: provisiond
+            dockerfile: Dockerfile.provisiond
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
