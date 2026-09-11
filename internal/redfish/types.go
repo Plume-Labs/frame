@@ -153,4 +153,21 @@ type Snapshot struct {
 	// all) against what this specific machine actually accepts, rather than
 	// sending a string the BMC will reject.
 	AllowableResetTypes []string
+
+	// LogPossiblyStale is true when the IML log spans more than one page
+	// (the first page's own links.NextPage said so) and readLog could not
+	// confirm it reached the true last page — decode_log.go's
+	// fetchLastLogPage failed for any reason: an out-of-range probe that
+	// didn't come back as Base.0.10.QueryParameterOutOfRange, a body that
+	// didn't parse, a transport error, or anything else. When that happens,
+	// readLog keeps the first page rather than guessing further, and the
+	// first page is this machine's *oldest* entries, not its newest — the
+	// exact failure mode C1 exists to prevent, recurring behind a firmware
+	// that doesn't answer the jump the way PROVENANCE.md's capture does.
+	// Without this flag that recurrence is invisible: Log and LogCounts
+	// still populate, LogTotal is still correct, and nothing else in the
+	// snapshot distinguishes "these are the newest 25" from "these are the
+	// oldest 25, silently". False for a log that fits on one page (there is
+	// nothing to jump to) and for a jump that succeeded.
+	LogPossiblyStale bool
 }

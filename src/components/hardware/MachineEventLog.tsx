@@ -25,12 +25,16 @@ const SEVERITY_ORDER: Record<SensorSeverity, number> = { critical: 0, warning: 1
  * arrives rather than re-sorting it).
  *
  * `eventLogCounts` covers only the entries the last probe actually retrieved
- * from the BMC — one page, not necessarily the whole log: on the captured
- * iLO4 the machine reports 175 entries total (`eventLogTotal`) but the
- * collection returns only 30 with no way to page further, so
- * `eventLogCounts` sums to 30, not 175. The sentence above the counts says
- * exactly that — entries retrieved vs. the machine's own total — rather
- * than claiming coverage this field doesn't have.
+ * from the BMC — one page, not necessarily the whole log. The redfish client
+ * pages to the machine's last page when the log spans more than one, so this
+ * is normally the newest page, but the BMC's own page size is not fixed and
+ * the last page is typically shorter than the others: on the captured iLO4
+ * the machine reports 175 entries total (`eventLogTotal`) across pages of
+ * 30 except a final page of 25, so `eventLogCounts` sums to 25, not 175. The
+ * sentence above the counts says exactly that — entries retrieved vs. the
+ * machine's own total — rather than claiming coverage this field doesn't
+ * have. `eventLogPossiblyStale` covers the case where the client couldn't
+ * even confirm it reached that last page — see the banner below.
  */
 export function MachineEventLog({ machine }: { machine: Machine }) {
   const counts = Object.entries(machine.eventLogCounts).sort(
@@ -39,6 +43,12 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
 
   return (
     <div className="space-y-3 font-mono text-xs">
+      {machine.eventLogPossiblyStale && (
+        <div className={`rounded-md border px-3 py-2 ${TONE_TEXT.warning}`}>
+          Le BMC n'a pas confirmé que la page lue est bien la plus récente : les entrées
+          ci-dessous pourraient être les plus anciennes du journal, pas les plus récentes.
+        </div>
+      )}
       <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-2">
         <div className="text-muted-foreground">
           {machine.eventLogTotal} entrée{machine.eventLogTotal === 1 ? '' : 's'} au total sur le journal

@@ -145,6 +145,23 @@ type logServiceJSON struct {
 // links.NextPage says there is more, it jumps straight to the true last
 // page (see its doc comment for why a jump rather than a hop-by-hop walk)
 // and readLog builds Log/LogCounts/LogTotal from that page instead.
+//
+// This first page is always fetched, even on the path where its body ends
+// up discarded in favor of the last page's — costing one request and one
+// full page body (44 KB on the captured iLO4) more than the theoretical
+// minimum of probing out-of-range first and skipping page 1 entirely
+// whenever it turns out not to be needed. That was considered and rejected:
+// the only way to know a log is even paginated at all is page 1's own
+// links.NextPage, and a BMC that doesn't implement ?page= — the same way
+// this iLO4 already silently ignores $skip/$top, per PROVENANCE.md —
+// answers an out-of-range probe with an ordinary 200 and its one and only
+// page, indistinguishable at that point from "the log has exactly one
+// page". Probing first and treating that ambiguous case as
+// LogPossiblyStale would misreport every genuinely single-page log from
+// such a firmware as possibly stale, forever — a new, permanent false
+// positive traded for a real but bounded per-reconcile cost. Fetching page
+// 1 first keeps that signal (NextPage present or not) unambiguous, at the
+// cost of at most one wasted page fetch on a machine that does paginate.
 func (c *client) readLog(ctx context.Context, path string, snap *Snapshot) error {
 	var col logCollectionJSON
 	err := c.get(ctx, path, &col)
@@ -159,6 +176,15 @@ func (c *client) readLog(ctx context.Context, path string, snap *Snapshot) error
 		if col.Links.NextPage != nil {
 			if last, jumpErr := c.fetchLastLogPage(ctx, path, col.Total); jumpErr == nil {
 				col = last
+			} else {
+				// The jump could not be confirmed and the first page (this
+				// machine's oldest entries) is what's about to be built into
+				// Log/LogCounts below — silently, unless this flag says so.
+				// See Snapshot.LogPossiblyStale's doc comment: this package
+				// has no logger of its own, so surfacing this loudly is the
+				// caller's job (the controller logs and reflects it in
+				// status), but it must not be surfaceable nowhere at all.
+				snap.LogPossiblyStale = true
 			}
 		}
 

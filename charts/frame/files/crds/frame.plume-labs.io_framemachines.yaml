@@ -261,12 +261,30 @@ spec:
                 description: |-
                   EventLogCounts is the count per severity across the entries this probe
                   actually retrieved from the BMC — one page, not necessarily the whole
-                  log. On the captured iLO4 the machine's own log holds 175 entries but
-                  the collection returns only 30 with no way to page further, so
-                  EventLogCounts here sums to 30, not 175. EventLogTotal is the number to
-                  read for "how many entries does the machine say it holds"; this field
-                  never claims to cover more than what it counted.
+                  log. The redfish client pages to the machine's last page when the log
+                  spans more than one (internal/redfish's readLog/fetchLastLogPage), so
+                  this is normally the newest page, but the BMC's own page size is not
+                  fixed and the last page is typically shorter than the others: on the
+                  captured iLO4 the machine's own log holds 175 entries (EventLogTotal)
+                  across pages of 30, except a final page of 25 — so EventLogCounts here
+                  sums to 25, the size of the page actually retrieved, not to
+                  EventLogTotal. EventLogTotal is the number to read for "how many
+                  entries does the machine say it holds"; this field never claims to
+                  cover more than what it counted. See EventLogPossiblyStale for whether
+                  that retrieved page is even confirmed to be the newest one.
                 type: object
+              eventLogPossiblyStale:
+                description: |-
+                  EventLogPossiblyStale is true when the BMC's IML log spans more than
+                  one page and the redfish client could not confirm it reached the true
+                  last page (internal/redfish.Snapshot.LogPossiblyStale) — a BMC whose
+                  out-of-range-page error doesn't match the one this client knows how to
+                  read, for instance. When true, EventLog/EventLogCounts above still
+                  populate, from whatever page the client did read, but that page may be
+                  the machine's *oldest* entries rather than its newest: nothing else in
+                  this status distinguishes the two cases. Absent (false) both when the
+                  log fits on one page and when the jump to the last page succeeded.
+                type: boolean
               eventLogTotal:
                 format: int32
                 type: integer

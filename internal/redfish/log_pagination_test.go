@@ -269,6 +269,10 @@ func TestProbeRetainsTheNewestEntriesAcrossIMLPagination(t *testing.T) {
 	if battery.Severity != "Warning" {
 		t.Errorf("entry 173 Severity = %q, want %q — a real active fault, not noise to be dropped", battery.Severity, "Warning")
 	}
+
+	if snap.LogPossiblyStale {
+		t.Errorf("LogPossiblyStale = true, want false — the jump to the last page succeeded")
+	}
 }
 
 // TestReadLogKeepsTheFirstPageWhenTheLastPageCannotBeReached is requirement
@@ -304,6 +308,108 @@ func TestReadLogKeepsTheFirstPageWhenTheLastPageCannotBeReached(t *testing.T) {
 	if snap.Log[0].ID != "29" {
 		t.Errorf("Log[0].ID = %q, want %q — the newest entry of the first page (ids 1-30), "+
 			"confirming the fallback used page 1 rather than fabricating page 6's content", snap.Log[0].ID, "29")
+	}
+	if !snap.LogPossiblyStale {
+		t.Error("LogPossiblyStale = false, want true — the jump to the last page was abandoned, " +
+			"and a caller reading only Log/LogTotal has no other way to tell these are the oldest entries")
+	}
+}
+
+// TestReadLogFlagsPossiblyStaleAgainstDivergentBMCErrorShapes is the four
+// scenarios the round-2 review exercised: a 400 whose body carries a
+// different MessageID than Base.0.10.QueryParameterOutOfRange, a 400 with
+// no parseable body at all, a plain 500, and a 404 on the out-of-range
+// ?page= request. In every one of them, before LogPossiblyStale existed,
+// Probe returned a nil error and a fully-populated Log/LogCounts/LogTotal
+// built from page 1 — the machine's *oldest* 25 entries, indistinguishable
+// in the snapshot from a correct read of the newest 25. Each case here
+// confirms Probe still succeeds (a firmware quirk in the pagination
+// discovery step must not fail the whole probe) but LogPossiblyStale is now
+// true, and the retained entries are still page 1's (proving the fallback
+// didn't silently succeed some other way).
+func TestReadLogFlagsPossiblyStaleAgainstDivergentBMCErrorShapes(t *testing.T) {
+	page1Body, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", "systems_1_logservices_iml_entries.json"))
+	if err != nil {
+		t.Fatalf("read page1 fixture: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		respond func(w http.ResponseWriter)
+	}{
+		{
+			name: "400 with a different MessageID",
+			respond: func(w http.ResponseWriter) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"Messages":[{"MessageID":"Base.0.10.GeneralError","MessageArgs":["oops"]}]}`))
+			},
+		},
+		{
+			name: "400 with no body",
+			respond: func(w http.ResponseWriter) {
+				w.WriteHeader(http.StatusBadRequest)
+			},
+		},
+		{
+			name: "500",
+			respond: func(w http.ResponseWriter) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+		},
+		{
+			name: "404 on ?page=N",
+			respond: func(w http.ResponseWriter) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			routes := realRoutes("postcomplete")
+			delete(routes, "/redfish/v1/Systems/1/LogServices/IML/Entries/")
+			mux := http.NewServeMux()
+			for p, file := range routes {
+				body, ferr := os.ReadFile(filepath.Join("testdata", "ilo4-real", file))
+				if ferr != nil {
+					t.Fatalf("fixture %s: %v", file, ferr)
+				}
+				mux.HandleFunc(p+"{$}", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write(body)
+				})
+			}
+			mux.HandleFunc("/redfish/v1/Systems/1/LogServices/IML/Entries/{$}", func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("page") == "" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write(page1Body)
+					return
+				}
+				// Every non-empty ?page= — the out-of-range probe (176) and,
+				// were the implementation to regress into walking pages, any
+				// other page number too — gets this scenario's divergent
+				// response.
+				tc.respond(w)
+			})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
+			srv := httptest.NewTLSServer(mux)
+			t.Cleanup(srv.Close)
+
+			snap, err := insecureClient(srv.URL).Probe(context.Background())
+			if err != nil {
+				t.Fatalf("Probe: %v (a firmware quirk in the pagination-discovery step must not fail the whole probe)", err)
+			}
+			if !snap.LogPossiblyStale {
+				t.Error("LogPossiblyStale = false, want true — the jump could not be confirmed against this BMC's error shape")
+			}
+			if len(snap.Log) != EventLogRetainCount {
+				t.Fatalf("len(Log) = %d, want %d", len(snap.Log), EventLogRetainCount)
+			}
+			if snap.Log[0].ID != "29" {
+				t.Errorf("Log[0].ID = %q, want %q — page 1's newest id, confirming the fallback "+
+					"used page 1 (the machine's oldest page) rather than fabricating anything else", snap.Log[0].ID, "29")
+			}
+		})
 	}
 }
 
