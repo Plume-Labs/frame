@@ -106,20 +106,87 @@ export function confirmationMatches(typed: string, serial: string): boolean {
 }
 
 /**
- * Whether the signed-in tier may create a FrameInstall. Mirrors the RBAC
- * tier labels `test/manifests/rbac_tiers_test.go` asserts against
- * (`frame-admin`/`frame-editor`/`frame-viewer`) — the same aggregation axis
- * `canEditManifest` (workloads.ts) and `MachineActions`' admin gate already
- * key off, not `FrameUser.spec.role`, which is a different vocabulary
- * (admin/operator/viewer) for a different question (who authd let sign in).
+ * Whether the signed-in account may create a FrameInstall.
+ *
+ * Takes the admin boolean, not a tier string, for the same reason
+ * `canEditManifest` (workloads.ts) does: the only signal the console
+ * actually has is `isAdminToken`, so a `tier === 'admin'` comparison had
+ * exactly two reachable inputs — `'admin'` and `''` — and its other branches
+ * were tested but unreachable, which reads as coverage and is not.
  *
  * Creating a FrameInstall wipes the named disks. The editor tier can restart
- * and scale workloads but does not hold this — only admin does — and the
- * screen must agree with the RBAC rather than offer a button the apiserver
- * will refuse.
+ * and scale workloads but does not hold this — only admin does
+ * (`frameinstall_editor_role.yaml` carries no tier label, design §9) — and
+ * the screen must agree with the RBAC rather than offer a button the
+ * apiserver will refuse.
  */
-export function canCreateInstall(tier: string): boolean {
-  return tier === 'admin'
+export function canCreateInstall(admin: boolean): boolean {
+  return admin
+}
+
+// ── What the create dialog is allowed to say about a machine ─────────────────
+
+/** The fields of a `FrameMachine`'s inventory the create dialog can show. */
+export interface MachineChoice {
+  name: string
+  model: string
+  serialNumber: string
+}
+
+/**
+ * The label for one machine in the create dialog's picker.
+ *
+ * It names the machine and its model and **not its serial**. Layer 2 of the
+ * destructive guard (design §8) exists to catch "I pointed at the wrong
+ * machine", and it works by making the operator read the serial off the
+ * machine or its BMC. A dialog that prints the answer next to the box asking
+ * for it is a dialog where the check is a typing exercise — the one control
+ * that says *which machine* would be satisfied by copying from the screen
+ * that is already wrong.
+ *
+ * Lives here rather than inline in the JSX because no `.tsx` file in this
+ * repo is ever executed by a test (see this file's header), so a rule
+ * embedded in a template cannot be pinned by one.
+ */
+export function machineOptionLabel(m: MachineChoice): string {
+  return `${m.name} — ${m.model}`
+}
+
+/** The label above the confirmation box. Names no serial, by construction. */
+export const CONFIRM_SERIAL_LABEL = "Type the machine's serial to confirm"
+
+/**
+ * Where to read the serial from, since the console deliberately will not
+ * show it. Both places are on the machine's side of the check, which is the
+ * point.
+ */
+export const CONFIRM_SERIAL_HINT =
+  'Read it from the chassis pull-tab or from the BMC — the console will not show it, ' +
+  'because a serial you copied from this screen confirms nothing about which machine this is.'
+
+/**
+ * Every string `InstallDialog` renders that is derived from a machine, in
+ * one list, so a test can assert what is *absent* from all of them at once.
+ *
+ * A check on the dialog's own JSX would be the better test and is not
+ * available here; this is the closest thing that runs, and it only holds as
+ * long as the dialog renders these values rather than rebuilding them
+ * inline. That is why `InstallDialog` imports both of the constants above
+ * instead of repeating their text.
+ */
+export function installDialogMachineTexts(choices: MachineChoice[]): string[] {
+  return [CONFIRM_SERIAL_LABEL, CONFIRM_SERIAL_HINT, ...choices.map(machineOptionLabel)]
+}
+
+/**
+ * Which of `texts` mention `needle`. Split out so the "the serial is absent"
+ * assertion has a positive control: a search that finds nothing is
+ * indistinguishable from a search that looks in the wrong place until
+ * something proves the search itself works.
+ */
+export function textsMentioning(texts: string[], needle: string): string[] {
+  if (needle === '') return []
+  return texts.filter((t) => t.includes(needle))
 }
 
 // ── Domain shape ─────────────────────────────────────────────────────────────
@@ -227,13 +294,10 @@ export interface InstallCreateSpec {
     address: string
     gateway: string
     dns?: string[]
-    vlan?: number
-    bond?: string
   }
   layout: {
-    kind: 'single-disk' | 'mirror' | 'raw'
-    disks?: InstallCreateDisk[]
-    raw?: string
+    kind: 'single-disk' | 'mirror'
+    disks: InstallCreateDisk[]
   }
   cluster: {
     mode: 'init' | 'join'

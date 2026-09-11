@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  canCreateInstall, confirmationMatches, elapsedLabel, isStalledInPhase,
-  isTerminal, phaseIndex, phaseTone, mapInstallPhase, toInstall,
+  CONFIRM_SERIAL_HINT, CONFIRM_SERIAL_LABEL,
+  canCreateInstall, confirmationMatches, elapsedLabel, installDialogMachineTexts,
+  isStalledInPhase, isTerminal, machineOptionLabel, phaseIndex, phaseTone,
+  mapInstallPhase, textsMentioning, toInstall, type MachineChoice,
 } from './installs'
 
 describe('phases', () => {
@@ -58,18 +60,6 @@ describe('the confirmation', () => {
     expect(confirmationMatches('cz3xxxxxxx', 'CZ3xxxxxxx')).toBe(false)
     expect(confirmationMatches('', '')).toBe(false)
     expect(confirmationMatches('CZ3', 'CZ3xxxxxxx')).toBe(false)
-  })
-})
-
-describe('who may create one', () => {
-  // Creating a FrameInstall wipes disks. The editor tier does not get it, and
-  // the screen must agree with the RBAC rather than offer a button the
-  // apiserver will refuse.
-  it('is admin and nobody else', () => {
-    expect(canCreateInstall('admin')).toBe(true)
-    expect(canCreateInstall('editor')).toBe(false)
-    expect(canCreateInstall('viewer')).toBe(false)
-    expect(canCreateInstall('')).toBe(false)
   })
 })
 
@@ -137,5 +127,71 @@ describe('toInstall', () => {
     })
     expect(install.phase).toBe('Pending')
     expect(install.phaseSince).toBeUndefined()
+  })
+})
+
+describe('the create dialog never shows the serial it asks for', () => {
+  const machine: MachineChoice = {
+    name: 'ml350-g9',
+    model: 'ProLiant ML350 Gen9',
+    serialNumber: 'CZ3xxxxxxx',
+  }
+
+  // The positive control. Without it, an empty result below cannot be told
+  // apart from a search that never looked at anything — which is the exact
+  // shape this lot has been fooled by a dozen times.
+  it('textsMentioning finds a serial that IS present', () => {
+    expect(textsMentioning(['ml350-g9 — CZ3xxxxxxx'], machine.serialNumber)).toHaveLength(1)
+    expect(textsMentioning(['a', 'b CZ3xxxxxxx c', 'd'], machine.serialNumber)).toEqual([
+      'b CZ3xxxxxxx c',
+    ])
+  })
+
+  // And the control that says the search looked at the right texts: the
+  // option label is really in the list, and it really does name the machine.
+  it('the texts under test are the ones the dialog renders', () => {
+    const texts = installDialogMachineTexts([machine])
+    expect(texts).toContain(machineOptionLabel(machine))
+    expect(texts).toContain(CONFIRM_SERIAL_LABEL)
+    expect(machineOptionLabel(machine)).toContain('ml350-g9')
+    expect(machineOptionLabel(machine)).toContain('ProLiant ML350 Gen9')
+  })
+
+  // Design §8 layer 2: the operator reads the serial off the machine or its
+  // BMC. A dialog that prints it beside the box asking for it turns the one
+  // "which machine is this" control into a copy from a screen that is
+  // already pointing at the wrong one.
+  it('no string the dialog renders carries the selected machine’s serial', () => {
+    const texts = installDialogMachineTexts([machine])
+    expect(textsMentioning(texts, machine.serialNumber)).toEqual([])
+  })
+
+  it('and not for any machine in the picker, not just the selected one', () => {
+    const others: MachineChoice[] = [
+      machine,
+      { name: 'w1', model: 'ProLiant DL360 Gen9', serialNumber: 'CZ9yyyyyyy' },
+    ]
+    const texts = installDialogMachineTexts(others)
+    for (const m of others) {
+      expect(textsMentioning(texts, m.serialNumber)).toEqual([])
+    }
+  })
+
+  // Where to find it instead, so removing the display is not just removing
+  // information.
+  it('says where to read the serial from instead', () => {
+    expect(CONFIRM_SERIAL_HINT).toMatch(/BMC/)
+  })
+})
+
+// Creating a FrameInstall wipes disks. The editor tier does not get it, and
+// the screen must agree with the RBAC rather than offer a button the
+// apiserver will refuse. Two inputs, both reachable from the one call site:
+// the previous string-tier signature had 'editor' and 'viewer' cases no
+// caller could ever produce.
+describe('who may create one', () => {
+  it('is admin and nobody else', () => {
+    expect(canCreateInstall(true)).toBe(true)
+    expect(canCreateInstall(false)).toBe(false)
   })
 })
