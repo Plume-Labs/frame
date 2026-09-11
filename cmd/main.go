@@ -168,7 +168,8 @@ func main() {
 		os.Exit(1)
 	}
 	if provisiondMediaURL == "" {
-		setupLog.Info("no -provisiond-media-url is set: FrameInstall reconciliation will refuse rather than build images whose boot arguments point nowhere; every other controller is unaffected")
+		setupLog.Info("no -provisiond-media-url is set: FrameInstall reconciliation will refuse " +
+			"rather than build images whose boot arguments point nowhere; every other controller is unaffected")
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled

@@ -356,7 +356,7 @@ func TestRemasterPutsTheBootArgsBeforeTheInstallerSeparator(t *testing.T) {
 	for _, path := range []string{"/isolinux/txt.cfg", "/boot/grub/grub.cfg"} {
 		body := isoContains(t, out, path)
 		var checked int
-		for _, line := range strings.Split(body, "\n") {
+		for line := range strings.SplitSeq(body, "\n") {
 			if !strings.Contains(line, "url="+testPreseedURL) {
 				continue
 			}
