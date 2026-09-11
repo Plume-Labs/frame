@@ -17,8 +17,6 @@ type Network struct {
 	Address string // CIDR, e.g. "192.168.2.210/24"
 	Gateway string
 	DNS     []string
-	VLAN    int
-	Bond    string
 }
 
 type LayoutKind string
