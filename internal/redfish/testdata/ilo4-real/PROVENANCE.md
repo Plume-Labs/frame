@@ -121,3 +121,59 @@ capture et constitue le repli.
 
 Fichiers : `..._page2.json` (chaînage), `..._page6.json` (dernière page,
 `NextPage` absent, entrées sans `Created`), `iml_entries_page_out_of_range_400.json`.
+
+## État dégradé — capturé le 2026-09-11 à 02:36, **non reproductible**
+
+Suffixe `_degraded`. Machine éteinte (`PowerState: Off`). La batterie Smart
+Storage va être **physiquement retirée** dans les jours qui suivent : ces
+fichiers sont la seule trace de cette machine en avertissement.
+
+### ⚠️ Ce que cette capture démontre
+
+```
+Systems/1                          Health = Warning
+Chassis/1                          Health = Warning
+  SmartStorage (racine)            Health = OK
+  ArrayControllers/0               Health = OK
+  DiskDrives/0..7  (8 disques)     Health = OK   pour les 8
+  LogicalDrives                    Total  = 0
+  capteur thermique 22-Storage Batt  22 C, Health = OK
+```
+
+**Une alerte au sommet dont la cause n'apparaît dans aucun sous-arbre
+standard.** Un bilan de santé qui parcourt les sous-systèmes les trouve tous
+verts et conclut « tout va bien » sur une machine que l'iLO signale en
+avertissement.
+
+La cause est lisible à un seul endroit, **hors schéma Redfish**, dans
+`/redfish/v1/Systems/1/` :
+
+```json
+"Oem": { "Hp": { "Battery": [ {
+  "Index": 1, "Present": "Yes", "Condition": "Failed", "ErrorCode": 13,
+  "Model": "727258-B21", "Spare": "815983-001", "MaxCapWatts": 96,
+  "ProductName": "HP Smart Storage Batt 96", "FirmwareVersion": "1.1"
+} ] } }
+```
+
+Le piège a **deux étages**. Le capteur thermique qui porte le nom du composant
+en panne — `22-Storage Batt` — rend `Health: OK` à 22 °C, parce qu'il mesure
+une température et que la panne est électrique. Chercher l'état d'un composant
+dans le capteur qui porte son nom donne ici la mauvaise réponse.
+
+`BackupPowerSourceStatus: NotPresent` sur le contrôleur ne désigne pas la
+panne : il découle du mode HBA, où le cache n'est ni utilisé ni configurable.
+Même valeur attendue une fois la batterie retirée.
+
+### Après la dépose
+
+`Oem.Hp.Battery[0].Present` doit passer à `"No"` et les deux `Warning`
+redevenir `OK`. Non vérifié à ce jour — si le firmware garde la trace de la
+panne, l'avertissement pourrait persister.
+
+### Arbre stockage en lecture seule
+
+`/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/` n'expose **aucune
+action** (`Actions`, `AvailableActions` : absents). Sur cet iLO4, rien ne
+s'écrit côté stockage par Redfish — effacer des métadonnées résiduelles passe
+par SSA au démarrage ou `ssacli` depuis l'OS.

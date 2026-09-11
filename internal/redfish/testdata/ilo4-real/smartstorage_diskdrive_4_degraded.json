@@ -1,0 +1,45 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/SmartStorage/ArrayControllers/Members/0/DiskDrives/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/4/",
+    "@odata.type": "#HpSmartStorageDiskDrive.1.3.0.HpSmartStorageDiskDrive",
+    "BlockSizeBytes": 512,
+    "CapacityGB": 1200,
+    "CapacityLogicalBlocks": 2344225968,
+    "CapacityMiB": 1144641,
+    "CarrierApplicationVersion": "11",
+    "CarrierAuthenticationStatus": "OK",
+    "CurrentTemperatureCelsius": 0,
+    "Description": "HP Smart Storage Disk Drive View",
+    "DiskDriveStatusReasons": [
+        "None"
+    ],
+    "EncryptedDrive": false,
+    "FirmwareVersion": {
+        "Current": {
+            "VersionString": "C6B0"
+        }
+    },
+    "Id": "4",
+    "InterfaceSpeedMbps": 6000,
+    "InterfaceType": "SAS",
+    "Location": "2I:6:5",
+    "LocationFormat": "ControllerPort:Box:Bay",
+    "MaximumTemperatureCelsius": 0,
+    "MediaType": "HDD",
+    "Model": "HUC10121CLAR1200",
+    "Name": "HpSmartStorageDiskDrive",
+    "PowerOnHours": null,
+    "RotationalSpeedRpm": 10000,
+    "SSDEnduranceUtilizationPercentage": null,
+    "SerialNumber": "L0JG1VJJ",
+    "Status": {
+        "Health": "OK",
+        "State": "Enabled"
+    },
+    "Type": "HpSmartStorageDiskDrive.1.3.0",
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/4/"
+        }
+    }
+}

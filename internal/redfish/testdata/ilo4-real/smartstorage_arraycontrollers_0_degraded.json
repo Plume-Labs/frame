@@ -1,0 +1,51 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/SmartStorage/ArrayControllers/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/",
+    "@odata.type": "#HpSmartStorageArrayController.1.1.0.HpSmartStorageArrayController",
+    "AdapterType": "SmartArray",
+    "BackupPowerSourceStatus": "NotPresent",
+    "CurrentOperatingMode": "HBA",
+    "Description": "HP Smart Storage Array Controller View",
+    "EncryptionCryptoOfficerPasswordSet": false,
+    "EncryptionEnabled": false,
+    "EncryptionFwLocked": false,
+    "EncryptionHasLockedVolumesMissingBootPassword": false,
+    "EncryptionMixedVolumesEnabled": false,
+    "EncryptionStandaloneModeEnabled": false,
+    "ExternalPortCount": 0,
+    "FirmwareVersion": {
+        "Current": {
+            "VersionString": "7.00"
+        }
+    },
+    "HardwareRevision": "B",
+    "Id": "0",
+    "InternalPortCount": 2,
+    "Location": "Slot 0",
+    "LocationFormat": "PCISlot",
+    "Model": "Smart Array P440ar Controller",
+    "Name": "HpSmartStorageArrayController",
+    "SerialNumber": "PDNLH0BRH9O1TG",
+    "Status": {
+        "Health": "OK",
+        "State": "Enabled"
+    },
+    "Type": "HpSmartStorageArrayController.1.1.0",
+    "links": {
+        "LogicalDrives": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/LogicalDrives/"
+        },
+        "PhysicalDrives": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/"
+        },
+        "StorageEnclosures": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/StorageEnclosures/"
+        },
+        "UnconfiguredDrives": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/UnconfiguredDrives/"
+        },
+        "self": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/"
+        }
+    }
+}

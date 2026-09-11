@@ -1,0 +1,95 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Chassis/Members/$entity",
+    "@odata.id": "/redfish/v1/Chassis/1/",
+    "@odata.type": "#Chassis.1.0.0.Chassis",
+    "ChassisType": "RackMount",
+    "Id": "1",
+    "Manufacturer": "HPE",
+    "Model": "ProLiant ML350 Gen9",
+    "Name": "Computer System Chassis",
+    "Oem": {
+        "Hp": {
+            "@odata.type": "#HpServerChassis.1.1.0.HpServerChassis",
+            "Firmware": {
+                "PlatformDefinitionTable": {
+                    "Current": {
+                        "VersionString": "25.06"
+                    }
+                },
+                "PowerManagementController": {
+                    "Current": {
+                        "VersionString": "1.0.9"
+                    }
+                },
+                "PowerManagementControllerBootloader": {
+                    "Current": {
+                        "Family": "20",
+                        "VersionString": "1.0"
+                    }
+                },
+                "SASProgrammableLogicDevice": {
+                    "Current": {
+                        "VersionString": "Version 0x03"
+                    }
+                },
+                "SPSFirmwareVersionData": {
+                    "Current": {
+                        "VersionString": "3.0.6.267.1"
+                    }
+                },
+                "SystemProgrammableLogicDevice": {
+                    "Current": {
+                        "VersionString": "Version 0x14"
+                    }
+                }
+            },
+            "Location": {
+                "LocationInRack": {
+                    "RackLdsPartNumber": "0",
+                    "RackLdsProductDescription": "0",
+                    "RackUHeight": 0,
+                    "TagVersion": 0,
+                    "ULocation": "UNKNOWN"
+                },
+                "LocationOfChassis": {
+                    "UUID": "35343537-3633-5A43-3235-35323035544A"
+                }
+            },
+            "Type": "HpServerChassis.1.1.0"
+        }
+    },
+    "Power": {
+        "@odata.id": "/redfish/v1/Chassis/1/Power/"
+    },
+    "SKU": "754536-B21",
+    "SerialNumber": "CZ255205TJ",
+    "Status": {
+        "Health": "Warning",
+        "State": "Disabled"
+    },
+    "Thermal": {
+        "@odata.id": "/redfish/v1/Chassis/1/Thermal/"
+    },
+    "Type": "Chassis.1.0.0",
+    "links": {
+        "ComputerSystems": [
+            {
+                "href": "/redfish/v1/Systems/1/"
+            }
+        ],
+        "ManagedBy": [
+            {
+                "href": "/redfish/v1/Managers/1/"
+            }
+        ],
+        "PowerMetrics": {
+            "href": "/redfish/v1/Chassis/1/Power/"
+        },
+        "ThermalMetrics": {
+            "href": "/redfish/v1/Chassis/1/Thermal/"
+        },
+        "self": {
+            "href": "/redfish/v1/Chassis/1/"
+        }
+    }
+}

@@ -1,0 +1,45 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/SmartStorage/ArrayControllers/Members/0/DiskDrives/Members/$entity",
+    "@odata.id": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/1/",
+    "@odata.type": "#HpSmartStorageDiskDrive.1.3.0.HpSmartStorageDiskDrive",
+    "BlockSizeBytes": 512,
+    "CapacityGB": 300,
+    "CapacityLogicalBlocks": 585937500,
+    "CapacityMiB": 286102,
+    "CarrierApplicationVersion": "11",
+    "CarrierAuthenticationStatus": "OK",
+    "CurrentTemperatureCelsius": 0,
+    "Description": "HP Smart Storage Disk Drive View",
+    "DiskDriveStatusReasons": [
+        "None"
+    ],
+    "EncryptedDrive": false,
+    "FirmwareVersion": {
+        "Current": {
+            "VersionString": "HPD6"
+        }
+    },
+    "Id": "1",
+    "InterfaceSpeedMbps": 12000,
+    "InterfaceType": "SAS",
+    "Location": "1I:6:3",
+    "LocationFormat": "ControllerPort:Box:Bay",
+    "MaximumTemperatureCelsius": 62,
+    "MediaType": "HDD",
+    "Model": "EG0300JFCKA",
+    "Name": "HpSmartStorageDiskDrive",
+    "PowerOnHours": null,
+    "RotationalSpeedRpm": 10500,
+    "SSDEnduranceUtilizationPercentage": null,
+    "SerialNumber": "S421NTCK0000M643K5U4",
+    "Status": {
+        "Health": "OK",
+        "State": "Enabled"
+    },
+    "Type": "HpSmartStorageDiskDrive.1.3.0",
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/1/"
+        }
+    }
+}

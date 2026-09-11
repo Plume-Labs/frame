@@ -1,0 +1,23 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/SmartStorage$entity",
+    "@odata.id": "/redfish/v1/Systems/1/SmartStorage/",
+    "@odata.type": "#HpSmartStorage.1.0.0.HpSmartStorage",
+    "Description": "HP Smart Storage",
+    "Id": "SmartStorage",
+    "Name": "HpSmartStorage",
+    "Status": {
+        "Health": "OK"
+    },
+    "Type": "HpSmartStorage.1.0.0",
+    "links": {
+        "ArrayControllers": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/"
+        },
+        "HostBusAdapters": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/HostBusAdapters/"
+        },
+        "self": {
+            "href": "/redfish/v1/Systems/1/SmartStorage/"
+        }
+    }
+}
