@@ -106,6 +106,23 @@ func LoadConfig(path string) (Config, error) {
 			"confirmSerial is empty: refusing, because an empty confirmation proves nothing about which machine this is and the cost of being wrong is a wiped disk on the wrong one")
 	}
 
+	// cluster.mode: join is not merely unvalidated for this command, it is
+	// meaningless. frame bootstrap exists for node zero, when no cluster
+	// exists yet -- there is nothing to join. Checked here, before the
+	// machine is ever touched, for the same reason Task 5's validation
+	// runs before Join does: a malformed value refused only deep into
+	// Joining is refused after the disk is already wiped. This is a
+	// stronger case than that one -- "asked for something this binary
+	// cannot do" isn't a bad value, it is the wrong command, and letting
+	// Install run image build, media attach and a machine reset before
+	// saying so wipes a disk on the way to telling the operator to have
+	// used `FrameInstall` instead.
+	if cfg.Cluster.Mode != provision.ClusterInit {
+		return Config{}, fmt.Errorf(
+			"cluster.mode %q: frame bootstrap creates a cluster, from no cluster at all -- it does not join an existing one; joining a node to a cluster that already exists is the controller's job, via a FrameInstall, not this command's",
+			cfg.Cluster.Mode)
+	}
+
 	if strings.TrimSpace(cfg.SSHKeyPath) == "" {
 		return Config{}, fmt.Errorf("sshKeyPath is empty")
 	}

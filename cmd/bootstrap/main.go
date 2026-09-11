@@ -269,6 +269,15 @@ func newInstallUID() (string, error) {
 // exist yet.
 type kubeconfigNodeChecker struct{}
 
+// NodeReady's nil-kubeconfig branch is unreachable through this binary
+// today: kubeconfig is nil only when Spec.Cluster.Mode is ClusterJoin
+// (provision.Join's documented contract), and LoadConfig now refuses any
+// config.go's cluster.mode other than ClusterInit before Install is ever
+// called. It stays -- a belt against a future caller that builds a Spec
+// some other way and reaches this type directly, not a path this command's
+// own flow can take today. Said here rather than left implicit: an
+// unreachable branch that reads as a live guard is exactly the shape this
+// lot has been fooled by before.
 func (kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error) {
 	if kubeconfig == nil {
 		return false, fmt.Errorf(

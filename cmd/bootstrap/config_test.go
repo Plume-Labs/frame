@@ -59,6 +59,29 @@ func TestLoadConfigRequiresTheConfirmedSerial(t *testing.T) {
 	}
 }
 
+// join is not merely unvalidated for this command, it is meaningless: frame
+// bootstrap exists for node zero, when no cluster exists yet, so there is
+// nothing to join. Letting it through would run image build, media attach
+// and a machine reset before failing at the Ready phase with no cluster to
+// check the joined node against -- a wiped disk on the way to a config
+// error.
+func TestLoadConfigRequiresClusterInit(t *testing.T) {
+	p := writeConfig(t, validConfig(func(c *Config) { c.Cluster.Mode = provision.ClusterJoin }))
+	if _, err := LoadConfig(p); err == nil {
+		t.Fatal("cluster.mode: join was accepted; frame bootstrap has no cluster to join")
+	}
+}
+
+// init is the positive control for the test above: without it, a check that
+// refused every mode -- including the only one this command can ever act
+// on -- would pass that test for the wrong reason.
+func TestLoadConfigAcceptsClusterInit(t *testing.T) {
+	p := writeConfig(t, validConfig(func(c *Config) { c.Cluster.Mode = provision.ClusterInit }))
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("cluster.mode: init was refused: %v", err)
+	}
+}
+
 // A password in a config file is a password on a laptop's disk. It is allowed
 // -- there is nowhere else to put it when no cluster exists -- but the file
 // must not be world-readable.
