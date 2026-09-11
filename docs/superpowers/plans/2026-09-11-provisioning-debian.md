@@ -2393,6 +2393,10 @@ Run: `cp config/crd/bases/frame.plume-labs.io_frameinstalls.yaml charts/frame/fi
 
 Follow `internal/controller/frame/framemachine_v1beta1_schema_test.go`. **Use fixture names unique to this file** — lot 1 lost time to a fixture named `fm-ok` colliding with another test's object and failing with `AlreadyExists` depending on seed order. Prefix every object here `fi-schema-`.
 
+**Register the cases with Ginkgo's `DescribeTable`, not a plain `func TestX(t *testing.T)`.** `k8sClient` and `ctx` are package-level vars that `BeforeSuite` fills, and `BeforeSuite` only runs inside `TestControllers` in `suite_test.go`. `go test` orders top-level tests by source file name, and `frameinstall_v1beta1_schema_test.go` sorts before `suite_test.go` — so a bare top-level test would run first and panic on a nil client. `frametask_v1beta1_schema_test.go` already paid for this and its header comment records it; every sibling schema test in the package follows the same shape.
+
+Step 5's `make test ARGS='-run TestFrameInstallV1Beta1Schema'` therefore matches nothing. Run `make test`, which runs `TestControllers` and with it every Ginkgo spec, and record the command actually used.
+
 One case written out, and the rest driven from a table in the same shape:
 
 ```go
