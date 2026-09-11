@@ -23,16 +23,47 @@ type recordingSession struct {
 	files map[string]string
 }
 
+// needsRoot is the one file-permission fact about the installed machine
+// that this package got wrong. k3s writes its kubeconfig root-owned 0600
+// and Join sets no --write-kubeconfig-mode, so the frame user cannot `cat`
+// it. Everything else Frame reads over SSH -- the install marker -- the
+// preseed chmods 444 on purpose.
+//
+// A fake that served every file to a bare `cat` is what let `cluster: init`
+// ship unable to read the kubeconfig it had just created: every test was
+// green against a machine more permissive than the real one.
+func (r *recordingSession) needsRoot(path string) bool {
+	return path == k3sKubeconfigPath
+}
+
 func (r *recordingSession) Run(_ context.Context, cmd string) (string, error) {
 	r.cmds = append(r.cmds, cmd)
+	if path, ok := strings.CutPrefix(cmd, "sudo -n cat "); ok {
+		if b, ok := r.files[path]; ok {
+			return b, nil
+		}
+		return "", errNotFound
+	}
+	if path, ok := strings.CutPrefix(cmd, "cat "); ok {
+		b, ok := r.files[path]
+		switch {
+		case !ok:
+			return "", errNotFound
+		case r.needsRoot(path):
+			return "", errors.New("cat: " + path + ": Permission denied")
+		default:
+			return b, nil
+		}
+	}
 	return "", nil
 }
 
-func (r *recordingSession) ReadFile(_ context.Context, path string) ([]byte, error) {
-	if b, ok := r.files[path]; ok {
-		return []byte(b), nil
+func (r *recordingSession) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	out, err := r.Run(ctx, "cat "+path)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errNotFound
+	return []byte(out), nil
 }
 
 const k3sKubeconfig = `apiVersion: v1
@@ -68,6 +99,29 @@ func TestJoinInitNeedsNoToken(t *testing.T) {
 	}
 	if !strings.Contains(string(kc), "https://192.168.2.210:6443") {
 		t.Errorf("kubeconfig still points at localhost:\n%s", kc)
+	}
+}
+
+// C2. k3s writes /etc/rancher/k3s/k3s.yaml root-owned 0600 and this install
+// sets no --write-kubeconfig-mode, so the read has to be privileged. The
+// command is asserted, not only the outcome: a fake that happened to answer
+// a bare cat would make the outcome green against the broken version.
+func TestJoinInitReadsTheKubeconfigAsRoot(t *testing.T) {
+	s := &recordingSession{files: map[string]string{k3sKubeconfigPath: k3sKubeconfig}}
+	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}, "192.168.2.210"); err != nil {
+		t.Fatal(err)
+	}
+	var read string
+	for _, c := range s.cmds {
+		if strings.Contains(c, k3sKubeconfigPath) && !strings.Contains(c, "get.k3s.io") {
+			read = c
+		}
+	}
+	if read == "" {
+		t.Fatalf("no command read %s at all:\n%s", k3sKubeconfigPath, strings.Join(s.cmds, "\n"))
+	}
+	if !strings.HasPrefix(read, "sudo ") {
+		t.Errorf("the kubeconfig is read with %q; k3s writes it root-owned 0600, so an unprivileged read fails every cluster-init install in Joining", read)
 	}
 }
 

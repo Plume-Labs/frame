@@ -11,6 +11,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// k3sKubeconfigPath is where a k3s server writes the cluster's admin
+// kubeconfig. Root-owned 0600 unless --write-kubeconfig-mode says otherwise,
+// and this install deliberately does not say otherwise.
+const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
+
 // Join installs k3s and either starts a cluster or joins one.
 //
 // Starting a cluster is the simpler of the two, which is the opposite of what
@@ -62,11 +67,27 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 		if _, err := sess.Run(ctx, cmd); err != nil {
 			return nil, fmt.Errorf("k3s server --cluster-init: %w", err)
 		}
-		raw, err := sess.ReadFile(ctx, "/etc/rancher/k3s/k3s.yaml")
+		// sudo, not Session.ReadFile. ReadFile is `cat` as the frame user,
+		// and k3s writes this file root-owned 0600 -- this install sets no
+		// --write-kubeconfig-mode, so a bare cat cannot read it. Every
+		// cluster-init install failed here, which is every `frame
+		// bootstrap` run, the one path the whole package boundary exists
+		// for.
+		//
+		// Fixed with sudo rather than by loosening the file's mode on the
+		// machine: --write-kubeconfig-mode 0644 would leave the cluster's
+		// admin credential readable by anything that ever gets a shell on
+		// that node, permanently, to serve one read that happens once. The
+		// preseed already grants frame NOPASSWD:ALL (preseed.go).
+		//
+		// -n so a machine where that sudoers drop-in did not land fails
+		// immediately with sudo's own message instead of blocking on a
+		// password prompt until this phase's deadline expires.
+		raw, err := sess.Run(ctx, "sudo -n cat "+k3sKubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("the cluster started but its kubeconfig is not readable, so nobody can talk to it: %w", err)
 		}
-		return RewriteKubeconfigServer(raw, nodeAddress)
+		return RewriteKubeconfigServer([]byte(raw), nodeAddress)
 
 	case ClusterJoin:
 		if err := validateJoinToken(t.JoinToken); err != nil {
