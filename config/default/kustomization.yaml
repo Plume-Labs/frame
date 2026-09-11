@@ -18,6 +18,13 @@ resources:
 - ../crd
 - ../rbac
 - ../manager
+# frame-provisiond: assembles per-machine installer images and serves them
+# to a machine's BMC. A second Deployment, on purpose -- see
+# internal/provision/server.go and config/provisiond/deployment.yaml. The
+# two patches below are scoped to the manager's own
+# control-plane=controller-manager label precisely so this addition doesn't
+# also receive them.
+- ../provisiond
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
 # crd/kustomization.yaml
 - ../webhook
@@ -37,9 +44,19 @@ resources:
 patches:
 # [METRICS] The following patch will enable the metrics endpoint using HTTPS and the port :8443.
 # More info: https://book.kubebuilder.io/reference/metrics
+#
+# Scoped to the manager's own control-plane label, not `kind: Deployment`
+# alone: unscoped, this patch (and the webhook one below) apply to every
+# Deployment the kustomization assembles, which was harmless only because
+# there used to be exactly one. A second Deployment (config/provisiond)
+# either breaks this JSON6902 patch outright -- it expects
+# containers[0].args[0] to already exist -- or, for the webhook patch below,
+# silently grafts webhook certificate material onto a pod that has nothing
+# to do with webhooks.
 - path: manager_metrics_patch.yaml
   target:
     kind: Deployment
+    labelSelector: control-plane=controller-manager
 
 # Uncomment the patches line if you enable Metrics and CertManager
 # [METRICS-WITH-CERTS] To enable metrics protected with certManager, uncomment the following line.
@@ -53,6 +70,7 @@ patches:
 - path: manager_webhook_patch.yaml
   target:
     kind: Deployment
+    labelSelector: control-plane=controller-manager
 
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations

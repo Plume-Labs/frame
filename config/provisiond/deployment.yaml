@@ -1,7 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: frame-provisiond
+  # Bare name, not "frame-provisiond": this manifest is wired into
+  # config/default/kustomization.yaml, whose namePrefix ("frame-") adds that
+  # prefix at build time -- the same reason config/manager/manager.yaml's
+  # Deployment is named "controller-manager" rather than
+  # "frame-controller-manager". Baking the prefix in here too would render
+  # as "frame-frame-provisiond".
+  name: provisiond
   namespace: frame-system
   labels:
     app.kubernetes.io/name: frame-provisiond
