@@ -72,10 +72,22 @@ func TestJoinInitNeedsNoToken(t *testing.T) {
 }
 
 // A cluster that exists and nobody can talk to is not a delivered cluster.
+//
+// The error message is asserted, not just its presence: with an empty files
+// map, disabling the "if err != nil" guard around sess.ReadFile still leaves
+// this test green if only err==nil is checked. RewriteKubeconfigServer is
+// then handed nil bytes; yaml.Unmarshal succeeds into a nil map; its own "no
+// clusters field" guard fires and returns an error instead, for the wrong
+// reason. Checking for the ReadFile guard's specific wording ("kubeconfig is
+// not readable") is what makes only that guard able to satisfy this test.
 func TestJoinInitFailsLoudlyIfTheKubeconfigNeverAppears(t *testing.T) {
 	s := &recordingSession{files: map[string]string{}}
-	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}, "192.168.2.210"); err == nil {
+	_, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}, "192.168.2.210")
+	if err == nil {
 		t.Fatal("want an error when k3s.yaml is not there, got nil")
+	}
+	if !strings.Contains(err.Error(), "kubeconfig is not readable") {
+		t.Errorf("error = %q; it must name the unreadable kubeconfig, not a downstream guard that never should have run", err)
 	}
 }
 
@@ -302,6 +314,18 @@ func TestJoinRefusesAMalformedK3sVersion(t *testing.T) {
 	s := &recordingSession{files: map[string]string{"/etc/rancher/k3s/k3s.yaml": k3sKubeconfig}}
 	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "1.33.4"}, "192.168.2.210"); err == nil {
 		t.Fatal("a malformed but non-empty k3s version was accepted")
+	}
+}
+
+// Not a masking-risk test -- there is no third fixture state to get wrong
+// here. K3sVersion and nodeAddress are valid, so neither of the two guards
+// ahead of the switch can fire, and an unrecognized Mode matches neither
+// ClusterInit nor ClusterJoin, so the default branch is the only path left
+// that returns anything at all.
+func TestJoinRefusesAnUnknownMode(t *testing.T) {
+	s := &recordingSession{files: map[string]string{}}
+	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterMode("bogus"), K3sVersion: "v1.33.4+k3s1"}, "192.168.2.210"); err == nil {
+		t.Fatal("an unrecognized cluster mode was accepted")
 	}
 }
 
