@@ -6,10 +6,15 @@
 # secret) must never share an exposure.
 ---
 # The build API. ClusterIP, reachable by the manager and nothing else.
+#
+# Both Service names below are bare, not "frame-provisiond"/
+# "frame-provisiond-media": config/default/kustomization.yaml's namePrefix
+# ("frame-") adds that prefix at build time, the same as deployment.yaml's
+# name. See that file's comment.
 apiVersion: v1
 kind: Service
 metadata:
-  name: frame-provisiond
+  name: provisiond
   namespace: frame-system
   labels:
     app.kubernetes.io/name: frame-provisiond
@@ -30,7 +35,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: frame-provisiond-media
+  name: provisiond-media
   namespace: frame-system
   labels:
     app.kubernetes.io/name: frame-provisiond
