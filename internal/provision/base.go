@@ -9,7 +9,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// maxBaseImageBytes bounds the download: generous for a netinst image (the
+// pinned one is ~792 MB), and finite. Without it an unbounded io.Copy runs to
+// completion, or to disk exhaustion, before the checksum it's all in aid of
+// is ever checked.
+//
+// A var, not a const, solely so a test can shrink it and prove the cap
+// actually truncates a download, without needing a multi-gigabyte fixture.
+var maxBaseImageBytes int64 = 4 << 30 // 4 GiB
 
 type BaseSource struct {
 	URL    string
@@ -32,7 +42,11 @@ func DefaultBase() BaseSource {
 // next run a leftover is indistinguishable from a cache hit, which turns one
 // bad download into a permanently poisoned cache.
 func FetchBase(ctx context.Context, dir string, src BaseSource) (string, error) {
-	path := filepath.Join(dir, filepath.Base(src.URL))
+	base := filepath.Base(src.URL)
+	if !validPathComponent(base) {
+		return "", fmt.Errorf("BaseSource.URL %q: base name %q is not a plain filename", src.URL, base)
+	}
+	path := filepath.Join(dir, base)
 
 	if got, err := fileSHA256(path); err == nil && got == src.SHA256 {
 		return path, nil
@@ -59,7 +73,7 @@ func FetchBase(ctx context.Context, dir string, src BaseSource) (string, error) 
 		return "", err
 	}
 	h := sha256.New()
-	_, copyErr := io.Copy(io.MultiWriter(f, h), resp.Body)
+	_, copyErr := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, maxBaseImageBytes))
 	closeErr := f.Close()
 	if copyErr != nil || closeErr != nil {
 		_ = os.Remove(path)
@@ -71,6 +85,14 @@ func FetchBase(ctx context.Context, dir string, src BaseSource) (string, error) 
 		return "", fmt.Errorf("fetch %s: sha256 %s, want %s", src.URL, got, src.SHA256)
 	}
 	return path, nil
+}
+
+// validPathComponent refuses a base name that isn't a single plain path
+// element -- "..", ".", empty, or anything carrying a separator. filepath.Base
+// on a crafted URL like "https://host/foo/.." yields "..", and joining that
+// under dir would write outside it.
+func validPathComponent(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsRune(name, filepath.Separator)
 }
 
 // firstErr, not cmp: cmp is a standard library package name, and shadowing it
