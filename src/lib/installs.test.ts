@@ -64,6 +64,37 @@ describe('the confirmation', () => {
   })
 })
 
+describe('stall detection', () => {
+  const at = (base: string, ms: number) => new Date(Date.parse(base) + ms)
+  const since = '2026-09-11T10:00:00Z'
+
+  // `Installed` is entered and left in the same instant — install.go reports
+  // it and reports `Joining` on the next statement. Its budget was two
+  // minutes, which reads as "this step may take two minutes". An object
+  // sitting there means nothing is driving it.
+  it('flags Installed within a minute, not two', () => {
+    expect(isStalledInPhase('Installed', since, at(since, 90_000))).toBe(true)
+  })
+
+  // And the floor is real: phaseSince is a cluster timestamp read against a
+  // browser clock, so a few seconds of skew must not read as a stall.
+  it('does not flag Installed on clock skew', () => {
+    expect(isStalledInPhase('Installed', since, at(since, 10_000))).toBe(false)
+  })
+
+  // A phase that legitimately takes twenty minutes must not be flagged at
+  // the same threshold — the positive control for the budget being per
+  // phase at all.
+  it('does not flag Installing at Installed\'s threshold', () => {
+    expect(isStalledInPhase('Installing', since, at(since, 90_000))).toBe(false)
+  })
+
+  it('never flags a terminal phase, however long ago it landed', () => {
+    expect(isStalledInPhase('Ready', since, at(since, 86_400_000))).toBe(false)
+    expect(isStalledInPhase('Failed', since, at(since, 86_400_000))).toBe(false)
+  })
+})
+
 describe('mapInstallPhase', () => {
   it('reads a freshly created object (no status yet) as Pending', () => {
     expect(mapInstallPhase(undefined)).toBe('Pending')

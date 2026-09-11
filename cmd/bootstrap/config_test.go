@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -400,5 +401,39 @@ func TestLoadConfigAcceptsAnExistingWritableOut(t *testing.T) {
 	b, err := os.ReadFile(out)
 	if err != nil || string(b) != "previous" {
 		t.Errorf("checking out modified it: %q, %v", b, err)
+	}
+}
+
+// mediaAddr and mediaBaseURL used to be documented as agreeing "by
+// construction" -- one Go const and one hand-written YAML field, which is
+// not construction. A mismatch produces the same twenty-minute silence a
+// wrong host does, with nothing in the log to say the BMC fetched from a
+// port nothing listens on.
+func TestLoadConfigRefusesAMediaBaseURLOnADifferentPortFromTheListener(t *testing.T) {
+	for _, url := range []string{
+		"http://192.168.2.50:8080",
+		"http://192.168.2.50",
+		"http://192.168.2.50:30581",
+	} {
+		p := writeConfig(t, validConfig(func(c *Config) { c.MediaBaseURL = url }))
+		if _, err := LoadConfig(p); err == nil {
+			t.Errorf("mediaBaseURL %q was accepted; frame bootstrap listens on %s", url, mediaAddr)
+		}
+	}
+}
+
+// The positive control: the port the listener actually binds is accepted,
+// and it is read from mediaAddr rather than restated, so changing the
+// const moves both sides together.
+func TestLoadConfigAcceptsAMediaBaseURLOnTheListenersOwnPort(t *testing.T) {
+	_, port, err := net.SplitHostPort(mediaAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := writeConfig(t, validConfig(func(c *Config) {
+		c.MediaBaseURL = "http://192.168.2.50:" + port
+	}))
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("the listener's own port was refused: %v", err)
 	}
 }

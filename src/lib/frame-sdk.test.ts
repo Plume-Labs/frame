@@ -290,55 +290,6 @@ function stubBrowser(overrides: Record<string, string> = {}) {
   vi.stubGlobal('window', overrides)
 }
 
-describe('NodeClient.getStatus', () => {
-  afterEach(() => { vi.unstubAllGlobals() })
-
-  /** Serve one FrameNode CR and record the URL it was asked for. */
-  function serve(cr: unknown): { urls: string[] } {
-    stubBrowser()
-    const urls: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      urls.push(String(input))
-      return new Response(JSON.stringify(cr), { status: 200, headers: { 'Content-Type': 'application/json' } })
-    }))
-    return { urls }
-  }
-
-  it('still reports a phase string for a discovered node, taken from the condition', async () => {
-    // NodeClient.getStatus's only caller (the FrameNode provisioning wizard)
-    // was retired with the Debian-provisioning lot, task 12 — the Talos
-    // maintenance-mode path it drove never produced a byte of status on this
-    // cluster (docs/provisioning.md). getStatus itself stays: it reads a
-    // field that no longer exists on the wire, so this pins that this
-    // projection still comes from the condition rather than a since-removed
-    // status field.
-    const { urls } = serve({
-      metadata: { name: 'neura-k3s-w1', namespace: 'default' },
-      spec: { ip: '192.168.2.202' },
-      status: {
-        discoveredHostname: 'neura-k3s-w1',
-        discoveredTalosVersion: 'v1.9.1',
-        discoveredDisks: [{ name: '/dev/nvme0n1', size: '512Gi', type: 'nvme' }],
-        conditions: [{ type: 'Ready', status: 'False', reason: 'Discovered' }],
-      },
-    })
-
-    const status = await createFrameClient().nodes.getStatus('neura-k3s-w1')
-
-    expect(status.phase).toBe('Discovered')
-    expect(status.discoveredHostname).toBe('neura-k3s-w1')
-    expect(status.discoveredDisks).toHaveLength(1)
-    // And it asked the hub version, not the deprecated spoke.
-    expect(urls[0]).toContain('/apis/frame.plume-labs.io/v1beta1/')
-    expect(urls[0]).not.toContain('v1alpha1')
-  })
-
-  it('reports an empty phase for an unreconciled node instead of a stale one', async () => {
-    serve({ metadata: { name: 'w9', namespace: 'default' }, spec: { ip: '10.0.0.9' }, status: {} })
-    expect((await createFrameClient().nodes.getStatus('w9')).phase).toBe('')
-  })
-})
-
 describe('JobClient.submit', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 

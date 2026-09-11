@@ -192,7 +192,7 @@ func addBootArgs(path, preseedURL string) (found bool, changed bool, err error) 
 		if strings.Contains(line, alreadyRewritten) {
 			return line
 		}
-		return line + " " + bootArgs(preseedURL)
+		return withBootArgs(line, preseedURL)
 	})
 	if out == string(b) {
 		return true, false, nil
@@ -201,6 +201,31 @@ func addBootArgs(path, preseedURL string) (found bool, changed bool, err error) 
 		return true, false, err
 	}
 	return true, true, nil
+}
+
+// tripleDash matches d-i's own argument separator as a standalone token.
+// Every kernel line on the real netinst carries one: "append vga=788
+// initrd=/install.amd/initrd.gz --- quiet".
+var tripleDash = regexp.MustCompile(`(?:^|\s)---(?:\s|$)`)
+
+// withBootArgs puts the unattended arguments BEFORE the "---" separator.
+//
+// Anything after "---" is not for the installer: d-i copies it onto the
+// kernel command line of the system it installs. Appending at the end of
+// the line therefore put url=, auto=true, priority=critical, interface=auto
+// and frame=1 into the installed node's own GRUB configuration, where they
+// mean nothing, persist across every future boot, and publish the preseed
+// URL to anyone who reads /proc/cmdline on that machine.
+//
+// Not proven on hardware -- the installed node's GRUB line has never been
+// read -- so "likely leaks" is the honest claim. Putting them where d-i
+// documents installer arguments to go costs nothing either way.
+func withBootArgs(line, preseedURL string) string {
+	args := bootArgs(preseedURL)
+	if m := tripleDash.FindStringIndex(line); m != nil {
+		return line[:m[0]] + " " + args + line[m[0]:]
+	}
+	return line + " " + args
 }
 
 func run(ctx context.Context, name string, args ...string) error {
