@@ -24,7 +24,11 @@ func (f *fakeSession) HostKey() string                             { return f.ho
 func (f *fakeSession) Run(context.Context, string) (string, error) { return "", nil }
 func (f *fakeSession) Close() error                                { f.closed = true; return nil }
 func (f *fakeSession) ReadFile(_ context.Context, path string) ([]byte, error) {
-	if path != markerPath {
+	// An empty marker means the file is not there, which is what a system
+	// that never ran our preseed actually presents: `cat` fails. Modelling it
+	// as an existing-but-blank file made the no-marker test land on the
+	// mismatch branch and left the read guard uncovered.
+	if path != markerPath || f.marker == "" {
 		return nil, errors.New("no such file")
 	}
 	return []byte(f.marker + "\n"), nil
