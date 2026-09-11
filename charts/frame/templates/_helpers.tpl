@@ -37,6 +37,35 @@ control-plane: controller-manager
 {{- end -}}
 
 {{/*
+frame-provisiond's image tag. Falls back to a literal "latest", not
+.Chart.AppVersion like frame.imageTag: config/provisiond/deployment.yaml
+hardcodes "frame-provisiond:latest" outright (no kustomize `images:`
+transform parameterizes it, unlike the manager's "controller" placeholder),
+so matching that exactly is what keeps `make helm-parity`'s default content
+diff green with no redact exception -- the manager's image/imagePullPolicy
+mismatch is a documented, permanent exception in hack/helm-parity.sh
+precisely because the two placeholders never were meant to agree; there is
+no equivalent reason for provisiond's default to disagree.
+*/}}
+{{- define "frame.provisiondImageTag" -}}
+{{- .Values.provisiond.image.tag | default "latest" -}}
+{{- end -}}
+
+{{/*
+provisiond's own selector labels -- distinct from frame.selectorLabels
+(app.kubernetes.io/name: frame, control-plane: controller-manager), which
+identifies the manager's pod, not this one. Matches
+config/provisiond/deployment.yaml and service.yaml's selector/template
+labels exactly. This one is load-bearing for `make helm-parity`, not just
+documentation: it lands under .spec (spec.selector.matchLabels,
+spec.template.metadata.labels), which the body diff does NOT strip the way
+it strips top-level .metadata, so a divergence here fails the script.
+*/}}
+{{- define "frame.provisiondSelectorLabels" -}}
+app.kubernetes.io/name: frame-provisiond
+{{- end -}}
+
+{{/*
 Metrics port/scheme, derived from metrics.secure so the container's
 --metrics-bind-address, the metrics Service, the NetworkPolicy ingress rule
 and the ServiceMonitor endpoint can never point at four different ports (I-2:

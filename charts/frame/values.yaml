@@ -109,6 +109,55 @@ certManager:
   # named above to already exist — see charts/frame/README.md.
   enabled: true
 
+provisiond:
+  # frame-provisiond assembles per-machine Debian installer images and
+  # serves them to a machine's BMC (2026-09-11, provisioning/Debian lot,
+  # task 8). On by default, unlike most other toggles in this file: the
+  # manager's own FrameInstall reconciliation calls its build API, so a
+  # Helm install without it renders a controller that cannot build an
+  # installer image, with nothing failing until a FrameInstall sits in
+  # Preparing until its deadline. That silent gap between the two install
+  # paths is the thing this value exists to close, not to reopen with a
+  # different default.
+  enabled: true
+  image:
+    # Unlike the manager's image.repository, this has a real default
+    # rather than being `required`: config/provisiond/deployment.yaml
+    # hardcodes "frame-provisiond:latest" outright (no kustomize `images:`
+    # transform parameterizes it), so this mirrors that, not the manager's
+    # "no default image is published yet" situation.
+    repository: frame-provisiond
+    # Also a literal default, not .Chart.AppVersion (see
+    # templates/_helpers.tpl's frame.provisiondImageTag) — matches
+    # config/provisiond/deployment.yaml's hardcoded tag exactly.
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    # Matches config/provisiond/deployment.yaml's hardcoded values exactly
+    # — see that file's comment for the sizing rationale (one base netinst
+    # download plus one in-flight remaster).
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+  images:
+    # emptyDir size for /var/lib/frame/images, mounted where both the
+    # build API writes 700 MB images and the media listener reads them
+    # back out of. Matches config/provisiond/deployment.yaml.
+    storage: 8Gi
+  media:
+    # A fixed NodePort, not a Service-allocated one, because the BMC's boot
+    # media configuration has to name a concrete address — it cannot be
+    # re-read from the cluster on every reinstall. Matches
+    # config/provisiond/service.yaml's hardcoded 30581. A second cluster on
+    # the same management network collides with this number if left at the
+    # default; override per cluster if that's a real risk in your
+    # environment (there is no way for this chart to choose a value that
+    # can't collide with something on a network it knows nothing about).
+    nodePort: 30581
+
 networkPolicy:
   # Matches today's kustomize behaviour: config/network-policy exists but is
   # commented out of config/default, so it's off by default here too.

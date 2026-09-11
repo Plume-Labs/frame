@@ -1,0 +1,50 @@
+{{- if .Values.provisiond.enabled }}
+# frame-provisiond gets two Services on purpose, mirroring its two listeners
+# (provisiond-deployment.yaml) and config/provisiond/service.yaml, which
+# this mirrors field-for-field. Collapsing them into one Service, even with
+# two ports, would put both behind whatever the Service's own exposure is --
+# and the whole design point here is that the build listener (writes a
+# 700 MB file from an unauthenticated Spec) and the media listener
+# (read-only, no secret) must never share an exposure.
+---
+# The build API. ClusterIP, reachable by the manager and nothing else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "frame.name" . }}-provisiond
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+    app.kubernetes.io/component: provisiond
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "frame.provisiondSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: build
+      port: 8080
+      targetPort: build
+      protocol: TCP
+---
+# The media listener. This is the one the BMC reaches, so it is the one
+# exposed on the machine network -- and it is read-only by construction,
+# carrying no secret because no secret ever enters an installer image.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "frame.name" . }}-provisiond-media
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+    app.kubernetes.io/component: provisiond
+spec:
+  type: NodePort
+  selector:
+    {{- include "frame.provisiondSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: media
+      port: 8081
+      targetPort: media
+      nodePort: {{ .Values.provisiond.media.nodePort }}
+      protocol: TCP
+{{- end }}
