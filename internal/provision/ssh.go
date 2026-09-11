@@ -14,7 +14,12 @@ import (
 // SSHClient dials the machine under installation.
 type SSHClient interface {
 	// Dial opens a session to addr ("host:22") as user, with key.
-	Dial(ctx context.Context, addr, user string, key []byte) (Session, error)
+	//
+	// expectedHostKey empty means trust on first use: whatever the machine
+	// presents is accepted and captured. Non-empty means the machine must
+	// present that key, and a mismatch is refused -- which is what makes the
+	// captured value worth capturing.
+	Dial(ctx context.Context, addr, user string, key []byte, expectedHostKey string) (Session, error)
 }
 
 // Session is an open connection to the machine under installation.
@@ -33,11 +38,16 @@ func NewSSHClient() SSHClient {
 	return sshClient{}
 }
 
-func (sshClient) Dial(ctx context.Context, addr, user string, key []byte) (Session, error) {
+func (sshClient) Dial(ctx context.Context, addr, user string, key []byte, expectedHostKey string) (Session, error) {
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("parsing SSH key: %w", err)
 	}
+
+	// Trimmed once so the comparison below is never fooled by whitespace on
+	// either side -- the value came from a previous WaitForOurSystem return,
+	// which is itself canonicalized, but this must hold regardless of caller.
+	wantHostKey := strings.TrimSpace(expectedHostKey)
 
 	var hostKey string
 	cfg := &ssh.ClientConfig{
@@ -45,12 +55,18 @@ func (sshClient) Dial(ctx context.Context, addr, user string, key []byte) (Sessi
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		// Frame cannot know the host key in advance: baking it into the image
-		// would make the image a secret carrier, which the design forbids.
-		// So the callback captures the key seen on connect for pinning rather
-		// than verifying it against a known value.
+		// Frame cannot know the host key in advance on first contact: baking
+		// it into the image would make the image a secret carrier, which the
+		// design forbids. So an empty expectedHostKey trusts whatever is
+		// presented and captures it. But capturing a value "for pinning" is
+		// decoration unless a later call actually checks it -- so once the
+		// caller has a key to compare against, a mismatch here aborts the
+		// handshake instead of silently reconnecting to whatever answered.
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			hostKey = string(ssh.MarshalAuthorizedKey(key))
+			hostKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+			if wantHostKey != "" && hostKey != wantHostKey {
+				return fmt.Errorf("host key changed for %s: presented host key %s, expected %s", addr, hostKey, wantHostKey)
+			}
 			return nil
 		},
 		Timeout: 5 * time.Second,
@@ -129,12 +145,18 @@ var _ io.Closer = (*sshSession)(nil)
 // address -- including the one we believed we were overwriting and in fact
 // never touched. The UID existed nowhere but inside the image we built.
 func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key []byte, uid string, every time.Duration) (string, error) {
+	// Trimmed once, up front, and every later comparison uses this value.
+	// Otherwise a uid with incidental whitespace passes this guard but can
+	// never equal a correctly-trimmed marker below, refusing a good
+	// installation forever instead of failing fast on a bad input.
+	uid = strings.TrimSpace(uid)
+
 	// Without this, an empty uid makes every unreadable marker look like a
 	// match: a failed read leaves the compared content empty, "" == "" is
 	// true, and a machine we never touched is accepted as ours -- the exact
 	// failure this whole mechanism exists to prevent. So this is checked
 	// before the loop even dials once.
-	if strings.TrimSpace(uid) == "" {
+	if uid == "" {
 		return "", fmt.Errorf("waiting for %s: no install UID to check against, so no machine could be told apart from any other at that address", addr)
 	}
 
@@ -149,11 +171,18 @@ func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key [
 		default:
 		}
 
-		sess, err := c.Dial(ctx, addr, user, key)
+		// This is first contact: WaitForOurSystem has nothing to pin against
+		// yet, so trust on first use. A later dial by a caller who already
+		// holds the host key this call returns is what makes the pin real.
+		sess, err := c.Dial(ctx, addr, user, key, "")
 		if err != nil {
 			last = err
 		} else {
-			hostKey := sess.HostKey()
+			// Canonical regardless of what this particular Session
+			// implementation hands back -- the real client already trims at
+			// capture, but WaitForOurSystem must not rely on that, since
+			// Session is an interface and any implementation could differ.
+			hostKey := strings.TrimSpace(sess.HostKey())
 			b, readErr := sess.ReadFile(ctx, markerPath)
 			_ = sess.Close()
 			switch {
