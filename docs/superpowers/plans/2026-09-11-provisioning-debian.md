@@ -368,6 +368,13 @@ func TestRenderPreseedRefusesAWholeKeyFile(t *testing.T) {
 	for name, key := range map[string]string{
 		"public then private": pub + "\n" + privatePart,
 		"private then public": privatePart + "\n" + pub,
+		// No PEM armour anywhere in this one, on purpose. The other two cases
+		// are refused by the PRIVATE KEY branch *and* by the single-line rule,
+		// so neither of them can isolate either guard. This one carries no
+		// secret at all -- it is someone appending a second person's key
+		// instead of replacing the first -- and only the single-line rule
+		// refuses it. It is what makes that rule provable.
+		"two public keys, one per line": pub + "\n" + pub,
 	} {
 		s := goodSpec()
 		s.SSHPublicKey = key
@@ -641,8 +648,14 @@ func checkPublicKeyOnly(key string) error {
 	if strings.Contains(k, "PRIVATE KEY") {
 		return fmt.Errorf("ssh key: this is private key material, which must never enter an installer image")
 	}
+	// This rule is not mainly about secrets -- the branch above catches PEM
+	// armour, and a private key without armour is not a shape anyone produces
+	// by accident. Its job is the other two: a second line is a second
+	// authorized key, which grants someone else access to the machine being
+	// built, and a newline inside the value truncates the shell command that
+	// writes it in the preseed.
 	if strings.ContainsAny(k, "\n\r") {
-		return fmt.Errorf("ssh key: must be one key on one line; a multi-line value is usually a whole key file, and the parser accepts those by reading the public line and ignoring the rest")
+		return fmt.Errorf("ssh key: must be one key on one line; a second line is a second key, and a newline truncates the command that writes this value")
 	}
 	// The value is interpolated into a single-quoted shell word in the
 	// preseed's late_command. A quote or a backslash in the comment field
@@ -680,7 +693,7 @@ Expected: PASS, fifteen tests.
 
 Two mutations, because the guard has two halves that fail differently. Both must still compile — a build failure proves nothing about a test.
 
-1. Delete the `strings.ContainsAny(k, "\n\r")` branch. `TestRenderPreseedRefusesAWholeKeyFile` must turn red, in both of its cases. This is the one that closes the hole.
+1. Delete the `strings.ContainsAny(k, "\n\r")` branch. `TestRenderPreseedRefusesAWholeKeyFile` must turn red — **in its `two public keys, one per line` case only**. Its two PEM cases stay green, because the `PRIVATE KEY` branch refuses those on its own. That overlap is the point: two guards that both refuse the same input cannot be told apart by it, which is why the third case exists and carries no PEM armour.
 2. Restore it, then delete the `strings.Contains(k, "PRIVATE KEY")` branch. `TestRenderPreseedSaysSoWhenTheValueIsPrivateKeyMaterial` must turn red while `TestRenderPreseedRefusesAWholeKeyFile` stays green — the value is still refused, but the message no longer names why.
 
 3. Restore it, then replace the comment-field re-parse with `if false {` so it never fires. `TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField` must turn red.
