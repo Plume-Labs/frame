@@ -780,7 +780,7 @@ func FetchBase(ctx context.Context, dir string, src BaseSource) (string, error) 
 	closeErr := f.Close()
 	if copyErr != nil || closeErr != nil {
 		_ = os.Remove(path)
-		return "", fmt.Errorf("fetch %s: %w", src.URL, cmp(copyErr, closeErr))
+		return "", fmt.Errorf("fetch %s: %w", src.URL, firstErr(copyErr, closeErr))
 	}
 
 	if got := hex.EncodeToString(h.Sum(nil)); got != src.SHA256 {
@@ -790,7 +790,9 @@ func FetchBase(ctx context.Context, dir string, src BaseSource) (string, error) 
 	return path, nil
 }
 
-func cmp(a, b error) error {
+// firstErr, not cmp: cmp is a standard library package name, and shadowing it
+// in a file that may later want cmp.Or is a trap for whoever writes that line.
+func firstErr(a, b error) error {
 	if a != nil {
 		return a
 	}
@@ -1928,9 +1930,13 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (Result, error) {
 			serial, o.ConfirmSerial))
 	}
 
-	// Preparing.
+	// Preparing. Every phase gets its own deadline: the spec says each phase
+	// carries one, and a build that hangs must not consume the install's whole
+	// budget before the machine is ever touched.
+	prepCtx, cancelPrep := context.WithTimeout(ctx, o.PhaseTimeout[PhasePreparing])
+	defer cancelPrep()
 	report(PhasePreparing)
-	url, token, err := d.Images.Build(ctx, s)
+	url, token, err := d.Images.Build(prepCtx, s)
 	if err != nil {
 		return fail(PhasePreparing, fmt.Errorf("building the installer image: %w", err))
 	}
@@ -1950,16 +1956,18 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (Result, error) {
 	// not the same as media being attached, and booting with none wastes
 	// twenty minutes to reach a timeout that explains nothing.
 	report(PhaseMediaAttached)
-	if err := d.BMC.InsertMedia(ctx, url); err != nil {
+	mediaCtx, cancelMedia := context.WithTimeout(ctx, o.PhaseTimeout[PhaseMediaAttached])
+	defer cancelMedia()
+	if err := d.BMC.InsertMedia(mediaCtx, url); err != nil {
 		return fail(PhaseMediaAttached, err)
 	}
-	if ok, err := d.BMC.MediaInserted(ctx); err != nil || !ok {
+	if ok, err := d.BMC.MediaInserted(mediaCtx); err != nil || !ok {
 		return fail(PhaseMediaAttached, fmt.Errorf("the BMC accepted the insert but reports no media attached"))
 	}
-	if err := d.BMC.SetBootOnce(ctx, "Cd", o.BootMode); err != nil {
+	if err := d.BMC.SetBootOnce(mediaCtx, "Cd", o.BootMode); err != nil {
 		return fail(PhaseMediaAttached, err)
 	}
-	if err := d.BMC.Reset(ctx, "ForceRestart"); err != nil {
+	if err := d.BMC.Reset(mediaCtx, "ForceRestart"); err != nil {
 		return fail(PhaseMediaAttached, err)
 	}
 
@@ -2634,7 +2642,7 @@ never return 404 and a tolerance that was never actually proven."
 
 **Files:**
 - Create: `internal/controller/frame/frameinstall_controller.go`
-- Create: `internal/controller/frame/frameinstall_bmc.go`
+- Create: `internal/provision/redfishbmc.go`
 - Test: `internal/controller/frame/frameinstall_controller_test.go`
 - Modify: `cmd/main.go` (register the reconciler beside the others)
 
@@ -2644,7 +2652,7 @@ never return 404 and a tolerance that was never actually proven."
 
 The controller is thin on purpose: it translates a CRD into a `provision.Spec`, supplies the four interfaces, runs the install in a goroutine keyed by object UID, and writes phases back to status. All judgment lives in `internal/provision`.
 
-`frameinstall_bmc.go` adapts lot 1's `redfish.Client` to `provision.BMC`. Lot 1's client has `Reset`, `ClearLog`, `SetIndicatorLED` and `Probe`; the virtual-media and boot-override calls are new and go here, using the HP OEM actions:
+`internal/provision/redfishbmc.go` adapts lot 1's `redfish.Client` to `provision.BMC`. It lives in `internal/provision`, **not** beside the controller: Task 10's command cannot import a package that imports Kubernetes, and `internal/redfish` is already Kubernetes-free, so this is its only possible home. The Task 5 import test covers this file. Lot 1's client has `Reset`, `ClearLog`, `SetIndicatorLED` and `Probe`; the virtual-media and boot-override calls are new and go here, using the HP OEM actions:
 
 ```go
 // iLO 4 exposes virtual media under Oem.Hp.Actions, not the standard
@@ -2754,7 +2762,7 @@ Remove the terminal-phase early return, run the "second reconcile does not start
 
 ```bash
 cd /home/rmocq/frame-provision
-git add internal/controller/frame/frameinstall_controller.go internal/controller/frame/frameinstall_bmc.go internal/controller/frame/frameinstall_controller_test.go cmd/main.go config/rbac/role.yaml
+git add internal/controller/frame/frameinstall_controller.go internal/provision/redfishbmc.go internal/controller/frame/frameinstall_controller_test.go cmd/main.go config/rbac/role.yaml
 git commit -m "feat(controller): drive an installation from a FrameInstall
 
 The controller is thin on purpose. It turns a CRD into a provision.Spec,
@@ -2895,11 +2903,9 @@ Expected: FAIL — `undefined: LoadConfig`.
 6. Calls `provision.Install` and prints each phase as it arrives.
 7. Writes the kubeconfig to `Out` with mode `0600`.
 
-- [ ] **Step 4: Move the Redfish adapter where both consumers can reach it**
+- [ ] **Step 4: Confirm the Redfish adapter is reachable from here**
 
-`provision.RedfishBMC` wraps `internal/redfish.Client` and adds the virtual-media and boot-override calls. It lives in `internal/provision/redfishbmc.go`, **not** in `internal/controller/frame`: the command cannot import a package that imports Kubernetes, and `internal/redfish` is already Kubernetes-free, so this is the natural home. The controller's `frameinstall_bmc.go` then does only the Secret-to-client wiring that `BuildRedfishClient` already models.
-
-Verify with the Task 5 import test, which covers this file too:
+`provision.RedfishBMC` was created in Task 9, in `internal/provision/redfishbmc.go`. This command uses it directly. Confirm it carries no Kubernetes import, which is the only reason this command can exist:
 
 Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -run TestProvisionImports -v`
 
@@ -3129,7 +3135,7 @@ an erased disk."
 
 **Files:**
 - Delete: `src/components/NodeProvisionWizard.tsx`
-- Modify: `src/App.tsx` (its import at line 10 and its use at line 796)
+- Modify: `src/App.tsx` (its import and its use — **locate them by the symbol name, not by line number**: Task 11 edits this file first and shifts every line below its change)
 
 - [ ] **Step 1: Verify it drives the dead path before removing anything**
 
