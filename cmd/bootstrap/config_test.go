@@ -20,8 +20,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -125,6 +127,115 @@ func TestLoadConfigFailsWhenThePublicHalfIsMissing(t *testing.T) {
 	cfg := validConfig(func(c *Config) { c.SSHKeyPath = filepath.Join(t.TempDir(), "absent") })
 	if _, err := LoadConfig(writeConfig(t, cfg)); err == nil {
 		t.Fatal("a config naming a key with no .pub was accepted")
+	}
+}
+
+// An empty sshKeyPath must be refused by its own check, not by accident
+// through the .pub stat that follows it: "" + ".pub" is the relative path
+// ".pub", which happens to fail to stat from this package's test working
+// directory too -- so asserting only that *an* error came back does not
+// discriminate the dedicated guard from that coincidence. Measured: with
+// the guard disabled, this test still saw an error, just the .pub stat's
+// "could not be read" message instead of this one's "sshKeyPath is empty".
+// So this asserts the guard's own message, which only it produces.
+func TestLoadConfigRequiresSSHKeyPath(t *testing.T) {
+	cfg := validConfig(func(c *Config) { c.SSHKeyPath = "" })
+	_, err := LoadConfig(writeConfig(t, cfg))
+	if err == nil {
+		t.Fatal("a config with no sshKeyPath was accepted")
+	}
+	if !strings.Contains(err.Error(), "sshKeyPath is empty") {
+		t.Fatalf("sshKeyPath is empty was refused, but not by its own guard: %v", err)
+	}
+}
+
+// The non-empty SSHKeyPath validConfig sets by default is the positive
+// control for the test above: without it, a check that refused every
+// config regardless of SSHKeyPath would pass that test for the wrong
+// reason, and every accept-path test in this file would already be failing
+// on this guard rather than on whatever each one actually exercises.
+func TestLoadConfigAcceptsANonEmptySSHKeyPath(t *testing.T) {
+	p := writeConfig(t, validConfig(nil))
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("a config with a valid sshKeyPath was refused: %v", err)
+	}
+}
+
+// A round-trip test -- marshal a Config, unmarshal it back -- cannot catch
+// a missing or wrong yaml tag: both directions apply the same implicit
+// rule, so a lowercased, unseparated key like "serverurl" marshals to
+// itself and back with every test in this file staying green. This test
+// instead hand-writes a fixture using the *documented* key names -- the
+// ones an operator, rebuilding node zero from a laptop with no cluster
+// left to consult, would actually type -- and asserts each one landed on
+// the field it names, not on the zero value a silently-ignored key would
+// leave behind.
+func TestLoadConfigAcceptsTheDocumentedKeyNames(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "id_ed25519")
+	writeTestSSHKey(t, keyPath)
+	out := filepath.Join(dir, "kubeconfig")
+
+	fixture := fmt.Sprintf(`
+bmc:
+  address: 192.168.2.200
+  username: admin
+  password: hunter2
+  insecureSkipVerify: true
+confirmSerial: SERIAL123
+hostname: node-zero
+network:
+  address: 192.168.2.210/24
+  gateway: 192.168.2.1
+  dns:
+    - 192.168.2.1
+layout:
+  kind: single-disk
+  disks:
+    - byID: /dev/disk/by-id/test-disk
+      sizeBytes: 500000000000
+cluster:
+  mode: init
+  k3sVersion: v1.33.4+k3s1
+bootMode: UEFI
+sshKeyPath: %s
+mediaBaseURL: http://192.168.2.50:8081
+out: %s
+`, keyPath, out)
+
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("a config written with the documented key names was refused: %v", err)
+	}
+
+	if got.BMC.Address != "192.168.2.200" {
+		t.Errorf("bmc.address: got %q", got.BMC.Address)
+	}
+	if got.Network.Gateway != "192.168.2.1" {
+		t.Errorf("network.gateway: got %q", got.Network.Gateway)
+	}
+	if len(got.Layout.Disks) != 1 || got.Layout.Disks[0].ByID != "/dev/disk/by-id/test-disk" {
+		t.Errorf("layout.disks[0].byID: got %+v", got.Layout.Disks)
+	}
+	if got.Layout.Disks[0].SizeBytes != 500_000_000_000 {
+		t.Errorf("layout.disks[0].sizeBytes: got %d", got.Layout.Disks[0].SizeBytes)
+	}
+	if got.Cluster.Mode != provision.ClusterInit {
+		t.Errorf("cluster.mode: got %q", got.Cluster.Mode)
+	}
+	if got.Cluster.K3sVersion != "v1.33.4+k3s1" {
+		t.Errorf("cluster.k3sVersion: got %q", got.Cluster.K3sVersion)
+	}
+	if got.SSHKeyPath != keyPath {
+		t.Errorf("sshKeyPath: got %q", got.SSHKeyPath)
+	}
+	if got.Out != out {
+		t.Errorf("out: got %q", got.Out)
 	}
 }
 

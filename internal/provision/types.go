@@ -18,10 +18,21 @@ type Spec struct {
 	Cluster      ClusterTarget
 }
 
+// Network, Layout, Disk and ClusterTarget carry yaml tags even though this
+// package has no YAML consumer of its own (Spec travels as JSON through
+// server.go's build API, which ignores them). cmd/bootstrap's Config embeds
+// these types directly, and its config file is the one file in the whole
+// lot a human hand-writes -- with no struct tags, the keys they would have
+// to type are the lowercased, unseparated Go field names (serverurl,
+// jointoken, k3sversion), discoverable only by reading this source file.
+// The moment they write that file is the moment a cluster is gone and
+// they are rebuilding node zero from a laptop; guessing key names then is
+// the worst possible time. Chosen to match Config's own tags (config.go):
+// lowerCamelCase, acronyms kept upper (byID, sizeBytes, serverURL).
 type Network struct {
-	Address string // CIDR, e.g. "192.168.2.210/24"
-	Gateway string
-	DNS     []string
+	Address string   `yaml:"address"` // CIDR, e.g. "192.168.2.210/24"
+	Gateway string   `yaml:"gateway"`
+	DNS     []string `yaml:"dns"`
 }
 
 type LayoutKind string
@@ -33,14 +44,14 @@ const (
 )
 
 type Layout struct {
-	Kind  LayoutKind
-	Disks []Disk
-	Raw   string // a partman recipe; only when Kind == LayoutRaw
+	Kind  LayoutKind `yaml:"kind"`
+	Disks []Disk     `yaml:"disks"`
+	Raw   string     `yaml:"raw"` // a partman recipe; only when Kind == LayoutRaw
 }
 
 type Disk struct {
-	ByID      string // "/dev/disk/by-id/..."
-	SizeBytes int64  // asserted on the machine before partitioning
+	ByID      string `yaml:"byID"`      // "/dev/disk/by-id/..."
+	SizeBytes int64  `yaml:"sizeBytes"` // asserted on the machine before partitioning
 }
 
 type ClusterMode string
@@ -51,10 +62,10 @@ const (
 )
 
 type ClusterTarget struct {
-	Mode       ClusterMode
-	ServerURL  string // only for ClusterJoin
-	JoinToken  string // only for ClusterJoin; never enters the image
-	K3sVersion string
+	Mode       ClusterMode `yaml:"mode"`
+	ServerURL  string      `yaml:"serverURL"` // only for ClusterJoin
+	JoinToken  string      `yaml:"joinToken"` // only for ClusterJoin; never enters the image
+	K3sVersion string      `yaml:"k3sVersion"`
 }
 
 // Phase is where an installation stands in its lifecycle. Every transition is

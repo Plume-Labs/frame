@@ -145,33 +145,15 @@ func run() error {
 	}
 	defer func() { _ = os.RemoveAll(imagesDir) }()
 
-	mediaSrv := &http.Server{
-		Addr:              mediaAddr,
-		Handler:           provision.MediaHandler(imagesDir),
-		ReadHeaderTimeout: 10 * time.Second,
+	mediaSrv, err := startMediaListener(mediaAddr, provision.MediaHandler(imagesDir))
+	if err != nil {
+		return err
 	}
-	mediaErrs := make(chan error, 1)
-	go func() {
-		if err := mediaSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			mediaErrs <- err
-			return
-		}
-		mediaErrs <- nil
-	}()
 	defer func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = mediaSrv.Shutdown(sctx)
 	}()
-	select {
-	case err := <-mediaErrs:
-		if err != nil {
-			return fmt.Errorf("media listener on %s: %w", mediaAddr, err)
-		}
-		return fmt.Errorf("media listener on %s exited immediately", mediaAddr)
-	case <-time.After(mediaStartGrace):
-		// Still running after the grace window; proceed.
-	}
 
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.BMC.InsecureSkipVerify} //nolint:gosec // operator-configured, matches the controller's identical construction
 	bmc := provision.NewRedfishBMC("https://"+cfg.BMC.Address, cfg.BMC.Username, cfg.BMC.Password, tlsCfg)
@@ -229,6 +211,39 @@ func run() error {
 
 	fmt.Printf("frame bootstrap: node %s is Ready; kubeconfig written to %s\n", res.NodeName, cfg.Out)
 	return nil
+}
+
+// startMediaListener binds addr and serves handler on it, waiting up to
+// mediaStartGrace to confirm the listener is actually still running before
+// handing it back. Split out from run() so the race it closes -- a port
+// already in use, or any other bind failure, reported immediately instead
+// of surfacing as a silent, twenty-minute MediaAttached timeout with
+// nothing in the log to say the BMC was never serving anything to fetch in
+// the first place -- is a unit a test can drive directly, by pre-binding
+// addr itself, rather than only provable in prose.
+func startMediaListener(addr string, handler http.Handler) (*http.Server, error) {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	errs := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errs <- err
+			return
+		}
+		errs <- nil
+	}()
+	select {
+	case err := <-errs:
+		if err != nil {
+			return nil, fmt.Errorf("media listener on %s: %w", addr, err)
+		}
+		return nil, fmt.Errorf("media listener on %s exited immediately", addr)
+	case <-time.After(mediaStartGrace):
+		return srv, nil
+	}
 }
 
 // addressWithoutCIDR strips a "/NN" suffix from a CIDR address, the same
