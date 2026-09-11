@@ -7,7 +7,9 @@
 # 700 MB file from an unauthenticated Spec) and the media listener
 # (read-only, no secret) must never share an exposure.
 ---
-# The build API. ClusterIP, reachable by the manager and nothing else.
+# The build API. ClusterIP -- which means reachable by EVERY pod in the
+# cluster, not only by the manager; see config/provisiond/service.yaml's
+# comment for why that matters and what is done about it.
 apiVersion: v1
 kind: Service
 metadata:
