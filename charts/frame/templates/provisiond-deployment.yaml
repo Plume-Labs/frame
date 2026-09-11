@@ -1,0 +1,104 @@
+{{- if .Values.provisiond.enabled }}
+# frame-provisiond assembles per-machine Debian installer images and serves
+# them to a machine's BMC — see internal/provision/server.go and
+# config/provisiond/deployment.yaml, which this mirrors field-for-field
+# (hack/helm-parity.sh's body diff compares them exactly; there is no
+# documented exception for this resource the way there is for the manager's
+# image/imagePullPolicy/affinity).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "frame.name" . }}-provisiond
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+    app.kubernetes.io/component: provisiond
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "frame.provisiondSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "frame.provisiondSelectorLabels" . | nindent 8 }}
+        app.kubernetes.io/part-of: frame
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # This component never talks to the Kubernetes apiserver -- see the
+      # package comment on internal/provision (imports_test.go enforces it
+      # for the Go package; this is the same fact one layer up, for the
+      # pod). It has nothing to watch and nothing to reconcile, only files
+      # to build and serve, so there is no reason for it to carry a token
+      # that could authenticate to anything.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provisiond
+          image: "{{ .Values.provisiond.image.repository }}:{{ include "frame.provisiondImageTag" . }}"
+          imagePullPolicy: {{ .Values.provisiond.image.pullPolicy }}
+          env:
+            # Matches the volume mount below: the directory both the build
+            # API writes 700 MB images into and the media listener reads
+            # them back out of.
+            - name: IMAGES_DIR
+              value: /var/lib/frame/images
+          ports:
+            # The build API. Reachable only through the ClusterIP Service
+            # in provisiond-service.yaml -- never through the NodePort one.
+            - name: build
+              containerPort: 8080
+              protocol: TCP
+            # The media listener. This is the one the NodePort Service
+            # exposes to the machine network; it is read-only by
+            # construction (MediaHandler), which is what makes exposing it
+            # to the BMCs on that network safe.
+            - name: media
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: media
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.provisiond.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # Sized for one in-flight remaster at a time: the base netinst
+            # (~800 MB, cached once) plus the per-machine image it produces
+            # (~700 MB) comfortably fit; .Values.provisiond.images.storage
+            # leaves headroom rather than tracking the exact figure. A full
+            # emptyDir fails the write that filled it, not a neighboring
+            # pod -- it is this Deployment's own volume, not a shared one.
+            - name: images
+              mountPath: /var/lib/frame/images
+            # xorriso -osirrox extracts a full netinst tree under
+            # os.MkdirTemp's default directory (os.TempDir(), /tmp) before
+            # Remaster ever touches the images volume above; with
+            # readOnlyRootFilesystem set, that write needs its own volume.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: images
+          emptyDir:
+            sizeLimit: {{ .Values.provisiond.images.storage }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}
