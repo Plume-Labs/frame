@@ -7,7 +7,6 @@ import { inviteTokenFromLocation } from '@/lib/accounts'
 import { loadConfig } from '@/lib/frame-config'
 
 import { NodeDetailPanel } from '@/components/NodeDetailPanel'
-import { NodeProvisionWizard } from '@/components/NodeProvisionWizard'
 import { PasskeysDialog } from '@/components/PasskeysDialog'
 import { HeaderStats } from '@/components/HeaderStats'
 import { NotEnabledView } from '@/components/NotEnabledView'
@@ -50,7 +49,6 @@ const TasksView = lazy(() => import('@/components/TasksView').then((m) => ({ def
 const AccountsView = lazy(() => import('@/components/AccountsView').then((m) => ({ default: m.AccountsView })))
 const SettingsView = lazy(() => import('@/components/SettingsView').then((m) => ({ default: m.SettingsView })))
 
-import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -448,23 +446,15 @@ function App() {
     setScreen(next)
     setPendingTab(tab)
   }, [])
-  const [provisionWizardOpen, setProvisionWizardOpen] = useState(false)
   const [passkeysOpen, setPasskeysOpen] = useState(false)
 
-  const { nodes, setNodes } = useClusterSimulation(32)
+  const { nodes } = useClusterSimulation(32)
 
   // Derive the selected node from the authoritative nodes array so the detail
   // panel always shows up-to-date metrics without an extra state update cycle.
   const syncedSelectedNode = useMemo(
     () => (selectedNode ? (nodes.find((n) => n.id === selectedNode.id) ?? null) : null),
     [nodes, selectedNode],
-  )
-
-  // Memoize cluster-wide stats so they aren't recomputed on every render
-  const racks = useMemo(() => Array.from(new Set(nodes.map((node) => node.rackId))).sort(), [nodes])
-  const controlPlaneCount = useMemo(
-    () => nodes.filter((node) => /control|master/i.test(node.name)).length,
-    [nodes],
   )
 
   // The nav gate is a courtesy, not a control: the token is decoded, not
@@ -556,16 +546,7 @@ function App() {
 
       // ── Compute ─────────────────────────────────────────────────────────
       case 'nodes':
-        return (
-          <div className="space-y-6">
-            <div className="flex justify-end">
-              <Button className="font-mono" onClick={() => setProvisionWizardOpen(true)}>
-                Provision Node
-              </Button>
-            </div>
-            <ClusterNodesView />
-          </div>
-        )
+        return <ClusterNodesView />
       case 'provisioned-nodes':
         return <FrameNodesView />
       case 'racks':
@@ -799,16 +780,6 @@ function App() {
         node={syncedSelectedNode}
         open={!!syncedSelectedNode}
         onClose={() => setSelectedNode(null)}
-      />
-      <NodeProvisionWizard
-        open={provisionWizardOpen}
-        onOpenChange={setProvisionWizardOpen}
-        racks={racks}
-        controlPlaneCount={controlPlaneCount}
-        onNodeProvisioned={(node) => {
-          setNodes((current) => [node, ...current])
-          setSelectedNode(node)
-        }}
       />
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
       <Toaster position="bottom-right" />

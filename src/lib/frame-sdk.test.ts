@@ -304,10 +304,14 @@ describe('NodeClient.getStatus', () => {
     return { urls }
   }
 
-  it('still reports a phase string for the provisioning wizard, taken from the condition', async () => {
-    // NodeProvisionWizard polls this for 'Discovered' and 'Online'. It reads a
-    // field that no longer exists on the wire, so the whole wizard hangs on
-    // this projection being here rather than in the CR.
+  it('still reports a phase string for a discovered node, taken from the condition', async () => {
+    // NodeClient.getStatus's only caller (the FrameNode provisioning wizard)
+    // was retired with the Debian-provisioning lot, task 12 — the Talos
+    // maintenance-mode path it drove never produced a byte of status on this
+    // cluster (docs/provisioning.md). getStatus itself stays: it reads a
+    // field that no longer exists on the wire, so this pins that this
+    // projection still comes from the condition rather than a since-removed
+    // status field.
     const { urls } = serve({
       metadata: { name: 'neura-k3s-w1', namespace: 'default' },
       spec: { ip: '192.168.2.202' },
