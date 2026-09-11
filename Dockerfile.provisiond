@@ -42,11 +42,9 @@ RUN groupadd -g 65532 -r frame && \
 COPY --from=builder /workspace/provisiond /provisiond
 USER 65532:65532
 
-# CMD, not ENTRYPOINT: an exec-form ENTRYPOINT here would mean `podman run
-# frame-provisiond:dev xorriso -version` runs /provisiond with "xorriso"
-# "-version" as its arguments, not xorriso itself -- the deployment manifest
-# never overrides the command, so plain CMD serves it exactly the same in
-# the cluster, and it is the only form that lets the image be checked for
-# xorriso directly, the way this component's whole reason for existing is
-# checked.
-CMD ["/provisiond"]
+# ENTRYPOINT, matching Dockerfile.controller/.authd/.uiproxy: a stray
+# argument on `podman run` cannot turn this image into anything other than
+# provisiond. To run xorriso directly for verification, override the
+# entrypoint explicitly instead:
+#   podman run --rm --entrypoint xorriso frame-provisiond:dev -version
+ENTRYPOINT ["/provisiond"]
