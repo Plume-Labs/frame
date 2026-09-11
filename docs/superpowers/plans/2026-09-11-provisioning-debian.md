@@ -312,7 +312,7 @@ func goodSpec() Spec {
 			{ByID: "/dev/disk/by-id/scsi-aaa", SizeBytes: 300 << 30},
 			{ByID: "/dev/disk/by-id/scsi-bbb", SizeBytes: 300 << 30},
 		}},
-		SSHPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest frame",
+		SSHPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILsytToxkJ2CiWuiv8BZ3hYpu7tFXn7Rwz+kc2gjbPSy frame-test-fixture",
 		Cluster:      ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"},
 	}
 }
