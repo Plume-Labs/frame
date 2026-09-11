@@ -143,7 +143,16 @@ var _ io.Closer = (*sshSession)(nil)
 // The marker is what makes this a proof rather than a coincidence. "Something
 // answers SSH at 192.168.2.210" is satisfied by any machine already at that
 // address -- including the one we believed we were overwriting and in fact
-// never touched. The UID existed nowhere but inside the image we built.
+// never touched.
+//
+// What the UID actually is, stated exactly rather than flatteringly: 16
+// bytes from crypto/rand, generated per run, held in the caller's memory and
+// written to no field any account can read. It is NOT baked into the image
+// -- it travels in the preseed, which is served over plaintext HTTP on the
+// management network, so anything that can watch that network or guess the
+// 32-hex path can learn it. That is a real limit on what this proves, and
+// it is the reason the value is random rather than the FrameInstall's own
+// metadata.uid, which every viewer-tier account could simply read.
 func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key []byte, uid string, every time.Duration) (string, error) {
 	// Trimmed once, up front, and every later comparison uses this value.
 	// Otherwise a uid with incidental whitespace passes this guard but can

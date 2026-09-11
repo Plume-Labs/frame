@@ -145,8 +145,26 @@ long and nearly blind is named as such rather than dressed up.
 **The UID marker is load-bearing.** Without it, "SSH answers at
 192.168.2.x" is satisfied by *any machine already at that address* —
 including the one we believed we were overwriting and in fact never touched.
-The preseed writes the marker; the UID is baked into the image at build time,
-so it proves this system came out of this installation.
+The preseed writes the marker.
+
+*Corrected 2026-09-12.* This section originally said the UID is "baked into
+the image at build time", and §7 leaned on that. Neither is true any more and
+one was never true:
+
+- The preseed moved off the image (§5, corrected 2026-09-11), so the UID
+  travels over plaintext HTTP on the management network, not inside the
+  image.
+- The controller was using the `FrameInstall`'s own `metadata.uid`, which
+  every `viewer`-tier account can read.
+
+The UID is now 16 bytes from `crypto/rand`, generated per run, held in the
+running installation's memory and written to no readable field. What the
+marker proves is therefore: *the machine answering at this address came out
+of this installation, unless someone could read the management network or
+guess a 32-character random path during the twenty minutes the image was
+served.* That is enough for what it is for — telling our machine apart from
+an unrelated one that happens to be at that address — and it is less than
+"nowhere but inside that image".
 
 Between boot and the first SSH answer, Redfish offers only `PowerState` and
 `Oem.Hp.PostState`. Lot 1 established that this BMC replays cached sensor
@@ -253,9 +271,9 @@ dependency of this design and is stated rather than hidden.
 **A limitation named rather than papered over:** Frame cannot know the host
 key in advance. Baking it into the image would make the image a secret
 carrier, which decision 3 forbids. So it is trust-on-first-use, then pinned
-into `status`. What makes this proportionate is the UID marker: an impostor at
-that address would have to know a UID that never existed anywhere but inside
-that image.
+into `status`. What makes this proportionate is the UID marker: an impostor
+at that address would have to present a UID it had no ordinary way to learn
+— see §4 for exactly how strong that is, and exactly how strong it is not.
 
 ## 8. The destructive guard
 

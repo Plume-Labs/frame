@@ -171,16 +171,33 @@ type fakeInstallImages struct {
 	built     int
 	removed   int
 	failBuild error
+	// builtUID is the Spec.UID of the last image built. On a real machine
+	// the install marker is whatever the preseed inside the booted image
+	// wrote, so a fake machine has to answer with the UID of the image it
+	// was built from -- not with a value the test chose independently. The
+	// controller generates that UID per run and never writes it anywhere
+	// readable, so there is no other honest way for the fake machine to
+	// know it.
+	builtUID string
 }
 
-func (i *fakeInstallImages) Build(context.Context, provision.Spec) (string, string, error) {
+func (i *fakeInstallImages) Build(_ context.Context, s provision.Spec) (string, string, error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.built++
+	i.builtUID = s.UID
 	if i.failBuild != nil {
 		return "", "", i.failBuild
 	}
 	return "http://provisiond/iso/tok.iso", "tok", nil
+}
+
+// lastBuiltUID is what the machine built from the last image would carry in
+// its marker file.
+func (i *fakeInstallImages) lastBuiltUID() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.builtUID
 }
 
 func (i *fakeInstallImages) Remove(context.Context, string) error {
@@ -212,9 +229,26 @@ func (i *fakeInstallImages) buildCount() int {
 type fakeInstallSession struct {
 	mu      sync.Mutex
 	hostKey string
-	marker  string
-	closed  bool
-	cmds    []string
+	// images, when set, makes this fake machine answer with the UID of the
+	// image it was built from -- which is what a real machine does, since
+	// the marker is written by the preseed inside that image. marker below
+	// overrides it, for the tests that need a machine carrying somebody
+	// else's UID.
+	images *fakeInstallImages
+	marker string
+	closed bool
+	cmds   []string
+}
+
+// markerValue is what this machine's /etc/frame-install-uid holds.
+func (s *fakeInstallSession) markerValue() string {
+	if s.marker != "" {
+		return s.marker
+	}
+	if s.images != nil {
+		return s.images.lastBuiltUID()
+	}
+	return ""
 }
 
 func (s *fakeInstallSession) HostKey() string { return s.hostKey }
@@ -235,7 +269,7 @@ func (s *fakeInstallSession) Run(_ context.Context, cmd string) (string, error) 
 func (s *fakeInstallSession) read(path string, privileged bool) (string, error) {
 	switch path {
 	case fakeMarkerPath:
-		return s.marker, nil
+		return s.markerValue(), nil
 	case fakeK3sKubeconfigPath:
 		if !privileged {
 			return "", fmt.Errorf("cat: %s: Permission denied", path)

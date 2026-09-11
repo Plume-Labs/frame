@@ -18,6 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -131,10 +134,11 @@ func fiSSHSecret(name string) *corev1.Secret {
 }
 
 // fiInstall builds an otherwise-fully-valid FrameInstall targeting one
-// single-disk machine. Its UID equals its own name, so a test can set a
-// fakeInstallSession's marker to the FrameInstall's own name and get the
-// exact provision.Spec.UID WaitForOurSystem checks against, without needing
-// a second round trip through the fake client to learn a generated UID.
+// single-disk machine. Its metadata.uid equals its own name, which makes it
+// easy to assert that the install UID is NOT derived from it -- the install
+// UID is generated per run and never written anywhere readable, so a fake
+// machine learns it the way a real one does: from the image it was built
+// from (fakeInstallImages.lastBuiltUID).
 //
 // Generation is set to 1 explicitly, matching what a real apiserver assigns
 // a freshly created object with a status subresource -- the fake client
@@ -409,8 +413,9 @@ func TestFrameInstallRecordsFrameTaskOnCreateAndTerminal(t *testing.T) {
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
-	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
-	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	images := &fakeInstallImages{}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
+	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
 	key := fiKey(fi)
 
 	fiAddFinalizer(t, r, key)
@@ -540,8 +545,9 @@ func TestFrameInstallSuccessfulRunReachesReady(t *testing.T) {
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
-	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
-	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	images := &fakeInstallImages{}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
+	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
 	key := fiKey(fi)
 
 	fiAddFinalizer(t, r, key)
@@ -674,7 +680,7 @@ func TestFrameInstallSecondReconcileDoesNotStartASecondInstall(t *testing.T) {
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
 	images := &fakeInstallImages{}
-	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
 	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
 	key := fiKey(fi)
 
@@ -849,8 +855,9 @@ func TestFrameInstallDoesNotRunTwoInstallsOnTheSameMachineConcurrently(t *testin
 	// prove the guard did not wrongly wedge it forever -- so it needs a
 	// real session behind it, not the zero-value fakeInstallSSH a
 	// guard-refusal test can get away with.
-	sessA := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fiA.UID)}
-	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sessA}, &fakeInstallNodes{ready: true})
+	imagesA := &fakeInstallImages{}
+	sessA := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: imagesA}
+	r := fiTestReconciler(c, bmc, imagesA, &fakeInstallSSH{session: sessA}, &fakeInstallNodes{ready: true})
 	keyA, keyB := fiKey(fiA), fiKey(fiB)
 
 	fiAddFinalizer(t, r, keyA)
@@ -969,10 +976,11 @@ func TestFrameInstallDoesNotTreatANonTerminalPhaseAloneAsARestart(t *testing.T) 
 	fi.Status.Phase = string(provision.PhasePreparing)
 	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
-	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
+	images := &fakeInstallImages{}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
-	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
 	key := fiKey(fi)
 
 	fiAddFinalizer(t, r, key)
@@ -1006,8 +1014,9 @@ func TestFrameInstallKubeconfigWriteFailureGoesFailedNotReady(t *testing.T) {
 	colliding := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fi.Name + "-kubeconfig", Namespace: "default"}}
 	c := fiTestClient(t, fi, fm, secret, colliding)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
-	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
-	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	images := &fakeInstallImages{}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
+	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
 	key := fiKey(fi)
 
 	fiAddFinalizer(t, r, key)
@@ -1029,5 +1038,95 @@ func TestFrameInstallKubeconfigWriteFailureGoesFailedNotReady(t *testing.T) {
 	}
 	if got.Status.KubeconfigSecret != "" {
 		t.Errorf("kubeconfigSecret = %q, want empty -- the write failed", got.Status.KubeconfigSecret)
+	}
+}
+
+// I3. The install UID is the whole reason trust-on-first-use is
+// proportionate (design §7): an impostor answering at the target address
+// would have to present a UID that existed nowhere but inside this
+// installation. It used to be string(fi.UID) -- the object's own
+// metadata.uid, readable by any viewer-tier account -- and it is now served
+// over plaintext HTTP inside the rendered preseed rather than baked into an
+// image, so "nowhere but inside the image" stopped being true twice over.
+//
+// What is asserted is the UID that actually reached the Spec the image was
+// built from, read back off the image store, not a value this test chose.
+func TestFrameInstallUIDIsNotReadableFromTheObject(t *testing.T) {
+	fi := fiInstall("fi-ctrl-uid", "fi-ctrl-uid-machine")
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+	c := fiTestClient(t, fi, fm, secret)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	images := &fakeInstallImages{}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
+	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	fiAddFinalizer(t, r, key)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	g := gomega.NewWithT(t)
+	g.Eventually(func() string {
+		return fiGet(t, c, key).Status.NodeName
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.Equal(fi.Spec.Hostname))
+
+	uid := images.lastBuiltUID()
+	// Positive control: an install really did happen and really did carry a
+	// UID, so every "is not equal to" below is a statement about a value
+	// that exists.
+	if uid == "" {
+		t.Fatal("no image was built with any UID at all; nothing below is being checked")
+	}
+	if !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(uid) {
+		t.Errorf("install UID %q is not 16 random bytes hex-encoded", uid)
+	}
+	if uid == string(fi.UID) {
+		t.Error("the install UID is the object's own metadata.uid, which every viewer-tier account can read")
+	}
+
+	// And it is nowhere in what a viewer can read back. Serialized whole
+	// rather than field-by-field: a check on status.phase and friends could
+	// not see a UID copied into a field nobody thought to list.
+	got := fiGet(t, c, key)
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), uid) {
+		t.Errorf("the install UID appears in the FrameInstall a viewer can read:\n%s", b)
+	}
+}
+
+// Two installs must not share a UID: a UID a previous run used is a UID an
+// old machine still on that address could be carrying.
+func TestFrameInstallUIDDiffersBetweenRuns(t *testing.T) {
+	seen := map[string]bool{}
+	for i := range 2 {
+		name := fmt.Sprintf("fi-ctrl-uid-uniq-%d", i)
+		fi := fiInstall(name, name+"-machine")
+		fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+		secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+		c := fiTestClient(t, fi, fm, secret)
+		bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+		images := &fakeInstallImages{}
+		sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
+		r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+		key := fiKey(fi)
+
+		fiAddFinalizer(t, r, key)
+		if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		g := gomega.NewWithT(t)
+		g.Eventually(func() string {
+			return images.lastBuiltUID()
+		}, 2*time.Second, 10*time.Millisecond).ShouldNot(gomega.BeEmpty())
+
+		uid := images.lastBuiltUID()
+		if seen[uid] {
+			t.Fatalf("two installs were given the same UID %q", uid)
+		}
+		seen[uid] = true
 	}
 }
