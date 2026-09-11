@@ -95,6 +95,11 @@ type ImageStore interface {
 // NodeChecker answers whether the named node is Ready in the target cluster
 // -- which, when Spec.Cluster.Mode is ClusterInit, is not the cluster Frame
 // itself runs in.
+//
+// A nil kubeconfig means: check the cluster Frame itself is running in,
+// rather than the one this installation just started. That is the case for
+// Spec.Cluster.Mode == ClusterJoin, where the joined node becomes part of an
+// existing cluster and Join produces no kubeconfig of its own for it.
 type NodeChecker interface {
 	NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error)
 }
