@@ -2,6 +2,7 @@ package provision
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -222,7 +223,7 @@ func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want, err := RenderPreseed(spec)
+	want, err := RenderPreseed(spec, testMediaURL+"/preseed/"+resp.Token+".sh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,5 +239,169 @@ func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
 	built := isoContains(t, filepath.Join(dir, resp.Token+".iso"), "/isolinux/txt.cfg")
 	if !strings.Contains(built, "url="+wantURL) {
 		t.Errorf("built image's boot args do not carry url=%s:\n%s", wantURL, built)
+	}
+}
+
+// C1's serving half. The preseed's preseed/run directive names a URL; if
+// nothing answers it, netcfg never re-runs and the static network
+// configuration is inert -- a failure indistinguishable, from the outside,
+// from an install that is merely slow.
+func TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, tok+".sh"), []byte(NetcfgRerunScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := MediaHandler(dir)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".sh", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /preseed/%s.sh = %d, want 200", tok, rr.Code)
+	}
+	if rr.Body.String() != NetcfgRerunScript {
+		t.Errorf("served body is not the run script:\n%s", rr.Body.String())
+	}
+
+	// Read-only, exactly like the preseed and the image beside it.
+	for _, m := range []string{http.MethodPost, http.MethodDelete} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(m, "/preseed/"+tok+".sh", nil))
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s /preseed/%s.sh = %d, want 405", m, tok, rr.Code)
+		}
+	}
+}
+
+// The run script's own name guard, proved the same way preseedName's is: a
+// single-segment name that DOES exist on disk under that exact name and
+// still must not be served. A missing file would 404 too, so only a real
+// file the pattern rejects separates "the guard refused it" from "there was
+// nothing there".
+//
+// Mutation-proved: replacing runScriptName with regexp.MustCompile(`.*`)
+// turns this red. Deleting the runScriptName clause from the route turns
+// TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed red instead --
+// two different mutations, two different tests, neither able to stand in
+// for the other.
+func TestMediaHandlerRefusesARunScriptNameThatIsNotARunScriptName(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"not-a-run-script.sh", tok + ".sh.txt", tok + ".bash"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(NetcfgRerunScript), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := MediaHandler(dir)
+	for _, name := range []string{"not-a-run-script.sh", tok + ".sh.txt", tok + ".bash"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+name, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("GET /preseed/%s = %d, want 404 (a file exists under this exact name; the guard has to be what refuses it)", name, rr.Code)
+		}
+	}
+}
+
+// The end-to-end version of C1 that this repo can actually run: build
+// through the real BuildHandler, read the preseed it wrote, take the URL
+// out of its own preseed/run directive, and fetch that URL through the
+// media listener over the same directory. Nothing here is told what the
+// address should be -- it is read back out of the artifact.
+func TestBuildHandlerServesTheRunScriptAtTheAddressThePreseedNames(t *testing.T) {
+	requireXorriso(t)
+
+	baseISOPath := realBaseISO(t)
+	baseBytes, err := os.ReadFile(baseISOPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := serveBytes(t, baseBytes)
+	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
+
+	dir := t.TempDir()
+	reqBody, err := json.Marshal(goodSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, base, testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var resp buildResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	preseed, err := os.ReadFile(filepath.Join(dir, resp.Token+".cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runURL := runURLFromPreseed(t, string(preseed))
+	if !strings.HasPrefix(runURL, testMediaURL+"/") {
+		t.Fatalf("preseed/run URL %q is not on the media listener the BMC reaches", runURL)
+	}
+
+	path := strings.TrimPrefix(runURL, testMediaURL)
+	got := httptest.NewRecorder()
+	MediaHandler(dir).ServeHTTP(got, httptest.NewRequest(http.MethodGet, path, nil))
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET %s (the address the preseed itself names) = %d, want 200", path, got.Code)
+	}
+	if got.Body.String() != NetcfgRerunScript {
+		t.Errorf("what is served at the preseed's own preseed/run address is not the run script:\n%s", got.Body.String())
+	}
+}
+
+// runURLFromPreseed reads the value out of the rendered preseed's own
+// preseed/run directive. Parsed rather than reconstructed on purpose: a
+// test that rebuilds the URL from the token cannot tell the directive
+// naming the right address from the directive being absent entirely.
+func runURLFromPreseed(t *testing.T, preseed string) string {
+	t.Helper()
+	const prefix = "d-i preseed/run string "
+	for _, line := range strings.Split(preseed, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	t.Fatalf("the rendered preseed carries no preseed/run directive at all:\n%s", preseed)
+	return ""
+}
+
+// A built image's sidecars are removed with it. A .sh left behind is a live
+// unauthenticated route pointing at nothing anyone owns.
+func TestBuildHandlerDeleteRemovesThePreseedAndTheRunScriptWithTheImage(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, DefaultBase(), testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+tok+".iso", nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s survived the delete", name)
+		}
+	}
+}
+
+func TestLocalImageStoreRemoveTakesThePreseedAndTheRunScriptToo(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &LocalImageStore{Dir: dir, MediaURL: testMediaURL}
+	if err := s.Remove(context.Background(), tok); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s survived Remove", name)
+		}
 	}
 }
