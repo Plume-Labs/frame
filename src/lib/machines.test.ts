@@ -67,6 +67,7 @@ describe('machineTemperatureReadings', () => {
     eventLog: [],
     eventLogCounts: {},
     eventLogTotal: 0,
+    eventLogPossiblyStale: false,
     lastPowerAction: '',
     lastPowerActionAt: null,
     lastPowerActionError: '',
@@ -212,9 +213,24 @@ describe('toMachine', () => {
     expect(m.sensors).toBeNull()
     expect(m.eventLog).toEqual([])
     expect(m.eventLogTotal).toBe(0)
+    expect(m.eventLogPossiblyStale).toBe(false)
     expect(m.postState).toBe('')
     expect(m.sensorsValidAt).toBeNull()
     expect(m.lastPowerActionError).toBe('')
+  })
+
+  // eventLogPossiblyStale is the signal that the retained event log entries
+  // may be the machine's oldest, not its newest — see
+  // internal/redfish.Snapshot.LogPossiblyStale. It must default to false
+  // (tested above) and pass through true unchanged when the controller set
+  // it.
+  it('maps eventLogPossiblyStale through unchanged when the controller sets it', () => {
+    const m = toMachine({
+      metadata: { name: 'ml350-g9', namespace: 'default' },
+      spec: { bmc: { address: '192.168.2.60' } },
+      status: { eventLogPossiblyStale: true },
+    })
+    expect(m.eventLogPossiblyStale).toBe(true)
   })
 
   // The three fields the amended status carries: postState (POST progress

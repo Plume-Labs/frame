@@ -110,6 +110,12 @@ export interface Machine {
   eventLog: MachineEvent[]
   eventLogCounts: Record<string, number>
   eventLogTotal: number
+  // True when the BMC's log spans more than one page and the redfish client
+  // could not confirm it reached the true last page (see
+  // internal/redfish.Snapshot.LogPossiblyStale). eventLog/eventLogCounts
+  // above still populate from whatever page was actually read, but that
+  // page may be the machine's oldest entries rather than its newest.
+  eventLogPossiblyStale: boolean
   lastPowerAction: string
   lastPowerActionAt: string | null
   lastPowerActionError: string
@@ -141,6 +147,7 @@ export interface MachineCR {
     eventLog?: MachineEvent[]
     eventLogCounts?: Record<string, number>
     eventLogTotal?: number
+    eventLogPossiblyStale?: boolean
     lastProbeAt?: string
     lastPowerAction?: string
     lastPowerActionAt?: string
@@ -173,6 +180,7 @@ export function toMachine(cr: MachineCR): Machine {
     eventLog: status.eventLog ?? [],
     eventLogCounts: status.eventLogCounts ?? {},
     eventLogTotal: status.eventLogTotal ?? 0,
+    eventLogPossiblyStale: status.eventLogPossiblyStale ?? false,
     lastPowerAction: status.lastPowerAction ?? '',
     lastPowerActionAt: status.lastPowerActionAt ?? null,
     lastPowerActionError: status.lastPowerActionError ?? '',

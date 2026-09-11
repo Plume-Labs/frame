@@ -103,7 +103,13 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// drop that mutation instead of persisting it.
 	if _, err := r.runPowerRequest(ctx, &fm, rc); err != nil {
 		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
-			return ctrl.Result{}, perr
+			// Both the power request and the status patch meant to record it
+			// failed: returning perr alone would silently drop err, the same
+			// dropped-error shape this patch-before-returning path exists to
+			// prevent in the first place (see the comment above). errors.Join
+			// keeps both in the error Reconcile returns instead of picking
+			// one to discard.
+			return ctrl.Result{}, errors.Join(err, perr)
 		}
 		return ctrl.Result{}, err
 	}
@@ -124,6 +130,20 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.setCondition(&fm, metav1.ConditionTrue, "Probed", "")
 	if err := r.Status().Patch(ctx, &fm, patch); err != nil {
 		return ctrl.Result{}, err
+	}
+	// snap.LogPossiblyStale (internal/redfish/types.go) is the only place
+	// this recurrence of C1 shows up: the probe itself succeeded, the
+	// condition is Probed/True, and EventLog/EventLogCounts/EventLogTotal
+	// are all populated — but from the machine's oldest page, not its
+	// newest, because the jump to the true last page could not be
+	// confirmed. That is silent everywhere except here and in
+	// status.eventLogPossiblyStale, which is why this logs at the default
+	// level rather than behind V(1) the way a routine successful probe does
+	// below: this is the one outcome of a "successful" probe someone
+	// watching logs needs to actually see, not have to opt into.
+	if snap.LogPossiblyStale {
+		log.Info("IML log pagination could not reach the last page; event log may show the oldest entries, not the newest",
+			"machine", req.NamespacedName)
 	}
 	log.V(1).Info("Probed FrameMachine", "machine", req.NamespacedName)
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
@@ -287,6 +307,7 @@ func applySnapshot(status *framev1beta1.FrameMachineStatus, snap *redfish.Snapsh
 	status.EventLog = mapEventLog(snap.Log)
 	status.EventLogCounts = mapLogCounts(snap.LogCounts)
 	status.EventLogTotal = int32(snap.LogTotal)
+	status.EventLogPossiblyStale = snap.LogPossiblyStale
 	now := metav1.Now()
 	status.LastProbeAt = &now
 }
@@ -371,6 +392,13 @@ func mapSensors(s *redfish.Sensors) *framev1beta1.MachineSensors {
 	return out
 }
 
+// eventLogMessageMaxLength mirrors EventLogEntry.Message's
+// +kubebuilder:validation:MaxLength (framemachine_types.go). A message this
+// package didn't truncate itself would fail the whole status Patch on the
+// one entry that happens to be long, rather than being cut the way
+// LastPowerActionError already is.
+const eventLogMessageMaxLength = 512
+
 // mapEventLog retains only the most recent redfish.EventLogRetainCount
 // entries, matching FrameMachineStatus.EventLog's
 // +kubebuilder:validation:MaxItems=25 (kept as a literal there — a
@@ -382,13 +410,6 @@ func mapSensors(s *redfish.Sensors) *framev1beta1.MachineSensors {
 // retains 25 entries at all is to answer "why did this machine reboot" — a
 // question about the newest entries — so keeping the tail would silently
 // retain the oldest quarter-century of history instead.
-// eventLogMessageMaxLength mirrors EventLogEntry.Message's
-// +kubebuilder:validation:MaxLength (framemachine_types.go). A message this
-// package didn't truncate itself would fail the whole status Patch on the
-// one entry that happens to be long, rather than being cut the way
-// LastPowerActionError already is.
-const eventLogMessageMaxLength = 512
-
 func mapEventLog(entries []redfish.LogEntry) []framev1beta1.EventLogEntry {
 	if len(entries) > redfish.EventLogRetainCount {
 		entries = entries[:redfish.EventLogRetainCount]

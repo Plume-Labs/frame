@@ -26,38 +26,75 @@ import (
 	"testing"
 )
 
+// oldGuessedClearLogTarget is the string template ClearLog's POST target
+// used to be built from, before it was discovered from the machine's own
+// LogService document
+// ("/redfish/v1/Systems/%s/LogServices/IML/Actions/LogService.ClearLog/"
+// with id "1"). It happens to be byte-identical to this hardware's real
+// target (testdata/ilo4-real/systems_1_logservices_iml.json's
+// Actions.#LogService.ClearLog.target), which is precisely why
+// TestClearLogPostsTheDiscoveredTarget must not use the real fixture
+// unmodified: a test server that only ever registers a handler at this one
+// path can't tell a client that discovered it apart from one that guessed
+// it and got lucky. See that test for how this is used to force the two
+// apart.
+const oldGuessedClearLogTarget = "/redfish/v1/Systems/1/LogServices/IML/Actions/LogService.ClearLog/"
+
 // TestClearLogPostsTheDiscoveredTarget is the parked item this lot promotes
-// to a fix: ClearLog's POST target used to be built from a string template
-// ("/redfish/v1/Systems/%s/LogServices/IML/Actions/LogService.ClearLog/")
-// rather than discovered from the machine. The capture publishes the real
-// one — testdata/ilo4-real/systems_1_logservices_iml.json's
-// Actions.#LogService.ClearLog.target — and it happens to match that old
-// template on this hardware, so this proves ClearLog reaches the target by
-// reading the LogService document, not by coincidence of a guess being
-// right: the handler below is registered only at the real discovered path,
-// and a client still posting to a guessed one would find nothing there.
+// to a fix: ClearLog's POST target used to be built from oldGuessedClearLogTarget's
+// string template rather than discovered from the machine. Round-2 review
+// found that on the real capture the two happen to coincide, so a server
+// registering the handler only at that shared path can't distinguish
+// discovery from a lucky guess — the test would pass against either
+// implementation. This one moves the LogService document's advertised
+// target to a different path a guess could never produce
+// (discoveredClearLogTarget below) and registers the POST handler only
+// there; the old guessed path gets its own handler that fails the test if
+// it is ever hit, so a regression back to the string-template
+// implementation fails this test instead of passing it by coincidence.
 func TestClearLogPostsTheDiscoveredTarget(t *testing.T) {
-	posted := make(chan struct{}, 1)
+	const discoveredClearLogTarget = "/redfish/v1/Systems/1/Oem/Hp/LogServices/IML/Actions/LogService.ClearLog/"
+
+	logServiceBody, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", "systems_1_logservices_iml.json"))
+	if err != nil {
+		t.Fatalf("fixture systems_1_logservices_iml.json: %v", err)
+	}
+	if !strings.Contains(string(logServiceBody), oldGuessedClearLogTarget) {
+		t.Fatalf("fixture no longer contains %q — oldGuessedClearLogTarget is stale", oldGuessedClearLogTarget)
+	}
+	movedLogServiceBody := strings.Replace(string(logServiceBody), oldGuessedClearLogTarget, discoveredClearLogTarget, 1)
+
 	routes := realRoutes("postcomplete")
+	delete(routes, "/redfish/v1/Systems/1/LogServices/IML/")
 	mux := http.NewServeMux()
 	for p, file := range routes {
-		body, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", file))
-		if err != nil {
-			t.Fatalf("fixture %s: %v", file, err)
+		body, ferr := os.ReadFile(filepath.Join("testdata", "ilo4-real", file))
+		if ferr != nil {
+			t.Fatalf("fixture %s: %v", file, ferr)
 		}
 		mux.HandleFunc(p+"{$}", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 		})
 	}
-	mux.HandleFunc("/redfish/v1/Systems/1/LogServices/IML/Actions/LogService.ClearLog/{$}",
-		func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				t.Errorf("method = %s, want POST", r.Method)
-			}
-			posted <- struct{}{}
-			w.WriteHeader(http.StatusOK)
-		})
+	mux.HandleFunc("/redfish/v1/Systems/1/LogServices/IML/{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(movedLogServiceBody))
+	})
+
+	posted := make(chan struct{}, 1)
+	mux.HandleFunc(discoveredClearLogTarget+"{$}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		posted <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc(oldGuessedClearLogTarget+"{$}", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("POST landed on the old guessed template path %q instead of the discovered one %q — "+
+			"ClearLog regressed to building its target from a string template", oldGuessedClearLogTarget, discoveredClearLogTarget)
+		w.WriteHeader(http.StatusOK)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
