@@ -11,6 +11,10 @@ IMG_AGENT ?= frame-agent:latest
 # Image for uiproxy, the authenticating reverse proxy between the UI and the
 # apiserver (Dockerfile.uiproxy).
 IMG_UIPROXY ?= frame-uiproxy:latest
+# Image for frame-provisiond, which assembles per-machine installer images
+# and serves them to a machine's BMC (Dockerfile.provisiond). Matches the
+# image name config/provisiond/deployment.yaml declares.
+IMG_PROVISIOND ?= frame-provisiond:latest
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -182,6 +186,14 @@ docker-build-uiproxy: ## Build the uiproxy Docker image
 .PHONY: docker-push-uiproxy
 docker-push-uiproxy: ## Push the uiproxy Docker image
 	$(CONTAINER_TOOL) push $(IMG_UIPROXY)
+
+.PHONY: docker-build-provisiond
+docker-build-provisiond: ## Build the frame-provisiond Docker image
+	$(CONTAINER_TOOL) build -f Dockerfile.provisiond -t $(IMG_PROVISIOND) .
+
+.PHONY: docker-push-provisiond
+docker-push-provisiond: ## Push the frame-provisiond Docker image
+	$(CONTAINER_TOOL) push $(IMG_PROVISIOND)
 
 .PHONY: set-image-ui
 set-image-ui: ## Set UI image in development overlay (requires IMG_UI)

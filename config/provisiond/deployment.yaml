@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frame-provisiond
+  namespace: frame-system
+  labels:
+    app.kubernetes.io/name: frame-provisiond
+    app.kubernetes.io/part-of: frame
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frame-provisiond
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frame-provisiond
+        app.kubernetes.io/part-of: frame
+    spec:
+      # This component never talks to the Kubernetes apiserver -- see the
+      # package comment on internal/provision (imports_test.go enforces it
+      # for the package; this is the same fact one layer up, for the pod).
+      # It has nothing to watch and nothing to reconcile, only files to
+      # build and serve, so there is no reason for it to carry a token that
+      # could authenticate to anything.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provisiond
+          image: frame-provisiond:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Matches the volume mount below: the directory both the build
+            # API writes 700 MB images into and the media listener reads
+            # them back out of.
+            - name: IMAGES_DIR
+              value: /var/lib/frame/images
+          ports:
+            # The build API. Reachable only through the ClusterIP Service in
+            # service.yaml -- never through the NodePort one.
+            - name: build
+              containerPort: 8080
+              protocol: TCP
+            # The media listener. This is the one the NodePort Service
+            # exposes to the machine network; it is read-only by
+            # construction (MediaHandler), which is what makes exposing it
+            # to the BMCs on that network safe.
+            - name: media
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: media
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # Sized for one in-flight remaster at a time: the base netinst
+            # (~800 MB, cached once) plus the per-machine image it produces
+            # (~700 MB) comfortably fit; 8Gi leaves headroom rather than
+            # tracking the exact figure. A full emptyDir fails the write
+            # that filled it, not a neighboring pod -- it is this
+            # Deployment's own volume, not a shared one.
+            - name: images
+              mountPath: /var/lib/frame/images
+            # xorriso -osirrox extracts a full netinst tree under
+            # os.MkdirTemp's default directory (os.TempDir(), /tmp) before
+            # Remaster ever touches the images volume above; with
+            # readOnlyRootFilesystem set, that write needs its own volume.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: images
+          emptyDir:
+            sizeLimit: 8Gi
+        - name: tmp
+          emptyDir: {}

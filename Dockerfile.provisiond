@@ -1,0 +1,52 @@
+# Dockerfile for frame-provisiond, the component that assembles per-machine
+# Debian installer images and serves them to a machine's BMC over HTTP. Kept
+# separate from Dockerfile.controller for the same reason authd and uiproxy
+# are: each binary gets its own minimal image rather than a shared one that
+# overgrants what a compromised container could reach.
+#
+# Unlike the other three, this one cannot be distroless/static
+# (Dockerfile.controller:20): the whole point of this component existing is
+# that xorriso cannot live in the manager image, so it has to live somewhere,
+# and here is that somewhere. debian:13-slim carries apt, so xorriso and
+# ca-certificates (FetchBase talks HTTPS to cdimage.debian.org, and TLS
+# verification needs a root store) are installed rather than absent by
+# construction the way they are everywhere else in this tree.
+FROM golang:1.26 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY cmd/ cmd/
+COPY api/ api/
+COPY internal/ internal/
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -a -o provisiond cmd/provisiond/main.go
+
+FROM debian:13-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends xorriso ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# The same UID/GID the distroless/static:nonroot images in this tree run as
+# (Dockerfile.controller, Dockerfile.authd, Dockerfile.uiproxy), so the
+# deployment's securityContext and the emptyDir it writes 700 MB images into
+# agree on one identity across every image in the fleet.
+RUN groupadd -g 65532 -r frame && \
+    useradd -u 65532 -r -g frame -M -s /usr/sbin/nologin frame
+
+COPY --from=builder /workspace/provisiond /provisiond
+USER 65532:65532
+
+# CMD, not ENTRYPOINT: an exec-form ENTRYPOINT here would mean `podman run
+# frame-provisiond:dev xorriso -version` runs /provisiond with "xorriso"
+# "-version" as its arguments, not xorriso itself -- the deployment manifest
+# never overrides the command, so plain CMD serves it exactly the same in
+# the cluster, and it is the only form that lets the image be checked for
+# xorriso directly, the way this component's whole reason for existing is
+# checked.
+CMD ["/provisiond"]
