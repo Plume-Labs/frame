@@ -116,11 +116,22 @@ kinds; a new kind ships into it without a webhook.
 `spec` carries:
 
 - `machineRef` — the `FrameMachine` supplying BMC address and credentials.
-- `hostname`, and a static network configuration (the shape `FrameNode`'s
-  `NetworkSpec` already defines: address, gateway, DNS, VLAN, bond).
+- `hostname`, and a static network configuration: address, gateway, DNS.
+  *Corrected 2026-09-12:* this originally borrowed `FrameNode`'s
+  `NetworkSpec` wholesale, VLAN and bond included. Both were validated by the
+  apiserver and dropped on the floor by the translation into
+  `internal/provision` — a `FrameInstall` asking for a tagged VLAN installed
+  untagged, silently. d-i bonding is not something to implement blind; they
+  are added when a machine needs one.
 - `layout` — `single-disk` (exactly one disk) or `mirror` (exactly two, as
-  Linux software RAID 1), each naming its disks by `/dev/disk/by-id` (see §5),
-  plus an escape hatch for a raw partman recipe.
+  Linux software RAID 1), each naming its disks by `/dev/disk/by-id` (see §5).
+  *Corrected 2026-09-12:* there was also "an escape hatch for a raw partman
+  recipe", and it could not do its job. Keeping the preseed's on-machine
+  disk-size assertion writable forced the recipe onto a single line, and a
+  real partman recipe is multi-line; and its own validation did not require
+  disks while the code refused it without them, so the apiserver accepted a
+  shape refused one phase later, after the object existed. An unusual layout
+  is a named kind, reviewed, with tests.
 - `cluster` — `join` (this cluster) or `init` (a new one). See §6.
 - `confirmSerial` — the machine's serial, retyped by hand. See §8.
 
@@ -203,15 +214,49 @@ else and `url=` avoids it by accident. The decision holds either way because
 the cost of acting on it is a URL instead of a path, and this document records
 it as an observation rather than borrowing authority it does not have.
 
-`interface=auto` is also fixed into every image's boot arguments. The machine
-has four NICs and one cabled, and without it d-i asks which to use — a
-question that arrives *before* it can fetch the preseed that answers it. The
-block is circular, silent, and indistinguishable from a crash.
+`interface=auto` is also fixed into every image's boot arguments. *Corrected
+2026-09-12.* This paragraph said d-i "asks which to use", which is an
+explanation, and what was measured is narrower: on the ML350 Gen9 (four
+NICs, one cabled) the boot did not reach the preseed without
+`interface=auto` and did reach it with. Nobody saw the screen. The
+interface question is a plausible reading of that symptom, not a confirmed
+mechanism — exactly the standing the `url=` result above is given, and the
+wording `internal/provision/iso.go`'s comment already used while these two
+documents upgraded it. The block is silent and indistinguishable from a
+crash either way, and the cost of acting on the observation is one boot
+argument.
 
-Build: unpack the Debian netinst, inject `preseed.cfg`, rewrite the boot
-configuration to `auto=true priority=critical`, repack with `xorriso`
-preserving the hybrid boot record. One function, two callers — a Job in
-cluster, or the command directly.
+**A preseed fetched over the network cannot preseed the network, so a second
+file is served beside it — added 2026-09-12.** Debian states the constraint
+outright: "preseeding the network configuration won't work if you're loading
+your preconfiguration file from the network". `netcfg` has to bring the
+machine online *before* the preconfiguration file can be fetched — which is
+the most plausible reading of why `url=` worked above and a local file did
+not. Every `netcfg/*` answer in the preseed therefore only suppresses a
+question that is never asked again; on its own the block configures nothing,
+and the machine comes up on a DHCP address under a DHCP name, at which point
+Frame waits at an address nobody is on, having already wiped every named
+disk.
+
+Debian's documented workaround is the one taken: a `preseed/run` script
+carrying `kill-all-dhcp; netcfg`, served beside the preseed under the same
+strict name pattern on the same read-only route, referenced by absolute URL
+(and resolvable as a relative one, since both land on the same route either
+way). The hostname is additionally written by `late_command`, because Debian
+notes DHCP-assigned names take precedence over `netcfg/get_hostname` and
+whether the re-run settles the name cannot be checked here.
+
+**Whether `netcfg` re-runs correctly is unproven without hardware.** What is
+proven is that the rendered preseed carries the directive and that the
+script is served at the address the preseed itself names. It is on §11's
+list of things that cannot be proven without the machine.
+
+Build: unpack the Debian netinst, rewrite every boot configuration's kernel
+line to `auto=true priority=critical interface=auto frame=1 url=…` — before
+the `---` separator, since anything after it is copied onto the *installed*
+system's kernel command line — and repack with `xorriso` preserving the
+hybrid boot record. One function, two callers — a Job in cluster, or the
+command directly.
 
 The image must be fetched by the BMC over HTTP, so the endpoint serving it is
 reachable on the management network, not only on the pod network. It carries
@@ -369,15 +414,32 @@ statement of it anyone here has produced. Every verification step in this lot
 is written to fail that way on purpose: with a positive control, or not at
 all.
 
-**Three things cannot be proven without hardware:** that the image boots, that
-partman partitions, and that k3s joins. They are written as unexecuted until
-the installation runs on the ML350 Gen9 — the same treatment as lot 1's
-browser check, which still carries that label in `docs/deployment.md`.
+**Several things cannot be proven without hardware:** that the image boots,
+that partman partitions, that k3s joins, that the `preseed/run` script
+re-runs `netcfg` and the static address and hostname take, and that the
+installed node's own kernel command line is clean. They are written as
+unexecuted until the installation runs on the ML350 Gen9 — the same
+treatment as lot 1's browser check, which still carries that label in
+`docs/deployment.md`. The list is in `docs/deployment.md`'s "Not yet
+executed" section and is the authoritative one.
 
 ## 12. Screen
 
 A list of installations with their phase, and creation from an
 already-inventoried machine. It does not compose partman recipes with a mouse.
+
+**It does not show the serial either** — added 2026-09-12, after the dialog
+shipped printing it twice, in the machine picker's own label and in
+parentheses beside the box asking for it. Layer 2 of §8 exists to catch "I
+pointed at the wrong machine", and it works only because the operator reads
+the serial off the machine or its BMC; a console that prints the answer next
+to the question makes the check a typing exercise that the wrong machine
+also passes. The dialog says where to read it instead.
+
+The object it creates is named after the hostname **plus a random suffix**,
+never the hostname alone: §3 says a reinstallation is a second object and
+the first stays readable, and naming by hostname made a retry collide `409`
+with the attempt it was retrying.
 
 ## 13. Assumptions to verify, not assume
 
