@@ -14,13 +14,20 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { createFrameClient } from '@/lib/frame-sdk'
-import { confirmationMatches, type InstallCreateSpec } from '@/lib/installs'
+import {
+  CONFIRM_SERIAL_HINT,
+  CONFIRM_SERIAL_LABEL,
+  confirmationMatches,
+  machineOptionLabel,
+  type InstallCreateSpec,
+} from '@/lib/installs'
 import type { Machine } from '@/lib/machines'
 
 const frame = createFrameClient()
 
 type LayoutKind = 'single-disk' | 'mirror'
 type ClusterMode = 'init' | 'join'
+type BootMode = 'UEFI' | 'Legacy'
 
 interface DiskField {
   byID: string
@@ -43,6 +50,16 @@ function diskCountFor(kind: LayoutKind): number {
  * Redfish — because `confirmationMatches` needs a real serial to check
  * against, and a machine nobody has ever read a serial from cannot be
  * confirmed at all.
+ *
+ * **The serial is never displayed.** It is compared against, and that is
+ * all. This dialog used to print it in the picker's label and again beside
+ * the confirmation box, which made layer 2 of the destructive guard (design
+ * §8) a typing exercise: the one control that answers *which machine* had
+ * its answer on screen, so pointing at the wrong machine still confirmed
+ * cleanly. Every machine-derived string this dialog renders comes from
+ * `installs.ts` (`machineOptionLabel`, `CONFIRM_SERIAL_LABEL`,
+ * `CONFIRM_SERIAL_HINT`), which is where vitest can assert that none of
+ * them carries it.
  *
  * Disk `byID` fields are free text, not read off the machine's inventory:
  * `FrameMachine.status.inventory.drives[].name` is a Redfish drive name
@@ -79,6 +96,7 @@ export function InstallDialog({
   const [joinTokenRef, setJoinTokenRef] = useState('')
   const [k3sVersion, setK3sVersion] = useState('')
   const [sshKeyRef, setSshKeyRef] = useState('')
+  const [bootMode, setBootMode] = useState<BootMode>('UEFI')
   const [confirmSerial, setConfirmSerial] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -98,6 +116,7 @@ export function InstallDialog({
     setJoinTokenRef('')
     setK3sVersion('')
     setSshKeyRef('')
+    setBootMode('UEFI')
     setConfirmSerial('')
   }, [open])
 
@@ -158,6 +177,7 @@ export function InstallDialog({
                 joinTokenRef: joinTokenRef.trim(),
                 k3sVersion: k3sVersion.trim(),
               },
+        bootMode,
         sshKeyRef: sshKeyRef.trim(),
       }
       await frame.installs.create(hostname.trim(), spec)
@@ -194,7 +214,11 @@ export function InstallDialog({
               <SelectContent>
                 {inventoried.map((m) => (
                   <SelectItem key={m.name} value={m.name}>
-                    {m.name} — {m.inventory?.model} ({m.inventory?.serialNumber})
+                    {machineOptionLabel({
+                      name: m.name,
+                      model: m.inventory?.model ?? '',
+                      serialNumber: m.inventory?.serialNumber ?? '',
+                    })}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -326,10 +350,25 @@ export function InstallDialog({
             />
           </div>
 
+          <div className="space-y-1.5">
+            <Label>Boot mode</Label>
+            <Select value={bootMode} onValueChange={(v) => setBootMode(v as BootMode)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="UEFI">UEFI</SelectItem>
+                <SelectItem value="Legacy">Legacy BIOS</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground">
+              Set on the machine, never inherited from it. An image that boots in the other mode
+              says nothing — it stays on a black screen until the phase times out.
+            </p>
+          </div>
+
           <div className="space-y-1.5 pt-2 border-t border-border">
-            <Label htmlFor="install-confirm-serial">
-              Type the machine's serial to confirm{selectedMachine ? ` (${serial})` : ''}
-            </Label>
+            <Label htmlFor="install-confirm-serial">{CONFIRM_SERIAL_LABEL}</Label>
             <Input
               id="install-confirm-serial"
               value={confirmSerial}
@@ -338,6 +377,7 @@ export function InstallDialog({
               className="font-mono text-xs"
               autoComplete="off"
             />
+            <p className="text-[10px] text-muted-foreground">{CONFIRM_SERIAL_HINT}</p>
           </div>
         </div>
 

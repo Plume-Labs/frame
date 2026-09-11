@@ -31,7 +31,7 @@ const PHASE_TONE_CLASS: Record<ReturnType<typeof phaseTone>, Tone> = {
 /**
  * Every `FrameInstall` on the cluster: which machine, which phase, which
  * node it produced, and how long it has been sitting there. The admin tier
- * (the RBAC tier `canCreateInstall` keys off — see installs.ts) gets a
+ * (the admin signal `canCreateInstall` keys off — see installs.ts) gets a
  * button to start a new one; nobody else does, because creating one wipes
  * the named disks and the screen should agree with the RBAC rather than
  * offer a write the apiserver will refuse.
@@ -81,7 +81,7 @@ export function InstallsTab() {
   // refused server-side by RBAC for anyone else regardless of what renders.
   const token = (globalThis as Record<string, unknown>).__FRAME_TOKEN__
   const admin = typeof token === 'string' ? isAdminToken(token) : false
-  const canCreate = canCreateInstall(admin ? 'admin' : '')
+  const canCreate = canCreateInstall(admin)
 
   return (
     <div className="space-y-6">
