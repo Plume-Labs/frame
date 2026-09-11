@@ -23,6 +23,11 @@ import (
 // server becomes a way to read /etc/shadow.
 var imageName = regexp.MustCompile(`^[a-f0-9]{32}\.iso$`)
 
+// preseedName is imageName's counterpart for the preseed route: the same
+// 32-hex token, ".cfg" instead of ".iso". Matched before a caller-supplied
+// name ever touches the filesystem, for the same reason imageName is.
+var preseedName = regexp.MustCompile(`^[a-f0-9]{32}\.cfg$`)
+
 // buildResponse is what the build API answers with. Only the token matters
 // to a caller: HTTPImageStore derives the URL the BMC will use itself, from
 // MediaURL, rather than trusting a URL the build API might hand back for its
@@ -45,13 +50,20 @@ func newToken() (string, error) {
 // it can do: the build API lives on a different port, on a Service nothing
 // outside the cluster can reach.
 //
-// GET /iso/{name} is a single-segment wildcard: it never matches
-// "/iso/sub/dir.iso", and any other method on the same path gets 405 from
-// http.ServeMux itself, not from any check written here. A trailing-slash
-// pattern is never used -- see the package-level note this lot has already
-// paid a task to learn: in http.ServeMux a trailing-slash pattern is a
-// subtree match that absorbs every deeper path, which is exactly how a
-// predecessor lot's 404 tolerance went untested.
+// GET /iso/{name} and GET /preseed/{name} are both single-segment wildcards:
+// neither matches a path with an extra segment (e.g. "/iso/sub/dir.iso"),
+// and any other method on either path gets 405 from http.ServeMux itself,
+// not from any check written here. A trailing-slash pattern is never used
+// -- see the package-level note this lot has already paid a task to learn:
+// in http.ServeMux a trailing-slash pattern is a subtree match that absorbs
+// every deeper path, which is exactly how a predecessor lot's 404 tolerance
+// went untested.
+//
+// /preseed/{name} is exposed on the same read-only, unauthenticated
+// listener as /iso/{name}: the preseed carries no secret by construction --
+// RenderPreseed refuses private key material and anything shell-unsafe
+// before an image is ever built -- so serving it to the machine network is
+// the same risk as serving the image it came from.
 func MediaHandler(dir string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /iso/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +72,14 @@ func MediaHandler(dir string) http.Handler {
 		// image name is refused outright, rather than cleaned and hoped
 		// about.
 		if !imageName.MatchString(name) {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(dir, name))
+	})
+	mux.HandleFunc("GET /preseed/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if !preseedName.MatchString(name) {
 			http.NotFound(w, r)
 			return
 		}
@@ -74,11 +94,15 @@ func MediaHandler(dir string) http.Handler {
 // exists to make impossible.
 //
 // It decodes a Spec, calls RenderPreseed first -- so a bad spec is a 400
-// before anything is fetched or built -- then fetches the base image and
-// remasters it into dir/<token>.iso, where the token is 32 hex characters
-// from crypto/rand. DELETE /iso/{name} removes a previously built image,
-// guarded by the same imageName check as the read-only listener.
-func BuildHandler(dir string, base BaseSource) http.Handler {
+// before anything is fetched or built -- then fetches the base image,
+// writes the rendered preseed to dir/<token>.cfg, and remasters the image
+// into dir/<token>.iso with boot arguments that fetch that same file from
+// mediaURL, the base address of the read-only listener MediaHandler serves
+// (the one the BMC reaches, not this one). token is 32 hex characters from
+// crypto/rand. DELETE /iso/{name} removes a previously built image and its
+// preseed together, guarded by the same imageName check as the read-only
+// listener.
+func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
 	mux := http.NewServeMux()
 	baseDir := filepath.Join(dir, "base")
 
@@ -91,8 +115,12 @@ func BuildHandler(dir string, base BaseSource) http.Handler {
 
 		// Rendered before anything is fetched or built: a spec this package
 		// would refuse to turn into a preseed is refused here too, before a
-		// single byte of a ~700 MB download happens.
-		if _, err := RenderPreseed(spec); err != nil {
+		// single byte of a ~700 MB download happens. The rendered content is
+		// kept, rather than discarded and re-rendered later, so what gets
+		// written to disk and what was just validated are provably the same
+		// call's output.
+		preseed, err := RenderPreseed(spec)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -113,8 +141,20 @@ func BuildHandler(dir string, base BaseSource) http.Handler {
 			return
 		}
 
+		cfgPath := filepath.Join(dir, token+".cfg")
+		if err := os.WriteFile(cfgPath, []byte(preseed), 0o644); err != nil {
+			http.Error(w, fmt.Sprintf("writing preseed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// The URL baked into the image's boot arguments and the one
+		// MediaHandler's /preseed/{name} route actually serves must be the
+		// same address by construction, not by coincidence -- both are
+		// built from mediaURL and token here, in one place.
+		preseedURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".cfg"
+
 		out := filepath.Join(dir, token+".iso")
-		if err := Remaster(r.Context(), baseISO, spec, out); err != nil {
+		if err := Remaster(r.Context(), baseISO, spec, preseedURL, out); err != nil {
 			http.Error(w, fmt.Sprintf("building image: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -134,6 +174,15 @@ func BuildHandler(dir string, base BaseSource) http.Handler {
 				http.NotFound(w, r)
 				return
 			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Best effort: the .iso removal above is the one a caller's retry
+		// depends on, and a missing .cfg (say, a prior cleanup that got this
+		// far and no further) must not turn a successful image removal into
+		// a 500.
+		token := strings.TrimSuffix(name, ".iso")
+		if err := os.Remove(filepath.Join(dir, token+".cfg")); err != nil && !os.IsNotExist(err) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -230,8 +279,11 @@ type LocalImageStore struct {
 
 func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (url, token string, err error) {
 	// Same order as BuildHandler, for the same reason: refuse before
-	// fetching or building anything.
-	if _, err := RenderPreseed(spec); err != nil {
+	// fetching or building anything. The rendered content is kept for the
+	// same reason too -- what is written to dir/<token>.cfg is provably
+	// this call's output, not a second, possibly-diverged render.
+	preseed, err := RenderPreseed(spec)
+	if err != nil {
 		return "", "", err
 	}
 
@@ -248,8 +300,17 @@ func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (url, token stri
 		return "", "", fmt.Errorf("preparing image directory: %w", err)
 	}
 
+	if err := os.WriteFile(filepath.Join(s.Dir, tok+".cfg"), []byte(preseed), 0o644); err != nil {
+		return "", "", fmt.Errorf("writing preseed: %w", err)
+	}
+
+	// Built from the same MediaURL the returned image URL below is, so the
+	// address baked into the image's boot arguments is the one this store
+	// actually serves -- see BuildHandler's identical construction.
+	preseedURL := strings.TrimSuffix(s.MediaURL, "/") + "/preseed/" + tok + ".cfg"
+
 	out := filepath.Join(s.Dir, tok+".iso")
-	if err := Remaster(ctx, baseISO, spec, out); err != nil {
+	if err := Remaster(ctx, baseISO, spec, preseedURL, out); err != nil {
 		return "", "", fmt.Errorf("building image: %w", err)
 	}
 
@@ -261,6 +322,9 @@ func (s *LocalImageStore) Remove(_ context.Context, token string) error {
 		return fmt.Errorf("token %q is not a valid image token", token)
 	}
 	if err := os.Remove(filepath.Join(s.Dir, token+".iso")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(s.Dir, token+".cfg")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

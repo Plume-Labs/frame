@@ -12,29 +12,49 @@ import (
 )
 
 // bootArgs is what makes the installer unattended. Virtual media offers no way
-// to pass kernel arguments -- that is the whole reason this file exists -- so
-// they have to be written into the image's own boot configuration.
-const bootArgs = "auto=true priority=critical file=/cdrom/preseed.cfg"
+// to pass kernel arguments, so they have to be written into the image's own
+// boot configuration.
+//
+// The preseed is fetched over HTTP rather than read from the image.
+// Measured on an ML350 Gen9 on 2026-09-11: an image saying
+// file=/cdrom/preseed.cfg read 79 MB from the virtual CD and stopped before
+// reaching the network, while url= read 139-148 MB and got through — three
+// trials each way, constant. The mechanism is not understood and the screen
+// was never seen, so this is a correlation acted on, not an explanation.
+//
+// interface=auto is not optional on that machine: it has four NICs and one
+// cabled, and without it d-i asks which to use — before it can fetch the
+// preseed that answers. The block is circular, silent, and looks exactly
+// like a crash.
+//
+// frame=1 is our own marker. It is what addBootArgs checks to avoid
+// rewriting a line twice. It cannot be auto=true, which Debian itself ships
+// on five entries of the real grub.cfg.
+const bootArgsFixed = "auto=true priority=critical interface=auto frame=1"
 
-// alreadyRewritten is the idempotency marker addBootArgs checks for, and it
-// must be this string rather than "auto=true": Debian's own boot/grub/grub.cfg
-// ships five "Automated install" submenu entries that already carry
-// "auto=true priority=critical" out of the box, with no file= directive at
-// all. Treating "already has auto=true" as "we already rewrote this line"
-// skips all five permanently -- they never receive a preseed path. This
-// string is ours; Debian never ships it.
-const alreadyRewritten = "file=/cdrom/preseed.cfg"
+const alreadyRewritten = "frame=1"
 
-// Remaster writes a per-machine installer image built from baseISO.
+func bootArgs(preseedURL string) string {
+	return bootArgsFixed + " url=" + preseedURL
+}
+
+// Remaster writes a per-machine installer image whose boot arguments fetch
+// its preseed from preseedURL.
 //
 // The image is built per machine rather than generic because no secret enters
 // it, which removes any reason to fetch a configuration at install time and
 // with it an entire MAC-based identification protocol. The image is the
 // installation intent, readable in full.
-func Remaster(ctx context.Context, baseISO string, s Spec, out string) error {
-	preseed, err := RenderPreseed(s)
-	if err != nil {
+//
+// The preseed itself is no longer written onto the image -- see bootArgs's
+// doc comment for why. preseedURL is required and refused empty, before
+// baseISO is ever touched, the same as a bad Spec is.
+func Remaster(ctx context.Context, baseISO string, s Spec, preseedURL, out string) error {
+	if _, err := RenderPreseed(s); err != nil {
 		return err
+	}
+	if strings.TrimSpace(preseedURL) == "" {
+		return fmt.Errorf("preseedURL is empty: the image has nothing to fetch its preseed from")
 	}
 
 	work, err := os.MkdirTemp("", "frame-remaster-")
@@ -52,11 +72,7 @@ func Remaster(ctx context.Context, baseISO string, s Spec, out string) error {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(tree, "preseed.cfg"), []byte(preseed), 0o644); err != nil {
-		return err
-	}
-
-	if err := rewriteBootConfigs(tree); err != nil {
+	if err := rewriteBootConfigs(tree, preseedURL); err != nil {
 		return err
 	}
 
@@ -92,7 +108,7 @@ var kernelLine = regexp.MustCompile(`(?m)^(\s*(?:append|linux)\s+.*)$`)
 // question Remaster has no way to answer and no need to: rewriting every
 // kernel line it finds means whichever entry the menu graph selects is
 // unattended. An entry nobody boots also carrying the arguments is harmless.
-func rewriteBootConfigs(tree string) error {
+func rewriteBootConfigs(tree, preseedURL string) error {
 	var files []string
 
 	isolinuxCfgs, err := filepath.Glob(filepath.Join(tree, "isolinux", "*.cfg"))
@@ -119,7 +135,7 @@ func rewriteBootConfigs(tree string) error {
 
 	var anyKernelLine bool
 	for _, f := range files {
-		found, _, err := addBootArgs(f)
+		found, _, err := addBootArgs(f, preseedURL)
 		if err != nil {
 			return err
 		}
@@ -157,7 +173,7 @@ func rewriteBootConfigs(tree string) error {
 // rewrite. found and changed diverge exactly when every kernel line in the
 // file already carries the marker: that is a legitimate idempotent no-op, not
 // the same thing as a file with nothing to rewrite in the first place.
-func addBootArgs(path string) (found bool, changed bool, err error) {
+func addBootArgs(path, preseedURL string) (found bool, changed bool, err error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false, false, err
@@ -169,7 +185,7 @@ func addBootArgs(path string) (found bool, changed bool, err error) {
 		if strings.Contains(line, alreadyRewritten) {
 			return line
 		}
-		return line + " " + bootArgs
+		return line + " " + bootArgs(preseedURL)
 	})
 	if out == string(b) {
 		return true, false, nil
