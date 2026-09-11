@@ -164,10 +164,16 @@ func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key [
 	for {
 		select {
 		case <-ctx.Done():
+			// ctx.Err() is always part of the message, not just a fallback
+			// used when no attempt has completed yet. Using it only as a
+			// fallback meant a context that expired mid-loop reported only
+			// the last dial's own error ("connection refused", say), which
+			// reads identically to a collaborator that will never come up --
+			// nothing said the deadline was what actually ended this.
 			if last == nil {
-				last = ctx.Err()
+				return "", fmt.Errorf("waiting for %s to come up as our system: %w, and no attempt had completed before it", addr, ctx.Err())
 			}
-			return "", fmt.Errorf("waiting for %s to come up as our system: %w", addr, last)
+			return "", fmt.Errorf("waiting for %s to come up as our system: %w (last attempt: %v)", addr, ctx.Err(), last)
 		default:
 		}
 
