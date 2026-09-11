@@ -320,8 +320,9 @@ already-inventoried machine. It does not compose partman recipes with a mouse.
   `192.168.2.0/24` and egress appears to work; it is checked, not assumed.
 - The BMC can fetch the image URL. This requires the serving endpoint to be
   reachable from the management network.
-- The exact Debian netinst version and its SHA256 are pinned by the plan's
-  first task, from the published checksum file, and carried in the plan's
-  Global Constraints. This document deliberately does not name a version it
-  has not verified; naming an unverified one would be worse than deferring it
-  to the one step that can check.
+- The exact Debian netinst version and its SHA256 are pinned in the plan's
+  Global Constraints, verified against Debian's published `SHA256SUMS` on
+  2026-09-11: `debian-13.6.0-amd64-netinst.iso`, SHA256
+  `65273beed27b2df543b68b65630ba525cfbad8df2b12035732b2dff87d6664e7`. The
+  checksum is the integrity control, and a downloaded file that fails it is
+  deleted rather than kept.
