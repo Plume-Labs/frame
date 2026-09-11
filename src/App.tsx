@@ -23,6 +23,7 @@ const ClusterNodesView = lazy(() => import('@/components/ClusterNodesView').then
 const FrameNodesView = lazy(() => import('@/components/FrameNodesView').then((m) => ({ default: m.FrameNodesView })))
 const RacksView = lazy(() => import('@/components/RacksView').then((m) => ({ default: m.RacksView })))
 const HardwareView = lazy(() => import('@/components/hardware/HardwareView').then((m) => ({ default: m.HardwareView })))
+const InstallsTab = lazy(() => import('@/components/hardware/InstallsTab').then((m) => ({ default: m.InstallsTab })))
 const WorkloadsView = lazy(() => import('@/components/workloads/WorkloadsView').then((m) => ({ default: m.WorkloadsView })))
 const ApplicationsView = lazy(() => import('@/components/ApplicationsView').then((m) => ({ default: m.ApplicationsView })))
 const FrameJobsView = lazy(() => import('@/components/FrameJobsView').then((m) => ({ default: m.FrameJobsView })))
@@ -122,6 +123,7 @@ type TabId =
   | 'provisioned-nodes'
   | 'racks'
   | 'hardware'
+  | 'installs'
   | 'gpu'
   | 'storage'
   | 'network'
@@ -235,7 +237,10 @@ const NAV: NavGroup[] = [
         label: 'Hardware',
         icon: <ComputerTower />,
         description: 'Physical chassis over Redfish: inventory, sensors, event log and power',
-        tabs: [{ id: 'hardware', label: 'Machines' }],
+        tabs: [
+          { id: 'hardware', label: 'Machines' },
+          { id: 'installs', label: 'Installs' },
+        ],
       },
     ],
   },
@@ -567,6 +572,8 @@ function App() {
         return <RacksView />
       case 'hardware':
         return <HardwareView />
+      case 'installs':
+        return <InstallsTab />
       // ── Resources ───────────────────────────────────────────────────────
       case 'gpu':
         return <GpuView />
