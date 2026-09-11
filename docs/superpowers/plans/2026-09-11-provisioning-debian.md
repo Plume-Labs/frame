@@ -2537,10 +2537,19 @@ Render the chart and confirm `frame-editor`'s aggregation rule does not select t
 
 ```bash
 cd /home/rmocq/frame-provision
-helm template charts/frame | grep -A5 'name: frameinstall-editor-role' | grep -c 'rbac.frame.plume-labs.io/tier' || echo "unlabelled, as intended"
+for role in editor viewer; do
+  printf '%s: ' "$role"
+  helm template charts/frame \
+    | awk "/name: frame-frameinstall-$role-role/,/^---/" \
+    | grep -c 'rbac.frame.plume-labs.io/tier'
+done
 ```
 
-Expected: `unlabelled, as intended`. Then add `rbac.frame.plume-labs.io/tier: editor` to the file, re-render, confirm the label appears, and remove it again. Paste both outputs into the report — this is the check that would have caught lot 1's escalation.
+Expected: `editor: 0` and `viewer: 1`.
+
+**The viewer line is the positive control and it is the point.** A check with no positive control cannot tell "the label is absent" from "I looked in the wrong place" — and the first version of this step did exactly that: it searched for `frameinstall-editor-role` while the chart renders `frame-frameinstall-editor-role`, with an `-A5` window that stopped short of the label. It printed the same reassuring result whether or not the label was there. Two reviewers and an implementer passed over it before one thought to check the check.
+
+Then add `rbac.frame.plume-labs.io/tier: editor` to the editor role, re-render, confirm `editor: 1`, and remove it again. Paste all three outputs — this is the check that would have caught lot 1's escalation.
 
 - [ ] **Step 5: Commit**
 
@@ -2834,6 +2843,9 @@ func TestFrameInstallRefusesToReinstallALiveClusterMember(t *testing.T) {
 ```
 
 Write that test out in full, following the fixture style of `framemachine_controller_test.go`. Then add the same shape for the address match.
+- **Two things the schema structurally cannot check, because CEL sees only `self` and never another object.** Both are refusals in `Pending`, before anything is built:
+  - Every `layout.disks[].byID` must appear in the inventory of the `FrameMachine` that `machineRef` names. Nothing today stops a `FrameInstall` from naming disks that are not on the machine it points at, and `confirmSerial` does not help — it proves which machine, not which disks.
+  - `spec.hostname` must not collide with an existing Node, nor with another `FrameInstall` that is not in a terminal phase. The live-member refusal above covers a `Ready` node; this covers the rest.
 - Creating a `FrameInstall`, and reaching a terminal phase, each append a `FrameTask` audit entry — the kind lot 0a introduced. The action string is bounded at 200 runes, which is `FrameTaskSpec.Action`'s CRD cap. `boundAction` lives in `internal/uiproxy` and is unexported, so it is not reachable here — use `truncateString` from `framemachine_controller.go:233`, which is in this package and already counts runes rather than bytes. Assert the entry exists after a successful run and after a failed one, and that its action names the machine.
 - A `FrameInstall` whose `confirmSerial` does not match goes `Failed` in phase `Pending`, and no image is built.
 - A successful run writes `status.phase: Ready`, `status.nodeName`, `status.hostKey`, and — for `mode: init` — `status.kubeconfigSecret`, with the Secret actually created.
