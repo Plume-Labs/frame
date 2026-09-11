@@ -33,6 +33,7 @@ import {
 import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
+import { toInstall, type Install, type InstallCR, type InstallCreateSpec } from './installs'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -709,6 +710,11 @@ export function crdListPath(group: string, version: string, plural: string, ns?:
 /** The list endpoint for FrameMachine CRs, for callers that want to watch it. */
 export function machinesPath(ns?: string): string {
   return frameListPath('framemachines', ns)
+}
+
+/** The list endpoint for FrameInstall CRs, for callers that want to watch it. */
+export function installsPath(ns?: string): string {
+  return frameListPath('frameinstalls', ns)
 }
 
 /**
@@ -3418,6 +3424,53 @@ class MachineClient {
   }
 }
 
+/**
+ * Reads FrameInstall status and creates new ones, mapping through
+ * `toInstall` (Task 11) rather than reshaping the CR here — every decision
+ * about what a reading means (phase, staleness, who may create one) lives
+ * in `installs.ts`, which is the only place vitest can reach for it.
+ *
+ * Mirrors `MachineClient` above: a `list`/`watchPath` pair for the screen's
+ * `useLiveResource`, plus the one write this screen makes. Unlike
+ * `MachineClient.power`, that write is a `create`, never a `patch` —
+ * nothing in this lot lets the console edit or delete a FrameInstall once
+ * submitted; the phase machine and the finalizer own its lifecycle from
+ * there.
+ */
+class InstallClient {
+  constructor(private readonly ns?: string) {}
+
+  async list(): Promise<Install[]> {
+    const res = await k8sFetch<ListResponse<InstallCR>>(installsPath(this.ns))
+    return (res.items ?? []).map(toInstall).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** For `useLiveResource`, so the console watches the same collection it reads. */
+  watchPath(): string {
+    return installsPath(this.ns)
+  }
+
+  /**
+   * Creates a `FrameInstall`. `namespace` defaults to `frameNs()`, same as
+   * every other namespaced create in this SDK — never the caller's own
+   * default, so a screen that never thinks about namespace still lands the
+   * object where the console reads.
+   */
+  async create(name: string, spec: InstallCreateSpec, namespace?: string): Promise<void> {
+    const ns = namespace ?? frameNs()
+    await k8sFetch<undefined>(installsPath(ns), {
+      action: `create install ${name} on ${spec.machineRef}`,
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'FrameInstall',
+        metadata: { name: toK8sName(name), namespace: ns },
+        spec,
+      },
+    })
+  }
+}
+
 /** A FrameUser CR as the apiserver returns it — the shape `src/lib/accounts.ts` reshapes into `Account`. */
 export interface FrameUserCR {
   metadata: { name: string }
@@ -3512,6 +3565,7 @@ export class FrameClient {
   public readonly users: UserClient
   public readonly workloads: WorkloadClient
   public readonly machines: MachineClient
+  public readonly installs: InstallClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -3524,6 +3578,7 @@ export class FrameClient {
     this.users     = new UserClient()
     this.workloads = new WorkloadClient()
     this.machines  = new MachineClient(opts.namespace)
+    this.installs  = new InstallClient(opts.namespace)
   }
 
   async health(): Promise<HealthStatus> {
