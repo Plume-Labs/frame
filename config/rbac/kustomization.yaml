@@ -58,4 +58,7 @@ resources:
 - framemachine_admin_role.yaml
 - framemachine_editor_role.yaml
 - framemachine_viewer_role.yaml
+- frameinstall_admin_role.yaml
+- frameinstall_editor_role.yaml
+- frameinstall_viewer_role.yaml
 

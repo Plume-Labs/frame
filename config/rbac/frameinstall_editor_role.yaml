@@ -1,0 +1,46 @@
+# This role deliberately carries no rbac.frame.plume-labs.io/tier label.
+#
+# Creating a FrameInstall wipes a machine's disks. Labelling this file would
+# make frame-editor aggregate its create and patch verbs, which is a
+# one-request promotion from "can edit workloads" to "can reinstall the
+# cluster's hardware". Lot 1 shipped exactly that mistake on
+# framemachine_editor_role.yaml -- it had tier: editor for one commit, and
+# that was a one-request escalation.
+#
+# The precedent is frameuser_editor_role.yaml, unlabelled for the same reason.
+
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants edit access to FrameInstall resources including creation, modification, and deletion.
+# This role is intended for operators who manage installation configurations and lifecycle
+# without administrative capabilities like bulk deletion.
+#
+# Bind it deliberately if you want it, to a group, never to a user.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: frameinstall-editor-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameinstalls
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameinstalls/status
+  verbs:
+  - get

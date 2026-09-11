@@ -52,7 +52,7 @@ whenever metrics.secure was set to false).
 {{- end -}}
 
 {{/*
-The ten CRD-tier RBAC sets (viewer/editor/admin per CRD). Kept as a fixed
+The eleven CRD-tier RBAC sets (viewer/editor/admin per CRD). Kept as a fixed
 list because it mirrors the actual CRDs in api/ — not meant to be
 user-editable; the toggle is rbac.tierRoles.install, not this.
 
@@ -87,11 +87,19 @@ aggregated ClusterRoles pick up. Default is all three; three kinds are not.
     `patch framemachines` and hands operators power control. See
     config/rbac/framemachine_editor_role.yaml's header and
     test/manifests/framemachine_rbac_test.go.
+  frameinstall — no editor (2026-09-11, provisioning/Debian, task 7). Creating
+    a FrameInstall wipes a machine's disks, the same class of action as
+    framemachine's powerRequest, so it gets the same exclusion: admin and
+    viewer only. See config/rbac/frameinstall_editor_role.yaml's header.
 
 This list and config/rbac/*_role.yaml are two hand-maintained copies of one
 thing. `make helm-parity` compares them, including this label.
 */}}
 {{- define "frame.tierRoleCRDs" -}}
+- roleBase: frameinstall
+  apiGroup: frame.plume-labs.io
+  resource: frameinstalls
+  aggregate: [admin, viewer]
 - roleBase: framejob
   apiGroup: frame.plume-labs.io
   resource: framejobs
