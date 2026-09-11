@@ -2122,7 +2122,11 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (Result, error) {
 
 	// Joining.
 	report(PhaseJoining)
-	sess, err := d.SSH.Dial(ctx, net.JoinHostPort(o.NodeAddress, "22"), o.SSHUser, o.SSHKey)
+	// res.HostKey was captured a moment ago by WaitForOurSystem. Passing it
+	// here is what makes the pin load-bearing rather than decorative: without
+	// it, every later connection trusts whatever key is presented, and the
+	// value written to status is never read by anything.
+	sess, err := d.SSH.Dial(ctx, net.JoinHostPort(o.NodeAddress, "22"), o.SSHUser, o.SSHKey, res.HostKey)
 	if err != nil {
 		return fail(PhaseJoining, err)
 	}
