@@ -1,3 +1,24 @@
+# The `rules:` blocks below must stay in the same order
+# config/rbac/role.yaml (controller-gen's generated output) has them in.
+# hack/helm-parity.sh's content diff runs both sides through `jq -S`, which
+# sorts object keys but does not touch array order -- so two `rules` arrays
+# with identical content in a different block order still fail the diff,
+# and the failure prints as resources appearing only on one side even
+# though they are plainly present on both. If `make helm-parity` reports a
+# missing/extra resource here that you can see is actually in both files,
+# check the block order against config/rbac/role.yaml before assuming a
+# rule is missing.
+#
+# controller-gen's own block order is not stable across unrelated changes:
+# adding an RBAC marker anywhere in the repo can shift where an existing
+# resource lands in config/rbac/role.yaml's rules array, which means this
+# file's order can need reshuffling again even when nothing here changed.
+# Canonicalising array order in the parity script's comparison (sorting
+# each rules array before diffing, the same way jq -S already sorts object
+# keys) would remove the need for this note and the reordering it asks
+# for, but that is a fix to hack/helm-parity.sh's own comparison logic, not
+# to this chart, and was left for whoever next has reason to touch that
+# script.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

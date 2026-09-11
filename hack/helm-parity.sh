@@ -247,6 +247,16 @@ while IFS= read -r triple; do
     redact='.spec.dnsNames = "IGNORED (kustomize leaves this Certificate'"'"'s dnsNames as unsubstituted placeholders — see templates/certmanager.yaml)"'
   fi
 
+  # jq -S sorts object keys, not array order: a ClusterRole (or any other
+  # resource) whose `rules` array — or any other array field — holds
+  # identical elements in a different order still fails the `[ "$a" != "$b" ]`
+  # comparison below, and the printed diff reads exactly like a missing or
+  # extra entry even though both sides have it. charts/frame/templates/
+  # rbac-manager.yaml carries a matching note and keeps its rule blocks in
+  # config/rbac/role.yaml's (controller-gen's) order for this reason —
+  # correcting it here, by canonicalising array order before comparing (the
+  # same way object keys already are), would remove the need for that but
+  # is a separate change to this comparison, not made in this pass.
   a="$(jq -S --arg kind "$kind" --arg ns "$ns" --arg name "$name" \
     ".[] | select(.kind==\$kind and ((.metadata.namespace // \"\")==\$ns) and .metadata.name==\$name) | del(.metadata) | $redact" \
     -s "$tmpdir/helm-default.jsonl")"

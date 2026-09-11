@@ -773,6 +773,59 @@ func TestFrameInstallRefusesAHostnameThatCollidesAcrossNamespaces(t *testing.T) 
 	}
 }
 
+// TestFrameInstallRefusesASameNamedFrameInstallInADifferentNamespace is the
+// test the review found missing: checkHostnameNotTaken excludes "myself"
+// from the collision scan by comparing UID, not Name -- Name is only
+// unique within a namespace, and a comparison by Name would wrongly treat
+// two distinct objects that happen to share a Name across namespaces as
+// the same object, silently skipping a real collision.
+//
+// Every other fixture pair in this file that exercises the collision guard
+// also has a different Name, so a reviewer reverting the comparison to
+// other.Name == fi.Name found every existing test -- including
+// TestFrameInstallRefusesAHostnameThatCollidesAcrossNamespaces above --
+// still green. This is the one built to actually need the UID comparison:
+// fi and other share both Name and Hostname, and differ only in Namespace
+// and UID (fiInstall derives UID from Name, so it has to be overridden by
+// hand here -- otherwise this fixture pair would share a UID too, which no
+// two real Kubernetes objects ever do, and the test would still prove
+// nothing).
+func TestFrameInstallRefusesASameNamedFrameInstallInADifferentNamespace(t *testing.T) {
+	fi := fiInstall("fi-ctrl-samename", "fi-ctrl-samename-machine")
+	other := fiInstall("fi-ctrl-samename", "fi-ctrl-samename-machine") // same Name as fi
+	other.Namespace = "fi-ctrl-other-namespace"
+	other.UID = types.UID("fi-ctrl-samename-other-ns-uid") // distinct UID; real objects never share one
+	// fiInstall already sets Spec.Hostname == the object's own Name, so fi
+	// and other already share a hostname by construction here -- no
+	// override needed, and leaving it implicit is itself part of what makes
+	// this fixture pair look, at a glance, like "the same object" the way
+	// the bug this test exists for would have treated them.
+	other.Status.Phase = string(provision.PhasePreparing) // non-terminal
+
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+	c := fiTestClient(t, fi, other, fm, secret)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	fiAddFinalizer(t, r, key)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseFailed) || got.Status.FailedPhase != string(provision.PhasePending) {
+		t.Fatalf("phase=%s failedPhase=%s, want Failed/Pending -- a same-named FrameInstall in a different namespace was wrongly excluded as \"myself\"", got.Status.Phase, got.Status.FailedPhase)
+	}
+	if !strings.Contains(got.Status.Message, other.Namespace+"/"+other.Name) {
+		t.Errorf("message %q does not name the colliding FrameInstall %s/%s", got.Status.Message, other.Namespace, other.Name)
+	}
+	if n := bmc.callCount(); n != 0 {
+		t.Errorf("the BMC recorded calls: %d", n)
+	}
+}
+
 // TestFrameInstallDoesNotRunTwoInstallsOnTheSameMachineConcurrently is I4's
 // own test. Before this fix, inFlight was keyed by the FrameInstall's own
 // UID, so two different objects naming the same machineRef each carried a
