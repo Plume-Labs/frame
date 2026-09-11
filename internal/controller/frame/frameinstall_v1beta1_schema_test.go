@@ -133,6 +133,16 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 				fi.Spec.Layout.Disks[0].ByID = "/dev/sda"
 			}, "disks must be named by /dev/disk/by-id, never by kernel name"),
 
+		Entry("rejects a raw layout with no recipe", "raw-no-recipe",
+			func(fi *framev1beta1.FrameInstall) {
+				// Kind moves to raw and Disks is dropped entirely: the
+				// mirror/single-disk disk-count rules both short-circuit to
+				// true on kind != 'mirror' / kind != 'single-disk' regardless
+				// of what Disks holds, so only the raw rule's has(self.raw)
+				// clause is exercised.
+				fi.Spec.Layout = framev1beta1.InstallLayout{Kind: "raw"}
+			}, "layout raw needs a recipe"),
+
 		Entry("rejects mode join with no joinTokenRef", "join-no-token",
 			func(fi *framev1beta1.FrameInstall) {
 				fi.Spec.Cluster.Mode = "join"
