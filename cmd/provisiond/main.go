@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -75,6 +76,34 @@ func or(v, def string) string {
 	return v
 }
 
+// validateMediaURL refuses anything that is not a usable http(s) base URL.
+// Checking presence alone only catches a missing value; it says nothing
+// about a value that is wrong in a way that only shows up on real
+// hardware later -- a typo'd scheme (ftp://, or http:/ missing a slash),
+// or a bare hostname with no scheme at all, which url.Parse accepts
+// without error and puts entirely into Path, leaving both Scheme and Host
+// empty. Every one of those still starts provisiond today and fails only
+// once a built image asks the BMC to fetch a preseed from it and finds
+// nothing there -- exactly the failure mode this whole task exists to
+// close for the boot arguments; this closes the same class of mistake for
+// the address they're built from.
+func validateMediaURL(raw string) error {
+	if raw == "" {
+		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their preseed from nowhere")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("MEDIA_URL %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("MEDIA_URL %q: scheme must be http or https, got %q", raw, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("MEDIA_URL %q: has no host", raw)
+	}
+	return nil
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "provisiond:", err)
@@ -89,8 +118,8 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if cfg.MediaURL == "" {
-		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their preseed from nowhere")
+	if err := validateMediaURL(cfg.MediaURL); err != nil {
+		return err
 	}
 
 	// The media mux adds one route MediaHandler itself does not: a
