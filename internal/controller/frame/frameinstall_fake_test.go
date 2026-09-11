@@ -1,0 +1,237 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/rmocq/frame/internal/provision"
+)
+
+// fakeInstallBMC, fakeInstallImages, fakeInstallSSH/fakeInstallSession and
+// fakeInstallNodes are this file's counterparts of framemachine_fake_test.go's
+// fakeRedfish: the seams provision.Install is tested through, with no
+// network and no real BMC. Every fake is safe for concurrent use because
+// Reconcile drives provision.Install in a goroutine (frameinstall_controller.go's
+// runInstall), so a test observes a fake's state from a different goroutine
+// than the one mutating it.
+
+// fakeMarkerPath mirrors install.go's unexported markerPath
+// ("/etc/frame-install-uid", confirmed by
+// internal/provision/preseed_test.go's TestRenderPreseedWritesTheUIDMarker).
+// It cannot be imported -- this is a different package -- so it is
+// reproduced here by literal, the same way any fixture in this file stands
+// in for a piece of internal/provision it cannot reach directly.
+const fakeMarkerPath = "/etc/frame-install-uid"
+
+// fakeK3sKubeconfig is a minimal but real kubeconfig shape:
+// provision.Join's ClusterInit path reads exactly this file over SSH and
+// hands it to RewriteKubeconfigServer, which fails on anything that does
+// not parse as YAML and carry clusters[].cluster.server.
+const fakeK3sKubeconfig = `apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: QQ==
+    server: https://127.0.0.1:6443
+  name: default
+contexts:
+- context: {cluster: default, user: default}
+  name: default
+current-context: default
+kind: Config
+users:
+- name: default
+`
+
+type fakeInstallBMC struct {
+	mu sync.Mutex
+
+	serial     string
+	failSerial error
+	inserted   bool
+	calls      []string
+}
+
+func (b *fakeInstallBMC) Serial(context.Context) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "serial")
+	if b.failSerial != nil {
+		return "", b.failSerial
+	}
+	return b.serial, nil
+}
+
+func (b *fakeInstallBMC) InsertMedia(_ context.Context, url string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "insert:"+url)
+	b.inserted = true
+	return nil
+}
+
+func (b *fakeInstallBMC) MediaInserted(context.Context) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.inserted, nil
+}
+
+func (b *fakeInstallBMC) EjectMedia(context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "eject")
+	b.inserted = false
+	return nil
+}
+
+func (b *fakeInstallBMC) SetBootOnce(_ context.Context, target, mode string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "boot:"+target+":"+mode)
+	return nil
+}
+
+func (b *fakeInstallBMC) ClearBootOverride(context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "clearboot")
+	return nil
+}
+
+func (b *fakeInstallBMC) Reset(_ context.Context, resetType string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, "reset:"+resetType)
+	return nil
+}
+
+// callsContaining is read under the same lock every write takes, so a test
+// polling a running install never races runInstall's goroutine.
+func (b *fakeInstallBMC) callsContaining(prefix string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := 0
+	for _, c := range b.calls {
+		if len(c) >= len(prefix) && c[:len(prefix)] == prefix {
+			n++
+		}
+	}
+	return n
+}
+
+func (b *fakeInstallBMC) callCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.calls)
+}
+
+type fakeInstallImages struct {
+	mu        sync.Mutex
+	built     int
+	removed   int
+	failBuild error
+}
+
+func (i *fakeInstallImages) Build(context.Context, provision.Spec) (string, string, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.built++
+	if i.failBuild != nil {
+		return "", "", i.failBuild
+	}
+	return "http://provisiond/iso/tok.iso", "tok", nil
+}
+
+func (i *fakeInstallImages) Remove(context.Context, string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.removed++
+	return nil
+}
+
+func (i *fakeInstallImages) buildCount() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.built
+}
+
+// fakeInstallSession answers WaitForOurSystem's marker read and, for a
+// ClusterInit spec, Join's read of /etc/rancher/k3s/k3s.yaml after it runs
+// "k3s server --cluster-init". Any other path is refused, the same as a
+// real machine answers `cat` on a file that is not there -- a fake that
+// answered every path would hide a caller that started reading the wrong
+// one.
+type fakeInstallSession struct {
+	mu      sync.Mutex
+	hostKey string
+	marker  string
+	closed  bool
+	cmds    []string
+}
+
+func (s *fakeInstallSession) HostKey() string { return s.hostKey }
+
+func (s *fakeInstallSession) Run(_ context.Context, cmd string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cmds = append(s.cmds, cmd)
+	return "", nil
+}
+
+func (s *fakeInstallSession) ReadFile(_ context.Context, path string) ([]byte, error) {
+	switch path {
+	case fakeMarkerPath:
+		return []byte(s.marker), nil
+	case "/etc/rancher/k3s/k3s.yaml":
+		return []byte(fakeK3sKubeconfig), nil
+	default:
+		return nil, fmt.Errorf("fakeInstallSession: no such file: %s", path)
+	}
+}
+
+func (s *fakeInstallSession) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
+
+type fakeInstallSSH struct {
+	mu       sync.Mutex
+	session  *fakeInstallSession
+	attempts int
+}
+
+func (f *fakeInstallSSH) Dial(context.Context, string, string, []byte, string) (provision.Session, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempts++
+	return f.session, nil
+}
+
+type fakeInstallNodes struct {
+	mu    sync.Mutex
+	ready bool
+}
+
+func (n *fakeInstallNodes) NodeReady(context.Context, []byte, string) (bool, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.ready, nil
+}

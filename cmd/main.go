@@ -45,6 +45,7 @@ import (
 	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
 	controller "github.com/rmocq/frame/internal/controller/frame"
 	servicescontroller "github.com/rmocq/frame/internal/controller/services"
+	"github.com/rmocq/frame/internal/provision"
 	"github.com/rmocq/frame/internal/services/provider"
 	"github.com/rmocq/frame/internal/services/provider/inference"
 	webhookv1beta1 "github.com/rmocq/frame/internal/webhook/frame/v1beta1"
@@ -93,6 +94,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var inferenceGPUMemoryMiB int64
+	var provisiondBuildURL string
+	var provisiondMediaURL string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -114,6 +117,13 @@ func main() {
 	flag.Int64Var(&inferenceGPUMemoryMiB, "inference-gpu-memory-mib", 7680,
 		"Usable GPU memory per card, in MiB, that inference instances are sized against. "+
 			"Defaults to the Tesla P4's 7680.")
+	flag.StringVar(&provisiondBuildURL, "provisiond-build-url", "http://frame-provisiond:8080",
+		"The in-cluster build API of frame-provisiond (config/provisiond/service.yaml's ClusterIP Service), "+
+			"which this manager posts a Spec to.")
+	flag.StringVar(&provisiondMediaURL, "provisiond-media-url", "",
+		"The base URL a machine's BMC -- on the management network, not the pod network -- can reach "+
+			"frame-provisiond's media listener at (config/provisiond/service.yaml's NodePort Service). "+
+			"FrameInstall creation fails until this is set: there is no address a BMC could safely default to.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -329,6 +339,21 @@ func main() {
 		NewClient: controller.BuildRedfishClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framemachine")
+		os.Exit(1)
+	}
+	if err := (&controller.FrameInstallReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("frameinstall"), //nolint:staticcheck
+		NewBMC:   controller.BuildRedfishBMC,
+		Images: &provision.HTTPImageStore{
+			BuildURL: provisiondBuildURL,
+			MediaURL: provisiondMediaURL,
+		},
+		SSH:   provision.NewSSHClient(),
+		Nodes: &controller.ClusterNodeChecker{Frame: mgr.GetClient()},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "frameinstall")
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {

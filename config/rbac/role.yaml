@@ -92,16 +92,9 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
-  - framejobs
-  - framenodes
-  - frameresourcequotas
-  - nodetunings
-  - schedulingpolicies
-  - talosmachineconfigs
-  - talosupgrades
+  - frameinstalls
+  - framemachines
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch
@@ -110,6 +103,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - frameinstalls/finalizers
   - framejobs/finalizers
   - framemachines/finalizers
   - framenodes/finalizers
@@ -123,6 +117,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - frameinstalls/status
   - framejobs/status
   - framemachines/status
   - framenodes/status
@@ -138,8 +133,16 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
-  - framemachines
+  - framejobs
+  - framenodes
+  - frameresourcequotas
+  - nodetunings
+  - schedulingpolicies
+  - talosmachineconfigs
+  - talosupgrades
   verbs:
+  - create
+  - delete
   - get
   - list
   - patch
