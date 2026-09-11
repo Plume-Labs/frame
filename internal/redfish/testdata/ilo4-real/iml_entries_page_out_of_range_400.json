@@ -1,0 +1,27 @@
+{
+    "Messages": [
+        {
+            "MessageArgs": [
+                "7",
+                "page",
+                "6"
+            ],
+            "MessageID": "Base.0.10.QueryParameterOutOfRange"
+        }
+    ],
+    "Type": "ExtendedError.1.0.0",
+    "error": {
+        "@Message.ExtendedInfo": [
+            {
+                "MessageArgs": [
+                    "7",
+                    "page",
+                    "6"
+                ],
+                "MessageID": "Base.0.10.QueryParameterOutOfRange"
+            }
+        ],
+        "code": "iLO.0.10.ExtendedInfo",
+        "message": "See @Message.ExtendedInfo for more information."
+    }
+}

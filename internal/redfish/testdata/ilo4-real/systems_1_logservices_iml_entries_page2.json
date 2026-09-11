@@ -1,0 +1,1126 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries",
+    "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/?page=2",
+    "@odata.type": "#LogEntryCollection.LogEntryCollection",
+    "Description": "Integrated Management Logs view",
+    "Items": [
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/31/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T16:50:00Z",
+            "EntryType": "Oem",
+            "Id": "31",
+            "Message": "Maintenance note: Intelligent Provisioning was loaded.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 33,
+                    "Code": 2,
+                    "EventNumber": 352,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T16:50:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 352,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/31/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/32/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T17:01:00Z",
+            "EntryType": "Oem",
+            "Id": "32",
+            "Message": "Option ROM POST Information: 1778-Slot 0 Drive Array resuming Automatic Data Recovery(Rebuild) process",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 353,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T17:01:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 353,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/32/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/33/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T17:01:00Z",
+            "EntryType": "Oem",
+            "Id": "33",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 4,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 354,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T17:43:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 354,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/33/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/34/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T17:01:00Z",
+            "EntryType": "Oem",
+            "Id": "34",
+            "Message": "POST Error: 289-IMPORTANT: A new network or storage device has been detected. This device will not be shown in the Legacy BIOS Boot Order options in RBSU until the system has booted once. Action: No action required.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 355,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T17:01:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 355,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/34/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/35/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T18:01:00Z",
+            "EntryType": "Oem",
+            "Id": "35",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 356,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T18:43:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 356,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/35/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/36/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-10T17:13:00Z",
+            "EntryType": "Oem",
+            "Id": "36",
+            "Message": "Option ROM POST Information: 1729-Slot 0 Drive Array - Disk Performance Optimization Scan In Progress - RAID 4/5/ADG performance may be higher after completion.",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 357,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-10T17:17:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 357,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/36/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/37/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-12T05:29:00Z",
+            "EntryType": "Oem",
+            "Id": "37",
+            "Message": "Option ROM POST Error: 1720-Slot 0 Drive Array - S.M.A.R.T. Hard Drive(s) Detect Imminent Failure:",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 358,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-12T05:29:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 358,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/37/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/38/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-12T06:30:00Z",
+            "EntryType": "Oem",
+            "Id": "38",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 5,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 359,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-12T06:53:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 359,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/38/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/39/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-12T05:38:00Z",
+            "EntryType": "Oem",
+            "Id": "39",
+            "Message": "Option ROM POST Information: 1778-Slot 0 Drive Array resuming Automatic Data Recovery(Rebuild) process",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 360,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-12T05:38:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 360,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/39/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/40/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-12T05:38:00Z",
+            "EntryType": "Oem",
+            "Id": "40",
+            "Message": "Option ROM POST Error: 1786-Slot 0 Drive Array Recovery Needed",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 361,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-12T05:38:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 361,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/40/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/41/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-12T06:14:00Z",
+            "EntryType": "Oem",
+            "Id": "41",
+            "Message": "Option ROM POST Information: 1729-Slot 0 Drive Array - Disk Performance Optimization Scan In Progress - RAID 4/5/ADG performance may be higher after completion.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 362,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-12T06:14:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 362,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/41/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/42/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-12T07:15:00Z",
+            "EntryType": "Oem",
+            "Id": "42",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 363,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-12T07:15:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 363,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/42/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/43/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-16T09:08:00Z",
+            "EntryType": "Oem",
+            "Id": "43",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 364,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-16T09:08:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 364,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/43/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/44/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-20T06:51:00Z",
+            "EntryType": "Oem",
+            "Id": "44",
+            "Message": "System Power Supply: Input Power Loss or Unplugged Power Cord, Verify Power Supply Input (Power Supply 2)",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 1,
+                    "EventNumber": 365,
+                    "Repaired": true,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-20T06:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 365,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/44/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/45/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-20T05:51:00Z",
+            "EntryType": "Oem",
+            "Id": "45",
+            "Message": "POST Error: 1624-Power Supply Unplugged - Power Supply 2 is unplugged. Action: Ensure the Power Supply is plugged in.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 366,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-20T05:51:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 366,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/45/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/46/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-20T06:52:00Z",
+            "EntryType": "Oem",
+            "Id": "46",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 367,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-20T06:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 367,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/46/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/47/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2022-10-20T07:04:00Z",
+            "EntryType": "Oem",
+            "Id": "47",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 368,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2022-10-20T07:04:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 368,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/47/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/48/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T08:44:00Z",
+            "EntryType": "Oem",
+            "Id": "48",
+            "Message": "POST Error: 239-DIMM Configuration Error - RDIMM and UDIMM are installed in the system. The system cannot have both types of DIMMs installed. - System Halted!",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 369,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T08:44:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 369,
+            "Severity": "Critical",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/48/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/49/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T12:55:00Z",
+            "EntryType": "Oem",
+            "Id": "49",
+            "Message": "POST Information: Processor 1, DIMM 1 could not be authenticated as genuine HP Memory. Enhanced and extended HP SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 7,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 370,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-02-14T08:56:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 370,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/49/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/50/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "50",
+            "Message": "POST Information: Processor 1, DIMM 4 could not be authenticated as genuine HP Memory. Enhanced and extended HP SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 28,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 371,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T11:08:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 371,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/50/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/51/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "51",
+            "Message": "POST Information: Processor 1, DIMM 9 could not be authenticated as genuine HP Memory. Enhanced and extended HP SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 26,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 372,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-08-30T20:16:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 372,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/51/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/52/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T12:55:00Z",
+            "EntryType": "Oem",
+            "Id": "52",
+            "Message": "POST Error: 207-Invalid Memory Configuration - Unsupported DIMM In",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 373,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T12:55:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 373,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/52/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/53/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T13:57:00Z",
+            "EntryType": "Oem",
+            "Id": "53",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 374,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T13:57:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 374,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/53/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/54/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T13:50:00Z",
+            "EntryType": "Oem",
+            "Id": "54",
+            "Message": "POST Error: 207-Invalid Memory Configuration - Unsupported DIMM In",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 375,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T13:59:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 375,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/54/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/55/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T14:51:00Z",
+            "EntryType": "Oem",
+            "Id": "55",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 376,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T14:54:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 376,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/55/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/56/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T15:00:00Z",
+            "EntryType": "Oem",
+            "Id": "56",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 377,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T15:00:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 377,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/56/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/57/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T16:51:00Z",
+            "EntryType": "Oem",
+            "Id": "57",
+            "Message": "POST Error: 207-Invalid Memory Configuration - Unsupported DIMM In",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 378,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T16:58:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 378,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/57/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/58/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T16:52:00Z",
+            "EntryType": "Oem",
+            "Id": "58",
+            "Message": "Option ROM POST Error: 1785-Slot 0 Drive Array Not Configured",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 3,
+                    "EventNumber": 379,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T16:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 379,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/58/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/59/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T17:52:00Z",
+            "EntryType": "Oem",
+            "Id": "59",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 380,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T17:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 380,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/59/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/60/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2024-01-13T18:00:00Z",
+            "EntryType": "Oem",
+            "Id": "60",
+            "Message": "Smart Storage Battery has exceeded the maximum amount of devices supported (Battery 1, service information: 0x07). Action: 1. Remove additional devices. 2. Consult server troubleshooting guide. 3. Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 381,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2024-01-13T18:00:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 381,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/60/"
+                }
+            }
+        }
+    ],
+    "MemberType": "LogEntry.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/31/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/32/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/33/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/34/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/35/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/36/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/37/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/38/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/39/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/40/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/41/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/42/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/43/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/44/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/45/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/46/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/47/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/48/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/49/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/50/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/51/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/52/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/53/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/54/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/55/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/56/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/57/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/58/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/59/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/60/"
+        }
+    ],
+    "Members@odata.count": 175,
+    "Name": "Integrated Management Logs",
+    "Total": 175,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/31/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/32/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/33/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/34/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/35/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/36/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/37/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/38/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/39/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/40/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/41/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/42/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/43/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/44/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/45/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/46/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/47/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/48/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/49/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/50/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/51/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/52/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/53/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/54/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/55/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/56/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/57/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/58/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/59/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/60/"
+            }
+        ],
+        "NextPage": {
+            "count": 30,
+            "page": 3
+        },
+        "self": {
+            "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/?page=2"
+        }
+    }
+}

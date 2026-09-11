@@ -54,6 +54,15 @@ import (
 // failure.
 var errNotFound = errors.New("redfish: resource not found")
 
+// errBadRequest is returned by do/get when a resource answers 400. Unlike
+// every other non-2xx status, do still decodes the body into out (best
+// effort) before returning it: a 400 body on this BMC is itself structured
+// diagnostic data, not an error page — see decode_log.go's
+// discoverMaxLogPage, which deliberately requests a page number it knows to
+// be out of range specifically to read the real maximum back out of the
+// iLO4's Base.0.10.QueryParameterOutOfRange response body.
+var errBadRequest = errors.New("redfish: bad request")
+
 // Client is what the controller talks to a BMC through. Probe returns one
 // complete snapshot; the other three methods are the write-side actions the
 // operator needs (power control, log hygiene, physical identification).
@@ -128,6 +137,15 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("%s: %w", path, ErrAuth)
 	case resp.StatusCode == http.StatusNotFound:
 		return fmt.Errorf("%s: %w", path, errNotFound)
+	case resp.StatusCode == http.StatusBadRequest:
+		if out != nil {
+			// Best-effort: a decode failure here must not mask
+			// errBadRequest behind a decode error — the caller's contract is
+			// "check errors.Is(err, errBadRequest), then inspect out",  not
+			// "a nil error means out is populated".
+			_ = json.NewDecoder(resp.Body).Decode(out)
+		}
+		return fmt.Errorf("%s: %w", path, errBadRequest)
 	case resp.StatusCode >= 300:
 		return fmt.Errorf("redfish: %s returned %s", path, resp.Status)
 	}
