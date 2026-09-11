@@ -1119,6 +1119,194 @@ switched by a click.
 
 ---
 
+## Provisioning a machine with Debian
+
+The 2026-09-11 provisioning-Debian lot replaces Talos maintenance-mode
+discovery (dead, see [provisioning.md](provisioning.md)) with a Debian
+preseed built and served per machine: `internal/provision` renders the
+preseed and the partman layout, remasters a netinst ISO, drives the install
+over SSH and a k3s join, and the `FrameInstall` CRD plus its controller
+sequence all of that against a real BMC. `frame-provisiond` builds the
+images and serves them — and their preseeds — to the machine's BMC. Full
+design in
+[`docs/superpowers/specs/2026-09-11-provisioning-debian-design.md`](superpowers/specs/2026-09-11-provisioning-debian-design.md).
+
+This assumes the machine is already a registered, reachable `FrameMachine`
+(the "Registering a machine's BMC" section above) — `FrameInstall` drives
+the BMC the same way the console's power actions do, over the object
+already registered there.
+
+### 1. Create the SSH key Secret
+
+`FrameInstallSpec.sshKeyRef` names a Secret holding `id` (private) and
+`id.pub` (public) — only the public half ever reaches an installer image,
+baked into the preseed's `late_command` as an authorized key.
+
+```bash
+ssh-keygen -t ed25519 -f /tmp/frame-install-key -N "" -C "frame-install"
+kubectl create secret generic frame-install-ssh \
+  --namespace default \
+  --from-file=id=/tmp/frame-install-key \
+  --from-file=id.pub=/tmp/frame-install-key.pub
+shred -u /tmp/frame-install-key /tmp/frame-install-key.pub
+```
+
+### 2. Deploy frame-provisiond and confirm the media listener answers
+
+`kubectl apply -k config/default` (step 2 above) already applies
+`config/provisiond` — it is wired in unconditionally, with no toggle on the
+kustomize side. Two values still need a real one in place of the
+placeholder before this does anything against a machine that isn't CI:
+
+**The manager's `--provisiond-media-url` flag** (`config/manager/manager.yaml`)
+ships `http://ci-placeholder.invalid:30581`. Patch it to the base URL a
+machine's BMC — on the management network, not the pod network — can reach
+`frame-provisiond`'s `NodePort` media listener at, e.g.
+`http://192.168.2.10:30581`. The manager refuses to start on an unset or
+malformed value (`cmd/main.go`'s `validateProvisiondMediaURL`) rather than
+hand a BMC boot arguments that point nowhere. The Helm chart takes this as
+`provisiond.media.url`, required at render time — see "Installing the
+operator via Helm" below.
+
+**`frame-provisiond`'s own `MEDIA_URL` environment variable** — measured,
+not a guess: neither `config/provisiond/deployment.yaml` nor
+`charts/frame/templates/provisiond-deployment.yaml` sets it; both set only
+`IMAGES_DIR`. `cmd/provisiond/main.go`'s `validateMediaURL` refuses to start
+without it, for the same reason the manager's flag exists — every image
+`BuildHandler` builds bakes this address into its own boot arguments as
+where to fetch its preseed from, and provisiond needs to know that address
+independently of the manager to build a correct image. Left unset, the pod
+crash-loops. Set it to the same value as `--provisiond-media-url` above:
+
+```bash
+kubectl set env deployment/provisiond -n frame-system MEDIA_URL=http://192.168.2.10:30581
+kubectl rollout status deployment/provisiond -n frame-system
+```
+
+Then confirm the media listener actually answers from where a BMC would
+reach it — not from inside the cluster, which proves nothing about the
+management network:
+
+```bash
+curl -sf http://192.168.2.10:30581/healthz && echo "media listener reachable"
+```
+
+### 3. Facts about this machine, worth knowing before you point this at it
+
+- **The preseed is fetched over HTTP, never read from the image.** Real
+  hardware refused a local one: booting `file=/cdrom/preseed.cfg` read 79 MB
+  off the virtual CD and stopped before the network came up; `url=` against
+  the media listener above read 139–148 MB and got through, in three trials
+  each way. The mechanism is unknown — nobody watched the console during
+  either boot — and this is recorded as a correlation, not an explanation.
+  It is also why the two values in step 2 are load-bearing rather than
+  cosmetic: a wrong `MEDIA_URL` does not degrade the install, it stops it
+  exactly where the local read used to stop.
+- **`interface=auto` is fixed into every built image.** Measured on hardware
+  with four NICs and one cabled: without it, d-i asks which interface to
+  configure before it can fetch the preseed that would have answered —
+  circular and silent, and it looks like the boot hung rather than like a
+  question nobody answered.
+- **A restart mid-install is a failed install, never a resumed one.** If the
+  manager restarts while a `FrameInstall` is between `Preparing` and
+  `Ready`, the controller marks it `Failed` on the next reconcile rather
+  than replaying the destructive sequence against a machine whose real
+  state it no longer knows. Recreate the `FrameInstall` rather than waiting
+  for it to continue.
+- **Nothing on the controller side confirms the named disks exist on the
+  machine before wiping starts.** A guard against
+  `FrameMachine.status.inventory.drives` was specified, built, and then
+  removed (`frameinstall_controller.go`'s comment where it used to live):
+  lot 1's Redfish client leaves `Drives` nil by design (physical drives sit
+  under HPE's OEM SmartStorage tree, which nothing in this codebase walks),
+  and even populated, a Redfish drive name and a `/dev/disk/by-id` path are
+  different namespaces a BMC has no way to reconcile. The disk-level check
+  that actually runs where the disks are is the preseed's own on-machine
+  size assertion (it powers the machine off rather than partition a disk
+  that doesn't match) — a controller-side equivalent is on this lot's list
+  of gaps to close (see "Not yet executed" below), not something silently
+  covered today.
+- **IML entry `1832`** warns that residual logical-volume metadata can hide
+  disks from the host. The check that settles it is `lsblk -d -o
+  NAME,SIZE,MODEL` on the first booted system: it must list **8** disks.
+  Fewer means the metadata must be cleared before trusting any `by-id` name,
+  and Redfish's SmartStorage tree exposes no action that can do it. On the
+  ML350 Gen9 this lot was built against, Debian sees **7 of the 8** — the
+  absent one is confirmed to be the 1000 GB backup disk, not either of the
+  300 GB SAS disks the mirror layout below names, so the mirror is
+  unaffected. IML `1832` was telling the truth about this chassis, and the
+  extent of it is exactly the one disk. Run the check again on any other
+  machine rather than assuming the same count.
+
+### 4. Create a `FrameInstall`
+
+Mirror layout over the two 300 GB SAS disks, confirmed present by the check
+above:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameInstall
+metadata:
+  name: ml350-g9-install
+  namespace: default
+spec:
+  machineRef: ml350-g9
+  confirmSerial: "<the serial from `kubectl get framemachine ml350-g9 -o jsonpath='{.status.inventory.serialNumber}'`>"
+  hostname: w3
+  network:
+    address: 192.168.2.213/24
+    gateway: 192.168.2.1
+  layout:
+    kind: mirror
+    disks:
+      - byID: /dev/disk/by-id/scsi-<first 300GB SAS disk's real by-id name>
+        sizeBytes: 300000000000
+      - byID: /dev/disk/by-id/scsi-<second 300GB SAS disk's real by-id name>
+        sizeBytes: 300000000000
+  cluster:
+    mode: init
+    k3sVersion: v1.33.4+k3s1
+  sshKeyRef: frame-install-ssh
+EOF
+
+kubectl get frameinstall ml350-g9-install -w
+```
+
+`confirmSerial` must equal Redfish's `Systems/1.SerialNumber` exactly — a
+typo refuses the create rather than installing on the wrong machine. The two
+`by-id` names are read off the machine itself, not off `FrameMachine`'s
+inventory — see the disk-guard note above for why the console's own install
+dialog asks for them as free text rather than offering a picker.
+
+### 5. Read the new cluster's kubeconfig
+
+A `cluster-init` install writes its kubeconfig — with the `server:` address
+rewritten from k3s's own `127.0.0.1` to the node's real address, so it
+reaches from another machine — to a Secret named `<FrameInstall
+name>-kubeconfig`, in the `FrameInstall`'s own namespace by default (or the
+operator's own namespace if the controller was started with
+`OperatorNamespace` set — check there first if the name below 404s):
+
+```bash
+kubectl get secret ml350-g9-install-kubeconfig -n default \
+  -o jsonpath='{.data.kubeconfig}' | base64 -d > ./ml350-g9.kubeconfig
+KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
+```
+
+### Not yet executed
+
+- [ ] The remastered image boots the ML350 Gen9 unattended, in the boot mode
+      Frame set, without a keypress.
+- [ ] partman partitions the two named 300 GB disks as a mirror, and refuses
+      when a named disk is absent.
+- [ ] `k3s server --cluster-init` produces a cluster whose kubeconfig, as
+      rewritten by Frame, reaches it from another machine.
+
+Until these three run, this lot is proven only against fakes and captures.
+
+---
+
 ## Installing the operator via Helm
 
 Alternative to step 2 above, for the operator only. The chart at
