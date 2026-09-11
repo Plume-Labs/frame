@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 
@@ -65,26 +64,25 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
-// validateProvisiondMediaURL refuses anything that is not a usable http(s)
-// base URL -- the same check cmd/provisiond/main.go's validateMediaURL
-// makes on MEDIA_URL, for the same reason: a scheme typo or a bare hostname
-// (which url.Parse accepts without error, putting everything into Path and
-// leaving Scheme/Host empty) would otherwise start this manager cleanly and
-// fail only once HTTPImageStore.Build hands a malformed or relative URL to
-// a BMC that cannot resolve it.
+// validateProvisiondMediaURL refuses a -provisiond-media-url that is set but
+// unusable. It delegates the shape check to provision.ValidateMediaURL, the
+// same one frame-provisiond runs on MEDIA_URL and the FrameInstall
+// controller runs before it touches a machine -- one check, three callers,
+// rather than three copies to drift.
+//
+// **An unset value is not an error here.** It used to be, and it made a flag
+// only the FrameInstall controller uses a hard start-up gate for the whole
+// operator: a cluster that runs Frame and will never provision a machine
+// could not upgrade. Unset is now refused at FrameInstall reconciliation
+// instead (frameinstall_controller.go), where it is actually needed and
+// where the refusal reaches the operator who asked for the install rather
+// than a CrashLoopBackOff nobody connected to it.
 func validateProvisiondMediaURL(raw string) error {
 	if raw == "" {
-		return fmt.Errorf("-provisiond-media-url is not set: FrameInstall creation would build images whose boot arguments point nowhere a BMC can reach")
+		return nil
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("-provisiond-media-url %q: %w", raw, err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("-provisiond-media-url %q: scheme must be http or https, got %q", raw, u.Scheme)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("-provisiond-media-url %q: has no host", raw)
+	if err := provision.ValidateMediaURL(raw); err != nil {
+		return fmt.Errorf("-provisiond-media-url %w", err)
 	}
 	return nil
 }
@@ -168,6 +166,9 @@ func main() {
 	if err := validateProvisiondMediaURL(provisiondMediaURL); err != nil {
 		setupLog.Error(err, "invalid -provisiond-media-url")
 		os.Exit(1)
+	}
+	if provisiondMediaURL == "" {
+		setupLog.Info("no -provisiond-media-url is set: FrameInstall reconciliation will refuse rather than build images whose boot arguments point nowhere; every other controller is unaffected")
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -388,8 +389,13 @@ func main() {
 			BuildURL: provisiondBuildURL,
 			MediaURL: provisiondMediaURL,
 		},
-		SSH:   provision.NewSSHClient(),
-		Nodes: &controller.ClusterNodeChecker{Frame: mgr.GetClient()},
+		// Passed separately from the ImageStore because the reconciler
+		// refuses a FrameInstall in Pending on this value, before the BMC
+		// is touched -- an ImageStore behind an interface cannot be asked
+		// what it was configured with.
+		ProvisiondMediaURL: provisiondMediaURL,
+		SSH:                provision.NewSSHClient(),
+		Nodes:              &controller.ClusterNodeChecker{Frame: mgr.GetClient()},
 		// POD_NAMESPACE is the downward-API-injected namespace this pod
 		// itself runs in (config/manager/manager.yaml,
 		// charts/frame/templates/deployment.yaml) -- there is no other

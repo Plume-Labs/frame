@@ -33,7 +33,10 @@ import {
 import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
-import { toInstall, type Install, type InstallCR, type InstallCreateSpec } from './installs'
+import {
+  installObjectName, randomNameSuffix, toInstall,
+  type Install, type InstallCR, type InstallCreateSpec,
+} from './installs'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -3455,19 +3458,27 @@ class InstallClient {
    * every other namespaced create in this SDK — never the caller's own
    * default, so a screen that never thinks about namespace still lands the
    * object where the console reads.
+   *
+   * The object name is `installObjectName(hostname, randomNameSuffix())`,
+   * not the hostname: design §3 says a reinstallation is a second object
+   * and the first stays readable, and naming by hostname made a retry
+   * collide 409 with the attempt it was retrying. Returns the name so a
+   * caller can say which object it made.
    */
-  async create(name: string, spec: InstallCreateSpec, namespace?: string): Promise<void> {
+  async create(hostname: string, spec: InstallCreateSpec, namespace?: string): Promise<string> {
     const ns = namespace ?? frameNs()
+    const name = installObjectName(hostname, randomNameSuffix())
     await k8sFetch<undefined>(installsPath(ns), {
       action: `create install ${name} on ${spec.machineRef}`,
       method: 'POST',
       body: {
         apiVersion: `${GROUP}/${VERSION}`,
         kind: 'FrameInstall',
-        metadata: { name: toK8sName(name), namespace: ns },
+        metadata: { name, namespace: ns },
         spec,
       },
     })
+    return name
   }
 }
 

@@ -17,15 +17,22 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/rmocq/frame/internal/provision"
 )
 
 func TestAddressWithoutCIDR(t *testing.T) {
@@ -145,5 +152,79 @@ func TestStartMediaListenerAcceptsAFreePort(t *testing.T) {
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// I4. provision.Join returns the kubeconfig in the Joining phase; the Ready
+// poll and the cleanup defer can both fail the install after that. Those are
+// the cases where a cluster exists, has a node, and its only admin
+// credential was sitting in a Result that got thrown away because the error
+// was checked first.
+func TestFinishWritesTheKubeconfigEvenWhenTheInstallFailed(t *testing.T) {
+	for name, res := range map[string]provision.Result{
+		"cleanup failed after Ready": {
+			Phase: provision.PhaseFailed, FailedPhase: provision.PhaseReady,
+			Kubeconfig: []byte("apiVersion: v1\n"), NodeName: "node-zero",
+		},
+		"the node never became Ready": {
+			Phase: provision.PhaseFailed, FailedPhase: provision.PhaseReady,
+			Kubeconfig: []byte("apiVersion: v1\n"),
+		},
+	} {
+		out := filepath.Join(t.TempDir(), "kubeconfig")
+		err := finish(io.Discard, out, res, errors.New("the BMC refused the eject"))
+		if err == nil {
+			t.Errorf("%s: finish returned nil; a failed install must still fail", name)
+		}
+		b, readErr := os.ReadFile(out)
+		if readErr != nil {
+			t.Errorf("%s: the new cluster's kubeconfig was discarded: %v", name, readErr)
+			continue
+		}
+		if string(b) != string(res.Kubeconfig) {
+			t.Errorf("%s: kubeconfig on disk = %q, want %q", name, b, res.Kubeconfig)
+		}
+	}
+}
+
+// The positive control for the test above, and the ordinary path: a
+// successful install writes it too, and says so.
+func TestFinishWritesTheKubeconfigOnSuccess(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "kubeconfig")
+	var buf bytes.Buffer
+	res := provision.Result{Phase: provision.PhaseReady, Kubeconfig: []byte("apiVersion: v1\n"), NodeName: "node-zero"}
+	if err := finish(&buf, out, res, nil); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil || string(b) != string(res.Kubeconfig) {
+		t.Fatalf("kubeconfig on disk = %q, %v", b, err)
+	}
+	if !strings.Contains(buf.String(), out) {
+		t.Errorf("nothing told the operator where the kubeconfig went:\n%s", buf.String())
+	}
+}
+
+// And the case that must stay an error: a run that produced no kubeconfig
+// at all has nothing to write, and saying "written to ..." would be a lie.
+func TestFinishRefusesASuccessThatProducedNoKubeconfig(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "kubeconfig")
+	err := finish(io.Discard, out, provision.Result{Phase: provision.PhaseReady}, nil)
+	if err == nil {
+		t.Fatal("a Ready install with no kubeconfig was reported as success")
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("something was written to %s anyway", out)
+	}
+}
+
+// A write failure is never swallowed, even when the install itself
+// succeeded: the credential is gone either way and the exit code has to say
+// so.
+func TestFinishFailsWhenTheKubeconfigCannotBeWritten(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "no-such-dir", "kubeconfig")
+	res := provision.Result{Phase: provision.PhaseReady, Kubeconfig: []byte("apiVersion: v1\n")}
+	if err := finish(io.Discard, out, res, nil); err == nil {
+		t.Fatal("an unwritable out was reported as success")
 	}
 }

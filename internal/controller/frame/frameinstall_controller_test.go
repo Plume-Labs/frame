@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -93,6 +94,11 @@ func fiTestReconciler(c client.Client, bmc provision.BMC, images provision.Image
 		Images:   images,
 		SSH:      ssh,
 		Nodes:    nodes,
+		// A configured cluster. Every test here that is not about this
+		// setting needs it set, the same way a real cluster does --
+		// TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured
+		// clears it deliberately.
+		ProvisiondMediaURL: "http://192.168.2.50:30581",
 		NewBMC: func(context.Context, client.Client, string, framev1beta1.BMCSpec) (provision.BMC, error) {
 			return bmc, nil
 		},
@@ -1128,5 +1134,110 @@ func TestFrameInstallUIDDiffersBetweenRuns(t *testing.T) {
 			t.Fatalf("two installs were given the same UID %q", uid)
 		}
 		seen[uid] = true
+	}
+}
+
+// I4. provision.Join returns the new cluster's kubeconfig in the Joining
+// phase. Two later things can still fail the install, and a Task 5 ruling
+// deliberately made one of them -- cleanup failure -- an install failure.
+// Gated on res.Phase == Ready, those cases threw the kubeconfig away: the
+// cluster exists, it has a node, and nobody can ever talk to it, because the
+// only copy of its admin credential was in a goroutine that has returned.
+//
+// Driven through a failing EjectMedia, which is a real path Install takes,
+// not a hand-rolled Result.
+func TestFrameInstallKeepsTheKubeconfigWhenCleanupFailsAfterJoining(t *testing.T) {
+	fi := fiInstall("fi-ctrl-kckeep", "fi-ctrl-kckeep-machine")
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+	c := fiTestClient(t, fi, fm, secret)
+	bmc := &fakeInstallBMC{
+		serial:    fi.Spec.ConfirmSerial,
+		failEject: errors.New("the BMC refused the eject"),
+	}
+	images := &fakeInstallImages{}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", images: images}
+	r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	fiAddFinalizer(t, r, key)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	// Waited on Message, not Phase: reportPhase writes Phase == Failed from
+	// Install's own cleanup defer, strictly before Install returns and
+	// finishStatus writes Message/KubeconfigSecret in a second patch.
+	// Polling Phase raced that second write -- measured, this test passed
+	// and failed alternately against the same code.
+	g := gomega.NewWithT(t)
+	g.Eventually(func() string {
+		return fiGet(t, c, key).Status.Message
+	}, 2*time.Second, 10*time.Millisecond).ShouldNot(gomega.BeEmpty())
+
+	// The install still failed. This is not a test that cleanup failure got
+	// downgraded -- it is a test that the credential survived it.
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseFailed) {
+		t.Errorf("phase = %q, want Failed -- cleanup failure is an install failure", got.Status.Phase)
+	}
+	wantSecret := fi.Name + "-kubeconfig"
+	if got.Status.KubeconfigSecret != wantSecret {
+		t.Errorf("kubeconfigSecret = %q, want %q -- the cluster was created and its kubeconfig was discarded with the failure", got.Status.KubeconfigSecret, wantSecret)
+	}
+	var sec corev1.Secret
+	if err := c.Get(context.Background(), types.NamespacedName{Name: wantSecret, Namespace: "default"}, &sec); err != nil {
+		t.Fatalf("the new cluster's kubeconfig Secret was never written: %v", err)
+	}
+	if len(sec.Data["kubeconfig"]) == 0 {
+		t.Error("the kubeconfig Secret is empty")
+	}
+}
+
+// I7. -provisiond-media-url used to be a hard start-up gate for the whole
+// manager, so a cluster that runs Frame and will never provision a machine
+// could not upgrade. It is refused here instead: in Pending, before the BMC
+// is touched and before anything is built, where it reaches the operator
+// who asked for the install.
+func TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured(t *testing.T) {
+	for name, mediaURL := range map[string]string{
+		"unset":           "",
+		"no scheme":       "192.168.2.50:30581",
+		"wrong scheme":    "ftp://192.168.2.50:30581",
+		"scheme, no host": "http:///iso",
+	} {
+		fi := fiInstall("fi-ctrl-nomedia", "fi-ctrl-nomedia-machine")
+		fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+		secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+		c := fiTestClient(t, fi, fm, secret)
+		bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+		images := &fakeInstallImages{}
+		r := fiTestReconciler(c, bmc, images, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
+		r.ProvisiondMediaURL = mediaURL
+		key := fiKey(fi)
+
+		fiAddFinalizer(t, r, key)
+		if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+			t.Fatalf("%s: reconcile: %v", name, err)
+		}
+
+		got := fiGet(t, c, key)
+		if got.Status.Phase != string(provision.PhaseFailed) {
+			t.Errorf("%s: phase = %q, want Failed", name, got.Status.Phase)
+		}
+		if got.Status.FailedPhase != string(provision.PhasePending) {
+			t.Errorf("%s: failedPhase = %q, want Pending -- the refusal must come before the machine is touched", name, got.Status.FailedPhase)
+		}
+		// Nothing was built and the BMC was never asked anything: the
+		// refusal is not "the install ran and could not fetch an image".
+		if images.buildCount() != 0 {
+			t.Errorf("%s: %d image(s) were built", name, images.buildCount())
+		}
+		if bmc.callCount() != 0 {
+			t.Errorf("%s: the BMC was called %d time(s)", name, bmc.callCount())
+		}
+		if !strings.Contains(got.Status.Message, "provisiond") {
+			t.Errorf("%s: message %q does not name what is missing", name, got.Status.Message)
+		}
 	}
 }

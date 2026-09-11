@@ -163,12 +163,18 @@ provisiond:
     # The base URL a machine's BMC -- on the management network, not the
     # pod network -- can reach the media listener above at, e.g.
     # "http://192.168.2.10:30581". Left empty and `required` at render
-    # time, the same way image.repository is: there is no address this
-    # chart could default to that is guaranteed reachable from a management
-    # network it knows nothing about, and the manager itself refuses to
-    # start against an unset or malformed value
-    # (cmd/main.go's validateProvisiondMediaURL) rather than build images
-    # whose boot arguments point nowhere.
+    # time WHEN provisiond.enabled is true: there is no address this chart
+    # could default to that is guaranteed reachable from a management
+    # network it knows nothing about.
+    #
+    # It is deliberately not required when provisiond.enabled is false. It
+    # was required unconditionally, which meant a cluster that runs Frame
+    # and will never provision a machine could not upgrade the chart at
+    # all. The manager now starts without it and refuses FrameInstall
+    # reconciliation instead
+    # (internal/controller/frame/frameinstall_controller.go), which is
+    # where the setting is actually needed and where the refusal reaches
+    # whoever asked for the install.
     #
     # This one key feeds two places, deliberately: the manager's own
     # --provisiond-media-url flag (deployment.yaml) AND frame-provisiond's

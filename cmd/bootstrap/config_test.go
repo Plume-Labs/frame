@@ -333,3 +333,72 @@ func writeTestSSHKeyErr(path string) error {
 	}
 	return os.WriteFile(path+".pub", ssh.MarshalAuthorizedKey(sshPub), 0o644)
 }
+
+// I6. Four inputs were already validated up front on the stated principle
+// that a bad value refused late is refused after the disk is wiped. `out`
+// was not one of them, and it is the one output this command produces that
+// cannot be regenerated: the new cluster's admin credential exists in
+// exactly one place and this path is where it lands.
+func TestLoadConfigRefusesAnOutPathItCannotWriteTo(t *testing.T) {
+	dir := t.TempDir()
+	readOnly := filepath.Join(dir, "readonly")
+	if err := os.Mkdir(readOnly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	existingDir := filepath.Join(dir, "a-directory")
+	if err := os.Mkdir(existingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	unwritableFile := filepath.Join(dir, "unwritable")
+	if err := os.WriteFile(unwritableFile, []byte("x"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, out := range map[string]string{
+		"empty":                              "",
+		"in a directory that does not exist": filepath.Join(dir, "nope", "kubeconfig"),
+		"in a read-only directory":           filepath.Join(readOnly, "kubeconfig"),
+		"is itself a directory":              existingDir,
+		"exists and is not writable":         unwritableFile,
+	} {
+		p := writeConfig(t, validConfig(func(c *Config) { c.Out = out }))
+		if _, err := LoadConfig(p); err == nil {
+			t.Errorf("%s: out %q was accepted; the kubeconfig would be lost after the disk was wiped", name, out)
+		}
+	}
+}
+
+// The positive control: a writable `out` is accepted, and checking it
+// leaves nothing behind -- an empty file at that path would read like a
+// half-written kubeconfig to whoever looks next.
+func TestLoadConfigAcceptsAWritableOutAndCreatesNothing(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "kubeconfig")
+	p := writeConfig(t, validConfig(func(c *Config) { c.Out = out }))
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("a writable out was refused: %v", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("checking out left a file behind at %s", out)
+	}
+}
+
+// An `out` that already exists and is writable is fine: a reinstall
+// overwrites the previous cluster's kubeconfig, which is what it means.
+func TestLoadConfigAcceptsAnExistingWritableOut(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "kubeconfig")
+	if err := os.WriteFile(out, []byte("previous"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := writeConfig(t, validConfig(func(c *Config) { c.Out = out }))
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("an existing writable out was refused: %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil || string(b) != "previous" {
+		t.Errorf("checking out modified it: %q, %v", b, err)
+	}
+}

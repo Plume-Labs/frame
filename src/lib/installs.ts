@@ -308,3 +308,36 @@ export interface InstallCreateSpec {
   bootMode?: 'UEFI' | 'Legacy'
   sshKeyRef: string
 }
+
+// ── Object naming ────────────────────────────────────────────────────────────
+
+/**
+ * The `metadata.name` for a new `FrameInstall`.
+ *
+ * Named after the hostname plus a random suffix, never the hostname alone.
+ * Design §3: "a reinstallation is a second object, and the outcome of the
+ * first stays readable". Naming the object after the hostname made a retry
+ * collide 409 with the failed first attempt — so the one case the design
+ * explicitly supports was the one case the console could not do, and the
+ * error it produced ("already exists") reads like a duplicate request rather
+ * than like the previous failure still being on file.
+ *
+ * `suffix` is a parameter rather than read from `crypto` inside, so a test
+ * can pin the shape without stubbing a global.
+ *
+ * The result is truncated to 63 characters with the suffix preserved: a long
+ * hostname must not silently produce two objects with the same name again.
+ */
+export function installObjectName(hostname: string, suffix: string): string {
+  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')
+  const tail = clean(suffix)
+  const head = clean(hostname).slice(0, 63 - tail.length - 1)
+  return head === '' ? tail : `${head}-${tail}`
+}
+
+/** Six hex characters from the platform CSPRNG, for `installObjectName`. */
+export function randomNameSuffix(): string {
+  const b = new Uint8Array(3)
+  crypto.getRandomValues(b)
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+}

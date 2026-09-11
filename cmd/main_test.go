@@ -20,14 +20,16 @@ func TestValidateProvisiondMediaURLAcceptsAWellFormedHTTPSURL(t *testing.T) {
 	}
 }
 
-// The check this function exists for: presence alone was the entire guard
-// before (an unset -provisiond-media-url used to be handed straight to
-// HTTPImageStore, which would build a relative "/iso/<token>.iso" URL and
-// hand it to a BMC that cannot resolve it), and presence alone never caught
-// this.
-func TestValidateProvisiondMediaURLRefusesAnEmptyValue(t *testing.T) {
-	if err := validateProvisiondMediaURL(""); err == nil {
-		t.Fatal("want an error for an empty value, got nil")
+// An unset value must NOT stop the manager. It used to, which made a flag
+// only the FrameInstall controller uses a hard start-up gate for every
+// controller in the binary: a cluster running Frame that will never
+// provision a machine could not upgrade. Unset is refused at FrameInstall
+// reconciliation instead (internal/controller/frame's
+// TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured), where the
+// refusal reaches the operator who asked for the install.
+func TestValidateProvisiondMediaURLAcceptsAnEmptyValueRatherThanStoppingTheManager(t *testing.T) {
+	if err := validateProvisiondMediaURL(""); err != nil {
+		t.Fatalf("an unset -provisiond-media-url stopped the manager: %v", err)
 	}
 }
 

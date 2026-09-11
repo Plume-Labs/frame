@@ -80,6 +80,12 @@ type fakeInstallBMC struct {
 	// rather than racing a second reconcile against however fast the fakes
 	// happen to resolve.
 	blockSerial chan struct{}
+
+	// failEject drives the one shape that ends an install AFTER Join has
+	// already returned the new cluster's kubeconfig: a Task 5 ruling made
+	// cleanup failure an install failure, so this reaches Failed with
+	// Result.Kubeconfig populated.
+	failEject error
 }
 
 func (b *fakeInstallBMC) Serial(ctx context.Context) (string, error) {
@@ -121,6 +127,9 @@ func (b *fakeInstallBMC) EjectMedia(context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, "eject")
+	if b.failEject != nil {
+		return b.failEject
+	}
 	b.inserted = false
 	return nil
 }
