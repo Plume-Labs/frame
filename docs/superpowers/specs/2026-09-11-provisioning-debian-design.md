@@ -158,11 +158,27 @@ Each phase carries its own timeout.
 ## 5. The installer image
 
 **Built per machine, not generic.** Because no secret enters it (decision 3),
-there is no reason to separate a generic image from a configuration fetched
-during installation — which removes an entire MAC-based identification
-protocol. Hostname, static network, disk recipe, SSH public key and the UID
-marker are baked in. The image *is* the installation intent, and it is
-readable in full.
+there is no reason for a generic image plus a MAC-based identification
+protocol. Each image's boot arguments carry the address of its own preseed.
+
+**The preseed itself travels over HTTP, not on the image — corrected
+2026-09-11 by measurement on the ML350 Gen9, against what this document
+originally said.** Eight boots, measured by bytes read from the virtual CD:
+an image whose boot arguments said `file=/cdrom/preseed.cfg` read 79 MB and
+stopped before reaching the network, while `url=` read 139-148 MB and got
+through. Three trials in each family, constant.
+
+**The mechanism is unknown.** The measured correlation is between the bytes
+read and the preseed's origin; nobody saw the screen, so where a local preseed
+stops is not established. It remains possible that the real cause is something
+else and `url=` avoids it by accident. The decision holds either way because
+the cost of acting on it is a URL instead of a path, and this document records
+it as an observation rather than borrowing authority it does not have.
+
+`interface=auto` is also fixed into every image's boot arguments. The machine
+has four NICs and one cabled, and without it d-i asks which to use — a
+question that arrives *before* it can fetch the preseed that answers it. The
+block is circular, silent, and indistinguishable from a crash.
 
 Build: unpack the Debian netinst, inject `preseed.cfg`, rewrite the boot
 configuration to `auto=true priority=critical`, repack with `xorriso`
@@ -303,6 +319,15 @@ red.
 On the image, the check that matters is not that it boots — it is that **no
 secret material is in it**. The built image is searched for the private key.
 That test fails against the naive version of this design.
+
+**A check that only looks for what you added never sees what you broke.** That
+sentence came from a peer session that rebuilt an initrd, verified its own
+added file was present, and did not notice `cpio` had silently dropped
+`/dev/console` and `/dev/null` because it was not root. It is the same defect
+this lot has found nine times in nine disguises, and it is the shortest
+statement of it anyone here has produced. Every verification step in this lot
+is written to fail that way on purpose: with a positive control, or not at
+all.
 
 **Three things cannot be proven without hardware:** that the image boots, that
 partman partitions, and that k3s joins. They are written as unexecuted until
