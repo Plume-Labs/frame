@@ -1,0 +1,321 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: frameinstalls.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: FrameInstall
+    listKind: FrameInstallList
+    plural: frameinstalls
+    shortNames:
+    - fi
+    singular: frameinstall
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.machineRef
+      name: Machine
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.nodeName
+      name: Node
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameInstall is the Schema for the frameinstalls API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              FrameInstallSpec is one installation's intent. Every destructive input is
+              named explicitly: there is no field here that means "figure it out".
+            properties:
+              bootMode:
+                default: UEFI
+                description: |-
+                  BootMode is set on the machine rather than inherited. An image that
+                  boots in the other mode stays on a black screen and reports nothing.
+                enum:
+                - UEFI
+                - Legacy
+                type: string
+              cluster:
+                description: |-
+                  InstallCluster says whether this installation starts a cluster or joins
+                  one that already exists.
+                properties:
+                  joinTokenRef:
+                    maxLength: 253
+                    type: string
+                  k3sVersion:
+                    maxLength: 32
+                    minLength: 1
+                    type: string
+                  mode:
+                    enum:
+                    - init
+                    - join
+                    type: string
+                  serverURL:
+                    maxLength: 255
+                    type: string
+                required:
+                - k3sVersion
+                - mode
+                type: object
+                x-kubernetes-validations:
+                - message: joining an existing cluster needs both serverURL and joinTokenRef;
+                    the token lives at /var/lib/rancher/k3s/server/node-token on a
+                    server node and must be placed in a Secret first
+                  rule: self.mode != 'join' || (has(self.serverURL) && has(self.joinTokenRef))
+              confirmSerial:
+                description: |-
+                  ConfirmSerial is the machine's serial, retyped by hand. The controller
+                  refuses unless it equals what Redfish reports at
+                  Systems/1.SerialNumber. A typo is a refusal, not an installation
+                  somewhere else; this is what catches pointing at the wrong machine.
+                maxLength: 64
+                minLength: 1
+                type: string
+              hostname:
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              layout:
+                description: InstallLayout is the disk layout recipe.
+                properties:
+                  disks:
+                    items:
+                      description: InstallDisk names one disk the layout consumes.
+                      properties:
+                        byID:
+                          description: |-
+                            ByID is a /dev/disk/by-id path. Kernel names reorder between boots and
+                            between controllers; on the ML350 Gen9, IML entry 1832 warns that
+                            residual volume metadata can hide disks from the host, which changes
+                            that ordering. Naming /dev/sda means installing on whatever is first
+                            that day.
+                          maxLength: 255
+                          type: string
+                          x-kubernetes-validations:
+                          - message: disks must be named by /dev/disk/by-id, never
+                              by kernel name
+                            rule: self.startsWith('/dev/disk/by-id/')
+                        sizeBytes:
+                          description: SizeBytes is asserted on the machine before
+                            partitioning.
+                          format: int64
+                          minimum: 1
+                          type: integer
+                      required:
+                      - byID
+                      - sizeBytes
+                      type: object
+                    maxItems: 8
+                    type: array
+                  kind:
+                    enum:
+                    - single-disk
+                    - mirror
+                    - raw
+                    type: string
+                  raw:
+                    maxLength: 4096
+                    type: string
+                required:
+                - kind
+                type: object
+                x-kubernetes-validations:
+                - message: a mirror is exactly two disks
+                  rule: self.kind != 'mirror' || size(self.disks) == 2
+                - message: single-disk is exactly one disk
+                  rule: self.kind != 'single-disk' || size(self.disks) == 1
+                - message: layout raw needs a recipe
+                  rule: self.kind != 'raw' || has(self.raw)
+              machineRef:
+                description: MachineRef names the FrameMachine whose BMC drives this
+                  installation.
+                maxLength: 253
+                minLength: 1
+                type: string
+              network:
+                description: InstallNetwork is the static network configuration the
+                  installer writes.
+                properties:
+                  address:
+                    maxLength: 43
+                    type: string
+                    x-kubernetes-validations:
+                    - message: address must be a CIDR, e.g. 192.168.2.210/24
+                      rule: isCIDR(self)
+                  bond:
+                    maxLength: 15
+                    type: string
+                  dns:
+                    items:
+                      type: string
+                    maxItems: 3
+                    type: array
+                  gateway:
+                    maxLength: 45
+                    type: string
+                    x-kubernetes-validations:
+                    - message: gateway must be an IP address
+                      rule: isIP(self)
+                  vlan:
+                    format: int32
+                    maximum: 4094
+                    minimum: 0
+                    type: integer
+                required:
+                - address
+                - gateway
+                type: object
+              sshKeyRef:
+                description: |-
+                  SSHKeyRef names a Secret holding "id" (private) and "id.pub" (public).
+                  Only the public half ever reaches an installer image.
+                maxLength: 253
+                minLength: 1
+                type: string
+            required:
+            - cluster
+            - confirmSerial
+            - hostname
+            - layout
+            - machineRef
+            - network
+            - sshKeyRef
+            type: object
+          status:
+            description: FrameInstallStatus defines the observed state of FrameInstall.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failedPhase:
+                description: |-
+                  FailedPhase names where it stopped, which is the first thing anyone
+                  reading a failure needs.
+                maxLength: 32
+                type: string
+              hostKey:
+                description: |-
+                  HostKey is pinned on first contact. Frame cannot know it in advance:
+                  baking it into the image would make the image a secret carrier.
+                maxLength: 512
+                type: string
+              kubeconfigSecret:
+                description: |-
+                  KubeconfigSecret names the Secret holding the new cluster's kubeconfig,
+                  set only when this installation created a cluster.
+                maxLength: 253
+                type: string
+              message:
+                maxLength: 512
+                type: string
+              nodeName:
+                maxLength: 253
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Preparing
+                - MediaAttached
+                - Installing
+                - Installed
+                - Joining
+                - Ready
+                - Failed
+                type: string
+              phaseSince:
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
