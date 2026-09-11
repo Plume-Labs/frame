@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -283,5 +284,67 @@ func TestExecActionNamesThePodAndContainer(t *testing.T) {
 	long := execAction(ref, url.Values{"container": []string{strings.Repeat("x", 400)}})
 	if len(long) > 200 {
 		t.Fatalf("action is %d characters, over the CRD's 200-character cap", len(long))
+	}
+}
+
+// The console builds X-Frame-Action itself for every write that is not an exec,
+// and about twenty of those call sites compose it from values with no bound of
+// their own — a node name, a namespace and a pod name, for instance. Past the
+// CRD's cap the apiserver refuses the FrameTask create, the recorder logs it,
+// and the write proceeds with no record. The failure is a silent hole in the
+// trail, not an error anyone sees, so the bound belongs here rather than at
+// each site that could forget it.
+func TestStartBoundsAnOverlongActionHeader(t *testing.T) {
+	rec, c := newRecorderFixture(t)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/nodes/w2", nil)
+	req.Header.Set("X-Frame-Action", strings.Repeat("x", 400))
+
+	name := rec.Start(context.Background(), Identity{User: "alice@example.com"}, req)
+	if name == "" {
+		t.Fatal("Start recorded nothing")
+	}
+	var task framev1beta1.FrameTask
+	if err := c.Get(context.Background(), client.ObjectKey{Name: name, Namespace: "frame-system"}, &task); err != nil {
+		t.Fatal(err)
+	}
+	if n := utf8.RuneCountInString(task.Spec.Action); n > maxAction {
+		t.Fatalf("Action is %d characters, over the CRD's %d-character cap", n, maxAction)
+	}
+}
+
+// A CRD's maxLength counts characters, not bytes, and these labels carry French
+// copy. Bounding by byte length would cut an accented label at half its allowed
+// size, and a byte slice can land mid-rune and produce invalid UTF-8 — which is
+// a worse record than a short one.
+func TestBoundActionCountsCharactersNotBytes(t *testing.T) {
+	accented := strings.Repeat("é", 250)
+	got := boundAction(accented)
+
+	if n := utf8.RuneCountInString(got); n != maxAction {
+		t.Fatalf("kept %d characters, want exactly %d — a byte bound would have kept 100", n, maxAction)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("bounded label is not valid UTF-8 — the cut landed mid-rune")
+	}
+}
+
+// A label already within the cap must come back untouched, accents and all.
+func TestBoundActionLeavesAShortLabelAlone(t *testing.T) {
+	const s = "redémarrage du déploiement neura/api"
+	if got := boundAction(s); got != s {
+		t.Fatalf("got %q, want it unchanged", got)
+	}
+}
+
+// execAction builds its own label from a container name that arrives in a URL,
+// so it needs the same bound and the same rune-awareness.
+func TestExecActionBoundIsRuneAware(t *testing.T) {
+	ref := framev1beta1.ObjectRef{Resource: "pods", Namespace: "neura", Name: "api-0", Subresource: "exec"}
+	got := execAction(ref, url.Values{"container": []string{strings.Repeat("é", 300)}})
+	if n := utf8.RuneCountInString(got); n > maxAction {
+		t.Fatalf("action is %d characters, over the cap", n)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("action is not valid UTF-8 — the cut landed mid-rune")
 	}
 }
