@@ -3418,3 +3418,118 @@ are written as unexecuted rather than assumed. Until they run, this lot is
 proven against fakes and captures only, which is worth knowing before anyone
 points it at a machine they care about."
 ```
+
+---
+
+### Task 8b: serve the preseed over HTTP
+
+Inserted 2026-09-11 after real-hardware evidence contradicted design decision 2. Tasks 2 and 8 are already merged; this amends both.
+
+**The finding.** On the ML350 Gen9, an image whose boot arguments said `file=/cdrom/preseed.cfg` read 79 MB from the virtual CD and stopped before reaching the network. The same image with `url=` read 139-148 MB and got through. Three trials each way, constant. **The mechanism is unknown** — the measurement is bytes read against preseed origin, and nobody saw the screen. Act on it, but write it down as a correlation.
+
+**Files:**
+- Modify: `internal/provision/iso.go` (`bootArgs`, `Remaster`, `addBootArgs`, `rewriteBootConfigs`)
+- Modify: `internal/provision/server.go` (`BuildHandler`, `MediaHandler`)
+- Modify: `internal/provision/iso_test.go`, `internal/provision/server_test.go`
+
+**Interfaces:**
+- Consumes: `RenderPreseed` (Task 1), `Remaster` (Task 2), the two handlers (Task 8).
+- Produces: `Remaster` gains a parameter.
+
+```go
+// Remaster writes a per-machine installer image whose boot arguments fetch
+// its preseed from preseedURL.
+func Remaster(ctx context.Context, baseISO string, s Spec, preseedURL, out string) error
+```
+
+- [ ] **Step 1: Change the boot arguments**
+
+```go
+// bootArgs is what makes the installer unattended. Virtual media offers no way
+// to pass kernel arguments, so they have to be written into the image's own
+// boot configuration.
+//
+// The preseed is fetched over HTTP rather than read from the image.
+// Measured on an ML350 Gen9 on 2026-09-11: an image saying
+// file=/cdrom/preseed.cfg read 79 MB from the virtual CD and stopped before
+// reaching the network, while url= read 139-148 MB and got through — three
+// trials each way, constant. The mechanism is not understood and the screen
+// was never seen, so this is a correlation acted on, not an explanation.
+//
+// interface=auto is not optional on that machine: it has four NICs and one
+// cabled, and without it d-i asks which to use — before it can fetch the
+// preseed that answers. The block is circular, silent, and looks exactly
+// like a crash.
+//
+// frame=1 is our own marker. It is what addBootArgs checks to avoid
+// rewriting a line twice. It cannot be auto=true, which Debian itself ships
+// on five entries of the real grub.cfg.
+const bootArgsFixed = "auto=true priority=critical interface=auto frame=1"
+
+const alreadyRewritten = "frame=1"
+
+func bootArgs(preseedURL string) string {
+	return bootArgsFixed + " url=" + preseedURL
+}
+```
+
+`Remaster` takes `preseedURL`, refuses an empty one, and **no longer writes `preseed.cfg` onto the image**. One source of truth: a second copy nothing reads is the dead-code-behind-a-passing-test shape this lot has found nine times.
+
+- [ ] **Step 2: Run the existing tests and watch them fail**
+
+Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -run TestRemaster -v`
+Expected: FAIL — the tests that assert `file=/cdrom/preseed.cfg` and that `preseed.cfg` is on the image no longer describe the code. Rewrite them to assert the boot arguments carry `url=`, `interface=auto` and `frame=1`, and that the image does **not** carry `preseed.cfg`.
+
+Keep `TestRemasterMakesTheActualDefaultEntryUnattended` and `TestRemasterRewritesDebiansOwnAutomatedInstallEntries` — both run against the real committed Debian boot configs and both still matter. Confirm the second still discriminates now that the marker changed: Debian's five pre-existing `auto=true` entries must still receive our arguments, which is the whole reason the marker could not be `auto=true`.
+
+- [ ] **Step 3: Serve the preseed from provisiond**
+
+`BuildHandler` renders the preseed once, writes it to `dir/<token>.cfg` beside `dir/<token>.iso`, and passes the media URL for it into `Remaster`. `Remove` deletes both.
+
+`MediaHandler` gains `GET /preseed/{name}` with the same strict name pattern as `/iso/{name}` — 32 hex characters, then `.cfg`. Read-only, same as the rest of that listener: it is the one reachable from the machine network, and the preseed carries no secret by construction (Task 1 refuses private key material and anything shell-unsafe before an image is ever built).
+
+- [ ] **Step 4: Test the new route, with a positive control**
+
+```go
+func TestMediaHandlerServesAPreseedAndRefusesToWriteOne(t *testing.T)
+func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedPreseedNameThatIsAbsent(t *testing.T)
+```
+
+The second is the positive control, and it is the point: without it, "a bad preseed name returned 404" cannot be told apart from "the route never matched" or "this handler says 404 to everything". The `/iso/` route has this pair already; the new route gets the same.
+
+- [ ] **Step 5: Prove the build API and the image agree**
+
+One test asserting that what `BuildHandler` writes at `<token>.cfg` is byte-identical to `RenderPreseed(spec)`, and that the URL baked into the built image's boot arguments is the one that serves it. A preseed served at an address the image does not ask for is an installation that hangs with nothing to read.
+
+- [ ] **Step 6: Mutation proofs**
+
+Three: delete `interface=auto` from `bootArgsFixed`; change `alreadyRewritten` back to `auto=true`; and make `BuildHandler` write the preseed to a name the image's URL does not reference. Each must turn exactly one test red, each must still compile, restore between them.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd /home/rmocq/frame-provision
+git add internal/provision/ docs/
+git commit -m "fix(provision): fetch the preseed over HTTP, because the machine would not read it from the image
+
+Measured on an ML350 Gen9: an image whose boot arguments said
+file=/cdrom/preseed.cfg read 79 MB from the virtual CD and stopped before
+reaching the network; the same image with url= read 139-148 MB and got
+through. Three trials each way, constant.
+
+The mechanism is not understood. The measurement is bytes read against preseed
+origin, and nobody saw the screen, so it remains possible the real cause is
+elsewhere and url= avoids it by accident. Acted on anyway: the cost is a URL
+instead of a path, and the cost of being wrong the other way is discovering it
+on the first real install.
+
+interface=auto is fixed into every image. Four NICs, one cabled, and without
+it d-i asks which to use before it can fetch the preseed that answers --
+circular, silent, and indistinguishable from a crash.
+
+The idempotency marker becomes our own frame=1. It could not stay auto=true,
+which Debian ships itself on five entries of the real grub.cfg, and it cannot
+be the preseed path any more because there is not one.
+
+The image no longer carries preseed.cfg at all. One source of truth."
+```
