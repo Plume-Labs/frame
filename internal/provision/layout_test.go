@@ -87,10 +87,15 @@ func TestPartmanRecipeRejectsAnUnknownLayoutKind(t *testing.T) {
 	}
 }
 
-func TestPartmanRecipeRejectsAnEmptyRawRecipe(t *testing.T) {
-	l := Layout{Kind: LayoutRaw, Raw: "   ", Disks: []Disk{{ByID: "/dev/disk/by-id/scsi-x", SizeBytes: 300 << 30}}}
+// The raw escape hatch is gone (see InstallLayout's comment in
+// api/frame/v1beta1/frameinstall_types.go). What replaces its tests is this:
+// "raw" is now just another unknown kind, refused by the same branch that
+// refuses any other, rather than a shape the apiserver accepts and this
+// function then rejects a phase later.
+func TestPartmanRecipeRejectsTheRemovedRawKind(t *testing.T) {
+	l := Layout{Kind: "raw", Disks: []Disk{{ByID: "/dev/disk/by-id/scsi-x", SizeBytes: 300 << 30}}}
 	if _, err := PartmanRecipe(l); err == nil {
-		t.Fatal("want error for an empty raw recipe, got nil")
+		t.Fatal("want error for the removed raw layout kind, got nil")
 	}
 }
 
@@ -101,23 +106,20 @@ func TestPartmanRecipeRejectsADiskWithUnknownSize(t *testing.T) {
 	}
 }
 
-// A raw layout used to render `early_command string true || {...}` -- no
-// assertion at all, because diskSizeAssertion special-cased LayoutRaw. A raw
-// layout must still name at least one disk, and that disk's size must still
-// be asserted before partman runs.
-func TestPartmanRecipeRawRequiresAtLeastOneDisk(t *testing.T) {
-	l := Layout{Kind: LayoutRaw, Raw: "some-recipe-string"}
-	if _, err := PartmanRecipe(l); err == nil {
-		t.Fatal("want error for a raw layout with no disks named, got nil")
-	}
-}
-
-func TestDiskSizeAssertionAssertsEvenForRawLayouts(t *testing.T) {
-	l := Layout{Kind: LayoutRaw, Raw: "some-recipe-string", Disks: []Disk{
+// Every layout that renders at all names its disks, and every named disk is
+// size-asserted on the machine before partman runs. This used to have to be
+// said specially for the raw kind, which had special-cased itself out of the
+// assertion entirely; with raw gone there is exactly one path and this is
+// the check that it still fires.
+func TestDiskSizeAssertionNamesEveryDiskInTheLayout(t *testing.T) {
+	l := Layout{Kind: LayoutMirror, Disks: []Disk{
 		{ByID: "/dev/disk/by-id/scsi-aaa", SizeBytes: 300 << 30},
+		{ByID: "/dev/disk/by-id/scsi-bbb", SizeBytes: 300 << 30},
 	}}
 	got := diskSizeAssertion(l)
-	if !strings.Contains(got, "blockdev --getsize64 /dev/disk/by-id/scsi-aaa") {
-		t.Errorf("a raw layout's named disk size is not asserted: %q", got)
+	for _, d := range l.Disks {
+		if !strings.Contains(got, "blockdev --getsize64 "+d.ByID) {
+			t.Errorf("disk %s is not size-asserted: %q", d.ByID, got)
+		}
 	}
 }

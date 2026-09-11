@@ -20,25 +20,6 @@ var byIDName = regexp.MustCompile(`^/dev/disk/by-id/[A-Za-z0-9_.:+-]+$`)
 // hypothetical: IML entry 1832 warns that residual logical-volume metadata can
 // hide disks from the host, which changes the ordering.
 func PartmanRecipe(l Layout) (string, error) {
-	if l.Kind == LayoutRaw {
-		if strings.TrimSpace(l.Raw) == "" {
-			return "", fmt.Errorf("layout raw: recipe is empty")
-		}
-		if err := checkPreseedValue("layout raw recipe", l.Raw); err != nil {
-			return "", err
-		}
-		// A raw recipe still names disks so their size can be asserted on the
-		// machine before partman runs. Without this, early_command had nothing
-		// to check and the size assertion silently became `true`.
-		if len(l.Disks) == 0 {
-			return "", fmt.Errorf("layout raw: at least one disk must be named, so its size can be asserted before partman runs")
-		}
-		if err := validateDisks(l.Disks); err != nil {
-			return "", err
-		}
-		return l.Raw, nil
-	}
-
 	want := map[LayoutKind]int{LayoutSingleDisk: 1, LayoutMirror: 2}[l.Kind]
 	if want == 0 {
 		return "", fmt.Errorf("layout %q: unknown kind", l.Kind)

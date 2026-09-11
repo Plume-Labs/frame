@@ -65,27 +65,35 @@ type InstallNetwork struct {
 	// +kubebuilder:validation:MaxLength=45
 	// +kubebuilder:validation:XValidation:rule="isIP(self)",message="gateway must be an IP address"
 	Gateway string `json:"gateway"`
+	// DNS resolvers, as IP addresses. There is no vlan or bond here on
+	// purpose: both were declared, validated by the apiserver, and then
+	// dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
+	// tagged VLAN installed untagged, silently. Task 1 removed them from
+	// provision.Network for exactly that reason and they survived one layer
+	// up, where the operator types. d-i bonding is not something to
+	// implement blind; add them back when a machine needs one.
 	// +kubebuilder:validation:MaxItems=3
 	DNS []string `json:"dns,omitempty"`
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=4094
-	VLAN int32 `json:"vlan,omitempty"`
-	// +kubebuilder:validation:MaxLength=15
-	Bond string `json:"bond,omitempty"`
 }
 
 // InstallLayout is the disk layout recipe.
 //
+// There is no raw escape hatch. It existed, and it could not do its job: a
+// review round required it to be a single line (so the preseed's on-machine
+// disk-size assertion could still be written), and a real partman recipe is
+// multi-line. It was also the one kind whose CEL did not require disks,
+// while PartmanRecipe refused it without them -- so the apiserver accepted a
+// shape the code rejected one phase later, after the object existed and the
+// operator believed it was valid. An unusual layout is added here as a named
+// kind, reviewed, with tests.
+//
 // +kubebuilder:validation:XValidation:rule="self.kind != 'mirror' || size(self.disks) == 2",message="a mirror is exactly two disks"
 // +kubebuilder:validation:XValidation:rule="self.kind != 'single-disk' || size(self.disks) == 1",message="single-disk is exactly one disk"
-// +kubebuilder:validation:XValidation:rule="self.kind != 'raw' || has(self.raw)",message="layout raw needs a recipe"
 type InstallLayout struct {
-	// +kubebuilder:validation:Enum=single-disk;mirror;raw
+	// +kubebuilder:validation:Enum=single-disk;mirror
 	Kind string `json:"kind"`
 	// +kubebuilder:validation:MaxItems=8
 	Disks []InstallDisk `json:"disks,omitempty"`
-	// +kubebuilder:validation:MaxLength=4096
-	Raw string `json:"raw,omitempty"`
 }
 
 // InstallDisk names one disk the layout consumes.

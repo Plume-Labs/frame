@@ -133,15 +133,16 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 				fi.Spec.Layout.Disks[0].ByID = "/dev/sda"
 			}, "disks must be named by /dev/disk/by-id, never by kernel name"),
 
-		Entry("rejects a raw layout with no recipe", "raw-no-recipe",
+		// The raw layout kind was removed (see InstallLayout's own comment):
+		// its CEL did not require disks while PartmanRecipe did, so the
+		// apiserver accepted a shape the code refused one phase later. What
+		// is asserted now is that the enum no longer admits it at all --
+		// which is a stronger statement than the rule this replaces, and
+		// fails against a CRD where "raw" is still an accepted value.
+		Entry("rejects the removed raw layout kind", "raw-kind-removed",
 			func(fi *framev1beta1.FrameInstall) {
-				// Kind moves to raw and Disks is dropped entirely: the
-				// mirror/single-disk disk-count rules both short-circuit to
-				// true on kind != 'mirror' / kind != 'single-disk' regardless
-				// of what Disks holds, so only the raw rule's has(self.raw)
-				// clause is exercised.
-				fi.Spec.Layout = framev1beta1.InstallLayout{Kind: "raw"}
-			}, "layout raw needs a recipe"),
+				fi.Spec.Layout = framev1beta1.InstallLayout{Kind: "raw", Disks: fi.Spec.Layout.Disks}
+			}, "Unsupported value"),
 
 		Entry("rejects mode join with no joinTokenRef", "join-no-token",
 			func(fi *framev1beta1.FrameInstall) {
