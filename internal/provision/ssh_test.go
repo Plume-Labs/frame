@@ -40,13 +40,28 @@ func (f *fakeSession) ReadFile(_ context.Context, path string) ([]byte, error) {
 type fakeSSH struct {
 	attempts  int
 	failUntil int
-	session   Session // an interface, so a recordingSession keeps its own Run/ReadFile
+	session   Session   // an interface, so a recordingSession keeps its own Run/ReadFile
+	sessions  []Session // if non-empty, popped in order across successive successful dials instead of always returning session -- for tests where the first dial (WaitForOurSystem's) and a later one (Install's join dial) need different fakes
+
+	// dialHostKeys records the expectedHostKey argument of every Dial call,
+	// in order. The fake otherwise ignores that argument entirely -- it
+	// never refuses a mismatched key the way the real sshClient does -- so
+	// nothing else about this fake could catch a caller that stopped
+	// passing the pinned key on a later dial. This is what makes that
+	// omission visible to a test built only from fakes.
+	dialHostKeys []string
 }
 
-func (f *fakeSSH) Dial(context.Context, string, string, []byte, string) (Session, error) {
+func (f *fakeSSH) Dial(_ context.Context, _, _ string, _ []byte, expectedHostKey string) (Session, error) {
 	f.attempts++
+	f.dialHostKeys = append(f.dialHostKeys, expectedHostKey)
 	if f.attempts <= f.failUntil {
 		return nil, errors.New("connection refused")
+	}
+	if len(f.sessions) > 0 {
+		s := f.sessions[0]
+		f.sessions = f.sessions[1:]
+		return s, nil
 	}
 	return f.session, nil
 }
