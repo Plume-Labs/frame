@@ -19,6 +19,8 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -62,6 +64,30 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 )
+
+// validateProvisiondMediaURL refuses anything that is not a usable http(s)
+// base URL -- the same check cmd/provisiond/main.go's validateMediaURL
+// makes on MEDIA_URL, for the same reason: a scheme typo or a bare hostname
+// (which url.Parse accepts without error, putting everything into Path and
+// leaving Scheme/Host empty) would otherwise start this manager cleanly and
+// fail only once HTTPImageStore.Build hands a malformed or relative URL to
+// a BMC that cannot resolve it.
+func validateProvisiondMediaURL(raw string) error {
+	if raw == "" {
+		return fmt.Errorf("-provisiond-media-url is not set: FrameInstall creation would build images whose boot arguments point nowhere a BMC can reach")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("-provisiond-media-url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("-provisiond-media-url %q: scheme must be http or https, got %q", raw, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("-provisiond-media-url %q: has no host", raw)
+	}
+	return nil
+}
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -131,6 +157,18 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Checked here, in the first second, rather than left to surface only
+	// once a FrameInstall is created and a built image asks the BMC to
+	// fetch a preseed from a URL that turns out to be malformed -- the same
+	// reasoning cmd/provisiond's validateMediaURL is built on, and the same
+	// check, because a relative "/iso/<token>.iso" handed to an HTTPImageStore
+	// with no MediaURL configured would otherwise be built into an image's
+	// boot arguments and fail only on real hardware, twenty minutes in.
+	if err := validateProvisiondMediaURL(provisiondMediaURL); err != nil {
+		setupLog.Error(err, "invalid -provisiond-media-url")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -352,6 +390,14 @@ func main() {
 		},
 		SSH:   provision.NewSSHClient(),
 		Nodes: &controller.ClusterNodeChecker{Frame: mgr.GetClient()},
+		// POD_NAMESPACE is the downward-API-injected namespace this pod
+		// itself runs in (config/manager/manager.yaml,
+		// charts/frame/templates/deployment.yaml) -- there is no other
+		// portable way for the process to learn it. Empty when unset (a
+		// checkout that has not wired the env var yet), which
+		// writeKubeconfigSecret already treats as "fall back to the
+		// FrameInstall's own namespace".
+		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "frameinstall")
 		os.Exit(1)

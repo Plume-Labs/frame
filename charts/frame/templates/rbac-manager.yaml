@@ -114,6 +114,48 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - frameinstalls
+  - framemachines
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameinstalls/finalizers
+  - framejobs/finalizers
+  - framemachines/finalizers
+  - framenodes/finalizers
+  - frameresourcequotas/finalizers
+  - nodetunings/finalizers
+  - schedulingpolicies/finalizers
+  - talosmachineconfigs/finalizers
+  - talosupgrades/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frameinstalls/status
+  - framejobs/status
+  - framemachines/status
+  - framenodes/status
+  - frameresourcequotas/status
+  - frametasks/status
+  - nodetunings/status
+  - schedulingpolicies/status
+  - talosmachineconfigs/status
+  - talosupgrades/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
   - framejobs
   - framenodes
   - frameresourcequotas
@@ -129,44 +171,17 @@ rules:
   - patch
   - update
   - watch
+# FrameInstallReconciler writes exactly one FrameTask per creation and one
+# per terminal phase (frameinstall_controller.go's recordTask) -- an audit
+# trail this manager never reads back, so create is the only verb on the
+# collection itself; frametasks/status above still needs get/patch/update to
+# set each entry's own outcome after creating it.
 - apiGroups:
   - frame.plume-labs.io
   resources:
-  - framejobs/finalizers
-  - framemachines/finalizers
-  - framenodes/finalizers
-  - frameresourcequotas/finalizers
-  - nodetunings/finalizers
-  - schedulingpolicies/finalizers
-  - talosmachineconfigs/finalizers
-  - talosupgrades/finalizers
+  - frametasks
   verbs:
-  - update
-- apiGroups:
-  - frame.plume-labs.io
-  resources:
-  - framejobs/status
-  - framemachines/status
-  - framenodes/status
-  - frameresourcequotas/status
-  - nodetunings/status
-  - schedulingpolicies/status
-  - talosmachineconfigs/status
-  - talosupgrades/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - frame.plume-labs.io
-  resources:
-  - framemachines
-  verbs:
-  - get
-  - list
-  - patch
-  - update
-  - watch
+  - create
 - apiGroups:
   - frame.plume-labs.io
   resources:
