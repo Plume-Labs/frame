@@ -69,6 +69,51 @@ func TestFetchBaseReusesAMatchingCachedFileWithoutDownloading(t *testing.T) {
 	}
 }
 
+// filepath.Base on a crafted URL like ".../foo/.." yields "..", and joining
+// that under dir would write outside it. The request must never even be
+// sent -- the handler fails the test if it's hit.
+func TestFetchBaseRefusesAURLWhoseBaseNameEscapesTheDirectory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("request sent for %s; the URL should have been refused before any network call", r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+
+	_, err := FetchBase(context.Background(), dir, BaseSource{URL: srv.URL + "/x/..", SHA256: sum([]byte("irrelevant"))})
+	if err == nil {
+		t.Fatal("want an error for a URL whose base name is \"..\", got nil")
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		t.Errorf("a file was written for a refused URL: %s", e.Name())
+	}
+}
+
+// The download is capped so an unbounded server (or a compromised mirror)
+// can't run io.Copy to disk exhaustion before the checksum -- the whole
+// point of the pin -- is ever checked. Shrinking maxBaseImageBytes for the
+// test proves the cap actually truncates, without downloading gigabytes:
+// a truncated body fails its checksum like any other corrupt download, and
+// is deleted the same way.
+func TestFetchBaseCapsTheDownloadSize(t *testing.T) {
+	body := make([]byte, 4096)
+	srv := serveBytes(t, body)
+	dir := t.TempDir()
+
+	orig := maxBaseImageBytes
+	maxBaseImageBytes = 1024
+	t.Cleanup(func() { maxBaseImageBytes = orig })
+
+	_, err := FetchBase(context.Background(), dir, BaseSource{URL: srv.URL + "/x.iso", SHA256: sum(body)})
+	if err == nil {
+		t.Fatal("want a checksum error for a download truncated by the cap, got nil")
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		t.Errorf("a truncated file survived: %s", e.Name())
+	}
+}
+
 // The value in Global Constraints, verified against the published SHA256SUMS
 // on 2026-09-11. If this ever changes, the change is deliberate.
 func TestDefaultBaseIsThePinnedDebianImage(t *testing.T) {
