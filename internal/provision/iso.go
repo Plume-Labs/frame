@@ -84,13 +84,14 @@ var kernelLine = regexp.MustCompile(`(?m)^(\s*(?:append|linux)\s+.*)$`)
 //
 // It walks isolinux/*.cfg and every *.cfg under boot/grub/, rather than
 // opening a fixed two-file list: a real netinst's BIOS boot graph branches
-// into eighteen included files (accessible/dark-contrast variants, rescue
-// mode, speech synthesis, advanced submenus), and which one the firmware
-// actually boots -- gtk.cfg's graphical installer, on a stock BIOS boot, not
-// txt.cfg -- is a menu-selection question Remaster has no way to answer and
-// no need to: rewriting every kernel line it finds means whichever entry the
-// menu graph selects is unattended. An entry nobody boots also carrying the
-// arguments is harmless.
+// into many included files (accessible/dark-contrast variants, rescue mode,
+// speech synthesis, advanced submenus -- see
+// testdata/debian-13.6.0-boot/PROVENANCE.md for the definitive, captured
+// listing), and which one the firmware actually boots -- gtk.cfg's graphical
+// installer, on a stock BIOS boot, not txt.cfg -- is a menu-selection
+// question Remaster has no way to answer and no need to: rewriting every
+// kernel line it finds means whichever entry the menu graph selects is
+// unattended. An entry nobody boots also carrying the arguments is harmless.
 func rewriteBootConfigs(tree string) error {
 	var files []string
 
@@ -116,14 +117,14 @@ func rewriteBootConfigs(tree string) error {
 		}
 	}
 
-	var rewritten int
+	var anyKernelLine bool
 	for _, f := range files {
-		did, err := addBootArgs(f)
+		found, _, err := addBootArgs(f)
 		if err != nil {
 			return err
 		}
-		if did {
-			rewritten++
+		if found {
+			anyKernelLine = true
 		}
 	}
 	// The error fires once for the whole tree, not per file: most files in a
@@ -131,21 +132,38 @@ func rewriteBootConfigs(tree string) error {
 	// line at all, so "this one file has none" is not itself a problem. "none
 	// of them do" is -- that is an image that boots to a menu and waits for a
 	// keypress that will never come, on a machine reachable only by its BMC.
-	if rewritten == 0 {
+	//
+	// This checks whether any kernel line was ever found, not whether any
+	// line was changed: Remaster always works on a freshly extracted tree
+	// today, so every kernel line found is unmarked and every found line is
+	// also a changed line. But if that ever stops being true -- an idempotent
+	// re-run against an already-remastered tree, say -- "0 changed" would
+	// otherwise be reported as "no kernel line to rewrite", which is false:
+	// every kernel line was found and correctly left alone because it
+	// already carried the marker. Those are different failure states and
+	// only one of them is actually a failure.
+	if !anyKernelLine {
 		return fmt.Errorf("no kernel line found to make unattended in %d boot config file(s) under %s", len(files), tree)
 	}
 	return nil
 }
 
 // addBootArgs appends the unattended arguments to every kernel line it finds
-// in path, and reports whether it rewrote anything. Finding nothing to
-// rewrite in one particular file is not an error here -- it is normal for
-// most files in a real isolinux tree -- rewriteBootConfigs is what decides
-// whether the walk as a whole found nothing.
-func addBootArgs(path string) (bool, error) {
+// in path that doesn't already carry them, and reports separately whether it
+// found a kernel line at all (found) and whether it changed the file
+// (changed). A file with no kernel line is not itself a problem -- most files
+// in a real isolinux tree are menu styling or submenu plumbing --
+// rewriteBootConfigs decides whether the walk as a whole found nothing to
+// rewrite. found and changed diverge exactly when every kernel line in the
+// file already carries the marker: that is a legitimate idempotent no-op, not
+// the same thing as a file with nothing to rewrite in the first place.
+func addBootArgs(path string) (found bool, changed bool, err error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return false, err
+		return false, false, err
+	}
+	if !kernelLine.MatchString(string(b)) {
+		return false, false, nil
 	}
 	out := kernelLine.ReplaceAllStringFunc(string(b), func(line string) string {
 		if strings.Contains(line, alreadyRewritten) {
@@ -154,12 +172,12 @@ func addBootArgs(path string) (bool, error) {
 		return line + " " + bootArgs
 	})
 	if out == string(b) {
-		return false, nil
+		return true, false, nil
 	}
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		return false, err
+		return true, false, err
 	}
-	return true, nil
+	return true, true, nil
 }
 
 func run(ctx context.Context, name string, args ...string) error {
