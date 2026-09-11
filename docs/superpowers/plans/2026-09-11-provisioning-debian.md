@@ -2633,16 +2633,21 @@ import (
 // The listener the BMC reaches must not be able to make anything.
 func TestMediaHandlerRefusesEverythingButReadingAnImage(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "tok.iso"), []byte("ISO"), 0o644); err != nil {
+	// A name the strict pattern accepts: 32 hex characters, as newToken()
+	// issues. Inventing a friendlier fixture name here would mean loosening
+	// the pattern to match it, which is the guard loosening itself to pass
+	// its own test.
+	const tok = "0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(filepath.Join(dir, tok+".iso"), []byte("ISO"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h := MediaHandler(dir)
 
 	for _, tc := range []struct{ method, path string; want int }{
-		{http.MethodGet, "/iso/tok.iso", http.StatusOK},
+		{http.MethodGet, "/iso/" + tok + ".iso", http.StatusOK},
 		{http.MethodPost, "/build", http.StatusNotFound},
-		{http.MethodPost, "/iso/tok.iso", http.StatusMethodNotAllowed},
-		{http.MethodDelete, "/iso/tok.iso", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/iso/" + tok + ".iso", http.StatusMethodNotAllowed},
+		{http.MethodDelete, "/iso/" + tok + ".iso", http.StatusMethodNotAllowed},
 	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, nil))
@@ -2654,6 +2659,20 @@ func TestMediaHandlerRefusesEverythingButReadingAnImage(t *testing.T) {
 
 // Serving files by a name the caller supplies is how a media server becomes a
 // way to read /etc/shadow.
+// The positive control for the two traversal cases below. A well-formed name
+// that simply does not exist must reach the filesystem and 404 there — which
+// proves the traversal cases are refused by the name check rather than by the
+// route failing to match, and that a 404 is not simply what this handler
+// returns for everything.
+func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedNameThatIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	rr := httptest.NewRecorder()
+	MediaHandler(dir).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/iso/ffffffffffffffffffffffffffffffff.iso", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404", rr.Code)
+	}
+}
+
 func TestMediaHandlerRefusesPathsThatClimbOut(t *testing.T) {
 	dir := t.TempDir()
 	h := MediaHandler(dir)
