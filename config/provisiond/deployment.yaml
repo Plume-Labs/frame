@@ -8,7 +8,12 @@ metadata:
   # "frame-controller-manager". Baking the prefix in here too would render
   # as "frame-frame-provisiond".
   name: provisiond
-  namespace: frame-system
+  # Placeholder, not the literal "frame-system": config/default's top-level
+  # `namespace:` transformer rewrites every namespace reference (including
+  # this one) at build time, the same as config/manager/manager.yaml's
+  # Deployment, which uses this exact placeholder rather than the real
+  # value.
+  namespace: system
   labels:
     app.kubernetes.io/name: frame-provisiond
     app.kubernetes.io/part-of: frame

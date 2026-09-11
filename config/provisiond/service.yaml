@@ -15,7 +15,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: provisiond
-  namespace: frame-system
+  # Placeholder, not the literal "frame-system" -- see deployment.yaml's
+  # comment.
+  namespace: system
   labels:
     app.kubernetes.io/name: frame-provisiond
     app.kubernetes.io/part-of: frame
@@ -36,7 +38,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: provisiond-media
-  namespace: frame-system
+  # Placeholder, not the literal "frame-system" -- see deployment.yaml's
+  # comment.
+  namespace: system
   labels:
     app.kubernetes.io/name: frame-provisiond
     app.kubernetes.io/part-of: frame

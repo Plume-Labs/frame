@@ -112,13 +112,14 @@ certManager:
 provisiond:
   # frame-provisiond assembles per-machine Debian installer images and
   # serves them to a machine's BMC (2026-09-11, provisioning/Debian lot,
-  # task 8). On by default, unlike most other toggles in this file: the
-  # manager's own FrameInstall reconciliation calls its build API, so a
-  # Helm install without it renders a controller that cannot build an
-  # installer image, with nothing failing until a FrameInstall sits in
-  # Preparing until its deadline. That silent gap between the two install
-  # paths is the thing this value exists to close, not to reopen with a
-  # different default.
+  # task 8). Defaults to true because config/default's kustomization wires
+  # config/provisiond in unconditionally, with no toggle on that side at
+  # all -- so true is what keeps this chart's default render agreeing with
+  # `kustomize build config/default` (see hack/helm-parity.sh's default
+  # parity/content-diff sections, which compare the two unconditionally).
+  # Nothing wires the controller to provisiond's build API yet (that is
+  # Task 9), so this value governs only whether the Deployment/Services
+  # exist, not whether anything calls them.
   enabled: true
   image:
     # Unlike the manager's image.repository, this has a real default
