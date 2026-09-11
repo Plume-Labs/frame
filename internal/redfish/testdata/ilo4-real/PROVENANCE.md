@@ -80,3 +80,44 @@ un identifiant.
 
 Numéros de série et adresses MAC sont conservés tels quels. Dis-le si tu
 préfères les masquer.
+
+## Pagination du journal IML — relevée le 2026-09-11
+
+`$skip` et `$top` sont **ignorés en silence** : `HTTP 200`, toujours les 30
+mêmes membres. Ne pas les utiliser, ils ne signalent pas leur inefficacité.
+
+La pagination est **propriétaire HP** et vit dans `links` :
+
+```json
+"links": {
+  "self":     { "href": ".../Entries/?page=1" },
+  "NextPage": { "count": 30, "page": 2 }
+}
+```
+
+`?page=N` fonctionne. `links.NextPage` est **absent sur la dernière page** —
+c'est le seul terminateur fiable. `?page=7` sur 6 pages rend `HTTP 400`
+`Base.0.10.QueryParameterOutOfRange` avec `MessageArgs: ["7","page","6"]`,
+le troisième argument étant le numéro de page maximal.
+
+175 entrées = 6 pages (30, 30, 30, 30, 30, 25). Ordre **croissant par Id**,
+donc `?page=1` rend les **plus anciennes**. Les plus récentes sont sur la
+dernière page, qu'il faut atteindre en suivant `NextPage` — ou en lisant
+`Total` et en calculant, mais `count` peut varier selon les pages.
+
+### `Members` ne contient que des liens
+
+`Members[]` ne porte que `@odata.id`. **Les entrées complètes sont dans
+`Items[]`** (`Id`, `Created`, `Severity`, `Message`, `Oem.Hp`). Un collecteur
+qui itère `Members` fait 175 requêtes là où 6 suffisent.
+
+### ⚠️ `Created` est absent sur certaines entrées
+
+**15 des 175 entrées n'ont pas de champ `Created`** — toutes des
+`POST Information` de type « DIMM could not be authenticated ». Elles portent
+en revanche `Oem.Hp.Updated`. Un tri par `Created` sans garde plante ou classe
+ces entrées n'importe où. `Oem.Hp.Updated` est présent partout dans cette
+capture et constitue le repli.
+
+Fichiers : `..._page2.json` (chaînage), `..._page6.json` (dernière page,
+`NextPage` absent, entrées sans `Created`), `iml_entries_page_out_of_range_400.json`.

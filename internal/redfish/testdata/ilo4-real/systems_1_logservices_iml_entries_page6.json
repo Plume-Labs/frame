@@ -1,0 +1,931 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries",
+    "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/?page=6",
+    "@odata.type": "#LogEntryCollection.LogEntryCollection",
+    "Description": "Integrated Management Logs view",
+    "Items": [
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/151/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "151",
+            "Message": "POST Information: Processor 1, DIMM 4 could not be authenticated as genuine HPE Memory. Enhanced and extended HPE SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 7,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 472,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:36:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 472,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/151/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/152/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "152",
+            "Message": "POST Information: Processor 1, DIMM 9 could not be authenticated as genuine HPE Memory. Enhanced and extended HPE SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 6,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 473,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:36:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 473,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/152/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/153/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "153",
+            "Message": "POST Information: Processor 1, DIMM 12 could not be authenticated as genuine HPE Memory. Enhanced and extended HPE SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 6,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 474,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:36:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 474,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/153/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/154/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T17:02:00Z",
+            "EntryType": "Oem",
+            "Id": "154",
+            "Message": "POST Error: 313-HPE Smart Storage Battery 1 Failure - Battery Shutdown Event Code: 0x0400. Action: Restart system. Contact HPE support if condition persists.",
+            "Name": "Integrated Management Log",
+            "Number": 8,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 475,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T17:51:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 475,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/154/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/155/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T18:02:00Z",
+            "EntryType": "Oem",
+            "Id": "155",
+            "Message": "System Power Supply: Input Power Loss or Unplugged Power Cord, Verify Power Supply Input (Power Supply 2)",
+            "Name": "Integrated Management Log",
+            "Number": 15,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 1,
+                    "EventNumber": 476,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T18:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 476,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/155/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/156/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T18:02:00Z",
+            "EntryType": "Oem",
+            "Id": "156",
+            "Message": "Smart Storage Battery failure (Battery 1, service information: 0x0A). Action: Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 16,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 477,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T18:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 477,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/156/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/157/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T17:05:00Z",
+            "EntryType": "Oem",
+            "Id": "157",
+            "Message": "POST Error: 239-DIMM Configuration Error - RDIMM and UDIMM are installed in the system. The system cannot have both types of DIMMs installed. - System Halted!",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 478,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T17:05:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 478,
+            "Severity": "Critical",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/157/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/158/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "158",
+            "Message": "POST Information: Processor 1, DIMM 2 could not be authenticated as genuine HPE Memory. Enhanced and extended HPE SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 4,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 479,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:36:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 479,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/158/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/159/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T17:21:00Z",
+            "EntryType": "Oem",
+            "Id": "159",
+            "Message": "Option ROM POST Information: 1832-Slot 0 Drive Array One or more physical drives are not exposed to the host due to presence of logical unit metadata.",
+            "Name": "Integrated Management Log",
+            "Number": 6,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 480,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T17:52:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 480,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/159/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/160/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T17:46:00Z",
+            "EntryType": "Oem",
+            "Id": "160",
+            "Message": "POST Information: 298-IMPORTANT: The Boot Mode has been changed to Legacy Boot Mode for this boot only. On the next reboot, the Boot Mode will return to UEFI Boot Mode. Action: No action required.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 481,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T17:46:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 481,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/160/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/161/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T18:01:00Z",
+            "EntryType": "Oem",
+            "Id": "161",
+            "Message": "POST Error: 313-HPE Smart Storage Battery 1 Failure - Battery Shutdown Event Code: 0x0400. Action: Restart system. Contact HPE support if condition persists.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 482,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T18:01:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 482,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/161/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/162/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T18:01:00Z",
+            "EntryType": "Oem",
+            "Id": "162",
+            "Message": "Option ROM POST Information: 1832-Slot 0 Drive Array One or more physical drives are not exposed to the host due to presence of logical unit metadata.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 483,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T18:01:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 483,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/162/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/163/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T19:01:00Z",
+            "EntryType": "Oem",
+            "Id": "163",
+            "Message": "System Power Supply: Input Power Loss or Unplugged Power Cord, Verify Power Supply Input (Power Supply 2)",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 1,
+                    "EventNumber": 484,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T19:01:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 484,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/163/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/164/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-07T19:01:00Z",
+            "EntryType": "Oem",
+            "Id": "164",
+            "Message": "Smart Storage Battery failure (Battery 1, service information: 0x0A). Action: Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 485,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-07T19:01:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 485,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/164/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/165/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "EntryType": "Oem",
+            "Id": "165",
+            "Message": "POST Information: Processor 1, DIMM 5 could not be authenticated as genuine HPE Memory. Enhanced and extended HPE SmartMemory features will not be active.",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 2,
+                    "EventNumber": 486,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:36:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 486,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/165/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/166/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-09T21:39:00Z",
+            "EntryType": "Oem",
+            "Id": "166",
+            "Message": "POST Error: 313-HPE Smart Storage Battery 1 Failure - Battery Shutdown Event Code: 0x0400. Action: Restart system. Contact HPE support if condition persists.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 487,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-09T21:39:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 487,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/166/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/167/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-09T21:39:00Z",
+            "EntryType": "Oem",
+            "Id": "167",
+            "Message": "Option ROM POST Information: 1832-Slot 0 Drive Array One or more physical drives are not exposed to the host due to presence of logical unit metadata.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 488,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-09T21:39:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 488,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/167/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/168/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-09T22:39:00Z",
+            "EntryType": "Oem",
+            "Id": "168",
+            "Message": "System Power Supply: Input Power Loss or Unplugged Power Cord, Verify Power Supply Input (Power Supply 2)",
+            "Name": "Integrated Management Log",
+            "Number": 3,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 1,
+                    "EventNumber": 489,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-09T22:40:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 489,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/168/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/169/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-09T22:39:00Z",
+            "EntryType": "Oem",
+            "Id": "169",
+            "Message": "Smart Storage Battery failure (Battery 1, service information: 0x0A). Action: Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 4,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 490,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-09T22:40:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 490,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/169/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/170/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-10T18:11:00Z",
+            "EntryType": "Oem",
+            "Id": "170",
+            "Message": "POST Error: 313-HPE Smart Storage Battery 1 Failure - Battery Shutdown Event Code: 0x0400. Action: Restart system. Contact HPE support if condition persists.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 491,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T18:11:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 491,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/170/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/171/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-10T18:12:00Z",
+            "EntryType": "Oem",
+            "Id": "171",
+            "Message": "Option ROM POST Information: 1832-Slot 0 Drive Array One or more physical drives are not exposed to the host due to presence of logical unit metadata.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 492,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T18:12:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 492,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/171/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/172/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-10T19:12:00Z",
+            "EntryType": "Oem",
+            "Id": "172",
+            "Message": "Smart Storage Battery failure (Battery 1, service information: 0x0A). Action: Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 4,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 493,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T19:13:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 493,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/172/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/173/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-10T20:37:00Z",
+            "EntryType": "Oem",
+            "Id": "173",
+            "Message": "POST Error: 313-HPE Smart Storage Battery 1 Failure - Battery Shutdown Event Code: 0x0400. Action: Restart system. Contact HPE support if condition persists.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 1,
+                    "EventNumber": 494,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:37:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 494,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/173/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/174/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-10T20:37:00Z",
+            "EntryType": "Oem",
+            "Id": "174",
+            "Message": "Option ROM POST Information: 1832-Slot 0 Drive Array One or more physical drives are not exposed to the host due to presence of logical unit metadata.",
+            "Name": "Integrated Management Log",
+            "Number": 1,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 10,
+                    "Code": 4,
+                    "EventNumber": 495,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T20:37:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 495,
+            "Severity": "OK",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/174/"
+                }
+            }
+        },
+        {
+            "@odata.context": "/redfish/v1/$metadata#Systems/Members/1/LogServices/IML/Entries/Members/$entity",
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/175/",
+            "@odata.type": "#LogEntry.1.0.0.LogEntry",
+            "Created": "2026-09-10T21:37:00Z",
+            "EntryType": "Oem",
+            "Id": "175",
+            "Message": "Smart Storage Battery failure (Battery 1, service information: 0x0A). Action: Gather AHS log and contact Support",
+            "Name": "Integrated Management Log",
+            "Number": 2,
+            "Oem": {
+                "Hp": {
+                    "@odata.type": "#HpLogEntry.1.0.0.HpLogEntry",
+                    "Class": 11,
+                    "Code": 31,
+                    "EventNumber": 496,
+                    "Repaired": false,
+                    "Type": "HpLogEntry.1.0.0",
+                    "Updated": "2026-09-10T21:37:00Z"
+                }
+            },
+            "OemRecordFormat": "Hp-IML",
+            "RecordId": 496,
+            "Severity": "Warning",
+            "Type": "LogEntry.1.0.0",
+            "links": {
+                "self": {
+                    "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/175/"
+                }
+            }
+        }
+    ],
+    "MemberType": "LogEntry.1",
+    "Members": [
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/151/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/152/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/153/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/154/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/155/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/156/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/157/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/158/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/159/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/160/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/161/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/162/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/163/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/164/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/165/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/166/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/167/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/168/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/169/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/170/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/171/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/172/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/173/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/174/"
+        },
+        {
+            "@odata.id": "/redfish/v1/Systems/1/LogServices/IML/Entries/175/"
+        }
+    ],
+    "Members@odata.count": 175,
+    "Name": "Integrated Management Logs",
+    "Total": 175,
+    "Type": "Collection.1.0.0",
+    "links": {
+        "Member": [
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/151/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/152/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/153/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/154/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/155/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/156/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/157/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/158/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/159/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/160/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/161/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/162/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/163/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/164/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/165/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/166/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/167/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/168/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/169/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/170/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/171/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/172/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/173/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/174/"
+            },
+            {
+                "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/175/"
+            }
+        ],
+        "self": {
+            "href": "/redfish/v1/Systems/1/LogServices/IML/Entries/?page=6"
+        }
+    }
+}
