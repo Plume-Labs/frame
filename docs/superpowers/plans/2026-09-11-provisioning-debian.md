@@ -354,11 +354,63 @@ func TestRenderPreseedCarriesTheStaticNetwork(t *testing.T) {
 
 // Decision 3 of the spec, made testable. The image is served over an
 // unauthenticated HTTP path that any sandbox on the platform can reach.
-func TestRenderPreseedRefusesAnythingThatLooksLikeAPrivateKey(t *testing.T) {
+//
+// The fixture is a whole key file, not a bare PEM block, because a bare PEM
+// fails to parse on its own and would prove nothing. Measured against
+// golang.org/x/crypto/ssh: ParseAuthorizedKey returns no error for a valid
+// public line followed by a private one, and none for the reverse order
+// either. That is the shape a real leak takes -- a Secret whose id.pub holds
+// both halves, or a paste of `cat id_ed25519*`.
+func TestRenderPreseedRefusesAWholeKeyFile(t *testing.T) {
+	const privatePart = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU=\n-----END OPENSSH PRIVATE KEY-----"
+	pub := goodSpec().SSHPublicKey
+
+	for name, key := range map[string]string{
+		"public then private": pub + "\n" + privatePart,
+		"private then public": privatePart + "\n" + pub,
+	} {
+		s := goodSpec()
+		s.SSHPublicKey = key
+		if _, err := RenderPreseed(s); err == nil {
+			t.Errorf("%s: a value carrying private key material was accepted", name)
+		}
+	}
+}
+
+// The dedicated branch earns its place by what it says, so that is what this
+// asserts. Remove the branch and the value is still refused -- by the
+// single-line rule -- but the message stops naming the problem.
+func TestRenderPreseedSaysSoWhenTheValueIsPrivateKeyMaterial(t *testing.T) {
 	s := goodSpec()
-	s.SSHPublicKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNz\n-----END OPENSSH PRIVATE KEY-----"
+	s.SSHPublicKey = s.SSHPublicKey + "\n-----BEGIN OPENSSH PRIVATE KEY-----"
+	_, err := RenderPreseed(s)
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "private key material") {
+		t.Errorf("error = %q; it must name the problem, not just refuse", err)
+	}
+}
+
+// The key is interpolated into a single-quoted shell word in late_command, so
+// a quote in the comment field ends that word and the rest runs as root on the
+// machine being installed. ParseAuthorizedKey accepts such a line without
+// complaint -- measured.
+func TestRenderPreseedRefusesAKeyThatCouldBreakOutOfThePreseedShell(t *testing.T) {
+	for _, comment := range []string{"don't", `back\slash`} {
+		s := goodSpec()
+		s.SSHPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILsytToxkJ2CiWuiv8BZ3hYpu7tFXn7Rwz+kc2gjbPSy " + comment
+		if _, err := RenderPreseed(s); err == nil {
+			t.Errorf("comment %q was accepted; it breaks out of the shell quoting", comment)
+		}
+	}
+}
+
+func TestRenderPreseedRefusesASecondKey(t *testing.T) {
+	s := goodSpec()
+	s.SSHPublicKey = s.SSHPublicKey + " " + s.SSHPublicKey
 	if _, err := RenderPreseed(s); err == nil {
-		t.Fatal("want error for private key material, got nil")
+		t.Fatal("two keys in one value were accepted")
 	}
 }
 
@@ -545,12 +597,42 @@ func RenderPreseed(s Spec) (string, error) {
 // checkPublicKeyOnly is the guard that keeps decision 3 true. The image is
 // served over an unauthenticated HTTP path reachable by every notebook and
 // sandbox on the platform, so anything secret in it is published.
+//
+// ssh.ParseAuthorizedKey is not that guard, and believing it was is the trap
+// here. Handed a whole key file it finds the public line, ignores the private
+// one, and returns no error -- measured, in both orders. So a Secret whose
+// "id.pub" actually holds both halves, or a paste of `cat id_ed25519*`, parses
+// cleanly and would be written into the image verbatim.
+//
+// What closes it is the single-line rule: one key, on one line, and nothing
+// else in the value.
 func checkPublicKeyOnly(key string) error {
-	if strings.Contains(key, "PRIVATE KEY") {
+	k := strings.TrimSpace(key)
+
+	// This branch is for the message, not for the hole -- the single-line rule
+	// below already refuses every multi-line value. But "this is private key
+	// material" is worth far more to whoever hit it than "must be a single
+	// line", so its test asserts the message rather than merely the error.
+	if strings.Contains(k, "PRIVATE KEY") {
 		return fmt.Errorf("ssh key: this is private key material, which must never enter an installer image")
 	}
-	if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(key))); err != nil {
+	if strings.ContainsAny(k, "\n\r") {
+		return fmt.Errorf("ssh key: must be one key on one line; a multi-line value is usually a whole key file, and the parser accepts those by reading the public line and ignoring the rest")
+	}
+	// The value is interpolated into a single-quoted shell word in the
+	// preseed's late_command. A quote or a backslash in the comment field
+	// breaks out of it, which turns a key comment into arbitrary commands run
+	// as root on the machine being installed.
+	if strings.ContainsAny(k, "'\\") {
+		return fmt.Errorf("ssh key: must not contain a quote or a backslash; this value is interpolated into a shell command in the preseed")
+	}
+
+	_, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(k))
+	if err != nil {
 		return fmt.Errorf("ssh key: not a usable authorized_keys line: %w", err)
+	}
+	if len(strings.TrimSpace(string(rest))) != 0 {
+		return fmt.Errorf("ssh key: more than one key in this value")
 	}
 	return nil
 }
@@ -559,13 +641,18 @@ func checkPublicKeyOnly(key string) error {
 - [ ] **Step 8: Run the preseed tests**
 
 Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -v`
-Expected: PASS, eleven tests.
+Expected: PASS, fourteen tests.
 
-- [ ] **Step 9: Prove the private-key guard discriminates**
+- [ ] **Step 9: Prove each half of the key guard discriminates**
 
-Comment out the `strings.Contains(key, "PRIVATE KEY")` branch in `checkPublicKeyOnly`, run the suite, and confirm `TestRenderPreseedRefusesAnythingThatLooksLikeAPrivateKey` turns red. Restore the branch. Paste the failure into the task report — a guard whose test cannot fail is decoration.
+Two mutations, because the guard has two halves that fail differently. Both must still compile — a build failure proves nothing about a test.
 
-Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -run 'PrivateKey' -v`
+1. Delete the `strings.ContainsAny(k, "\n\r")` branch. `TestRenderPreseedRefusesAWholeKeyFile` must turn red, in both of its cases. This is the one that closes the hole.
+2. Restore it, then delete the `strings.Contains(k, "PRIVATE KEY")` branch. `TestRenderPreseedSaysSoWhenTheValueIsPrivateKeyMaterial` must turn red while `TestRenderPreseedRefusesAWholeKeyFile` stays green — the value is still refused, but the message no longer names why.
+
+Restore both. Paste both commands and both failures into the task report.
+
+Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -run 'TestRenderPreseed' -v`
 
 - [ ] **Step 10: Commit**
 
