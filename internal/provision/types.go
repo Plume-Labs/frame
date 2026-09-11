@@ -4,6 +4,11 @@
 // cluster exists yet. The interfaces below are what those consumers implement.
 package provision
 
+import (
+	"context"
+	"time"
+)
+
 type Spec struct {
 	UID          string // proves this system came out of this image
 	Hostname     string
@@ -50,4 +55,77 @@ type ClusterTarget struct {
 	ServerURL  string // only for ClusterJoin
 	JoinToken  string // only for ClusterJoin; never enters the image
 	K3sVersion string
+}
+
+// Phase is where an installation stands in its lifecycle. Every transition is
+// tied to a signal that can be read, not inferred from elapsed time -- except
+// by a phase running out of its own budget, which is itself a read signal.
+type Phase string
+
+const (
+	PhasePending       Phase = "Pending"
+	PhasePreparing     Phase = "Preparing"
+	PhaseMediaAttached Phase = "MediaAttached"
+	PhaseInstalling    Phase = "Installing"
+	PhaseInstalled     Phase = "Installed"
+	PhaseJoining       Phase = "Joining"
+	PhaseReady         Phase = "Ready"
+	PhaseFailed        Phase = "Failed"
+)
+
+// BMC is the out-of-band interface Install drives: attaching installer
+// media, setting a one-time boot override, and power-cycling the machine.
+type BMC interface {
+	Serial(ctx context.Context) (string, error)
+	InsertMedia(ctx context.Context, url string) error
+	MediaInserted(ctx context.Context) (bool, error)
+	EjectMedia(ctx context.Context) error
+	SetBootOnce(ctx context.Context, target, mode string) error // "Cd", "UEFI"|"Legacy"
+	ClearBootOverride(ctx context.Context) error
+	Reset(ctx context.Context, resetType string) error
+}
+
+// ImageStore builds the per-machine installer image Install attaches, and
+// removes it once the machine no longer needs it.
+type ImageStore interface {
+	Build(ctx context.Context, s Spec) (url, token string, err error)
+	Remove(ctx context.Context, token string) error
+}
+
+// NodeChecker answers whether the named node is Ready in the target cluster
+// -- which, when Spec.Cluster.Mode is ClusterInit, is not the cluster Frame
+// itself runs in.
+type NodeChecker interface {
+	NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error)
+}
+
+// Deps are the collaborators Install drives.
+type Deps struct {
+	BMC    BMC
+	Images ImageStore
+	SSH    SSHClient
+	Nodes  NodeChecker
+	Report func(Phase) // called on entering each phase; may be nil
+}
+
+// Options configures one Install call.
+type Options struct {
+	BootMode      string // "UEFI" or "Legacy"; never inherited from the machine
+	SSHUser       string // "frame"
+	SSHKey        []byte // the private half; never enters an image
+	NodeAddress   string // the address the installed system answers on
+	ConfirmSerial string // must equal BMC.Serial(); the destructive guard
+	PhaseTimeout  map[Phase]time.Duration
+	Poll          time.Duration
+}
+
+// Result is what Install produces, win or lose: the phase it ended in, and
+// -- on failure -- the phase it failed in, so the caller can say where
+// without re-deriving it from the returned error.
+type Result struct {
+	Phase       Phase
+	FailedPhase Phase
+	HostKey     string
+	Kubeconfig  []byte
+	NodeName    string
 }
