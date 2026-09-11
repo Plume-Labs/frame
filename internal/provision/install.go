@@ -165,7 +165,7 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 
 		if ejectErr != nil || clearErr != nil || removeErr != nil {
 			priorPhase := res.Phase
-			res.Phase = PhaseFailed
+			report(PhaseFailed)
 			if res.FailedPhase == "" {
 				res.FailedPhase = priorPhase
 			}

@@ -349,10 +349,22 @@ func TestInstallRefusesAnEmptyConfirmedSerialEvenAgainstAnEmptyReportedSerial(t 
 // eject has actually succeeded: removing it regardless would delete the ISO
 // out from under a virtual-media URL that, if eject failed, may still be
 // attached.
+//
+// And proves Report actually observes PhaseFailed here, not just res.Phase:
+// the cleanup defer's first version set res.Phase = PhaseFailed directly,
+// bypassing the report() closure entirely, so Report -- which is what a
+// status-projecting consumer (Task 9's controller) actually watches -- never
+// saw it. That consumer would have watched an install finish at Ready and
+// never learned the machine still had media attached and a boot override
+// set: the single most important thing to report, and the exact case M6 was
+// written to surface. Unreachable before this fix, since the old cleanup
+// discarded its errors entirely.
 func TestInstallFailsIfCleanupFailsEvenAfterReachingReady(t *testing.T) {
 	d, _, i := happyDeps()
 	b := d.BMC.(*fakeBMC)
 	b.failEject = errors.New("BMC refused to eject")
+	var reported []Phase
+	d.Report = func(p Phase) { reported = append(reported, p) }
 
 	res, err := Install(context.Background(), d, goodSpec(), opts())
 	if err == nil {
@@ -366,6 +378,9 @@ func TestInstallFailsIfCleanupFailsEvenAfterReachingReady(t *testing.T) {
 	}
 	if i.removed != 0 {
 		t.Error("the image was removed even though eject failed")
+	}
+	if !containsPhase(reported, PhaseFailed) {
+		t.Errorf("Report never observed PhaseFailed when cleanup failed after Ready: %v", reported)
 	}
 }
 
