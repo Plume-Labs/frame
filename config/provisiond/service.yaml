@@ -1,0 +1,47 @@
+# frame-provisiond gets two Services on purpose, mirroring its two listeners
+# (deployment.yaml). Collapsing them into one Service, even with two ports,
+# would put both behind whatever the Service's own exposure is -- and the
+# whole design point here is that the build listener (writes a 700 MB file
+# from an unauthenticated Spec) and the media listener (read-only, no
+# secret) must never share an exposure.
+---
+# The build API. ClusterIP, reachable by the manager and nothing else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frame-provisiond
+  namespace: frame-system
+  labels:
+    app.kubernetes.io/name: frame-provisiond
+    app.kubernetes.io/part-of: frame
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: frame-provisiond
+  ports:
+    - name: build
+      port: 8080
+      targetPort: build
+      protocol: TCP
+---
+# The media listener. This is the one the BMC reaches, so it is the one
+# exposed on the machine network -- and it is read-only by construction,
+# carrying no secret because no secret ever enters an installer image.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frame-provisiond-media
+  namespace: frame-system
+  labels:
+    app.kubernetes.io/name: frame-provisiond
+    app.kubernetes.io/part-of: frame
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: frame-provisiond
+  ports:
+    - name: media
+      port: 8081
+      targetPort: media
+      nodePort: 30581
+      protocol: TCP
