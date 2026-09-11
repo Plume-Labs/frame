@@ -230,6 +230,9 @@ func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
 // -- the address the BMC, on the management network, will fetch from -- so
 // the two listeners this design deliberately keeps separate are never
 // confused with each other.
+//
+// It sends a Spec with Cluster zeroed: the build side does not use it, and
+// it carries the k3s join token. See Build.
 type HTTPImageStore struct {
 	BuildURL string // the in-cluster build API
 	MediaURL string // the base URL the BMC will fetch from
@@ -244,6 +247,19 @@ func (s *HTTPImageStore) client() *http.Client {
 }
 
 func (s *HTTPImageStore) Build(ctx context.Context, spec Spec) (url, token string, err error) {
+	// The k3s join token never leaves this process. It was being POSTed in
+	// cleartext to an unauthenticated in-cluster build API that has no use
+	// for it: RenderPreseed does not read Spec.Cluster at all, so nothing
+	// downstream of this request ever looks at it. Decision 3 of the design
+	// rejected serving a cluster-membership token from an in-cluster HTTP
+	// endpoint on the grounds that every notebook and every sandbox on the
+	// platform can reach one -- and then this sent it there anyway.
+	//
+	// Zeroed rather than nulled field-by-field, so a future field added to
+	// ClusterTarget is excluded by default instead of leaking until someone
+	// remembers this line.
+	spec.Cluster = ClusterTarget{}
+
 	body, err := json.Marshal(spec)
 	if err != nil {
 		return "", "", fmt.Errorf("encoding spec: %w", err)

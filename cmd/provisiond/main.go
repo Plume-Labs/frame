@@ -22,11 +22,13 @@ limitations under the License.
 // fetches it.
 //
 // It listens on two ports, deliberately. The build API (BuildAddr) accepts
-// a Spec and writes a 700 MB file; it belongs on a ClusterIP Service
-// reachable only by the manager. The media listener (MediaAddr) is
-// read-only and carries no secret by construction; it is the only one a
-// NodePort exposes to the machine network. One port serving both would hand
-// the LAN an endpoint that writes files.
+// a Spec and writes a 700 MB file; it belongs on a ClusterIP Service, which
+// keeps it off the LAN but is reachable by every pod in the cluster -- so
+// it is treated as unauthenticated, and the manager zeroes the cluster
+// target before POSTing to it (internal/provision/server.go). The media
+// listener (MediaAddr) is read-only and carries no secret by construction;
+// it is the only one a NodePort exposes to the machine network. One port
+// serving both would hand the LAN an endpoint that writes files.
 //
 // This command touches no Kubernetes API: it has nothing to watch and
 // nothing to reconcile, only files to build and serve.
@@ -48,7 +50,7 @@ import (
 )
 
 type config struct {
-	BuildAddr string // the build API -- ClusterIP only, never the LAN
+	BuildAddr string // the build API -- ClusterIP only, never the LAN (but every pod can reach a ClusterIP)
 	MediaAddr string // the media listener -- the one a NodePort exposes
 	ImagesDir string
 	// MediaURL is the address the BMC, on the management network, reaches

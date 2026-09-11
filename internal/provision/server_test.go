@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -403,5 +404,52 @@ func TestLocalImageStoreRemoveTakesThePreseedAndTheRunScriptToo(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Errorf("%s survived Remove", name)
 		}
+	}
+}
+
+// I2. The build API is unauthenticated and in-cluster, which on this
+// platform means reachable by every notebook and every coding sandbox --
+// the recorded defect decision 3 of the design was written against. It has
+// no use for the join token: RenderPreseed never reads Spec.Cluster. So the
+// token must not be in the request at all.
+//
+// The assertion is on the raw request body, not on a decoded struct: a
+// decode would only see the fields this package knows about, and the
+// question here is what bytes crossed the wire.
+func TestHTTPImageStoreNeverSendsTheJoinTokenToTheBuildAPI(t *testing.T) {
+	const token = "K10deadbeef::server:supersecretpassword"
+
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(buildResponse{Token: tok})
+	}))
+	defer srv.Close()
+
+	spec := goodSpec()
+	spec.Cluster = ClusterTarget{
+		Mode:       ClusterJoin,
+		ServerURL:  "https://192.168.2.201:6443",
+		JoinToken:  token,
+		K3sVersion: "v1.33.4+k3s1",
+	}
+
+	store := &HTTPImageStore{BuildURL: srv.URL, MediaURL: testMediaURL, Client: srv.Client()}
+	if _, _, err := store.Build(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Positive control: the body really is the marshalled Spec, so "the
+	// token is absent" is a statement about this request rather than about
+	// an empty buffer nobody wrote to.
+	if !strings.Contains(string(body), `"Hostname":"g9"`) {
+		t.Fatalf("the recorded body is not the marshalled Spec at all:\n%s", body)
+	}
+	if strings.Contains(string(body), token) {
+		t.Errorf("the k3s join token was POSTed in cleartext to the build API:\n%s", body)
+	}
+	if strings.Contains(string(body), "192.168.2.201:6443") {
+		t.Errorf("the cluster target was POSTed to a build API that has no use for it:\n%s", body)
 	}
 }

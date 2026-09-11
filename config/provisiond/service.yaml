@@ -5,7 +5,19 @@
 # from an unauthenticated Spec) and the media listener (read-only, no
 # secret) must never share an exposure.
 ---
-# The build API. ClusterIP, reachable by the manager and nothing else.
+# The build API. ClusterIP -- which means reachable by EVERY pod in the
+# cluster, not only by the manager. A ClusterIP Service is not an access
+# control; it only keeps the endpoint off the LAN, which is the one thing it
+# is here to do (the media listener below is the NodePort). On this platform
+# "every pod" includes notebooks and coding sandboxes, so this endpoint is
+# treated as unauthenticated and reachable by them: it accepts a Spec and
+# writes a 700 MB file, and the manager deliberately zeroes Spec.Cluster
+# before POSTing so the k3s join token never reaches it
+# (internal/provision/server.go, HTTPImageStore.Build).
+#
+# An earlier version of this comment said "reachable by the manager and
+# nothing else", which is false and was the stated reason the token being
+# sent here looked acceptable.
 #
 # Both Service names below are bare, not "frame-provisiond"/
 # "frame-provisiond-media": config/default/kustomization.yaml's namePrefix
