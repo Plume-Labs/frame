@@ -91,8 +91,13 @@ func TestJoinRequiresATokenAndAServerURL(t *testing.T) {
 	}
 }
 
+// The kubeconfig fixture is supplied so nothing downstream of
+// validateK3sVersion could produce the error instead: with an empty files
+// map, Join would still fail -- at the ReadFile step -- even with the
+// version guard disabled entirely, and the test would prove nothing about
+// that guard specifically.
 func TestJoinRefusesAnUnpinnedK3sVersion(t *testing.T) {
-	s := &recordingSession{files: map[string]string{}}
+	s := &recordingSession{files: map[string]string{"/etc/rancher/k3s/k3s.yaml": k3sKubeconfig}}
 	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit}, "192.168.2.210"); err == nil {
 		t.Fatal("want an error for an empty k3s version, got nil")
 	}
@@ -108,6 +113,18 @@ func TestRewriteKubeconfigServerReplacesOnlyTheServer(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "certificate-authority-data") {
 		t.Error("the rewrite dropped the CA data")
+	}
+}
+
+// An IPv6 node address must come out bracketed in the rewritten server URL
+// ("[::1]:6443", not "::1:6443", which is not even a valid URL authority).
+func TestRewriteKubeconfigServerBracketsAnIPv6Address(t *testing.T) {
+	out, err := RewriteKubeconfigServer([]byte(k3sKubeconfig), "::1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "https://[::1]:6443") {
+		t.Errorf("IPv6 address was not bracketed:\n%s", out)
 	}
 }
 
@@ -238,6 +255,16 @@ func TestValidateServerURLRefusesNoHost(t *testing.T) {
 	}
 }
 
+// "https://user:pass@192.168.2.201:6443" satisfies every other check here --
+// https scheme, non-empty host, no path/query/fragment -- so refusing it is
+// what isolates this guard specifically: disabling it alone, and nothing
+// else, is what would need to turn this test red.
+func TestValidateServerURLRefusesEmbeddedCredentials(t *testing.T) {
+	if err := validateServerURL("https://user:pass@192.168.2.201:6443"); err == nil {
+		t.Fatal("a server URL with embedded credentials was accepted")
+	}
+}
+
 func TestValidateServerURLAcceptsSchemeAndHostOnly(t *testing.T) {
 	if err := validateServerURL("https://192.168.2.201:6443"); err != nil {
 		t.Errorf("a scheme-and-host-only server URL was refused: %v", err)
@@ -264,8 +291,15 @@ func TestValidateNodeAddressAcceptsAnIP(t *testing.T) {
 // --- wiring: Join actually calls the validators above, not just the
 // empty-string checks the earlier tests in this file cover ---
 
+// Same masking risk as TestJoinRefusesAnUnpinnedK3sVersion above, and it
+// bit this exact test in review: with an empty files map, disabling
+// validateK3sVersion entirely still left this test green, because Join fails
+// at the ReadFile step regardless. The kubeconfig fixture below closes that
+// -- with it present, a defeated version guard makes Join succeed all the
+// way through, so only the guard being intact turns this red for the right
+// reason.
 func TestJoinRefusesAMalformedK3sVersion(t *testing.T) {
-	s := &recordingSession{files: map[string]string{}}
+	s := &recordingSession{files: map[string]string{"/etc/rancher/k3s/k3s.yaml": k3sKubeconfig}}
 	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "1.33.4"}, "192.168.2.210"); err == nil {
 		t.Fatal("a malformed but non-empty k3s version was accepted")
 	}
