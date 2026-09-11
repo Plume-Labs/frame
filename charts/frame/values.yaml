@@ -169,6 +169,17 @@ provisiond:
     # start against an unset or malformed value
     # (cmd/main.go's validateProvisiondMediaURL) rather than build images
     # whose boot arguments point nowhere.
+    #
+    # This one key feeds two places, deliberately: the manager's own
+    # --provisiond-media-url flag (deployment.yaml) AND frame-provisiond's
+    # own MEDIA_URL env var (provisiond-deployment.yaml) -- it is the same
+    # address seen from both sides of the same relationship (the manager
+    # hands it to a BMC's boot arguments; provisiond bakes it into the image
+    # those arguments point at), so a second key here would only be a second
+    # place for the two to drift apart. If the manager and provisiond ever
+    # need genuinely different values -- e.g. provisiond fronted by a
+    # different Service or Ingress than the manager can reach -- split this
+    # into two keys then, with this comment saying why.
     url: ""
   build:
     # The in-cluster build API's own address is always

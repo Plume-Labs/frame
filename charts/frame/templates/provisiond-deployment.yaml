@@ -51,6 +51,17 @@ spec:
             # them back out of.
             - name: IMAGES_DIR
               value: /var/lib/frame/images
+            # Same value as deployment.yaml's --provisiond-media-url flag,
+            # deliberately from the same .Values.provisiond.media.url key
+            # rather than a second one: it is one address seen from two
+            # sides (the manager hands it to a BMC's boot arguments;
+            # provisiond bakes it into the image those arguments point at),
+            # so asking an operator to set it twice is exactly how the two
+            # drift. required here too, not just there — provisiond refuses
+            # to start without a valid one (cmd/provisiond/main.go's
+            # validateMediaURL), for the same reason the manager does.
+            - name: MEDIA_URL
+              value: {{ required "provisiond.media.url is required: the base URL a machine's BMC (on the management network, not the pod network) can reach frame-provisiond's NodePort media listener at, e.g. http://192.168.2.10:30581. provisiond will not start without it." .Values.provisiond.media.url | quote }}
           ports:
             # The build API. Reachable only through the ClusterIP Service
             # in provisiond-service.yaml -- never through the NodePort one.
