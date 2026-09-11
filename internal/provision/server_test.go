@@ -360,8 +360,8 @@ func runURLFromPreseed(t *testing.T, preseed string) string {
 	t.Helper()
 	const prefix = "d-i preseed/run string "
 	for _, line := range strings.Split(preseed, "\n") {
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if v, ok := strings.CutPrefix(line, prefix); ok {
+			return strings.TrimSpace(v)
 		}
 	}
 	t.Fatalf("the rendered preseed carries no preseed/run directive at all:\n%s", preseed)

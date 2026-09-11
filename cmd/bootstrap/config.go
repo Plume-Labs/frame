@@ -187,7 +187,8 @@ func validateMediaBaseURL(raw string) error {
 	}
 	if u.Port() != listenPort {
 		return fmt.Errorf(
-			"mediaBaseURL %q names port %q, but frame bootstrap serves the installer image and preseed on port %s; the BMC would fetch from somewhere nothing is listening",
+			"mediaBaseURL %q names port %q, but frame bootstrap serves the installer image and preseed on "+
+				"port %s; the BMC would fetch from somewhere nothing is listening",
 			raw, u.Port(), listenPort)
 	}
 	return nil
@@ -205,7 +206,8 @@ func validateMediaBaseURL(raw string) error {
 func checkOutWritable(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf(
-			"out is empty: it is where the new cluster's kubeconfig is written, and that credential exists nowhere else -- refusing before anything is wiped rather than after")
+			"out is empty: it is where the new cluster's kubeconfig is written, and that credential " +
+				"exists nowhere else -- refusing before anything is wiped rather than after")
 	}
 
 	if info, err := os.Stat(path); err == nil {

@@ -223,7 +223,7 @@ func finish(stdout io.Writer, out string, res provision.Result, installErr error
 		if err := os.WriteFile(out, res.Kubeconfig, 0o600); err != nil {
 			writeErr = fmt.Errorf("writing kubeconfig to %s: %w", out, err)
 		} else {
-			fmt.Fprintf(stdout, "frame bootstrap: kubeconfig for the new cluster written to %s\n", out)
+			_, _ = fmt.Fprintf(stdout, "frame bootstrap: kubeconfig for the new cluster written to %s\n", out)
 		}
 	}
 
@@ -243,7 +243,7 @@ func finish(stdout io.Writer, out string, res provision.Result, installErr error
 		return fmt.Errorf("install reached %s with no kubeconfig produced; nothing to write to %s", res.Phase, out)
 	}
 
-	fmt.Fprintf(stdout, "frame bootstrap: node %s is Ready\n", res.NodeName)
+	_, _ = fmt.Fprintf(stdout, "frame bootstrap: node %s is Ready\n", res.NodeName)
 	return nil
 }
 

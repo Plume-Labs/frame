@@ -256,7 +256,7 @@ func (s *HTTPImageStore) client() *http.Client {
 	return http.DefaultClient
 }
 
-func (s *HTTPImageStore) Build(ctx context.Context, spec Spec) (url, token string, err error) {
+func (s *HTTPImageStore) Build(ctx context.Context, spec Spec) (imageURL, token string, err error) {
 	// The k3s join token never leaves this process. It was being POSTed in
 	// cleartext to an unauthenticated in-cluster build API that has no use
 	// for it: RenderPreseed does not read Spec.Cluster at all, so nothing
@@ -366,7 +366,7 @@ type LocalImageStore struct {
 	MediaURL string // how the BMC reaches this machine, e.g. http://192.168.2.50:8081
 }
 
-func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (url, token string, err error) {
+func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (imageURL, token string, err error) {
 	// Same order as BuildHandler, for the same reason: refuse before
 	// fetching or building anything. The render itself waits for the token,
 	// because the preseed names its preseed/run script by a token-derived
