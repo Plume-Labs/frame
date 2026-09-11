@@ -87,10 +87,16 @@ one.
    existing Kubernetes node. Small, independent of any OS decision, and it
    closes the latent defect above. This is the only piece that is urgent.
 
-2. **Design provisioning on a Debian image.** What builds the image, what
-   installs it, what joins the node, and what — if anything — Frame owns of
-   that. Until this exists, machines are installed by hand and Frame learns
-   about them afterwards, which is exactly what step 1 makes work.
+2. **Design provisioning on a Debian image. Done — designed and implemented.**
+   `docs/superpowers/specs/2026-09-11-provisioning-debian-design.md` is the
+   design; `docs/superpowers/plans/2026-09-11-provisioning-debian.md` is the
+   plan that built it, in fourteen tasks: preseed rendering and partman
+   layouts, ISO remastering, an SSH-based join, the `FrameInstall` CRD and its
+   controller, `frame-provisiond` (which builds and serves the images and
+   their preseeds), and `frame bootstrap` for node zero when no cluster
+   exists yet. See [deployment.md](deployment.md#provisioning-a-machine-with-debian)
+   for the runbook and the claims this lot has not yet proven against real
+   hardware.
 
 3. **Retire the Talos CRDs.** Deliberately last. `v1beta1` is frozen and
    removing a served kind is a breaking API change; the kinds also appear in

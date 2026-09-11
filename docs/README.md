@@ -11,10 +11,10 @@ Engineering documentation for the Frame operator and control plane. For the prod
 | [api.md](api.md) | CRD API, TypeScript SDK (`FrameClient`), authentication |
 | [crd-reference.md](crd-reference.md) | All nine CRDs across two API groups (`frame.plume-labs.io`, `services.plume-labs.io`) — fields, controllers, webhooks |
 | [development.md](development.md) | Build, test, lint, run — Go operator and React UI |
-| [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm |
+| [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm, [provisioning a machine with Debian](deployment.md#provisioning-a-machine-with-debian) |
 | [upgrading.md](upgrading.md) | Migrating a kustomize install to Helm, chart-to-chart upgrades, what schema stability to expect pre-Phase B |
 | [roadmap.md](roadmap.md) | Path from the `v1beta1` beta to stable V1, plus the new API groups building alongside it |
-| [provisioning.md](provisioning.md) | How a machine becomes a node: the 2026-09-10 decision to drop Talos, what it invalidates, and the three pieces of work that follow |
+| [provisioning.md](provisioning.md) | How a machine becomes a node: the 2026-09-10 decision to drop Talos, what it invalidates, and the three pieces of work that follow (piece 2, provisioning on Debian, is designed and implemented — runbook in [deployment.md](deployment.md#provisioning-a-machine-with-debian)) |
 | [runbook.md](runbook.md) | Operating the live cluster: health, failover, certificates, storage migration, backup/restore, control-plane containment |
 
 ## 30-second model
