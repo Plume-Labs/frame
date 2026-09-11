@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -47,7 +48,12 @@ d-i clock-setup/ntp boolean true
 # Refuse before partman touches anything if a named disk is not the size Frame
 # was told it is. Frame checked the machine's serial remotely; this checks its
 # disks locally. Both can be wrong, but not in the same way.
-d-i preseed/early_command string {{ .SizeAssertion }} || { echo "FRAME: named disk is not the expected size, refusing" >&2; exit 1; }
+#
+# This does not depend on a non-zero early_command aborting the install --
+# that behaviour could not be verified here. It powers the machine off
+# directly instead: an untouched, powered-off machine is a safe failure, and
+# Frame's Installing phase times out and reports it.
+d-i preseed/early_command string {{ .SizeAssertion }} || { echo "FRAME: named disk is not the expected size, refusing" > /dev/console; poweroff -f; }
 
 {{ .Partman }}
 tasksel tasksel/first multiselect standard, ssh-server
@@ -71,14 +77,24 @@ d-i preseed/late_command string \
   in-target chmod 444 {{ .MarkerPath }}
 `
 
+// preseedTmpl is parsed once at package init so a template typo panics at
+// build/test time rather than on the first call to RenderPreseed.
+var preseedTmpl = template.Must(template.New("preseed").Parse(preseedTemplate))
+
 // RenderPreseed turns a Spec into a preseed.cfg.
 //
 // It refuses rather than emits when something is wrong, because the two ways
 // this can go badly are silent: an image carrying secret material, and an
 // installation that wipes a disk nobody named.
 func RenderPreseed(s Spec) (string, error) {
+	if err := checkPreseedValue("UID", s.UID); err != nil {
+		return "", err
+	}
 	if strings.TrimSpace(s.UID) == "" {
 		return "", fmt.Errorf("spec: UID is empty, so the installed system could not be told apart from any other machine at that address")
+	}
+	if err := checkPreseedValue("hostname", s.Hostname); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(s.Hostname) == "" {
 		return "", fmt.Errorf("spec: hostname is empty")
@@ -87,12 +103,28 @@ func RenderPreseed(s Spec) (string, error) {
 		return "", err
 	}
 
+	if err := checkPreseedValue("network address", s.Network.Address); err != nil {
+		return "", err
+	}
 	ip, ipnet, err := net.ParseCIDR(s.Network.Address)
 	if err != nil {
 		return "", fmt.Errorf("network address %q: %w", s.Network.Address, err)
 	}
+	if ip.To4() == nil {
+		return "", fmt.Errorf("network address %q: must be IPv4", s.Network.Address)
+	}
+
+	if err := checkPreseedValue("network gateway", s.Network.Gateway); err != nil {
+		return "", err
+	}
 	if net.ParseIP(s.Network.Gateway) == nil {
 		return "", fmt.Errorf("network gateway %q is not an IP address", s.Network.Gateway)
+	}
+
+	for _, dns := range s.Network.DNS {
+		if err := checkPreseedValue("network DNS", dns); err != nil {
+			return "", err
+		}
 	}
 
 	partman, err := PartmanRecipe(s.Layout)
@@ -118,10 +150,35 @@ func RenderPreseed(s Spec) (string, error) {
 	}
 
 	var b strings.Builder
-	if err := template.Must(template.New("preseed").Parse(preseedTemplate)).Execute(&b, data); err != nil {
+	if err := preseedTmpl.Execute(&b, data); err != nil {
 		return "", err
 	}
 	return b.String(), nil
+}
+
+// checkPreseedValue refuses what breaks the two contexts every interpolated
+// value lands in: a preseed directive line, where a newline starts a new
+// directive that runs as root, and a single-quoted shell word inside
+// early_command and late_command, where a quote or a backslash ends the word
+// and the rest becomes commands.
+//
+// It is one function applied to every field rather than a guard per field
+// because a guard per field is exactly what failed here: SSHPublicKey was
+// hardened four times while UID, Hostname, DNS and Disk.ByID -- same two
+// contexts -- had none.
+func checkPreseedValue(field, v string) error {
+	if strings.ContainsAny(v, "\n\r") {
+		return fmt.Errorf("%s: must not contain a newline; in a preseed a newline starts a new directive, which runs as root", field)
+	}
+	if strings.ContainsAny(v, "'\\") {
+		return fmt.Errorf("%s: must not contain a quote or a backslash; this value is interpolated into a shell command in the preseed", field)
+	}
+	for _, r := range v {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%s: must not contain control characters", field)
+		}
+	}
+	return nil
 }
 
 // checkPublicKeyOnly is the guard that keeps decision 3 true. The image is
@@ -135,16 +192,21 @@ func RenderPreseed(s Spec) (string, error) {
 // cleanly and would be written into the image verbatim.
 //
 // What closes it is the single-line rule: one key, on one line, and nothing
-// else in the value.
+// else in the value. checkPreseedValue is not used here, and its newline and
+// metacharacter checks are kept duplicated on purpose: this function's
+// messages are field-specific, and its tests assert those messages, which a
+// shared, generic message would not let them do.
 func checkPublicKeyOnly(key string) error {
 	k := strings.TrimSpace(key)
 
 	// A boundary this value crosses twice: into a generated preseed, and from
 	// there onto a machine's disk. An ed25519 line is about 100 characters and
 	// an RSA-4096 one about 750; 1024 admits both and refuses a paste of
-	// something else entirely.
-	if len(k) == 0 || len(k) > 1024 {
-		return fmt.Errorf("ssh key: must be between 1 and 1024 characters, got %d", len(k))
+	// something else entirely. Counted in characters, not bytes -- the message
+	// says characters, and a byte count would be wrong for a key comment
+	// containing non-ASCII text.
+	if n := utf8.RuneCountInString(k); n == 0 || n > 1024 {
+		return fmt.Errorf("ssh key: must be between 1 and 1024 characters, got %d", n)
 	}
 
 	// This branch is for the message, not for the hole -- the single-line rule
@@ -171,9 +233,18 @@ func checkPublicKeyOnly(key string) error {
 		return fmt.Errorf("ssh key: must not contain a quote or a backslash; this value is interpolated into a shell command in the preseed")
 	}
 
-	_, comment, _, _, err := ssh.ParseAuthorizedKey([]byte(k))
+	_, comment, options, _, err := ssh.ParseAuthorizedKey([]byte(k))
 	if err != nil {
 		return fmt.Errorf("ssh key: not a usable authorized_keys line: %w", err)
+	}
+	// An authorized_keys options prefix (command=, no-pty, and the rest) is
+	// exactly "something else in the value" -- measured, a key line carrying
+	// command="curl ...|sh",no-pty parses cleanly, and the double quotes inside
+	// it are inert in the single-quoted echo that writes this file, so the
+	// metacharacter check above never sees it. It would run as Frame's own
+	// login, "frame", who has NOPASSWD:ALL.
+	if len(options) != 0 {
+		return fmt.Errorf("ssh key: carries authorized_keys options (%q); this value must be a bare key", strings.Join(options, ","))
 	}
 	// The parser's trailing remainder is not the check it looks like: it holds
 	// unconsumed *lines*, never unconsumed words, and the single-line rule

