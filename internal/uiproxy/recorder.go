@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -73,10 +74,26 @@ func execAction(ref framev1beta1.ObjectRef, q url.Values) string {
 	if c := q.Get("container"); c != "" {
 		s = fmt.Sprintf("%s (%s)", s, c)
 	}
-	if len(s) > maxAction {
-		s = s[:maxAction]
+	return boundAction(s)
+}
+
+// boundAction holds a label inside FrameTaskSpec.Action's cap, counting
+// characters rather than bytes because that is what a CRD's maxLength counts.
+// A byte bound would cut an accented label at half its allowance, and a byte
+// slice can land mid-rune and store invalid UTF-8 — a worse record than a
+// short one.
+//
+// It lives here, where every label passes through, rather than at the call
+// sites that compose one. About twenty of those exist in the console and they
+// compose from values carrying no bound of their own — a node name, a
+// namespace and a pod name, for instance. A site that forgets costs a silent
+// hole in the trail rather than a visible error, so the bound belongs at the
+// choke point and not at the memory of whoever adds the next site.
+func boundAction(s string) string {
+	if utf8.RuneCountInString(s) <= maxAction {
+		return s
 	}
-	return s
+	return string([]rune(s)[:maxAction])
 }
 
 // isDryRun reports whether the request asked the apiserver to validate without
@@ -147,7 +164,7 @@ func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) 
 	if verb == "" {
 		return ""
 	}
-	action := r.Header.Get("X-Frame-Action")
+	action := boundAction(r.Header.Get("X-Frame-Action"))
 	if action == "" && ref.Subresource == "exec" && isExecUpgrade(r) {
 		action = execAction(ref, q)
 	}
