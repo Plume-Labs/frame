@@ -118,8 +118,14 @@ const maxJoinTokenLen = 512
 
 // validateJoinToken refuses anything outside a k3s token's character set or
 // length, regardless of whether shellQuote would also escape it correctly.
+//
+// There is no separate v == "" check: joinTokenPattern requires one or more
+// characters, so an empty token already fails the pattern below. A dedicated
+// empty check would be dead code behind a passing test -- the test for it
+// stays, but it passes because the pattern refuses "", not because of a
+// branch that never runs.
 func validateJoinToken(v string) error {
-	if v == "" || len(v) > maxJoinTokenLen {
+	if len(v) > maxJoinTokenLen {
 		return fmt.Errorf("join token: must be between 1 and %d characters, got %d", maxJoinTokenLen, len(v))
 	}
 	if !joinTokenPattern.MatchString(v) {
@@ -129,10 +135,11 @@ func validateJoinToken(v string) error {
 }
 
 // validateServerURL refuses anything that is not exactly a k3s server
-// address: https, a host, and nothing else. A k3s K3S_URL is
-// "https://host:6443" -- no path, query or fragment belongs in one, and
-// allowing them would let a value carry content past the point a reader
-// expects the URL to end.
+// address: https, a host, and nothing else -- no path, query, fragment or
+// embedded credentials. A k3s K3S_URL is "https://host:6443". Credentials in
+// it are wrong on their own terms regardless of injection concerns, and this
+// value travels into a shell command line and into anything that logs it, so
+// user:pass@ is refused rather than silently carried along.
 func validateServerURL(v string) error {
 	u, err := url.Parse(v)
 	if err != nil {
@@ -143,6 +150,9 @@ func validateServerURL(v string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("server URL %q: no host", v)
+	}
+	if u.User != nil {
+		return fmt.Errorf("server URL %q: must not carry embedded credentials", v)
 	}
 	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("server URL %q: must be scheme and host only, no path, query or fragment", v)
@@ -187,7 +197,10 @@ func RewriteKubeconfigServer(in []byte, address string) ([]byte, error) {
 		return nil, fmt.Errorf("kubeconfig has no clusters")
 	}
 
-	newServer := fmt.Sprintf("https://%s:6443", address)
+	// net.JoinHostPort, not fmt.Sprintf: an IPv6 literal needs brackets in a
+	// URL authority ("[::1]:6443"), and Sprintf("https://%s:6443", "::1")
+	// produces "https://::1:6443", which is not a valid URL at all.
+	newServer := "https://" + net.JoinHostPort(address, "6443")
 	rewritten := 0
 	for _, c := range clusters {
 		entry, ok := c.(map[string]any)
