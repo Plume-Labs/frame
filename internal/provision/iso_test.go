@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+// testPreseedURL is the preseedURL every test below hands to Remaster that
+// doesn't itself exist to test preseedURL handling. It looks like a real
+// address MediaHandler's /preseed/{name} route would serve, but nothing
+// here fetches it -- these tests only assert what lands in the image's own
+// boot arguments.
+const testPreseedURL = "http://192.168.2.50:8081/preseed/0123456789abcdef0123456789abcdef.cfg"
+
 func requireXorriso(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("xorriso"); err != nil {
@@ -101,15 +108,20 @@ func isoContains(t *testing.T, iso, path string) string {
 	return string(b)
 }
 
-func TestRemasterPutsThePreseedOnTheImage(t *testing.T) {
+// The preseed is fetched over HTTP now, so the image itself must not carry
+// it: a second copy nothing reads is exactly the dead-code-behind-a-passing-
+// test shape this lot keeps finding, and here it would also be a leftover
+// place a stale preseed could be read from by mistake.
+func TestRemasterDoesNotPutThePreseedOnTheImage(t *testing.T) {
 	base := realBaseISO(t)
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), out); err != nil {
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
-	got := isoContains(t, out, "/preseed.cfg")
-	if !strings.Contains(got, "b3f1c2d4-0000-4000-8000-000000000001") {
-		t.Error("the preseed on the image does not carry this installation's UID")
+	dir := t.TempDir()
+	cmd := exec.Command("xorriso", "-osirrox", "on", "-indev", out, "-extract", "/preseed.cfg", filepath.Join(dir, "out"))
+	if b, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("preseed.cfg was extracted from the image; it must not be there:\n%s", b)
 	}
 }
 
@@ -119,12 +131,12 @@ func TestRemasterPutsThePreseedOnTheImage(t *testing.T) {
 func TestRemasterMakesBothBootPathsUnattended(t *testing.T) {
 	base := realBaseISO(t)
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), out); err != nil {
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/isolinux/txt.cfg", "/boot/grub/grub.cfg"} {
 		got := isoContains(t, out, path)
-		for _, want := range []string{"auto=true", "priority=critical", "file=/cdrom/preseed.cfg"} {
+		for _, want := range []string{"auto=true", "priority=critical", "interface=auto", "frame=1", "url=" + testPreseedURL} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s is missing %q:\n%s", path, want, got)
 			}
@@ -142,14 +154,14 @@ func TestRemasterMakesBothBootPathsUnattended(t *testing.T) {
 func TestRemasterMakesTheActualDefaultEntryUnattended(t *testing.T) {
 	base := realBaseISO(t)
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), out); err != nil {
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
 	got := isoContains(t, out, "/isolinux/gtk.cfg")
 	if !strings.Contains(got, "menu default") {
 		t.Fatal("test fixture regression: gtk.cfg no longer carries menu default")
 	}
-	for _, want := range []string{"auto=true", "priority=critical", "file=/cdrom/preseed.cfg"} {
+	for _, want := range []string{"auto=true", "priority=critical", "interface=auto", "frame=1", "url=" + testPreseedURL} {
 		if !strings.Contains(got, want) {
 			t.Errorf("gtk.cfg (the entry actually marked menu default) is missing %q:\n%s", want, got)
 		}
@@ -165,18 +177,18 @@ func TestRemasterMakesTheActualDefaultEntryUnattended(t *testing.T) {
 // "vmlinuz auto=true priority=critical" (kernel path immediately followed by
 // those two tokens) identifies exactly Debian's five pre-existing entries,
 // and only them: bootArgs, when appended, reads "... auto=true
-// priority=critical file=/cdrom/preseed.cfg" with no "vmlinuz" immediately
-// before it, so this substring can't appear as a side effect of the rewrite
-// itself -- it only ever comes from the original image content. Counting
-// "file=/cdrom/preseed.cfg" across the whole file, by contrast, cannot tell
-// a rewritten pre-existing entry from any of grub.cfg's other menu entries
+// priority=critical interface=auto frame=1 url=..." with no "vmlinuz"
+// immediately before it, so this substring can't appear as a side effect of
+// the rewrite itself -- it only ever comes from the original image content.
+// Counting "frame=1" across the whole file, by contrast, cannot tell a
+// rewritten pre-existing entry from any of grub.cfg's other menu entries
 // that never had auto=true to begin with -- measured: that looser version of
 // this test passed against the unfixed code, because those other entries
 // still got the marker even though the five pre-existing ones didn't.
 func TestRemasterRewritesDebiansOwnAutomatedInstallEntries(t *testing.T) {
 	base := realBaseISO(t)
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), out); err != nil {
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
 	got := isoContains(t, out, "/boot/grub/grub.cfg")
@@ -187,8 +199,8 @@ func TestRemasterRewritesDebiansOwnAutomatedInstallEntries(t *testing.T) {
 			continue
 		}
 		preExisting++
-		if !strings.Contains(line, "file=/cdrom/preseed.cfg") {
-			t.Errorf("a pre-existing Debian auto=true entry did not receive the preseed path:\n%s", line)
+		if !strings.Contains(line, "frame=1") {
+			t.Errorf("a pre-existing Debian auto=true entry did not receive our boot arguments:\n%s", line)
 		}
 	}
 	if preExisting != 5 {
@@ -201,7 +213,7 @@ func TestRemasterRewritesDebiansOwnAutomatedInstallEntries(t *testing.T) {
 func TestRemasterProducesAnImageWithNoPrivateKeyMaterial(t *testing.T) {
 	base := realBaseISO(t)
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), out); err != nil {
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(out)
@@ -223,7 +235,7 @@ func TestRemasterRefusesAnImageWhoseBootConfigItCannotRewrite(t *testing.T) {
 		"isolinux/txt.cfg": "default install\nlabel install\n  ui gtk\n",
 	})
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	err := Remaster(context.Background(), base, goodSpec(), out)
+	err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out)
 	if err == nil {
 		t.Fatal("want an error for a boot config with no kernel line, got nil")
 	}
@@ -245,11 +257,11 @@ func TestRemasterAcceptsABaseImageMissingOneBootConfig(t *testing.T) {
 		"isolinux/txt.cfg": "default install\nlabel install\n  kernel /install.amd/vmlinuz\n  append vga=788 initrd=/install.amd/initrd.gz --- quiet\n",
 	})
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), out); err != nil {
+	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
 	got := isoContains(t, out, "/isolinux/txt.cfg")
-	for _, want := range []string{"auto=true", "priority=critical", "file=/cdrom/preseed.cfg"} {
+	for _, want := range []string{"auto=true", "priority=critical", "interface=auto", "frame=1", "url=" + testPreseedURL} {
 		if !strings.Contains(got, want) {
 			t.Errorf("/isolinux/txt.cfg is missing %q:\n%s", want, got)
 		}
@@ -263,7 +275,7 @@ func TestRemasterAcceptsABaseImageMissingOneBootConfig(t *testing.T) {
 func TestRemasterRefusesABadSpecBeforeTouchingTheBaseImage(t *testing.T) {
 	s := goodSpec()
 	s.UID = ""
-	err := Remaster(context.Background(), "/nonexistent/base.iso", s, filepath.Join(t.TempDir(), "out.iso"))
+	err := Remaster(context.Background(), "/nonexistent/base.iso", s, testPreseedURL, filepath.Join(t.TempDir(), "out.iso"))
 	if err == nil {
 		t.Fatal("want an error for an empty UID, got nil")
 	}
@@ -272,5 +284,22 @@ func TestRemasterRefusesABadSpecBeforeTouchingTheBaseImage(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("error = %q; it names the missing base image, which means RenderPreseed ran too late", err)
+	}
+}
+
+// The same guard as above, for the other required-before-anything-is-
+// touched value: an empty preseedURL means the image would boot to a
+// machine with nothing to fetch its preseed from, so it must be refused
+// before the base image is ever touched, not discovered on real hardware.
+func TestRemasterRefusesAnEmptyPreseedURLBeforeTouchingTheBaseImage(t *testing.T) {
+	err := Remaster(context.Background(), "/nonexistent/base.iso", goodSpec(), "", filepath.Join(t.TempDir(), "out.iso"))
+	if err == nil {
+		t.Fatal("want an error for an empty preseedURL, got nil")
+	}
+	if !strings.Contains(err.Error(), "preseedURL") {
+		t.Errorf("error = %q; want it to name the empty preseedURL, not a filesystem error", err)
+	}
+	if strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error = %q; it names the missing base image, which means the preseedURL check ran too late", err)
 	}
 }

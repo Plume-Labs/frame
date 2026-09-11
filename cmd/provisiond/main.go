@@ -50,6 +50,13 @@ type config struct {
 	BuildAddr string // the build API -- ClusterIP only, never the LAN
 	MediaAddr string // the media listener -- the one a NodePort exposes
 	ImagesDir string
+	// MediaURL is the address the BMC, on the management network, reaches
+	// the media listener at -- not MediaAddr, which is where this process
+	// binds. It has no default: every image BuildHandler builds bakes this
+	// address into its own boot arguments as where to fetch its preseed
+	// from, so a wrong or missing value is not a degraded start, it is
+	// every subsequent install hanging with nothing to read.
+	MediaURL string
 }
 
 func configFromEnv(get func(string) string) config {
@@ -57,6 +64,7 @@ func configFromEnv(get func(string) string) config {
 		BuildAddr: or(get("BUILD_ADDR"), ":8080"),
 		MediaAddr: or(get("MEDIA_ADDR"), ":8081"),
 		ImagesDir: or(get("IMAGES_DIR"), "/var/lib/frame/images"),
+		MediaURL:  get("MEDIA_URL"),
 	}
 }
 
@@ -81,6 +89,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.MediaURL == "" {
+		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their preseed from nowhere")
+	}
+
 	// The media mux adds one route MediaHandler itself does not: a
 	// readinessProbe target. It is registered as its own exact pattern,
 	// alongside MediaHandler's own "GET /iso/{name}", never as a trailing-
@@ -94,7 +106,7 @@ func run() error {
 
 	buildSrv := &http.Server{
 		Addr:              cfg.BuildAddr,
-		Handler:           provision.BuildHandler(cfg.ImagesDir, provision.DefaultBase()),
+		Handler:           provision.BuildHandler(cfg.ImagesDir, provision.DefaultBase(), cfg.MediaURL),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	mediaSrv := &http.Server{

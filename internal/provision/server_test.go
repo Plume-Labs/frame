@@ -1,6 +1,8 @@
 package provision
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,12 @@ import (
 )
 
 const tok = "0123456789abcdef0123456789abcdef"
+
+// testMediaURL stands in for the address the BMC, on the management
+// network, would reach the media listener at. Only TestBuildHandlerWrites-
+// ThePreseedTheImageAsksFor actually fetches anything served by it; the
+// other BuildHandler tests only need a non-empty value.
+const testMediaURL = "http://192.168.2.50:8081"
 
 // The listener the BMC reaches must not be able to make anything.
 func TestMediaHandlerRefusesEverythingButReadingAnImage(t *testing.T) {
@@ -86,12 +94,104 @@ func TestMediaHandlerRefusesAWellFormedRouteNameThatIsNotAnImageName(t *testing.
 	}
 }
 
+// The listener the BMC reaches must be able to read a preseed the same way
+// it reads an image, and be just as unable to write one.
+func TestMediaHandlerServesAPreseedAndRefusesToWriteOne(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, tok+".cfg"), []byte("PRESEED"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := MediaHandler(dir)
+
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, "/preseed/" + tok + ".cfg", http.StatusOK},
+		{http.MethodPost, "/preseed/" + tok + ".cfg", http.StatusMethodNotAllowed},
+		{http.MethodDelete, "/preseed/" + tok + ".cfg", http.StatusMethodNotAllowed},
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, nil))
+		if rr.Code != tc.want {
+			t.Errorf("%s %s = %d, want %d", tc.method, tc.path, rr.Code, tc.want)
+		}
+	}
+}
+
+// The positive control the case above needs, same reason the /iso/ route
+// has one: without it, "a bad preseed name returned 404" is indistinguishable
+// from "the route never matched" or "this handler says 404 to everything".
+func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedPreseedNameThatIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	h := MediaHandler(dir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".cfg", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404 (a well-formed but absent preseed name should reach the filesystem and fail there, not be turned away earlier)", rr.Code)
+	}
+}
+
 func TestBuildHandlerRejectsASpecItWouldRefuseToRender(t *testing.T) {
-	h := BuildHandler(t.TempDir(), DefaultBase())
+	h := BuildHandler(t.TempDir(), DefaultBase(), testMediaURL)
 	body := `{"uid":"","hostname":"g9"}`
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", strings.NewReader(body)))
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rr.Code)
+	}
+}
+
+// The point of the whole HTTP-preseed change: what BuildHandler writes to
+// dir/<token>.cfg must be exactly what RenderPreseed(spec) produces, and
+// the URL baked into the built image's own boot arguments must be the one
+// MediaHandler's /preseed/{name} route actually serves. A preseed served at
+// an address the image does not ask for is an installation that hangs with
+// nothing to read.
+func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
+	requireXorriso(t)
+
+	baseISOPath := realBaseISO(t)
+	baseBytes, err := os.ReadFile(baseISOPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := serveBytes(t, baseBytes)
+	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
+
+	dir := t.TempDir()
+	h := BuildHandler(dir, base, testMediaURL)
+
+	spec := goodSpec()
+	reqBody, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var resp buildResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	want, err := RenderPreseed(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, resp.Token+".cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("dir/%s.cfg does not match RenderPreseed(spec) byte-for-byte", resp.Token)
+	}
+
+	wantURL := testMediaURL + "/preseed/" + resp.Token + ".cfg"
+	built := isoContains(t, filepath.Join(dir, resp.Token+".iso"), "/isolinux/txt.cfg")
+	if !strings.Contains(built, "url="+wantURL) {
+		t.Errorf("built image's boot args do not carry url=%s:\n%s", wantURL, built)
 	}
 }
