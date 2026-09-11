@@ -406,11 +406,28 @@ func TestRenderPreseedRefusesAKeyThatCouldBreakOutOfThePreseedShell(t *testing.T
 	}
 }
 
-func TestRenderPreseedRefusesASecondKey(t *testing.T) {
+// Two keys on one line do not land where anyone would look for them. The
+// parser takes the first and folds the entire second key into the first one's
+// comment field, leaving its trailing remainder empty -- measured -- so the
+// obvious check (is there anything left over?) is blind to exactly this case.
+func TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + " " + s.SSHPublicKey
 	if _, err := RenderPreseed(s); err == nil {
-		t.Fatal("two keys in one value were accepted")
+		t.Fatal("two keys on one line were accepted")
+	}
+}
+
+func TestRenderPreseedRefusesAValueTooLongToBeAKey(t *testing.T) {
+	s := goodSpec()
+	s.SSHPublicKey = s.SSHPublicKey + " " + strings.Repeat("x", 1024)
+	if _, err := RenderPreseed(s); err == nil {
+		t.Fatal("a 1100-character value was accepted")
+	}
+	empty := goodSpec()
+	empty.SSHPublicKey = "   "
+	if _, err := RenderPreseed(empty); err == nil {
+		t.Fatal("an empty key was accepted")
 	}
 }
 
@@ -609,6 +626,14 @@ func RenderPreseed(s Spec) (string, error) {
 func checkPublicKeyOnly(key string) error {
 	k := strings.TrimSpace(key)
 
+	// A boundary this value crosses twice: into a generated preseed, and from
+	// there onto a machine's disk. An ed25519 line is about 100 characters and
+	// an RSA-4096 one about 750; 1024 admits both and refuses a paste of
+	// something else entirely.
+	if len(k) == 0 || len(k) > 1024 {
+		return fmt.Errorf("ssh key: must be between 1 and 1024 characters, got %d", len(k))
+	}
+
 	// This branch is for the message, not for the hole -- the single-line rule
 	// below already refuses every multi-line value. But "this is private key
 	// material" is worth far more to whoever hit it than "must be a single
@@ -627,12 +652,20 @@ func checkPublicKeyOnly(key string) error {
 		return fmt.Errorf("ssh key: must not contain a quote or a backslash; this value is interpolated into a shell command in the preseed")
 	}
 
-	_, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(k))
+	_, comment, _, _, err := ssh.ParseAuthorizedKey([]byte(k))
 	if err != nil {
 		return fmt.Errorf("ssh key: not a usable authorized_keys line: %w", err)
 	}
-	if len(strings.TrimSpace(string(rest))) != 0 {
-		return fmt.Errorf("ssh key: more than one key in this value")
+	// The parser's trailing remainder is not the check it looks like: it holds
+	// unconsumed *lines*, never unconsumed words, and the single-line rule
+	// above already refuses every multi-line value -- so inspecting it would
+	// be dead code behind a passing test. Two keys on one line land somewhere
+	// else entirely: the parser takes the first and folds the whole second key
+	// into the first one's comment field. Measured. So the comment is what has
+	// to be looked at, and the exact test is whether it parses as a key on its
+	// own.
+	if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(comment))); err == nil {
+		return fmt.Errorf("ssh key: more than one key in this value; the second is hidden in the first one's comment field")
 	}
 	return nil
 }
@@ -641,7 +674,7 @@ func checkPublicKeyOnly(key string) error {
 - [ ] **Step 8: Run the preseed tests**
 
 Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -v`
-Expected: PASS, fourteen tests.
+Expected: PASS, fifteen tests.
 
 - [ ] **Step 9: Prove each half of the key guard discriminates**
 
@@ -650,7 +683,9 @@ Two mutations, because the guard has two halves that fail differently. Both must
 1. Delete the `strings.ContainsAny(k, "\n\r")` branch. `TestRenderPreseedRefusesAWholeKeyFile` must turn red, in both of its cases. This is the one that closes the hole.
 2. Restore it, then delete the `strings.Contains(k, "PRIVATE KEY")` branch. `TestRenderPreseedSaysSoWhenTheValueIsPrivateKeyMaterial` must turn red while `TestRenderPreseedRefusesAWholeKeyFile` stays green — the value is still refused, but the message no longer names why.
 
-Restore both. Paste both commands and both failures into the task report.
+3. Restore it, then replace the comment-field re-parse with `if false {` so it never fires. `TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField` must turn red.
+
+Restore all three. Paste all three commands and all three failures into the task report.
 
 Run: `cd /home/rmocq/frame-provision && go test ./internal/provision/ -run 'TestRenderPreseed' -v`
 
