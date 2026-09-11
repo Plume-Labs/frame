@@ -63,8 +63,24 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          # Deterministic: matches provisiond-service.yaml's Service name
+          # exactly, so this needs no per-deployment override.
+          - --provisiond-build-url=http://frame-provisiond:8080
+          # A placeholder, like the image reference below: there is no
+          # address this manifest could default to that is guaranteed
+          # reachable from a management network it knows nothing about, and
+          # the manager refuses to start without a valid one
+          # (cmd/main.go's validateProvisiondMediaURL). Override with the
+          # base URL a machine's BMC can actually reach frame-provisiond's
+          # media listener at before applying this outside hack/helm-parity.sh.
+          - --provisiond-media-url=http://ci-placeholder.invalid:30581
         image: controller:latest
         name: manager
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         ports:
         - containerPort: 8081
           name: health

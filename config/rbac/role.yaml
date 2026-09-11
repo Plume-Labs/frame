@@ -122,6 +122,7 @@ rules:
   - framemachines/status
   - framenodes/status
   - frameresourcequotas/status
+  - frametasks/status
   - nodetunings/status
   - schedulingpolicies/status
   - talosmachineconfigs/status
@@ -148,6 +149,12 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - frametasks
+  verbs:
+  - create
 - apiGroups:
   - frame.plume-labs.io
   resources:

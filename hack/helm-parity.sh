@@ -11,6 +11,12 @@
 #                CI_PLACEHOLDER_IMAGE=some/image (image.repository has no
 #                real default and is `required`; any syntactically valid
 #                value works here, nothing is ever pulled)
+#                CI_PLACEHOLDER_MEDIA_URL=http://host:port (provisiond.media.url
+#                has no safe default either and is `required` for the same
+#                reason -- there is no address a BMC on a management network
+#                this chart knows nothing about is guaranteed to reach; any
+#                syntactically valid http(s) URL works here, nothing ever
+#                contacts it)
 set -euo pipefail
 
 # `comm` requires both inputs sorted per the active locale's collation order;
@@ -24,6 +30,7 @@ CHART_DIR="$ROOT_DIR/charts/frame"
 KUSTOMIZE="${KUSTOMIZE:-$ROOT_DIR/bin/kustomize}"
 HELM="${HELM:-helm}"
 CI_PLACEHOLDER_IMAGE="${CI_PLACEHOLDER_IMAGE:-ci-placeholder.invalid/frame}"
+CI_PLACEHOLDER_MEDIA_URL="${CI_PLACEHOLDER_MEDIA_URL:-http://ci-placeholder.invalid:30581}"
 
 command -v "$KUSTOMIZE" >/dev/null 2>&1 || { echo "kustomize not found at $KUSTOMIZE (run 'make kustomize')" >&2; exit 1; }
 command -v "$HELM" >/dev/null 2>&1 || { echo "helm not found ($HELM)" >&2; exit 1; }
@@ -172,6 +179,7 @@ grep -v '^Namespace|' "$tmpdir/kustomize.set" > "$tmpdir/kustomize.set.filtered"
 # --- helm side: default values ----------------------------------------------
 "$HELM" template frame "$CHART_DIR" --namespace frame-system \
   --set image.repository="$CI_PLACEHOLDER_IMAGE" \
+  --set provisiond.media.url="$CI_PLACEHOLDER_MEDIA_URL" \
   > "$tmpdir/helm-default.yaml"
 extract_jsonl "$tmpdir/helm-default.yaml" > "$tmpdir/helm-default.jsonl"
 triples "$tmpdir/helm-default.jsonl" > "$tmpdir/helm-default.set"
@@ -360,6 +368,7 @@ EXPECTED_EXTRAS=(
 
 "$HELM" template frame "$CHART_DIR" --namespace frame-system \
   --set image.repository="$CI_PLACEHOLDER_IMAGE" \
+  --set provisiond.media.url="$CI_PLACEHOLDER_MEDIA_URL" \
   --set networkPolicy.enabled=true \
   --set metrics.serviceMonitor.enabled=true \
   --set podDisruptionBudget.enabled=true \

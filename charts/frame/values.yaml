@@ -117,9 +117,11 @@ provisiond:
   # all -- so true is what keeps this chart's default render agreeing with
   # `kustomize build config/default` (see hack/helm-parity.sh's default
   # parity/content-diff sections, which compare the two unconditionally).
-  # Nothing wires the controller to provisiond's build API yet (that is
-  # Task 9), so this value governs only whether the Deployment/Services
-  # exist, not whether anything calls them.
+  # The FrameInstall controller (2026-09-11, task 9) calls provisiond's
+  # build API and hands the media listener's URL to every BMC it drives, so
+  # this value now governs more than just whether the Deployment/Services
+  # exist -- see media.url below, which the manager refuses to start
+  # without.
   enabled: true
   image:
     # Unlike the manager's image.repository, this has a real default
@@ -158,6 +160,24 @@ provisiond:
     # environment (there is no way for this chart to choose a value that
     # can't collide with something on a network it knows nothing about).
     nodePort: 30581
+    # The base URL a machine's BMC -- on the management network, not the
+    # pod network -- can reach the media listener above at, e.g.
+    # "http://192.168.2.10:30581". Left empty and `required` at render
+    # time, the same way image.repository is: there is no address this
+    # chart could default to that is guaranteed reachable from a management
+    # network it knows nothing about, and the manager itself refuses to
+    # start against an unset or malformed value
+    # (cmd/main.go's validateProvisiondMediaURL) rather than build images
+    # whose boot arguments point nowhere.
+    url: ""
+  build:
+    # The in-cluster build API's own address is always
+    # http://{name}-provisiond:8080 (provisiond-service.yaml), and
+    # frame.name (_helpers.tpl) is a fixed literal, not release-scoped -- so
+    # unlike media.url this needs no value most installs will ever touch.
+    # Still overridable for the rare case the manager needs to reach a
+    # provisiond outside this release entirely.
+    url: ""
 
 networkPolicy:
   # Matches today's kustomize behaviour: config/network-policy exists but is

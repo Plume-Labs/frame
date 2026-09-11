@@ -66,16 +66,35 @@ type fakeInstallBMC struct {
 	failSerial error
 	inserted   bool
 	calls      []string
+
+	// blockSerial, when non-nil, makes Serial record its call and then
+	// block until the channel is closed -- the seam
+	// TestFrameInstallDoesNotRunTwoInstallsOnTheSameMachineConcurrently
+	// uses to hold a genuinely-running install open deterministically,
+	// rather than racing a second reconcile against however fast the fakes
+	// happen to resolve.
+	blockSerial chan struct{}
 }
 
-func (b *fakeInstallBMC) Serial(context.Context) (string, error) {
+func (b *fakeInstallBMC) Serial(ctx context.Context) (string, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.calls = append(b.calls, "serial")
-	if b.failSerial != nil {
-		return "", b.failSerial
+	block := b.blockSerial
+	failErr := b.failSerial
+	serial := b.serial
+	b.mu.Unlock()
+
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
-	return b.serial, nil
+	if failErr != nil {
+		return "", failErr
+	}
+	return serial, nil
 }
 
 func (b *fakeInstallBMC) InsertMedia(_ context.Context, url string) error {

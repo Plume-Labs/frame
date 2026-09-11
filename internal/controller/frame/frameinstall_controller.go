@@ -104,6 +104,17 @@ type FrameInstallReconciler struct {
 	SSH    provision.SSHClient
 	Nodes  provision.NodeChecker
 
+	// OperatorNamespace is where a cluster-init install's kubeconfig Secret
+	// is written -- the operator's own namespace, not the FrameInstall's,
+	// because the Secret's OwnerReference only means anything to the
+	// garbage collector when it resolves within the same namespace as the
+	// child object; a FrameInstall this manager watches cluster-wide could
+	// otherwise leave the Secret in a namespace the operator itself never
+	// touches again. Left empty, writeKubeconfigSecret falls back to the
+	// FrameInstall's own namespace -- the only sound choice when no operator
+	// namespace was configured, and what every test in this package uses.
+	OperatorNamespace string
+
 	// PhaseTimeout and Poll configure every provision.Install call this
 	// reconciler makes. Left nil/zero, defaultPhaseTimeouts/defaultPoll
 	// apply; tests that need to prove a timeout set these to a fraction of a
@@ -111,20 +122,31 @@ type FrameInstallReconciler struct {
 	PhaseTimeout map[provision.Phase]time.Duration
 	Poll         time.Duration
 
-	// mu guards inFlight, the set of FrameInstall UIDs with a
-	// provision.Install call currently running in a goroutine this process
-	// started. It is memory, not a durable lock: a manager restart loses it,
-	// which is exactly the case the finalizer's own media-eject (not "wait
-	// for the goroutine that owned this UID") exists to still handle
-	// correctly.
+	// mu guards inFlight: which machineRef currently has a provision.Install
+	// call running in a goroutine this process started, and which
+	// FrameInstall UID owns it.
+	//
+	// Keyed by machineRef, not by the FrameInstall's own UID: a BMC is what
+	// Reset/InsertMedia/EjectMedia actually act on, and two different
+	// FrameInstall objects naming the same machineRef would each carry a
+	// distinct UID, so a UID-keyed map lets both pass every guard and both
+	// call Reset on the same BMC at once -- one's cleanup then ejecting
+	// media the other's install still needs attached.
+	//
+	// It is memory, not a durable lock: a manager restart loses it, which is
+	// exactly the case Reconcile's own restart-recovery branch and the
+	// finalizer's media-eject both exist to still handle correctly -- see
+	// the comment on the ObservedGeneration check in Reconcile.
 	mu       sync.Mutex
-	inFlight map[types.UID]struct{}
+	inFlight map[string]types.UID
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameinstalls,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameinstalls/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameinstalls/finalizers,verbs=update
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frametasks,verbs=create
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frametasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
@@ -152,8 +174,40 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if fi.Status.Phase == string(provision.PhaseReady) || fi.Status.Phase == string(provision.PhaseFailed) {
 		return ctrl.Result{}, nil
 	}
-	if r.running(fi.UID) {
+
+	// The machine this object targets is currently being driven by a
+	// goroutine this same process started -- either for this exact object
+	// (the ordinary "still running" case) or, because inFlight is keyed by
+	// machineRef and not by UID, for a *different* FrameInstall naming the
+	// same machine. Either way, nothing more may start against this
+	// machineRef right now.
+	if r.running(fi.Spec.MachineRef) {
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	// committed reports whether *this* generation of *this* object was
+	// already handed to provision.Install by some earlier Reconcile call --
+	// stamped synchronously into status.observedGeneration, further down,
+	// in the same call that starts the goroutine, strictly before that
+	// goroutine is spawned. Checked only after running() above, and not
+	// before: r.running is keyed by machineRef, so a label edit that bumps
+	// Generation while a genuinely-running install is still in flight in
+	// *this* process must not fall through past the running() guard just
+	// because ObservedGeneration (stamped at the older generation) no
+	// longer matches.
+	//
+	// If committed and running() is false, the goroutine that was driving
+	// it is simply gone: either this manager restarted mid-install (inFlight
+	// is memory, lost on restart) or, in the same shape, the process was
+	// killed. A resync interval replaying that would make the restart
+	// interval the reinstall interval, and the machine's real state is
+	// unknown at that point -- media may still be attached, a boot override
+	// may still be set, disks may be mid-write. finalize's own comment
+	// already reads this identical combination -- non-terminal phase, plus
+	// running() == false -- as "there is cleanup to do here"; Reconcile must
+	// not read it as "start an install" instead.
+	if fi.Status.ObservedGeneration == fi.Generation {
+		return r.failRestarted(ctx, &fi)
 	}
 
 	fm, err := r.getMachine(ctx, fi.Namespace, fi.Spec.MachineRef)
@@ -165,9 +219,6 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.failPending(ctx, &fi, err.Error())
 	}
 	if err := r.checkHostnameNotTaken(ctx, &fi); err != nil {
-		return r.failPending(ctx, &fi, err.Error())
-	}
-	if err := checkDisksKnown(&fi, fm); err != nil {
 		return r.failPending(ctx, &fi, err.Error())
 	}
 
@@ -189,9 +240,30 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	if !r.startInstall(fi.UID) {
-		// A concurrent reconcile already won the race to start this UID.
+	if !r.startInstall(fi.Spec.MachineRef, fi.UID) {
+		// A concurrent reconcile already won the race to start this
+		// machineRef -- for this object or another one naming it.
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	// Stamped synchronously, before the goroutine below is spawned, and
+	// blocking: a process that dies between this Patch succeeding and the
+	// goroutine's own first status write leaves status.observedGeneration
+	// committed for this generation with no goroutine behind it in any
+	// future process -- which is exactly the signal this Reconcile's own
+	// restart-recovery check above reads as "resume is unsafe, fail
+	// closed". Committing this *after* startInstall's in-memory claim,
+	// rather than before, would leave a window where a crash between the
+	// two could lose the in-memory claim (restart) while this write never
+	// happened -- undetectable as a restart at all. Ordered the other way,
+	// a crash in that same window is still caught: the durable write
+	// happened, inFlight did not survive, and the check above reads that
+	// correctly as "unsafe to resume".
+	patch := client.MergeFrom(fi.DeepCopy())
+	fi.Status.ObservedGeneration = fi.Generation
+	if err := r.Status().Patch(ctx, &fi, patch); err != nil {
+		r.finishInstall(fi.Spec.MachineRef)
+		return ctrl.Result{}, err
 	}
 
 	spec := toProvisionSpec(&fi, sshPub, joinToken)
@@ -208,58 +280,129 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	r.recordTask(ctx, &fi, framev1beta1.TaskVerbCreate,
 		fmt.Sprintf("install %s on machine %s", fi.Spec.Hostname, fi.Spec.MachineRef))
 
-	go r.runInstall(fi.UID, key, fi.Spec.MachineRef, deps, spec, opts)
+	go r.runInstall(ctx, fi.Spec.MachineRef, key, deps, spec, opts)
 
 	log.Info("started FrameInstall", "frameinstall", req.NamespacedName, "machine", fi.Spec.MachineRef)
 	return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 }
 
-// runInstall is the goroutine Reconcile starts, keyed by the object's UID so
+// failRestarted handles a non-terminal FrameInstall whose current
+// generation was already committed to provision.Install (status.
+// observedGeneration == metadata.generation) but has no goroutine driving
+// it in this process. A restart mid-install is a failed install, not a
+// resumed one: replaying the destructive sequence because a process died is
+// the same fault a resync interval replaying it would be, and the
+// machine's real state -- media attached or not, boot override set or not,
+// disks mid-write or not -- is unknown at this point. It is never retried
+// automatically, the same as any other Install failure; a retry is a new
+// FrameInstall, created deliberately.
+//
+// The cleanup attempted here is the same one finalize makes on deletion:
+// eject media, clear the boot override. A failure to do so is folded into
+// the recorded message rather than returned as an error, because unlike
+// finalize -- which must not let the object be deleted while cleanup is
+// unresolved -- there is nothing to block here; retrying this exact
+// function on the next resync would attempt the identical cleanup against
+// the identical unknown machine state, not converge on anything new.
+func (r *FrameInstallReconciler) failRestarted(ctx context.Context, fi *framev1beta1.FrameInstall) (ctrl.Result, error) {
+	prevPhase := fi.Status.Phase
+	if prevPhase == "" {
+		// Committed (observedGeneration stamped) but the goroutine died
+		// before its own first report(PhasePending) call ever landed --
+		// still Pending is where every install starts.
+		prevPhase = string(provision.PhasePending)
+	}
+	msg := fmt.Sprintf(
+		"the controller restarted mid-install (was in phase %s); a mid-install restart cannot be resumed safely and is not retried automatically -- the machine may still have installer media attached and a one-time boot override set",
+		prevPhase)
+
+	fm, err := r.getMachine(ctx, fi.Namespace, fi.Spec.MachineRef)
+	if err == nil {
+		if bmc, berr := r.NewBMC(ctx, r.Client, fi.Namespace, fm.Spec.BMC); berr == nil {
+			ejectErr := bmc.EjectMedia(ctx)
+			clearErr := bmc.ClearBootOverride(ctx)
+			if ejectErr != nil || clearErr != nil {
+				msg = fmt.Sprintf("%s (cleanup also failed: eject=%v clear=%v)", msg, ejectErr, clearErr)
+			}
+		}
+	}
+
+	patch := client.MergeFrom(fi.DeepCopy())
+	fi.Status.Phase = string(provision.PhaseFailed)
+	fi.Status.FailedPhase = prevPhase
+	fi.Status.Message = truncateString(msg, 512)
+	now := metav1.Now()
+	fi.Status.PhaseSince = &now
+	if err := r.Status().Patch(ctx, fi, patch); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.Recorder.Event(fi, corev1.EventTypeWarning, "InstallRestarted", msg)
+	r.recordTask(ctx, fi, framev1beta1.TaskVerbUpdate,
+		fmt.Sprintf("install %s on machine %s reached Failed: controller restarted mid-install", fi.Spec.Hostname, fi.Spec.MachineRef))
+	return ctrl.Result{}, nil
+}
+
+// runInstall is the goroutine Reconcile starts, keyed by machineRef so
 // running() and startInstall() below can tell "already in flight" apart
 // from "not yet started" without touching the apiserver. It always frees
 // its slot on return, success or failure -- inFlight tracks "a call is
 // running", not "the last call succeeded".
-func (r *FrameInstallReconciler) runInstall(uid types.UID, key client.ObjectKey, machineRef string, deps provision.Deps, spec provision.Spec, opts provision.Options) {
-	defer r.finishInstall(uid)
-	ctx := context.Background()
+//
+// ctx is the manager's own long-lived context (passed through from
+// Reconcile, which controller-runtime hands the manager's Start context
+// unwrapped -- there is no per-Reconcile-call cancellation to accidentally
+// inherit here), not context.Background(): on shutdown the manager cancels
+// it, which unwinds provision.Install's in-progress phase the same way any
+// other deadline does, and its cleanup defer -- built on
+// context.WithoutCancel internally -- still gets its own budget to eject
+// media and clear the boot override before the process exits. The two
+// status-writing calls below use a value derived with context.WithoutCancel
+// for the same reason install.go's own cleanup does: the record of what
+// happened must still be written even if ctx is already Done.
+func (r *FrameInstallReconciler) runInstall(ctx context.Context, machineRef string, key client.ObjectKey, deps provision.Deps, spec provision.Spec, opts provision.Options) {
+	defer r.finishInstall(machineRef)
 	res, err := provision.Install(ctx, deps, spec, opts)
-	r.finishStatus(ctx, key, machineRef, res, err)
+	r.finishStatus(context.WithoutCancel(ctx), key, machineRef, res, err)
 }
 
-// running reports whether a provision.Install call for uid is active in
-// this process. Read-only and unlocked-fast-path-free on purpose: it is
+// running reports whether a provision.Install call for machineRef is active
+// in this process -- for this FrameInstall or, since a BMC is what is
+// actually being driven and two objects can name the same machineRef, for a
+// different one. Read-only and unlocked-fast-path-free on purpose: it is
 // called on every reconcile of an object that has not reached a terminal
 // phase yet, so it has to be cheap, but it must never race startInstall's
 // check-and-set below -- both take the same mutex.
-func (r *FrameInstallReconciler) running(uid types.UID) bool {
+func (r *FrameInstallReconciler) running(machineRef string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, ok := r.inFlight[uid]
+	_, ok := r.inFlight[machineRef]
 	return ok
 }
 
-// startInstall atomically claims uid, returning false if it was already
-// claimed. This is the actual run-once guard against a race two concurrent
+// startInstall atomically claims machineRef for uid, returning false if it
+// was already claimed -- by this object or another one naming the same
+// machine. This is the actual run-once guard against a race two concurrent
 // Reconcile calls could otherwise hit: running() above is a fast, separate
 // read that lets Reconcile skip the rest of its own work early, but only
-// startInstall's check-and-set is what may not run twice for the same UID.
-func (r *FrameInstallReconciler) startInstall(uid types.UID) bool {
+// startInstall's check-and-set is what may not run twice for the same
+// machineRef.
+func (r *FrameInstallReconciler) startInstall(machineRef string, uid types.UID) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.inFlight == nil {
-		r.inFlight = map[types.UID]struct{}{}
+		r.inFlight = map[string]types.UID{}
 	}
-	if _, ok := r.inFlight[uid]; ok {
+	if _, ok := r.inFlight[machineRef]; ok {
 		return false
 	}
-	r.inFlight[uid] = struct{}{}
+	r.inFlight[machineRef] = uid
 	return true
 }
 
-func (r *FrameInstallReconciler) finishInstall(uid types.UID) {
+func (r *FrameInstallReconciler) finishInstall(machineRef string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.inFlight, uid)
+	delete(r.inFlight, machineRef)
 }
 
 // reportPhase is provision.Deps.Report: called on entering every phase,
@@ -314,19 +457,49 @@ func (r *FrameInstallReconciler) finishStatus(ctx context.Context, key client.Ob
 	fi.Status.HostKey = res.HostKey
 	fi.Status.NodeName = res.NodeName
 
-	if res.Phase == provision.PhaseReady && len(res.Kubeconfig) > 0 {
-		secretName, err := r.writeKubeconfigSecret(ctx, fi.Namespace, fi.Name, res.Kubeconfig)
-		if err != nil {
+	// Gated on Spec.Cluster.Mode, not on len(res.Kubeconfig) > 0: a
+	// ClusterJoin install produces no kubeconfig of its own by contract
+	// (types.go's NodeChecker doc comment -- Join returns nil for it), so
+	// the two conditions agree today, but "did this install start a new
+	// cluster" is the actual fact this branch is about. Testing the byte
+	// slice's length instead means a future, unrelated change to what
+	// Install happens to return could silently repoint this branch onto a
+	// condition that was never its contract.
+	if res.Phase == provision.PhaseReady && fi.Spec.Cluster.Mode == "init" {
+		ns := r.OperatorNamespace
+		if ns == "" {
+			ns = fi.Namespace
+		}
+		if err := r.writeKubeconfigSecret(ctx, ns, &fi, res.Kubeconfig); err != nil {
+			// The install itself succeeded -- there is a Ready node -- but
+			// delivering the one thing that makes a cluster it just created
+			// usable at all did not, and that is a different, unrecoverable
+			// fact from Ready: the kubeconfig existed only in this
+			// goroutine's memory, gone the moment this call returns, and
+			// this reconciler's RBAC grants secrets create but not update,
+			// so even a second attempt through this exact path has nothing
+			// left to write. Ready is the print column an operator scans;
+			// leaving it there next to a note in status.message is how this
+			// specific, unrecoverable failure stays invisible.
 			log.Error(err, "install succeeded but its kubeconfig Secret could not be written", "frameinstall", key)
-			fi.Status.Message = truncateError(fmt.Errorf("install succeeded but saving the kubeconfig failed: %w", err), 512)
+			fi.Status.Phase = string(provision.PhaseFailed)
+			fi.Status.FailedPhase = string(provision.PhaseReady)
+			fi.Status.Message = truncateString(
+				fmt.Sprintf("install succeeded but saving kubeconfig Secret %s/%s-kubeconfig failed: %v", ns, fi.Name, err), 512)
 		} else {
-			fi.Status.KubeconfigSecret = secretName
+			fi.Status.KubeconfigSecret = fi.Name + "-kubeconfig"
 		}
 	}
 
 	if err := r.Status().Patch(ctx, &fi, patch); err != nil {
 		log.Error(err, "could not record install result", "frameinstall", key)
 		return
+	}
+
+	if fi.Status.Phase == string(provision.PhaseReady) {
+		r.Recorder.Event(&fi, corev1.EventTypeNormal, "InstallReady", "installation reached Ready")
+	} else {
+		r.Recorder.Event(&fi, corev1.EventTypeWarning, "InstallFailed", fi.Status.Message)
 	}
 
 	r.recordTask(ctx, &fi, framev1beta1.TaskVerbUpdate,
@@ -346,8 +519,15 @@ func (r *FrameInstallReconciler) failPending(ctx context.Context, fi *framev1bet
 	if err := r.Status().Patch(ctx, fi, patch); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.Recorder.Event(fi, corev1.EventTypeWarning, "InstallRefused", msg)
+	// msg first, the fixed "install X on machine Y" context after: msg is
+	// the only variable-length part of this string and the one worth
+	// keeping if truncateString's 200-rune cap (FrameTaskSpec.Action's CRD
+	// maxLength) has to cut something. A long hostname or machineRef cutting
+	// into the actual reason, rather than the reverse, is how a truncated
+	// audit entry stops saying anything useful.
 	r.recordTask(ctx, fi, framev1beta1.TaskVerbUpdate,
-		fmt.Sprintf("install %s on machine %s refused: %s", fi.Spec.Hostname, fi.Spec.MachineRef, msg))
+		fmt.Sprintf("refused: %s (install %s on machine %s)", msg, fi.Spec.Hostname, fi.Spec.MachineRef))
 	return ctrl.Result{}, nil
 }
 
@@ -434,12 +614,21 @@ func (r *FrameInstallReconciler) checkNotALiveClusterMember(ctx context.Context,
 	return nil
 }
 
-// checkHostnameNotTaken is the structural half of the disk/hostname guard
-// CEL cannot express, minus the Ready-node case checkNotALiveClusterMember
+// checkHostnameNotTaken is the structural half of the hostname guard CEL
+// cannot express, minus the Ready-node case checkNotALiveClusterMember
 // already refuses with its own, more specific message: a Node occupying
-// this hostname that is not Ready, or another FrameInstall in the same
-// namespace that names the same hostname and has not yet reached a terminal
-// phase.
+// this hostname that is not Ready, or another FrameInstall -- in any
+// namespace -- that names the same hostname and has not yet reached a
+// terminal phase.
+//
+// Cluster-wide on purpose, not client.InNamespace(fi.Namespace): a hostname
+// becomes a Node name, and Node names are cluster-global regardless of which
+// namespace the FrameInstall that requested one lives in. This reconciler's
+// RBAC is already a ClusterRole (frameinstalls has no namespace restriction
+// in config/rbac/role.yaml), so scoping the List here bought no additional
+// safety, only a blind spot: two FrameInstalls in different namespaces
+// naming the same hostname used to pass this check and collide on the Node
+// name itself once both tried to install.
 func (r *FrameInstallReconciler) checkHostnameNotTaken(ctx context.Context, fi *framev1beta1.FrameInstall) error {
 	var node corev1.Node
 	err := r.Get(ctx, types.NamespacedName{Name: fi.Spec.Hostname}, &node)
@@ -451,42 +640,45 @@ func (r *FrameInstallReconciler) checkHostnameNotTaken(ctx context.Context, fi *
 	}
 
 	var installs framev1beta1.FrameInstallList
-	if err := r.List(ctx, &installs, client.InNamespace(fi.Namespace)); err != nil {
+	if err := r.List(ctx, &installs); err != nil {
 		return fmt.Errorf("listing FrameInstalls: %w", err)
 	}
 	for i := range installs.Items {
 		other := &installs.Items[i]
-		if other.Name == fi.Name || other.Spec.Hostname != fi.Spec.Hostname {
+		// Compared by UID, not by Name: Name alone is only unique within a
+		// namespace, and this list is no longer scoped to one -- two
+		// different objects in two different namespaces can share a Name,
+		// and a Name-only comparison would wrongly treat one as "this
+		// object itself" and skip it.
+		if other.UID == fi.UID || other.Spec.Hostname != fi.Spec.Hostname {
 			continue
 		}
 		if other.Status.Phase == string(provision.PhaseReady) || other.Status.Phase == string(provision.PhaseFailed) {
 			continue
 		}
-		return fmt.Errorf("FrameInstall %q already targets hostname %q and has not reached a terminal phase", other.Name, fi.Spec.Hostname)
+		return fmt.Errorf("FrameInstall %q already targets hostname %q and has not reached a terminal phase", other.Namespace+"/"+other.Name, fi.Spec.Hostname)
 	}
 	return nil
 }
 
-// checkDisksKnown is the other structural half CEL cannot express: every
-// layout.disks[].byID must appear in the inventory of the FrameMachine
-// machineRef names. confirmSerial proves which machine this is; it says
-// nothing about which disks are on it, and a schema validation rule sees
-// only the FrameInstall being validated, never the FrameMachine it points
-// at, so nothing before this has ever checked the two against each other.
-func checkDisksKnown(fi *framev1beta1.FrameInstall, fm *framev1beta1.FrameMachine) error {
-	known := map[string]bool{}
-	if fm.Status.Inventory != nil {
-		for _, d := range fm.Status.Inventory.Drives {
-			known[d.Name] = true
-		}
-	}
-	for _, d := range fi.Spec.Layout.Disks {
-		if !known[d.ByID] {
-			return fmt.Errorf("disk %q is not in %s's inventory", d.ByID, fm.Name)
-		}
-	}
-	return nil
-}
+// There is no checkDisksKnown here. It was removed: internal/redfish
+// deliberately leaves Inventory.Drives nil (redfish/client.go's Probe --
+// physical drives live under HPE's OEM SmartStorage tree on an iLO4, which
+// nothing in this codebase walks), and framemachine_controller.go's
+// mapInventory carries that nil straight through, so the check could never
+// see a disk regardless of the machine's real inventory -- every real
+// FrameInstall naming disks, which CEL requires for both defined layouts,
+// would refuse in Pending unconditionally. Separately, even with a
+// populated inventory, DriveInfo.Name (a Redfish drive name) and
+// InstallDisk.ByID (CEL-forced to /dev/disk/by-id/...) are different
+// namespaces a BMC has no way to reconcile: nothing about a Redfish drive
+// name predicts what the installed kernel will call it under
+// /dev/disk/by-id. The guard this task's brief specified could only ever
+// pass against a fixture built to agree with itself. The disk-level check
+// that actually runs where the disks are is the preseed's on-machine size
+// assertion (design §8, layer 4); a controller-side equivalent is on the
+// lot's list of gaps to close, not a check kept here in a shape that never
+// worked.
 
 // addressWithoutCIDR strips a CIDR suffix ("192.168.2.210/24" ->
 // "192.168.2.210"), so an address from FrameInstallSpec.Network -- always a
@@ -522,37 +714,63 @@ func (r *FrameInstallReconciler) readSSHKey(ctx context.Context, namespace, name
 	return strings.TrimSpace(string(pubBytes)), privBytes, nil
 }
 
-// readJoinToken reads the Secret JoinTokenRef names. Its key ("token") is
-// not fixed anywhere else in this lot -- frameinstall_types.go's CEL rule
-// requires joinTokenRef to be set for mode: join but is silent on the
-// Secret's shape, the way BMCSpec.CredentialsRef ("username"/"password")
-// and SSHKeyRef ("id"/"id.pub") both are documented to be. "token" is this
+// readJoinToken reads the Secret JoinTokenRef names. Its key is not fixed
+// anywhere else in this lot -- frameinstall_types.go's CEL rule requires
+// joinTokenRef to be set for mode: join but is silent on the Secret's
+// shape, the way BMCSpec.CredentialsRef ("username"/"password") and
+// SSHKeyRef ("id"/"id.pub") both are documented to be. "token" is this
 // reconciler's own choice, made here for lack of a precedent to follow.
+//
+// "node-token" is accepted too, and checked first: it is the literal
+// filename the token lives at on a k3s server
+// (/var/lib/rancher/k3s/server/node-token, the same path
+// frameinstall_types.go's own CEL error message names), so
+// `kubectl create secret generic --from-file=/var/lib/rancher/k3s/server/node-token`
+// -- the command an administrator actually runs, per design §6 -- produces
+// a Secret keyed "node-token", not "token". Refusing that at runtime with
+// no hint of the expected key is a worse first encounter with this
+// reconciler than accepting the key the documented command actually
+// produces.
 func (r *FrameInstallReconciler) readJoinToken(ctx context.Context, namespace, name string) (string, error) {
 	var sec corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &sec); err != nil {
 		return "", err
 	}
-	tok, ok := sec.Data["token"]
-	if !ok || len(tok) == 0 {
-		return "", fmt.Errorf("secret %s/%s has no token", namespace, name)
+	for _, key := range []string{"node-token", "token"} {
+		if tok := sec.Data[key]; len(tok) > 0 {
+			return strings.TrimSpace(string(tok)), nil
+		}
 	}
-	return strings.TrimSpace(string(tok)), nil
+	return "", fmt.Errorf("secret %s/%s has neither a node-token nor a token key", namespace, name)
 }
 
-// writeKubeconfigSecret stores a cluster-init install's kubeconfig. design
+// writeKubeconfigSecret stores a cluster-init install's kubeconfig, in
+// namespace -- the operator's own namespace when one is configured
+// (Reconciler.OperatorNamespace), the FrameInstall's own otherwise. design
 // §6: without this, a new cluster exists and nobody can talk to it.
-func (r *FrameInstallReconciler) writeKubeconfigSecret(ctx context.Context, namespace, installName string, kubeconfig []byte) (string, error) {
-	name := installName + "-kubeconfig"
+//
+// An OwnerReference is set only when namespace equals owner's own
+// namespace: Kubernetes' garbage collector resolves an OwnerReference by
+// looking the owner up *within the child's namespace*, so one pointing at
+// an object in a different namespace is accepted by the API server but
+// never acted on -- setting it anyway would claim a cleanup guarantee this
+// call cannot actually make. When they match (every test in this package,
+// and any single-tenant deployment where FrameInstall and the operator
+// share a namespace), it is what stops deleting the FrameInstall from
+// orphaning a cluster-admin credential forever: nothing else in this
+// reconciler deletes this Secret.
+func (r *FrameInstallReconciler) writeKubeconfigSecret(ctx context.Context, namespace string, owner *framev1beta1.FrameInstall, kubeconfig []byte) error {
 	sec := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: owner.Name + "-kubeconfig", Namespace: namespace},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       map[string][]byte{"kubeconfig": kubeconfig},
 	}
-	if err := r.Create(ctx, sec); err != nil {
-		return "", err
+	if namespace == owner.Namespace {
+		if err := controllerutil.SetControllerReference(owner, sec, r.Scheme); err != nil {
+			return fmt.Errorf("setting owner reference: %w", err)
+		}
 	}
-	return name, nil
+	return r.Create(ctx, sec)
 }
 
 // toProvisionSpec translates the CRD into the Kubernetes-free Spec
@@ -613,7 +831,7 @@ func (r *FrameInstallReconciler) options(fi *framev1beta1.FrameInstall, sshKey [
 // FrameInstall deleted mid-flight does not strand the machine with media
 // attached and a one-time boot override set (design §10).
 //
-// A running goroutine for this UID is left to finish rather than raced:
+// A running goroutine for this machine is left to finish rather than raced:
 // provision.Install already ejects media and clears the boot override on
 // every one of its own exits (install.go's cleanup defer), so requeueing
 // until it is done is simpler than two callers issuing BMC writes at once.
@@ -621,12 +839,15 @@ func (r *FrameInstallReconciler) options(fi *framev1beta1.FrameInstall, sshKey [
 // see at all -- a manager restart during Preparing/MediaAttached/Installing
 // loses inFlight, and the object's own status.phase (not Ready or Failed)
 // combined with running() being false is exactly what tells this finalizer
-// there is real cleanup to do here, not merely to wait for.
+// there is real cleanup to do here, not merely to wait for. Reconcile's own
+// restart-recovery branch (the ObservedGeneration check) reads that
+// identical combination the same way, for the same reason, on the
+// non-deleting path.
 func (r *FrameInstallReconciler) finalize(ctx context.Context, fi *framev1beta1.FrameInstall) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(fi, frameInstallFinalizer) {
 		return ctrl.Result{}, nil
 	}
-	if r.running(fi.UID) {
+	if r.running(fi.Spec.MachineRef) {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 

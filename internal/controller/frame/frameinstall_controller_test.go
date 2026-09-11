@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -79,9 +80,16 @@ func fiTestReconciler(c client.Client, bmc provision.BMC, images provision.Image
 	return &FrameInstallReconciler{
 		Client: c,
 		Scheme: c.Scheme(),
-		Images: images,
-		SSH:    ssh,
-		Nodes:  nodes,
+		// A nil Recorder panics the first time finishStatus/failPending/
+		// failRestarted emit an Event -- the same choice
+		// FrameMachineReconciler's own tests make (framemachine_controller_
+		// test.go), deliberately: a reconciler under test with no Recorder
+		// wired is a setup bug that should surface immediately, not be
+		// silently tolerated by a nil check in production code.
+		Recorder: record.NewFakeRecorder(32),
+		Images:   images,
+		SSH:      ssh,
+		Nodes:    nodes,
 		NewBMC: func(context.Context, client.Client, string, framev1beta1.BMCSpec) (provision.BMC, error) {
 			return bmc, nil
 		},
@@ -90,13 +98,13 @@ func fiTestReconciler(c client.Client, bmc provision.BMC, images provision.Image
 	}
 }
 
-// fiMachine builds a FrameMachine whose inventory carries diskIDs -- the
-// only shape checkDisksKnown reads.
-func fiMachine(name, serial string, diskIDs ...string) *framev1beta1.FrameMachine {
-	var drives []framev1beta1.DriveInfo
-	for _, id := range diskIDs {
-		drives = append(drives, framev1beta1.DriveInfo{Name: id})
-	}
+// fiMachine builds a FrameMachine with no disk inventory: nothing in this
+// package reads FrameMachine.Status.Inventory.Drives any more (C3 —
+// checkDisksKnown was removed; see frameinstall_controller.go's comment
+// where it used to live), and a fixture that populated Drives with values
+// agreeing with a FrameInstall's own layout.disks was itself how a defect
+// that could never fire against real Redfish data went unnoticed.
+func fiMachine(name, serial string) *framev1beta1.FrameMachine {
 	return &framev1beta1.FrameMachine{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: framev1beta1.FrameMachineSpec{
@@ -107,7 +115,7 @@ func fiMachine(name, serial string, diskIDs ...string) *framev1beta1.FrameMachin
 			},
 		},
 		Status: framev1beta1.FrameMachineStatus{
-			Inventory: &framev1beta1.MachineInventory{SerialNumber: serial, Drives: drives},
+			Inventory: &framev1beta1.MachineInventory{SerialNumber: serial},
 		},
 	}
 }
@@ -127,9 +135,20 @@ func fiSSHSecret(name string) *corev1.Secret {
 // fakeInstallSession's marker to the FrameInstall's own name and get the
 // exact provision.Spec.UID WaitForOurSystem checks against, without needing
 // a second round trip through the fake client to learn a generated UID.
+//
+// Generation is set to 1 explicitly, matching what a real apiserver assigns
+// a freshly created object with a status subresource -- the fake client
+// (sigs.k8s.io/controller-runtime@v0.23.3's client/fake) does not simulate
+// metadata.generation at all: verified directly, it stays exactly 0 through
+// Create and Update calls, spec-changing or not, if never set. Reconcile's
+// restart-recovery check compares status.observedGeneration against
+// metadata.generation; leaving Generation at the fake client's un-simulated
+// 0 would make every fixture read as "already committed" (0 == 0, the
+// status field's own zero value) before a single reconcile ever ran, which
+// is exactly the false positive this fixture change exists to rule out.
 func fiInstall(name, machineRef string) *framev1beta1.FrameInstall {
 	return &framev1beta1.FrameInstall{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name)},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name), Generation: 1},
 		Spec: framev1beta1.FrameInstallSpec{
 			MachineRef:    machineRef,
 			ConfirmSerial: "CZ3xxxxxxx",
@@ -206,7 +225,7 @@ func TestFrameInstallReconcilerMissingMachineFailsWithoutTouchingBMC(t *testing.
 // below repeats its shape for the address match.
 func TestFrameInstallRefusesToReinstallALiveClusterMember(t *testing.T) {
 	fi := fiInstall("fi-ctrl-live", "fi-ctrl-live-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "fi-ctrl-live"},
@@ -252,7 +271,7 @@ func TestFrameInstallRefusesToReinstallALiveClusterMemberByAddress(t *testing.T)
 			Addresses:  []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.168.2.210"}},
 		},
 	}
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret, node)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
@@ -279,38 +298,12 @@ func TestFrameInstallRefusesToReinstallALiveClusterMemberByAddress(t *testing.T)
 	}
 }
 
-// TestFrameInstallRefusesAnUnknownDisk is one of the two guards CEL cannot
-// express: the fixture's disk is real ("/dev/disk/by-id/scsi-aaa" would
-// satisfy every schema rule on its own), but it is not on the machine
-// fi.Spec.MachineRef actually names.
-func TestFrameInstallRefusesAnUnknownDisk(t *testing.T) {
-	fi := fiInstall("fi-ctrl-unknowndisk", "fi-ctrl-unknowndisk-machine")
-	// The machine's inventory names a different disk, so confirmSerial
-	// alone -- which proves which machine, not which disks -- cannot save
-	// this fixture from the guard under test.
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, "/dev/disk/by-id/scsi-zzz")
-	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
-	c := fiTestClient(t, fi, fm, secret)
-	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
-	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
-	key := fiKey(fi)
-
-	fiAddFinalizer(t, r, key)
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-
-	got := fiGet(t, c, key)
-	if got.Status.Phase != string(provision.PhaseFailed) || got.Status.FailedPhase != string(provision.PhasePending) {
-		t.Fatalf("phase=%s failedPhase=%s, want Failed/Pending", got.Status.Phase, got.Status.FailedPhase)
-	}
-	if !strings.Contains(got.Status.Message, "/dev/disk/by-id/scsi-aaa") {
-		t.Errorf("message %q does not name the unknown disk", got.Status.Message)
-	}
-	if n := bmc.callCount(); n != 0 {
-		t.Errorf("the BMC recorded calls: %d", n)
-	}
-}
+// There is no TestFrameInstallRefusesAnUnknownDisk here any more. It tested
+// checkDisksKnown, removed in this same fix round (C3): the guard it tested
+// could never fire against real Redfish data (internal/redfish leaves
+// Inventory.Drives nil by design) and could only ever pass against a
+// fixture built to agree with itself — see frameinstall_controller.go's
+// comment where checkDisksKnown used to live.
 
 // TestFrameInstallRefusesAHostnameThatCollidesWithANotReadyNode is the
 // structural half of the hostname guard that is not the live-member case:
@@ -319,7 +312,7 @@ func TestFrameInstallRefusesAnUnknownDisk(t *testing.T) {
 // can be what refuses this.
 func TestFrameInstallRefusesAHostnameThatCollidesWithANotReadyNode(t *testing.T) {
 	fi := fiInstall("fi-ctrl-notready", "fi-ctrl-notready-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: fi.Spec.Hostname},
@@ -358,7 +351,7 @@ func TestFrameInstallRefusesAHostnameThatCollidesWithAnotherNonTerminalInstall(t
 	other.Spec.Hostname = fi.Spec.Hostname
 	other.Status.Phase = string(provision.PhasePreparing) // non-terminal
 
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, other, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
@@ -390,7 +383,7 @@ func TestFrameInstallRefusesAHostnameThatCollidesWithAnotherNonTerminalInstall(t
 // control makes the self-exclusion explicit rather than merely assumed.
 func TestFrameInstallDoesNotCollideWithItself(t *testing.T) {
 	fi := fiInstall("fi-ctrl-notself", "fi-ctrl-notself-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
@@ -412,7 +405,7 @@ func TestFrameInstallDoesNotCollideWithItself(t *testing.T) {
 // entry).
 func TestFrameInstallRecordsFrameTaskOnCreateAndTerminal(t *testing.T) {
 	fi := fiInstall("fi-ctrl-audit", "fi-ctrl-audit-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
@@ -483,7 +476,7 @@ func TestFrameInstallRecordsFrameTaskOnCreateAndTerminal(t *testing.T) {
 // it.
 func TestFrameInstallRefusesSerialMismatchAndBuildsNoImage(t *testing.T) {
 	fi := fiInstall("fi-ctrl-badserial", "fi-ctrl-badserial-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: "CZ3-not-the-confirmed-one"}
@@ -514,13 +507,36 @@ func TestFrameInstallRefusesSerialMismatchAndBuildsNoImage(t *testing.T) {
 	if got := images.buildCount(); got != 0 {
 		t.Errorf("images.buildCount() = %d, want 0 -- no image should be built for a machine whose serial did not match", got)
 	}
+
+	// I6: a failed run must record a terminal FrameTask exactly the way a
+	// successful one does (TestFrameInstallRecordsFrameTaskOnCreateAndTerminal
+	// covers the Ready path) -- an audit trail that only ever records
+	// successes would miss the runs that most need explaining.
+	var terminal *framev1beta1.FrameTask
+	g.Eventually(func() bool {
+		var tasks framev1beta1.FrameTaskList
+		if err := c.List(context.Background(), &tasks, client.InNamespace("default")); err != nil {
+			t.Fatal(err)
+		}
+		for i := range tasks.Items {
+			task := &tasks.Items[i]
+			if task.Spec.Target.Name == fi.Name && task.Spec.Verb == framev1beta1.TaskVerbUpdate {
+				terminal = task
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.BeTrue(), "no terminal FrameTask was recorded for the failed run")
+	if !strings.Contains(terminal.Spec.Action, fi.Spec.MachineRef) {
+		t.Errorf("terminal action %q does not name the machine", terminal.Spec.Action)
+	}
 }
 
 // TestFrameInstallSuccessfulRunReachesReady is the happy path: mode init,
 // so it also proves the kubeconfig Secret's shape.
 func TestFrameInstallSuccessfulRunReachesReady(t *testing.T) {
 	fi := fiInstall("fi-ctrl-happy", "fi-ctrl-happy-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
@@ -578,7 +594,7 @@ func TestFrameInstallFinalizerEjectsMediaOnDelete(t *testing.T) {
 	fi := fiInstall("fi-ctrl-delmidflight", "fi-ctrl-delmidflight-machine")
 	fi.Finalizers = []string{frameInstallFinalizer}
 	fi.Status.Phase = string(provision.PhaseInstalling)
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	c := fiTestClient(t, fi, fm)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
 	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
@@ -603,23 +619,23 @@ func TestFrameInstallFinalizerEjectsMediaOnDelete(t *testing.T) {
 }
 
 // TestFrameInstallFinalizerWaitsForARunningInstallRatherThanRacingIt proves
-// the other half of finalize's behaviour: while running(uid) is true --
-// meaning this same process has a provision.Install call in flight for this
-// object -- the finalizer must not issue its own, concurrent BMC calls.
-// Without this, deleting an object mid-flight in the same process could
-// eject media out from under the goroutine that is still using it.
+// the other half of finalize's behaviour: while running(machineRef) is true
+// -- meaning this same process has a provision.Install call in flight for
+// this machine -- the finalizer must not issue its own, concurrent BMC
+// calls. Without this, deleting an object mid-flight in the same process
+// could eject media out from under the goroutine that is still using it.
 func TestFrameInstallFinalizerWaitsForARunningInstallRatherThanRacingIt(t *testing.T) {
 	fi := fiInstall("fi-ctrl-delrunning", "fi-ctrl-delrunning-machine")
 	fi.Finalizers = []string{frameInstallFinalizer}
 	fi.Status.Phase = string(provision.PhaseInstalling)
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	c := fiTestClient(t, fi, fm)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
 	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
 	key := fiKey(fi)
 
-	if !r.startInstall(fi.UID) {
-		t.Fatal("startInstall refused a UID with nothing running yet")
+	if !r.startInstall(fi.Spec.MachineRef, fi.UID) {
+		t.Fatal("startInstall refused a machineRef with nothing running yet")
 	}
 
 	if err := c.Delete(context.Background(), fi); err != nil {
@@ -636,7 +652,7 @@ func TestFrameInstallFinalizerWaitsForARunningInstallRatherThanRacingIt(t *testi
 		t.Errorf("the finalizer touched the BMC while an install was still running: %d calls", n)
 	}
 
-	r.finishInstall(fi.UID)
+	r.finishInstall(fi.Spec.MachineRef)
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("reconcile (finalize, now idle): %v", err)
 	}
@@ -653,7 +669,7 @@ func TestFrameInstallFinalizerWaitsForARunningInstallRatherThanRacingIt(t *testi
 // exactly as well as a correct one.
 func TestFrameInstallSecondReconcileDoesNotStartASecondInstall(t *testing.T) {
 	fi := fiInstall("fi-ctrl-once", "fi-ctrl-once-machine")
-	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial, fi.Spec.Layout.Disks[0].ByID)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
 	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
 	c := fiTestClient(t, fi, fm, secret)
 	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
@@ -684,18 +700,18 @@ func TestFrameInstallSecondReconcileDoesNotStartASecondInstall(t *testing.T) {
 		t.Fatal("the first install never set a boot override -- this test proves nothing about a second install if the first one never happened")
 	}
 
-	// runInstall's own goroutine clears r.running(uid) in a defer, which
-	// runs after finishStatus -- so status.Phase can already read Ready
-	// (finishStatus's write) for a brief window in which running(uid) is
-	// still true. Waited out explicitly: with it still true, Reconcile's
-	// own *other* guard (r.running) would block a second install by
-	// accident, on a call that says nothing about the terminal-phase check
-	// this test exists to prove. Checked: without this wait, this test
-	// still passed after deleting the terminal-phase guard entirely, for
-	// exactly that reason -- it wasn't the guard under test holding, it was
-	// timing. See task-9-report.md for that red/green pair.
+	// runInstall's own goroutine clears r.running(machineRef) in a defer,
+	// which runs after finishStatus -- so status.Phase can already read
+	// Ready (finishStatus's write) for a brief window in which
+	// running(machineRef) is still true. Waited out explicitly: with it
+	// still true, Reconcile's own *other* guard (r.running) would block a
+	// second install by accident, on a call that says nothing about the
+	// terminal-phase check this test exists to prove. Checked: without this
+	// wait, this test still passed after deleting the terminal-phase guard
+	// entirely, for exactly that reason -- it wasn't the guard under test
+	// holding, it was timing. See task-9-report.md for that red/green pair.
 	g.Eventually(func() bool {
-		return r.running(fi.UID)
+		return r.running(fi.Spec.MachineRef)
 	}, 2*time.Second, 10*time.Millisecond).Should(gomega.BeFalse())
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
@@ -716,5 +732,249 @@ func TestFrameInstallSecondReconcileDoesNotStartASecondInstall(t *testing.T) {
 		"the run-once guard did not hold: a second install started")
 	if got := bmc.callsContaining("boot:"); got != bootCalls {
 		t.Errorf("boot override was set again on the second reconcile (%d -> %d): the run-once guard did not hold", bootCalls, got)
+	}
+}
+
+// TestFrameInstallRefusesAHostnameThatCollidesAcrossNamespaces is I5's own
+// test: checkHostnameNotTaken used to List FrameInstalls scoped to
+// client.InNamespace(fi.Namespace), so two objects in different namespaces
+// naming the same hostname passed this guard and would have collided on the
+// Node name itself once both tried to install. Hostnames become Node names,
+// which are cluster-global, and this reconciler's RBAC is already a
+// ClusterRole -- scoping the List bought no safety, only a blind spot.
+func TestFrameInstallRefusesAHostnameThatCollidesAcrossNamespaces(t *testing.T) {
+	fi := fiInstall("fi-ctrl-crossns-b", "fi-ctrl-crossns-machine")
+	other := fiInstall("fi-ctrl-crossns-a", "fi-ctrl-crossns-machine")
+	other.Namespace = "fi-ctrl-other-namespace"
+	other.Spec.Hostname = fi.Spec.Hostname
+	other.Status.Phase = string(provision.PhasePreparing) // non-terminal
+
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+	c := fiTestClient(t, fi, other, fm, secret)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	fiAddFinalizer(t, r, key)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseFailed) || got.Status.FailedPhase != string(provision.PhasePending) {
+		t.Fatalf("phase=%s failedPhase=%s, want Failed/Pending -- a same-hostname collision in a different namespace was not refused", got.Status.Phase, got.Status.FailedPhase)
+	}
+	if !strings.Contains(got.Status.Message, other.Namespace+"/"+other.Name) {
+		t.Errorf("message %q does not name the colliding FrameInstall %s/%s", got.Status.Message, other.Namespace, other.Name)
+	}
+	if n := bmc.callCount(); n != 0 {
+		t.Errorf("the BMC recorded calls: %d", n)
+	}
+}
+
+// TestFrameInstallDoesNotRunTwoInstallsOnTheSameMachineConcurrently is I4's
+// own test. Before this fix, inFlight was keyed by the FrameInstall's own
+// UID, so two different objects naming the same machineRef each carried a
+// distinct key and could both pass every guard and both call the BMC at
+// once. It uses fakeInstallBMC.blockSerial to hold fi-A's install open
+// deterministically -- with instantaneous fakes, a second reconcile racing
+// however fast fi-A happens to finish would not reliably catch a
+// regression.
+func TestFrameInstallDoesNotRunTwoInstallsOnTheSameMachineConcurrently(t *testing.T) {
+	fiA := fiInstall("fi-ctrl-race-a", "fi-ctrl-race-machine")
+	fiB := fiInstall("fi-ctrl-race-b", "fi-ctrl-race-machine")
+	// Different hostnames: checkHostnameNotTaken must not be what blocks
+	// fiB here -- only the machineRef-keyed inFlight guard should be.
+	fm := fiMachine(fiA.Spec.MachineRef, fiA.Spec.ConfirmSerial)
+	secretA := fiSSHSecret(fiA.Spec.SSHKeyRef)
+	c := fiTestClient(t, fiA, fiB, fm, secretA)
+
+	block := make(chan struct{})
+	bmc := &fakeInstallBMC{serial: fiA.Spec.ConfirmSerial, blockSerial: block}
+	// fiA's install must be able to run to completion once unblocked, to
+	// prove the guard did not wrongly wedge it forever -- so it needs a
+	// real session behind it, not the zero-value fakeInstallSSH a
+	// guard-refusal test can get away with.
+	sessA := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fiA.UID)}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sessA}, &fakeInstallNodes{ready: true})
+	keyA, keyB := fiKey(fiA), fiKey(fiB)
+
+	fiAddFinalizer(t, r, keyA)
+	fiAddFinalizer(t, r, keyB)
+
+	// fiA's reconcile starts a goroutine that calls bmc.Serial(), which
+	// blocks on `block`. Reconcile itself still returns immediately --
+	// only the goroutine it spawned is stuck.
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: keyA}); err != nil {
+		t.Fatalf("reconcile fiA: %v", err)
+	}
+
+	// Waited for on the Serial call itself, not merely running(machineRef):
+	// startInstall claims the machineRef synchronously inside Reconcile,
+	// strictly before the goroutine it spawns ever calls bmc.Serial() --
+	// running() can read true a moment before that call has actually landed
+	// in fakeInstallBMC.calls, which raced this assertion (checked: it
+	// failed intermittently on exactly this line before the wait target
+	// changed).
+	g := gomega.NewWithT(t)
+	g.Eventually(func() int {
+		return bmc.callsContaining("serial")
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.Equal(1))
+	if !r.running(fiA.Spec.MachineRef) {
+		t.Fatalf("running(%q) = false once fiA's Serial call landed, want true", fiA.Spec.MachineRef)
+	}
+
+	resB, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: keyB})
+	if err != nil {
+		t.Fatalf("reconcile fiB: %v", err)
+	}
+	if resB.RequeueAfter <= 0 {
+		t.Error("fiB's reconcile did not requeue while fiA's install was running on the same machine")
+	}
+	// The discriminating assertion: fiB must not have reached the BMC at
+	// all. Before this fix, fiB would have called Serial a second time here
+	// (a second, concurrent goroutine racing fiA's).
+	if n := bmc.callsContaining("serial"); n != 1 {
+		t.Errorf("serial calls = %d after fiB's reconcile, want still 1 -- fiB started its own install on a machine fiA is already installing", n)
+	}
+
+	close(block)
+	g.Eventually(func() string {
+		return fiGet(t, c, keyA).Status.NodeName
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.Equal(fiA.Spec.Hostname))
+}
+
+// TestFrameInstallRestartMidInstallFailsRatherThanResumes is C1's own test.
+// It simulates exactly what a manager restart leaves behind: a FrameInstall
+// whose current generation was already committed to provision.Install
+// (status.observedGeneration == metadata.generation, stamped synchronously
+// by Reconcile before it starts a goroutine) and a non-terminal
+// status.phase, but nothing running in *this* process's inFlight map (a
+// fresh reconciler here, the same way a fresh process after a restart has
+// an empty one). Before this fix, Reconcile read that combination as
+// "nothing to do, fall through to the guards and start a new install" --
+// replaying the destructive sequence because a process died.
+func TestFrameInstallRestartMidInstallFailsRatherThanResumes(t *testing.T) {
+	fi := fiInstall("fi-ctrl-restart", "fi-ctrl-restart-machine")
+	fi.Finalizers = []string{frameInstallFinalizer}
+	fi.Status.Phase = string(provision.PhaseMediaAttached)
+	fi.Status.ObservedGeneration = fi.Generation // "already committed"
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	c := fiTestClient(t, fi, fm)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	if r.running(fi.Spec.MachineRef) {
+		t.Fatal("test setup bug: nothing should be running in this fresh reconciler")
+	}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseFailed) {
+		t.Errorf("phase = %q, want Failed", got.Status.Phase)
+	}
+	if got.Status.FailedPhase != string(provision.PhaseMediaAttached) {
+		t.Errorf("failedPhase = %q, want MediaAttached (the phase it actually was in), not overwritten by anything else", got.Status.FailedPhase)
+	}
+	if !strings.Contains(got.Status.Message, "restart") {
+		t.Errorf("message %q does not mention a restart", got.Status.Message)
+	}
+	// Cleanup was attempted through the same BMC path finalize uses.
+	if n := bmc.callsContaining("eject"); n == 0 {
+		t.Error("no cleanup eject was attempted for the orphaned install")
+	}
+	if n := bmc.callsContaining("clearboot"); n == 0 {
+		t.Error("no cleanup clearboot was attempted for the orphaned install")
+	}
+	// Discriminating: Serial/Build/boot must never be called -- this is a
+	// refusal, not a resumed or retried install.
+	if n := bmc.callsContaining("serial"); n != 0 {
+		t.Errorf("the serial confirmation guard ran (%d calls): this must be a refusal, not an install attempt", n)
+	}
+}
+
+// TestFrameInstallDoesNotTreatANonTerminalPhaseAloneAsARestart is the
+// positive control for the test above: a non-terminal status.phase by
+// itself -- without status.observedGeneration actually matching
+// metadata.generation -- must not trigger the restart-recovery path.
+// Without this, a version that read "phase is non-terminal" instead of
+// "observedGeneration was actually stamped for this generation" would pass
+// the restart test above for the wrong reason (both fixtures have a
+// non-terminal phase) and this one would catch it: a fresh object always
+// has ObservedGeneration 0, which must not incidentally equal Generation.
+func TestFrameInstallDoesNotTreatANonTerminalPhaseAloneAsARestart(t *testing.T) {
+	fi := fiInstall("fi-ctrl-notarestart", "fi-ctrl-notarestart-machine")
+	// A non-terminal phase with no corresponding ObservedGeneration commit
+	// -- not the shape Reconcile's own synchronous stamp ever produces, but
+	// exactly the shape that isolates "non-terminal phase" from "actually
+	// committed" as the two are otherwise only ever set together.
+	fi.Status.Phase = string(provision.PhasePreparing)
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
+	c := fiTestClient(t, fi, fm, secret)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	fiAddFinalizer(t, r, key)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	g := gomega.NewWithT(t)
+	g.Eventually(func() string {
+		return fiGet(t, c, key).Status.NodeName
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.Equal(fi.Spec.Hostname))
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseReady) {
+		t.Errorf("phase = %q, want Ready -- a non-terminal phase alone was wrongly treated as a restart to recover from", got.Status.Phase)
+	}
+}
+
+// TestFrameInstallKubeconfigWriteFailureGoesFailedNotReady is I1's own
+// test. The install itself succeeds -- there is a Ready node -- but the
+// kubeconfig Secret cannot be written, driven here by pre-creating a Secret
+// at the exact name writeKubeconfigSecret will try to Create, so it fails
+// with a real AlreadyExists rather than a hand-rolled failing client. That
+// is a different, unrecoverable fact from Ready: the kubeconfig only ever
+// existed in the goroutine's memory, and this reconciler's RBAC grants
+// secrets create but not update.
+func TestFrameInstallKubeconfigWriteFailureGoesFailedNotReady(t *testing.T) {
+	fi := fiInstall("fi-ctrl-kcfail", "fi-ctrl-kcfail-machine")
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	secret := fiSSHSecret(fi.Spec.SSHKeyRef)
+	colliding := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: fi.Name + "-kubeconfig", Namespace: "default"}}
+	c := fiTestClient(t, fi, fm, secret, colliding)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	sess := &fakeInstallSession{hostKey: "ssh-ed25519 AAAAhost", marker: string(fi.UID)}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{session: sess}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	fiAddFinalizer(t, r, key)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	g := gomega.NewWithT(t)
+	g.Eventually(func() string {
+		return fiGet(t, c, key).Status.FailedPhase
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.Equal(string(provision.PhaseReady)))
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseFailed) {
+		t.Errorf("phase = %q, want Failed -- Ready is unrecoverable and this failure must not hide behind it", got.Status.Phase)
+	}
+	if !strings.Contains(got.Status.Message, fi.Name+"-kubeconfig") {
+		t.Errorf("message %q does not name the kubeconfig Secret", got.Status.Message)
+	}
+	if got.Status.KubeconfigSecret != "" {
+		t.Errorf("kubeconfigSecret = %q, want empty -- the write failed", got.Status.KubeconfigSecret)
 	}
 }
