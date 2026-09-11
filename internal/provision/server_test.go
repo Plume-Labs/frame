@@ -453,3 +453,117 @@ func TestHTTPImageStoreNeverSendsTheJoinTokenToTheBuildAPI(t *testing.T) {
 		t.Errorf("the cluster target was POSTed to a build API that has no use for it:\n%s", body)
 	}
 }
+
+// I10. The search for secret material belongs where the spec-derived
+// content is, and since 2026-09-11 that is the served preseed, not the
+// image. This reads the file BuildHandler actually wrote and serves --
+// dir/<token>.cfg -- rather than RenderPreseed's return value, because the
+// question is what is published on the unauthenticated media listener.
+func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
+	requireXorriso(t)
+
+	baseISOPath := realBaseISO(t)
+	baseBytes, err := os.ReadFile(baseISOPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := serveBytes(t, baseBytes)
+	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
+
+	const joinToken = "K10deadbeef::server:supersecretpassword"
+	spec := goodSpec()
+	spec.SSHPublicKey = secretLadenPublicKey
+	spec.Cluster = ClusterTarget{
+		Mode:       ClusterJoin,
+		ServerURL:  "https://192.168.2.201:6443",
+		JoinToken:  joinToken,
+		K3sVersion: "v1.33.4+k3s1",
+	}
+
+	dir := t.TempDir()
+	reqBody, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, base, testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+
+	// The secret-laden key must be refused outright -- that is the primary
+	// guard, and it is what keeps the preseed clean. If it ever is not, the
+	// rest of this test is what catches the consequence.
+	if rr.Code == http.StatusBadRequest {
+		return
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var resp buildResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fetched through the media listener, not read off disk: that is the
+	// surface the question is about.
+	got := httptest.NewRecorder()
+	MediaHandler(dir).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET the served preseed = %d", got.Code)
+	}
+	served := got.Body.String()
+	for what, v := range map[string]string{
+		"PEM armour":          "PRIVATE KEY",
+		"an OpenSSH key file": "BEGIN OPENSSH",
+		"the k3s join token":  joinToken,
+	} {
+		if strings.Contains(served, v) {
+			t.Errorf("the preseed served on the unauthenticated media listener carries %s (%q)", what, v)
+		}
+	}
+}
+
+// secretLadenPublicKey is the shape a real leak takes: a Secret whose
+// "id.pub" holds both halves, or a paste of `cat id_ed25519*`. Measured
+// against golang.org/x/crypto/ssh, ParseAuthorizedKey finds the public line
+// and returns no error for it.
+const secretLadenPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILsytToxkJ2CiWuiv8BZ3hYpu7tFXn7Rwz+kc2gjbPSy frame-test-fixture\n" +
+	"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n"
+
+// And the ordinary spec's served preseed does carry the public key, which
+// is the positive control for the search above: a served body that was
+// empty, or a route answering with the wrong file, would satisfy every
+// "does not contain" there.
+func TestBuildHandlerServesAPreseedThatDoesCarryThePublicKey(t *testing.T) {
+	requireXorriso(t)
+
+	baseISOPath := realBaseISO(t)
+	baseBytes, err := os.ReadFile(baseISOPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := serveBytes(t, baseBytes)
+	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
+
+	dir := t.TempDir()
+	spec := goodSpec()
+	reqBody, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, base, testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var resp buildResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	got := httptest.NewRecorder()
+	MediaHandler(dir).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET the served preseed = %d", got.Code)
+	}
+	if !strings.Contains(got.Body.String(), spec.SSHPublicKey) {
+		t.Errorf("the served preseed does not carry the public key at all:\n%s", got.Body.String())
+	}
+}

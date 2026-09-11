@@ -208,21 +208,58 @@ func TestRemasterRewritesDebiansOwnAutomatedInstallEntries(t *testing.T) {
 	}
 }
 
-// The check that matters on the artifact is not that it boots -- it is that
-// nothing secret is on it.
-func TestRemasterProducesAnImageWithNoPrivateKeyMaterial(t *testing.T) {
+// This used to search the built image for "PRIVATE KEY" and "BEGIN
+// OPENSSH", and it could no longer fail: once the preseed moved off the
+// image, no field of Spec reaches the ISO at all, so the naive version of
+// Remaster passes it too -- reproduced by the reviewer. The search for
+// private key material moved to where the spec-derived content now is (the
+// served preseed; see server_test.go).
+//
+// What is asserted on the image instead is the stronger property the move
+// created and nothing was checking: **no value from the Spec reaches the
+// image, at all.** A change that put the preseed back on the ISO, or
+// baked a hostname or a disk name into a boot argument, turns this red --
+// which the old assertion, scoped to two PEM strings, would not have.
+func TestRemasterPutsNoSpecContentOnTheImage(t *testing.T) {
 	base := realBaseISO(t)
 	out := filepath.Join(t.TempDir(), "g9.iso")
-	if err := Remaster(context.Background(), base, goodSpec(), testPreseedURL, out); err != nil {
+	spec := goodSpec()
+	if err := Remaster(context.Background(), base, spec, testPreseedURL, out); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"PRIVATE KEY", "BEGIN OPENSSH"} {
-		if strings.Contains(string(b), forbidden) {
-			t.Errorf("the built image contains %q", forbidden)
+	image := string(b)
+
+	// The positive control, and it is not optional: an ISO this test cannot
+	// read at all would satisfy every "does not contain" below. The preseed
+	// URL is the one thing Remaster is supposed to write into the image, so
+	// finding it proves the search reaches the bytes that were written.
+	if !strings.Contains(image, testPreseedURL) {
+		t.Fatalf("the preseed URL is not in the built image; this search is not looking at what Remaster wrote")
+	}
+
+	// Fields, then the two PEM strings the old test looked for -- kept so
+	// this is strictly stronger than what it replaces, not different.
+	forbidden := map[string]string{
+		"the SSH public key":  spec.SSHPublicKey,
+		"the install UID":     spec.UID,
+		"the hostname":        spec.Hostname,
+		"the network address": spec.Network.Address,
+		"the gateway":         spec.Network.Gateway,
+		"the first disk":      spec.Layout.Disks[0].ByID,
+		"the second disk":     spec.Layout.Disks[1].ByID,
+		"PEM armour":          "PRIVATE KEY",
+		"an OpenSSH key file": "BEGIN OPENSSH",
+	}
+	for what, v := range forbidden {
+		if v == "" {
+			t.Fatalf("%s is empty in the fixture, so looking for it proves nothing", what)
+		}
+		if strings.Contains(image, v) {
+			t.Errorf("the built image carries %s (%q); nothing from the Spec belongs on it", what, v)
 		}
 	}
 }
