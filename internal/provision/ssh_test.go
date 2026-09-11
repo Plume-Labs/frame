@@ -77,12 +77,37 @@ func TestWaitForOurSystemRefusesAMachineThatIsNotOurs(t *testing.T) {
 
 // A system with no marker at all is not ours either -- that is a pre-existing
 // machine at the address, not a failed write of our own marker.
+//
+// The dedicated readErr branch earns its place by what it says, so that is
+// what this asserts (same shape as preseed.go's PRIVATE KEY branch test).
+// Remove the branch and the system is still refused -- by the UID
+// comparison, now that an empty uid can no longer sneak an empty-vs-empty
+// match past it -- but the message stops naming the problem.
 func TestWaitForOurSystemRefusesASystemWithNoMarker(t *testing.T) {
 	f := &fakeSSH{session: &fakeSession{hostKey: "ssh-ed25519 AAAAhost", marker: ""}}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := WaitForOurSystem(ctx, f, "192.168.2.210:22", "frame", nil, "the-uid", time.Millisecond); err == nil {
+	_, err := WaitForOurSystem(ctx, f, "192.168.2.210:22", "frame", nil, "the-uid", time.Millisecond)
+	if err == nil {
 		t.Fatal("a system with no marker was accepted as ours")
+	}
+	if !strings.Contains(err.Error(), "has no "+markerPath) {
+		t.Errorf("error = %q; it must name the missing marker, not just refuse", err)
+	}
+}
+
+// Without this, an empty uid matches an unreadable marker: a failed read
+// compares as "", "" == "" is true, and a machine we never touched is
+// accepted as ours. It must be refused before the first dial, not after --
+// there is nothing a retry could fix.
+func TestWaitForOurSystemRefusesAnEmptyUID(t *testing.T) {
+	f := &fakeSSH{session: &fakeSession{hostKey: "ssh-ed25519 AAAAhost", marker: ""}}
+	_, err := WaitForOurSystem(context.Background(), f, "192.168.2.210:22", "frame", nil, "", time.Millisecond)
+	if err == nil {
+		t.Fatal("an empty UID was accepted as something to check a machine against")
+	}
+	if f.attempts != 0 {
+		t.Errorf("attempts = %d, want 0: an empty UID must be refused before dialing", f.attempts)
 	}
 }
 

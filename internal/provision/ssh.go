@@ -129,6 +129,15 @@ var _ io.Closer = (*sshSession)(nil)
 // address -- including the one we believed we were overwriting and in fact
 // never touched. The UID existed nowhere but inside the image we built.
 func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key []byte, uid string, every time.Duration) (string, error) {
+	// Without this, an empty uid makes every unreadable marker look like a
+	// match: a failed read leaves the compared content empty, "" == "" is
+	// true, and a machine we never touched is accepted as ours -- the exact
+	// failure this whole mechanism exists to prevent. So this is checked
+	// before the loop even dials once.
+	if strings.TrimSpace(uid) == "" {
+		return "", fmt.Errorf("waiting for %s: no install UID to check against, so no machine could be told apart from any other at that address", addr)
+	}
+
 	var last error
 	for {
 		select {
@@ -148,6 +157,14 @@ func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key [
 			b, readErr := sess.ReadFile(ctx, markerPath)
 			_ = sess.Close()
 			switch {
+			// This branch is for the message, not for the refusal -- the UID
+			// comparison below already refuses every unreadable marker too,
+			// since a failed read leaves b empty and uid can never be empty
+			// (guarded above), so "" != uid always holds. But "this is a
+			// system we did not install" tells an operator something that
+			// "carries UID %q, not %q" does not, especially when the first
+			// %q would print empty, so its test asserts the message rather
+			// than merely the refusal.
 			case readErr != nil:
 				last = fmt.Errorf("%s has no %s: this is a system we did not install", addr, markerPath)
 			case strings.TrimSpace(string(b)) != uid:
