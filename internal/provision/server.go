@@ -28,6 +28,16 @@ var imageName = regexp.MustCompile(`^[a-f0-9]{32}\.iso$`)
 // name ever touches the filesystem, for the same reason imageName is.
 var preseedName = regexp.MustCompile(`^[a-f0-9]{32}\.cfg$`)
 
+// runScriptName is the third name this package produces: the same 32-hex
+// token, ".sh". It is the preseed/run script (NetcfgRerunScript) the
+// rendered preseed points d-i at, and it is served from the SAME route as
+// the preseed, deliberately -- d-i resolves a relative preseed/run value
+// against the directory the preconfiguration file came from, and Frame
+// writes an absolute URL. Putting the two files on one route means both
+// readings land on the same file, so which one d-i actually does is not a
+// question this has to get right.
+var runScriptName = regexp.MustCompile(`^[a-f0-9]{32}\.sh$`)
+
 // buildResponse is what the build API answers with. Only the token matters
 // to a caller: HTTPImageStore derives the URL the BMC will use itself, from
 // MediaURL, rather than trusting a URL the build API might hand back for its
@@ -79,7 +89,11 @@ func MediaHandler(dir string) http.Handler {
 	})
 	mux.HandleFunc("GET /preseed/{name}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
-		if !preseedName.MatchString(name) {
+		// Two guards, not one pattern with an alternation: each refuses on
+		// its own, so a mutation to either is visible as exactly one test
+		// going red rather than as a combined pattern that still matches
+		// half of what it used to.
+		if !preseedName.MatchString(name) && !runScriptName.MatchString(name) {
 			http.NotFound(w, r)
 			return
 		}
@@ -113,14 +127,14 @@ func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
 			return
 		}
 
-		// Rendered before anything is fetched or built: a spec this package
+		// Validated before anything is fetched or built: a spec this package
 		// would refuse to turn into a preseed is refused here too, before a
-		// single byte of a ~700 MB download happens. The rendered content is
-		// kept, rather than discarded and re-rendered later, so what gets
-		// written to disk and what was just validated are provably the same
-		// call's output.
-		preseed, err := RenderPreseed(spec)
-		if err != nil {
+		// single byte of a ~700 MB download happens. The render itself has
+		// to wait for the token, because the preseed now names the
+		// preseed/run script by its token-derived URL -- so the refusals
+		// are split out into ValidateSpec rather than duplicated, and there
+		// is still exactly one render, whose output is what lands on disk.
+		if err := ValidateSpec(spec); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -141,17 +155,32 @@ func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
 			return
 		}
 
+		// The URL baked into the image's boot arguments and the one
+		// MediaHandler's /preseed/{name} route actually serves must be the
+		// same address by construction, not by coincidence -- all three are
+		// built from mediaURL and token here, in one place.
+		preseedURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".cfg"
+		runURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".sh"
+
+		preseed, err := RenderPreseed(spec, runURL)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		cfgPath := filepath.Join(dir, token+".cfg")
 		if err := os.WriteFile(cfgPath, []byte(preseed), 0o644); err != nil {
 			http.Error(w, fmt.Sprintf("writing preseed: %v", err), http.StatusInternalServerError)
 			return
 		}
-
-		// The URL baked into the image's boot arguments and the one
-		// MediaHandler's /preseed/{name} route actually serves must be the
-		// same address by construction, not by coincidence -- both are
-		// built from mediaURL and token here, in one place.
-		preseedURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".cfg"
+		// Written beside the preseed, on the same route, read-only. Without
+		// it the preseed's preseed/run directive names a 404 and netcfg
+		// never re-runs -- which is indistinguishable, from here, from the
+		// install simply taking a long time.
+		if err := os.WriteFile(filepath.Join(dir, token+".sh"), []byte(NetcfgRerunScript), 0o644); err != nil {
+			http.Error(w, fmt.Sprintf("writing preseed/run script: %v", err), http.StatusInternalServerError)
+			return
+		}
 
 		out := filepath.Join(dir, token+".iso")
 		if err := Remaster(r.Context(), baseISO, spec, preseedURL, out); err != nil {
@@ -178,13 +207,15 @@ func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
 			return
 		}
 		// Best effort: the .iso removal above is the one a caller's retry
-		// depends on, and a missing .cfg (say, a prior cleanup that got this
-		// far and no further) must not turn a successful image removal into
-		// a 500.
+		// depends on, and a missing .cfg or .sh (say, a prior cleanup that
+		// got this far and no further) must not turn a successful image
+		// removal into a 500.
 		token := strings.TrimSuffix(name, ".iso")
-		if err := os.Remove(filepath.Join(dir, token+".cfg")); err != nil && !os.IsNotExist(err) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		for _, side := range []string{token + ".cfg", token + ".sh"} {
+			if err := os.Remove(filepath.Join(dir, side)); err != nil && !os.IsNotExist(err) {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -279,11 +310,10 @@ type LocalImageStore struct {
 
 func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (url, token string, err error) {
 	// Same order as BuildHandler, for the same reason: refuse before
-	// fetching or building anything. The rendered content is kept for the
-	// same reason too -- what is written to dir/<token>.cfg is provably
-	// this call's output, not a second, possibly-diverged render.
-	preseed, err := RenderPreseed(spec)
-	if err != nil {
+	// fetching or building anything. The render itself waits for the token,
+	// because the preseed names its preseed/run script by a token-derived
+	// URL -- so the refusals run here and the single render runs below.
+	if err := ValidateSpec(spec); err != nil {
 		return "", "", err
 	}
 
@@ -300,14 +330,23 @@ func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (url, token stri
 		return "", "", fmt.Errorf("preparing image directory: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(s.Dir, tok+".cfg"), []byte(preseed), 0o644); err != nil {
-		return "", "", fmt.Errorf("writing preseed: %w", err)
-	}
-
 	// Built from the same MediaURL the returned image URL below is, so the
 	// address baked into the image's boot arguments is the one this store
 	// actually serves -- see BuildHandler's identical construction.
 	preseedURL := strings.TrimSuffix(s.MediaURL, "/") + "/preseed/" + tok + ".cfg"
+	runURL := strings.TrimSuffix(s.MediaURL, "/") + "/preseed/" + tok + ".sh"
+
+	preseed, err := RenderPreseed(spec, runURL)
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, tok+".cfg"), []byte(preseed), 0o644); err != nil {
+		return "", "", fmt.Errorf("writing preseed: %w", err)
+	}
+	// Beside the preseed, on the same read-only route -- see BuildHandler.
+	if err := os.WriteFile(filepath.Join(s.Dir, tok+".sh"), []byte(NetcfgRerunScript), 0o644); err != nil {
+		return "", "", fmt.Errorf("writing preseed/run script: %w", err)
+	}
 
 	out := filepath.Join(s.Dir, tok+".iso")
 	if err := Remaster(ctx, baseISO, spec, preseedURL, out); err != nil {
@@ -324,8 +363,10 @@ func (s *LocalImageStore) Remove(_ context.Context, token string) error {
 	if err := os.Remove(filepath.Join(s.Dir, token+".iso")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Remove(filepath.Join(s.Dir, token+".cfg")); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, side := range []string{token + ".cfg", token + ".sh"} {
+		if err := os.Remove(filepath.Join(s.Dir, side)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }

@@ -53,7 +53,11 @@ func bootArgs(preseedURL string) string {
 // doc comment for why. preseedURL is required and refused empty, before
 // baseISO is ever touched, the same as a bad Spec is.
 func Remaster(ctx context.Context, baseISO string, s Spec, preseedURL, out string) error {
-	if _, err := RenderPreseed(s); err != nil {
+	// ValidateSpec, not RenderPreseed: Remaster has no preseed/run URL to
+	// render against (the store that calls it builds both URLs from the
+	// token it owns), and inventing one here to throw the output away would
+	// make this refuse or accept on a value no image ever carries.
+	if err := ValidateSpec(s); err != nil {
 		return err
 	}
 	if strings.TrimSpace(preseedURL) == "" {

