@@ -23,9 +23,12 @@ import (
 // was never seen, so this is a correlation acted on, not an explanation.
 //
 // interface=auto is not optional on that machine: it has four NICs and one
-// cabled, and without it d-i asks which to use — before it can fetch the
-// preseed that answers. The block is circular, silent, and looks exactly
-// like a crash.
+// cabled. Observed, not explained, same as url= above and by the same
+// session, where nobody saw the screen either: without interface=auto the
+// boot does not reach the preseed; with it, DHCP proceeds and the
+// installer takes its address. "d-i is asking which interface to use" is a
+// plausible reading of that symptom, not a confirmed mechanism -- do not
+// trust it further than that.
 //
 // frame=1 is our own marker. It is what addBootArgs checks to avoid
 // rewriting a line twice. It cannot be auto=true, which Debian itself ships

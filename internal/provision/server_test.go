@@ -119,9 +119,31 @@ func TestMediaHandlerServesAPreseedAndRefusesToWriteOne(t *testing.T) {
 	}
 }
 
-// The positive control the case above needs, same reason the /iso/ route
-// has one: without it, "a bad preseed name returned 404" is indistinguishable
-// from "the route never matched" or "this handler says 404 to everything".
+// /iso/'s traversal coverage (TestMediaHandlerRefusesPathsThatClimbOut)
+// never sends a single request at /preseed/; this is that same coverage for
+// the new route.
+func TestMediaHandlerRefusesPreseedPathsThatClimbOut(t *testing.T) {
+	dir := t.TempDir()
+	h := MediaHandler(dir)
+	for _, p := range []string{"/preseed/../../etc/passwd", "/preseed/..%2f..%2fetc%2fpasswd", "/preseed/sub/dir.cfg"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
+		if rr.Code == http.StatusOK {
+			t.Errorf("%s was served", p)
+		}
+	}
+}
+
+// This does NOT prove preseedName refuses anything -- it only separates "a
+// well-formed name reached the filesystem and 404'd there" from "the route
+// never matched at all". Keeping the comment honest about that after
+// getting it wrong once already: an earlier version of this file paired
+// this test with TestMediaHandlerServesAPreseedAndRefusesToWriteOne and
+// called that the positive control for preseedName. It is not -- both of
+// those tests stay fully green with preseedName's check deleted outright
+// (measured; see the mutation proof in TestMediaHandlerRefusesAWellFormed-
+// PreseedRouteNameThatIsNotAPreseedName's comment below, which is the
+// actual proof).
 func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedPreseedNameThatIsAbsent(t *testing.T) {
 	dir := t.TempDir()
 	h := MediaHandler(dir)
@@ -129,6 +151,29 @@ func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedPreseedNameThatIsAb
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".cfg", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("code = %d, want 404 (a well-formed but absent preseed name should reach the filesystem and fail there, not be turned away earlier)", rr.Code)
+	}
+}
+
+// The actual proof preseedName refuses anything: a name that is a single
+// path segment (so the route matches it) and that DOES exist on disk under
+// that exact name, but does not match preseedName. A missing file would
+// also 404 here, and a multi-segment path
+// (TestMediaHandlerRefusesPreseedPathsThatClimbOut's "/preseed/sub/dir.cfg"
+// case) never reaches the name check at all -- only this shape, a
+// well-formed route match against a real file the pattern still rejects,
+// tells "the guard refused it" apart from "there was nothing there".
+// Mutation-proved: replacing preseedName with regexp.MustCompile(`.*`)
+// turns exactly this test red and none of the others in this file.
+func TestMediaHandlerRefusesAWellFormedPreseedRouteNameThatIsNotAPreseedName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "not-a-preseed-name"), []byte("PRESEED"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := MediaHandler(dir)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/not-a-preseed-name", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404 (the name check should have refused this before the filesystem was touched, even though a file exists under this exact name)", rr.Code)
 	}
 }
 
