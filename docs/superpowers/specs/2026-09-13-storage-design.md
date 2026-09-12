@@ -130,6 +130,20 @@ par Linux, un `MM1000GFJTE` masqué par des métadonnées résiduelles. PVE ne
 peut pas montrer ça, faute d'avoir deux sources. Frame en a deux, donc Frame
 le doit.
 
+**Le BMC ne sait pas qu'il ment.** Relevé sur le G9 le 2026-09-11 : les huit
+disques rendent `Health: OK` et `DiskDriveStatusReasons: ["None"]`, les huit
+sont dans `UnconfiguredDrives`, `LogicalDrives` est à 0. Le seul indice côté
+BMC est une entrée IML `1832` de sévérité `OK`, donc informative. Aucun champ
+d'état ne porte l'écart. **`divergences[]` est donc calculé par la jointure,
+jamais lu dans une source.** Une entrée `bmc-only` dont l'état est `OK` est
+le cas normal, pas le cas rare.
+
+Ces chiffres viennent de `docs/g9-single-node-cluster.md` du dépôt Neura
+(`main = e8a9eba82`), un journal de terrain non relu dont l'autrice signale y
+avoir corrigé trois affirmations fausses en route. Ils valent comme cas de
+démonstration ; **la garde 1 de §4 impose de toute façon de revérifier le
+numéro de série sur la machine avant tout geste destructif.**
+
 `observed[]` porte aussi **ce qui occupe le disque** : monté, PV LVM, OSD
 Ceph, table de partitions. C'est la donnée dont dépend la garde principale de
 `FrameDiskClaim`.
