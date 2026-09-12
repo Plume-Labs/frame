@@ -23,9 +23,10 @@ type fakeSession struct {
 // HostKey carries a trailing newline, matching ssh.MarshalAuthorizedKey's
 // real output -- WaitForOurSystem must not rely on any particular Session
 // implementation having already cleaned that up.
-func (f *fakeSession) HostKey() string                             { return f.hostKey + "\n" }
-func (f *fakeSession) Run(context.Context, string) (string, error) { return "", nil }
-func (f *fakeSession) Close() error                                { f.closed = true; return nil }
+func (f *fakeSession) HostKey() string                                { return f.hostKey + "\n" }
+func (f *fakeSession) Run(context.Context, string) (string, error)    { return "", nil }
+func (f *fakeSession) Output(context.Context, string) (string, error) { return "", nil }
+func (f *fakeSession) Close() error                                   { f.closed = true; return nil }
 func (f *fakeSession) ReadFile(_ context.Context, path string) ([]byte, error) {
 	// An empty marker means the file is not there, which is what a system
 	// that never ran our preseed actually presents: `cat` fails. Modelling it

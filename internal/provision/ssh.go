@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -25,7 +26,33 @@ type SSHClient interface {
 // Session is an open connection to the machine under installation.
 type Session interface {
 	HostKey() string                                     // "ssh-ed25519 AAAA..." as seen on connect
-	Run(ctx context.Context, cmd string) (string, error) // combined output
+	Run(ctx context.Context, cmd string) (string, error) // combined output; for commands whose diagnostics matter
+	// Output runs cmd and returns its STANDARD OUTPUT ONLY. Anything the
+	// command wrote to stderr goes into the error, never into the result.
+	//
+	// This exists because Run merges them, and one caller reads a value
+	// that has to survive verbatim: the new cluster's kubeconfig. `sudo`
+	// writes warnings to stderr while still exiting 0 -- "sudo: unable to
+	// resolve host <name>" being the common one on a freshly installed
+	// machine -- and merged, that text prepends to the YAML.
+	//
+	// Measured, both ways, because the guess was wrong in the more
+	// dangerous direction:
+	//
+	//   "sudo: unable to resolve host x: Name or service not known" has a
+	//   second colon, so yaml.Unmarshal refuses it ("mapping values are not
+	//   allowed in this context") and the cluster's only admin credential
+	//   is lost behind an error about indentation.
+	//
+	//   "sudo: a password is required" has one colon, so it parses
+	//   CLEANLY as an extra top-level key, and clientcmd.
+	//   RESTConfigFromKubeConfig accepts the whole document without error.
+	//   Nothing anywhere reports a problem; a Secret is written holding a
+	//   kubeconfig with sudo's complaint inside it.
+	//
+	// The second case is why stdout has to be separated rather than
+	// sanity-checked afterwards.
+	Output(ctx context.Context, cmd string) (string, error)
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	Close() error
 }
@@ -98,6 +125,18 @@ func (s *sshSession) HostKey() string {
 }
 
 func (s *sshSession) Run(ctx context.Context, cmd string) (string, error) {
+	return s.exec(ctx, cmd, true)
+}
+
+// Output runs cmd and returns only what it wrote to stdout. stderr is
+// captured separately and folded into the error, so a command that writes a
+// warning there and still exits 0 cannot corrupt the value read back. See
+// Session.Output's doc comment for the case that made this necessary.
+func (s *sshSession) Output(ctx context.Context, cmd string) (string, error) {
+	return s.exec(ctx, cmd, false)
+}
+
+func (s *sshSession) exec(ctx context.Context, cmd string, merge bool) (string, error) {
 	sess, err := s.client.NewSession()
 	if err != nil {
 		return "", err
@@ -108,9 +147,23 @@ func (s *sshSession) Run(ctx context.Context, cmd string) (string, error) {
 		out []byte
 		err error
 	}
+
+	var stderr bytes.Buffer
+	if !merge {
+		sess.Stderr = &stderr
+	}
+
 	done := make(chan result, 1)
 	go func() {
-		out, err := sess.CombinedOutput(cmd)
+		if merge {
+			out, err := sess.CombinedOutput(cmd)
+			done <- result{out: out, err: err}
+			return
+		}
+		// ssh.Session.Output sets Stdout itself and leaves Stderr alone,
+		// which is why it was set above -- left nil it would be discarded
+		// and an exit-non-zero failure would say nothing about why.
+		out, err := sess.Output(cmd)
 		done <- result{out: out, err: err}
 	}()
 
@@ -119,6 +172,9 @@ func (s *sshSession) Run(ctx context.Context, cmd string) (string, error) {
 		_ = sess.Close()
 		return "", ctx.Err()
 	case r := <-done:
+		if r.err != nil && !merge && stderr.Len() > 0 {
+			return "", fmt.Errorf("%w: %s", r.err, strings.TrimSpace(stderr.String()))
+		}
 		return string(r.out), r.err
 	}
 }
@@ -146,13 +202,25 @@ var _ io.Closer = (*sshSession)(nil)
 // never touched.
 //
 // What the UID actually is, stated exactly rather than flatteringly: 16
-// bytes from crypto/rand, generated per run, held in the caller's memory and
-// written to no field any account can read. It is NOT baked into the image
-// -- it travels in the preseed, which is served over plaintext HTTP on the
-// management network, so anything that can watch that network or guess the
-// 32-hex path can learn it. That is a real limit on what this proves, and
-// it is the reason the value is random rather than the FrameInstall's own
-// metadata.uid, which every viewer-tier account could simply read.
+// bytes from crypto/rand, generated per run, held in the caller's memory.
+// Two things it is not:
+//
+//   - It is NOT baked into the image. It travels in the preseed, served
+//     over plaintext HTTP on the management network, so anything that can
+//     watch that network or guess the 32-hex path can learn it.
+//   - It is NOT unreadable afterwards. On the mismatch path the error
+//     below prints both the marker found and the UID expected, and the
+//     controller records that error in status.message -- so a FAILED
+//     install publishes its own UID to any account that can read the
+//     object. The happy path writes it nowhere.
+//
+// Neither costs anything real: a UID is scoped to one installation and is
+// meaningless once that installation has ended, which is the only moment
+// either exposure happens. What both rule out is the claim this comment
+// used to make -- "existed nowhere but inside that image" -- and what they
+// leave intact is the reason the value is random rather than the
+// FrameInstall's own metadata.uid: that one is readable BEFORE the install,
+// by every viewer-tier account, which is when it would matter.
 func WaitForOurSystem(ctx context.Context, c SSHClient, addr, user string, key []byte, uid string, every time.Duration) (string, error) {
 	// Trimmed once, up front, and every later comparison uses this value.
 	// Otherwise a uid with incidental whitespace passes this guard but can

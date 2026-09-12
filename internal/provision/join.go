@@ -83,9 +83,30 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 		// -n so a machine where that sudoers drop-in did not land fails
 		// immediately with sudo's own message instead of blocking on a
 		// password prompt until this phase's deadline expires.
-		raw, err := sess.Run(ctx, "sudo -n cat "+k3sKubeconfigPath)
+		// Output, not Run: Run is CombinedOutput, and `sudo` writes
+		// warnings to stderr while still exiting 0 -- "sudo: unable to
+		// resolve host <name>" being the one a freshly installed machine
+		// produces. Merged, that text prepends to the YAML, and what
+		// happens next depends on how many colons the message has:
+		// two and the parse fails, one and it parses cleanly as an extra
+		// top-level key that clientcmd then accepts without a word.
+		// Measured both ways -- see Session.Output's comment. Output keeps
+		// stderr out of the value and puts it in the error instead.
+		raw, err := sess.Output(ctx, "sudo -n cat "+k3sKubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("the cluster started but its kubeconfig is not readable, so nobody can talk to it: %w", err)
+		}
+		// Second belt, because Session is an interface and an
+		// implementation that merges anyway would put us back where we
+		// started. "Silently" is literal: measured, "sudo: a password is
+		// required" in front of a kubeconfig parses as valid YAML and
+		// clientcmd accepts the result, so there is no error anywhere for
+		// this to be a belt against -- only a Secret holding a file with
+		// sudo's complaint in it. A `sudo:` line at the front is refused by
+		// name instead.
+		if msg, found := sudoPreamble(raw); found {
+			return nil, fmt.Errorf(
+				"the kubeconfig read came back with sudo's own output in front of it (%q), so it is not the file: fix that warning on the machine -- most often an /etc/hosts entry for its own hostname -- rather than parsing around it", msg)
 		}
 		return RewriteKubeconfigServer([]byte(raw), nodeAddress)
 
@@ -107,6 +128,24 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 	default:
 		return nil, fmt.Errorf("cluster: unknown mode %q", t.Mode)
 	}
+}
+
+// sudoPreamble reports whether the first non-empty line of out is one of
+// sudo's own messages, and returns it. sudo prefixes everything it says
+// with "sudo: ", which is what makes this exact rather than a guess about
+// what a kubeconfig cannot start with.
+func sudoPreamble(out string) (string, bool) {
+	for line := range strings.SplitSeq(out, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "sudo:") {
+			return t, true
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // k3sVersionPattern is what INSTALL_K3S_VERSION actually looks like:
