@@ -81,7 +81,14 @@ func validateProvisiondMediaURL(raw string) error {
 	if raw == "" {
 		return nil
 	}
-	if err := provision.ValidateMediaURL(raw); err != nil {
+	// Syntax only, not provision.ValidateMediaURL: both shipped manifests
+	// default this flag to http://ci-placeholder.invalid:30581, and the
+	// full check refuses .invalid. Applying it here would CrashLoop the
+	// manager on the documented `kubectl apply -k config/default` path --
+	// which is the boot gate I7 removed, reintroduced by a different
+	// route. The placeholder is refused where it matters instead, at
+	// FrameInstall reconciliation, which names it on the object.
+	if err := provision.ValidateMediaURLSyntax(raw); err != nil {
 		return fmt.Errorf("-provisiond-media-url %w", err)
 	}
 	return nil

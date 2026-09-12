@@ -325,8 +325,8 @@ func (s *HTTPImageStore) Remove(ctx context.Context, token string) error {
 	return nil
 }
 
-// ValidateMediaURL refuses anything that is not a usable http(s) base URL a
-// BMC on the management network could fetch from.
+// ValidateMediaURLSyntax refuses anything that is not a well-formed http(s)
+// base URL.
 //
 // Checking presence alone only catches a missing value; it says nothing
 // about one that is wrong in a way that shows up only on hardware later --
@@ -336,11 +336,19 @@ func (s *HTTPImageStore) Remove(ctx context.Context, token string) error {
 // an image whose boot arguments point nowhere and fails twenty minutes in,
 // with nothing saying why.
 //
-// It lives here, beside the code that builds URLs from this value, so the
-// manager, frame-provisiond and the FrameInstall controller check the same
-// thing rather than three copies of it. Callers wrap the error with the
-// name of whatever they call this setting.
-func ValidateMediaURL(raw string) error {
+// It is deliberately NOT the whole check -- see ValidateMediaURL. This half
+// is what the manager applies at start-up, and it has to keep passing the
+// placeholder both shipped manifests carry
+// (http://ci-placeholder.invalid:30581), or `kubectl apply -k
+// config/default` CrashLoops the manager on a value the runbook says to
+// replace later. That distinction is the whole reason there are two
+// functions.
+//
+// Both live here, beside the code that builds URLs from this value, so the
+// manager and the FrameInstall controller check the same thing rather than
+// two copies of it. Callers wrap the error with the name of whatever they
+// call this setting.
+func ValidateMediaURLSyntax(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("is not set: every built image bakes this address into its own boot arguments, so an image built against it would fetch its preseed from nowhere")
 	}
@@ -353,6 +361,36 @@ func ValidateMediaURL(raw string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("%q: has no host", raw)
+	}
+	return nil
+}
+
+// ValidateMediaURL is ValidateMediaURLSyntax plus the one thing syntax
+// cannot see: whether this address could ever resolve.
+//
+// ".invalid" is reserved by RFC 2606 precisely so that it never does, and
+// both shipped manifests default this setting to
+// "http://ci-placeholder.invalid:30581" -- so the refusal added for a
+// missing media URL never fired on the documented `kubectl apply -k`
+// path, which is the path most likely to reach a real machine with a
+// placeholder still in it. A BMC handed that address fails to resolve it
+// and Frame sees a MediaAttached timeout that says nothing.
+//
+// This is what a build must pass, checked before the BMC is touched. It is
+// not what the manager checks at start-up, on purpose: the placeholder has
+// to keep the manager running so it can refuse the install and say why.
+func ValidateMediaURL(raw string) error {
+	if err := ValidateMediaURLSyntax(raw); err != nil {
+		return err
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q: %w", raw, err)
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "invalid" || strings.HasSuffix(host, ".invalid") {
+		return fmt.Errorf(
+			"%q: .invalid is reserved by RFC 2606 and never resolves -- this is the placeholder the shipped manifests carry, not an address any BMC can fetch from", raw)
 	}
 	return nil
 }

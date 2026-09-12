@@ -289,11 +289,19 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	// The install UID is generated here, per run, and never written
-	// anywhere readable. It used to be string(fi.UID) -- the object's own
-	// metadata.uid, which every viewer-tier account can read with `kubectl
-	// get frameinstall -o yaml`, and which is now served over plaintext
-	// HTTP inside the rendered preseed rather than baked into an image.
+	// The install UID is generated here, per run. It used to be
+	// string(fi.UID) -- the object's own metadata.uid, which every
+	// viewer-tier account can read with `kubectl get frameinstall -o yaml`
+	// BEFORE the install runs, which is when knowing it would matter.
+	//
+	// It is not written to any readable field on the happy path. It is not
+	// secret afterwards either, and saying otherwise would be the same kind
+	// of overclaim this replaced: on a marker mismatch,
+	// provision.WaitForOurSystem's error names both the UID found and the
+	// UID expected, and finishStatus writes that error into
+	// status.message. So a FAILED install publishes its own UID. That costs
+	// nothing -- a UID is scoped to one installation and is dead the moment
+	// that installation ends, which is exactly when this happens.
 	//
 	// What the marker is for (design §7) is making trust-on-first-use
 	// proportionate: an impostor answering at the target address would have

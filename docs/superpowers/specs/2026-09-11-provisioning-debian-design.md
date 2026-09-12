@@ -168,14 +168,21 @@ one was never true:
 - The controller was using the `FrameInstall`'s own `metadata.uid`, which
   every `viewer`-tier account can read.
 
-The UID is now 16 bytes from `crypto/rand`, generated per run, held in the
-running installation's memory and written to no readable field. What the
-marker proves is therefore: *the machine answering at this address came out
-of this installation, unless someone could read the management network or
-guess a 32-character random path during the twenty minutes the image was
-served.* That is enough for what it is for — telling our machine apart from
-an unrelated one that happens to be at that address — and it is less than
-"nowhere but inside that image".
+The UID is now 16 bytes from `crypto/rand`, generated per run and held in
+the running installation's memory. It is written to no readable field while
+the installation is running; on a marker mismatch the failure message names
+it and lands in `status.message`, so a **failed** install publishes its own
+UID. Both are named here rather than glossed, because glossing exactly this
+is what produced the correction above.
+
+What the marker proves is therefore: *the machine answering at this address
+came out of this installation, unless someone could read the management
+network or guess a 32-character random path during the twenty minutes the
+image was served.* That is enough for what it is for — telling our machine
+apart from an unrelated one that happens to be at that address — and it is
+less than "nowhere but inside that image". A UID readable after the run has
+ended costs nothing, because it is meaningless then; a UID readable
+**before** it, which `metadata.uid` was, is the one that mattered.
 
 **`Installed` is a report, not a phase.** *Corrected 2026-09-12 to match the
 code.* This table originally said `Installed` ends when the media is ejected
