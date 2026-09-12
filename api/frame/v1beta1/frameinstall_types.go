@@ -65,15 +65,24 @@ type InstallNetwork struct {
 	// +kubebuilder:validation:MaxLength=45
 	// +kubebuilder:validation:XValidation:rule="isIP(self)",message="gateway must be an IP address"
 	Gateway string `json:"gateway"`
-	// DNS resolvers, as IP addresses. There is no vlan or bond here on
+	// DNS resolvers, as IP addresses. At least one is required, and the
+	// apiserver says so rather than leaving it to the controller one phase
+	// later: with none, the preseed renders an empty
+	// netcfg/get_nameservers against a mirror named deb.debian.org, and
+	// partman runs before the base system is fetched -- so the install
+	// halts asking a question nobody can answer, after both disks are
+	// already gone. The console's own happy path produced exactly that.
+	//
+	// There is no vlan or bond here on
 	// purpose: both were declared, validated by the apiserver, and then
 	// dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
 	// tagged VLAN installed untagged, silently. Task 1 removed them from
 	// provision.Network for exactly that reason and they survived one layer
 	// up, where the operator types. d-i bonding is not something to
 	// implement blind; add them back when a machine needs one.
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=3
-	DNS []string `json:"dns,omitempty"`
+	DNS []string `json:"dns"`
 }
 
 // InstallLayout is the disk layout recipe.

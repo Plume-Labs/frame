@@ -180,7 +180,15 @@ spec:
                       rule: isCIDR(self)
                   dns:
                     description: |-
-                      DNS resolvers, as IP addresses. There is no vlan or bond here on
+                      DNS resolvers, as IP addresses. At least one is required, and the
+                      apiserver says so rather than leaving it to the controller one phase
+                      later: with none, the preseed renders an empty
+                      netcfg/get_nameservers against a mirror named deb.debian.org, and
+                      partman runs before the base system is fetched -- so the install
+                      halts asking a question nobody can answer, after both disks are
+                      already gone. The console's own happy path produced exactly that.
+
+                      There is no vlan or bond here on
                       purpose: both were declared, validated by the apiserver, and then
                       dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
                       tagged VLAN installed untagged, silently. Task 1 removed them from
@@ -190,6 +198,7 @@ spec:
                     items:
                       type: string
                     maxItems: 3
+                    minItems: 1
                     type: array
                   gateway:
                     maxLength: 45
@@ -199,6 +208,7 @@ spec:
                       rule: isIP(self)
                 required:
                 - address
+                - dns
                 - gateway
                 type: object
               sshKeyRef:

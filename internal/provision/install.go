@@ -36,6 +36,14 @@ func validateOptions(o Options) error {
 // wiped. None of them need the machine, so all of them run here instead,
 // before it is ever touched.
 func validatePendingSpec(s Spec, nodeAddress string) error {
+	// Every refusal RenderPreseed makes, run here instead of at Preparing,
+	// where Images.Build would reach it: none of them need the machine
+	// either, and Pending is the one phase that has not yet read anything
+	// off the BMC. A spec this package will not render is refused before
+	// the BMC is touched at all, rather than one phase later.
+	if err := ValidateSpec(s); err != nil {
+		return err
+	}
 	if err := validateK3sVersion(s.Cluster.K3sVersion); err != nil {
 		return fmt.Errorf("cluster target: %w", err)
 	}
