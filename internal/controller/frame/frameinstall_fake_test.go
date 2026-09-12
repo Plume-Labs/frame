@@ -247,6 +247,8 @@ type fakeInstallSession struct {
 	marker string
 	closed bool
 	cmds   []string
+	// sudoStderr is what `sudo` writes to stderr while still exiting 0.
+	sudoStderr string
 }
 
 // markerValue is what this machine's /etc/frame-install-uid holds.
@@ -262,7 +264,25 @@ func (s *fakeInstallSession) markerValue() string {
 
 func (s *fakeInstallSession) HostKey() string { return s.hostKey }
 
-func (s *fakeInstallSession) Run(_ context.Context, cmd string) (string, error) {
+// Run merges stderr, the way a real session's CombinedOutput does; Output
+// does not. sudoStderr is what sudo writes there while still exiting 0 --
+// see provision.Session.Output's doc comment for why that distinction is
+// load-bearing for exactly one caller.
+func (s *fakeInstallSession) Run(ctx context.Context, cmd string) (string, error) {
+	out, err := s.Output(ctx, cmd)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	warn := s.sudoStderr
+	s.mu.Unlock()
+	if warn != "" && strings.HasPrefix(cmd, "sudo ") {
+		return warn + "\n" + out, nil
+	}
+	return out, nil
+}
+
+func (s *fakeInstallSession) Output(_ context.Context, cmd string) (string, error) {
 	s.mu.Lock()
 	s.cmds = append(s.cmds, cmd)
 	s.mu.Unlock()

@@ -19,8 +19,9 @@ var errNotFound = errors.New("no such file")
 // the fixed answers fakeSession gives every caller.
 type recordingSession struct {
 	fakeSession
-	cmds  []string
-	files map[string]string
+	cmds       []string
+	files      map[string]string
+	sudoStderr string
 }
 
 // needsRoot is the one file-permission fact about the installed machine
@@ -36,8 +37,29 @@ func (r *recordingSession) needsRoot(path string) bool {
 	return path == k3sKubeconfigPath
 }
 
+// sudoStderr, when set, is what sudo writes to STDERR while still exiting
+// 0 -- "sudo: unable to resolve host <name>" is the one a freshly installed
+// machine produces. Run merges it into its result, the way CombinedOutput
+// does on a real session; Output does not, which is the whole point of
+// having both.
 func (r *recordingSession) Run(_ context.Context, cmd string) (string, error) {
 	r.cmds = append(r.cmds, cmd)
+	out, err := r.exec(cmd)
+	if err != nil {
+		return "", err
+	}
+	if r.sudoStderr != "" && strings.HasPrefix(cmd, "sudo ") {
+		return r.sudoStderr + "\n" + out, nil
+	}
+	return out, nil
+}
+
+func (r *recordingSession) Output(_ context.Context, cmd string) (string, error) {
+	r.cmds = append(r.cmds, cmd)
+	return r.exec(cmd)
+}
+
+func (r *recordingSession) exec(cmd string) (string, error) {
 	if path, ok := strings.CutPrefix(cmd, "sudo -n cat "); ok {
 		if b, ok := r.files[path]; ok {
 			return b, nil
@@ -402,5 +424,108 @@ func TestJoinRefusesANodeAddressThatIsNotAnIP(t *testing.T) {
 	s := &recordingSession{files: map[string]string{"/etc/rancher/k3s/k3s.yaml": k3sKubeconfig}}
 	if _, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}, "not-an-ip"); err == nil {
 		t.Fatal("a non-IP node address was accepted")
+	}
+}
+
+// Session.Run is CombinedOutput, and `sudo` writes to stderr while still
+// exiting 0 -- "sudo: unable to resolve host <name>" on a freshly installed
+// machine is the common one. Merged, that text prepends to the YAML,
+// "sudo: X: Y" is not parseable, and the cluster's only admin credential is
+// lost behind an error about indentation.
+func TestJoinInitSurvivesASudoWarningOnStderr(t *testing.T) {
+	// Both measured shapes. The two-colon one makes yaml.Unmarshal fail;
+	// the one-colon one parses CLEANLY as an extra top-level key that
+	// clientcmd accepts without error -- so that case has no failure for
+	// anything downstream to notice, only a Secret holding a file with
+	// sudo's complaint in it.
+	for _, warn := range []string{
+		"sudo: unable to resolve host node-zero: Name or service not known",
+		"sudo: a password is required",
+	} {
+		s := &recordingSession{
+			files:      map[string]string{k3sKubeconfigPath: k3sKubeconfig},
+			sudoStderr: warn,
+		}
+		kc, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}, "192.168.2.210")
+		if err != nil {
+			t.Fatalf("%q on stderr lost the kubeconfig: %v", warn, err)
+		}
+		if !strings.Contains(string(kc), "https://192.168.2.210:6443") {
+			t.Errorf("%q: kubeconfig is not the rewritten one:\n%s", warn, kc)
+		}
+		if strings.Contains(string(kc), "sudo:") {
+			t.Errorf("%q: sudo's own output is inside the kubeconfig:\n%s", warn, kc)
+		}
+	}
+}
+
+// The positive control for the test above: the fake really does merge on
+// Run. Without this, a fake whose sudoStderr did nothing at all would make
+// that test pass against a Join that still used Run.
+func TestRecordingSessionRunMergesStderrAndOutputDoesNot(t *testing.T) {
+	s := &recordingSession{
+		files:      map[string]string{k3sKubeconfigPath: k3sKubeconfig},
+		sudoStderr: "sudo: unable to resolve host node-zero",
+	}
+	merged, err := s.Run(context.Background(), "sudo -n cat "+k3sKubeconfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(merged, "sudo:") {
+		t.Fatalf("Run did not merge stderr, so the test above proves nothing:\n%s", merged)
+	}
+	clean, err := s.Output(context.Background(), "sudo -n cat "+k3sKubeconfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(clean, "sudo:") {
+		t.Errorf("Output merged stderr:\n%s", clean)
+	}
+}
+
+// Session is an interface, so an implementation that merges anyway would
+// put this back where it started -- silently, as a YAML syntax error. The
+// second belt refuses a sudo preamble by name instead of parsing around it.
+func TestJoinInitRefusesAKubeconfigWithSudoOutputInFrontOfIt(t *testing.T) {
+	s := &mergingSession{recordingSession: recordingSession{
+		files: map[string]string{k3sKubeconfigPath: k3sKubeconfig},
+	}}
+	_, err := Join(context.Background(), s, ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}, "192.168.2.210")
+	if err == nil {
+		t.Fatal("a kubeconfig with sudo's output in front of it was accepted")
+	}
+	if !strings.Contains(err.Error(), "sudo") {
+		t.Errorf("error = %q; it must name sudo, not report a YAML syntax error the operator cannot act on", err)
+	}
+}
+
+// mergingSession is a Session that ignores the stdout/stderr split -- the
+// implementation the guard above exists for.
+type mergingSession struct {
+	recordingSession
+}
+
+func (m *mergingSession) Output(ctx context.Context, cmd string) (string, error) {
+	out, err := m.recordingSession.Output(ctx, cmd)
+	if err != nil || !strings.HasPrefix(cmd, "sudo ") {
+		return out, err
+	}
+	return "sudo: unable to resolve host node-zero\n" + out, nil
+}
+
+func TestSudoPreambleOnlyLooksAtTheFirstNonEmptyLine(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		want bool
+	}{
+		"sudo warning first":         {"sudo: unable to resolve host x\napiVersion: v1\n", true},
+		"blank lines then sudo":      {"\n\nsudo: whatever\n", true},
+		"a real kubeconfig":          {k3sKubeconfig, false},
+		"empty":                      {"", false},
+		"the word sudo further down": {"apiVersion: v1\n# installed with sudo: yes\n", false},
+	} {
+		if _, got := sudoPreamble(tc.in); got != tc.want {
+			t.Errorf("%s: sudoPreamble = %v, want %v", name, got, tc.want)
+		}
 	}
 }
