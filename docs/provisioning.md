@@ -82,10 +82,21 @@ one.
 
 ### Three pieces of work, in the order they should happen
 
-1. **Decouple classification from provisioning.** Make label projection
-   reachable for a `FrameNode` that has no `spec.disk`, by matching it to an
-   existing Kubernetes node. Small, independent of any OS decision, and it
-   closes the latent defect above. This is the only piece that is urgent.
+1. **Decouple classification from provisioning. Done, 2026-09-12.**
+   `Reconcile` now looks for the Kubernetes node this object describes before
+   it branches on phase or `spec.disk`; if the node is in the cluster its
+   labels are projected, however the machine was installed. The latent defect
+   above is closed in code.
+
+   **Not yet deployed.** The three `FrameNode` objects will not carry
+   `service-class` onto their nodes until the manager running this is rolled
+   out.
+
+   One claim in the section above was wrong and is corrected here: the
+   discovery path was described as retrying every 30 seconds. It does not. A
+   `FrameNode` already at `Discovered` returns without requeueing, which is
+   why those three objects settled and stayed quiet. The 30-second loop lives
+   in the provisioning path, which they never reached.
 
 2. **Design provisioning on a Debian image. Done — designed and implemented.**
    `docs/superpowers/specs/2026-09-11-provisioning-debian-design.md` is the

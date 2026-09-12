@@ -106,6 +106,72 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(readyCond.Reason).To(Equal("Provisioning"))
 	})
 
+	// The defect this closes, measured on the live cluster on 2026-09-12: three
+	// FrameNode objects 48 days old, all with no spec.disk, all stopped at
+	// Discovered -- and not one node carrying frame.plume-labs.io/service-class,
+	// while the inference provider uses exactly that label as the nodeSelector
+	// of every Deployment it creates. Label projection lived only at the end of
+	// the provisioning path, so an unprovisioned FrameNode never reached it.
+	//
+	// This goes through Reconcile rather than calling reconcileOnline directly.
+	// That distinction is the whole test: the existing projection test calls
+	// reconcileOnline, which is why it passed for 48 days while nothing in the
+	// cluster could reach that function.
+	It("projects labels onto an existing node even when the FrameNode was never provisioned", func() {
+		ctx := context.Background()
+
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "unprovisioned-node"}}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		fn := &framev1beta1.FrameNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "unprovisioned", Namespace: "default"},
+			Spec: framev1beta1.FrameNodeSpec{
+				IP:           "127.0.0.1",
+				Hostname:     "unprovisioned-node",
+				Role:         "worker",
+				Rack:         "rack-09",
+				ServiceClass: "HIGH",
+				// Disk deliberately empty: this machine was never provisioned
+				// by Frame, which is true of every node in this estate.
+			},
+		}
+		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+		DeferCleanup(func() {
+			fresh := &framev1beta1.FrameNode{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "unprovisioned", Namespace: "default"}, fresh); err == nil {
+				fresh.Finalizers = nil
+				_ = k8sClient.Update(ctx, fresh)
+				_ = k8sClient.Delete(ctx, fresh)
+			}
+		})
+
+		reconciler := &FrameNodeReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(20),
+		}
+		req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "unprovisioned", Namespace: "default"}}
+		// The first pass only adds the finalizer and returns.
+		_, err := reconciler.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "unprovisioned-node"}, fetched)).To(Succeed())
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelServiceClass, "HIGH"),
+			"the label the inference provider selects on")
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRack, "rack-09"))
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRole, "worker"))
+
+		// And it must not report a discovery it never performed.
+		updated := &framev1beta1.FrameNode{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "unprovisioned", Namespace: "default"}, updated)).To(Succeed())
+		Expect(nodePhaseFromStatus(updated)).NotTo(Equal(nodePhaseDiscovered),
+			"a node that is in the cluster is not awaiting discovery")
+	})
+
 	It("projects the frame-prefixed rack label and skips empty values", func() {
 		ctx := context.Background()
 

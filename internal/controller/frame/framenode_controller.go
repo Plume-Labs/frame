@@ -95,6 +95,42 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.Update(ctx, &fn)
 	}
 
+	// Classification comes first, and it does not depend on provisioning.
+	//
+	// Role, rack, zone, service class and RDMA are facts about a machine that
+	// hold however the machine was installed, and they are what the inference
+	// provider, the scheduler and the placement screen read. So if the node
+	// this object describes is in the cluster, its labels get projected --
+	// whatever phase the FrameNode is in, and whether or not Frame ever
+	// installed it.
+	//
+	// Before this, projection lived only at the end of the provisioning path.
+	// Measured on the live cluster on 2026-09-12: three FrameNode objects 48
+	// days old, none with spec.disk, all stopped at Discovered, and not one
+	// node carrying frame.plume-labs.io/service-class -- which
+	// internal/services/provider/inference/inference.go uses as the
+	// nodeSelector of every Deployment it creates. Nothing had been scheduled
+	// through it only because the estate's one FrameService was blocked a step
+	// earlier on a PVC that does not exist.
+	nodeName := fn.Spec.Hostname
+	if nodeName == "" {
+		nodeName = fn.Name
+	}
+	var node corev1.Node
+	switch err := r.Get(ctx, types.NamespacedName{Name: nodeName}, &node); {
+	case err == nil:
+		return r.reconcileOnline(ctx, &fn)
+	case !apierrors.IsNotFound(err):
+		return ctrl.Result{}, err
+	}
+
+	// No node of that name is in the cluster. What follows is the provisioning
+	// path exactly as it was, reached only in that case now. It dials a Talos
+	// maintenance API that no longer exists anywhere in this estate; retiring
+	// it is deliberately the last piece of docs/provisioning.md's work, and
+	// doing it here would mean removing the Talos CRDs, which v1beta1 being
+	// frozen makes a lot of its own.
+
 	// Phase 1: disk not yet set → contact maintenance API to discover disks/version.
 	if fn.Spec.Disk == "" {
 		return r.reconcileDiscovery(ctx, &fn)
@@ -105,7 +141,8 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileProvision(ctx, &fn)
 	}
 
-	// Phase 3: node should have joined Kubernetes → sync labels/status.
+	// Phase 3: the node was provisioned but has not joined yet. reconcileOnline
+	// re-reads it, finds it absent, and requeues -- unchanged behaviour.
 	return r.reconcileOnline(ctx, &fn)
 }
 
