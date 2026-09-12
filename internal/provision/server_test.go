@@ -567,3 +567,46 @@ func TestBuildHandlerServesAPreseedThatDoesCarryThePublicKey(t *testing.T) {
 		t.Errorf("the served preseed does not carry the public key at all:\n%s", got.Body.String())
 	}
 }
+
+// The two halves of the media-URL check are deliberately different, and the
+// difference is exactly one address: the placeholder both shipped manifests
+// carry. Syntax must accept it (or the manager CrashLoops on `kubectl apply
+// -k config/default`); the full check must refuse it (or the FrameInstall
+// refusal never fires on that path).
+func TestValidateMediaURLRefusesTheReservedPlaceholderButItsSyntaxDoesNot(t *testing.T) {
+	const placeholder = "http://ci-placeholder.invalid:30581"
+
+	if err := ValidateMediaURLSyntax(placeholder); err != nil {
+		t.Errorf("syntax refused the shipped placeholder (%v); the manager would not start from config/default", err)
+	}
+	if err := ValidateMediaURL(placeholder); err == nil {
+		t.Error("the full check accepted .invalid; RFC 2606 reserves it and it never resolves")
+	}
+
+	// Both forms of the reserved name, and case-insensitively.
+	for _, raw := range []string{
+		"http://invalid:30581",
+		"http://anything.INVALID:30581",
+		"https://a.b.invalid/",
+	} {
+		if err := ValidateMediaURL(raw); err == nil {
+			t.Errorf("%q was accepted", raw)
+		}
+	}
+
+	// Positive control: a real address passes both, so the refusals above
+	// are about .invalid and not about the function refusing everything.
+	for _, raw := range []string{"http://192.168.2.10:30581", "https://media.frame.internal"} {
+		if err := ValidateMediaURLSyntax(raw); err != nil {
+			t.Errorf("syntax refused %q: %v", raw, err)
+		}
+		if err := ValidateMediaURL(raw); err != nil {
+			t.Errorf("the full check refused %q: %v", raw, err)
+		}
+	}
+
+	// And a name that merely contains "invalid" is not the reserved one.
+	if err := ValidateMediaURL("http://invalid-host.example.net:30581"); err != nil {
+		t.Errorf("a host whose name merely contains \"invalid\" was refused: %v", err)
+	}
+}

@@ -63,3 +63,16 @@ func TestValidateProvisiondMediaURLRefusesAValueURLParseItselfRejects(t *testing
 		t.Fatal("want an error for a value url.Parse itself rejects, got nil")
 	}
 }
+
+// The manager must keep starting on the placeholder both shipped manifests
+// carry, or `kubectl apply -k config/default` CrashLoops it -- which is the
+// boot gate removed for a flag only one controller uses, reintroduced by a
+// different route. The placeholder is refused at FrameInstall
+// reconciliation instead (internal/controller/frame's
+// TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured), where the
+// refusal lands on the object and names itself.
+func TestValidateProvisiondMediaURLAcceptsTheShippedPlaceholder(t *testing.T) {
+	if err := validateProvisiondMediaURL("http://ci-placeholder.invalid:30581"); err != nil {
+		t.Fatalf("the placeholder the shipped manifests carry stopped the manager: %v", err)
+	}
+}
