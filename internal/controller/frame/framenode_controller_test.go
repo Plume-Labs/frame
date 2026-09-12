@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -170,6 +171,120 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "unprovisioned", Namespace: "default"}, updated)).To(Succeed())
 		Expect(nodePhaseFromStatus(updated)).NotTo(Equal(nodePhaseDiscovered),
 			"a node that is in the cluster is not awaiting discovery")
+	})
+
+	// The escalation the classification guards close. A principal bound to
+	// framenode-editor-role has no RBAC on Node objects at all; without these
+	// guards it could create a bare FrameNode named after a classified node
+	// and have applyNodeLabel strip every Frame label off it -- service-class
+	// included, which is the key the inference provider selects on -- with no
+	// admission rejection and nothing in the node's own audit trail.
+	It("refuses to strip a node's labels for a FrameNode that classifies nothing", func() {
+		ctx := context.Background()
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "already-classified-node",
+				Labels: map[string]string{
+					nodeLabelServiceClass: "HIGH",
+					nodeLabelRack:         "rack-01",
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		// Every classification field empty: this object has nothing to say.
+		fn := &framev1beta1.FrameNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "empty-claimant", Namespace: "default"},
+			Spec:       framev1beta1.FrameNodeSpec{IP: "127.0.0.1", Hostname: "already-classified-node"},
+		}
+		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+		DeferCleanup(func() {
+			fresh := &framev1beta1.FrameNode{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "empty-claimant", Namespace: "default"}, fresh); err == nil {
+				fresh.Finalizers = nil
+				_ = k8sClient.Update(ctx, fresh)
+				_ = k8sClient.Delete(ctx, fresh)
+			}
+		})
+
+		reconciler := &FrameNodeReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(20),
+		}
+		req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "empty-claimant", Namespace: "default"}}
+		_, err := reconciler.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconciler.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		fetched := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "already-classified-node"}, fetched)).To(Succeed())
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelServiceClass, "HIGH"),
+			"an object with nothing to project must not unclassify a node")
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRack, "rack-01"))
+
+		updated := &framev1beta1.FrameNode{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "empty-claimant", Namespace: "default"}, updated)).To(Succeed())
+		Expect(nodePhaseFromStatus(updated)).To(Equal(nodePhaseUnclassified))
+	})
+
+	It("refuses a second FrameNode claiming a node another one already classifies", func() {
+		ctx := context.Background()
+
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "contested-node"}}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		mk := func(name, class string) *framev1beta1.FrameNode {
+			fn := &framev1beta1.FrameNode{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+				Spec: framev1beta1.FrameNodeSpec{
+					IP: "127.0.0.1", Hostname: "contested-node", Role: "worker",
+					ServiceClass: framev1beta1.ServiceClass(class),
+				},
+			}
+			Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+			DeferCleanup(func() {
+				fresh := &framev1beta1.FrameNode{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, fresh); err == nil {
+					fresh.Finalizers = nil
+					_ = k8sClient.Update(ctx, fresh)
+					_ = k8sClient.Delete(ctx, fresh)
+				}
+			})
+			return fn
+		}
+
+		first := mk("owner", "HIGH")
+		// A distinct creation timestamp is what decides which object owns the
+		// node, and envtest's clock has second granularity.
+		time.Sleep(1100 * time.Millisecond)
+		second := mk("usurper", "LOW")
+
+		reconciler := &FrameNodeReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(20),
+		}
+		for _, fn := range []*framev1beta1.FrameNode{first, second} {
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: fn.Name, Namespace: "default"}}
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		fetched := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "contested-node"}, fetched)).To(Succeed())
+		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelServiceClass, "HIGH"),
+			"the node keeps answering to the object that claimed it first")
+
+		usurper := &framev1beta1.FrameNode{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "usurper", Namespace: "default"}, usurper)).To(Succeed())
+		Expect(nodePhaseFromStatus(usurper)).To(Equal(nodePhaseUnclassified))
 	})
 
 	It("projects the frame-prefixed rack label and skips empty values", func() {

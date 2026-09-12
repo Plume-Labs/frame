@@ -119,6 +119,9 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var node corev1.Node
 	switch err := r.Get(ctx, types.NamespacedName{Name: nodeName}, &node); {
 	case err == nil:
+		if reason, msg, ok := r.mayClassify(ctx, &fn, nodeName); !ok {
+			return ctrl.Result{}, r.setPhase(ctx, &fn, reason, msg)
+		}
 		return r.reconcileOnline(ctx, &fn)
 	case !apierrors.IsNotFound(err):
 		return ctrl.Result{}, err
@@ -279,6 +282,10 @@ const (
 	nodeLabelServiceClass = "frame.plume-labs.io/service-class"
 	nodeLabelRole         = "frame.plume-labs.io/role"
 	nodeLabelRDMA         = "frame.plume-labs.io/rdma"
+
+	// nodePhaseUnclassified is the state of a FrameNode that names a real node
+	// but is not allowed to write labels onto it. See mayClassify.
+	nodePhaseUnclassified = "Unclassified"
 )
 
 // frameNodeLabels is every key reconcileDelete strips. Keeping the list in
@@ -298,6 +305,58 @@ func applyNodeLabel(labels map[string]string, key, value string) {
 		return
 	}
 	labels[key] = value
+}
+
+// mayClassify decides whether this FrameNode is allowed to write labels onto
+// the node it names. It exists because matching is by name and nothing proves
+// a FrameNode has anything to do with the node it claims.
+//
+// That was already true of reconcileOnline, but reaching it used to cost a
+// disk, a provisioning attempt and two reconciles. Projecting before any of
+// that -- which is the point of the change this guard ships with -- made a
+// latent escalation immediate: a principal bound to framenode-editor-role has
+// no RBAC on Node objects at all, and could otherwise create a bare FrameNode
+// named after a classified node and have applyNodeLabel strip every Frame
+// label off it, service-class included, on the next reconcile.
+//
+// Returns a condition reason, a message, and whether projection may proceed.
+func (r *FrameNodeReconciler) mayClassify(ctx context.Context, fn *framev1beta1.FrameNode, nodeName string) (string, string, bool) {
+	// An object that classifies nothing has nothing to say about a node, and
+	// must not be able to say it by deleting what is there. This is the shape
+	// the escalation takes: every field empty, so every label removed.
+	if fn.Spec.Rack == "" && fn.Spec.Zone == "" && fn.Spec.Role == "" &&
+		string(fn.Spec.ServiceClass) == "" && fn.Spec.RDMAInterface == "" {
+		return nodePhaseUnclassified,
+			"No classification to project; refusing to strip labels from node " + nodeName, false
+	}
+
+	// Two FrameNodes naming one node is a contradiction whoever wrote them
+	// second. Refusing the newcomer keeps the node's labels answering to the
+	// object that already owns them.
+	var list framev1beta1.FrameNodeList
+	if err := r.List(ctx, &list); err != nil {
+		// Failing open here would defeat the guard, so fail closed and retry
+		// on the next reconcile.
+		return nodePhaseUnclassified, "Cannot verify node ownership: " + err.Error(), false
+	}
+	for i := range list.Items {
+		other := &list.Items[i]
+		if other.UID == fn.UID {
+			continue
+		}
+		name := other.Spec.Hostname
+		if name == "" {
+			name = other.Name
+		}
+		if name != nodeName {
+			continue
+		}
+		if other.CreationTimestamp.Time.Before(fn.CreationTimestamp.Time) {
+			return nodePhaseUnclassified,
+				"Node " + nodeName + " is already classified by FrameNode " + other.Namespace + "/" + other.Name, false
+		}
+	}
+	return "", "", true
 }
 
 // reconcileOnline syncs Kubernetes Node readiness back into the FrameNode status.
