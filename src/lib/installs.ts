@@ -167,13 +167,21 @@ export function machineOptionLabel(m: MachineChoice): string {
 export const CONFIRM_SERIAL_LABEL = "Type the machine's serial to confirm"
 
 /**
- * Where to read the serial from, since the console deliberately will not
- * show it. Both places are on the machine's side of the check, which is the
- * point.
+ * Where to read the serial from.
+ *
+ * It does **not** claim the console will not show it, which an earlier
+ * version of this string did and which is false: `InventoryTab` renders
+ * `inventory.serialNumber` for every machine, two clicks away on the same
+ * screen. The improvement this dialog actually made is narrower and worth
+ * stating accurately — the answer is no longer sitting beside the box
+ * asking for it, so confirming requires a deliberate second act rather than
+ * a glance. A console that could not show a serial at all would be a
+ * different change, in a different file, and is not this one.
  */
 export const CONFIRM_SERIAL_HINT =
-  'Read it from the chassis pull-tab or from the BMC — the console will not show it, ' +
-  'because a serial you copied from this screen confirms nothing about which machine this is.'
+  'Read it from the chassis pull-tab or from the BMC. Checking it against this console ' +
+  'proves only that the console and the console agree — the point of retyping it is that ' +
+  'it came from the machine.'
 
 /**
  * Every string `InstallDialog` renders that is derived from a machine, in
@@ -304,7 +312,11 @@ export interface InstallCreateSpec {
   network: {
     address: string
     gateway: string
-    dns?: string[]
+    // Required, not optional. The CRD requires at least one
+    // (frameinstall_types.go): with none, the preseed renders an empty
+    // netcfg/get_nameservers against a mirror named deb.debian.org and the
+    // install halts after partman has already wiped every named disk.
+    dns: string[]
   }
   layout: {
     kind: 'single-disk' | 'mirror'

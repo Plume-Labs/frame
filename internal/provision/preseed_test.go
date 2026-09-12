@@ -399,3 +399,39 @@ func TestRenderPreseedAcceptsAResolverListOfIPs(t *testing.T) {
 		t.Errorf("preseed does not carry both resolvers:\n%s", got)
 	}
 }
+
+// A machine installed with no resolver renders
+// "d-i netcfg/get_nameservers string " -- empty -- against a mirror named
+// deb.debian.org. partman runs before the base system is fetched, so the
+// install halts at critical priority asking a question nobody is there to
+// answer, AFTER both disks are gone, and Frame sees only the sixty-minute
+// Installing timeout. The console's own happy path built exactly this,
+// because its dialog had no DNS field.
+func TestRenderPreseedRefusesANetworkWithNoResolver(t *testing.T) {
+	for name, dns := range map[string][]string{
+		"nil":   nil,
+		"empty": {},
+	} {
+		s := goodSpec()
+		s.Network.DNS = dns
+		if _, err := RenderPreseed(s, testRunURL); err == nil {
+			t.Errorf("%s resolver list was accepted; the install would halt after wiping every named disk", name)
+		}
+	}
+}
+
+// And the refusal is in ValidateSpec, so it lands wherever a Spec is
+// checked -- including Install's Pending phase, before the BMC is read at
+// all, not only at Preparing where the image is built.
+func TestValidateSpecRefusesANetworkWithNoResolver(t *testing.T) {
+	s := goodSpec()
+	s.Network.DNS = nil
+	if err := ValidateSpec(s); err == nil {
+		t.Fatal("ValidateSpec accepted a spec with no resolver")
+	}
+	// Positive control: the same spec with a resolver passes, so the
+	// refusal above is about DNS and not about the fixture being broken.
+	if err := ValidateSpec(goodSpec()); err != nil {
+		t.Fatalf("a good spec was refused: %v", err)
+	}
+}

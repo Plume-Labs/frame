@@ -1291,6 +1291,14 @@ spec:
   network:
     address: 192.168.2.213/24
     gateway: 192.168.2.1
+    # At least one resolver is required and the apiserver enforces it. The
+    # installer resolves deb.debian.org with these, and partman runs before
+    # the base system is fetched -- so with none, the install halts asking
+    # for a mirror it cannot look up, after both disks are already gone.
+    # This example omitted dns until 2026-09-12 and would have produced
+    # exactly that.
+    dns:
+      - 192.168.2.1
   layout:
     kind: mirror
     disks:
@@ -1312,6 +1320,14 @@ typo refuses the create rather than installing on the wrong machine. The two
 `by-id` names are read off the machine itself, not off `FrameMachine`'s
 inventory — see the disk-guard note above for why the console's own install
 dialog asks for them as free text rather than offering a picker.
+
+`dns` is not optional. `deb.debian.org` is a name, partman runs before the
+base system is fetched, and an installer that cannot resolve its mirror
+stops at a critical-priority prompt on a machine nobody is standing in front
+of — with both disks already erased and nothing visible to Frame but the
+sixty-minute `Installing` timeout. The apiserver refuses a `FrameInstall`
+without one, `provision.ValidateSpec` refuses it again before the BMC is
+read, and the console's dialog now asks for it.
 
 ### 5. Read the new cluster's kubeconfig
 
@@ -1358,6 +1374,27 @@ KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
 - [ ] The node's hostname is what the `FrameInstall` asked for, not
       `debian`. `netcfg/hostname` is set and `late_command` writes
       `/etc/hostname` directly as a belt; neither has been seen to work.
+      The `/etc/hosts` line that belt also writes is what keeps `sudo` from
+      printing `sudo: unable to resolve host …` on every invocation — check
+      it landed, because the kubeconfig read below runs through `sudo`.
+- [ ] **The whole `Installing` gate has never run on hardware.** Three
+      things have to be true at once for that phase to end, and all three
+      are proven only against fakes: that the installed machine answers SSH
+      with Frame's key, that the `sudoers.d/frame` drop-in landed with the
+      right mode so `sudo -n` works without a password, and that
+      `/etc/frame-install-uid` exists, is readable by the `frame` user, and
+      holds the UID this run generated. Any one of them failing looks
+      identical from Frame: a twenty-minute silence ending in the
+      `Installing` timeout. On the first real install, get a console or
+      another way in and check all three by hand before believing the
+      timeout.
+- [ ] **Nothing exercises `cmd/bootstrap`'s `run()` end to end.** Its
+      config loading, its listener start-up and its post-`Install`
+      decision are each tested in isolation (`LoadConfig`,
+      `startMediaListener`, `finish`), and the function that wires them
+      together is only ever read. `frame bootstrap` is the path that exists
+      for the day a single-node cluster dies, which is the worst possible
+      day to discover a wiring mistake.
 
 Until these run, this lot is proven only against fakes and captures.
 

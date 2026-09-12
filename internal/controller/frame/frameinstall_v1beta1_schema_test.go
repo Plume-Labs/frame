@@ -56,6 +56,7 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 				Network: framev1beta1.InstallNetwork{
 					Address: "192.168.2.210/24",
 					Gateway: "192.168.2.1",
+					DNS:     []string{"192.168.2.1"},
 				},
 				Layout: framev1beta1.InstallLayout{
 					Kind: "mirror",
@@ -155,6 +156,17 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 				fi.Spec.Cluster.Mode = "join"
 				fi.Spec.Cluster.JoinTokenRef = "k3s-join-token"
 			}, "joining an existing cluster needs both serverURL and joinTokenRef"),
+
+		// A machine installed with no resolver halts at critical priority
+		// asking for a mirror it cannot look up -- after partman has
+		// already wiped every named disk. The apiserver refuses it, rather
+		// than leaving the controller to refuse one phase later a shape
+		// this schema had accepted (the mistake the removed raw layout
+		// made).
+		Entry("rejects a network with no resolver at all", "dns-empty",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.DNS = nil
+			}, "spec.network.dns"),
 
 		Entry("rejects an address that is not CIDR", "address-not-cidr",
 			func(fi *framev1beta1.FrameInstall) {

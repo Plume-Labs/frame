@@ -55,8 +55,10 @@ function diskCountFor(kind: LayoutKind): number {
  * all. This dialog used to print it in the picker's label and again beside
  * the confirmation box, which made layer 2 of the destructive guard (design
  * §8) a typing exercise: the one control that answers *which machine* had
- * its answer on screen, so pointing at the wrong machine still confirmed
- * cleanly. Every machine-derived string this dialog renders comes from
+ * its answer sitting beside the box asking for it, so pointing at the wrong
+ * machine still confirmed cleanly. (`InventoryTab` still shows serials, two
+ * clicks away — the improvement is that confirming now takes a deliberate
+ * second act, not that the number is unobtainable.) Every machine-derived string this dialog renders comes from
  * `installs.ts` (`machineOptionLabel`, `CONFIRM_SERIAL_LABEL`,
  * `CONFIRM_SERIAL_HINT`), which is where vitest can assert that none of
  * them carries it.
@@ -89,6 +91,7 @@ export function InstallDialog({
   const [hostname, setHostname] = useState('')
   const [address, setAddress] = useState('')
   const [gateway, setGateway] = useState('')
+  const [dns, setDns] = useState('')
   const [layoutKind, setLayoutKind] = useState<LayoutKind>('single-disk')
   const [disks, setDisks] = useState<DiskField[]>([EMPTY_DISK])
   const [clusterMode, setClusterMode] = useState<ClusterMode>('init')
@@ -109,6 +112,7 @@ export function InstallDialog({
     setHostname('')
     setAddress('')
     setGateway('')
+    setDns('')
     setLayoutKind('single-disk')
     setDisks([EMPTY_DISK])
     setClusterMode('init')
@@ -144,6 +148,15 @@ export function InstallDialog({
     parsedDisks.length === diskCountFor(layoutKind) &&
     parsedDisks.every((d) => d.byID.startsWith('/dev/disk/by-id/') && Number.isFinite(d.sizeBytes) && d.sizeBytes > 0)
 
+  // Split on whitespace or commas so "1.1.1.1, 8.8.8.8" and "1.1.1.1 8.8.8.8"
+  // both work; the CRD caps the list at 3 and requires at least 1.
+  const parsedDNS = dns.split(/[\s,]+/).filter((d) => d !== '')
+  // At least one resolver, always. With none the installer halts at critical
+  // priority asking for a mirror it cannot resolve — after partman has
+  // already wiped every named disk, and with nothing visible to Frame but
+  // the sixty-minute Installing timeout.
+  const dnsValid = parsedDNS.length >= 1 && parsedDNS.length <= 3
+
   const joinValid = clusterMode === 'init' || (serverURL.trim() !== '' && joinTokenRef.trim() !== '')
 
   const canSubmit =
@@ -151,6 +164,7 @@ export function InstallDialog({
     hostname.trim() !== '' &&
     address.trim() !== '' &&
     gateway.trim() !== '' &&
+    dnsValid &&
     sshKeyRef.trim() !== '' &&
     k3sVersion.trim() !== '' &&
     disksValid &&
@@ -166,7 +180,7 @@ export function InstallDialog({
         machineRef: selectedMachine.name,
         confirmSerial: confirmSerial.trim(),
         hostname: hostname.trim(),
-        network: { address: address.trim(), gateway: gateway.trim() },
+        network: { address: address.trim(), gateway: gateway.trim(), dns: parsedDNS },
         layout: { kind: layoutKind, disks: parsedDisks },
         cluster:
           clusterMode === 'init'
@@ -261,6 +275,22 @@ export function InstallDialog({
               <Label htmlFor="install-gateway">Gateway</Label>
               <Input id="install-gateway" value={gateway} onChange={(e) => setGateway(e.target.value)} placeholder="192.168.2.1" />
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="install-dns">DNS resolvers</Label>
+            <Input
+              id="install-dns"
+              value={dns}
+              onChange={(e) => setDns(e.target.value)}
+              placeholder="192.168.2.1, 9.9.9.9"
+              className="font-mono text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              At least one, up to three. The installer resolves deb.debian.org with these — with
+              none it halts asking for a mirror it cannot look up, after the disks are already
+              erased.
+            </p>
           </div>
 
           <div className="space-y-1.5">

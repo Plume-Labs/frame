@@ -127,6 +127,22 @@ d-i preseed/late_command string \
   echo '127.0.1.1 {{ .Hostname }}' >> /target/etc/hosts
 `
 
+// Two notes on the last two lines of that late_command, because each is
+// load-bearing for a reason the other does not explain:
+//
+// /etc/hostname is the belt under C1's netcfg re-run -- Debian says a
+// DHCP-assigned name takes precedence, and whether the re-run settles the
+// name cannot be observed from here.
+//
+// **The /etc/hosts line is also what keeps `sudo` quiet.** Without an entry
+// mapping the machine's own hostname, every sudo invocation prints
+// "sudo: unable to resolve host <name>" to stderr while still exiting 0 --
+// and Join reads the new cluster's kubeconfig over sudo. join.go does not
+// depend on that (it reads stdout only, and refuses a sudo preamble by
+// name), but this line is why the common trigger does not arise in the
+// first place. Do not remove it as "cosmetic, netcfg sets the hostname":
+// it is holding two things up, and only one of them is the hostname.
+
 // preseedTmpl is parsed once at package init so a template typo panics at
 // build/test time rather than on the first call to RenderPreseed.
 var preseedTmpl = template.Must(template.New("preseed").Parse(preseedTemplate))
@@ -182,6 +198,23 @@ func renderInputs(s Spec) (ip net.IP, netmask net.IP, partman string, err error)
 		return nil, nil, "", fmt.Errorf("network gateway %q is not an IP address", s.Network.Gateway)
 	}
 
+	// An empty resolver list is refused, not defaulted. It rendered
+	// "d-i netcfg/get_nameservers string " -- empty -- against a mirror
+	// named deb.debian.org, and partman runs BEFORE the base system is
+	// fetched: the install halts at critical priority asking a question
+	// nobody is there to answer, after both disks are already gone, and
+	// Frame sees only the sixty-minute Installing timeout. Exactly C1's
+	// failure shape. The console's own happy path built this, because its
+	// dialog had no DNS field at all and the runbook's example omitted
+	// dns too.
+	//
+	// Refused rather than defaulted to the gateway: a gateway that does
+	// not forward DNS is a plausible house network, and guessing here
+	// turns "you did not say" into the same silent halt one layer later.
+	if len(s.Network.DNS) == 0 {
+		return nil, nil, "", fmt.Errorf(
+			"network DNS: at least one resolver is required; with none, the installer halts asking for a mirror it cannot resolve -- after partman has already wiped every named disk")
+	}
 	// DNS was the one interpolated value with no shape check: every other
 	// field here is an address, a CIDR, a by-id path or an authorized_keys
 	// line, each refused by construction rather than by blocklist. DNS had

@@ -602,6 +602,11 @@ func (s *blockingSession) Run(ctx context.Context, _ string) (string, error) {
 	return "", ctx.Err()
 }
 
+func (s *blockingSession) Output(ctx context.Context, _ string) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
 // Every other phase (Preparing, MediaAttached, Installing, Ready) is wrapped
 // in its own context.WithTimeout(ctx, o.PhaseTimeout[phase]) -- see install.go.
 // Joining must be too, per the design ("each phase carries its own
@@ -641,5 +646,29 @@ func TestInstallJoiningHonorsItsOwnPhaseTimeout(t *testing.T) {
 	}
 	if elapsed > 500*time.Millisecond {
 		t.Errorf("took %s; Joining's own 10ms budget should have ended this long before the outer 2s context did", elapsed)
+	}
+}
+
+// The refusal has to land in Pending -- the one phase that has not yet read
+// anything off the BMC -- not at Preparing where Images.Build would reach
+// RenderPreseed. Asserted through what was NOT called: zero BMC calls and
+// zero images built.
+func TestInstallRefusesASpecWithNoResolverBeforeTouchingTheBMC(t *testing.T) {
+	d, bmc, images := happyDeps()
+	s := goodSpec()
+	s.Network.DNS = nil
+
+	res, err := Install(context.Background(), d, s, opts())
+	if err == nil {
+		t.Fatal("an install with no resolver was accepted")
+	}
+	if res.FailedPhase != PhasePending {
+		t.Errorf("failed in %s, want Pending", res.FailedPhase)
+	}
+	if len(bmc.calls) != 0 {
+		t.Errorf("the BMC was called %v; the refusal must come first", bmc.calls)
+	}
+	if images.built != 0 {
+		t.Errorf("%d image(s) were built", images.built)
 	}
 }

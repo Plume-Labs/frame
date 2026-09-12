@@ -166,6 +166,7 @@ func fiInstall(name, machineRef string) *framev1beta1.FrameInstall {
 			Network: framev1beta1.InstallNetwork{
 				Address: "192.168.2.210/24",
 				Gateway: "192.168.2.254",
+				DNS:     []string{"192.168.2.254"},
 			},
 			Layout: framev1beta1.InstallLayout{
 				Kind:  "single-disk",
@@ -1205,6 +1206,12 @@ func TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured(t *testing.T) {
 		"no scheme":       "192.168.2.50:30581",
 		"wrong scheme":    "ftp://192.168.2.50:30581",
 		"scheme, no host": "http:///iso",
+		// The one the shipped manifests actually carry. .invalid is
+		// reserved by RFC 2606 and never resolves, so without this case
+		// the refusal above never fired on the documented `kubectl apply
+		// -k config/default` path -- the path most likely to reach a real
+		// machine with a placeholder still in it.
+		"the shipped placeholder": "http://ci-placeholder.invalid:30581",
 	} {
 		fi := fiInstall("fi-ctrl-nomedia", "fi-ctrl-nomedia-machine")
 		fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
