@@ -136,6 +136,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-frame-plume-labs-io-v1beta1-framestorage
+  failurePolicy: Fail
+  name: vframestorage-v1beta1.kb.io
+  rules:
+  - apiGroups:
+    - frame.plume-labs.io
+    apiVersions:
+    - v1beta1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - framestorages
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-frame-plume-labs-io-v1beta1-frameuser
   failurePolicy: Fail
   matchPolicy: Equivalent

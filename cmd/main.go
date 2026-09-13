@@ -458,6 +458,12 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
+		if err := webhookv1beta1.SetupFrameStorageWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameStorage")
+			os.Exit(1)
+		}
+	}
 	if err := (&servicescontroller.FrameServiceReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
