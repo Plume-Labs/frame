@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -26,6 +27,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -33,15 +37,19 @@ import (
 // fakeRunner is a CommandRunner that records every invocation and never
 // execs anything. The agent's whole restart half is "which command, with
 // which arguments, how many times", so the recording is the assertion
-// surface.
+// surface. out lets a test hand back real command output (e.g. lsblk's JSON
+// for agent.ObserveDisks) where the caller actually parses it; every
+// existing test leaves it at its zero value ("") because nothing they drive
+// reads Run's return value.
 type fakeRunner struct {
+	out   string
 	err   error
 	calls [][]string
 }
 
 func (f *fakeRunner) Run(name string, args ...string) (string, error) {
 	f.calls = append(f.calls, append([]string{name}, args...))
-	return "", f.err
+	return f.out, f.err
 }
 
 func nodeWithRequest(value string) *corev1.Node {
@@ -266,6 +274,62 @@ func TestApplyMatchedRefusesWhenTwoNodeTuningsSelectTheNode(t *testing.T) {
 	}
 	if want := "[Service]\nMemoryKSM=yes\n"; string(got) != want {
 		t.Fatalf("want drop-in %q, got %q", want, string(got))
+	}
+}
+
+// TestTickPublishesDisksEvenWhenObserveFails is the regression test for step
+// 6's independence from step 5: a NodeTuning-observe failure (here, a
+// corrupted KSM sysfs counter — the one branch in agent.Observe that
+// returns an error instead of defaulting a missing file to its zero value)
+// must not suppress publishing the node's disks. The storage lot's task 5
+// brief states this as two halves of one requirement ("A node no
+// FrameMachine claims is logged... but cmd/agent/main.go logs it and
+// carries on, because the tuning half of that loop must keep working");
+// this test is the other direction of the same guarantee — a broken tuning
+// half must not silence the storage half.
+//
+// tick's DetectKSMUnit and NodeTuning-selection steps are left to fail/no-op
+// naturally against an otherwise-empty fixture root and an empty
+// NodeTuningList: neither is what this test is about, and both already have
+// their own coverage elsewhere in this file and in internal/agent.
+func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "sys/kernel/mm/ksm/general_profit"), "not-a-number\n")
+
+	sch := clientgoscheme.Scheme
+	if err := framev1beta1.AddToScheme(sch); err != nil {
+		t.Fatalf("registering scheme: %v", err)
+	}
+
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}}
+	machine := &framev1beta1.FrameMachine{
+		ObjectMeta: metav1.ObjectMeta{Name: "m1", Namespace: "default"},
+		Spec: framev1beta1.FrameMachineSpec{
+			BMC:     framev1beta1.BMCSpec{Address: "192.168.2.60", CredentialsRef: "m1-creds", TLS: framev1beta1.BMCTLSSpec{InsecureSkipVerify: true}},
+			NodeRef: "node-1",
+		},
+	}
+	kc := fake.NewClientBuilder().
+		WithScheme(sch).
+		WithStatusSubresource(&framev1beta1.FrameMachine{}).
+		WithObjects(node, machine).
+		Build()
+
+	runner := &fakeRunner{out: `{"blockdevices":[` +
+		`{"name":"sdc","path":"/dev/sdc","serial":"KZK245ZG","size":1200000000000,"type":"disk","fstype":null,"mountpoint":null}` +
+		`]}`}
+
+	tick(context.Background(), kc, "node-1", root, runner)
+
+	var got framev1beta1.FrameMachine
+	if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status.Storage == nil {
+		t.Fatal("status.storage is nil: step 6 did not run when step 5's Observe failed")
+	}
+	if len(got.Status.Storage.Observed) != 1 || got.Status.Storage.Observed[0].SerialNumber != "KZK245ZG" {
+		t.Errorf("Observed = %+v, want the one disk lsblk reported", got.Status.Storage.Observed)
 	}
 }
 
