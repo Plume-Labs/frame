@@ -154,3 +154,53 @@ func TestRefusesWhenTheClassLookupFails(t *testing.T) {
 		t.Errorf("refusal wrongly claims the class was found, rather than that the lookup failed: %v", err)
 	}
 }
+
+// TestAcceptsAnUpdateThatDoesNotChangeTheClassName is the bug the
+// coordinator's ruling exists to fix: validateAdoption must NOT re-run on an
+// update that leaves spec.storageClassName untouched. Once the controller
+// (a later task) creates the StorageClass for a Frame-owned entry, that class
+// exists while spec.adoptExisting is still false — nothing sets it after
+// creation — so an unconditional re-check on every update would fall past
+// NotFound into the final refusal forever, telling the operator to set
+// adoptExisting: true, which would misrepresent ownership rather than fix
+// anything. Without this test, the next task (the controller that creates
+// the class) walks straight back into that trap.
+func TestAcceptsAnUpdateThatDoesNotChangeTheClassName(t *testing.T) {
+	v := validatorWith(foreignClass("ceph-rbd"))
+	old := entry("ceph-rbd", false)
+	updated := old.DeepCopy()
+	updated.Spec.Content = []string{"workload", "model"}
+	if _, err := v.ValidateUpdate(context.Background(), old, updated); err != nil {
+		t.Fatalf("an update that leaves storageClassName unchanged must not re-run the adoption check: %v", err)
+	}
+}
+
+// TestRefusesAnUpdateThatChangesToAnExistingClass: the name did change, so
+// this IS a new adoption decision the create-time check never saw. It must
+// run the full check against the new name, and the refusal must name it.
+func TestRefusesAnUpdateThatChangesToAnExistingClass(t *testing.T) {
+	v := validatorWith(foreignClass("ceph-rbd"), foreignClass("ceph-bucket"))
+	old := entry("ceph-rbd", false)
+	updated := old.DeepCopy()
+	updated.Spec.StorageClassName = "ceph-bucket"
+	_, err := v.ValidateUpdate(context.Background(), old, updated)
+	if err == nil {
+		t.Fatal("want a refusal for an update that switches to an existing StorageClass without adoptExisting")
+	}
+	if !strings.Contains(err.Error(), "ceph-bucket") {
+		t.Errorf("refusal does not name the new class: %v", err)
+	}
+}
+
+// TestAcceptsAnUpdateThatChangesToAClassThatDoesNotExistYet: the counterpart
+// of the refusal above — a changed name is only refused when the new class
+// already exists, not merely because it changed.
+func TestAcceptsAnUpdateThatChangesToAClassThatDoesNotExistYet(t *testing.T) {
+	v := validatorWith(foreignClass("ceph-rbd"))
+	old := entry("ceph-rbd", false)
+	updated := old.DeepCopy()
+	updated.Spec.StorageClassName = "frame-scratch"
+	if _, err := v.ValidateUpdate(context.Background(), old, updated); err != nil {
+		t.Fatalf("an update to a class Frame is about to create needs no opt-in: %v", err)
+	}
+}

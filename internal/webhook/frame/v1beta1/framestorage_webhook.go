@@ -49,7 +49,26 @@ func (v *FrameStorageCustomValidator) ValidateCreate(ctx context.Context, obj *f
 	return nil, v.validateAdoption(ctx, obj)
 }
 
-func (v *FrameStorageCustomValidator) ValidateUpdate(ctx context.Context, _, newObj *framev1beta1.FrameStorage) (admission.Warnings, error) {
+// ValidateUpdate re-runs the adoption check only when spec.storageClassName
+// changes. Once a Frame-owned entry's class exists — which happens as soon as
+// the controller creates it — the class is no longer "not found", so an
+// unconditional re-check would fall into the final refusal on every
+// subsequent update forever, telling the operator to set adoptExisting: true,
+// which would be a lie about ownership rather than a fix.
+//
+// The decision was already made, correctly, at creation: if the name is
+// unchanged, there is nothing new to decide. If the name changes, the new
+// name is an adoption decision the create-time check never saw, so the full
+// check runs against it.
+//
+// Gating on an owner reference instead was considered and rejected: whether
+// the controller has created that reference depends on timing, so the same
+// update would be accepted or refused depending on how far reconciliation had
+// gotten. Comparing old against new has no such dependency.
+func (v *FrameStorageCustomValidator) ValidateUpdate(ctx context.Context, oldObj, newObj *framev1beta1.FrameStorage) (admission.Warnings, error) {
+	if oldObj.Spec.StorageClassName == newObj.Spec.StorageClassName {
+		return nil, nil
+	}
 	return nil, v.validateAdoption(ctx, newObj)
 }
 
