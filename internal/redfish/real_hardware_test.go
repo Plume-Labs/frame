@@ -637,3 +637,108 @@ func serveRealSmartStorage(t *testing.T) *httptest.Server {
 	}
 	return serveFixturesFrom(t, "ilo4-real", routes)
 }
+
+// TestSmartStorageRootNotFoundLeavesDrivesEmptyButProbeSucceeds is fix
+// round 1's regression test: readSmartStorage used to wrap any c.get error,
+// including a plain 404, as fatal to the whole Probe. Every sibling reader
+// in this package (readManager, readSensors, readThermal, readPower)
+// tolerates a 404 and degrades gracefully instead — a tree that is
+// advertised but 404s is a machine this client cannot fully read, not a
+// probe failure. This test drives the SmartStorage root itself to 404 and
+// asserts both halves of the fix: Drives ends up empty, AND the rest of the
+// snapshot (power state, at minimum) is still populated. Asserting only the
+// first half would not distinguish "tolerates not-found" from "swallows
+// every error" — see TestSmartStorageRootServerErrorFailsProbe for the
+// other half of that distinction.
+func TestSmartStorageRootNotFoundLeavesDrivesEmptyButProbeSucceeds(t *testing.T) {
+	systemDoc, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", "systems_1_degraded.json"))
+	if err != nil {
+		t.Fatalf("fixture systems_1_degraded.json: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	serve := func(path, file string) {
+		body, ferr := os.ReadFile(filepath.Join("testdata", "ilo4-real", file))
+		if ferr != nil {
+			t.Fatalf("fixture %s: %v", file, ferr)
+		}
+		mux.HandleFunc(path+"{$}", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		})
+	}
+	serve("/redfish/v1/", "service_root.json")
+	serve("/redfish/v1/Systems/", "systems.json")
+	mux.HandleFunc("/redfish/v1/Systems/1/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(systemDoc)
+	})
+	// The system document advertises a SmartStorage root, but it 404s — the
+	// tree is advertised and absent, exactly the case this fix must
+	// tolerate.
+	mux.HandleFunc("/redfish/v1/Systems/1/SmartStorage/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	snap, err := insecureClient(srv.URL).Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if len(snap.Inventory.Drives) != 0 {
+		t.Errorf("Drives = %v, want empty (SmartStorage root 404d)", snap.Inventory.Drives)
+	}
+	// The whole point of the fix: a 404 on one OEM sub-tree must not take
+	// the rest of the snapshot down with it.
+	if snap.PowerState != "Off" {
+		t.Errorf("PowerState = %q, want %q — a SmartStorage 404 must not blank the rest of the snapshot", snap.PowerState, "Off")
+	}
+}
+
+// TestSmartStorageRootServerErrorFailsProbe is the other half of the
+// distinction TestSmartStorageRootNotFoundLeavesDrivesEmptyButProbeSucceeds
+// needs: a 404 is tolerated, but a real failure (here, a 500) is not. A
+// version of readSmartStorage that swallowed every c.get error, not just
+// errNotFound, would pass the 404 test and this one both — this test is
+// what tells them apart.
+func TestSmartStorageRootServerErrorFailsProbe(t *testing.T) {
+	systemDoc, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", "systems_1_degraded.json"))
+	if err != nil {
+		t.Fatalf("fixture systems_1_degraded.json: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	serve := func(path, file string) {
+		body, ferr := os.ReadFile(filepath.Join("testdata", "ilo4-real", file))
+		if ferr != nil {
+			t.Fatalf("fixture %s: %v", file, ferr)
+		}
+		mux.HandleFunc(path+"{$}", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		})
+	}
+	serve("/redfish/v1/", "service_root.json")
+	serve("/redfish/v1/Systems/", "systems.json")
+	mux.HandleFunc("/redfish/v1/Systems/1/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(systemDoc)
+	})
+	// The system document advertises a SmartStorage root, and this time it
+	// answers with a server error rather than a 404 — a real failure, which
+	// must still fail Probe.
+	mux.HandleFunc("/redfish/v1/Systems/1/SmartStorage/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	if _, err := insecureClient(srv.URL).Probe(context.Background()); err == nil {
+		t.Fatal("Probe succeeded, want an error — the SmartStorage root answered 500, not 404")
+	}
+}

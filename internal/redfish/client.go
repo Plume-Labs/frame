@@ -450,9 +450,17 @@ func (c *client) SetIndicatorLED(ctx context.Context, on bool) error {
 // readSmartStorage walks HPE's OEM storage tree and fills snap.Inventory.Drives.
 //
 // An empty root (no SmartStorage link on the system document) returns nil
-// with no drives: see the call site. A root that is advertised but does not
-// answer is an error, because that is a BMC saying it has a tree and then
-// refusing to serve it.
+// with no drives: see the call site. A 404 at any node of the walk — the
+// root itself, the ArrayControllers collection, a controller document, its
+// PhysicalDrives collection, or an individual disk document — is tolerated
+// the same way: stop walking that branch, leave Drives as it stands so far,
+// return nil. That matches every sibling reader in this package
+// (readManager, readSensors, readThermal, readPower): a tree that is
+// advertised but 404s is a machine this client cannot fully read, not a
+// probe failure, and failing here would take the whole snapshot — power
+// state, sensors, event log — down with it for what may be a transient
+// SmartStorage hiccup. Any other error (transport failure, 5xx, malformed
+// JSON) still returns the error: a real failure stays a real failure.
 func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapshot) error {
 	if root == "" {
 		return nil
@@ -460,6 +468,9 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 
 	var ss smartStorageDoc
 	if err := c.get(ctx, root, &ss); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil
+		}
 		return fmt.Errorf("smart storage root %s: %w", root, err)
 	}
 	if ss.Links.ArrayControllers.Href == "" {
@@ -468,12 +479,18 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 
 	var controllers hpCollection
 	if err := c.get(ctx, ss.Links.ArrayControllers.Href, &controllers); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil
+		}
 		return fmt.Errorf("array controllers: %w", err)
 	}
 
 	for _, ctrl := range controllers.Members {
 		var ac arrayControllerDoc
 		if err := c.get(ctx, ctrl.ODataID, &ac); err != nil {
+			if errors.Is(err, errNotFound) {
+				return nil
+			}
 			return fmt.Errorf("array controller %s: %w", ctrl.ODataID, err)
 		}
 		if ac.Links.PhysicalDrives.Href == "" {
@@ -482,12 +499,18 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 
 		var drives hpCollection
 		if err := c.get(ctx, ac.Links.PhysicalDrives.Href, &drives); err != nil {
+			if errors.Is(err, errNotFound) {
+				return nil
+			}
 			return fmt.Errorf("physical drives of %s: %w", ctrl.ODataID, err)
 		}
 
 		for _, d := range drives.Members {
 			var doc diskDriveDoc
 			if err := c.get(ctx, d.ODataID, &doc); err != nil {
+				if errors.Is(err, errNotFound) {
+					return nil
+				}
 				return fmt.Errorf("disk drive %s: %w", d.ODataID, err)
 			}
 			snap.Inventory.Drives = append(snap.Inventory.Drives, Drive{
