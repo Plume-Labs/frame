@@ -26,6 +26,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -60,6 +61,14 @@ type FrameStorageReconciler struct {
 	// drive it without a rook CRD in envtest, and so a cluster with no rook at
 	// all is a nil field rather than a permanent error.
 	CephHealth func(ctx context.Context) (health string, reasons []string, err error)
+
+	// CephCapacity reports the pool's raw bytes and the replication factor
+	// that divides them. Usable is never read from the cluster directly:
+	// Ceph reports raw, and raw is what gets mistaken for usable. Same
+	// function-field seam as CephHealth, and for the same reason: testable
+	// without rook's CRDs, and a cluster with no rook at all is a nil field
+	// rather than a permanent error.
+	CephCapacity func(ctx context.Context, storageClassName string) (rawBytes, usedBytes uint64, replication int32, err error)
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framestorages,verbs=get;list;watch;create;update;patch
@@ -68,6 +77,7 @@ type FrameStorageReconciler struct {
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ceph.rook.io,resources=cephblockpools,verbs=get;list;watch
 
 func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var fs framev1beta1.FrameStorage
@@ -91,6 +101,8 @@ func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 	fs.Status.Claims = claims
+
+	r.reconcileCapacity(ctx, &fs)
 
 	fs.Status.Phase, err = r.reconcileHealth(ctx, &fs)
 	if err != nil {
@@ -116,6 +128,14 @@ func (r *FrameStorageReconciler) reconcileClass(ctx context.Context, fs *framev1
 	err := r.Get(ctx, types.NamespacedName{Name: fs.Spec.StorageClassName}, &sc)
 	switch {
 	case err == nil:
+		// The class exists. Whether that is a legitimate adoption or a
+		// silent ownership grab was already decided at admission time --
+		// the FrameStorage validating webhook's validateAdoption refuses a
+		// non-adopting entry that names an existing class before it is ever
+		// persisted -- so by the time a reconcile reaches this branch,
+		// fs.Spec.AdoptExisting is known to be true whenever this class was
+		// not created by this entry. This is not a missing check; it is
+		// relying on the one admission already performed.
 		return fs.Spec.AdoptExisting, nil
 	case !apierrors.IsNotFound(err):
 		return false, fmt.Errorf("reading StorageClass %q: %w", fs.Spec.StorageClassName, err)
@@ -173,6 +193,51 @@ func (r *FrameStorageReconciler) countClaims(ctx context.Context, className stri
 		}
 	}
 	return counts, nil
+}
+
+// reconcileCapacity populates status.capacity for ceph-* entries.
+//
+// Usable is derived from raw divided by the pool's replication factor --
+// never copied from raw directly. Ceph reports raw, and raw is what gets
+// mistaken for usable: the park's capacity incident came from reading raw
+// numbers on a pool whose replication divided them by three, and that is
+// exactly what a fallback here would reproduce while looking correct. When
+// the replication factor is not known (zero, negative, or simply not
+// resolvable for this entry's class), Usable is left empty -- no usable
+// figure is reported at all, rather than a guessed one -- while Raw and
+// Used, which are independent of any one class's replication, are still
+// reported.
+//
+// A capacity lookup that errors, a local-path entry, or a nil CephCapacity
+// field all leave status.capacity exactly as this reconcile found it: the
+// same "not knowing is not health" rule reconcileHealth's CheckFailed
+// branch follows. A capacity failure must never fail the reconcile, and
+// must never flip an otherwise-Ready entry.
+func (r *FrameStorageReconciler) reconcileCapacity(ctx context.Context, fs *framev1beta1.FrameStorage) {
+	if !strings.HasPrefix(fs.Spec.Type, "ceph-") || r.CephCapacity == nil {
+		return
+	}
+
+	rawBytes, usedBytes, replication, err := r.CephCapacity(ctx, fs.Spec.StorageClassName)
+	if err != nil {
+		return
+	}
+
+	capacity := &framev1beta1.StorageCapacity{
+		Raw:  bytesToQuantityString(rawBytes),
+		Used: bytesToQuantityString(usedBytes),
+	}
+	if replication >= 1 {
+		capacity.Usable = bytesToQuantityString(rawBytes / uint64(replication))
+	}
+	fs.Status.Capacity = capacity
+}
+
+// bytesToQuantityString renders a byte count as a Kubernetes quantity
+// string (e.g. "1.2Ti"), not a raw integer -- the form every other
+// capacity figure in the cluster is already displayed in.
+func bytesToQuantityString(bytes uint64) string {
+	return resource.NewQuantity(int64(bytes), resource.BinarySI).String()
 }
 
 // reconcileHealth returns the entry's phase and sets its Healthy condition.

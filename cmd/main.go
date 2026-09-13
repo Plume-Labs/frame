@@ -30,6 +30,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -99,10 +100,12 @@ func validateProvisiondMediaURL(raw string) error {
 }
 
 // cephClusterNamespace and cephClusterName name the CephCluster this manager
-// reads for FrameStorage health. deploy/ceph/cluster.yaml is the only place
-// this cluster is provisioned, and it puts both the object and its rook
-// operator in "rook-ceph" -- there is no flag for this yet because there is
-// only ever one CephCluster in this deployment.
+// reads for FrameStorage health and capacity. deploy/ceph/cluster.yaml is
+// the only place this cluster is provisioned, and it puts both the object
+// and its rook operator in "rook-ceph" -- there is no flag for this yet
+// because there is only ever one CephCluster in this deployment. The same
+// assumption backs readCephCapacity's CephBlockPool lookup below: a pool
+// backing a FrameStorage entry's StorageClass lives in this namespace too.
 const (
 	cephClusterNamespace = "rook-ceph"
 	cephClusterName      = "rook-ceph"
@@ -152,6 +155,69 @@ func readCephHealth(c client.Client) func(context.Context) (string, []string, er
 
 		return health, reasons, nil
 	}
+}
+
+// readCephCapacity returns a controller.FrameStorageReconciler.CephCapacity
+// that reads status.ceph.capacity (bytesTotal, bytesUsed) off the same
+// CephCluster readCephHealth reads, and the replication factor off the
+// CephBlockPool backing the given StorageClass.
+//
+// A failure to reach the CephCluster itself, or to read its capacity
+// fields, is a function error -- raw and used are not known at all, and
+// reconcileCapacity's contract for an error is to leave status.capacity
+// untouched. A failure to resolve the replication factor specifically
+// (the class does not exist, names no pool, or the pool has no
+// spec.replicated.size) is not treated the same way: raw and used are
+// already known independent of any one class, so it comes back as
+// replication 0 (unknown) with a nil error -- reconcileCapacity's rule is
+// what refuses to turn that into a usable figure, not this function.
+func readCephCapacity(c client.Client) func(context.Context, string) (uint64, uint64, int32, error) {
+	return func(ctx context.Context, storageClassName string) (uint64, uint64, int32, error) {
+		cc := &unstructured.Unstructured{}
+		cc.SetGroupVersionKind(cephClusterGVK)
+		if err := c.Get(ctx, client.ObjectKey{Namespace: cephClusterNamespace, Name: cephClusterName}, cc); err != nil {
+			return 0, 0, 0, fmt.Errorf("reading CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+		}
+
+		rawBytes, _, err := unstructured.NestedInt64(cc.Object, "status", "ceph", "capacity", "bytesTotal")
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("reading status.ceph.capacity.bytesTotal off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+		}
+		usedBytes, _, err := unstructured.NestedInt64(cc.Object, "status", "ceph", "capacity", "bytesUsed")
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("reading status.ceph.capacity.bytesUsed off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+		}
+
+		return uint64(rawBytes), uint64(usedBytes), readReplicationFactor(ctx, c, storageClassName), nil
+	}
+}
+
+// readReplicationFactor returns 0 (unknown) rather than an error whenever
+// it cannot resolve one: the StorageClass may not exist yet, may name no
+// pool, or the CephBlockPool it names may ship with no explicit
+// spec.replicated.size. Any of those is exactly the "unknown replication"
+// case reconcileCapacity's rule 2 exists for, not a reason to fail the
+// whole capacity read.
+func readReplicationFactor(ctx context.Context, c client.Client, storageClassName string) int32 {
+	var sc storagev1.StorageClass
+	if err := c.Get(ctx, client.ObjectKey{Name: storageClassName}, &sc); err != nil {
+		return 0
+	}
+	poolName := sc.Parameters["pool"]
+	if poolName == "" {
+		return 0
+	}
+
+	pool := &unstructured.Unstructured{}
+	pool.SetGroupVersionKind(schema.GroupVersionKind{Group: "ceph.rook.io", Version: "v1", Kind: "CephBlockPool"})
+	if err := c.Get(ctx, client.ObjectKey{Namespace: cephClusterNamespace, Name: poolName}, pool); err != nil {
+		return 0
+	}
+	size, found, err := unstructured.NestedInt64(pool.Object, "spec", "replicated", "size")
+	if err != nil || !found {
+		return 0
+	}
+	return int32(size)
 }
 
 func init() {
@@ -477,9 +543,10 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.FrameStorageReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		CephHealth: readCephHealth(mgr.GetClient()),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		CephHealth:   readCephHealth(mgr.GetClient()),
+		CephCapacity: readCephCapacity(mgr.GetClient()),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framestorage")
 		os.Exit(1)

@@ -248,6 +248,114 @@ var _ = Describe("FrameStorage controller", func() {
 		Expect(cond.Message).To(ContainSubstring("CephCluster"))
 	})
 
+	It("calcule l'utilisable a partir du brut et de la replication", func(ctx SpecContext) {
+		// Rule 1: a known replication factor n >= 1 divides raw into usable,
+		// and raw is still reported alongside it.
+		fs := &framev1beta1.FrameStorage{
+			ObjectMeta: metav1.ObjectMeta{Name: "ceph-capacity-known"},
+			Spec: framev1beta1.FrameStorageSpec{
+				Type: "ceph-rbd", Content: []string{"workload"},
+				StorageClassName: "frame-ceph-capacity-known",
+			},
+		}
+		Expect(k8sClient.Create(ctx, fs)).To(Succeed())
+
+		const oneTiB = uint64(1) << 40
+		r := &FrameStorageReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), CephCapacity: func(context.Context, string) (uint64, uint64, int32, error) {
+			return 3 * oneTiB, oneTiB, 3, nil
+		}}
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameStorage
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &back)).To(Succeed())
+		Expect(back.Status.Capacity).NotTo(BeNil())
+		Expect(back.Status.Capacity.Raw).To(Equal("3Ti"))
+		Expect(back.Status.Capacity.Used).To(Equal("1Ti"))
+		Expect(back.Status.Capacity.Usable).To(Equal("1Ti"),
+			"3Ti raw at replication 3 is 1Ti usable, not 3Ti")
+	})
+
+	It("ne rend aucun utilisable quand la replication est inconnue", func(ctx SpecContext) {
+		// Rule 2, the load-bearing one: an unknown, zero, or negative
+		// replication factor must never fall back to reporting raw as
+		// usable. That silent fallback is the capacity incident this rule
+		// exists to prevent, reproduced exactly while looking correct.
+		fs := &framev1beta1.FrameStorage{
+			ObjectMeta: metav1.ObjectMeta{Name: "ceph-capacity-unknown-replication"},
+			Spec: framev1beta1.FrameStorageSpec{
+				Type: "ceph-rbd", Content: []string{"workload"},
+				StorageClassName: "frame-ceph-capacity-unknown-replication",
+			},
+		}
+		Expect(k8sClient.Create(ctx, fs)).To(Succeed())
+
+		const oneTiB = uint64(1) << 40
+		r := &FrameStorageReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), CephCapacity: func(context.Context, string) (uint64, uint64, int32, error) {
+			return 3 * oneTiB, oneTiB, 0, nil
+		}}
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameStorage
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &back)).To(Succeed())
+		Expect(back.Status.Capacity).NotTo(BeNil())
+		Expect(back.Status.Capacity.Usable).To(BeEmpty(),
+			"no usable figure at all, not raw standing in for it")
+	})
+
+	It("laisse la capacite intacte et la reconciliation en succes quand la lecture de capacite echoue", func(ctx SpecContext) {
+		// Rule 3: a capacity lookup failure must not fail the reconcile and
+		// must not flip an otherwise-Ready entry -- same "not knowing is not
+		// health" rule as reconcileHealth's CheckFailed branch.
+		fs := &framev1beta1.FrameStorage{
+			ObjectMeta: metav1.ObjectMeta{Name: "ceph-capacity-lookup-failed"},
+			Spec: framev1beta1.FrameStorageSpec{
+				Type: "ceph-rbd", Content: []string{"workload"},
+				StorageClassName: "frame-ceph-capacity-lookup-failed",
+			},
+		}
+		Expect(k8sClient.Create(ctx, fs)).To(Succeed())
+
+		r := &FrameStorageReconciler{
+			Client: k8sClient, Scheme: k8sClient.Scheme(),
+			CephHealth: func(context.Context) (string, []string, error) {
+				return "HEALTH_OK", nil, nil
+			},
+			CephCapacity: func(context.Context, string) (uint64, uint64, int32, error) {
+				return 0, 0, 0, errors.New("reading CephCluster rook-ceph/rook-ceph: connection refused")
+			},
+		}
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameStorage
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &back)).To(Succeed())
+		Expect(back.Status.Capacity).To(BeNil())
+		Expect(back.Status.Phase).To(Equal("Ready"),
+			"a capacity failure must never flip an otherwise-healthy entry")
+	})
+
+	It("laisse la capacite absente pour une entree local-path", func(ctx SpecContext) {
+		// Rule 4: no cluster-wide usable figure means anything for local
+		// storage; inventing one would be worse than absence. Also covers
+		// CephCapacity == nil, the default for every other spec in this file.
+		fs := &framev1beta1.FrameStorage{
+			ObjectMeta: metav1.ObjectMeta{Name: "local-path-capacity"},
+			Spec: framev1beta1.FrameStorageSpec{
+				Type: "local-path", Content: []string{"scratch"},
+				StorageClassName: "frame-local-path-capacity",
+			},
+		}
+		Expect(k8sClient.Create(ctx, fs)).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameStorage
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &back)).To(Succeed())
+		Expect(back.Status.Capacity).To(BeNil())
+	})
+
 	It("porte la disponibilite par noeud dans une condition", func(ctx SpecContext) {
 		fs := &framev1beta1.FrameStorage{
 			ObjectMeta: metav1.ObjectMeta{Name: "two-nodes"},

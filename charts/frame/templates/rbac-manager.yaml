@@ -130,6 +130,7 @@ rules:
 - apiGroups:
   - ceph.rook.io
   resources:
+  - cephblockpools
   - cephclusters
   verbs:
   - get
