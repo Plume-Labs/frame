@@ -8,6 +8,7 @@ import {
   powerPatchBody,
   projectToFull,
   workloadWatchPaths,
+  type CephStatus,
   type MetricSeries,
 } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
@@ -788,6 +789,72 @@ describe('integration proxy requests carry the bearer token', () => {
       .filter(({ line }: { line: string }) =>
         /(?<![a-zA-Z.])fetch\(/.test(line) && !/proxyFetch\(|k8sFetch|^\s*\*/.test(line))
     expect(bare.map((b: { n: number; line: string }) => `${b.n}: ${b.line.trim()}`)).toEqual([])
+  })
+})
+
+// R18: an earlier version of ceph() remapped status.ceph.details into a
+// generic checks[code].summary.message shape for cephWarningReasons
+// (storage.ts) to consume, and shipped with nothing here exercising that
+// remap — cephWarningReasons was tested only against a shape the cluster
+// never actually sends. The fix deletes the translation: ceph() now hands
+// `details` straight through, and this pins that the pass-through actually
+// happens, not just that the field compiles. A silent regression here (e.g.
+// someone reintroducing a remap, or dropping the field on a refactor) would
+// otherwise only be caught by noticing a WARN's reasons went blank on a
+// live cluster.
+describe('ClusterClient.ceph()', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  it('carries status.ceph.details through verbatim', async () => {
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/cephclusters')) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  status: {
+                    ceph: {
+                      health: 'HEALTH_WARN',
+                      details: {
+                        POOL_NO_REDUNDANCY: {
+                          message: '1 pool(s) have no replicas configured',
+                          severity: 'HEALTH_WARN',
+                        },
+                        MON_CLOCK_SKEW: {
+                          message: 'clock skew detected on mon.b',
+                          severity: 'HEALTH_WARN',
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        // cephblockpools and the osd/mon pod lists: empty is enough, this
+        // test is only about the details pass-through above.
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+
+    const status: CephStatus = await createFrameClient().cluster.ceph()
+
+    expect(status.details).toEqual({
+      POOL_NO_REDUNDANCY: { message: '1 pool(s) have no replicas configured', severity: 'HEALTH_WARN' },
+      MON_CLOCK_SKEW: { message: 'clock skew detected on mon.b', severity: 'HEALTH_WARN' },
+    })
   })
 })
 

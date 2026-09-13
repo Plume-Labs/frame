@@ -538,14 +538,16 @@ export interface CephStatus {
   bytesAvailable: number
   pools: Array<{ name: string; replication: number }>
   /**
-   * The reasons behind `health` when it is not HEALTH_OK, shaped like the
-   * generic `CephHealthPayload.checks` `cephWarningReasons` (`storage.ts`)
-   * consumes — one entry per rook `status.ceph.details` key, remapped from
-   * Rook's `{message, severity}` shape into `{summary: {message}}` so the
-   * pure decision function is not written against one specific source's
-   * field names.
+   * `status.ceph.details` off the CephCluster CR, carried through verbatim
+   * — the same field `cmd/main.go`'s `readCephHealth` reads for
+   * FrameStorage's `Healthy` condition. `cephWarningReasons` (`storage.ts`)
+   * is written directly against this shape (R18): an earlier version
+   * remapped it into a generic `checks[code].summary.message` shape here,
+   * and shipped with no test covering that remap, so the pure function was
+   * exercised only against a shape the cluster never actually sends.
+   * Passing the real shape straight through is the fix.
    */
-  checks: Record<string, { summary?: { message?: string } }>
+  details: Record<string, { message?: string; severity?: string }>
 }
 
 /** A real Kubernetes event. */
@@ -1565,17 +1567,6 @@ class ClusterClient {
     const running = (list: ListResponse<{ status?: { phase?: string } }>) =>
       (list.items ?? []).filter((p) => p.status?.phase === 'Running').length
 
-    // Remapped into `cephWarningReasons`'s generic checks shape (storage.ts)
-    // rather than handing that pure function Rook's own field names —
-    // `checks[code].summary.message`, not `details[code].message`, is the
-    // one shape it is written against, and this is where that translation
-    // belongs, not inside the decision itself.
-    const details = cluster.status?.ceph?.details ?? {}
-    const checks: CephStatus['checks'] = {}
-    for (const [code, entry] of Object.entries(details)) {
-      checks[code] = { summary: { message: entry?.message } }
-    }
-
     return {
       health: cluster.status?.ceph?.health ?? 'UNKNOWN',
       version: version.replace(/^ceph version /, '').split(' ')[0] ?? '',
@@ -1588,7 +1579,8 @@ class ClusterClient {
         name: p.metadata.name,
         replication: p.spec?.replicated?.size ?? 0,
       })),
-      checks,
+      // Carried through verbatim — R18. No remap here: see CephStatus.details.
+      details: cluster.status?.ceph?.details ?? {},
     }
   }
 

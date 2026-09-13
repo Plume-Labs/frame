@@ -173,7 +173,7 @@ export function ClusterStorageView() {
 
             {c.health !== 'HEALTH_OK' && (
               <ul className={`text-xs font-mono space-y-0.5 list-disc list-inside ${TONE_TEXT[healthTone(c.health)]}`}>
-                {cephWarningReasons({ health: c.health, checks: c.checks }).map((reason) => (
+                {cephWarningReasons({ health: c.health, details: c.details }).map((reason) => (
                   <li key={reason}>{reason}</li>
                 ))}
               </ul>
