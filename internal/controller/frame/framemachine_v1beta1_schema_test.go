@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -96,5 +97,38 @@ var _ = Describe("FrameMachine v1beta1 schema", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("must have at most 25 items"))
 		Expect(k8sClient.Delete(context.Background(), fm)).To(Succeed())
+	})
+
+	It("garde le numero de serie, la baie et les motifs d'etat d'un disque", func(ctx SpecContext) {
+		m := newMachine("drive-fields", "192.168.2.60")
+		Expect(k8sClient.Create(ctx, m)).To(Succeed())
+
+		m.Status.Inventory = &framev1beta1.MachineInventory{
+			Drives: []framev1beta1.DriveInfo{{
+				Name:          "2I:6:8",
+				Model:         "MM1000GFJTE",
+				SizeGB:        1000,
+				Protocol:      "SATA",
+				Health:        "OK",
+				SerialNumber:  "W4722RRA",
+				Location:      "2I:6:8",
+				MediaType:     "HDD",
+				StatusReasons: []string{"None"},
+			}},
+		}
+		Expect(k8sClient.Status().Update(ctx, m)).To(Succeed())
+
+		var back framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(m), &back)).To(Succeed())
+		Expect(back.Status.Inventory.Drives).To(HaveLen(1))
+		d := back.Status.Inventory.Drives[0]
+		// The serial is the join key: a CRD that drops it silently makes
+		// every divergence in internal/storage.Join read "os-only".
+		Expect(d.SerialNumber).To(Equal("W4722RRA"))
+		Expect(d.Location).To(Equal("2I:6:8"))
+		Expect(d.MediaType).To(Equal("HDD"))
+		Expect(d.StatusReasons).To(Equal([]string{"None"}))
+
+		Expect(k8sClient.Delete(ctx, m)).To(Succeed())
 	})
 })

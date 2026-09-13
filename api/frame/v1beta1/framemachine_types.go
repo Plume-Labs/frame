@@ -149,7 +149,10 @@ type MemoryModuleInfo struct {
 	Manufacturer string `json:"manufacturer,omitempty"`
 }
 
-// DriveInfo describes one drive the BMC can see.
+// DriveInfo describes one drive the BMC can see. It is half of the storage
+// picture: what the node's own kernel sees lives in
+// FrameMachineStatus.Storage.Observed, and the two are joined on
+// SerialNumber alone (internal/storage.Join).
 type DriveInfo struct {
 	// +kubebuilder:validation:MaxLength=256
 	Name string `json:"name,omitempty"`
@@ -160,6 +163,31 @@ type DriveInfo struct {
 	Protocol string `json:"protocol,omitempty"`
 	// +kubebuilder:validation:MaxLength=64
 	Health string `json:"health,omitempty"`
+
+	// SerialNumber is the only key this drive can be matched on. A Redfish
+	// drive name and a /dev/disk/by-id path are different namespaces.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	SerialNumber string `json:"serialNumber,omitempty"`
+
+	// Location is the physical bay, in the controller's
+	// ControllerPort:Box:Bay format (e.g. "2I:6:8") — the string a human
+	// reads on the chassis before pulling a disk.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	Location string `json:"location,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MaxLength=32
+	MediaType string `json:"mediaType,omitempty"`
+
+	// StatusReasons is what the controller says about this drive's state.
+	// On the captured ML350 G9 all eight drives report ["None"], including
+	// the one the host cannot see: the BMC has no field that admits a disk
+	// is masked. That is why divergence is computed from two sources.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	StatusReasons []string `json:"statusReasons,omitempty"`
 }
 
 // NetworkAdapterInfo describes one network port.
