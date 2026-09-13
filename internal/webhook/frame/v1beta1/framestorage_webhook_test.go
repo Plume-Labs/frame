@@ -113,10 +113,10 @@ func TestSharedIsNotSettableFromSpec(t *testing.T) {
 	// rather than quietly add a field.
 	var spec framev1beta1.FrameStorageSpec
 	_ = spec
-	if got := sharedForType("ceph-rbd"); !got {
+	if got := framev1beta1.SharedForType("ceph-rbd"); !got {
 		t.Error("ceph-rbd must be shared")
 	}
-	if got := sharedForType("local-path"); got {
+	if got := framev1beta1.SharedForType("local-path"); got {
 		t.Error("local-path must not be shared")
 	}
 }
