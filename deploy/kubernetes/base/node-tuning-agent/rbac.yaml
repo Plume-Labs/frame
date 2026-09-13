@@ -35,6 +35,19 @@ rules:
   - apiGroups: ["frame.plume-labs.io"]
     resources: ["nodetunings/status"]
     verbs: ["patch", "update"]
+  # FrameMachine is the storage lot's addition: the agent lists it to find
+  # the one whose spec.nodeRef names this node (there is no field selector
+  # for that), and patches only status.storage on it — never spec, and
+  # never any other status field. The machine controller (inventory,
+  # sensors, power state, event log) is the other writer of this same
+  # status; internal/agent/diskstatus.go documents the two mechanisms that
+  # keep the two writers from clobbering each other.
+  - apiGroups: ["frame.plume-labs.io"]
+    resources: ["framemachines"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["frame.plume-labs.io"]
+    resources: ["framemachines/status"]
+    verbs: ["get", "patch", "update"]
   # The widest privilege this agent holds, and the reason it gets a role of
   # its own rather than sharing one. The agent publishes the systemd unit it
   # detected, that unit's ActiveEnterTimestamp, and the MIG profile label, all
