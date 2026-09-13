@@ -227,15 +227,22 @@ func readReplicationFactor(ctx context.Context, c client.Client, storageClassNam
 // human-supervised act against a chosen machine, not something a manager
 // rollout should be able to trigger on its own. Wiring this stand-in instead
 // of leaving Wiper nil means a FrameDiskClaim created against this
-// deployment fails cleanly and visibly (status.phase=Failed, an explicit
-// message) instead of a nil-pointer panic or silently doing nothing.
+// deployment never reaches a nil-pointer panic and never silently does
+// nothing: every method errors, and the controller requeues on that error
+// (R14 — a destructive object must not turn a read failure into a
+// permanent, terminal Failed) — so what an operator sees is this error
+// repeating in the manager's log on every retry, not a phase on the object.
 type unconfiguredWiper struct{}
 
-func (unconfiguredWiper) ReadMarker(_ context.Context, _, _ string) (string, error) {
-	return "", errors.New("destructive backend not configured: this build ships FrameDiskClaim's guards only")
+func (unconfiguredWiper) ReadMarker(_ context.Context, _, _ string) (string, bool, error) {
+	return "", false, errors.New("destructive backend not configured: this build ships FrameDiskClaim's guards only")
 }
 
 func (unconfiguredWiper) Claim(_ context.Context, _, _, _, _ string) error {
+	return errors.New("destructive backend not configured: this build ships FrameDiskClaim's guards only")
+}
+
+func (unconfiguredWiper) MarkComplete(_ context.Context, _, _, _ string) error {
 	return errors.New("destructive backend not configured: this build ships FrameDiskClaim's guards only")
 }
 
@@ -577,8 +584,10 @@ func main() {
 		// node — is a separate, human-supervised step against a chosen
 		// machine and is not part of this build. Wiring an
 		// unconfiguredWiper here means a FrameDiskClaim created against
-		// this deployment fails cleanly (status.phase=Failed, an explicit
-		// message) instead of silently doing nothing.
+		// this deployment never reaches a nil-pointer panic and never
+		// silently does nothing: it requeues with this error in the
+		// manager's log on every retry — it does not reach a phase on the
+		// object, clean or otherwise.
 		Wiper: &unconfiguredWiper{},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framediskclaim")

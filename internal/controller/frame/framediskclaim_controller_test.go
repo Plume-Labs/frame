@@ -33,26 +33,47 @@ import (
 )
 
 // fakeWiper records every destructive call and can be told to fail its
-// cleanup step, so guard 5 has something to catch.
+// cleanup step, so guard 5 has something to catch. It also tracks R15's
+// completion record separately from the started marker: Claim only ever
+// writes "started", and MarkComplete is what a real Wiper would call once
+// the destructive work is actually done.
 type fakeWiper struct {
-	mu         sync.Mutex
-	calls      int
-	cleanupErr error
-	markers    map[string]string
+	mu            sync.Mutex
+	calls         int
+	cleanupErr    error
+	readMarkerErr error
+	markers       map[string]string
+	completed     map[string]bool
 }
 
-func newFakeWiper() *fakeWiper { return &fakeWiper{markers: map[string]string{}} }
+func newFakeWiper() *fakeWiper {
+	return &fakeWiper{markers: map[string]string{}, completed: map[string]bool{}}
+}
 
 func (f *fakeWiper) Count() int { f.mu.Lock(); defer f.mu.Unlock(); return f.calls }
 
 func (f *fakeWiper) FailCleanup(err error) { f.mu.Lock(); defer f.mu.Unlock(); f.cleanupErr = err }
 
-// ReadMarker returns the claim UID recorded on the machine for byIDPath, or
-// "" if none. This is the on-machine record guard 4 relies on.
-func (f *fakeWiper) ReadMarker(_ context.Context, machine, byIDPath string) (string, error) {
+// FailReadMarker makes the next ReadMarker calls return err, standing in for
+// a transient node-communication failure — R14's case, as opposed to any of
+// guards 1-3's "this is unsafe" refusals.
+func (f *fakeWiper) FailReadMarker(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.markers[machine+"|"+byIDPath], nil
+	f.readMarkerErr = err
+}
+
+// ReadMarker returns the claim UID recorded on the machine for byIDPath (or
+// "" if none) and whether MarkComplete was ever called for it. This is the
+// on-machine record guard 4 relies on, and the completion half R15 added.
+func (f *fakeWiper) ReadMarker(_ context.Context, machine, byIDPath string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.readMarkerErr != nil {
+		return "", false, f.readMarkerErr
+	}
+	key := machine + "|" + byIDPath
+	return f.markers[key], f.completed[key], nil
 }
 
 func (f *fakeWiper) Claim(_ context.Context, machine, byIDPath, claimUID, destination string) error {
@@ -61,6 +82,13 @@ func (f *fakeWiper) Claim(_ context.Context, machine, byIDPath, claimUID, destin
 	f.markers[machine+"|"+byIDPath] = claimUID
 	f.calls++
 	return f.cleanupErr
+}
+
+func (f *fakeWiper) MarkComplete(_ context.Context, machine, byIDPath, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.completed[machine+"|"+byIDPath] = true
+	return nil
 }
 
 var _ = Describe("FrameDiskClaim controller", func() {
@@ -111,6 +139,29 @@ var _ = Describe("FrameDiskClaim controller", func() {
 			},
 		}
 	}
+
+	// LE CHEMIN HEUREUX — sans ce test, la suite ne prouve que les refus.
+	// Le re-revieweur a remplace succeed() par fail() sur le chemin de
+	// succes et les quinze specs precedentes sont restees vertes: rien ne
+	// pinnait "Ready". Un disque libre, une serie qui correspond, un Wiper
+	// qui reussit — doit produire Ready, un seul appel destructif, et un
+	// message qui nomme la destination.
+	It("autorise un disque libre dont le chemin et la serie correspondent", func(ctx SpecContext) {
+		machineWithDisks(ctx, "happy-path", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-HAPPY", SerialNumber: "HAPPY0001", SizeGB: 1200, Occupancy: "free"},
+		})
+		c := claim("happy-path", "/dev/disk/by-id/scsi-HAPPY", "HAPPY0001")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Ready"))
+		Expect(back.Status.Message).To(ContainSubstring("wipe"))
+		Expect(wipes.Count()).To(Equal(1))
+	})
 
 	// GARDE 1 — le numero de serie retape doit correspondre.
 	It("refuse quand le serial retape ne correspond a aucun disque observe", func(ctx SpecContext) {
@@ -364,6 +415,34 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(back.Status.Message).To(ContainSubstring("stale"))
 	})
 
+	// GARDE 4, ruling R14 — une erreur de lecture transitoire du marqueur ne
+	// doit pas fermer definitivement l'objet. R12/R1 avaient d'abord fait de
+	// cette branche un fail() terminal (pour que les commentaires de
+	// cmd/main.go disent vrai) ; c'etait une erreur, car sur un objet
+	// destructeur un aleas de communication avec le noeud n'est pas une
+	// declaration que la reclamation est dangereuse — contrairement aux
+	// gardes 1-3, qui statuent sur la securite du geste, celle-ci ne dit
+	// rien de tel et doit se representer (`err` non nil, requeue), jamais
+	// verrouiller l'objet en Failed.
+	It("ne ferme pas definitivement sur une erreur de lecture transitoire du marqueur", func(ctx SpecContext) {
+		machineWithDisks(ctx, "r14-transient", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-R14", SerialNumber: "R14TRANSIENT", SizeGB: 300, Occupancy: "free"},
+		})
+		wipes.FailReadMarker(errors.New("temporary node communication error"))
+
+		c := claim("r14-transient", "/dev/disk/by-id/scsi-R14", "R14TRANSIENT")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).To(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).NotTo(Equal("Failed"),
+			"a transient marker-read failure on a destructive object must requeue, not close the claim permanently")
+		Expect(wipes.Count()).To(Equal(0), "no destructive call while the marker could not even be read")
+	})
+
 	// GARDE 4, revue I3 — un marqueur appartenant a un autre objet doit
 	// refuser. Sans ce test, remplacer cette branche par `succeed(...)`
 	// laisse la suite verte, puisque aucun test ne pre-seme un marqueur
@@ -404,9 +483,18 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(wipes.Count()).To(Equal(1))
 
-		// A manager that died after the wipe and before writing its phase.
+		// A manager that died after the wipe and before writing Ready.
 		// Without this the terminal-phase guard alone ends the second
-		// reconcile, and the test stays green with ReadMarker deleted.
+		// reconcile, and the test stays green with ReadMarker deleted. Note
+		// what this test does and does not pin: since Claim and MarkComplete
+		// both succeed here (no FailCleanup armed), the resumed reconcile
+		// legitimately finds the marker complete and does converge to
+		// Ready — that is R15's correct behaviour for a claim that actually
+		// finished, not a regression of guard 4. What guard 4 forbids is the
+		// destructive call running twice, which is the only thing asserted
+		// below; the "unconfirmed completion" refusal this ruling also
+		// introduced is pinned separately by the guard-5 extension, where
+		// Claim's cleanup fails and MarkComplete is never reached.
 		var mid framev1beta1.FrameDiskClaim
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &mid)).To(Succeed())
 		mid.Status.Phase = ""
@@ -418,6 +506,13 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		_, err = fresh.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(wipes.Count()).To(Equal(1), "the destructive act ran twice across a manager restart")
+
+		// R15: the marker matches and MarkComplete was recorded, so this is
+		// the "lost the Ready status write" case, not "died mid-gesture" —
+		// pin that it actually resumes to Ready rather than being folded
+		// into the unconfirmed-completion refusal regardless of `complete`.
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &mid)).To(Succeed())
+		Expect(mid.Status.Phase).To(Equal("Ready"))
 	})
 
 	// GARDE 5 — une erreur de nettoyage n'est pas avalee. Revue C2: guard 4

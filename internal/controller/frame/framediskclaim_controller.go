@@ -45,11 +45,21 @@ const observationMaxAge = 5 * time.Minute
 // because the only record that it had already run was process-local. That
 // was reproduced, not supposed.
 type Wiper interface {
-	// ReadMarker returns the claim UID already recorded for this disk on
-	// this machine, or "" if none.
-	ReadMarker(ctx context.Context, machine, byIDPath string) (string, error)
-	// Claim writes the marker and then does the destructive work.
+	// ReadMarker returns the claim UID recorded for this disk on this
+	// machine (or "" if none) and whether that claim was recorded complete.
+	// The claim UID alone only ever meant "started": without the completion
+	// half, a claim that fully succeeded and then merely lost its status
+	// write is indistinguishable from one whose manager died mid-gesture,
+	// and both would fail closed forever demanding a manual disk inspection
+	// that a completed claim never needed.
+	ReadMarker(ctx context.Context, machine, byIDPath string) (claimUID string, complete bool, err error)
+	// Claim writes the started marker and then does the destructive work.
 	Claim(ctx context.Context, machine, byIDPath, claimUID, destination string) error
+	// MarkComplete records that the destructive work finished. Called after
+	// Claim returns successfully and before the phase is recorded Ready, so
+	// that a lost Ready status write can still be told apart from a claim
+	// that never finished.
+	MarkComplete(ctx context.Context, machine, byIDPath, claimUID string) error
 }
 
 type FrameDiskClaimReconciler struct {
@@ -86,20 +96,29 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// must not depend on that guard remaining intact to be safe: disk.Path
 	// is what ties the call to a disk that was actually observed.
 	claimUID := string(c.UID)
-	existing, err := r.Wiper.ReadMarker(ctx, c.Spec.MachineRef.Name, disk.Path)
+	existing, complete, err := r.Wiper.ReadMarker(ctx, c.Spec.MachineRef.Name, disk.Path)
 	if err != nil {
-		return ctrl.Result{}, r.fail(ctx, &c,
-			fmt.Sprintf("reading the claim marker on %s: %v", c.Spec.MachineRef.Name, err))
+		// R14: a transient read failure on a destructive object must not be
+		// terminal. Requeue instead of failing closed permanently — unlike
+		// guard 1-3's refusals, this is not a statement that the claim is
+		// unsafe, only that the node could not be asked right now.
+		return ctrl.Result{}, fmt.Errorf("reading the claim marker on %s: %w", c.Spec.MachineRef.Name, err)
 	}
 	if existing == claimUID {
-		// The marker means "this object's destructive work started", never
-		// "it succeeded". This branch is only reachable when the phase is
+		if complete {
+			// The destructive work finished on an earlier pass, but that
+			// pass's own succeed() status write was lost — a plain
+			// controller-runtime conflict, not a sign anything went wrong.
+			// MarkComplete is the record that distinguishes this from the
+			// "died mid-gesture" case below.
+			return ctrl.Result{}, r.succeed(ctx, &c, claimUID, "already claimed by this object")
+		}
+		// The started marker means only that: started, never confirmed
+		// finished. This branch is only reachable when the phase is
 		// non-terminal, which means the manager died (or the previous
 		// attempt's cleanup failed) somewhere between writing the marker and
-		// recording Ready. Nobody can know from here whether the disk is
-		// intact, so this is a refusal, not a resume: completion is recorded
-		// by the phase reaching Ready on the attempt that wrote the marker,
-		// never inferred from the marker's mere presence on a later one.
+		// recording completion. Nobody can know from here whether the disk
+		// is intact, so this is a refusal, not a resume.
 		return ctrl.Result{}, r.fail(ctx, &c,
 			fmt.Sprintf("this claim already began claiming %s and its completion is unconfirmed "+
 				"(the manager may have restarted, or a previous attempt's cleanup failed); "+
@@ -124,6 +143,16 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, serr
 		}
 		return ctrl.Result{}, fmt.Errorf("claiming %s on %s: %w", disk.Path, c.Spec.MachineRef.Name, err)
+	}
+
+	// R15: record completion before Ready, so a lost Ready status write is
+	// still told apart from a claim that never finished. If this itself
+	// fails, the phase is left as Claiming (not Ready, not Failed) and the
+	// error is returned for a requeue; the next pass will see the started
+	// marker without a completion record and fail closed asking for a
+	// manual inspection, rather than silently calling itself done.
+	if err := r.Wiper.MarkComplete(ctx, c.Spec.MachineRef.Name, disk.Path, claimUID); err != nil {
+		return ctrl.Result{}, fmt.Errorf("marking %s complete on %s: %w", disk.Path, c.Spec.MachineRef.Name, err)
 	}
 
 	return ctrl.Result{}, r.succeed(ctx, &c, claimUID, fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination))
