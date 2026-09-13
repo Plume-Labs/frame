@@ -27,6 +27,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -142,16 +143,41 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		return m
 	}
 
-	claim := func(machine, byID, serial string) *framev1beta1.FrameDiskClaim {
+	claimTo := func(machine, byID, serial, destination string) *framev1beta1.FrameDiskClaim {
 		return &framev1beta1.FrameDiskClaim{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "c-", Namespace: "default"},
 			Spec: framev1beta1.FrameDiskClaimSpec{
 				MachineRef:  framev1beta1.LocalObjectReference{Name: machine},
 				ByIDPath:    byID,
 				Serial:      serial,
-				Destination: "wipe",
+				Destination: destination,
 			},
 		}
+	}
+
+	claim := func(machine, byID, serial string) *framev1beta1.FrameDiskClaim {
+		return claimTo(machine, byID, serial, "wipe")
+	}
+
+	// reportOccupancy republishes the machine's disk report with a new
+	// occupancy for one disk — what the node agent does on its next pass
+	// after something changed on the disk. A claim that succeeded changes
+	// it: internal/agent's occupancyOf reads a ceph filesystem as
+	// "ceph-osd" and an LVM member as "lvm-pv".
+	reportOccupancy := func(ctx SpecContext, machine, byIDPath, occupancy string) {
+		var m framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: machine, Namespace: "default"}, &m)).To(Succeed())
+		found := false
+		for i := range m.Status.Storage.Observed {
+			if m.Status.Storage.Observed[i].Path == byIDPath {
+				m.Status.Storage.Observed[i].Occupancy = occupancy
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "no observed disk at %s on %s to re-report", byIDPath, machine)
+		now := metav1.Now()
+		m.Status.Storage.ObservedAt = &now
+		Expect(k8sClient.Status().Update(ctx, &m)).To(Succeed())
 	}
 
 	// LE CHEMIN HEUREUX — sans ce test, la suite ne prouve que les refus.
@@ -236,7 +262,7 @@ var _ = Describe("FrameDiskClaim controller", func() {
 	// condition. Deux couches, deux assertions inconditionnelles: le schema
 	// (MinLength=1) refuse a l'admission, et le controleur refuse aussi,
 	// pour le chemin qui contourne l'admission (objets ecrits avant un
-	// changement de schema, ou tout appel direct de authorise).
+	// changement de schema, ou tout appel direct de identify).
 	It("refuse un serial vide, au schema et dans le controleur", func(ctx SpecContext) {
 		machineWithDisks(ctx, "g1-blank", []framev1beta1.ObservedDisk{
 			{Path: "/dev/disk/by-id/scsi-B", SerialNumber: "", SizeGB: 1200, Occupancy: "free"},
@@ -251,7 +277,7 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		// a disk gets wiped with no confirmation.
 		inMemory := claim("g1-blank", "/dev/disk/by-id/scsi-B", "")
 		inMemory.Namespace = "default"
-		_, err := reconciler.authorise(ctx, inMemory)
+		_, _, err := reconciler.identify(ctx, inMemory)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("empty"))
 	})
@@ -329,14 +355,14 @@ var _ = Describe("FrameDiskClaim controller", func() {
 	})
 
 	// GARDE 2, revue I1 — le controleur doit refuser aussi, independamment
-	// du schema. Meme idiome que R2: appeler authorise() directement avec
+	// du schema. Meme idiome que R2: appeler identify() directement avec
 	// un objet en memoire qui n'est jamais passe par l'admission. Sans ce
 	// test, mutiler le controleur (HasPrefix -> Contains) ne rougissait que
 	// si le motif CRD etait aussi retire — ce qui ne prouvait pas grand
 	// chose sur le controleur lui-meme.
 	It("refuse un chemin sdX au niveau du controleur, meme hors admission", func(ctx SpecContext) {
 		// Deliberately no FrameMachine created for "g2-bypass-none": if the
-		// sdX guard is weakened, authorise falls through to the machine
+		// sdX guard is weakened, identify falls through to the machine
 		// lookup and fails with a "reading FrameMachine" NotFound error
 		// instead — which does not mention "by-id" — so this discriminates
 		// cleanly instead of coincidentally matching a later guard's message
@@ -345,7 +371,7 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		// pass for the wrong reason).
 		inMemory := claim("g2-bypass-none", "/dev/sdb", "KZK00SDX")
 		inMemory.Namespace = "default"
-		_, err := reconciler.authorise(ctx, inMemory)
+		_, _, err := reconciler.identify(ctx, inMemory)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("by-id"))
 	})
@@ -535,6 +561,16 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(wipes.Count()).To(Equal(1))
 
+		// The agent's next report after a successful claim. This fixture
+		// used to keep the disk "free" across the restart, which is not what
+		// the real producer publishes: internal/agent's occupancyOf reads a
+		// claimed disk as ceph-osd or lvm-pv, never free. A fake that
+		// contradicts its real counterpart is how the resume path came to be
+		// unreachable without a single test going red — the occupancy guard
+		// ran before the marker read, so the very success this claim
+		// achieved was what made the next reconcile refuse.
+		reportOccupancy(ctx, "g4", "/dev/disk/by-id/scsi-G", "ceph-osd")
+
 		// A manager that died after the wipe and before writing Ready.
 		// Without this the terminal-phase guard alone ends the second
 		// reconcile, and the test stays green with ReadMarker deleted. Note
@@ -547,9 +583,17 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		// below; the "unconfirmed completion" refusal this ruling also
 		// introduced is pinned separately by the guard-5 extension, where
 		// Claim's cleanup fails and MarkComplete is never reached.
+		// succeed() writes phase, message and conditions in ONE status
+		// patch, so "the Ready write was lost" means all of it was lost —
+		// including the CompletionRecorded condition the first pass set.
+		// Clearing only the phase would leave that condition behind and make
+		// the resume's own condition assertion below pass no matter what the
+		// resume branch does.
 		var mid framev1beta1.FrameDiskClaim
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &mid)).To(Succeed())
 		mid.Status.Phase = ""
+		mid.Status.Message = ""
+		mid.Status.Conditions = nil
 		Expect(k8sClient.Status().Update(ctx, &mid)).To(Succeed())
 
 		// A fresh reconciler is a restarted manager: nothing in memory
@@ -569,6 +613,86 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		// primary path's, destination and all, so a resumed claim reads the
 		// same as a fresh one.
 		Expect(mid.Status.Message).To(ContainSubstring(c.Spec.Destination))
+		// Final review: the resume branch concludes Ready knowing the
+		// completion record exists, so it must say so. An absent condition
+		// would mean both "recorded" and "never asked", which is exactly
+		// what makes the False case below unreadable.
+		resumed := meta.FindStatusCondition(mid.Status.Conditions, conditionCompletionRecorded)
+		Expect(resumed).NotTo(BeNil(),
+			"a resume that concludes Ready on a complete marker must record that it did")
+		Expect(resumed.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	// Final review, the case the lot ships for: destination ceph-osd. After
+	// a successful ceph-osd claim the node agent reports the disk as
+	// ceph-osd, so a second reconcile of a claim whose Ready write was lost
+	// hits the occupancy guard — "disk ... is ceph-osd; a claim destroys
+	// data and only proceeds on a free disk" — and a fully successful claim
+	// becomes a Failed that blames the disk. The marker must be read before
+	// the occupancy guard so the resume path is reachable at all.
+	It("reprend un claim ceph-osd abouti dont l'ecriture Ready a ete perdue", func(ctx SpecContext) {
+		machineWithDisks(ctx, "osd-resume", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-OSD", SerialNumber: "OSD0000001", SizeGB: 1200, Occupancy: "free"},
+		})
+		c := claimTo("osd-resume", "/dev/disk/by-id/scsi-OSD", "OSD0000001", "ceph-osd")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(wipes.Count()).To(Equal(1))
+
+		// The disk is now an OSD. This is not a hostile fixture: it is what
+		// internal/agent publishes for a disk carrying a ceph filesystem.
+		reportOccupancy(ctx, "osd-resume", "/dev/disk/by-id/scsi-OSD", "ceph-osd")
+
+		// The lost Ready write: one status patch carried phase, message and
+		// conditions, so losing it loses all three.
+		var mid framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &mid)).To(Succeed())
+		mid.Status.Phase = ""
+		mid.Status.Message = ""
+		mid.Status.Conditions = nil
+		Expect(k8sClient.Status().Update(ctx, &mid)).To(Succeed())
+
+		fresh := &FrameDiskClaimReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Wiper: wipes}
+		_, err = fresh.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Ready"),
+			"a claim that finished must not be re-read as a failure just because it finished")
+		Expect(back.Status.Message).NotTo(ContainSubstring("only proceeds on a free disk"),
+			"the disk is occupied because this very claim occupied it; blaming it is the defect")
+		Expect(back.Status.Message).To(ContainSubstring("ceph-osd"))
+		Expect(wipes.Count()).To(Equal(1), "the destructive act ran twice across a manager restart")
+		// The resume concluded Ready knowing the completion record exists;
+		// it must say so on the object it just rewrote.
+		cond := meta.FindStatusCondition(back.Status.Conditions, conditionCompletionRecorded)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	// The other half of the distinction: moving the marker read before the
+	// occupancy guard must not weaken the guard. A claim with no marker of
+	// its own on an occupied disk is still refused, and nothing is
+	// destroyed — otherwise the fix above would read as "occupancy no
+	// longer gates anything".
+	It("refuse toujours un disque occupe quand aucun marqueur ne nous appartient", func(ctx SpecContext) {
+		machineWithDisks(ctx, "osd-occupied", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-OCC", SerialNumber: "OCC0000001", SizeGB: 1200, Occupancy: "ceph-osd"},
+		})
+		c := claimTo("osd-occupied", "/dev/disk/by-id/scsi-OCC", "OCC0000001", "ceph-osd")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Failed"))
+		Expect(back.Status.Message).To(ContainSubstring("only proceeds on a free disk"))
+		Expect(wipes.Count()).To(Equal(0), "a disk nobody claimed and that is not free must not be touched")
 	})
 
 	// GARDE 5 — une erreur de nettoyage n'est pas avalee. Revue C2: guard 4

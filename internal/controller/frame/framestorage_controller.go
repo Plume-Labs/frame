@@ -112,7 +112,8 @@ func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{RequeueAfter: storageResyncInterval}, nil
 }
 
-// reconcileClass returns whether this entry adopted its StorageClass.
+// reconcileClass returns whether this entry's StorageClass is an adopted
+// one -- that is, one Frame does not control.
 //
 // An adopted class gets no owner reference: an owned object is
 // garbage-collected with its owner, and adopting a class means explicitly
@@ -123,15 +124,19 @@ func (r *FrameStorageReconciler) reconcileClass(ctx context.Context, fs *framev1
 	err := r.Get(ctx, types.NamespacedName{Name: fs.Spec.StorageClassName}, &sc)
 	switch {
 	case err == nil:
-		// The class exists. Whether that is a legitimate adoption or a
-		// silent ownership grab was already decided at admission time --
-		// the FrameStorage validating webhook's validateAdoption refuses a
-		// non-adopting entry that names an existing class before it is ever
-		// persisted -- so by the time a reconcile reaches this branch,
-		// fs.Spec.AdoptExisting is known to be true whenever this class was
-		// not created by this entry. This is not a missing check; it is
-		// relying on the one admission already performed.
-		return fs.Spec.AdoptExisting, nil
+		// The class exists, and what gets reported is a fact about the
+		// object, not a repetition of what the spec asked for. The two come
+		// apart: admission only validates adoption when the class name
+		// changes, so an entry that created its own class can have
+		// adoptExisting flipped false -> true afterwards without any
+		// re-validation. The class still carries this entry's
+		// ownerReference and is still garbage-collected with it, while
+		// spec.AdoptExisting now says the opposite -- and status.adopted,
+		// the screen's badge and this type's documentation all promise an
+		// adopted entry "owns nothing and deletes nothing". Reading
+		// ownership off the fetched class is what keeps that promise true:
+		// adopted means exactly "Frame does not control this class".
+		return !metav1.IsControlledBy(&sc, fs), nil
 	case !apierrors.IsNotFound(err):
 		return false, fmt.Errorf("reading StorageClass %q: %w", fs.Spec.StorageClassName, err)
 	}
@@ -192,16 +197,25 @@ func (r *FrameStorageReconciler) countClaims(ctx context.Context, className stri
 
 // reconcileCapacity populates status.capacity for ceph-* entries.
 //
-// Usable is derived from raw divided by the pool's replication factor --
-// never copied from raw directly. Ceph reports raw, and raw is what gets
-// mistaken for usable: the park's capacity incident came from reading raw
-// numbers on a pool whose replication divided them by three, and that is
-// exactly what a fallback here would reproduce while looking correct. When
-// the replication factor is not known (zero, negative, or simply not
-// resolvable for this entry's class), Usable is left empty -- no usable
-// figure is reported at all, rather than a guessed one -- while Raw and
-// Used, which are independent of any one class's replication, are still
-// reported.
+// Usable and Used are both derived from the pool's replication factor --
+// never copied from the raw figures directly. Ceph reports raw, and raw is
+// what gets mistaken for usable: the park's capacity incident came from
+// reading raw numbers on a pool whose replication divided them by three,
+// and that is exactly what a fallback here would reproduce while looking
+// correct.
+//
+// bytesTotal and bytesUsed come from the same status.ceph.capacity block
+// and are therefore in the same unit, so dividing only one of them puts
+// two incomparable numbers on one line: the screen renders
+// "${used} used of ${usable} usable (raw ${raw})", and 1.5Ti of raw use on
+// a 3.6Ti three-way pool would read "1.5Ti used of 1.2Ti usable" -- used
+// exceeding usable, which is the raw/usable confusion this lot exists to
+// remove, restated in a shorter sentence.
+//
+// When the replication factor is not known (zero, negative, or simply not
+// resolvable for this entry's class), Usable AND Used are both left empty
+// -- an undivided Used beside a missing Usable is the same lie. Raw, which
+// is independent of any one class's replication, is still reported.
 //
 // A capacity lookup that errors, a local-path entry, or a nil CephCapacity
 // field all leave status.capacity exactly as this reconcile found it: the
@@ -219,11 +233,11 @@ func (r *FrameStorageReconciler) reconcileCapacity(ctx context.Context, fs *fram
 	}
 
 	capacity := &framev1beta1.StorageCapacity{
-		Raw:  bytesToQuantityString(rawBytes),
-		Used: bytesToQuantityString(usedBytes),
+		Raw: bytesToQuantityString(rawBytes),
 	}
 	if replication >= 1 {
 		capacity.Usable = bytesToQuantityString(rawBytes / uint64(replication))
+		capacity.Used = bytesToQuantityString(usedBytes / uint64(replication))
 	}
 	fs.Status.Capacity = capacity
 }

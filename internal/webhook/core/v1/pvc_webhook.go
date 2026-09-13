@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
@@ -70,11 +71,23 @@ func (v *PVCCustomValidator) ValidateDelete(_ context.Context, _ *corev1.Persist
 // validate refuses a claim whose declared usage is not among the content
 // types of the FrameStorage entry that owns its class.
 //
-// Three ways out, all of them "accept": no usage label (the claim opted
+// Four ways out, all of them "accept": no usage label (the claim opted
 // out, and the objectSelector means it never got here anyway), no storage
-// class named, and no FrameStorage entry describing that class. The last
-// one matters most: local-path is the cluster's default class, and a class
-// Frame does not describe is not Frame's to police.
+// class named, no FrameStorage entry describing that class, and a listing
+// that failed. The third matters most day to day: local-path is the
+// cluster's default class, and a class Frame does not describe is not
+// Frame's to police.
+//
+// The fourth is the one failurePolicy does not cover. failurePolicy:
+// Ignore only applies when the API server cannot reach this webhook; a
+// webhook that answers "deny" is obeyed whatever the policy says. So a
+// manager that is up but whose cache cannot list FrameStorage entries —
+// RBAC withdrawn, informer not yet synced, apiserver refusing the read —
+// would, if the error were returned, stop volume creation cluster-wide
+// while every failure-tolerance knob read as correctly set. A policy that
+// cannot be evaluated must not stop the cluster, and "cannot be
+// evaluated" includes this. The error is logged, because an unenforced
+// policy that is also silent is the other failure to avoid.
 func (v *PVCCustomValidator) validate(ctx context.Context, pvc *corev1.PersistentVolumeClaim) error {
 	usage := pvc.Labels[framev1beta1.UsageLabel]
 	if usage == "" {
@@ -86,7 +99,9 @@ func (v *PVCCustomValidator) validate(ctx context.Context, pvc *corev1.Persisten
 
 	var entries framev1beta1.FrameStorageList
 	if err := v.Client.List(ctx, &entries); err != nil {
-		return fmt.Errorf("listing FrameStorage entries: %w", err)
+		logf.FromContext(ctx).Error(err, "could not list FrameStorage entries; admitting the claim unevaluated",
+			"pvc", client.ObjectKeyFromObject(pvc), "class", *pvc.Spec.StorageClassName)
+		return nil
 	}
 
 	for i := range entries.Items {

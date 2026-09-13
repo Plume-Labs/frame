@@ -92,7 +92,11 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	disk, err := r.authorise(ctx, &c)
+	// Identity first: guards 1 and 2, plus the half of guard 3 without which
+	// no disk can be named at all. Nothing here is destructive, and nothing
+	// below may destroy anything until the disk this claim names has been
+	// positively identified.
+	m, disk, err := r.identify(ctx, &c)
 	if err != nil {
 		return ctrl.Result{}, r.fail(ctx, &c, err.Error())
 	}
@@ -104,6 +108,18 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// cross-check guarantees the two are equal, but the destructive call
 	// must not depend on that guard remaining intact to be safe: disk.Path
 	// is what ties the call to a disk that was actually observed.
+	//
+	// The marker is read BEFORE the freshness and occupancy guards, and that
+	// ordering is the whole point. Those two guards gate the destructive
+	// call; they cannot gate the resume, because a successful claim is
+	// exactly what makes them refuse. After a ceph-osd claim the node agent
+	// reports the disk's occupancy as ceph-osd or lvm-pv (internal/agent's
+	// occupancyOf), so a second reconcile of a claim that fully succeeded —
+	// a manager restart that lost the Ready status write — would die on
+	// "disk ... is ceph-osd; a claim destroys data and only proceeds on a
+	// free disk" and turn a success into a Failed that blames the disk.
+	// Reading a marker destroys nothing; the destructive path below still
+	// runs the full set of guards when no marker of ours exists.
 	claimUID := string(c.UID)
 	existing, complete, err := r.Wiper.ReadMarker(ctx, c.Spec.MachineRef.Name, disk.Path)
 	if err != nil {
@@ -122,8 +138,21 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// "died mid-gesture" case below. The message matches the primary
 			// success path's, destination and all, so a resumed claim reads
 			// the same as a fresh one.
+			//
+			// CompletionRecorded is set True here for the same reason it is
+			// set on the primary path: this branch is only reachable because
+			// complete is true, so the record demonstrably exists. Leaving
+			// the condition absent would make absence mean both "recorded"
+			// and "never asked", which destroys its meaning everywhere else
+			// — including the False case it exists to contrast with.
 			return ctrl.Result{}, r.succeed(ctx, &c, claimUID,
-				fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination))
+				fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination),
+				metav1.Condition{
+					Type:    conditionCompletionRecorded,
+					Status:  metav1.ConditionTrue,
+					Reason:  "Recorded",
+					Message: "the completion record was read back from the machine on resume",
+				})
 		}
 		// The started marker means only that: started, never confirmed
 		// finished. This branch is only reachable when the phase is
@@ -140,6 +169,13 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, r.fail(ctx, &c,
 			fmt.Sprintf("disk %s already carries claim marker %q; a second claim on a claimed disk is refused",
 				disk.Path, existing))
+	}
+
+	// No marker of ours, and none of anyone else's: this reconcile is about
+	// to destroy data. The guards that only a destructive act needs run
+	// here, immediately before the only call that destroys anything.
+	if err := r.authoriseDestruction(m, disk); err != nil {
+		return ctrl.Result{}, r.fail(ctx, &c, err.Error())
 	}
 
 	if err := r.setPhase(ctx, &c, "Claiming", claimUID, fmt.Sprintf("claiming %s", disk.Path)); err != nil {
@@ -170,9 +206,14 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// phase still becomes Ready; the gap is made legible in the message and
 	// in the CompletionRecorded condition, and a later resume on that
 	// machine (should the phase itself somehow be lost too) still reads
-	// "not complete" and refuses — the correct side to fail on, since the
-	// object's own status already says Ready and gives a human everything
-	// needed to tell what happened.
+	// "not complete" and refuses. That refusal is the correct side to fail
+	// on, and the reason is not that the object still says Ready — in the
+	// very case this record was invented for, the status write is what
+	// failed, and the object then says nothing at all. It is that with no
+	// completion record on the machine, "finished but lost its status
+	// write" and "died mid-gesture" are indistinguishable from here, and
+	// the only safe reading of an indistinguishable pair is the one that
+	// asks a human to look at the disk.
 	msg := fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination)
 	cond := metav1.Condition{
 		Type:    conditionCompletionRecorded,
@@ -191,34 +232,43 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{}, r.succeed(ctx, &c, claimUID, msg, cond)
 }
 
-// authorise runs guards 1 to 3 and returns the observed disk the claim
-// names. Every branch that cannot positively identify a free disk is a
-// refusal: not knowing is not an authorisation.
-func (r *FrameDiskClaimReconciler) authorise(ctx context.Context, c *framev1beta1.FrameDiskClaim) (*framev1beta1.ObservedDisk, error) {
+// identify establishes which disk, on which machine, this claim names, and
+// nothing else. It runs guards 1 and 2 in full, plus the half of guard 3
+// that a claim cannot do without: a machine whose agent never reported has
+// no observed disk to name.
+//
+// It is deliberately separate from authoriseDestruction. Identity is what
+// every branch needs — including the marker read, which must address the
+// observed path rather than the spec's string. The guards that say "this
+// disk may be destroyed right now" are the ones that must not run before
+// the marker, because a completed claim is exactly what makes them refuse.
+//
+// Every branch that cannot positively identify the disk is a refusal: not
+// knowing is not an authorisation.
+func (r *FrameDiskClaimReconciler) identify(ctx context.Context, c *framev1beta1.FrameDiskClaim) (*framev1beta1.FrameMachine, *framev1beta1.ObservedDisk, error) {
 	// GUARD 1, first half: an empty serial matches nothing, because two
 	// empty strings are equal and that is how a disk gets wiped with no
 	// confirmation.
 	if strings.TrimSpace(c.Spec.Serial) == "" {
-		return nil, fmt.Errorf("spec.serial is empty: the retyped serial is the confirmation, and an empty one confirms nothing")
+		return nil, nil, fmt.Errorf("spec.serial is empty: the retyped serial is the confirmation, and an empty one confirms nothing")
 	}
 
 	// GUARD 2: an sdX path names a different disk on every boot.
 	if !strings.HasPrefix(c.Spec.ByIDPath, "/dev/disk/by-id/") {
-		return nil, fmt.Errorf("spec.byIDPath %q is not under /dev/disk/by-id: sdX ordering changes across boots", c.Spec.ByIDPath)
+		return nil, nil, fmt.Errorf("spec.byIDPath %q is not under /dev/disk/by-id: sdX ordering changes across boots", c.Spec.ByIDPath)
 	}
 
 	var m framev1beta1.FrameMachine
 	if err := r.Get(ctx, types.NamespacedName{Name: c.Spec.MachineRef.Name, Namespace: c.Namespace}, &m); err != nil {
-		return nil, fmt.Errorf("reading FrameMachine %q: %v", c.Spec.MachineRef.Name, err)
+		return nil, nil, fmt.Errorf("reading FrameMachine %q: %v", c.Spec.MachineRef.Name, err)
 	}
 
-	// GUARD 3, the half that gets forgotten: a machine whose agent has
-	// never reported, or reported too long ago, authorises nothing.
+	// GUARD 3, the half that gets forgotten: a machine whose agent has never
+	// reported authorises nothing — and names nothing either, which is why
+	// this half belongs to identity rather than to authoriseDestruction.
+	// There is no observed path to read a marker against.
 	if m.Status.Storage == nil || m.Status.Storage.ObservedAt == nil {
-		return nil, fmt.Errorf("machine %q has never reported its disks: not knowing is not an authorisation", m.Name)
-	}
-	if age := time.Since(m.Status.Storage.ObservedAt.Time); age > observationMaxAge {
-		return nil, fmt.Errorf("machine %q's disk report is stale (%s old, limit %s)", m.Name, age.Truncate(time.Second), observationMaxAge)
+		return nil, nil, fmt.Errorf("machine %q has never reported its disks: not knowing is not an authorisation", m.Name)
 	}
 
 	// GUARD 1, second half: the retyped serial must match exactly one
@@ -234,22 +284,38 @@ func (r *FrameDiskClaimReconciler) authorise(ctx context.Context, c *framev1beta
 		}
 	}
 	if len(matches) > 1 {
-		return nil, fmt.Errorf("serial %q matches %d disks on machine %q; refusing an ambiguous claim",
+		return nil, nil, fmt.Errorf("serial %q matches %d disks on machine %q; refusing an ambiguous claim",
 			c.Spec.Serial, len(matches), m.Name)
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no disk with serial %q is reported on machine %q", c.Spec.Serial, m.Name)
+		return nil, nil, fmt.Errorf("no disk with serial %q is reported on machine %q", c.Spec.Serial, m.Name)
 	}
 	d := matches[0]
 	if d.Path != c.Spec.ByIDPath {
-		return nil, fmt.Errorf("serial %q is at %s on %s, not at the requested %s",
+		return nil, nil, fmt.Errorf("serial %q is at %s on %s, not at the requested %s",
 			c.Spec.Serial, d.Path, m.Name, c.Spec.ByIDPath)
+	}
+	return &m, d, nil
+}
+
+// authoriseDestruction runs the two guards that authorise destruction
+// rather than establish identity: the report's freshness and the disk's
+// occupancy. Both are about the disk's state right now, so both belong
+// immediately before the destructive call and after the marker read — a
+// disk that a completed claim of ours turned into an OSD is no longer
+// free, and reading that as a reason to refuse a resume converts a success
+// into a Failed that blames the disk.
+func (r *FrameDiskClaimReconciler) authoriseDestruction(m *framev1beta1.FrameMachine, d *framev1beta1.ObservedDisk) error {
+	// GUARD 3, the freshness half: a machine that reported too long ago
+	// authorises nothing. The agent reports every 30 seconds.
+	if age := time.Since(m.Status.Storage.ObservedAt.Time); age > observationMaxAge {
+		return fmt.Errorf("machine %q's disk report is stale (%s old, limit %s)", m.Name, age.Truncate(time.Second), observationMaxAge)
 	}
 	// GUARD 3, the occupancy half: fail closed on anything but free.
 	if d.Occupancy != "free" {
-		return nil, fmt.Errorf("disk %s is %s; a claim destroys data and only proceeds on a free disk", d.Path, d.Occupancy)
+		return fmt.Errorf("disk %s is %s; a claim destroys data and only proceeds on a free disk", d.Path, d.Occupancy)
 	}
-	return d, nil
+	return nil
 }
 
 // setPhase mutates the phase and any given conditions together and patches

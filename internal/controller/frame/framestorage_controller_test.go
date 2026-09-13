@@ -159,6 +159,59 @@ var _ = Describe("FrameStorage controller", func() {
 		// An adopted class keeps no owner reference: an owned object is
 		// garbage-collected with its owner, and this one holds volumes.
 		Expect(sc.OwnerReferences).To(BeEmpty())
+		// The status is read off the object, not off the flag: this class
+		// really is one Frame does not control.
+		Expect(metav1.IsControlledBy(&sc, &back)).To(BeFalse())
+	})
+
+	// Final-review finding: status.adopted used to return fs.Spec.AdoptExisting
+	// whenever the class existed. The admission guard deliberately skips
+	// re-validating adoption when the class name is unchanged, so nothing
+	// stops an operator flipping adoptExisting false -> true on an entry
+	// Frame created. The class keeps Frame's ownerReference and is still
+	// garbage-collected with the entry, while status.adopted, the screen's
+	// badge and the type's documentation would all start promising it
+	// "owns nothing and deletes nothing". The status must report what is
+	// true of the object.
+	It("ne devient pas adoptee quand on bascule le drapeau sur une classe que Frame a creee", func(ctx SpecContext) {
+		fs := &framev1beta1.FrameStorage{
+			ObjectMeta: metav1.ObjectMeta{Name: "flag-flipped"},
+			Spec: framev1beta1.FrameStorageSpec{
+				Type: "local-path", Content: []string{"scratch"},
+				StorageClassName: "frame-flag-flipped", AdoptExisting: false,
+			},
+		}
+		Expect(k8sClient.Create(ctx, fs)).To(Succeed())
+
+		// First pass: no such class, so this entry creates it and owns it.
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var sc storagev1.StorageClass
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "frame-flag-flipped"}, &sc)).To(Succeed())
+		Expect(metav1.IsControlledBy(&sc, fs)).To(BeTrue(),
+			"a class Frame creates is owned by its entry and deleted with it")
+
+		// The flip admission never sees: the class name is unchanged, so
+		// validateAdoption does not run again.
+		var live framev1beta1.FrameStorage
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &live)).To(Succeed())
+		live.Spec.AdoptExisting = true
+		Expect(k8sClient.Update(ctx, &live)).To(Succeed())
+
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameStorage
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &back)).To(Succeed())
+		Expect(back.Status.Adopted).To(BeFalse(),
+			"the entry still controls this class and still deletes it; adopted must not say otherwise "+
+				"just because the spec flag was flipped")
+
+		// The fact behind the status, asserted separately so a status that
+		// merely echoes the spec cannot pass by coincidence.
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "frame-flag-flipped"}, &sc)).To(Succeed())
+		Expect(metav1.IsControlledBy(&sc, &back)).To(BeTrue())
 	})
 
 	It("rend Degraded avec le motif quand Ceph est en WARN", func(ctx SpecContext) {
@@ -248,9 +301,17 @@ var _ = Describe("FrameStorage controller", func() {
 		Expect(cond.Message).To(ContainSubstring("CephCluster"))
 	})
 
-	It("calcule l'utilisable a partir du brut et de la replication", func(ctx SpecContext) {
+	It("divise l'utilise par la meme replication que l'utilisable", func(ctx SpecContext) {
 		// Rule 1: a known replication factor n >= 1 divides raw into usable,
 		// and raw is still reported alongside it.
+		//
+		// Rule 1b, the final review's finding: bytesTotal and bytesUsed come
+		// off the same status.ceph.capacity block and are in the same unit,
+		// so used must be divided by the same factor. The screen prints them
+		// on one line -- "${used} used of ${usable} usable (raw ${raw})" --
+		// and an undivided used is a used that can exceed usable. The
+		// numbers here are chosen so an undivided used would do exactly
+		// that: 1.5Ti of raw occupancy against 1Ti of usable space.
 		fs := &framev1beta1.FrameStorage{
 			ObjectMeta: metav1.ObjectMeta{Name: "ceph-capacity-known"},
 			Spec: framev1beta1.FrameStorageSpec{
@@ -262,7 +323,7 @@ var _ = Describe("FrameStorage controller", func() {
 
 		const oneTiB = uint64(1) << 40
 		r := &FrameStorageReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), CephCapacity: func(context.Context, string) (uint64, uint64, int32, error) {
-			return 3 * oneTiB, oneTiB, 3, nil
+			return 3 * oneTiB, 3 * oneTiB / 2, 3, nil
 		}}
 		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(fs)})
 		Expect(err).NotTo(HaveOccurred())
@@ -271,9 +332,21 @@ var _ = Describe("FrameStorage controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(fs), &back)).To(Succeed())
 		Expect(back.Status.Capacity).NotTo(BeNil())
 		Expect(back.Status.Capacity.Raw).To(Equal("3Ti"))
-		Expect(back.Status.Capacity.Used).To(Equal("1Ti"))
 		Expect(back.Status.Capacity.Usable).To(Equal("1Ti"),
 			"3Ti raw at replication 3 is 1Ti usable, not 3Ti")
+		Expect(back.Status.Capacity.Used).To(Equal("512Gi"),
+			"1.5Ti of raw occupancy at replication 3 is 512Gi used, not 1536Gi -- an "+
+				"undivided used reads as more than the whole usable pool")
+
+		// The invariant the screen's line stands on, asserted as a
+		// relationship rather than as two independent strings: used can
+		// never exceed usable.
+		used, uerr := resource.ParseQuantity(back.Status.Capacity.Used)
+		Expect(uerr).NotTo(HaveOccurred())
+		usable, serr := resource.ParseQuantity(back.Status.Capacity.Usable)
+		Expect(serr).NotTo(HaveOccurred())
+		Expect(used.Cmp(usable)).To(BeNumerically("<=", 0),
+			"used must be comparable to usable, not to raw")
 	})
 
 	It("ne rend aucun utilisable quand la replication est inconnue", func(ctx SpecContext) {
@@ -302,6 +375,13 @@ var _ = Describe("FrameStorage controller", func() {
 		Expect(back.Status.Capacity).NotTo(BeNil())
 		Expect(back.Status.Capacity.Usable).To(BeEmpty(),
 			"no usable figure at all, not raw standing in for it")
+		// Same rule, same reason: an undivided used printed beside a missing
+		// usable is the identical lie in a shorter sentence. Raw is the one
+		// figure that stands on its own here.
+		Expect(back.Status.Capacity.Used).To(BeEmpty(),
+			"used is in raw units too: with no factor to divide it by, it is not reported either")
+		Expect(back.Status.Capacity.Raw).To(Equal("3Ti"),
+			"raw is independent of any one class's replication and is still reported")
 	})
 
 	It("laisse la capacite intacte et la reconciliation en succes quand la lecture de capacite echoue", func(ctx SpecContext) {

@@ -618,10 +618,10 @@ func TestSmartStorageReadsTheSATADriveVerbatim(t *testing.T) {
 	}
 }
 
-// serveRealSmartStorage routes the unmodified ilo4-real SmartStorage
-// captures, for tests about values rather than about discovery.
-func serveRealSmartStorage(t *testing.T) *httptest.Server {
-	t.Helper()
+// realSmartStorageRoutes is the unmodified ilo4-real SmartStorage capture
+// set. Returned as a fresh map so a caller can drop one document from it
+// and have that one document 404 (serveFixturesFrom's catch-all).
+func realSmartStorageRoutes() map[string]string {
 	routes := map[string]string{
 		"/redfish/v1/":                                                      "service_root.json",
 		"/redfish/v1/Systems/":                                              "systems.json",
@@ -635,7 +635,62 @@ func serveRealSmartStorage(t *testing.T) *httptest.Server {
 		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
 	}
-	return serveFixturesFrom(t, "ilo4-real", routes)
+	return routes
+}
+
+// serveRealSmartStorage routes the unmodified ilo4-real SmartStorage
+// captures, for tests about values rather than about discovery.
+func serveRealSmartStorage(t *testing.T) *httptest.Server {
+	t.Helper()
+	return serveFixturesFrom(t, "ilo4-real", realSmartStorageRoutes())
+}
+
+// TestOneMissingDiskDocumentCostsOnlyThatDisk pins the final review's
+// finding: a 404 on an individual disk document used to `return nil` out of
+// readSmartStorage entirely, abandoning every controller and every drive
+// after it — while the function's own comment claimed it stopped walking
+// "that branch". The consequence is not a shorter list: internal/storage.Join
+// reads a drive the BMC does not list as an os-only divergence, so one
+// absent document renders every remaining disk on the machine as a
+// divergence.
+//
+// The machine's eight drive documents are served except index 0, which
+// 404s. Index 7 is W4722RRA, the SATA disk the whole storage lot turns on,
+// and it sits *after* the hole — so it is present only if the walk
+// continued. Asserting the count alone would not discriminate: a version
+// that stopped at the hole returns zero drives, but so would several other
+// bugs. The count AND the far-side drive together say the walk carried on.
+func TestOneMissingDiskDocumentCostsOnlyThatDisk(t *testing.T) {
+	routes := realSmartStorageRoutes()
+	delete(routes, "/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/0/")
+	srv := serveFixturesFrom(t, "ilo4-real", routes)
+
+	snap, err := New(srv.URL, "u", "p", &tls.Config{InsecureSkipVerify: true}).Probe(context.Background()) //nolint:gosec // test server
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	if len(snap.Inventory.Drives) != 7 {
+		t.Errorf("got %d drives, want 7 — one 404 document must cost exactly one disk, not the rest of the walk",
+			len(snap.Inventory.Drives))
+	}
+	var serials []string
+	for _, d := range snap.Inventory.Drives {
+		serials = append(serials, d.SerialNumber)
+	}
+	found := false
+	for _, s := range serials {
+		if s == "W4722RRA" {
+			found = true
+		}
+		if s == "KZK245ZG" {
+			t.Errorf("drive KZK245ZG is present, but its document 404d")
+		}
+	}
+	if !found {
+		t.Errorf("W4722RRA is missing from %v — it is drive 7, after the 404d document 0: the walk stopped instead of skipping",
+			serials)
+	}
 }
 
 // TestSmartStorageRootNotFoundLeavesDrivesEmptyButProbeSucceeds is fix

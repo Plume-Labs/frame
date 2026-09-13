@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,7 +10,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -94,5 +97,40 @@ func TestAcceptsAClaimWithNoStorageClass(t *testing.T) {
 	}
 	if _, err := v.ValidateCreate(context.Background(), p); err != nil {
 		t.Fatalf("a PVC with no class named yet must pass: %v", err)
+	}
+}
+
+// TestAcceptsWhenTheEntryListCannotBeRead is the final review's item 10.
+// failurePolicy: Ignore covers a webhook the API server cannot REACH; it
+// does not cover a webhook that is reached and answers "deny". A manager
+// that is up but cannot list FrameStorage entries — RBAC withdrawn,
+// informer not synced, apiserver refusing the read — used to return that
+// error, which the API server renders as a refusal and which would stop
+// volume creation cluster-wide with every failure-tolerance setting still
+// reading as correct. The design's rule is that a policy which cannot be
+// evaluated must not stop the cluster.
+func TestAcceptsWhenTheEntryListCannotBeRead(t *testing.T) {
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = framev1beta1.AddToScheme(s)
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(storageEntry("models", "ceph-rbd", "model")).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return errors.New("the cache has not synced")
+			},
+		}).Build()
+	v := &PVCCustomValidator{Client: c}
+
+	// Deliberately a claim this webhook WOULD refuse if it could read the
+	// entries: "backup" is not among models' content types. That is what
+	// makes this discriminating — a version that still denied on a list
+	// error, and a version that denied on the content type, are told apart
+	// only because the answer here must be "accept" for a claim that is
+	// otherwise refusable.
+	if _, err := v.ValidateCreate(context.Background(),
+		pvc("ceph-rbd", map[string]string{framev1beta1.UsageLabel: "backup"})); err != nil {
+		t.Fatalf("a policy that cannot be evaluated must not stop the cluster: %v", err)
 	}
 }
