@@ -36,11 +36,6 @@ import (
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
 
-// usageLabel is the label the content-type webhook selects on. It is
-// declared once, here, and read by the PVC webhook too: a second literal
-// would be a second policy.
-const usageLabel = "frame.plume-labs.io/usage"
-
 // storageResyncInterval is how often an entry's capacity and claim counts
 // are refreshed. Capacity is polled, not watched: no backend in this lot
 // sends an event when a pool fills up.
@@ -188,7 +183,7 @@ func (r *FrameStorageReconciler) countClaims(ctx context.Context, className stri
 			continue
 		}
 		counts.Total++
-		if _, ok := pvc.Labels[usageLabel]; ok {
+		if _, ok := pvc.Labels[framev1beta1.UsageLabel]; ok {
 			counts.Labelled++
 		}
 	}

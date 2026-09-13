@@ -155,6 +155,12 @@ func init() {
 	SchemeBuilder.Register(&FrameStorage{}, &FrameStorageList{})
 }
 
+// UsageLabel is the label a PersistentVolumeClaim carries to declare what
+// it is for. It is also the objectSelector of the content-type webhook:
+// a PVC without it is never sent to admission at all, which is what makes
+// enforcement opt-in per object rather than a cluster-wide flag day.
+const UsageLabel = "frame.plume-labs.io/usage"
+
 // SharedForType derives status.shared from the type. It lives in the API
 // package, not the webhook, so nothing anywhere can set it from a spec, and
 // so the controller (which also needs it) has one definition to call rather
