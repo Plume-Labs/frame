@@ -78,19 +78,37 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, r.fail(ctx, &c, err.Error())
 	}
 
-	// GUARD 4: the marker is read from the machine, never from memory.
+	// GUARD 4: the marker is read from the machine, never from memory. It is
+	// read and written against disk.Path — the observed path that survived
+	// the join and every guard above — never c.Spec.ByIDPath, which is an
+	// unvalidated string from the spec. By this point guard 1's path/serial
+	// cross-check guarantees the two are equal, but the destructive call
+	// must not depend on that guard remaining intact to be safe: disk.Path
+	// is what ties the call to a disk that was actually observed.
 	claimUID := string(c.UID)
-	existing, err := r.Wiper.ReadMarker(ctx, c.Spec.MachineRef.Name, c.Spec.ByIDPath)
+	existing, err := r.Wiper.ReadMarker(ctx, c.Spec.MachineRef.Name, disk.Path)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("reading the claim marker on %s: %w", c.Spec.MachineRef.Name, err)
+		return ctrl.Result{}, r.fail(ctx, &c,
+			fmt.Sprintf("reading the claim marker on %s: %v", c.Spec.MachineRef.Name, err))
 	}
 	if existing == claimUID {
-		return ctrl.Result{}, r.succeed(ctx, &c, claimUID, "already claimed by this object")
+		// The marker means "this object's destructive work started", never
+		// "it succeeded". This branch is only reachable when the phase is
+		// non-terminal, which means the manager died (or the previous
+		// attempt's cleanup failed) somewhere between writing the marker and
+		// recording Ready. Nobody can know from here whether the disk is
+		// intact, so this is a refusal, not a resume: completion is recorded
+		// by the phase reaching Ready on the attempt that wrote the marker,
+		// never inferred from the marker's mere presence on a later one.
+		return ctrl.Result{}, r.fail(ctx, &c,
+			fmt.Sprintf("this claim already began claiming %s and its completion is unconfirmed "+
+				"(the manager may have restarted, or a previous attempt's cleanup failed); "+
+				"the disk must be inspected before any retry", disk.Path))
 	}
 	if existing != "" {
 		return ctrl.Result{}, r.fail(ctx, &c,
 			fmt.Sprintf("disk %s already carries claim marker %q; a second claim on a claimed disk is refused",
-				c.Spec.ByIDPath, existing))
+				disk.Path, existing))
 	}
 
 	if err := r.setPhase(ctx, &c, "Claiming", claimUID, fmt.Sprintf("claiming %s", disk.Path)); err != nil {
@@ -100,12 +118,12 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// GUARD 5: the error from the destructive call is returned, never
 	// swallowed. A phase does not become Ready because the failure happened
 	// after the useful work.
-	if err := r.Wiper.Claim(ctx, c.Spec.MachineRef.Name, c.Spec.ByIDPath, claimUID, c.Spec.Destination); err != nil {
+	if err := r.Wiper.Claim(ctx, c.Spec.MachineRef.Name, disk.Path, claimUID, c.Spec.Destination); err != nil {
 		if serr := r.setPhase(ctx, &c, "Claiming", claimUID,
 			fmt.Sprintf("claim of %s did not complete cleanly: %v", disk.Path, err)); serr != nil {
 			return ctrl.Result{}, serr
 		}
-		return ctrl.Result{}, fmt.Errorf("claiming %s on %s: %w", c.Spec.ByIDPath, c.Spec.MachineRef.Name, err)
+		return ctrl.Result{}, fmt.Errorf("claiming %s on %s: %w", disk.Path, c.Spec.MachineRef.Name, err)
 	}
 
 	return ctrl.Result{}, r.succeed(ctx, &c, claimUID, fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination))

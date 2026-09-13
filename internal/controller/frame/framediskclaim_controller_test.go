@@ -172,6 +172,48 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(back.Status.Message).To(ContainSubstring("ambiguous"))
 	})
 
+	// GARDE 1, revue C1 — le serial peut correspondre a un disque observe
+	// tout en nommant un autre chemin: le croisement chemin/serial doit
+	// refuser, pas cibler le premier match de serie. Sans ce test, retirer
+	// `if d.Path != c.Spec.ByIDPath { ... }` laisse toute la suite verte —
+	// et ce croisement est la seule chose qui relie le chemin declare a un
+	// disque reellement observe avant l'appel destructif.
+	It("refuse quand le serial correspond a un disque observe a un autre chemin", func(ctx SpecContext) {
+		machineWithDisks(ctx, "g1-crossed", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-X1", SerialNumber: "CROSS0001", SizeGB: 300, Occupancy: "free"},
+			{Path: "/dev/disk/by-id/scsi-X2", SerialNumber: "CROSS0002", SizeGB: 300, Occupancy: "free"},
+		})
+		// scsi-X1's path, but scsi-X2's serial.
+		c := claim("g1-crossed", "/dev/disk/by-id/scsi-X1", "CROSS0002")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Failed"))
+		Expect(back.Status.Message).To(ContainSubstring("not at the requested"))
+	})
+
+	// GARDE 1, revue M1 — la comparaison de serie est sensible a la casse;
+	// "la confirmation retapee" n'en est une que si elle correspond
+	// exactement.
+	It("refuse un serial qui ne differe que par la casse", func(ctx SpecContext) {
+		machineWithDisks(ctx, "g1-case", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-CASE", SerialNumber: "KZK245ZG", SizeGB: 1200, Occupancy: "free"},
+		})
+		c := claim("g1-case", "/dev/disk/by-id/scsi-CASE", "kzk245zg")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Failed"))
+	})
+
 	// GARDE 2 — jamais un nom sdX.
 	It("refuse un chemin sdX", func(ctx SpecContext) {
 		machineWithDisks(ctx, "g2", []framev1beta1.ObservedDisk{
@@ -181,6 +223,28 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		// Refused by the CRD pattern; assert that, since that is where the
 		// guard lives.
 		Expect(k8sClient.Create(ctx, c)).NotTo(Succeed())
+	})
+
+	// GARDE 2, revue I1 — le controleur doit refuser aussi, independamment
+	// du schema. Meme idiome que R2: appeler authorise() directement avec
+	// un objet en memoire qui n'est jamais passe par l'admission. Sans ce
+	// test, mutiler le controleur (HasPrefix -> Contains) ne rougissait que
+	// si le motif CRD etait aussi retire — ce qui ne prouvait pas grand
+	// chose sur le controleur lui-meme.
+	It("refuse un chemin sdX au niveau du controleur, meme hors admission", func(ctx SpecContext) {
+		// Deliberately no FrameMachine created for "g2-bypass-none": if the
+		// sdX guard is weakened, authorise falls through to the machine
+		// lookup and fails with a "reading FrameMachine" NotFound error
+		// instead — which does not mention "by-id" — so this discriminates
+		// cleanly instead of coincidentally matching a later guard's message
+		// (the path/serial cross-check's error text also happens to quote a
+		// by-id path, which would make a same-machine version of this test
+		// pass for the wrong reason).
+		inMemory := claim("g2-bypass-none", "/dev/sdb", "KZK00SDX")
+		inMemory.Namespace = "default"
+		_, err := reconciler.authorise(ctx, inMemory)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("by-id"))
 	})
 
 	// GARDE 3 — refus ferme sur l'occupation.
@@ -198,6 +262,26 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
 		Expect(back.Status.Phase).To(Equal("Failed"))
 		Expect(back.Status.Message).To(ContainSubstring("ceph-osd"))
+	})
+
+	// GARDE 3, revue I2 — l'occupation doit fermer sur toute valeur qui
+	// n'est pas explicitement "free", y compris une chaine vide (une entree
+	// jamais renseignee). Un `!= "free" && != ""` ou une liste blanche qui
+	// ne nomme que "ceph-osd"/"mounted" survivrait a la suite sans ce test,
+	// et autoriserait "lvm-pv" ou une occupation jamais renseignee.
+	It("refuse un disque dont l'occupation est vide", func(ctx SpecContext) {
+		machineWithDisks(ctx, "g3-unknown-occ", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-U", SerialNumber: "UNKNOWNOCC1", SizeGB: 300, Occupancy: ""},
+		})
+		c := claim("g3-unknown-occ", "/dev/disk/by-id/scsi-U", "UNKNOWNOCC1")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Failed"))
 	})
 
 	// GARDE 3, la moitie qu'on oublie — ne pas savoir n'est pas une
@@ -280,6 +364,29 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(back.Status.Message).To(ContainSubstring("stale"))
 	})
 
+	// GARDE 4, revue I3 — un marqueur appartenant a un autre objet doit
+	// refuser. Sans ce test, remplacer cette branche par `succeed(...)`
+	// laisse la suite verte, puisque aucun test ne pre-seme un marqueur
+	// etranger.
+	It("refuse quand un autre objet porte deja le marqueur", func(ctx SpecContext) {
+		machineWithDisks(ctx, "g4-foreign", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-FM", SerialNumber: "FOREIGN0001", SizeGB: 300, Occupancy: "free"},
+		})
+		wipes.markers["g4-foreign|/dev/disk/by-id/scsi-FM"] = "some-other-claim-uid"
+
+		c := claim("g4-foreign", "/dev/disk/by-id/scsi-FM", "FOREIGN0001")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Failed"))
+		Expect(back.Status.Message).To(ContainSubstring("already carries claim marker"))
+		Expect(wipes.Count()).To(Equal(0), "a disk carrying someone else's marker must never be wiped")
+	})
+
 	// GARDE 4, ruling R1 — le marqueur d'unicite n'est pas dans la memoire
 	// du process. Le test doit forcer le chemin de rejeu: un manager mort
 	// apres l'effacement et avant l'ecriture de la phase. Sans remettre la
@@ -313,8 +420,14 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(wipes.Count()).To(Equal(1), "the destructive act ran twice across a manager restart")
 	})
 
-	// GARDE 5 — une erreur de nettoyage n'est pas avalee.
-	It("ne passe pas Ready quand le nettoyage echoue apres le travail utile", func(ctx SpecContext) {
+	// GARDE 5 — une erreur de nettoyage n'est pas avalee. Revue C2: guard 4
+	// undoes guard 5 one requeue later if the "marker matches this object"
+	// branch resumes with succeed() — the marker is written by Claim()
+	// before the destructive work, so a failed cleanup still leaves it
+	// behind, and the very next reconcile would read it back and converge
+	// to Ready if that branch trusted it. The extension below reconciles a
+	// second time, cleanup still failing, and pins that it does not.
+	It("ne passe pas Ready quand le nettoyage echoue apres le travail utile, meme apres un second passage", func(ctx SpecContext) {
 		machineWithDisks(ctx, "g5", []framev1beta1.ObservedDisk{
 			{Path: "/dev/disk/by-id/scsi-H", SerialNumber: "S420YJWS0000K6319L3R", SizeGB: 300, Occupancy: "free"},
 		})
@@ -330,5 +443,21 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
 		Expect(back.Status.Phase).NotTo(Equal("Ready"),
 			"a phase does not become Ready because the failure happened after the useful work")
+		Expect(wipes.Count()).To(Equal(1))
+
+		// The natural next step after the first reconcile returned an error:
+		// controller-runtime requeues. Guard 4's own marker — written by the
+		// first, failed Claim call — is now read back and matches this
+		// object's UID. Per the ruling, that must mean "started, not
+		// confirmed succeeded", so this pass must fail closed too, never
+		// converge to Ready just because the marker looks like "already
+		// done", and it must not repeat the destructive call either.
+		_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).NotTo(Equal("Ready"),
+			"a claim whose destructive work may not have completed must not converge to Ready on a later reconcile")
+		Expect(wipes.Count()).To(Equal(1), "an unconfirmed claim must not be retried automatically")
 	})
 })
