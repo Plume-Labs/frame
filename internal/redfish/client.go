@@ -453,8 +453,14 @@ func (c *client) SetIndicatorLED(ctx context.Context, on bool) error {
 // with no drives: see the call site. A 404 at any node of the walk — the
 // root itself, the ArrayControllers collection, a controller document, its
 // PhysicalDrives collection, or an individual disk document — is tolerated
-// the same way: stop walking that branch, leave Drives as it stands so far,
-// return nil. That matches every sibling reader in this package
+// the same way: stop walking THAT branch and keep walking the siblings,
+// leave Drives as it stands so far, return nil. The distinction is
+// load-bearing below the collections: a single disk document that 404s must
+// cost exactly that disk. Abandoning the whole walk there would drop every
+// controller and drive after it, and internal/storage.Join reads a drive
+// missing from the BMC's list as an os-only divergence — so one absent
+// document would render every remaining disk on the machine as a
+// divergence. That matches every sibling reader in this package
 // (readManager, readSensors, readThermal, readPower): a tree that is
 // advertised but 404s is a machine this client cannot fully read, not a
 // probe failure, and failing here would take the whole snapshot — power
@@ -489,7 +495,9 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 		var ac arrayControllerDoc
 		if err := c.get(ctx, ctrl.ODataID, &ac); err != nil {
 			if errors.Is(err, errNotFound) {
-				return nil
+				// This controller's branch, not the walk: the remaining
+				// controllers still have drives to report.
+				continue
 			}
 			return fmt.Errorf("array controller %s: %w", ctrl.ODataID, err)
 		}
@@ -500,7 +508,7 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 		var drives hpCollection
 		if err := c.get(ctx, ac.Links.PhysicalDrives.Href, &drives); err != nil {
 			if errors.Is(err, errNotFound) {
-				return nil
+				continue
 			}
 			return fmt.Errorf("physical drives of %s: %w", ctrl.ODataID, err)
 		}
@@ -509,7 +517,9 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 			var doc diskDriveDoc
 			if err := c.get(ctx, d.ODataID, &doc); err != nil {
 				if errors.Is(err, errNotFound) {
-					return nil
+					// One disk document, one disk lost. The siblings after
+					// it are still read.
+					continue
 				}
 				return fmt.Errorf("disk drive %s: %w", d.ODataID, err)
 			}
