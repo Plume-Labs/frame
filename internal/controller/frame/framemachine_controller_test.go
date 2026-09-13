@@ -496,4 +496,77 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(fake.clearLog).To(Equal(0))
 		Expect(fake.ledCalls).To(BeEmpty())
 	})
+
+	// Task 2 (storage lot 3) carries the BMC's drive fields, including the
+	// join key against the node's own kernel-reported disks, up through
+	// mapInventory. framemachine_v1beta1_schema_test.go proves the CRD
+	// preserves those fields once they're in status, but it writes status
+	// directly (Status().Update), never through Reconcile — so it cannot
+	// tell whether the controller's mapping actually fills them in. This
+	// spec is the one that can: it drives a real Reconcile off a fake
+	// Redfish snapshot and checks what lands in status. Values are the ones
+	// captured off the real ML350 G9 (see internal/redfish's
+	// SmartStorage tests), so this doubles as documentation of the shape.
+	It("maps every drive field the BMC provides through Reconcile, not just the ones present before this task", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-drives-creds"))).To(Succeed())
+		fm := newMachine("fm-drives")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+
+		fake.snapshot.Inventory.Drives = []redfish.Drive{{
+			Name:          "2I:6:8",
+			Model:         "MM1000GFJTE",
+			SizeGB:        1000,
+			Protocol:      "SATA",
+			Health:        "OK",
+			SerialNumber:  "W4722RRA",
+			Location:      "2I:6:8",
+			MediaType:     "HDD",
+			StatusReasons: []string{"None"},
+		}}
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-drives", Namespace: "default"}}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.Inventory).NotTo(BeNil())
+		Expect(got.Status.Inventory.Drives).To(HaveLen(1))
+		d := got.Status.Inventory.Drives[0]
+		// Each field gets its own expectation, not a single struct
+		// equality: this test's job is to say which field the mapping
+		// dropped, not merely that "the drive is wrong".
+		Expect(d.Name).To(Equal("2I:6:8"))
+		Expect(d.Model).To(Equal("MM1000GFJTE"))
+		Expect(d.SizeGB).To(BeNumerically("==", 1000))
+		Expect(d.Protocol).To(Equal("SATA"))
+		Expect(d.Health).To(Equal("OK"))
+		// The serial is the join key: a mapping that drops it silently
+		// makes every divergence in a later task's internal/storage.Join
+		// read as an unidentified, plausible-looking disk.
+		Expect(d.SerialNumber).To(Equal("W4722RRA"))
+		Expect(d.Location).To(Equal("2I:6:8"))
+		Expect(d.MediaType).To(Equal("HDD"))
+		Expect(d.StatusReasons).To(Equal([]string{"None"}))
+	})
+
+	It("reconciles a BMC with no SmartStorage tree without error, leaving drives empty", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-nodrives-creds"))).To(Succeed())
+		fm := newMachine("fm-nodrives")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+		// fake.snapshot.Inventory.Drives is left at its BeforeEach zero
+		// value (nil): the normal shape for a BMC with no SmartStorage tree
+		// (internal/redfish tolerates the not-found there instead of
+		// failing the probe). A mapping that panics or errors on a nil
+		// slice would break every non-HPE machine.
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-nodrives", Namespace: "default"}}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.Inventory).NotTo(BeNil())
+		Expect(got.Status.Inventory.Drives).To(BeEmpty())
+	})
 })
