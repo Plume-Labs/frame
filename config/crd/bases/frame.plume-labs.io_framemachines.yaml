@@ -549,6 +549,93 @@ spec:
                   advances on that probe, but SensorsValidAt does not.
                 format: date-time
                 type: string
+              storage:
+                description: |-
+                  Storage carries what the node itself reports about its disks, and the
+                  divergences against Inventory.Drives. Two writers touch this object's
+                  status — the machine controller and the node agent — so the agent
+                  writes nothing but this field (see internal/agent/diskstatus.go).
+                properties:
+                  divergences:
+                    items:
+                      description: |-
+                        DiskDivergence is one disagreement between the BMC's list and the node's.
+                        It is computed by internal/storage.Join and never read from either source:
+                        on the captured ML350 G9 the BMC reports Health OK and
+                        DiskDriveStatusReasons ["None"] for the very disk the kernel cannot see.
+                      properties:
+                        detail:
+                          description: |-
+                            Detail names what differs, for mismatch. A divergence with no detail
+                            says two numbers differ without saying which.
+                          maxLength: 256
+                          type: string
+                        reason:
+                          description: |-
+                            Reason is bmc-only (the BMC lists it, the kernel does not),
+                            os-only (the reverse), or mismatch (both list it, disagreeing).
+                          enum:
+                          - bmc-only
+                          - os-only
+                          - mismatch
+                          type: string
+                        serialNumber:
+                          maxLength: 128
+                          type: string
+                      type: object
+                    maxItems: 64
+                    type: array
+                  observed:
+                    items:
+                      description: |-
+                        ObservedDisk is one whole disk as the node's own kernel reports it —
+                        the second of the two storage sources. It is never merged with
+                        DriveInfo: the gap between them is the datum (see
+                        docs/superpowers/specs/2026-09-13-storage-design.md §3).
+                      properties:
+                        occupancy:
+                          description: |-
+                            Occupancy is what is using the disk: free, mounted, partitioned,
+                            lvm-pv, ceph-osd, or in-use for a signature the agent does not
+                            recognise. Anything but "free" makes FrameDiskClaim refuse.
+                          enum:
+                          - free
+                          - mounted
+                          - partitioned
+                          - lvm-pv
+                          - ceph-osd
+                          - in-use
+                          maxLength: 32
+                          type: string
+                        path:
+                          description: |-
+                            Path is the stable /dev/disk/by-id path where one exists, and the
+                            kernel name otherwise. It is never an sdX name in a destructive
+                            context: sdX ordering changed on all three boots of the machine this
+                            design was written against.
+                          maxLength: 512
+                          type: string
+                        serialNumber:
+                          description: |-
+                            SerialNumber is the join key. An entry never carries an empty one:
+                            the agent drops a disk it could not identify rather than publish a
+                            blank that matches every other blank.
+                          maxLength: 128
+                          type: string
+                        sizeGB:
+                          format: int32
+                          type: integer
+                      type: object
+                    maxItems: 64
+                    type: array
+                  observedAt:
+                    description: |-
+                      ObservedAt is when the agent last reported. A nil value means never,
+                      and never is not the same as "no disks" — FrameDiskClaim refuses on
+                      both, deliberately, but the screens must be able to tell them apart.
+                    format: date-time
+                    type: string
+                type: object
             type: object
         type: object
     served: true
