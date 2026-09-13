@@ -329,33 +329,62 @@ echo
 # guarantee lives only in prose unless something fails a build the day a
 # well-meaning cleanup patch adds `delete` back to one of those blocks — so
 # assert the absent verb directly against both rendered manifests, not just
-# against the two hand-maintained sources. `grep -A20 persistentvolume` also
-# matches `persistentvolumeclaims`, deliberately, and is checked against the
-# full render (not just the RBAC section) since a hand-authored subresource
-# rule for a literal `persistentvolumes` resource would land somewhere this
-# script's other sections never look.
+# against the two hand-maintained sources.
 #
-# Reuses $tmpdir/kustomize.yaml and $tmpdir/helm-default.yaml, already
-# rendered above for the default-parity comparison, rather than invoking
-# `helm template`/`kustomize build` a second time: a bare `helm template
-# charts/frame` with no --set fails outright, since image.repository and
-# provisiond.media.url are `required` with no default (see this script's own
-# header) -- there is no reason to re-render (and re-risk that) when this
-# check only needs text already on disk from the first render.
+# This used to be `grep -A20 persistentvolume | grep -qE '^\s+- delete$'`,
+# and a fixed text window is exactly the kind of control that stops covering
+# without anyone noticing: it holds only while every rule block that names a
+# persistentvolume resource keeps its verbs within twenty lines of the
+# resource name. Add a few resources or a few verbs to that block — a
+# perfectly ordinary edit — and `delete` slides past line 20, the grep finds
+# nothing, and the check reports OK for a chart that now grants it. It also
+# cannot say WHICH rule is at fault when it does fire. Selecting the rules by
+# resource with jq has neither property: it reads whole rule objects out of
+# the parsed render, so a rule's size is irrelevant, and it prints the
+# offending role and rule verbatim.
+#
+# Subresources (`persistentvolumeclaims/status`) count, and so do verbs that
+# merely imply deletion: `deletecollection` and the `*` wildcard both grant
+# it. The absent verb is the guarantee; a wildcard that happens to include it
+# is not an absent verb.
+#
+# Runs over $tmpdir/kustomize.jsonl and $tmpdir/helm-default.jsonl, the
+# parsed form of the same two renders the default-parity comparison already
+# produced, rather than invoking `helm template`/`kustomize build` a second
+# time: a bare `helm template charts/frame` with no --set fails outright,
+# since image.repository and provisiond.media.url are `required` with no
+# default (see this script's own header).
 echo "== RBAC safety: no delete verb on PersistentVolume or PersistentVolumeClaim (either install path) =="
+pv_delete_rules() {
+  # $1 = JSONL file. Prints one line per RBAC rule that names a
+  # persistentvolume(claim) resource AND carries a verb permitting deletion.
+  # Silence means the guarantee holds.
+  jq -r '
+    select(.kind == "ClusterRole" or .kind == "Role")
+    | .kind as $kind | (.metadata.name // "") as $name
+    | (.rules // [])[]
+    | select(any((.resources // [])[];
+        . == "persistentvolumes" or . == "persistentvolumeclaims"
+        or startswith("persistentvolumes/") or startswith("persistentvolumeclaims/")))
+    | select(any((.verbs // [])[];
+        . == "delete" or . == "deletecollection" or . == "*"))
+    | "\($kind)/\($name): apiGroups=\(.apiGroups // [] | tojson) resources=\(.resources // [] | tojson) verbs=\(.verbs // [] | tojson)"
+  ' "$1"
+}
+
 pv_delete_fail=0
-if grep -A20 'persistentvolume' "$tmpdir/kustomize.yaml" | grep -qE '^\s+- delete$'; then
-  echo "FAIL: kustomize build config/default grants delete on a persistentvolume(claim) resource. Frame must never delete a PV or PVC -- the absent verb is the guarantee, not a comment." >&2
-  pv_delete_fail=1
-fi
-if grep -A20 'persistentvolume' "$tmpdir/helm-default.yaml" | grep -qE '^\s+- delete$'; then
-  echo "FAIL: the chart grants delete on a persistentvolume(claim) resource. Frame must never delete a PV or PVC -- the absent verb is the guarantee, not a comment." >&2
-  pv_delete_fail=1
-fi
+for side in kustomize helm-default; do
+  offenders="$(pv_delete_rules "$tmpdir/$side.jsonl")"
+  if [ -n "$offenders" ]; then
+    echo "FAIL: $side grants deletion on a persistentvolume(claim) resource. Frame must never delete a PV or PVC -- the absent verb is the guarantee, not a comment. Offending rules:" >&2
+    echo "$offenders" >&2
+    pv_delete_fail=1
+  fi
+done
 if [ "$pv_delete_fail" -ne 0 ]; then
   exit 1
 fi
-echo "OK: neither install path grants delete on PersistentVolume or PersistentVolumeClaim."
+echo "OK: neither install path grants delete, deletecollection or * on PersistentVolume or PersistentVolumeClaim."
 echo
 
 # --- CRD shape diff: version topology and conversion wiring ------------------
@@ -462,6 +491,65 @@ if [ "$pvc_fail" -ne 0 ]; then
   exit 1
 fi
 echo "OK: both install paths carry failurePolicy: Ignore and the objectSelector on vpersistentvolumeclaim.kb.io."
+echo
+
+# --- No other webhook carries an objectSelector --------------------------------
+# The check above can only ever say "the PVC webhook lost its selector". It
+# cannot say "another webhook silently GAINED one", which is the failure the
+# way that selector is installed makes easy: kustomize attaches it with
+# config/webhook/patches/objectselector_in_persistentvolumeclaims.yaml, a
+# JSON-6902 patch addressing a webhook by INDEX (/webhooks/N/objectSelector),
+# and the chart writes it into one hand-ordered entry of
+# charts/frame/templates/webhookconfigurations.yaml. Insert a webhook above
+# either one and the selector lands on a different entry — and a webhook that
+# gains `frame.plume-labs.io/usage: Exists` stops being called for every
+# object in the cluster that does not carry that label, which is all of them.
+# It does not fail. It goes quiet, and the resource it was validating is
+# admitted unchecked from then on.
+#
+# Nothing else in Frame is opt-in per object, so the invariant is flat: exactly
+# one webhook, vpersistentvolumeclaim.kb.io, may carry an objectSelector. Green
+# today; red and naming the victim the day the index-addressed patch lands on
+# the wrong entry.
+echo "== Webhook safety: no webhook other than vpersistentvolumeclaim.kb.io carries an objectSelector =="
+foreign_object_selectors() {
+  # $1 = JSONL file. Prints one line per webhook that carries a non-empty
+  # objectSelector and is not the PVC content-type webhook.
+  jq -r '
+    select(.kind == "ValidatingWebhookConfiguration" or .kind == "MutatingWebhookConfiguration")
+    | .kind as $kind | (.metadata.name // "") as $cfg
+    | (.webhooks // [])[]
+    | select(.name != "vpersistentvolumeclaim.kb.io")
+    | select((.objectSelector // {}) != {})
+    | "\($kind)/\($cfg) -> webhook \(.name): objectSelector=\(.objectSelector | tojson)"
+  ' "$1"
+}
+
+selector_fail=0
+for side in kustomize helm-default; do
+  strays="$(foreign_object_selectors "$tmpdir/$side.jsonl")"
+  if [ -n "$strays" ]; then
+    cat >&2 <<MSG
+FAIL: $side renders an objectSelector on a webhook that must not have one:
+
+$strays
+
+Only vpersistentvolumeclaim.kb.io is opt-in per object. A webhook that gains
+an objectSelector is not called for any object lacking that label -- it stops
+validating, silently, with no error anywhere. The selector is attached by
+index (config/webhook/patches/objectselector_in_persistentvolumeclaims.yaml
+addresses /webhooks/N/objectSelector) and by hand-ordered position in
+charts/frame/templates/webhookconfigurations.yaml, so inserting a webhook
+above either one moves it onto the wrong entry. Check that first.
+MSG
+    selector_fail=1
+  fi
+done
+
+if [ "$selector_fail" -ne 0 ]; then
+  exit 1
+fi
+echo "OK: no webhook other than vpersistentvolumeclaim.kb.io carries an objectSelector, on either install path."
 echo
 
 # --- helm side: opt-in extras ------------------------------------------------
