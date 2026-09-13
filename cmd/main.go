@@ -17,10 +17,12 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -28,7 +30,9 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
@@ -92,6 +96,62 @@ func validateProvisiondMediaURL(raw string) error {
 		return fmt.Errorf("-provisiond-media-url %w", err)
 	}
 	return nil
+}
+
+// cephClusterNamespace and cephClusterName name the CephCluster this manager
+// reads for FrameStorage health. deploy/ceph/cluster.yaml is the only place
+// this cluster is provisioned, and it puts both the object and its rook
+// operator in "rook-ceph" -- there is no flag for this yet because there is
+// only ever one CephCluster in this deployment.
+const (
+	cephClusterNamespace = "rook-ceph"
+	cephClusterName      = "rook-ceph"
+)
+
+var cephClusterGVK = schema.GroupVersionKind{Group: "ceph.rook.io", Version: "v1", Kind: "CephCluster"}
+
+// readCephHealth returns a controller.FrameStorageReconciler.CephHealth that
+// reads status.ceph.health and status.ceph.details off the live CephCluster,
+// unstructured: the manager's scheme has no Go type for a rook CRD, and it
+// must not gain one just to read two fields.
+//
+// A missing CephCluster -- no rook installed, or the CRD itself absent --
+// comes back as an error here, same as any other read failure. It is
+// reconcileHealth's job, not this function's, to turn that into Unknown
+// rather than Ready: this function only reports what it saw.
+func readCephHealth(c client.Client) func(context.Context) (string, []string, error) {
+	return func(ctx context.Context) (string, []string, error) {
+		cc := &unstructured.Unstructured{}
+		cc.SetGroupVersionKind(cephClusterGVK)
+		if err := c.Get(ctx, client.ObjectKey{Namespace: cephClusterNamespace, Name: cephClusterName}, cc); err != nil {
+			return "", nil, fmt.Errorf("reading CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+		}
+
+		health, _, err := unstructured.NestedString(cc.Object, "status", "ceph", "health")
+		if err != nil {
+			return "", nil, fmt.Errorf("reading status.ceph.health off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+		}
+
+		details, _, err := unstructured.NestedMap(cc.Object, "status", "ceph", "details")
+		if err != nil {
+			return "", nil, fmt.Errorf("reading status.ceph.details off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+		}
+		reasons := make([]string, 0, len(details))
+		for _, v := range details {
+			entry, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			if msg, ok := entry["message"].(string); ok && msg != "" {
+				reasons = append(reasons, msg)
+			}
+		}
+		// details is a map: iteration order is not stable, and neither is the
+		// order screens or tests would see reason-by-reason otherwise.
+		sort.Strings(reasons)
+
+		return health, reasons, nil
+	}
 }
 
 func init() {
@@ -414,6 +474,14 @@ func main() {
 		OperatorNamespace: os.Getenv("POD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "frameinstall")
+		os.Exit(1)
+	}
+	if err := (&controller.FrameStorageReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		CephHealth: readCephHealth(mgr.GetClient()),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "framestorage")
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
