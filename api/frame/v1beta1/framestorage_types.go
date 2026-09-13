@@ -154,3 +154,16 @@ type FrameStorageList struct {
 func init() {
 	SchemeBuilder.Register(&FrameStorage{}, &FrameStorageList{})
 }
+
+// SharedForType derives status.shared from the type. It lives in the API
+// package, not the webhook, so nothing anywhere can set it from a spec, and
+// so the controller (which also needs it) has one definition to call rather
+// than a second copy that could drift from the webhook's.
+func SharedForType(t string) bool {
+	switch t {
+	case "ceph-rbd", "ceph-bucket":
+		return true
+	default:
+		return false
+	}
+}

@@ -108,14 +108,3 @@ func (v *FrameStorageCustomValidator) validateAdoption(ctx context.Context, fs *
 		fs.Spec.StorageClassName,
 	)
 }
-
-// sharedForType derives status.shared from the type. It lives here, next to
-// the validator, so nothing anywhere can set it from a spec.
-func sharedForType(t string) bool {
-	switch t {
-	case "ceph-rbd", "ceph-bucket":
-		return true
-	default:
-		return false
-	}
-}
