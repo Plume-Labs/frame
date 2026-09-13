@@ -241,12 +241,6 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 			SerialNumber:   sys.SerialNumber,
 			BIOSVersion:    sys.BiosVersion,
 			TotalMemoryGiB: sys.MemorySummary.TotalSystemMemoryGiB,
-			// Drives is deliberately left empty. An iLO4 exposes physical
-			// drives under HPE's OEM SmartStorage tree, not the standard
-			// Storage/Drives collections the rest of this package walks —
-			// guessing that OEM path without a real machine to check it
-			// against is how a plausible-looking wrong implementation
-			// ships. It gets filled in after first contact with hardware.
 		},
 		LogCounts: map[string]int{},
 	}
@@ -271,6 +265,21 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 	// occasionally trusting a state this package has not catalogued yet.
 	snap.SensorsTrustworthy = snap.PowerState == "On" &&
 		snap.PostState != "PowerOff" && snap.PostState != "InPost"
+
+	// Drives come from HPE's OEM SmartStorage tree, whose root is read
+	// from the system document's own Oem.Hp.links.SmartStorage.href rather
+	// than assembled from a template: see
+	// TestSmartStorageRootIsDiscoveredNotGuessed for why a hardcoded path
+	// passes every test written against the capture and is still wrong.
+	//
+	// A machine with no SmartStorage tree (any non-HPE BMC) leaves Drives
+	// empty and is not an error: an inventory missing a section is a
+	// machine this client does not know how to read, not a probe failure,
+	// and failing here would take the whole snapshot — power state,
+	// sensors, event log — down with it.
+	if err := c.readSmartStorage(ctx, sys.Oem.Hp.Links.SmartStorage.Href, snap); err != nil {
+		return nil, fmt.Errorf("redfish: read SmartStorage: %w", err)
+	}
 
 	if err := c.readManager(ctx, snap); err != nil {
 		return nil, err
@@ -436,4 +445,63 @@ func (c *client) SetIndicatorLED(ctx context.Context, on bool) error {
 		IndicatorLED string `json:"IndicatorLED"`
 	}{IndicatorLED: state}
 	return c.patch(ctx, systemPath, body)
+}
+
+// readSmartStorage walks HPE's OEM storage tree and fills snap.Inventory.Drives.
+//
+// An empty root (no SmartStorage link on the system document) returns nil
+// with no drives: see the call site. A root that is advertised but does not
+// answer is an error, because that is a BMC saying it has a tree and then
+// refusing to serve it.
+func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapshot) error {
+	if root == "" {
+		return nil
+	}
+
+	var ss smartStorageDoc
+	if err := c.get(ctx, root, &ss); err != nil {
+		return fmt.Errorf("smart storage root %s: %w", root, err)
+	}
+	if ss.Links.ArrayControllers.Href == "" {
+		return nil
+	}
+
+	var controllers hpCollection
+	if err := c.get(ctx, ss.Links.ArrayControllers.Href, &controllers); err != nil {
+		return fmt.Errorf("array controllers: %w", err)
+	}
+
+	for _, ctrl := range controllers.Members {
+		var ac arrayControllerDoc
+		if err := c.get(ctx, ctrl.ODataID, &ac); err != nil {
+			return fmt.Errorf("array controller %s: %w", ctrl.ODataID, err)
+		}
+		if ac.Links.PhysicalDrives.Href == "" {
+			continue
+		}
+
+		var drives hpCollection
+		if err := c.get(ctx, ac.Links.PhysicalDrives.Href, &drives); err != nil {
+			return fmt.Errorf("physical drives of %s: %w", ctrl.ODataID, err)
+		}
+
+		for _, d := range drives.Members {
+			var doc diskDriveDoc
+			if err := c.get(ctx, d.ODataID, &doc); err != nil {
+				return fmt.Errorf("disk drive %s: %w", d.ODataID, err)
+			}
+			snap.Inventory.Drives = append(snap.Inventory.Drives, Drive{
+				Name:          doc.Location,
+				Model:         doc.Model,
+				SizeGB:        doc.CapacityGB,
+				Protocol:      doc.InterfaceType,
+				Health:        doc.Status.Health,
+				SerialNumber:  doc.SerialNumber,
+				Location:      doc.Location,
+				MediaType:     doc.MediaType,
+				StatusReasons: doc.DiskDriveStatusReasons,
+			})
+		}
+	}
+	return nil
 }

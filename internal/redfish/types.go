@@ -61,6 +61,27 @@ type Drive struct {
 	SizeGB   int32
 	Protocol string
 	Health   string
+
+	// SerialNumber is the join key against what the node's own agent sees
+	// (internal/storage.Join). A Redfish drive name and a /dev/disk/by-id
+	// path are different namespaces; matching on anything but the serial
+	// matches nothing.
+	SerialNumber string
+
+	// Location is the physical bay in the controller's own
+	// ControllerPort:Box:Bay format, e.g. "2I:6:8" — what a human reads on
+	// the chassis before pulling a disk.
+	Location string
+
+	// MediaType is HDD or SSD as the controller reports it.
+	MediaType string
+
+	// StatusReasons is the controller's own explanation of the drive's
+	// state. On the captured hardware every drive, including the one Linux
+	// cannot see, reports ["None"]: the BMC has no field that says a disk
+	// is masked by residual logical-unit metadata. That absence is why the
+	// divergence is computed, never read.
+	StatusReasons []string
 }
 
 type NetworkAdapter struct {

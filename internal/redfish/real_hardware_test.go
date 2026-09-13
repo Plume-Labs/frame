@@ -18,6 +18,8 @@ package redfish
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -121,7 +123,7 @@ func TestClearLogPostsTheDiscoveredTarget(t *testing.T) {
 // power state — so only the system document and chassis Thermal/Power vary
 // by state here.
 func realRoutes(state string) map[string]string {
-	return map[string]string{
+	routes := map[string]string{
 		"/redfish/v1/":                             "service_root.json",
 		"/redfish/v1/Systems/":                     "systems.json",
 		"/redfish/v1/Systems/1/":                   "systems_1_" + state + ".json",
@@ -146,7 +148,26 @@ func realRoutes(state string) map[string]string {
 		"/redfish/v1/Systems/1/LogServices/":             "systems_1_logservices.json",
 		"/redfish/v1/Systems/1/LogServices/IML/":         "systems_1_logservices_iml.json",
 		"/redfish/v1/Systems/1/LogServices/IML/Entries/": "systems_1_logservices_iml_entries.json",
+		// The system document's Oem.Hp.links.SmartStorage.href is the same
+		// literal path regardless of power state, and every state's system
+		// document advertises it — so Probe now always walks this tree, and
+		// a route must exist here or these state tests fail on a 404 that
+		// has nothing to do with what they're testing. There is no
+		// per-power-state SmartStorage capture (see PROVENANCE.md's
+		// "État dégradé" section: it was a one-off, non-reproducible
+		// capture taken while the machine was off), so the degraded set is
+		// reused here; none of the tests driven by realRoutes assert on
+		// Inventory.Drives.
+		"/redfish/v1/Systems/1/SmartStorage/":                               "smartstorage_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/":              "smartstorage_arraycontrollers_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/":            "smartstorage_arraycontrollers_0_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/": "smartstorage_diskdrives_degraded.json",
 	}
+	for i := 0; i < 8; i++ {
+		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
+			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
+	}
+	return routes
 }
 
 func serveRealFixtures(t *testing.T, state string) *httptest.Server {
@@ -472,4 +493,147 @@ func TestProbeJoinsPathsThatArriveWithoutATrailingSlash(t *testing.T) {
 	if snap.LogTotal == 0 {
 		t.Error("LogTotal = 0 — Systems/1/LogServices/IML/Entries/ was not reached")
 	}
+}
+
+// movedSmartStorageRoot is a path the real machine does not use. A client
+// that discovers SmartStorage from Oem.Hp.links.SmartStorage.href finds the
+// drives here; one that hardcodes "/redfish/v1/Systems/1/SmartStorage/"
+// finds a 404 and reports zero drives. Without this move both
+// implementations pass, because on the captured hardware the guessed path
+// and the advertised one are byte-identical — the same coincidence that
+// hid the ClearLog defect (see TestClearLogPostsTheDiscoveredTarget).
+const movedSmartStorageRoot = "/redfish/v1/Systems/1/Oem/Hp/SmartStorageRelocated/"
+
+func TestSmartStorageRootIsDiscoveredNotGuessed(t *testing.T) {
+	systemDoc, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", "systems_1_degraded.json"))
+	if err != nil {
+		t.Fatalf("fixture systems_1_degraded.json: %v", err)
+	}
+	moved := strings.ReplaceAll(
+		string(systemDoc),
+		"/redfish/v1/Systems/1/SmartStorage/",
+		movedSmartStorageRoot,
+	)
+
+	guessed := make(chan struct{}, 1)
+	mux := http.NewServeMux()
+	serve := func(path, file string) {
+		body, err := os.ReadFile(filepath.Join("testdata", "ilo4-real", file))
+		if err != nil {
+			t.Fatalf("fixture %s: %v", file, err)
+		}
+		mux.HandleFunc(path+"{$}", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		})
+	}
+	serve("/redfish/v1/", "service_root.json")
+	serve("/redfish/v1/Systems/", "systems.json")
+	mux.HandleFunc("/redfish/v1/Systems/1/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(moved))
+	})
+	serve(movedSmartStorageRoot, "smartstorage_degraded.json")
+	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/", "smartstorage_arraycontrollers_degraded.json")
+	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/", "smartstorage_arraycontrollers_0_degraded.json")
+	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/", "smartstorage_diskdrives_degraded.json")
+	for i := 0; i < 8; i++ {
+		serve(
+			fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i),
+			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i),
+		)
+	}
+	// The guessed root gets its own handler so a regression is a failure,
+	// not a silent 404 that merely yields zero drives.
+	mux.HandleFunc("/redfish/v1/Systems/1/SmartStorage/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case guessed <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL, "u", "p", &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test server
+	snap, err := c.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	select {
+	case <-guessed:
+		t.Fatal("client fetched the hardcoded SmartStorage path; it must read Oem.Hp.links.SmartStorage.href")
+	default:
+	}
+	if len(snap.Inventory.Drives) != 8 {
+		t.Fatalf("Drives = %d, want 8", len(snap.Inventory.Drives))
+	}
+}
+
+// TestSmartStorageReadsTheSATADriveVerbatim pins the one drive the whole
+// storage lot turns on: bay 2I:6:8, serial W4722RRA, the machine's only
+// SATA disk and the only one Linux does not see. The BMC reports it
+// Health OK — nothing in this document says it is masked — which is why
+// the divergence in internal/storage.Join is computed from two sources
+// and never read from one.
+func TestSmartStorageReadsTheSATADriveVerbatim(t *testing.T) {
+	srv := serveRealSmartStorage(t)
+	c := New(srv.URL, "u", "p", &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test server
+	snap, err := c.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	var got *Drive
+	for i := range snap.Inventory.Drives {
+		if snap.Inventory.Drives[i].SerialNumber == "W4722RRA" {
+			got = &snap.Inventory.Drives[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("no drive with serial W4722RRA among %d drives", len(snap.Inventory.Drives))
+	}
+	if got.Location != "2I:6:8" {
+		t.Errorf("Location = %q, want 2I:6:8", got.Location)
+	}
+	if got.Model != "MM1000GFJTE" {
+		t.Errorf("Model = %q, want MM1000GFJTE", got.Model)
+	}
+	if got.Protocol != "SATA" {
+		t.Errorf("Protocol = %q, want SATA (it is the machine's only SATA disk)", got.Protocol)
+	}
+	if got.MediaType != "HDD" {
+		t.Errorf("MediaType = %q, want HDD", got.MediaType)
+	}
+	if got.SizeGB != 1000 {
+		t.Errorf("SizeGB = %d, want 1000", got.SizeGB)
+	}
+	if got.Health != "OK" {
+		t.Errorf("Health = %q, want OK — the BMC does not know this disk is masked", got.Health)
+	}
+	if len(got.StatusReasons) != 1 || got.StatusReasons[0] != "None" {
+		t.Errorf("StatusReasons = %v, want [None]", got.StatusReasons)
+	}
+}
+
+// serveRealSmartStorage routes the unmodified ilo4-real SmartStorage
+// captures, for tests about values rather than about discovery.
+func serveRealSmartStorage(t *testing.T) *httptest.Server {
+	t.Helper()
+	routes := map[string]string{
+		"/redfish/v1/":                                                      "service_root.json",
+		"/redfish/v1/Systems/":                                              "systems.json",
+		"/redfish/v1/Systems/1/":                                            "systems_1_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/":                               "smartstorage_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/":              "smartstorage_arraycontrollers_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/":            "smartstorage_arraycontrollers_0_degraded.json",
+		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/": "smartstorage_diskdrives_degraded.json",
+	}
+	for i := 0; i < 8; i++ {
+		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
+			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
+	}
+	return serveFixturesFrom(t, "ilo4-real", routes)
 }

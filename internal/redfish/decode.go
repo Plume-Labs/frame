@@ -88,6 +88,11 @@ type computerSystemJSON struct {
 	Oem struct {
 		Hp struct {
 			PostState string `json:"PostState"`
+			Links     struct {
+				SmartStorage struct {
+					Href string `json:"href"`
+				} `json:"SmartStorage"`
+			} `json:"links"`
 		} `json:"Hp"`
 	} `json:"Oem"`
 }
