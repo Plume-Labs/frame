@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -218,6 +219,24 @@ func readReplicationFactor(ctx context.Context, c client.Client, storageClassNam
 		return 0
 	}
 	return int32(size)
+}
+
+// unconfiguredWiper is the FrameDiskClaim controller's destructive backend on
+// this build. The implementation that actually runs sgdisk/ceph-volume
+// against a node is deliberately not part of this lot — it is a physical,
+// human-supervised act against a chosen machine, not something a manager
+// rollout should be able to trigger on its own. Wiring this stand-in instead
+// of leaving Wiper nil means a FrameDiskClaim created against this
+// deployment fails cleanly and visibly (status.phase=Failed, an explicit
+// message) instead of a nil-pointer panic or silently doing nothing.
+type unconfiguredWiper struct{}
+
+func (unconfiguredWiper) ReadMarker(_ context.Context, _, _ string) (string, error) {
+	return "", errors.New("destructive backend not configured: this build ships FrameDiskClaim's guards only")
+}
+
+func (unconfiguredWiper) Claim(_ context.Context, _, _, _, _ string) error {
+	return errors.New("destructive backend not configured: this build ships FrameDiskClaim's guards only")
 }
 
 func init() {
@@ -549,6 +568,20 @@ func main() {
 		CephCapacity: readCephCapacity(mgr.GetClient()),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framestorage")
+		os.Exit(1)
+	}
+	if err := (&controller.FrameDiskClaimReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		// The real Wiper — the one that runs sgdisk/ceph-volume against a
+		// node — is a separate, human-supervised step against a chosen
+		// machine and is not part of this build. Wiring an
+		// unconfiguredWiper here means a FrameDiskClaim created against
+		// this deployment fails cleanly (status.phase=Failed, an explicit
+		// message) instead of silently doing nothing.
+		Wiper: &unconfiguredWiper{},
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "framediskclaim")
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {

@@ -139,6 +139,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framediskclaims
   - frameinstalls
   - framemachines
   verbs:
@@ -150,6 +151,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framediskclaims/finalizers
   - frameinstalls/finalizers
   - framejobs/finalizers
   - framemachines/finalizers
@@ -165,6 +167,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framediskclaims/status
   - frameinstalls/status
   - framejobs/status
   - framemachines/status
