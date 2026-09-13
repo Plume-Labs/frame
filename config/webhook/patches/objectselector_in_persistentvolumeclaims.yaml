@@ -1,0 +1,38 @@
+# controller-gen has no marker for objectSelector, so it regenerates
+# manifests.yaml on every `make manifests` run without one — the entry
+# there is otherwise complete. This patch adds it back by hand.
+#
+# No PVC in the cluster carries frame.plume-labs.io/usage today, so this
+# selector is what makes the day this webhook lands a no-op: nothing is
+# refused, because nothing is even sent to admission. See
+# internal/webhook/core/v1/pvc_webhook.go for the rest of the story
+# (failurePolicy: Ignore, set via the kubebuilder marker instead, since
+# controller-gen does understand that one).
+#
+# This is a JSON6902 patch by array index, not a strategic merge patch by
+# name: a strategic merge patch that only lists this one changed webhook
+# moves it to the FRONT of the array (the patch's own list order wins for
+# any item it mentions, including under $setElementOrder — kustomize
+# v5.8.1's patch merge does not honour that directive the way `kubectl
+# patch --type=strategic` does). That silently misaligns this array
+# against charts/frame/templates/webhookconfigurations.yaml's hand-written
+# copy, which `make helm-parity` compares position-by-position (jq -S
+# sorts object keys, not array order).
+#
+# /webhooks/6 is `vpersistentvolumeclaim.kb.io`'s current index — manifests.yaml
+# is controller-gen's alphabetical-by-name ordering of all ValidatingWebhookConfiguration
+# entries: framejob(0) framenode(1) frameresourcequota(2) frameservice(3)
+# framestorage(4) frameuser(5) persistentvolumeclaim(6) schedulingpolicy(7)
+# talosmachineconfig(8) talosupgrade(9). If `make manifests` ever reorders
+# this list (a new webhook whose name sorts before "vpersistentvolumeclaim"),
+# this index must move with it — hack/helm-parity.sh's objectSelector/
+# failurePolicy assertion (see the PVC webhook section there) will fail
+# loudly with a wrong-index patch (it targets the entry by name and checks
+# its properties), which is what forces this comment to be re-read rather
+# than the drift going unnoticed.
+- op: add
+  path: /webhooks/6/objectSelector
+  value:
+    matchExpressions:
+    - key: frame.plume-labs.io/usage
+      operator: Exists

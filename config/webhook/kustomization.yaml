@@ -1,3 +1,15 @@
 resources:
 - manifests.yaml
 - service.yaml
+
+patches:
+# controller-gen regenerates manifests.yaml on every `make manifests` run
+# and has no marker for objectSelector, so it is added back here — see
+# patches/objectselector_in_persistentvolumeclaims.yaml for why this field
+# matters (it is the whole reason the webhook is a no-op the day it lands)
+# and why this is a JSON6902 patch by array index rather than a strategic
+# merge patch by name.
+- path: patches/objectselector_in_persistentvolumeclaims.yaml
+  target:
+    kind: ValidatingWebhookConfiguration
+    name: validating-webhook-configuration

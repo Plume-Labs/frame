@@ -55,6 +55,7 @@ import (
 	"github.com/rmocq/frame/internal/provision"
 	"github.com/rmocq/frame/internal/services/provider"
 	"github.com/rmocq/frame/internal/services/provider/inference"
+	webhookcorev1 "github.com/rmocq/frame/internal/webhook/core/v1"
 	webhookv1beta1 "github.com/rmocq/frame/internal/webhook/frame/v1beta1"
 	webhookservicesv1beta1 "github.com/rmocq/frame/internal/webhook/services/v1beta1"
 	// +kubebuilder:scaffold:imports
@@ -638,6 +639,12 @@ func main() {
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1beta1.SetupFrameStorageWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameStorage")
+			os.Exit(1)
+		}
+	}
+	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
+		if err := webhookcorev1.SetupPVCWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "PersistentVolumeClaim")
 			os.Exit(1)
 		}
 	}

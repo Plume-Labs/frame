@@ -347,6 +347,85 @@ fi
 echo "OK: identical CRD version topology and conversion wiring."
 echo
 
+# --- PVC webhook safety properties: present on both install paths, not just
+# --- identical between them ---------------------------------------------------
+# The body diff above (and every other check in this script) only catches
+# DIVERGENCE between the two install paths. It cannot catch both paths losing
+# the same thing at the same time: if a future edit dropped objectSelector
+# from both charts/frame/templates/webhookconfigurations.yaml and
+# config/webhook/patches/objectselector_in_persistentvolumeclaims.yaml, the
+# two renders would still be identical to each other — silently identical,
+# with this whole script staying green — while the webhook stopped being
+# opt-in and started evaluating every PersistentVolumeClaim in the cluster
+# the moment the manager next started answering. Demonstrated in Task 9: with
+# the (unrelated) framestorage entry gap in the chart set aside, removing
+# objectSelector from both sides made the rest of this script pass outright.
+#
+# failurePolicy: Ignore is the other property with no room for silent loss:
+# the whole point of this webhook is that a manager that is down, rolling, or
+# unreachable must never stop the cluster from provisioning storage. Both
+# properties are asserted here, independently of one another and of whatever
+# the other side renders, precisely so neither can vanish from both paths at
+# once without this failing.
+echo "== PVC webhook safety properties: objectSelector and failurePolicy present on both install paths =="
+pvc_webhook_props() {
+  # $1 = JSONL file (kustomize.jsonl or helm-default.jsonl)
+  jq -S '
+    .[] | select(.kind == "ValidatingWebhookConfiguration")
+    | .webhooks[] | select(.name == "vpersistentvolumeclaim.kb.io")
+    | {failurePolicy, objectSelector}
+  ' -s "$1"
+}
+
+expected_pvc_props='{
+  "failurePolicy": "Ignore",
+  "objectSelector": {
+    "matchExpressions": [
+      {
+        "key": "frame.plume-labs.io/usage",
+        "operator": "Exists"
+      }
+    ]
+  }
+}'
+expected_pvc_props_sorted="$(echo "$expected_pvc_props" | jq -S .)"
+
+pvc_fail=0
+for side in kustomize helm-default; do
+  actual="$(pvc_webhook_props "$tmpdir/$side.jsonl")"
+  if [ -z "$actual" ]; then
+    echo "FAIL: $side has no vpersistentvolumeclaim.kb.io ValidatingWebhookConfiguration entry at all." >&2
+    pvc_fail=1
+    continue
+  fi
+  if [ "$actual" != "$expected_pvc_props_sorted" ]; then
+    cat >&2 <<MSG
+FAIL: $side's vpersistentvolumeclaim.kb.io webhook does not carry both
+failurePolicy: Ignore and objectSelector matching frame.plume-labs.io/usage.
+
+A manager that cannot be reached must never block volume creation
+(failurePolicy), and no PVC may be evaluated unless it opted in
+(objectSelector) — these are the only two things that make this webhook
+safe to install on a live cluster with nineteen PVCs already running. This
+check exists precisely because the body diff above cannot see both paths
+losing the same field at once — see the comment above this section.
+
+Expected:
+$expected_pvc_props_sorted
+
+Got:
+$actual
+MSG
+    pvc_fail=1
+  fi
+done
+
+if [ "$pvc_fail" -ne 0 ]; then
+  exit 1
+fi
+echo "OK: both install paths carry failurePolicy: Ignore and the objectSelector on vpersistentvolumeclaim.kb.io."
+echo
+
 # --- helm side: opt-in extras ------------------------------------------------
 # ServiceMonitor and the two NetworkPolicies live in config/ (config/prometheus,
 # config/network-policy) but are commented out of config/default's
