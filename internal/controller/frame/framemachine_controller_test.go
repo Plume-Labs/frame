@@ -30,11 +30,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
+	"github.com/rmocq/frame/internal/agent"
 	"github.com/rmocq/frame/internal/redfish"
 )
 
@@ -568,5 +571,106 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
 		Expect(got.Status.Inventory).NotTo(BeNil())
 		Expect(got.Status.Inventory.Drives).To(BeEmpty())
+	})
+
+	// FrameMachine.status now has two independent writers: this reconciler
+	// (inventory, sensors, power state, the event log) and the node agent
+	// (status.storage, via agent.PatchObservedDisks). This spec exists
+	// because internal/agent/status.go documents exactly this failure mode
+	// for NodeTuning: a status merge patch built from a stale copy of the
+	// object reverts everything the other writer put there, because a JSON
+	// merge patch replaces an array wholesale.
+	//
+	// Writing the two halves as two sequential Go statements — create,
+	// then k8sClient.Status().Update, then agent.PatchObservedDisks — was
+	// tried first and does not prove anything: the agent's internal List
+	// always runs strictly after the controller's Update has already
+	// committed, so it never observes a stale snapshot no matter how the
+	// patch precondition is implemented. Verified directly: that version
+	// stayed green against a deliberately weakened PatchObservedDisks
+	// (plain client.MergeFrom(base), no resourceVersion precondition, List
+	// hoisted out of the retry loop) — see task-5-report.md for the
+	// mutation run. The window this test exists to prove safe only exists
+	// if the controller's write lands *between* the agent's List and its
+	// Patch, so it is injected there directly: a client.WithWatch on the
+	// same envtest API server, wrapped so its List call performs the
+	// controller's Status().Update as a side effect immediately after
+	// reading — the exact ordering PatchObservedDisks' doc comment
+	// describes, made deterministic instead of hoped-for.
+	It("l'agent ecrit ses disques sans effacer l'inventaire BMC", func() {
+		m := newMachine("two-writers")
+		m.Spec.NodeRef = "node-two-writers"
+		Expect(k8sClient.Create(ctx, m)).To(Succeed())
+		// Status is left at its zero value here on purpose: the controller's
+		// write happens inside the racing client below, in the window
+		// between the agent's read and its patch, not before either.
+
+		wc, err := client.NewWithWatch(cfg, client.Options{Scheme: scheme.Scheme})
+		Expect(err).NotTo(HaveOccurred())
+
+		var controllerWroteOnce bool
+		racing := interceptor.NewClient(wc, interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				// The agent's real read, exactly as it happens without the
+				// interceptor.
+				if err := c.List(ctx, list, opts...); err != nil {
+					return err
+				}
+				if controllerWroteOnce {
+					// A retry's re-read must see the controller's write as
+					// settled, not trigger a second one.
+					return nil
+				}
+				controllerWroteOnce = true
+
+				// The controller's half, landing in the window between the
+				// agent's List (just above) and its Patch (about to
+				// happen). Read-modify-write against k8sClient, not racing,
+				// exactly like a real reconciler.
+				var fresh framev1beta1.FrameMachine
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(m), &fresh)).To(Succeed())
+				fresh.Status.Inventory = &framev1beta1.MachineInventory{
+					Model:  "ProLiant ML350 Gen9",
+					Drives: []framev1beta1.DriveInfo{{SerialNumber: "W4722RRA", Location: "2I:6:8", SizeGB: 1000}},
+				}
+				fresh.Status.PowerState = "On"
+				Expect(k8sClient.Status().Update(ctx, &fresh)).To(Succeed())
+				return nil
+			},
+		})
+
+		// The agent's half, reading through the racing client so its List
+		// genuinely precedes the controller's write above.
+		Expect(agent.PatchObservedDisks(ctx, racing, "node-two-writers",
+			[]framev1beta1.ObservedDisk{{Path: "/dev/sdc", SerialNumber: "KZK245ZG", SizeGB: 1200, Occupancy: "free"}},
+		)).To(Succeed())
+
+		var back framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(m), &back)).To(Succeed())
+
+		// Both halves survive.
+		Expect(back.Status.PowerState).To(Equal("On"))
+		Expect(back.Status.Inventory).NotTo(BeNil())
+		Expect(back.Status.Inventory.Drives).To(HaveLen(1), "the agent's patch replaced the BMC drive list")
+		Expect(back.Status.Storage).NotTo(BeNil())
+		Expect(back.Status.Storage.Observed).To(HaveLen(1))
+		Expect(back.Status.Storage.ObservedAt).NotTo(BeNil())
+
+		// This is the assertion that actually discriminates a stale read
+		// from a fresh one: the join is computed at patch-construction
+		// time from status.inventory.drives, so if the agent's snapshot
+		// predates the controller's write, this comes back with only the
+		// os-only divergence (1), the BMC side having been read as empty.
+		// Only a fresh re-read (RetryOnConflict redoing the List after the
+		// optimistic-lock conflict) sees the BMC's W4722RRA and reports
+		// both sides: bmc-only and os-only.
+		Expect(back.Status.Storage.Divergences).To(HaveLen(2))
+	})
+
+	It("refuse d'ecrire quand aucune FrameMachine ne nomme ce noeud", func() {
+		err := agent.PatchObservedDisks(ctx, k8sClient, "node-that-no-machine-claims",
+			[]framev1beta1.ObservedDisk{{Path: "/dev/sda", SerialNumber: "X1", SizeGB: 1, Occupancy: "free"}})
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("no FrameMachine"))
 	})
 })

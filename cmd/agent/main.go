@@ -33,7 +33,12 @@ limitations under the License.
 //  4. services a restart request from the controller by scheduling a
 //     *detached* restart, never an inline one;
 //  5. measures what the node actually reports (agent.Observe) and patches it
-//     into status.nodes[].observed on every NodeTuning that selects it.
+//     into status.nodes[].observed on every NodeTuning that selects it;
+//  6. reads the node's own block devices (agent.ObserveDisks) and publishes
+//     them, joined against the BMC's drive list, onto the FrameMachine whose
+//     spec.nodeRef names this node. A node no FrameMachine claims is logged
+//     and skipped: the tuning half of this loop (steps 1-5) must keep
+//     working on a cluster where FrameMachine is not used at all.
 //
 // It never writes status.nodes[].phase — that is the controller's, computed
 // by diffing spec against what this agent reports.
@@ -185,18 +190,33 @@ func tick(ctx context.Context, kc client.Client, nodeName, root string, runner a
 	observed, err := agent.Observe(root)
 	if err != nil {
 		slog.Error("observing node state", "error", err)
-		return
-	}
-	for _, nt := range matching {
-		// nt comes from the List above, and everything between it and here —
-		// Apply, the systemd round-trips, Observe — happens on the node, in
-		// seconds. agent.PatchObserved therefore re-reads the object rather
-		// than patching from this snapshot: the controller may have written
-		// the node's restart record in the meantime, and a merge patch built
-		// from a stale copy would revert it. See its doc comment.
-		if err := agent.PatchObserved(ctx, kc, nt, nodeName, observed); err != nil {
-			slog.Error("patching NodeTuning status", "nodeTuning", nt.Name, "node", nodeName, "error", err)
+	} else {
+		for _, nt := range matching {
+			// nt comes from the List above, and everything between it and here —
+			// Apply, the systemd round-trips, Observe — happens on the node, in
+			// seconds. agent.PatchObserved therefore re-reads the object rather
+			// than patching from this snapshot: the controller may have written
+			// the node's restart record in the meantime, and a merge patch built
+			// from a stale copy would revert it. See its doc comment.
+			if err := agent.PatchObserved(ctx, kc, nt, nodeName, observed); err != nil {
+				slog.Error("patching NodeTuning status", "nodeTuning", nt.Name, "node", nodeName, "error", err)
+			}
 		}
+	}
+
+	// 6. reads the node's own block devices and publishes them, with the
+	//    divergences against the BMC's list, onto the FrameMachine that
+	//    names this node. A node no FrameMachine claims is logged and moves
+	//    on, deliberately not treated as fatal to the rest of the tick: the
+	//    tuning half above (steps 1-5) must keep running on a cluster where
+	//    FrameMachine is not used at all. It does not share a return path
+	//    with step 5 above for the same reason — a failure reading the
+	//    node's tuning state must not silently suppress publishing its
+	//    disks, or vice versa.
+	if disks, err := agent.ObserveDisks(runner); err != nil {
+		slog.Error("reading node disks", "error", err)
+	} else if err := agent.PatchObservedDisks(ctx, kc, nodeName, disks); err != nil {
+		slog.Error("publishing node disks", "node", nodeName, "error", err)
 	}
 }
 
