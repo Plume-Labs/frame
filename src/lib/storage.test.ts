@@ -84,6 +84,15 @@ describe('claimGapLine', () => {
     expect(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toContain('ceph-rbd')
   })
 
+  // Every other case here (and the only production call site) happens to
+  // pass 'ceph-rbd', so a hardcoded `ceph-rbd — ...` that ignores
+  // `className` entirely would still pass them all. Varying the class name
+  // is the only way to prove the parameter is actually threaded through —
+  // 'local-path' is the cluster's other real class, not an invented one.
+  it('threade le nom de classe recu, pas une constante', () => {
+    expect(claimGapLine('local-path', { total: 3, labelled: 1 })).toContain('local-path')
+  })
+
   it('ne presente pas zero etiquette comme une faute', () => {
     // Enforcement is opt-in per object; the normal state on day one is
     // many claims and no labels.
