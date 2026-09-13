@@ -337,18 +337,21 @@ func mapInventory(inv *redfish.Inventory) *framev1beta1.MachineInventory {
 			Manufacturer: m.Manufacturer,
 		})
 	}
-	// Drives is deliberately mapped through unchanged: internal/redfish
-	// (Task 3) always returns it empty, because iLO4 exposes physical drives
-	// under HPE's OEM SmartStorage tree, which cannot be walked without
-	// hardware to verify against. That is a decision for the client to
-	// revisit, not something for this mapping to special-case around.
+	// inv.Drives is legitimately empty on a machine whose BMC has no
+	// SmartStorage tree (internal/redfish tolerates a not-found there rather
+	// than failing the probe) — ranging over an empty slice is the normal
+	// case here, not an error to special-case around.
 	for _, d := range inv.Drives {
 		out.Drives = append(out.Drives, framev1beta1.DriveInfo{
-			Name:     d.Name,
-			Model:    d.Model,
-			SizeGB:   d.SizeGB,
-			Protocol: d.Protocol,
-			Health:   d.Health,
+			Name:          d.Name,
+			Model:         d.Model,
+			SizeGB:        d.SizeGB,
+			Protocol:      d.Protocol,
+			Health:        d.Health,
+			SerialNumber:  d.SerialNumber,
+			Location:      d.Location,
+			MediaType:     d.MediaType,
+			StatusReasons: d.StatusReasons,
 		})
 	}
 	for _, n := range inv.NetworkAdapters {
