@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,12 +39,13 @@ import (
 // writes "started", and MarkComplete is what a real Wiper would call once
 // the destructive work is actually done.
 type fakeWiper struct {
-	mu            sync.Mutex
-	calls         int
-	cleanupErr    error
-	readMarkerErr error
-	markers       map[string]string
-	completed     map[string]bool
+	mu              sync.Mutex
+	calls           int
+	cleanupErr      error
+	readMarkerErr   error
+	markCompleteErr error
+	markers         map[string]string
+	completed       map[string]bool
 }
 
 func newFakeWiper() *fakeWiper {
@@ -84,9 +86,21 @@ func (f *fakeWiper) Claim(_ context.Context, machine, byIDPath, claimUID, destin
 	return f.cleanupErr
 }
 
+// FailMarkComplete makes the next MarkComplete call return err, matching
+// the FailCleanup idiom — R16's case: the destructive work already
+// succeeded, only the completion bookkeeping fails to write.
+func (f *fakeWiper) FailMarkComplete(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markCompleteErr = err
+}
+
 func (f *fakeWiper) MarkComplete(_ context.Context, machine, byIDPath, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.markCompleteErr != nil {
+		return f.markCompleteErr
+	}
 	f.completed[machine+"|"+byIDPath] = true
 	return nil
 }
@@ -161,6 +175,44 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(back.Status.Phase).To(Equal("Ready"))
 		Expect(back.Status.Message).To(ContainSubstring("wipe"))
 		Expect(wipes.Count()).To(Equal(1))
+
+		// R16, test 2 of 2 — the normal path records completion as True.
+		cond := meta.FindStatusCondition(back.Status.Conditions, conditionCompletionRecorded)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	// R16 — a failed MarkComplete must not undo a successful Claim. The
+	// destructive work already happened; refusing Ready here would assert
+	// something false about the hardware (guard 5's "the gesture itself
+	// failed" does not apply — only the bookkeeping did), and returning the
+	// error would requeue into a resume that reads "started, not complete"
+	// and fails closed forever, rebuilding the exact incident R15 removed.
+	// R16, test 1 of 2 — this must produce Ready, one destructive call, a
+	// message naming the failure, and CompletionRecorded=False.
+	It("passe Ready quand seul l'enregistrement de completion echoue", func(ctx SpecContext) {
+		machineWithDisks(ctx, "r16-fail", []framev1beta1.ObservedDisk{
+			{Path: "/dev/disk/by-id/scsi-R16", SerialNumber: "R16FAIL0001", SizeGB: 300, Occupancy: "free"},
+		})
+		wipes.FailMarkComplete(errors.New("could not write the completion marker"))
+
+		c := claim("r16-fail", "/dev/disk/by-id/scsi-R16", "R16FAIL0001")
+		Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+		Expect(err).NotTo(HaveOccurred())
+
+		var back framev1beta1.FrameDiskClaim
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+		Expect(back.Status.Phase).To(Equal("Ready"),
+			"a failure to record completion says nothing about the disk, which was already claimed successfully")
+		Expect(back.Status.Message).To(ContainSubstring("could not write the completion marker"))
+		Expect(wipes.Count()).To(Equal(1))
+
+		cond := meta.FindStatusCondition(back.Status.Conditions, conditionCompletionRecorded)
+		Expect(cond).NotTo(BeNil())
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal("MarkerWriteFailed"))
 	})
 
 	// GARDE 1 — le numero de serie retape doit correspondre.
@@ -513,6 +565,10 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		// into the unconfirmed-completion refusal regardless of `complete`.
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &mid)).To(Succeed())
 		Expect(mid.Status.Phase).To(Equal("Ready"))
+		// Tightened per re-review: the resume-success message must match the
+		// primary path's, destination and all, so a resumed claim reads the
+		// same as a fresh one.
+		Expect(mid.Status.Message).To(ContainSubstring(c.Spec.Destination))
 	})
 
 	// GARDE 5 — une erreur de nettoyage n'est pas avalee. Revue C2: guard 4
@@ -551,8 +607,14 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
-		Expect(back.Status.Phase).NotTo(Equal("Ready"),
-			"a claim whose destructive work may not have completed must not converge to Ready on a later reconcile")
+		// Tightened per re-review: NotTo(Equal("Ready")) alone would let a
+		// stuck "Claiming" through, or a Failed whose message dropped the
+		// inspection instruction — the one sentence this object exists to
+		// deliver at this moment. Pin both: the phase is the terminal
+		// refusal, and the message still tells the operator what to do.
+		Expect(back.Status.Phase).To(Equal("Failed"),
+			"own marker, not complete: this must be the terminal refusal, not a stuck Claiming")
+		Expect(back.Status.Message).To(ContainSubstring("inspected"))
 		Expect(wipes.Count()).To(Equal(1), "an unconfirmed claim must not be retried automatically")
 	})
 })
