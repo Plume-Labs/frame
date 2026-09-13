@@ -63,6 +63,7 @@ describe('machineTemperatureReadings', () => {
     lastProbeAt: '2026-09-10T11:59:30Z',
     sensorsValidAt: null,
     inventory: null,
+    storage: null,
     sensors: null,
     eventLog: [],
     eventLogCounts: {},

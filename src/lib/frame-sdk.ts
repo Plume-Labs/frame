@@ -35,6 +35,7 @@ import {
   installObjectName, randomNameSuffix, toInstall,
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
+import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -536,6 +537,15 @@ export interface CephStatus {
   bytesUsed: number
   bytesAvailable: number
   pools: Array<{ name: string; replication: number }>
+  /**
+   * The reasons behind `health` when it is not HEALTH_OK, shaped like the
+   * generic `CephHealthPayload.checks` `cephWarningReasons` (`storage.ts`)
+   * consumes — one entry per rook `status.ceph.details` key, remapped from
+   * Rook's `{message, severity}` shape into `{summary: {message}}` so the
+   * pure decision function is not written against one specific source's
+   * field names.
+   */
+  checks: Record<string, { summary?: { message?: string } }>
 }
 
 /** A real Kubernetes event. */
@@ -673,6 +683,17 @@ export function frameListPath(plural: string, ns?: string): string {
 }
 
 /**
+ * The list endpoint for a cluster-scoped Frame CRD — FrameStorage is the
+ * only one this SDK reads (`+kubebuilder:resource:scope=Cluster` in
+ * `api/frame/v1beta1/framestorage_types.go`), so unlike every other Frame
+ * kind here there is no namespace segment to build and no `frameNs` to
+ * resolve through.
+ */
+export function frameClusterListPath(plural: string): string {
+  return `/apis/${GROUP}/${VERSION}/${plural}`
+}
+
+/**
  * Where the FrameTask trail is read from.
  *
  * Not `frameListPath('frametasks')`: that resolves through `frameNs()` to
@@ -708,6 +729,16 @@ export function machinesPath(ns?: string): string {
 /** The list endpoint for FrameInstall CRs, for callers that want to watch it. */
 export function installsPath(ns?: string): string {
   return frameListPath('frameinstalls', ns)
+}
+
+/** The list endpoint for FrameStorage CRs — cluster-scoped, see `frameClusterListPath`. */
+export function storageEntriesPath(): string {
+  return frameClusterListPath('framestorages')
+}
+
+/** The list endpoint for FrameDiskClaim CRs, for callers that want to watch it. */
+export function diskClaimsPath(ns?: string): string {
+  return frameListPath('framediskclaims', ns)
 }
 
 /**
@@ -1507,6 +1538,12 @@ class ClusterClient {
               health?: string
               capacity?: { bytesTotal?: number; bytesUsed?: number; bytesAvailable?: number }
               versions?: { overall?: Record<string, number> }
+              // Same field cmd/main.go's readCephHealth reads for
+              // FrameStorage's Healthy condition: one entry per failed
+              // check, keyed by check code, message-only (no summary
+              // nesting — that shape is ceph's own `status --format json`,
+              // not what Rook publishes on the CR).
+              details?: Record<string, { message?: string; severity?: string }>
             }
           }
         }>
@@ -1528,6 +1565,17 @@ class ClusterClient {
     const running = (list: ListResponse<{ status?: { phase?: string } }>) =>
       (list.items ?? []).filter((p) => p.status?.phase === 'Running').length
 
+    // Remapped into `cephWarningReasons`'s generic checks shape (storage.ts)
+    // rather than handing that pure function Rook's own field names —
+    // `checks[code].summary.message`, not `details[code].message`, is the
+    // one shape it is written against, and this is where that translation
+    // belongs, not inside the decision itself.
+    const details = cluster.status?.ceph?.details ?? {}
+    const checks: CephStatus['checks'] = {}
+    for (const [code, entry] of Object.entries(details)) {
+      checks[code] = { summary: { message: entry?.message } }
+    }
+
     return {
       health: cluster.status?.ceph?.health ?? 'UNKNOWN',
       version: version.replace(/^ceph version /, '').split(' ')[0] ?? '',
@@ -1540,6 +1588,7 @@ class ClusterClient {
         name: p.metadata.name,
         replication: p.spec?.replicated?.size ?? 0,
       })),
+      checks,
     }
   }
 
@@ -3457,6 +3506,165 @@ class InstallClient {
   }
 }
 
+/**
+ * A FrameStorage CR as the apiserver returns it — cluster-scoped
+ * (`+kubebuilder:resource:scope=Cluster` in
+ * `api/frame/v1beta1/framestorage_types.go`), so unlike every other Frame
+ * kind read here there is no `metadata.namespace`.
+ */
+export interface FrameStorageCR {
+  metadata: { name: string }
+  spec?: {
+    type?: string
+    content?: string[]
+    storageClassName?: string
+    adoptExisting?: boolean
+    nodes?: string[]
+  }
+  status?: {
+    shared?: boolean
+    phase?: string
+    capacity?: { usable?: string; used?: string; raw?: string }
+    claims?: { total?: number; labelled?: number }
+    adopted?: boolean
+    conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>
+  }
+}
+
+/**
+ * A FrameStorage entry, projected for the screen. `capacity`/`claims` are
+ * never left `undefined` — `capacityLine`/`claimGapLine` (storage.ts) are
+ * written against the zero-valued shape, not an optional one, so an entry
+ * whose reconcile has not yet populated `status.capacity` still renders
+ * "usable unknown" rather than throwing.
+ */
+export interface StorageEntry {
+  name: string
+  type: string
+  content: string[]
+  storageClassName: string
+  shared: boolean
+  phase: string
+  adopted: boolean
+  capacity: StorageCapacity
+  claims: StorageClaimCounts
+  /** From the `Healthy` condition — its message carries the WARN reasons for a Degraded entry. */
+  healthy: { status: string; reason: string; message: string } | null
+  /** From the `Available` condition — message is `all nodes` or a comma-separated node list. */
+  available: { status: string; message: string } | null
+}
+
+function findCondition(
+  conditions: Array<{ type: string; status: string; reason?: string; message?: string }> | undefined,
+  type: string,
+): { type: string; status: string; reason?: string; message?: string } | undefined {
+  return (conditions ?? []).find((c) => c.type === type)
+}
+
+function crToStorageEntry(cr: FrameStorageCR): StorageEntry {
+  const status = cr.status ?? {}
+  const healthy = findCondition(status.conditions, 'Healthy')
+  const available = findCondition(status.conditions, 'Available')
+  return {
+    name: cr.metadata.name,
+    type: cr.spec?.type ?? '',
+    content: cr.spec?.content ?? [],
+    storageClassName: cr.spec?.storageClassName ?? '',
+    shared: status.shared ?? false,
+    phase: status.phase ?? 'Unknown',
+    adopted: status.adopted ?? false,
+    capacity: {
+      usable: status.capacity?.usable ?? '',
+      used: status.capacity?.used ?? '',
+      raw: status.capacity?.raw ?? '',
+    },
+    claims: {
+      total: status.claims?.total ?? 0,
+      labelled: status.claims?.labelled ?? 0,
+    },
+    healthy: healthy ? { status: healthy.status, reason: healthy.reason ?? '', message: healthy.message ?? '' } : null,
+    available: available ? { status: available.status, message: available.message ?? '' } : null,
+  }
+}
+
+/**
+ * Reads FrameStorage entries, mapping each CR through `crToStorageEntry`
+ * above — a structural projection, not a decision, so it stays beside the
+ * other CR-to-view mappers in this module rather than in `storage.ts`
+ * (which is reserved for the pure, tested judgments: `capacityLine`,
+ * `claimGapLine`, `cephWarningReasons`, `describeDivergence`).
+ *
+ * Cluster-scoped, so unlike every other client in this file there is no
+ * namespace to carry and no constructor argument.
+ */
+class StorageClient {
+  async list(): Promise<StorageEntry[]> {
+    const res = await k8sFetch<ListResponse<FrameStorageCR>>(storageEntriesPath())
+    return (res.items ?? []).map(crToStorageEntry).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** For `useLiveResource`, so the console watches the same collection it reads. */
+  watchPath(): string {
+    return storageEntriesPath()
+  }
+}
+
+/** A FrameDiskClaim CR as the apiserver returns it. */
+export interface FrameDiskClaimCR {
+  metadata: { name: string; namespace: string }
+  spec?: {
+    machineRef?: { name?: string }
+    byIDPath?: string
+    serial?: string
+    destination?: string
+  }
+  status?: {
+    phase?: string
+    message?: string
+    claimUID?: string
+  }
+}
+
+/** A FrameDiskClaim, projected for the screen. */
+export interface DiskClaim {
+  name: string
+  namespace: string
+  machineName: string
+  byIDPath: string
+  serial: string
+  destination: string
+  phase: string
+  message: string
+}
+
+function crToDiskClaim(cr: FrameDiskClaimCR): DiskClaim {
+  return {
+    name: cr.metadata.name,
+    namespace: cr.metadata.namespace,
+    machineName: cr.spec?.machineRef?.name ?? '',
+    byIDPath: cr.spec?.byIDPath ?? '',
+    serial: cr.spec?.serial ?? '',
+    destination: cr.spec?.destination ?? '',
+    phase: cr.status?.phase ?? 'Pending',
+    message: cr.status?.message ?? '',
+  }
+}
+
+/** Reads FrameDiskClaim objects — namespaced, mirroring `MachineClient`/`InstallClient` above. */
+class DiskClaimClient {
+  constructor(private readonly ns?: string) {}
+
+  async list(): Promise<DiskClaim[]> {
+    const res = await k8sFetch<ListResponse<FrameDiskClaimCR>>(diskClaimsPath(this.ns))
+    return (res.items ?? []).map(crToDiskClaim).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** For `useLiveResource`, so the console watches the same collection it reads. */
+  watchPath(): string {
+    return diskClaimsPath(this.ns)
+  }
+}
+
 /** A FrameUser CR as the apiserver returns it — the shape `src/lib/accounts.ts` reshapes into `Account`. */
 export interface FrameUserCR {
   metadata: { name: string }
@@ -3552,6 +3760,8 @@ export class FrameClient {
   public readonly workloads: WorkloadClient
   public readonly machines: MachineClient
   public readonly installs: InstallClient
+  public readonly storage: StorageClient
+  public readonly diskClaims: DiskClaimClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -3565,6 +3775,8 @@ export class FrameClient {
     this.workloads = new WorkloadClient()
     this.machines  = new MachineClient(opts.namespace)
     this.installs  = new InstallClient(opts.namespace)
+    this.storage   = new StorageClient()
+    this.diskClaims = new DiskClaimClient(opts.namespace)
   }
 
   async health(): Promise<HealthStatus> {

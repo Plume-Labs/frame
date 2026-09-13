@@ -13,6 +13,7 @@
 // is the normal case, not an error, and the screen must be able to say why.
 
 import type { NamespaceNode } from './workloads'
+import type { DiskDivergence } from './storage'
 
 export type SensorSeverity = 'ok' | 'warning' | 'critical' | 'unknown'
 
@@ -36,6 +37,39 @@ export interface DriveInfo {
   sizeGB: number
   protocol: string
   health: string
+  // The four fields below back the two-source disk inventory
+  // (`api/frame/v1beta1/framemachine_types.go`'s `DriveInfo`): the BMC's
+  // half of a picture whose other half is `Machine.storage.observed`, and
+  // the two are joined on `serialNumber` alone and never merged on screen
+  // (see `MachineDisksPanel.tsx` / `docs/superpowers/specs/2026-09-13-storage-design.md` §3).
+  serialNumber: string
+  location: string
+  mediaType: string
+  statusReasons: string[]
+}
+
+/**
+ * One whole disk as the node's own kernel reports it — the second of the
+ * two storage sources. Never merged with `DriveInfo`: the gap between them
+ * is the datum.
+ */
+export interface ObservedDisk {
+  path: string
+  serialNumber: string
+  sizeGB: number
+  occupancy: string
+}
+
+/**
+ * The node-side half of the storage picture plus the computed gap against
+ * `MachineInventory.drives`. `null` on a `Machine` means the agent has
+ * never reported — distinct from an empty `observed` list, which
+ * `observedAt` is what lets a screen tell apart.
+ */
+export interface MachineStorage {
+  observed: ObservedDisk[]
+  divergences: DiskDivergence[]
+  observedAt: string | null
 }
 
 export interface NetworkAdapterInfo {
@@ -106,6 +140,7 @@ export interface Machine {
   lastProbeAt: string | null
   sensorsValidAt: string | null
   inventory: MachineInventory | null
+  storage: MachineStorage | null
   sensors: MachineSensors | null
   eventLog: MachineEvent[]
   eventLogCounts: Record<string, number>
@@ -142,6 +177,7 @@ export interface MachineCR {
     postState?: string
     indicatorLED?: string
     inventory?: MachineInventory
+    storage?: { observed?: ObservedDisk[]; divergences?: DiskDivergence[]; observedAt?: string }
     sensors?: MachineSensors
     sensorsValidAt?: string
     eventLog?: MachineEvent[]
@@ -176,6 +212,13 @@ export function toMachine(cr: MachineCR): Machine {
     lastProbeAt: status.lastProbeAt ?? null,
     sensorsValidAt: status.sensorsValidAt ?? null,
     inventory: status.inventory ?? null,
+    storage: status.storage
+      ? {
+          observed: status.storage.observed ?? [],
+          divergences: status.storage.divergences ?? [],
+          observedAt: status.storage.observedAt ?? null,
+        }
+      : null,
     sensors: status.sensors ?? null,
     eventLog: status.eventLog ?? [],
     eventLogCounts: status.eventLogCounts ?? {},

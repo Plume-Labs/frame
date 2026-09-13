@@ -1,4 +1,13 @@
-import { AlluxioStats, CephStatus, MetricSeries, createFrameClient, coreListPath, crdListPath } from '@/lib/frame-sdk'
+import {
+  AlluxioStats,
+  CephStatus,
+  MetricSeries,
+  StorageEntry,
+  createFrameClient,
+  coreListPath,
+  crdListPath,
+} from '@/lib/frame-sdk'
+import { capacityLine, cephWarningReasons } from '@/lib/storage'
 import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,7 +17,7 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Stat } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
-import { Tone, inverseScoreTone } from '@/lib/thresholds'
+import { Tone, TONE_TEXT, inverseScoreTone } from '@/lib/thresholds'
 import { Database, ArrowClockwise, HardDrives, Cube, Stack, Lightning, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -119,8 +128,19 @@ export function ClusterStorageView() {
     [],
     30_000,
   )
+  // FrameStorage entries, read only for the usable figure their reconcile
+  // derives (raw / replication) — this screen never computes usable itself,
+  // for the same reason capacityLine refuses to guess it.
+  const { state: storageState } = useLiveResource<StorageEntry[]>(
+    () => frame.storage.list(),
+    [],
+    [frame.storage.watchPath()],
+  )
   const c = state.phase === 'ready' ? state.data : null
   const trend = trendState.phase === 'ready' ? trendState.data : null
+  const entries = storageState.phase === 'ready' ? storageState.data : []
+  const cephEntry = entries.find((e) => e.type.startsWith('ceph-') && e.capacity.usable)
+    ?? entries.find((e) => e.type.startsWith('ceph-'))
   const usedPct = c && c.bytesTotal ? (c.bytesUsed / c.bytesTotal) * 100 : 0
 
   return (
@@ -151,14 +171,24 @@ export function ClusterStorageView() {
               <Stat label="Ceph version" value={c.version || '—'} size="sm" tone="muted" />
             </div>
 
+            {c.health !== 'HEALTH_OK' && (
+              <ul className={`text-xs font-mono space-y-0.5 list-disc list-inside ${TONE_TEXT[healthTone(c.health)]}`}>
+                {cephWarningReasons({ health: c.health, checks: c.checks }).map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            )}
+
             <div className="space-y-1">
               <Progress value={usedPct} className="h-3" />
-              <div className="flex justify-between text-xs text-muted-foreground font-mono">
-                <span>{(c.bytesUsed / GiB).toFixed(1)} GiB used</span>
-                <span>
-                  {(c.bytesAvailable / GiB).toFixed(0)} GiB free of{' '}
-                  {(c.bytesTotal / GiB).toFixed(0)} GiB raw
-                </span>
+              <div className="text-xs text-muted-foreground font-mono">
+                {capacityLine(
+                  cephEntry?.capacity ?? {
+                    usable: '',
+                    used: `${(c.bytesUsed / GiB).toFixed(1)}GiB`,
+                    raw: `${(c.bytesTotal / GiB).toFixed(0)}GiB`,
+                  },
+                )}
               </div>
             </div>
           </CardContent>
