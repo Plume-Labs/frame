@@ -113,11 +113,28 @@ alimenté par l'agent.
 
 ```yaml
 status:
+  inventory:
+    drives: []        # Redfish : baie, modèle, série, type, état  (champ du lot 1)
   storage:
-    bmc: []           # Redfish : baie, modèle, série, état, RAID
     observed: []      # agent : lsblk + /dev/disk/by-id, taille, occupation
     divergences: []   # motif : bmc-only | os-only | mismatch
 ```
+
+**La source BMC n'est pas un champ neuf : c'est `status.inventory.drives[]`,
+posé par le lot 1 et jamais rempli.** `internal/redfish/client.go` laisse
+`Inventory.Drives` vide avec un commentaire explicite — un iLO4 expose ses
+disques sous l'arbre OEM `SmartStorage`, pas sous les collections standard
+`Storage/Drives`, et le lot 1 a refusé de deviner ce chemin sans machine pour
+le vérifier. Les captures de cette machine existent désormais
+(`internal/redfish/testdata/ilo4-real/smartstorage_*`). Ce lot implémente donc
+le parcours OEM et remplit le champ existant ; créer une seconde liste BMC à
+côté d'une liste vide serait un doublon.
+
+`DriveInfo` du lot 1 ne porte **pas** de numéro de série — donc la jointure de
+§3 est aujourd'hui impossible. L'ajouter est un préalable, pas un détail : le
+champ `SerialNumber` des disques est présent dans les captures
+(`"SerialNumber": "W4722RRA"`), avec `Location` (`"2I:6:8"`), `InterfaceType`,
+`MediaType` et `DiskDriveStatusReasons`.
 
 **La clé de jointure est le numéro de série, et rien d'autre.** Le lot
 provisionnement a montré qu'un nom de disque Redfish et un chemin `by-id`
