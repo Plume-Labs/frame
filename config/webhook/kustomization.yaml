@@ -9,6 +9,31 @@ patches:
 # matters (it is the whole reason the webhook is a no-op the day it lands)
 # and why this is a JSON6902 patch by array index rather than a strategic
 # merge patch by name.
+#
+# Whoever adds the next webhook: read this before you do. The patch below
+# targets `vpersistentvolumeclaim.kb.io` by its numeric array index (today
+# 6), because manifests.yaml is controller-gen's alphabetical-by-name
+# ordering and JSON6902 has no by-name selector. If a new webhook's name
+# sorts before "vpersistentvolumeclaim" alphabetically, every index after it
+# shifts by one — including this one — and the patch silently starts adding
+# objectSelector to whatever webhook now sits at index 6, not to the PVC
+# one.
+#
+# That is worse than it sounds, and worse than what `make helm-parity`'s
+# failure message will tell you. Its PVC-webhook-safety check selects by
+# name, so it will go red — but it can only ever say "the PVC webhook lost
+# its objectSelector", because it only inspects that one webhook. What it
+# cannot see and will not say is the other half of the same mistake: the
+# webhook that now unexpectedly HOLDS the objectSelector is (as of task 10)
+# `framestorages`, or whichever fail-closed, Frame-only webhook next lands
+# at that position — and none of those objects carry
+# `frame.plume-labs.io/usage`, the label this selector matches on. Gaining
+# that selector doesn't loosen that webhook, it disables it: every create
+# and update to that kind stops being sent to admission at all, silently,
+# with no error and no log line, while its ValidatingWebhookConfiguration
+# entry still shows `failurePolicy: Fail` to anyone who reads it. Fix the
+# index in the same change that reorders manifests.yaml; do not wait for
+# the parity failure to tell you which one moved.
 - path: patches/objectselector_in_persistentvolumeclaims.yaml
   target:
     kind: ValidatingWebhookConfiguration

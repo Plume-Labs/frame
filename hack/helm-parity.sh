@@ -320,6 +320,44 @@ fi
 echo "OK: identical tier labels."
 echo
 
+# --- RBAC safety: no delete verb on PersistentVolume(Claim), either path ----
+# Frame never deletes a PersistentVolume or a PersistentVolumeClaim, in any
+# branch: a FrameStorage entry describes where volumes may live, and removing
+# the description must never remove the volumes (see the "no delete verb"
+# comment on the framestorages/storageclasses blocks in
+# charts/frame/templates/rbac-manager.yaml and config/rbac/role.yaml). That
+# guarantee lives only in prose unless something fails a build the day a
+# well-meaning cleanup patch adds `delete` back to one of those blocks — so
+# assert the absent verb directly against both rendered manifests, not just
+# against the two hand-maintained sources. `grep -A20 persistentvolume` also
+# matches `persistentvolumeclaims`, deliberately, and is checked against the
+# full render (not just the RBAC section) since a hand-authored subresource
+# rule for a literal `persistentvolumes` resource would land somewhere this
+# script's other sections never look.
+#
+# Reuses $tmpdir/kustomize.yaml and $tmpdir/helm-default.yaml, already
+# rendered above for the default-parity comparison, rather than invoking
+# `helm template`/`kustomize build` a second time: a bare `helm template
+# charts/frame` with no --set fails outright, since image.repository and
+# provisiond.media.url are `required` with no default (see this script's own
+# header) -- there is no reason to re-render (and re-risk that) when this
+# check only needs text already on disk from the first render.
+echo "== RBAC safety: no delete verb on PersistentVolume or PersistentVolumeClaim (either install path) =="
+pv_delete_fail=0
+if grep -A20 'persistentvolume' "$tmpdir/kustomize.yaml" | grep -qE '^\s+- delete$'; then
+  echo "FAIL: kustomize build config/default grants delete on a persistentvolume(claim) resource. Frame must never delete a PV or PVC -- the absent verb is the guarantee, not a comment." >&2
+  pv_delete_fail=1
+fi
+if grep -A20 'persistentvolume' "$tmpdir/helm-default.yaml" | grep -qE '^\s+- delete$'; then
+  echo "FAIL: the chart grants delete on a persistentvolume(claim) resource. Frame must never delete a PV or PVC -- the absent verb is the guarantee, not a comment." >&2
+  pv_delete_fail=1
+fi
+if [ "$pv_delete_fail" -ne 0 ]; then
+  exit 1
+fi
+echo "OK: neither install path grants delete on PersistentVolume or PersistentVolumeClaim."
+echo
+
 # --- CRD shape diff: version topology and conversion wiring ------------------
 # See crd_shape() for why this is a separate, narrow comparison rather than a
 # full body diff, and for what it is guarding against (F13).

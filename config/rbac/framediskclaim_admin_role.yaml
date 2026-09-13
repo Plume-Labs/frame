@@ -1,0 +1,35 @@
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants full administrative access to FrameDiskClaim resources including bulk deletion.
+# This role is intended for administrators who manage the complete lifecycle of
+# disk claims including collection-level operations.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: admin
+  name: framediskclaim-admin-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framediskclaims
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framediskclaims/status
+  verbs:
+  - get

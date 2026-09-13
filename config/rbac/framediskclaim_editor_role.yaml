@@ -1,0 +1,47 @@
+# This role deliberately carries no rbac.frame.plume-labs.io/tier label.
+#
+# Creating a FrameDiskClaim destroys data. Labelling this file would make
+# frame-editor aggregate its create and patch verbs, which is a one-request
+# promotion from "can edit workloads" to "can wipe a volume". Lot 1 shipped
+# exactly that mistake on framemachine_editor_role.yaml -- it had tier: editor
+# for one commit, and that was a one-request escalation.
+#
+# The precedent is frameinstall_editor_role.yaml, unlabelled for the same
+# reason (task 7, provisioning/Debian: creating a FrameInstall wipes a
+# machine's disks).
+
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants edit access to FrameDiskClaim resources including creation, modification, and
+# deletion. This role is intended for operators who manage disk claim lifecycle without
+# administrative capabilities like bulk deletion.
+#
+# Bind it deliberately if you want it, to a group, never to a user.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: framediskclaim-editor-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framediskclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framediskclaims/status
+  verbs:
+  - get

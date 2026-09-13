@@ -120,11 +120,20 @@ aggregated ClusterRoles pick up. Default is all three; three kinds are not.
     a FrameInstall wipes a machine's disks, the same class of action as
     framemachine's powerRequest, so it gets the same exclusion: admin and
     viewer only. See config/rbac/frameinstall_editor_role.yaml's header.
+  framediskclaim — no editor (2026-09-13, storage, task 10). Creating a
+    FrameDiskClaim destroys data, the same class of action as frameinstall's
+    disk wipe and framemachine's powerRequest, so it gets the same exclusion:
+    admin and viewer only. See config/rbac/framediskclaim_editor_role.yaml's
+    header.
 
 This list and config/rbac/*_role.yaml are two hand-maintained copies of one
 thing. `make helm-parity` compares them, including this label.
 */}}
 {{- define "frame.tierRoleCRDs" -}}
+- roleBase: framediskclaim
+  apiGroup: frame.plume-labs.io
+  resource: framediskclaims
+  aggregate: [admin, viewer]
 - roleBase: frameinstall
   apiGroup: frame.plume-labs.io
   resource: frameinstalls
@@ -142,6 +151,9 @@ thing. `make helm-parity` compares them, including this label.
 - roleBase: frameresourcequota
   apiGroup: frame.plume-labs.io
   resource: frameresourcequotas
+- roleBase: framestorage
+  apiGroup: frame.plume-labs.io
+  resource: framestorages
 - roleBase: frametask
   apiGroup: frame.plume-labs.io
   resource: frametasks
