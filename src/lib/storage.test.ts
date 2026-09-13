@@ -21,6 +21,22 @@ describe('describeDivergence', () => {
     expect(line.toLowerCase()).not.toContain('error')
   })
 
+  // The load-bearing property is the meaning, not merely that the string
+  // differs between branches: a `bmc-only` line has to say the disk is
+  // seen by the BMC and not presented to the node, or an operator reading
+  // it cannot tell which side is missing it.
+  it('dit que le BMC voit le disque et que le noeud ne le presente pas', () => {
+    const line = describeDivergence({ serialNumber: 'X', reason: 'bmc-only', detail: '' }).toLowerCase()
+    expect(line).toContain('bmc')
+    expect(line).toContain('not presented to the node')
+  })
+
+  it('dit que le noeud voit le disque et que le BMC ne le liste pas', () => {
+    const line = describeDivergence({ serialNumber: 'X', reason: 'os-only', detail: '' }).toLowerCase()
+    expect(line).toContain('node')
+    expect(line).toContain("absent from the bmc")
+  })
+
   it('distingue os-only de bmc-only', () => {
     const a = describeDivergence({ serialNumber: 'X', reason: 'bmc-only', detail: '' })
     const b = describeDivergence({ serialNumber: 'X', reason: 'os-only', detail: '' })
@@ -32,6 +48,14 @@ describe('capacityLine', () => {
   it('rend l-utilisable en premier', () => {
     const line = capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '3.6Ti' })
     expect(line.indexOf('1.2Ti')).toBeLessThan(line.indexOf('3.6Ti'))
+  })
+
+  // Usable alone tells an operator how much room is left; without `used`
+  // alongside it there is no way to read how close the cluster is to that
+  // ceiling, which is the whole point of showing capacity at all.
+  it('rend aussi l-utilise, pas seulement l-utilisable', () => {
+    const line = capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '3.6Ti' })
+    expect(line).toContain('480Gi')
   })
 
   it('ne rend jamais le brut seul', () => {
@@ -53,6 +77,13 @@ describe('claimGapLine', () => {
     expect(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toContain('0')
   })
 
+  // The count alone is meaningless without which class it is a count of:
+  // a screen listing several entries side by side needs the class name in
+  // the line itself, not just as a heading nothing here checks for.
+  it('nomme la classe de stockage, pas seulement les comptes', () => {
+    expect(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toContain('ceph-rbd')
+  })
+
   it('ne presente pas zero etiquette comme une faute', () => {
     // Enforcement is opt-in per object; the normal state on day one is
     // many claims and no labels.
@@ -66,9 +97,9 @@ describe('cephWarningReasons', () => {
   it('extrait les verifications en echec', () => {
     const reasons = cephWarningReasons({
       health: 'HEALTH_WARN',
-      checks: {
-        POOL_NO_REDUNDANCY: { summary: { message: '1 pool(s) have no replicas configured' } },
-        MON_CLOCK_SKEW: { summary: { message: 'clock skew detected on mon.b' } },
+      details: {
+        POOL_NO_REDUNDANCY: { message: '1 pool(s) have no replicas configured', severity: 'HEALTH_WARN' },
+        MON_CLOCK_SKEW: { message: 'clock skew detected on mon.b', severity: 'HEALTH_WARN' },
       },
     })
     expect(reasons).toHaveLength(2)
@@ -76,13 +107,26 @@ describe('cephWarningReasons', () => {
   })
 
   it('rend une liste vide sur HEALTH_OK', () => {
-    expect(cephWarningReasons({ health: 'HEALTH_OK', checks: {} })).toEqual([])
+    expect(cephWarningReasons({ health: 'HEALTH_OK', details: {} })).toEqual([])
+  })
+
+  // The guard has to key off `health` first, unconditionally — not off
+  // whether `details` happens to be non-empty. A stale or lingering
+  // `details` entry on an otherwise-OK cluster must not be read as a
+  // warning; reordering the guard to "details non-empty implies warning"
+  // passes every other test here while getting this one backwards.
+  it('ignore des motifs residuels quand la sante est HEALTH_OK', () => {
+    const reasons = cephWarningReasons({
+      health: 'HEALTH_OK',
+      details: { MON_CLOCK_SKEW: { message: 'clock skew detected on mon.b', severity: 'HEALTH_WARN' } },
+    })
+    expect(reasons).toEqual([])
   })
 
   it('ne masque pas un WARN dont les motifs manquent', () => {
-    // A WARN with no checks is still a WARN. Returning [] here would let
+    // A WARN with no details is still a WARN. Returning [] here would let
     // the screen render "healthy" for a degraded cluster.
-    const reasons = cephWarningReasons({ health: 'HEALTH_WARN', checks: {} })
+    const reasons = cephWarningReasons({ health: 'HEALTH_WARN', details: {} })
     expect(reasons).toHaveLength(1)
     expect(reasons[0].toLowerCase()).toContain('reason')
   })

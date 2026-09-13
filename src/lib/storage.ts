@@ -69,9 +69,19 @@ export function claimGapLine(className: string, c: ClaimCounts): string {
   return `${className} — ${c.total} PVC, ${c.labelled} labelled`
 }
 
+/**
+ * Rook's own shape for `status.ceph.details` off the CephCluster CR — the
+ * field `cmd/main.go`'s `readCephHealth` already reads for FrameStorage's
+ * `Healthy` condition. Deliberately not Ceph's own `status --format json`
+ * `checks[code].summary.message` shape: that is a different source this
+ * screen never reads, and R18 struck the translation between the two after
+ * it shipped with no test on the transformation the cluster actually
+ * exercises — the tested thing is now the thing the cluster serves,
+ * carried through `ceph()` verbatim rather than remapped.
+ */
 export interface CephHealthPayload {
   health: string
-  checks: Record<string, { summary?: { message?: string } }>
+  details: Record<string, { message?: string; severity?: string }>
 }
 
 /**
@@ -79,15 +89,21 @@ export interface CephHealthPayload {
  * not show: it renders "WARN" and nothing else, and a degraded state with
  * no reason cannot be acted on.
  *
- * A WARN whose checks are missing still returns one line. Returning an
+ * `health` is checked first and unconditionally: a non-empty `details` on
+ * an otherwise-OK cluster (stale reads, a check that cleared but whose
+ * entry hasn't yet) must still report no warning — reordering this guard
+ * to key off `details` alone would render a healthy cluster as WARN, the
+ * opposite of the other failure mode below.
+ *
+ * A WARN whose details are missing still returns one line. Returning an
  * empty list there would let the screen render a degraded cluster as
  * healthy — the failure mode this function exists to prevent.
  */
 export function cephWarningReasons(payload: CephHealthPayload): string[] {
   if (payload.health === 'HEALTH_OK') return []
 
-  const reasons = Object.entries(payload.checks ?? {})
-    .map(([code, check]) => check.summary?.message ?? code)
+  const reasons = Object.entries(payload.details ?? {})
+    .map(([code, detail]) => detail.message ?? code)
     .filter((m) => m.length > 0)
 
   if (reasons.length === 0) {
