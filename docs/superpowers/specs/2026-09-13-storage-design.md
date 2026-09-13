@@ -193,10 +193,30 @@ d'une classe et ceux qui sont étiquetés. L'écran montre `ceph-rbd — 16 PVC,
 
 ## 6. Santé
 
-La `FrameStorage` de type `ceph-*` remonte l'état du cluster Ceph dans son
-statut et ses conditions. Le HEALTH_WARN en cours depuis cinquante jours doit
-devenir visible sur un écran sans qu'on tape `kubectl`. C'est le seul critère
-de réussite du volet B qui ne se laisse pas simuler par un test.
+**Correction portée après lecture du code.** J'avais écrit que le HEALTH_WARN
+n'était affiché nulle part. C'est faux : `src/components/ClusterStorageView.tsx`
+appelle `frame.cluster.ceph()`, lit `cluster.status.ceph.health`, et rend
+`<Stat label="Health" …>` avec un ton `warning` sur `HEALTH_WARN`
+(`healthTone`). L'écran existe, sous *Resources → Storage*. Le volet santé de
+ce lot n'a donc pas à rendre Ceph visible ; il doit faire les deux choses que
+cet écran ne fait pas.
+
+**a. Le pourquoi du WARN n'est nulle part.** L'écran affiche `WARN` et rien
+d'autre : ni les vérifications en échec, ni depuis quand. Un état dégradé sans
+son motif ne se traite pas. La `FrameStorage` de type `ceph-*` porte donc
+l'état **et ses motifs** dans ses conditions, et l'écran rend les motifs.
+
+**b. L'écran n'affiche que du brut, et c'est le défaut à corriger.** La barre
+de capacité lit `bytesUsed`/`bytesTotal` et l'étiquette dit littéralement
+`GiB raw`. C'est exactement la lecture qui a produit l'incident de capacité du
+parc : des OSD dimensionnés sur le brut quand la réplication divise par trois.
+`FrameStorage.status.capacity.usable` est la valeur de référence (§2.1), le
+brut ne peut apparaître qu'à côté d'elle, jamais seul.
+
+Le critère de réussite du volet B est donc : sur l'écran, le motif du WARN est
+lisible et la capacité utilisable est affichée avant le brut. Ni l'un ni
+l'autre ne se simule par un test unitaire — les deux se vérifient à l'écran,
+sur le cluster.
 
 ## 7. Contraintes globales
 
