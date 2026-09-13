@@ -1398,6 +1398,25 @@ KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
 
 Until these run, this lot is proven only against fakes and captures.
 
+Lot 3 (storage, 2026-09-13) adds two more items to this list, unrelated to
+provisioning — see [storage.md](storage.md) for the rest of what that lot
+does and does not deliver:
+
+- [ ] **The PVC content-type webhook needs a `caBundle` or cert-manager
+      before it can be installed.** The webhook manifest
+      (`config/webhook/manifests.yaml`) ships in this branch, but nothing has
+      applied it to a cluster; like every other admission webhook here, its
+      serving certificate and the injected CA come from cert-manager (see
+      "Cert-manager (required for webhooks)" above), and it has never been
+      exercised against a real PVC create.
+- [ ] **The node agent needs its new RBAC before the disks screen shows
+      anything at all.** `deploy/kubernetes/base/node-tuning-agent/rbac.yaml`
+      already grants the agent's `ClusterRole` `get`/`list`/`watch` on
+      `framemachines` and `get`/`patch`/`update` on `framemachines/status` —
+      the storage lot's addition — but that file has not been re-applied to
+      any running agent. Until it is, the agent cannot write
+      `status.storage`, and the disks screen has nothing to read.
+
 ---
 
 ## Installing the operator via Helm
