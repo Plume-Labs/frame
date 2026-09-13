@@ -61,4 +61,14 @@ resources:
 - frameinstall_admin_role.yaml
 - frameinstall_editor_role.yaml
 - frameinstall_viewer_role.yaml
+- framestorage_admin_role.yaml
+- framestorage_editor_role.yaml
+- framestorage_viewer_role.yaml
+# FrameDiskClaim's editor role is scaffolded but deliberately unlabelled, same
+# pattern and reason as frameinstall above: creating a FrameDiskClaim destroys
+# data, so only the admin and viewer tiers are meant to see it. See the header
+# of framediskclaim_editor_role.yaml.
+- framediskclaim_admin_role.yaml
+- framediskclaim_editor_role.yaml
+- framediskclaim_viewer_role.yaml
 
