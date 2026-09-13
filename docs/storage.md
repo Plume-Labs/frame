@@ -107,20 +107,41 @@ spec:
 reaches `Ready` or `Failed` it is terminal. Re-running the same act means
 creating a new object, never editing this one.
 
-**On this build, a `FrameDiskClaim` never reaches a phase at all.** The
-controller that drives the destructive work
-(`internal/controller/frame/framediskclaim_controller.go`) is wired in
-`cmd/main.go` with `unconfiguredWiper`, a stand-in whose every method
-returns `"destructive backend not configured: this build ships
+**On this build, a claim that would have succeeded never reaches a phase at
+all — but a claim that is refused does.** The controller that drives the
+destructive work (`internal/controller/frame/framediskclaim_controller.go`)
+is wired in `cmd/main.go` with `unconfiguredWiper`, a stand-in whose every
+method returns `"destructive backend not configured: this build ships
 FrameDiskClaim's guards only"`. That is deliberate: the real implementation
 — the one that actually runs `sgdisk` or `ceph-volume` against a node — is a
 physical, human-supervised act against one chosen machine, and shipping it
 as part of a manager rollout is exactly the mistake this lot's guards exist
-to prevent. **A claim created against this build passes its guards (below),
-then requeues forever with that error printed in the manager's log on every
-retry. It does not become `Failed`.** Do not expect a clean terminal phase —
-look at the manager's log, not `kubectl get framediskclaim`, to see what
-happened.
+to prevent.
+
+So there are two outcomes, and they are read in two different places:
+
+- **A refusal is a `Failed` phase, visible in `kubectl`.** The identity
+  guards — an empty or unmatched or ambiguous `spec.serial`, a
+  `spec.byIDPath` outside `/dev/disk/by-id/`, an unreadable
+  `FrameMachine`, a machine whose agent has never reported — all run before
+  the backend is ever touched. Each one writes `status.phase: Failed` with
+  its reason in `status.message`:
+  `kubectl get framediskclaim <name> -o jsonpath='{.status.message}'`.
+- **Anything past those guards is invisible on the object.** The very next
+  thing the controller does is read the claim marker off the machine, and
+  on this build that read is what returns the "destructive backend not
+  configured" error. The reconcile requeues (R14: a destructive object must
+  not turn a read failure into a permanent `Failed`), so the claim sits with
+  no phase and the error repeats in the manager's log on every retry. This
+  is also why the two guards that gate destruction rather than identity —
+  the report's freshness and the disk's occupancy — produce nothing visible
+  here either: they run *after* the marker read, deliberately, so that a
+  claim which already succeeded is not refused for having occupied the disk
+  it was asked to occupy.
+
+In short: `kubectl get framediskclaim` tells you why a claim was refused;
+the manager's log is the only place a would-have-succeeded claim says
+anything at all.
 
 ### Disks are not a type
 
@@ -245,9 +266,11 @@ the actual machine before any destructive act.**
    an earlier session.
 2. Create the `FrameDiskClaim` (see the spec above) with `destination: wipe`
    or `destination: ceph-osd`.
-3. Watch `status.phase`. On this build (see above), expect neither — watch
-   the manager's log for the "destructive backend not configured" error
-   instead, repeating on every retry.
+3. Watch `status.phase`. A refusal by one of the identity guards lands as
+   `Failed` with its reason in `status.message` — read it with `kubectl get
+   framediskclaim`. A claim that gets past them reaches no phase at all on
+   this build (see above): watch the manager's log for the "destructive
+   backend not configured" error instead, repeating on every retry.
 
 Before any of that ever reaches the (unconfigured) destructive step, the
 controller runs five refusals, each closing a real defect found while
@@ -265,13 +288,19 @@ building the previous lot:
    this was built against, `sdX` ordering changed across all three reboots
    tried.
 3. **No report, a stale report, or an occupied disk.** A machine whose agent
-   has never reported disks, or reported more than five minutes ago,
-   authorises nothing — not knowing is not an authorisation. A disk whose
-   `Occupancy` is anything but `free` (mounted, a partition table, an LVM
-   PV, an existing Ceph OSD) is refused the same way. **What the operator
-   does about it:** check the agent's own health on that node (the report
-   age is in the refusal message) or inspect the disk directly with
-   `lsblk`/`wipefs -n` before creating a claim on it again.
+   has never reported disks authorises nothing — not knowing is not an
+   authorisation — and it names nothing either, so that half runs with the
+   identity guards and lands as `Failed`. The other two halves, a report
+   older than five minutes and a disk whose `Occupancy` is anything but
+   `free` (mounted, a partition table, an LVM PV, an existing Ceph OSD),
+   run immediately before the destructive call and *after* the marker is
+   read: a claim that already succeeded leaves the disk occupied, and
+   reading that as a refusal would turn a success into a `Failed` that
+   blames the disk. On this build they are therefore never reached — see
+   the note above. **What the operator does about it:** check the agent's
+   own health on that node (the report age is in the refusal message) or
+   inspect the disk directly with `lsblk`/`wipefs -n` before creating a
+   claim on it again.
 4. **An ambiguous or unconfirmed prior claim on the same disk.** The claim
    marker lives on the machine itself, not in the controller's memory — a
    manager restart previously replayed an entire destructive sequence
