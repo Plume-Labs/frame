@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,6 +31,14 @@ import (
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
+
+// conditionCompletionRecorded tracks whether the completion marker — the
+// record that lets a later resume tell "finished but lost its status
+// write" apart from "died mid-gesture" (R15) — was itself written
+// successfully. Its own failure says nothing about the disk (R16): the
+// destructive work already succeeded, so this condition can be False on an
+// otherwise Ready object.
+const conditionCompletionRecorded = "CompletionRecorded"
 
 // observationMaxAge is how old the agent's disk report may be and still
 // authorise a destructive act. The agent reports every 30 seconds; five
@@ -110,8 +119,11 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			// pass's own succeed() status write was lost — a plain
 			// controller-runtime conflict, not a sign anything went wrong.
 			// MarkComplete is the record that distinguishes this from the
-			// "died mid-gesture" case below.
-			return ctrl.Result{}, r.succeed(ctx, &c, claimUID, "already claimed by this object")
+			// "died mid-gesture" case below. The message matches the primary
+			// success path's, destination and all, so a resumed claim reads
+			// the same as a fresh one.
+			return ctrl.Result{}, r.succeed(ctx, &c, claimUID,
+				fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination))
 		}
 		// The started marker means only that: started, never confirmed
 		// finished. This branch is only reachable when the phase is
@@ -145,17 +157,38 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, fmt.Errorf("claiming %s on %s: %w", disk.Path, c.Spec.MachineRef.Name, err)
 	}
 
-	// R15: record completion before Ready, so a lost Ready status write is
-	// still told apart from a claim that never finished. If this itself
-	// fails, the phase is left as Claiming (not Ready, not Failed) and the
-	// error is returned for a requeue; the next pass will see the started
-	// marker without a completion record and fail closed asking for a
-	// manual inspection, rather than silently calling itself done.
+	// R15/R16: record completion before Ready, so a lost Ready status write
+	// is still told apart from a claim that never finished. A failure here
+	// does NOT requeue and does NOT fail closed — ruling R16: guard 5
+	// refuses Ready on a failure of the destructive gesture itself, because
+	// the disk may then be in a bad state; a failure to write the
+	// completion record says nothing about the disk, only that the
+	// bookkeeping is missing, and the destructive work already succeeded.
+	// Returning the error here would just requeue into a resume that reads
+	// "started, not complete" and fails closed forever — rebuilding the
+	// exact incident R15 removed, on a claim that actually finished. So the
+	// phase still becomes Ready; the gap is made legible in the message and
+	// in the CompletionRecorded condition, and a later resume on that
+	// machine (should the phase itself somehow be lost too) still reads
+	// "not complete" and refuses — the correct side to fail on, since the
+	// object's own status already says Ready and gives a human everything
+	// needed to tell what happened.
+	msg := fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination)
+	cond := metav1.Condition{
+		Type:    conditionCompletionRecorded,
+		Status:  metav1.ConditionTrue,
+		Reason:  "Recorded",
+		Message: "the completion record was written on the machine",
+	}
 	if err := r.Wiper.MarkComplete(ctx, c.Spec.MachineRef.Name, disk.Path, claimUID); err != nil {
-		return ctrl.Result{}, fmt.Errorf("marking %s complete on %s: %w", disk.Path, c.Spec.MachineRef.Name, err)
+		msg = fmt.Sprintf("%s claimed for %s; the completion record could not be written: %v",
+			disk.Path, c.Spec.Destination, err)
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "MarkerWriteFailed"
+		cond.Message = err.Error()
 	}
 
-	return ctrl.Result{}, r.succeed(ctx, &c, claimUID, fmt.Sprintf("%s claimed for %s", disk.Path, c.Spec.Destination))
+	return ctrl.Result{}, r.succeed(ctx, &c, claimUID, msg, cond)
 }
 
 // authorise runs guards 1 to 3 and returns the observed disk the claim
@@ -219,22 +252,32 @@ func (r *FrameDiskClaimReconciler) authorise(ctx context.Context, c *framev1beta
 	return d, nil
 }
 
-func (r *FrameDiskClaimReconciler) setPhase(ctx context.Context, c *framev1beta1.FrameDiskClaim, phase, claimUID, msg string) error {
+// setPhase mutates the phase and any given conditions together and patches
+// once. Conditions must be set here rather than by mutating
+// c.Status.Conditions before calling setPhase: base is captured at the top
+// of this function, so a mutation made before the call would already be
+// reflected in both base and the post-mutation object, and the diff
+// client.MergeFrom(base) sends would silently omit it.
+func (r *FrameDiskClaimReconciler) setPhase(ctx context.Context, c *framev1beta1.FrameDiskClaim, phase, claimUID, msg string, conditions ...metav1.Condition) error {
 	base := c.DeepCopy()
 	now := metav1.Now()
 	c.Status.Phase = phase
 	c.Status.PhaseSince = &now
 	c.Status.ClaimUID = claimUID
 	c.Status.Message = msg
+	for _, cond := range conditions {
+		cond.ObservedGeneration = c.Generation
+		meta.SetStatusCondition(&c.Status.Conditions, cond)
+	}
 	return r.Status().Patch(ctx, c, client.MergeFrom(base))
 }
 
-func (r *FrameDiskClaimReconciler) fail(ctx context.Context, c *framev1beta1.FrameDiskClaim, msg string) error {
-	return r.setPhase(ctx, c, "Failed", c.Status.ClaimUID, msg)
+func (r *FrameDiskClaimReconciler) fail(ctx context.Context, c *framev1beta1.FrameDiskClaim, msg string, conditions ...metav1.Condition) error {
+	return r.setPhase(ctx, c, "Failed", c.Status.ClaimUID, msg, conditions...)
 }
 
-func (r *FrameDiskClaimReconciler) succeed(ctx context.Context, c *framev1beta1.FrameDiskClaim, claimUID, msg string) error {
-	return r.setPhase(ctx, c, "Ready", claimUID, msg)
+func (r *FrameDiskClaimReconciler) succeed(ctx context.Context, c *framev1beta1.FrameDiskClaim, claimUID, msg string, conditions ...metav1.Condition) error {
+	return r.setPhase(ctx, c, "Ready", claimUID, msg, conditions...)
 }
 
 func (r *FrameDiskClaimReconciler) SetupWithManager(mgr ctrl.Manager) error {
