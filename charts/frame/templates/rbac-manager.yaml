@@ -31,6 +31,7 @@ rules:
   resources:
   - configmaps
   - namespaces
+  - persistentvolumeclaims
   - pods
   verbs:
   - get
@@ -53,12 +54,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  verbs:
-  - get
 - apiGroups:
   - ""
   resources:
@@ -133,6 +128,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ceph.rook.io
+  resources:
+  - cephclusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - frame.plume-labs.io
   resources:
   - frameinstalls
@@ -151,6 +154,7 @@ rules:
   - framemachines/finalizers
   - framenodes/finalizers
   - frameresourcequotas/finalizers
+  - framestorages/finalizers
   - nodetunings/finalizers
   - schedulingpolicies/finalizers
   - talosmachineconfigs/finalizers
@@ -165,6 +169,7 @@ rules:
   - framemachines/status
   - framenodes/status
   - frameresourcequotas/status
+  - framestorages/status
   - frametasks/status
   - nodetunings/status
   - schedulingpolicies/status
@@ -187,6 +192,22 @@ rules:
   verbs:
   - create
   - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# The controller creates a FrameStorage entry's StorageClass and may adopt an
+# existing one (see storageclasses below), but never deletes either -- an
+# entry describes where volumes may live, and removing the description must
+# never remove the volumes. No delete verb here, unlike every other
+# frame.plume-labs.io resource in this file.
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framestorages
+  verbs:
+  - create
   - get
   - list
   - patch
@@ -262,6 +283,20 @@ rules:
   - get
   - patch
   - update
+# The FrameStorage admission webhook and controller both read a
+# StorageClass by name to decide whether an entry is adopting one that
+# already exists; the controller additionally creates the class for an
+# entry that owns one. No delete here either, for the same reason as
+# framestorages above.
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - create
+  - get
+  - list
+  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
