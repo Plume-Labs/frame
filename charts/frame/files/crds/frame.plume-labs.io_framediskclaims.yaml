@@ -1,0 +1,195 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: framediskclaims.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: FrameDiskClaim
+    listKind: FrameDiskClaimList
+    plural: framediskclaims
+    shortNames:
+    - fdc
+    singular: framediskclaim
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.machineRef.name
+      name: Machine
+      type: string
+    - jsonPath: .spec.serial
+      name: Serial
+      type: string
+    - jsonPath: .spec.destination
+      name: Destination
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameDiskClaim is the Schema for the framediskclaims API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              FrameDiskClaimSpec claims one physical disk for one purpose, destroying
+              whatever is on it. It is modelled on FrameInstall: a one-shot act with a
+              terminal phase, not a long-lived declaration that gets reconciled back
+              into place. Re-running it means creating a new object.
+            properties:
+              byIDPath:
+                description: |-
+                  ByIDPath is the /dev/disk/by-id path of the disk. Never an sdX name:
+                  on the machine this design was written against, sdX ordering changed
+                  on all three boots, so a claim naming sdb would have wiped a
+                  different disk on each one.
+                maxLength: 512
+                pattern: ^/dev/disk/by-id/.+
+                type: string
+              destination:
+                description: |-
+                  Destination is what the disk becomes. LVM and manual partitioning
+                  are deliberately absent: each is a different destructive operation
+                  with its own failure modes, and this lot ships the two that the park
+                  actually needs.
+                enum:
+                - wipe
+                - ceph-osd
+                type: string
+              machineRef:
+                description: MachineRef names the FrameMachine whose disk this is.
+                properties:
+                  name:
+                    maxLength: 253
+                    type: string
+                required:
+                - name
+                type: object
+              serial:
+                description: |-
+                  Serial is the disk's serial number, retyped by hand. It is matched
+                  against what the node's agent reported, and the match is the
+                  confirmation: a path can be stale, a serial the operator read off
+                  the object they intend to destroy cannot.
+                maxLength: 128
+                minLength: 1
+                type: string
+            required:
+            - byIDPath
+            - destination
+            - machineRef
+            - serial
+            type: object
+          status:
+            properties:
+              claimUID:
+                description: |-
+                  ClaimUID is written onto the machine before the destructive work
+                  begins and read back before it is repeated. It lives on the node, not
+                  in this controller's memory: a manager restart replayed an entire
+                  destructive sequence in the previous lot because the only record that
+                  it had already run was process-local.
+                maxLength: 64
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              message:
+                maxLength: 1024
+                type: string
+              phase:
+                enum:
+                - Pending
+                - Claiming
+                - Ready
+                - Failed
+                type: string
+              phaseSince:
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
