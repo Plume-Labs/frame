@@ -205,6 +205,39 @@ webhooks:
     service:
       name: {{ $svc }}
       namespace: {{ $ns }}
+      path: /validate--v1-persistentvolumeclaim
+  # A policy that cannot be evaluated must not stop the cluster from
+  # creating volumes. Every other webhook in this file is failurePolicy:
+  # Fail because it guards a Frame CRD nobody else writes; this one guards
+  # a core type the whole cluster uses.
+  failurePolicy: Ignore
+  # Enforcement is opt-in per object. No PVC in the cluster carries this
+  # label today, so the day this lands nothing happens.
+  objectSelector:
+    matchExpressions:
+    - key: frame.plume-labs.io/usage
+      operator: Exists
+  name: vpersistentvolumeclaim.kb.io
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - persistentvolumeclaims
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    {{- if not .Values.certManager.enabled }}
+    caBundle: {{ .Values.webhooks.caBundle | quote }}
+    {{- end }}
+    service:
+      name: {{ $svc }}
+      namespace: {{ $ns }}
       path: /validate-frame-plume-labs-io-v1beta1-schedulingpolicy
   failurePolicy: Fail
   name: vschedulingpolicy-v1beta1.kb.io

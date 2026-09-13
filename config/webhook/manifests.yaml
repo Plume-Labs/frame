@@ -178,6 +178,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate--v1-persistentvolumeclaim
+  failurePolicy: Ignore
+  name: vpersistentvolumeclaim.kb.io
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - persistentvolumeclaims
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-frame-plume-labs-io-v1beta1-schedulingpolicy
   failurePolicy: Fail
   name: vschedulingpolicy-v1beta1.kb.io
