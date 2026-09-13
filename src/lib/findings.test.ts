@@ -27,6 +27,7 @@ const healthyCeph: CephStatus = {
   bytesUsed: 75,
   bytesAvailable: 225,
   pools: [],
+  checks: {},
 }
 
 function backups(over: Partial<BackupStatus> = {}): BackupStatus {

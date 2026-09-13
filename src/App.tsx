@@ -31,6 +31,8 @@ const ServiceClassesView = lazy(() => import('@/components/ServiceClassesView').
 const LineageView = lazy(() => import('@/components/LineageView').then((m) => ({ default: m.LineageView })))
 const GpuView = lazy(() => import('@/components/GpuView').then((m) => ({ default: m.GpuView })))
 const ClusterStorageView = lazy(() => import('@/components/ClusterStorageView').then((m) => ({ default: m.ClusterStorageView })))
+const FrameStorageView = lazy(() => import('@/components/FrameStorageView').then((m) => ({ default: m.FrameStorageView })))
+const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
 const NetworkView = lazy(() => import('@/components/NetworkView').then((m) => ({ default: m.NetworkView })))
 const WorkloadPlacementView = lazy(() => import('@/components/WorkloadPlacementView').then((m) => ({ default: m.WorkloadPlacementView })))
 const InferenceOverviewView = lazy(() => import('@/components/InferenceOverviewView').then((m) => ({ default: m.InferenceOverviewView })))
@@ -124,6 +126,8 @@ type TabId =
   | 'installs'
   | 'gpu'
   | 'storage'
+  | 'storage-entries'
+  | 'disks'
   | 'network'
   | 'data-locality'
   | 'inference'
@@ -257,7 +261,11 @@ const NAV: NavGroup[] = [
         label: 'Storage',
         icon: <Database />,
         description: 'Live Ceph health, OSDs, capacity and pools',
-        tabs: [{ id: 'storage', label: 'Storage' }],
+        tabs: [
+          { id: 'storage', label: 'Storage' },
+          { id: 'storage-entries', label: 'Entries' },
+          { id: 'disks', label: 'Disks' },
+        ],
       },
       {
         id: 'network',
@@ -560,6 +568,10 @@ function App() {
         return <GpuView />
       case 'storage':
         return <ClusterStorageView />
+      case 'storage-entries':
+        return <FrameStorageView />
+      case 'disks':
+        return <MachineDisksPanel />
       case 'network':
         return <NetworkView />
       case 'data-locality':
