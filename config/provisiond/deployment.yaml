@@ -18,6 +18,10 @@ metadata:
     app.kubernetes.io/name: frame-provisiond
     app.kubernetes.io/part-of: frame
 spec:
+  # Must stay 1. frame-provisiond keeps installer beacons in memory: the
+  # media listener writes them and the build listener serves them back to
+  # the manager, and a second replica would answer the manager's reads from
+  # a process the machine never wrote to.
   replicas: 1
   selector:
     matchLabels:
