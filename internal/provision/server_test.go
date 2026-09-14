@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -614,7 +615,15 @@ func TestValidateMediaURLRefusesTheReservedPlaceholderButItsSyntaxDoesNot(t *tes
 
 func TestMediaHandlerRecordsABeacon(t *testing.T) {
 	store := NewBeaconStore(8)
-	h := MediaHandler(t.TempDir(), store)
+	dir := t.TempDir()
+	// A beacon must name a real installation: see
+	// TestMediaHandlerRefusesABeaconForATokenNamingNoImage. This test is
+	// about the write succeeding, so the image the token names has to
+	// exist.
+	if err := os.WriteFile(filepath.Join(dir, testBeaconToken+".iso"), []byte("ISO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := MediaHandler(dir, store)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
@@ -631,7 +640,15 @@ func TestMediaHandlerRecordsABeacon(t *testing.T) {
 // stored, and the store must be asked, not merely the status code.
 func TestMediaHandlerRefusesABeaconItDoesNotRecognise(t *testing.T) {
 	store := NewBeaconStore(8)
-	h := MediaHandler(t.TempDir(), store)
+	dir := t.TempDir()
+	// The image exists here too: this test is about the checkpoint and
+	// token shapes, not about whether the image exists, and it must not be
+	// able to pass for the wrong reason (a 404 from the image check rather
+	// than from the shape checks it actually names).
+	if err := os.WriteFile(filepath.Join(dir, testBeaconToken+".iso"), []byte("ISO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := MediaHandler(dir, store)
 
 	for _, path := range []string{
 		"/beacon/" + testBeaconToken + "/bogus",
@@ -647,6 +664,62 @@ func TestMediaHandlerRefusesABeaconItDoesNotRecognise(t *testing.T) {
 	}
 	if _, ok := store.Get(testBeaconToken); ok {
 		t.Error("a refused beacon still created an entry")
+	}
+}
+
+// TestMediaHandlerRefusesABeaconForATokenNamingNoImage is finding 5: Record
+// shape-checks a token but never asks whether it names a real image, so
+// every well-formed token is insertable -- and eviction is oldest-inserted,
+// so enough well-formed-but-fake tokens evict a live install's own entry.
+// A well-formed token that names no image on disk must 404 before the
+// store is ever touched.
+func TestMediaHandlerRefusesABeaconForATokenNamingNoImage(t *testing.T) {
+	store := NewBeaconStore(8)
+	// Deliberately empty: no <token>.iso exists here.
+	h := MediaHandler(t.TempDir(), store)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d -- a token naming no image must not be recordable", rr.Code, http.StatusNotFound)
+	}
+	if _, ok := store.Get(testBeaconToken); ok {
+		t.Error("a beacon for a token naming no image still created a store entry")
+	}
+}
+
+// TestMediaHandlerRefusesEnoughFakeBeaconsToEvictALiveInstall is the shape
+// of the actual attack finding 5 closes: before the fix, sixty-four
+// well-formed but never-issued tokens would each pass Record's own shape
+// checks, evicting the genuine, first-inserted entry (eviction is
+// oldest-inserted). With the image-existence check in front of Record, none
+// of them are ever recordable, so the real entry survives.
+func TestMediaHandlerRefusesEnoughFakeBeaconsToEvictALiveInstall(t *testing.T) {
+	store := NewBeaconStore(64)
+	dir := t.TempDir()
+	realToken := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := os.WriteFile(filepath.Join(dir, realToken+".iso"), []byte("ISO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := MediaHandler(dir, store)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+realToken+"/"+CheckpointEarly, nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("the real install's own beacon was refused: status = %d", rr.Code)
+	}
+
+	for i := 0; i < 64; i++ {
+		fake := fmt.Sprintf("%032x", i+1)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+fake+"/"+CheckpointEarly, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("fake token %d: status = %d, want 404", i, rr.Code)
+		}
+	}
+
+	if _, ok := store.Get(realToken); !ok {
+		t.Error("the real install's entry was evicted by tokens naming no image")
 	}
 }
 

@@ -134,7 +134,32 @@ func MediaHandler(dir string, beacons *BeaconStore) http.Handler {
 	// nothing to say.
 	if beacons != nil {
 		mux.HandleFunc("GET /beacon/{token}/{checkpoint}", func(w http.ResponseWriter, r *http.Request) {
-			if !beacons.Record(r.PathValue("token"), r.PathValue("checkpoint"), time.Now()) {
+			token := r.PathValue("token")
+			// Bounds the store to real installations, checked before
+			// Record is ever called. Record shape-checks a token (32 hex
+			// characters) but has no way to know whether it names an
+			// installation that exists -- every well-formed token is
+			// otherwise just as insertable as a real one, and eviction is
+			// oldest-inserted, so enough of them evict a live install's own
+			// entry. os.Stat costs one syscall and opens no new oracle:
+			// /iso/{name} on this same listener already discloses whether
+			// an image exists. The check belongs here, not in
+			// BeaconStore: the store has no business knowing about a
+			// filesystem.
+			//
+			// beaconToken is matched first so a token that cannot be a
+			// path element (e.g. containing "..") never reaches
+			// filepath.Join -- the same discipline imageName gets for
+			// /iso/{name} above.
+			if !beaconToken.MatchString(token) {
+				http.NotFound(w, r)
+				return
+			}
+			if _, err := os.Stat(filepath.Join(dir, token+".iso")); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			if !beacons.Record(token, r.PathValue("checkpoint"), time.Now()) {
 				http.NotFound(w, r)
 				return
 			}
