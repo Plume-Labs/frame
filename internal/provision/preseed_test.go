@@ -522,6 +522,44 @@ func TestRenderRunScriptReportsNetcfgAndStillRerunsNetcfg(t *testing.T) {
 	}
 }
 
+// TestRenderRunScriptReportsNetcfgDoneAfterNetcfgReturns is finding 3's
+// discriminator: `netcfg` alone (a machine that never got onto the static
+// address) must be distinguishable from `netcfg` plus `netcfg-done` (a
+// machine that did, and was later refused by the disk-size guard). That
+// only holds if `netcfg-done` is emitted strictly after the `netcfg`
+// command itself runs, not merely after the `netcfg` checkpoint report at
+// the top of the script.
+func TestRenderRunScriptReportsNetcfgDoneAfterNetcfgReturns(t *testing.T) {
+	got := RenderRunScript(testBeaconBase, testBeaconToken)
+
+	netcfgBeacon := BeaconURL(testBeaconBase, testBeaconToken, CheckpointNetcfg)
+	doneBeacon := BeaconURL(testBeaconBase, testBeaconToken, CheckpointNetcfgDone)
+	netcfgCmd := strings.LastIndex(got, "\nnetcfg\n")
+
+	netcfgBeaconIdx := strings.Index(got, netcfgBeacon)
+	doneBeaconIdx := strings.Index(got, doneBeacon)
+
+	if netcfgBeaconIdx < 0 {
+		t.Fatalf("the script does not report the netcfg checkpoint:\n%s", got)
+	}
+	if doneBeaconIdx < 0 {
+		t.Fatalf("the script does not report the netcfg-done checkpoint:\n%s", got)
+	}
+	if netcfgCmd < 0 {
+		t.Fatalf("the script does not run netcfg as its own command:\n%s", got)
+	}
+	if netcfgBeaconIdx > netcfgCmd {
+		t.Errorf("the netcfg checkpoint is reported after the netcfg command runs, not before it:\n%s", got)
+	}
+	if doneBeaconIdx < netcfgCmd {
+		t.Errorf("the netcfg-done checkpoint is reported before the netcfg command runs, so it would fire even if netcfg never took the static address:\n%s", got)
+	}
+
+	if bare := RenderRunScript("", testBeaconToken); strings.Contains(bare, "/beacon/") {
+		t.Errorf("a run script rendered with no beacon base carries a beacon URL:\n%s", bare)
+	}
+}
+
 // directiveLine returns the logical preseed line for a directive, joining
 // the backslash continuations d-i uses for multi-command hooks. Without the
 // join, a test searching for two strings "on the same line" would pass or

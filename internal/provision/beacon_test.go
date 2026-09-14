@@ -8,10 +8,10 @@ import (
 const testBeaconBase = "http://192.168.2.10:30581"
 const testBeaconToken = "0123456789abcdef0123456789abcdef"
 
-func TestValidCheckpointAcceptsExactlyTheFourNames(t *testing.T) {
-	for _, ok := range []string{CheckpointNetcfg, CheckpointEarly, CheckpointPartman, CheckpointLate} {
+func TestValidCheckpointAcceptsExactlyTheFiveNames(t *testing.T) {
+	for _, ok := range []string{CheckpointNetcfg, CheckpointNetcfgDone, CheckpointEarly, CheckpointPartman, CheckpointLate} {
 		if !ValidCheckpoint(ok) {
-			t.Errorf("ValidCheckpoint(%q) = false; it is one of the four", ok)
+			t.Errorf("ValidCheckpoint(%q) = false; it is one of the five", ok)
 		}
 	}
 	// Anything else reaches provisiond's memory if this is wrong, so the

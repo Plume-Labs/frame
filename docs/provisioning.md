@@ -148,7 +148,8 @@ answers on SSH carrying this installation's UID. While it runs, the
 | `False` / `Rebooting` | `late`, lost recently | **the normal tail of a successful install**: `late` is the last thing the installer sends before `finish-install` reboots the machine, and `WaitForOurSystem` then waits out a full POST and boot — past `beaconLostAfter` on every install. Not a fault. |
 | `False` / `HeartbeatLost` | `partman` | it died during partitioning or `pkgsel` |
 | `False` / `HeartbeatLost` | `early` | it died between the disk-size guard and partitioning |
-| `False` / `HeartbeatLost` | `netcfg` | **the machine refused**: a named disk was not the size the `FrameInstall` declared, and `preseed/early_command` powered it off. Check `spec.layout.disks[].sizeBytes` against the machine. |
+| `False` / `HeartbeatLost` | `netcfg-done` | **the machine refused**: a named disk was not the size the `FrameInstall` declared, and `preseed/early_command` powered it off. Check `spec.layout.disks[].sizeBytes` against the machine. |
+| `False` / `HeartbeatLost` | `netcfg` (no `netcfg-done`) | the `preseed/run` script started but the netcfg re-run never brought the interface up on its static address, so nothing past this ever ran |
 | `False` / `NeverSeen` | none | it never booted the media, or the network never came up |
 | `Unknown` / `Unavailable` | — | Frame could not ask `frame-provisiond`; `frame-provisiond` restarted and lost its beacon history for an installation it had already reported on; or this manager restarted mid-install and no longer knows the image token. Says nothing about the machine. |
 
