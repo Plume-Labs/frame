@@ -22,7 +22,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"sort"
 	"time"
@@ -547,19 +546,20 @@ func main() {
 	// has reported -- one HTTP client against frame-provisiond's build
 	// listener, not two.
 	//
-	// Client carries an explicit timeout because Progress is the one call on
-	// this ImageStore that runs synchronously on the reconcile path itself
-	// (Build/Remove run on the per-install goroutine). http.DefaultClient's
-	// Timeout is 0 -- unbounded -- and this reconciler's
-	// MaxConcurrentReconciles is 1, so a provisiond that accepts the TCP
-	// connection and never answers would wedge Reconcile for every
-	// FrameInstall, including the finalizer's media-eject, indefinitely. Do
-	// not remove this: it is what turns that wedge into a returned error
-	// (reported as InstallerResponding=Unknown/Unavailable) instead.
+	// No Client override here, deliberately: HTTPImageStore.client() returns
+	// one *http.Client for all three methods, and Build's request waits on
+	// synchronous ISO remastering (FetchBase's download on a cache miss,
+	// then Remaster's xorriso extract/chmod/repack) -- minutes, not seconds.
+	// A client-side Timeout here would abort every image build partway
+	// through, failing every install in Preparing. Build/Remove stay bounded
+	// by their own phase budgets (PhasePreparing/PhaseMediaAttached in
+	// defaultPhaseTimeouts), which is correct for operations that legitimately
+	// take minutes. Progress is bounded separately, in the controller itself
+	// (reportInstallerLiveness's context.WithTimeout) -- see that comment for
+	// why that one ceiling exists.
 	provisiondImages := &provision.HTTPImageStore{
 		BuildURL: provisiondBuildURL,
 		MediaURL: provisiondMediaURL,
-		Client:   &http.Client{Timeout: 5 * time.Second},
 	}
 	if err := (&controller.FrameInstallReconciler{
 		Client:   mgr.GetClient(),
