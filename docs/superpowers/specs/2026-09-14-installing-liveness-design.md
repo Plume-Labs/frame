@@ -177,9 +177,10 @@ No body, no query string, response ignored. A beacon that fails to send must
 never break the install: every invocation is `wget -q -O /dev/null ... || true`.
 
 `early` is emitted *after* the size assertion on purpose. It is what makes
-case 3 legible: the guard powering the machine off leaves `netcfg` as the last
-checkpoint and no heartbeat, which is a different row of §2's table from a
-panic during partitioning.
+case 3 legible: the guard powering the machine off leaves `netcfg-done` as the
+last checkpoint and no heartbeat, which is a different row of §2's table both
+from a panic during partitioning and from a machine that never reached its
+static address at all.
 
 ## 6. What provisiond keeps
 
@@ -231,10 +232,11 @@ message: "last checkpoint partman, 4m12s ago; heartbeat lost 3m01s ago"
   what distinguish "installing normally" from "alive and not advancing".
 - `False`/`HeartbeatLost` — beacons arrived and none has for 60 seconds. This
   covers both a heartbeat that stopped mid-install and one that never started
-  at all (the size-guard refusal, whose only beacon is `netcfg`). The two are
-  told apart by the checkpoint in the message, not by a fifth reason — the
-  reason says whether Frame is being spoken to, the message says how far it
-  got.
+  at all (the size-guard refusal, whose last beacon is `netcfg-done`). Those
+  are told apart by the checkpoint in the message rather than by a reason of
+  their own — the reason says whether Frame is being spoken to, the message
+  says how far it got. `Rebooting` is the one exception, and it earns a reason
+  because it is not a failure at all.
 - `False`/`NeverSeen` — the phase is `Installing` and nothing ever arrived.
 - `False`/`Rebooting` — the last checkpoint is `late`, so the heartbeat
   stopped because d-i rebooted. The status stays `False` — the installer
@@ -305,7 +307,14 @@ of §2, not the plumbing:
   That last one is the test that fails if someone later makes the beacon
   load-bearing.
 - The size-guard case (§1 case 3) gets its own named test: last checkpoint
-  `netcfg`, no heartbeat, and the message must distinguish it from a panic.
+  `netcfg-done`, no heartbeat, and the message must distinguish it both from a
+  panic and from a machine that never came up on its static address, whose
+  last checkpoint is `netcfg`.
+- The rendered `preseed/early_command` is **parsed**, not searched. Every other
+  test on that directive is a substring or index comparison, and a shell syntax
+  error in it disables the disk-size guard while leaving the whole suite green —
+  which happened once during implementation. The test extracts the directive,
+  joins its continuations and runs `sh -n`.
 
 ## 10. Assumptions to verify, not assume
 
