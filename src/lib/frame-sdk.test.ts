@@ -957,6 +957,31 @@ describe('WorkloadClient', () => {
     ])
   })
 
+  it("resolves a component's pods through its own selector, not through every pod in the namespace", async () => {
+    const seen = capture((url) => {
+      if (url.startsWith('/apis/apps/v1/namespaces/neura/deployments/api')) {
+        return json({ spec: { selector: { matchLabels: { app: 'api', tier: 'web' } } } })
+      }
+      return json({ items: [{ metadata: { name: 'api-1', namespace: 'neura' }, spec: { containers: [{ name: 'api' }] } }] })
+    })
+    const pods = await createFrameClient().apps.pods({ kind: 'Deployment', namespace: 'neura', name: 'api' })
+    expect(pods.map((p) => p.name)).toEqual(['api-1'])
+    expect(seen.map((s) => s.url)).toContain(
+      `/api/v1/namespaces/neura/pods?labelSelector=${encodeURIComponent('app=api,tier=web')}`,
+    )
+  })
+
+  // A workload with no selector must return nothing rather than fall back to
+  // an unfiltered list: an unfiltered list is every pod in the namespace, and
+  // this panel would then present a neighbouring application's output as this
+  // component's, which is worse than showing none.
+  it('returns no pods, rather than the whole namespace, when the workload has no selector', async () => {
+    const seen = capture(() => json({ spec: {} }))
+    const pods = await createFrameClient().apps.pods({ kind: 'StatefulSet', namespace: 'neura', name: 'db' })
+    expect(pods).toEqual([])
+    expect(seen.map((s) => s.url).some((u) => u.includes('/pods'))).toBe(false)
+  })
+
   // The contract this asserts is between two pieces of data, not a snapshot of
   // either: whatever `apps.list()` reads is what ApplicationsView has to
   // watch, and APPLICATION_WATCH_PATHS is the single place that pair is

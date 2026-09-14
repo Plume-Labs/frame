@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Application, AppComponent, APPLICATION_WATCH_PATHS, createFrameClient } from '@/lib/frame-sdk'
+import type { WorkloadPod } from '@/lib/workloads'
+import { LogsTab } from '@/components/workloads/LogsTab'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +35,7 @@ import {
   ArrowsClockwise,
   Minus,
   Plus,
+  FileText,
 } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -127,6 +137,26 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
   const pct = app.desiredReplicas > 0 ? (app.readyReplicas / app.desiredReplicas) * 100 : 0
   const [restartTarget, setRestartTarget] = useState<AppComponent | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [logsFor, setLogsFor] = useState<AppComponent | null>(null)
+  // null while resolving, [] when the component has no pods -- two different
+  // things to tell an operator, so they are not collapsed into one empty list.
+  const [logPods, setLogPods] = useState<WorkloadPod[] | null>(null)
+  const [logsError, setLogsError] = useState<string | null>(null)
+  const [pod, setPod] = useState<WorkloadPod | null>(null)
+
+  async function openLogs(c: AppComponent) {
+    setLogsFor(c)
+    setLogPods(null)
+    setPod(null)
+    setLogsError(null)
+    try {
+      const found = await frame.apps.pods(c)
+      setLogPods(found)
+      setPod(found[0] ?? null)
+    } catch (e) {
+      setLogsError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   async function doRestart(c: AppComponent) {
     setBusy(c.name)
@@ -240,6 +270,15 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
                   variant="outline"
                   size="sm"
                   className="h-6 font-mono text-[10px] gap-1"
+                  onClick={() => void openLogs(c)}
+                >
+                  <FileText size={10} />
+                  Logs
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 font-mono text-[10px] gap-1"
                   disabled={busy === c.name}
                   onClick={() => setRestartTarget(c)}
                 >
@@ -251,6 +290,47 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
           ))}
         </div>
       </CardContent>
+
+      <Dialog open={!!logsFor} onOpenChange={(open) => !open && setLogsFor(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="font-mono">
+              {logsFor?.name} {pod ? <span className="text-muted-foreground">· {pod.name}</span> : null}
+            </DialogTitle>
+            <DialogDescription>
+              Read straight from the apiserver, the same path the Workloads screen uses.
+            </DialogDescription>
+          </DialogHeader>
+
+          {logsError && (
+            <div className="font-mono text-xs text-destructive">Cannot list pods: {logsError}</div>
+          )}
+          {!logsError && logPods === null && (
+            <div className="font-mono text-xs text-muted-foreground">Finding this component's pods…</div>
+          )}
+          {!logsError && logPods?.length === 0 && (
+            <div className="font-mono text-xs text-muted-foreground">
+              This {logsFor?.kind} has no pods right now — scaled to zero, or none scheduled yet.
+            </div>
+          )}
+          {logPods && logPods.length > 1 && (
+            <div className="flex flex-wrap gap-1">
+              {logPods.map((p) => (
+                <Button
+                  key={p.name}
+                  variant={p.name === pod?.name ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-6 font-mono text-[10px]"
+                  onClick={() => setPod(p)}
+                >
+                  {p.name}
+                </Button>
+              ))}
+            </div>
+          )}
+          {pod && <LogsTab pod={pod} />}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!restartTarget} onOpenChange={(open) => !open && setRestartTarget(null)}>
         <AlertDialogContent>
