@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
-import { Application, AppComponent, createFrameClient } from '@/lib/frame-sdk'
+import { Application, AppComponent, APPLICATION_WATCH_PATHS, createFrameClient } from '@/lib/frame-sdk'
+import { useLiveResource } from '@/hooks/useLiveResource'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -41,30 +42,21 @@ const HEALTH_LABEL: Record<Application['health'], string> = {
   down: 'Down',
 }
 
-type LoadState =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; apps: Application[] }
+/**
+ * Watched, not polled, and taken from the SDK rather than restated here: the
+ * paths an application is assembled from are the paths this screen has to
+ * watch, and APPLICATION_WATCH_PATHS is the one place that pair is written
+ * down. Restating them would let the screen silently stop tracking a kind the
+ * SDK started reading.
+ *
+ * Scaling and restarting write to these same collections, so the operator's
+ * own action refreshes the screen; `reload` stays wired to the actions
+ * anyway, because a watch is a change signal and not a delivery guarantee.
+ */
+const WATCHED = [...APPLICATION_WATCH_PATHS]
 
 export function ApplicationsView() {
-  const [state, setState] = useState<LoadState>({ phase: 'loading' })
-
-  const load = useCallback(async () => {
-    setState({ phase: 'loading' })
-    try {
-      const apps = await frame.apps.list()
-      setState({ phase: 'ready', apps })
-    } catch (e) {
-      setState({
-        phase: 'error',
-        message: e instanceof Error ? e.message : 'Failed to reach the Kubernetes API',
-      })
-    }
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
+  const { state, reload } = useLiveResource<Application[]>(() => frame.apps.list(), [], WATCHED)
 
   return (
     <div className="space-y-6">
@@ -77,7 +69,7 @@ export function ApplicationsView() {
               variant="outline"
               size="sm"
               className="ml-auto font-mono gap-1.5"
-              onClick={() => void load()}
+              onClick={() => reload()}
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
@@ -115,7 +107,7 @@ export function ApplicationsView() {
         </Card>
       )}
 
-      {state.phase === 'ready' && state.apps.length === 0 && (
+      {state.phase === 'ready' && state.data.length === 0 && (
         <Card>
           <CardContent className="py-10 text-center font-mono text-sm text-muted-foreground">
             No applications found outside the system namespaces.
@@ -124,8 +116,8 @@ export function ApplicationsView() {
       )}
 
       {state.phase === 'ready' &&
-        state.apps.map((app) => (
-          <ApplicationCard key={`${app.namespace}/${app.name}`} app={app} onChanged={() => void load()} />
+        state.data.map((app) => (
+          <ApplicationCard key={`${app.namespace}/${app.name}`} app={app} onChanged={reload} />
         ))}
     </div>
   )
