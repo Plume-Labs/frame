@@ -139,7 +139,15 @@ d-i clock-setup/ntp boolean true
 # that behaviour could not be verified here. It powers the machine off
 # directly instead: an untouched, powered-off machine is a safe failure, and
 # Frame's Installing phase times out and reports it.
-d-i preseed/early_command string {{ .SizeAssertion }} || { echo "FRAME: named disk is not the expected size, refusing" > /dev/console; poweroff -f; }{{ if .BeaconEarly }} ; {{ .BeaconEarly }} ; {{ .BeaconHeartbeat }}{{ end }}
+#
+# Written as if/then/else, not "ASSERT || { ...; poweroff -f; } ; EARLY ;
+# HEARTBEAT": a trailing semicolon after the { } group runs regardless of
+# which side of || fired, so on a refused machine the beacon calls would
+# still run -- reporting "early" for a machine the guard just powered off,
+# unless poweroff -f's reboot(RB_POWER_OFF) never returns. if/then/else
+# does not depend on that: the beacon calls are reachable only through the
+# branch that runs when the assertion passed.
+d-i preseed/early_command string if {{ .SizeAssertion }}; then {{ if .BeaconEarly }}{{ .BeaconEarly }} ; {{ .BeaconHeartbeat }}{{ else }}:{{ end }}; else echo "FRAME: named disk is not the expected size, refusing" > /dev/console; poweroff -f; fi
 
 {{ .Partman }}
 {{ if .BeaconPartman }}d-i partman/early_command string {{ .BeaconPartman }}

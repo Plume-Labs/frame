@@ -442,19 +442,38 @@ func TestRenderPreseedEmitsEveryCheckpointAtItsOwnHook(t *testing.T) {
 // This is what makes the size guard legible. `early` must be emitted after
 // the assertion, so a machine that refused carries `netcfg` and nothing
 // more -- an outcome no other failure produces.
+// TestRenderPreseedReportsEarlyOnlyAfterTheDiskAssertion asserts the
+// structural guarantee, not a textual ordering: early_command is an
+// if/then/else, and the early beacon must be reachable only through the
+// then-branch (the assertion passed), never through the else-branch (the
+// assertion failed and the machine is being powered off). A `;` after the
+// `||` group would run regardless of which side fired -- exactly what would
+// make a refused machine also report `early`, and exactly what if/then/else
+// does not depend on poweroff -f's reboot(RB_POWER_OFF) never returning to
+// prevent.
 func TestRenderPreseedReportsEarlyOnlyAfterTheDiskAssertion(t *testing.T) {
 	got, err := RenderPreseed(goodSpec(), testRunURL, testBeaconBase, testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	line := directiveLine(t, got, "preseed/early_command")
-	assertion := strings.Index(line, "poweroff -f")
+
+	thenIdx := strings.Index(line, "; then ")
+	elseIdx := strings.Index(line, "; else ")
+	if thenIdx < 0 || elseIdx < 0 || elseIdx < thenIdx {
+		t.Fatalf("early_command is not an if/then/else guard:\n%s", line)
+	}
+
 	beacon := strings.Index(line, BeaconURL(testBeaconBase, testBeaconToken, CheckpointEarly))
-	if assertion < 0 || beacon < 0 {
+	poweroff := strings.Index(line, "poweroff -f")
+	if beacon < 0 || poweroff < 0 {
 		t.Fatalf("early_command is missing the assertion or the beacon:\n%s", line)
 	}
-	if beacon < assertion {
-		t.Errorf("the early beacon is emitted before the disk assertion, so a refused machine would look like it passed:\n%s", line)
+	if beacon < thenIdx || beacon > elseIdx {
+		t.Errorf("the early beacon must be inside the then-branch, reachable only when the disk assertion passed:\n%s", line)
+	}
+	if poweroff < elseIdx {
+		t.Errorf("poweroff -f must be inside the else-branch, so a refused machine cannot also report early:\n%s", line)
 	}
 }
 
