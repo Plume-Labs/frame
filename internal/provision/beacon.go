@@ -39,6 +39,22 @@ func ValidCheckpoint(s string) bool {
 	return false
 }
 
+// checkpointRank gives the four checkpoints above a machine-readable form of
+// the same order their own doc comment already states. BeaconStore.Record
+// uses it to keep the furthest-progressed checkpoint rather than the most
+// recently reported one: BeaconHeartbeat is a background loop that keeps
+// resending the checkpoint it was started at (checkpoint, not `late`, is
+// fixed for the life of that loop), so a later arrival is not always a
+// later checkpoint, and without this a heartbeat sent under `early` -- the
+// checkpoint every heartbeat happens to be rendered with -- would overwrite
+// `partman` or `late` within 15 seconds of either firing, on every install.
+var checkpointRank = map[string]int{
+	CheckpointNetcfg:  0,
+	CheckpointEarly:   1,
+	CheckpointPartman: 2,
+	CheckpointLate:    3,
+}
+
 // ValidateBeaconBase refuses a base URL that would break out of the two
 // contexts it is interpolated into -- a preseed directive line and a shell
 // word -- using the same guard every other interpolated value gets.

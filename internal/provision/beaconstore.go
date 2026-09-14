@@ -47,6 +47,20 @@ func NewBeaconStore(capacity int) *BeaconStore {
 // Record stores one beacon and reports whether it was accepted. Both the
 // token and the checkpoint are matched against their closed shapes first:
 // nothing a caller chose becomes a map key or a stored value otherwise.
+//
+// LastCheckpoint keeps the furthest-progressed checkpoint seen, not the most
+// recently reported one: BeaconHeartbeat resends the checkpoint it was
+// started at every 15 seconds for as long as the installer environment
+// lives, so an install that has since moved on to `partman` or `late` keeps
+// receiving beacons still naming `early`. Regressing LastCheckpoint on one
+// of those would erase the only thing that makes a stalled install legible
+// -- where it got to -- within 15 seconds of it happening, on every install,
+// not just a stalled one.
+//
+// LastSeen and Count update on every accepted beacon regardless, including
+// one that does not advance LastCheckpoint: liveness comes from LastSeen,
+// progress from LastCheckpoint, and collapsing the two would make a
+// heartbeat that keeps arriving indistinguishable from one that stopped.
 func (s *BeaconStore) Record(token, checkpoint string, now time.Time) bool {
 	if !beaconToken.MatchString(token) || !ValidCheckpoint(checkpoint) {
 		return false
@@ -64,8 +78,14 @@ func (s *BeaconStore) Record(token, checkpoint string, now time.Time) bool {
 		}
 		s.order = append(s.order, token)
 	}
+
+	lastCheckpoint := checkpoint
+	if existed && checkpointRank[prev.LastCheckpoint] > checkpointRank[checkpoint] {
+		lastCheckpoint = prev.LastCheckpoint
+	}
+
 	s.entries[token] = BeaconState{
-		LastCheckpoint: checkpoint,
+		LastCheckpoint: lastCheckpoint,
 		LastSeen:       now,
 		Count:          prev.Count + 1,
 	}
