@@ -335,6 +335,32 @@ describe('JobClient.submit', () => {
     expect((sent[0].body as { spec: { serviceClass: string } }).spec.serviceClass).toBe('HIGH')
     expect(job.namespace).toBe('team-a')
   })
+
+  it('sends a container job with its type and envFrom, and no pipeline key at all', async () => {
+    const { sent } = capture()
+
+    await createFrameClient().jobs.submit({
+      name: 'cad-gen-1',
+      type: 'batch',
+      container: {
+        image: 'registry.local/cad:1',
+        args: ['--part', '42'],
+        envFrom: [{ secretRef: { name: 'blob-creds' } }],
+      },
+    })
+
+    const spec = (sent[0].body as { spec: Record<string, unknown> }).spec
+    expect(spec).toEqual({
+      type: 'batch',
+      container: {
+        image: 'registry.local/cad:1',
+        args: ['--part', '42'],
+        envFrom: [{ secretRef: { name: 'blob-creds' } }],
+      },
+      gpuCount: 0,
+    })
+    expect(spec).not.toHaveProperty('pipeline')
+  })
 })
 
 describe('k8sFetch in-flight de-duplication', () => {
