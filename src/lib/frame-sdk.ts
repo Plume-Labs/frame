@@ -2770,6 +2770,40 @@ class ApplicationClient {
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
+  /**
+   * The pods currently backing one component, so an operator looking at an
+   * unhealthy application can read its output without leaving the screen.
+   *
+   * Resolved through the workload's own `spec.selector.matchLabels` rather
+   * than by walking ownerReferences. For a Deployment that walk is two hops --
+   * Deployment to ReplicaSet to Pod -- and during a rollout it spans two
+   * ReplicaSets, so the label selector is both shorter and the only form that
+   * answers the same way for a StatefulSet. It is also what the controller
+   * itself uses to decide which pods are its own.
+   *
+   * Two requests, and only when the operator asks: the applications list does
+   * not carry pods, and pulling every pod in the cluster to fill a panel
+   * nobody opened is what Important 7 of a previous review was about.
+   */
+  async pods(component: Pick<AppComponent, 'kind' | 'namespace' | 'name'>): Promise<WorkloadPod[]> {
+    const plural = component.kind === 'Deployment' ? 'deployments' : 'statefulsets'
+    const workload = await k8sFetch<{ spec?: { selector?: { matchLabels?: Record<string, string> } } }>(
+      `/apis/apps/v1/namespaces/${component.namespace}/${plural}/${component.name}`,
+    )
+    const labels = workload.spec?.selector?.matchLabels ?? {}
+    const selector = Object.entries(labels)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(',')
+    // A workload with no selector would otherwise list every pod in the
+    // namespace and present another application's output as this one's.
+    if (!selector) return []
+
+    const pods = await k8sFetch<ListResponse<PodItemCR>>(
+      `/api/v1/namespaces/${component.namespace}/pods?labelSelector=${encodeURIComponent(selector)}`,
+    )
+    return (pods.items ?? []).map(toPod)
+  }
+
   /** Rolling-restart a Deployment/StatefulSet by bumping its pod template restart annotation. */
   async restart(component: Pick<AppComponent, 'kind' | 'namespace' | 'name'>): Promise<void> {
     const plural = component.kind === 'Deployment' ? 'deployments' : 'statefulsets'
