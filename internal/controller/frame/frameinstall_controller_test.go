@@ -665,7 +665,7 @@ func TestFrameInstallFinalizerWaitsForARunningInstallRatherThanRacingIt(t *testi
 		t.Errorf("the finalizer touched the BMC while an install was still running: %d calls", n)
 	}
 
-	r.finishInstall(fi.Spec.MachineRef)
+	r.finishInstall(fi.Spec.MachineRef, fi.UID)
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("reconcile (finalize, now idle): %v", err)
 	}
@@ -1246,5 +1246,105 @@ func TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured(t *testing.T) {
 		if !strings.Contains(got.Status.Message, "provisiond") {
 			t.Errorf("%s: message %q does not name what is missing", name, got.Status.Message)
 		}
+	}
+}
+
+func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
+	lost := 61 * time.Second
+	fresh := 5 * time.Second
+	now := time.Unix(1_700_000_000, 0)
+
+	for _, tc := range []struct {
+		name       string
+		state      provision.BeaconState
+		known      bool
+		err        error
+		wantStatus metav1.ConditionStatus
+		wantReason string
+		wantInMsg  string
+	}{
+		{
+			name:       "a heartbeat is arriving",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointPartman, LastSeen: now.Add(-fresh), Count: 12},
+			known:      true,
+			wantStatus: metav1.ConditionTrue,
+			wantReason: "Heartbeat",
+			wantInMsg:  provision.CheckpointPartman,
+		},
+		{
+			name:       "the heartbeat stopped mid-install",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointPartman, LastSeen: now.Add(-lost), Count: 12},
+			known:      true,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "HeartbeatLost",
+			wantInMsg:  provision.CheckpointPartman,
+		},
+		{
+			// The size guard powered the machine off: netcfg reported, the
+			// heartbeat never started. The checkpoint in the message is what
+			// tells this apart from a panic during partitioning.
+			name:       "the disk-size guard refused",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: now.Add(-lost), Count: 1},
+			known:      true,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "HeartbeatLost",
+			wantInMsg:  provision.CheckpointNetcfg,
+		},
+		{
+			name:       "nothing was ever heard",
+			known:      false,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "NeverSeen",
+			wantInMsg:  "nothing",
+		},
+		{
+			name:       "provisiond could not be asked",
+			err:        errors.New("connection refused"),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "Unavailable",
+			wantInMsg:  "connection refused",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := installerRespondingCondition(tc.state, tc.known, tc.err, now)
+			if got.Status != tc.wantStatus {
+				t.Errorf("status = %q, want %q", got.Status, tc.wantStatus)
+			}
+			if got.Reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", got.Reason, tc.wantReason)
+			}
+			if !strings.Contains(got.Message, tc.wantInMsg) {
+				t.Errorf("message = %q; it does not mention %q", got.Message, tc.wantInMsg)
+			}
+		})
+	}
+}
+
+// The load-bearing test of the whole design. If someone later makes beacon
+// state able to fail an install, this goes red.
+func TestBeaconStateNeverEndsOrFailsAnInstall(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state provision.BeaconState
+		known bool
+		err   error
+	}{
+		{name: "never seen", known: false},
+		{name: "heartbeat lost", known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: time.Unix(0, 0)}},
+		{name: "provisiond unreachable", err: errors.New("connection refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cond := installerRespondingCondition(tc.state, tc.known, tc.err, time.Now())
+			// A condition, and nothing else. No phase, no failure, no
+			// message that a caller could mistake for a terminal verdict.
+			if cond.Type != "InstallerResponding" {
+				t.Fatalf("condition type = %q", cond.Type)
+			}
+			for _, forbidden := range []string{string(provision.PhaseFailed), string(provision.PhaseReady), string(provision.PhaseInstalled)} {
+				if strings.Contains(cond.Message, forbidden) {
+					t.Errorf("the condition message names the phase %q; a diagnostic must not read as a verdict: %q", forbidden, cond.Message)
+				}
+			}
+		})
 	}
 }
