@@ -96,7 +96,7 @@ func (i *fakeImages) Build(ctx context.Context, _ Spec) (string, string, error) 
 	if i.failBuild != nil {
 		return "", "", i.failBuild
 	}
-	return "http://provisiond/iso/tok.iso", "tok", nil
+	return "http://provisiond/iso/tok.iso", "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", nil
 }
 func (i *fakeImages) Remove(ctx context.Context, _ string) error {
 	if err := ctx.Err(); err != nil {
@@ -670,5 +670,41 @@ func TestInstallRefusesASpecWithNoResolverBeforeTouchingTheBMC(t *testing.T) {
 	}
 	if images.built != 0 {
 		t.Errorf("%d image(s) were built", images.built)
+	}
+}
+
+// The controller cannot learn the token any other way: it is produced inside
+// Install and is absent from Result, which the controller only sees once the
+// install is over -- long after the diagnosis is needed.
+func TestInstallAnnouncesItsTokenOnceTheImageExists(t *testing.T) {
+	var got []string
+	d, _, _ := happyDeps()
+	d.ReportToken = func(tok string) { got = append(got, tok) }
+
+	if _, err := Install(context.Background(), d, goodSpec(), opts()); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ReportToken called %d times, want exactly 1: %v", len(got), got)
+	}
+	if !beaconToken.MatchString(got[0]) {
+		t.Errorf("reported token %q is not an image token", got[0])
+	}
+}
+
+// Nothing was built, so there is no token and nothing to announce. A caller
+// that heard one would poll provisiond for an installation that does not
+// exist.
+func TestInstallAnnouncesNoTokenWhenTheBuildFails(t *testing.T) {
+	called := 0
+	d, _, i := happyDeps()
+	i.failBuild = errors.New("builder is down")
+	d.ReportToken = func(string) { called++ }
+
+	if _, err := Install(context.Background(), d, goodSpec(), opts()); err == nil {
+		t.Fatal("Install succeeded although the build failed")
+	}
+	if called != 0 {
+		t.Errorf("ReportToken called %d times after a failed build, want 0", called)
 	}
 }
