@@ -96,21 +96,74 @@ export interface Job {
   completedAt?: string
 }
 
-export interface JobSpec {
+/** The substrate a container-substrate FrameJob runs on. Ignored for a
+ * pipeline job — Argo is always the substrate for a pipeline regardless of
+ * `type`. Server-side default is `background` when omitted. */
+export type WorkloadType = 'realtime' | 'batch' | 'background'
+
+/** Mirrors k8s `corev1.EnvVar` — passed straight through to the API server,
+ * which is why `valueFrom` is left loose rather than modelled field by field. */
+export interface ContainerEnvVar {
   name: string
-  pipeline: string
+  value?: string
+  valueFrom?: Record<string, unknown>
+}
+
+/** Mirrors k8s `corev1.EnvFromSource` — exactly one of `configMapRef`/`secretRef`,
+ * same as upstream; Frame does not narrow it further. */
+export interface ContainerEnvFromSource {
+  configMapRef?: { name: string; optional?: boolean }
+  secretRef?: { name: string; optional?: boolean }
+  prefix?: string
+}
+
+/**
+ * The container substrate for a FrameJob — the alternative to naming an Argo
+ * pipeline. Deliberately narrow (image, command, args, env, resources,
+ * envFrom) rather than a full pod spec; see `ContainerSpec` in
+ * `api/frame/v1beta1/framejob_types.go` for why.
+ */
+export interface ContainerSpec {
+  image: string
+  command?: string[]
+  args?: string[]
+  env?: ContainerEnvVar[]
+  /** Populates env vars from a Secret or ConfigMap already in the FrameJob's
+   * own namespace — see the CRD field doc for the blast-radius note. */
+  envFrom?: ContainerEnvFromSource[]
+  resources?: {
+    limits?: Record<string, string>
+    requests?: Record<string, string>
+  }
+}
+
+interface JobSpecCommon {
+  name: string
   /** Omit to take the CRD default (LOW) rather than pinning a tier here. */
   serviceClass?: ServiceClass
   /** Omit to take the CRD default (medium). */
   priority?: Priority
   /**
-   * Where the FrameJob — and therefore its Workflow — is created. It used to
-   * name `spec.namespace`, a separate target the CR itself did not live in;
-   * v1beta1 removed that field (F5), so this now steers `metadata.namespace`.
+   * Where the FrameJob — and therefore its Workflow or container Job — is
+   * created. It used to name `spec.namespace`, a separate target the CR
+   * itself did not live in; v1beta1 removed that field (F5), so this now
+   * steers `metadata.namespace`.
    */
   namespace?: string
   gpuCount?: number
+  /** Only meaningful alongside `container` — see `WorkloadType`. */
+  type?: WorkloadType
 }
+
+/**
+ * Exactly one of `pipeline`/`container`, mirroring the CEL rule the CRD
+ * enforces server-side (`has(self.pipeline) != has(self.container)`). The
+ * `?: never` on the field not chosen makes supplying both a compile error
+ * instead of a runtime rejection.
+ */
+export type JobSpec =
+  | (JobSpecCommon & { pipeline: string; container?: never })
+  | (JobSpecCommon & { container: ContainerSpec; pipeline?: never })
 
 export interface SchedulingPolicy {
   name: string
@@ -3221,7 +3274,13 @@ class JobClient {
         kind: 'FrameJob',
         metadata: { name: crName, namespace: frameNs(ns) },
         spec: {
-          pipeline:     spec.pipeline,
+          // Exactly one of the two is set — JobSpec's type makes the other
+          // combination a compile error, so this is just forwarding it.
+          ...(spec.pipeline ? { pipeline: spec.pipeline } : {}),
+          ...(spec.container ? { container: spec.container } : {}),
+          // No fallback for type either: the CRD defaults it to `background`,
+          // and it is ignored server-side for a pipeline job anyway.
+          ...(spec.type ? { type: spec.type } : {}),
           // No fallback: the CRD defaults serviceClass to LOW and priority to
           // medium now, so sending a value here is what made kubectl and the
           // UI disagree about what "unspecified" means (F4). Send only what
