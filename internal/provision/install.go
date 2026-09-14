@@ -149,6 +149,12 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 	if buildErr != nil {
 		return fail(PhasePreparing, phaseErr(prepCtx, fmt.Errorf("building the installer image: %w", buildErr)))
 	}
+	// Announced here and not earlier: before this line there is no token,
+	// and announcing one that does not name a built image would have the
+	// caller poll for an installation that was never created.
+	if d.ReportToken != nil {
+		d.ReportToken(token)
+	}
 
 	// From here on the machine has been touched, so every exit cleans up.
 	// Named returns are what let this defer amend the outcome the rest of

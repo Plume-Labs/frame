@@ -123,6 +123,19 @@ type Deps struct {
 	SSH    SSHClient
 	Nodes  NodeChecker
 	Report func(Phase) // called on entering each phase; may be nil
+	// ReportToken is called once, with the image token, as soon as an image
+	// exists -- and never if the build failed, because then there is
+	// nothing to report about.
+	//
+	// It is the ONE thing this package tells a caller beyond the phase, and
+	// it is write-only on purpose: the token is what a caller needs to ask
+	// provisiond how the installation is reporting itself. There is no
+	// matching read here, and there must not be one. Install must not be
+	// able to see what a machine has claimed about its own progress; only
+	// WaitForOurSystem, which proves identity, may end this phase.
+	//
+	// May be nil.
+	ReportToken func(token string)
 }
 
 // Options configures one Install call.
