@@ -670,11 +670,29 @@ func TestMediaHandlerDoesNotServeBeaconsBack(t *testing.T) {
 
 // Without a store there is no route at all -- not a route that quietly
 // accepts and discards.
+//
+// GET alone cannot tell those two apart: "never registered" and
+// "registered but this handler always 404s" look identical on a GET. POST
+// to the same path is the discriminator, because http.ServeMux itself
+// answers 405, not 404, for a pattern that IS registered when the method
+// doesn't match -- exactly what TestMediaHandlerRefusesEverythingButReading-
+// AnImage's POST /iso/{name} case already relies on for that route. A 404
+// on POST here is what proves the /beacon/{token}/{checkpoint} pattern is
+// absent from the mux -- not merely that GET's handler refused this
+// particular request.
 func TestMediaHandlerWithoutAStoreHasNoBeaconRoute(t *testing.T) {
+	h := MediaHandler(t.TempDir(), nil)
+	path := "/beacon/" + testBeaconToken + "/" + CheckpointEarly
+
 	rr := httptest.NewRecorder()
-	MediaHandler(t.TempDir(), nil).ServeHTTP(rr,
-		httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 	if rr.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", rr.Code)
+		t.Errorf("GET %s: status = %d, want 404", path, rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, path, nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("POST %s: status = %d, want 404 (405 would mean the route is registered)", path, rr.Code)
 	}
 }

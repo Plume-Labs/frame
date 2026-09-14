@@ -58,18 +58,25 @@ func newToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// MediaHandler is the only listener a BMC reaches. It reads, and that is all
-// it can do: the build API lives on a different port, on a Service nothing
-// outside the cluster can reach.
+// MediaHandler is the only listener a BMC reaches. It is not read-only: it
+// may deposit an installation's progress (the beacon route below), but it
+// may never disclose one -- the build API, on a different port and a
+// Service nothing outside the cluster can reach, is the only listener
+// that reads beacon state back (BuildHandler). Write-only is not the same
+// guarantee as read-only, and it holds here because the write stores
+// nothing a caller chose: BeaconStore.Record refuses any token or
+// checkpoint outside its closed shapes before either reaches memory, and
+// the route itself returns nothing but a status code.
 //
-// GET /iso/{name} and GET /preseed/{name} are both single-segment wildcards:
-// neither matches a path with an extra segment (e.g. "/iso/sub/dir.iso"),
-// and any other method on either path gets 405 from http.ServeMux itself,
-// not from any check written here. A trailing-slash pattern is never used
-// -- see the package-level note this lot has already paid a task to learn:
-// in http.ServeMux a trailing-slash pattern is a subtree match that absorbs
-// every deeper path, which is exactly how a predecessor lot's 404 tolerance
-// went untested.
+// GET /iso/{name} and GET /preseed/{name} are both single-segment
+// wildcards, and GET /beacon/{token}/{checkpoint} is a two-segment one:
+// none matches a path with an extra segment (e.g. "/iso/sub/dir.iso"),
+// and any other method on any of the three gets 405 from http.ServeMux
+// itself, not from any check written here. A trailing-slash pattern is
+// never used -- see the package-level note this lot has already paid a
+// task to learn: in http.ServeMux a trailing-slash pattern is a subtree
+// match that absorbs every deeper path, which is exactly how a
+// predecessor lot's 404 tolerance went untested.
 //
 // /preseed/{name} is exposed on the same read-only, unauthenticated
 // listener as /iso/{name}: the preseed carries no secret by construction --
