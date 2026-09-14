@@ -44,8 +44,11 @@ spec:
       protocol: TCP
 ---
 # The media listener. This is the one the BMC reaches, so it is the one
-# exposed on the machine network -- and it is read-only by construction,
-# carrying no secret because no secret ever enters an installer image.
+# exposed on the machine network -- and it carries no secret, because no
+# secret ever enters an installer image. It is not read-only: it may
+# deposit an installation's progress (the beacon route), and it may never
+# disclose one -- see internal/provision/server.go's MediaHandler doc
+# comment, which this mirrors.
 apiVersion: v1
 kind: Service
 metadata:
