@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -439,9 +440,6 @@ func TestRenderPreseedEmitsEveryCheckpointAtItsOwnHook(t *testing.T) {
 	}
 }
 
-// This is what makes the size guard legible. `early` must be emitted after
-// the assertion, so a machine that refused carries `netcfg` and nothing
-// more -- an outcome no other failure produces.
 // TestRenderPreseedReportsEarlyOnlyAfterTheDiskAssertion asserts the
 // structural guarantee, not a textual ordering: early_command is an
 // if/then/else, and the early beacon must be reachable only through the
@@ -459,7 +457,12 @@ func TestRenderPreseedReportsEarlyOnlyAfterTheDiskAssertion(t *testing.T) {
 	line := directiveLine(t, got, "preseed/early_command")
 
 	thenIdx := strings.Index(line, "; then ")
-	elseIdx := strings.Index(line, "; else ")
+	// Not "; else ": the terminator before "else" differs by branch (see
+	// the template's own comment) -- the beacon branch ends in
+	// BeaconHeartbeat's own trailing "&", which is already a separator, so
+	// nothing renders a semicolon in front of "else" in that case. " else "
+	// (bare, no semicolon required) is what both branches actually share.
+	elseIdx := strings.Index(line, " else ")
 	if thenIdx < 0 || elseIdx < 0 || elseIdx < thenIdx {
 		t.Fatalf("early_command is not an if/then/else guard:\n%s", line)
 	}
@@ -474,6 +477,62 @@ func TestRenderPreseedReportsEarlyOnlyAfterTheDiskAssertion(t *testing.T) {
 	}
 	if poweroff < elseIdx {
 		t.Errorf("poweroff -f must be inside the else-branch, so a refused machine cannot also report early:\n%s", line)
+	}
+}
+
+// assertShellParses runs script through `sh -n`, which parses without
+// executing, and fails the test if it does not exit 0. It exists because
+// every other assertion on early_command's rendered text is a substring or
+// index search -- none of which would have caught a rendering that is
+// syntactically invalid shell, which is exactly what shipped between the
+// if/then/else restructuring (the poweroff -f fix) and this test: the
+// beacon branch's trailing "&" followed by a hardcoded ";" before "else" is
+// a shell syntax error, `sh -n` exits 2, and early_command silently does
+// not run at all -- not the assertion, not poweroff -f, nothing. `make
+// test` was green throughout, because nothing parsed the directive as
+// shell.
+func assertShellParses(t *testing.T, script string) {
+	t.Helper()
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not found on PATH in this test environment; the rendered directive's shell syntax cannot be verified here")
+	}
+	cmd := exec.Command(shPath, "-n")
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rendered early_command does not parse as shell (sh -n): %v\n%s\nscript:\n%s", err, out, script)
+	}
+}
+
+// TestRenderPreseedEarlyCommandDirectiveParsesAsShell extracts the actual
+// preseed/early_command value -- joining the directive's own backslash
+// continuations the same way directiveLine does for every other test on
+// this directive -- and feeds it to `sh -n`, for both the with-beacon and
+// the empty-base (cold-start) renders. See assertShellParses's own comment
+// for why this check exists: no substring or ordering assertion on this
+// directive can tell a syntactically broken render from a working one.
+func TestRenderPreseedEarlyCommandDirectiveParsesAsShell(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		beaconBase string
+	}{
+		{"with beacon configured", testBeaconBase},
+		{"no beacon base (cold-start path)", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RenderPreseed(goodSpec(), testRunURL, tc.beaconBase, testBeaconToken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := directiveLine(t, got, "preseed/early_command")
+			const prefix = "d-i preseed/early_command string "
+			if !strings.HasPrefix(line, prefix) {
+				t.Fatalf("directive line does not have the expected prefix %q:\n%s", prefix, line)
+			}
+			script := "#!/bin/sh\n" + strings.TrimPrefix(line, prefix) + "\n"
+			assertShellParses(t, script)
+		})
 	}
 }
 
