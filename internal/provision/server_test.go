@@ -225,7 +225,7 @@ func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want, err := RenderPreseed(spec, testMediaURL+"/preseed/"+resp.Token+".sh")
+	want, err := RenderPreseed(spec, testMediaURL+"/preseed/"+resp.Token+".sh", "", resp.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
 // from an install that is merely slow.
 func TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, tok+".sh"), []byte(NetcfgRerunScript), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, tok+".sh"), []byte(RenderRunScript("", tok)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h := MediaHandler(dir, nil)
@@ -260,7 +260,7 @@ func TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /preseed/%s.sh = %d, want 200", tok, rr.Code)
 	}
-	if rr.Body.String() != NetcfgRerunScript {
+	if rr.Body.String() != RenderRunScript("", tok) {
 		t.Errorf("served body is not the run script:\n%s", rr.Body.String())
 	}
 
@@ -288,7 +288,7 @@ func TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed(t *testing.T) {
 func TestMediaHandlerRefusesARunScriptNameThatIsNotARunScriptName(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"not-a-run-script.sh", tok + ".sh.txt", tok + ".bash"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(NetcfgRerunScript), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(RenderRunScript("", tok)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -348,7 +348,7 @@ func TestBuildHandlerServesTheRunScriptAtTheAddressThePreseedNames(t *testing.T)
 	if got.Code != http.StatusOK {
 		t.Fatalf("GET %s (the address the preseed itself names) = %d, want 200", path, got.Code)
 	}
-	if got.Body.String() != NetcfgRerunScript {
+	if got.Body.String() != RenderRunScript("", tok) {
 		t.Errorf("what is served at the preseed's own preseed/run address is not the run script:\n%s", got.Body.String())
 	}
 }
