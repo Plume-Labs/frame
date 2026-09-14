@@ -145,7 +145,8 @@ answers on SSH carrying this installation's UID. While it runs, the
 | condition | last checkpoint in the message | what it means |
 |---|---|---|
 | `True` / `Heartbeat` | not advancing between reads | the installer is alive and waiting on a debconf question — go look at the console |
-| `False` / `HeartbeatLost` | `partman` or `late` | it died during partitioning, `pkgsel`, or the base install |
+| `False` / `Rebooting` | `late`, lost recently | **the normal tail of a successful install**: `late` is the last thing the installer sends before `finish-install` reboots the machine, and `WaitForOurSystem` then waits out a full POST and boot — past `beaconLostAfter` on every install. Not a fault. |
+| `False` / `HeartbeatLost` | `partman` | it died during partitioning or `pkgsel` |
 | `False` / `HeartbeatLost` | `early` | it died between the disk-size guard and partitioning |
 | `False` / `HeartbeatLost` | `netcfg` | **the machine refused**: a named disk was not the size the `FrameInstall` declared, and `preseed/early_command` powered it off. Check `spec.layout.disks[].sizeBytes` against the machine. |
 | `False` / `NeverSeen` | none | it never booted the media, or the network never came up |

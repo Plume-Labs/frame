@@ -111,6 +111,20 @@ func installerRespondingCondition(st provision.BeaconState, known bool, err erro
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = "NeverSeen"
 		cond.Message = "nothing has been heard from the installer: it may not have booted the media, or the network may never have come up"
+	case now.Sub(st.LastSeen) > beaconLostAfter && st.LastCheckpoint == provision.CheckpointLate:
+		// late is the last thing the installer sends before finish-install
+		// reboots the machine, so the heartbeat stops within seconds of it
+		// on every successful install -- and WaitForOurSystem then waits
+		// out a full POST and boot, minutes past beaconLostAfter. Status
+		// stays False: the installer genuinely is not responding. But the
+		// reason and message must not read as a fault, or every successful
+		// install spends its last minutes under a condition that tells an
+		// operator to go debug partitioning. A distinct reason, not just a
+		// distinct message, so an operator can filter on it.
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "Rebooting"
+		cond.Message = fmt.Sprintf("base system installed %s ago; the machine is rebooting into it",
+			now.Sub(st.LastSeen).Round(time.Second))
 	case now.Sub(st.LastSeen) > beaconLostAfter:
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = "HeartbeatLost"
@@ -623,11 +637,11 @@ func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi
 // caller's possibly-stale fi: without this, a condition written just before
 // Installing ends (the ordinary case -- WaitForOurSystem regularly outlasts
 // beaconLostAfter after the installer's own reboot, so the last beacon-based
-// write before Ready is usually HeartbeatLost) is never corrected, and every
-// successfully installed machine keeps a permanent "installer stopped
-// responding" condition. finishStatus removes the condition outright once
-// Install returns, for the same reason: this reconciler must never be the
-// last writer of a condition describing a phase that has already ended.
+// write before Ready is usually Rebooting) is never corrected, and every
+// successfully installed machine keeps a permanent condition describing a
+// phase that has already ended. finishStatus removes the condition outright
+// once Install returns, for the same reason: this reconciler must never be
+// the last writer of a condition describing a phase that has already ended.
 func (r *FrameInstallReconciler) setCondition(ctx context.Context, fi *framev1beta1.FrameInstall, cond metav1.Condition) {
 	var latest framev1beta1.FrameInstall
 	if err := r.Get(ctx, client.ObjectKeyFromObject(fi), &latest); err != nil {
@@ -699,11 +713,11 @@ func (r *FrameInstallReconciler) finishStatus(ctx context.Context, key client.Ob
 	// that stops describing anything is worse than none: WaitForOurSystem
 	// routinely outlasts beaconLostAfter after the installer's own reboot,
 	// so without this, the LAST InstallerResponding write before a normal,
-	// successful Ready would almost always be HeartbeatLost, and it would
-	// never be corrected -- every successfully installed machine keeping a
-	// permanent "installer stopped responding" condition. A no-op if
-	// reportInstallerLiveness never got here (installs that fail before
-	// Installing never had this condition to begin with).
+	// successful Ready would almost always be Rebooting, and it would never
+	// be corrected -- every successfully installed machine keeping a
+	// permanent condition describing a phase that has already ended. A
+	// no-op if reportInstallerLiveness never got here (installs that fail
+	// before Installing never had this condition to begin with).
 	meta.RemoveStatusCondition(&fi.Status.Conditions, "InstallerResponding")
 
 	// NOT gated on res.Phase == Ready. provision.Join returns the

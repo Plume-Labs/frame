@@ -1329,6 +1329,19 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 			wantInMsg:  provision.CheckpointNetcfg,
 		},
 		{
+			// late is the last checkpoint the installer sends before
+			// finish-install reboots the machine -- WaitForOurSystem then
+			// waits out a full POST and boot, well past beaconLostAfter.
+			// Every successful install spends that tail here, and it is not
+			// a fault: it must not read as one.
+			name:       "the base install finished and the machine is rebooting",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointLate, LastSeen: now.Add(-lost), Count: 40},
+			known:      true,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "Rebooting",
+			wantInMsg:  "rebooting",
+		},
+		{
 			name:       "nothing was ever heard",
 			known:      false,
 			wantStatus: metav1.ConditionFalse,
