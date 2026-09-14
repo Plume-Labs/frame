@@ -110,9 +110,21 @@ func BeaconSend(base, token, checkpoint string) string {
 //
 // 15 seconds against the 60-second "lost" threshold in the controller: four
 // sends may be missed before anything is said.
+//
+// The loop's stdin, stdout and stderr are all redirected, not left to
+// inherit early_command's own. This loop is backgrounded inside the shell
+// preseed/early_command runs, and it keeps running for the rest of the
+// install -- long after that shell itself has exited. d-i runs preseed
+// hooks under log-output, which reads the hook's output; if its reader
+// waits for EOF on the hook's stdout/stderr pipes rather than only for the
+// hook process's own exit, this loop holding an open copy of those pipes
+// would block that reader for the rest of the install. Which behaviour
+// log-output actually has on this d-i version cannot be proven without
+// hardware, so the mitigation does not wait to find out: it costs nothing,
+// and it is why this line does not get simplified back to `&` later.
 func BeaconHeartbeat(base, token, checkpoint string) string {
 	if strings.TrimSpace(base) == "" {
 		return ""
 	}
-	return fmt.Sprintf("(while true; do %s; sleep 15; done) &", BeaconSend(base, token, checkpoint))
+	return fmt.Sprintf("(while true; do %s; sleep 15; done) </dev/null >/dev/null 2>&1 &", BeaconSend(base, token, checkpoint))
 }
