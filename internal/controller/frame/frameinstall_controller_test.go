@@ -966,6 +966,43 @@ func TestFrameInstallRestartMidInstallFailsRatherThanResumes(t *testing.T) {
 	}
 }
 
+// TestFrameInstallRestartRemovesAStaleInstallerRespondingCondition covers
+// the residual finding 2 left behind: status.conditions is durable across a
+// restart even though inFlight/tokens are not, so an InstallerResponding
+// condition written by a pre-restart process would otherwise survive on the
+// now-Failed object failRestarted produces -- the one exit that reaches
+// Failed without going through finishStatus's own removal.
+func TestFrameInstallRestartRemovesAStaleInstallerRespondingCondition(t *testing.T) {
+	fi := fiInstall("fi-ctrl-restart-condition", "fi-ctrl-restart-condition-machine")
+	fi.Finalizers = []string{frameInstallFinalizer}
+	fi.Status.Phase = string(provision.PhaseInstalling)
+	fi.Status.ObservedGeneration = fi.Generation // "already committed"
+	fi.Status.Conditions = []metav1.Condition{{
+		Type:               "InstallerResponding",
+		Status:             metav1.ConditionFalse,
+		Reason:             "HeartbeatLost",
+		Message:            "pre-restart condition that must not survive",
+		LastTransitionTime: metav1.Now(),
+	}}
+	fm := fiMachine(fi.Spec.MachineRef, fi.Spec.ConfirmSerial)
+	c := fiTestClient(t, fi, fm)
+	bmc := &fakeInstallBMC{serial: fi.Spec.ConfirmSerial}
+	r := fiTestReconciler(c, bmc, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{ready: true})
+	key := fiKey(fi)
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseFailed) {
+		t.Fatalf("phase = %q, want Failed", got.Status.Phase)
+	}
+	if cond := meta.FindStatusCondition(got.Status.Conditions, "InstallerResponding"); cond != nil {
+		t.Errorf("InstallerResponding condition survived failRestarted: %+v -- a condition from before the restart must not remain on a terminal object", cond)
+	}
+}
+
 // TestFrameInstallDoesNotTreatANonTerminalPhaseAloneAsARestart is the
 // positive control for the test above: a non-terminal status.phase by
 // itself -- without status.observedGeneration actually matching
@@ -1321,8 +1358,6 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 	}
 }
 
-// The load-bearing test of the whole design. If someone later makes beacon
-// state able to fail an install, this goes red.
 // TestBeaconStateNeverEndsOrFailsAnInstall is the load-bearing test of the
 // whole design. A version once existed that only called
 // installerRespondingCondition directly and asserted on the returned
