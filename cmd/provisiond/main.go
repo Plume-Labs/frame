@@ -133,7 +133,10 @@ func run() error {
 	mediaMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mediaMux.Handle("/", provision.MediaHandler(cfg.ImagesDir))
+	// nil for now: this task only adds the write route's plumbing to
+	// MediaHandler itself. Task 6 builds the shared BeaconStore and hands it
+	// to both listeners here.
+	mediaMux.Handle("/", provision.MediaHandler(cfg.ImagesDir, nil))
 
 	buildSrv := &http.Server{
 		Addr:              cfg.BuildAddr,

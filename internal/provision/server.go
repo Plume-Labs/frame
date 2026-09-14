@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // imageName is the shape of a token this package ever produces: 32 hex
@@ -84,7 +85,7 @@ func newToken() (string, error) {
 // machine happening to answer at the target address, not an attacker who
 // can read this network. Design §7 says the same, and used to say the
 // stronger thing this route made untrue.
-func MediaHandler(dir string) http.Handler {
+func MediaHandler(dir string, beacons *BeaconStore) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /iso/{name}", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
@@ -109,6 +110,30 @@ func MediaHandler(dir string) http.Handler {
 		}
 		http.ServeFile(w, r, filepath.Join(dir, name))
 	})
+
+	// The write half of the beacon mechanism, and the only half that lives
+	// here. Reads are on the build listener (BuildHandler): this listener is
+	// reachable by anything on the management network, so it may deposit an
+	// installation's progress and may never disclose it.
+	//
+	// Registered only when a store exists. A route that accepted beacons and
+	// dropped them would be worse than no route: the machine's sends would
+	// succeed and the absence of any record would read as "the installer
+	// never spoke".
+	//
+	// Two path segments, both wildcards, both matched against a closed shape
+	// before anything is stored -- the same rule /iso/{name} follows. The
+	// response is 204 with no body: the machine ignores it, and there is
+	// nothing to say.
+	if beacons != nil {
+		mux.HandleFunc("GET /beacon/{token}/{checkpoint}", func(w http.ResponseWriter, r *http.Request) {
+			if !beacons.Record(r.PathValue("token"), r.PathValue("checkpoint"), time.Now()) {
+				http.NotFound(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
 	return mux
 }
 

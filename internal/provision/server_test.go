@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const tok = "0123456789abcdef0123456789abcdef"
@@ -27,7 +28,7 @@ func TestMediaHandlerRefusesEverythingButReadingAnImage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, tok+".iso"), []byte("ISO"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 
 	for _, tc := range []struct {
 		method, path string
@@ -50,7 +51,7 @@ func TestMediaHandlerRefusesEverythingButReadingAnImage(t *testing.T) {
 // way to read /etc/shadow.
 func TestMediaHandlerRefusesPathsThatClimbOut(t *testing.T) {
 	dir := t.TempDir()
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	for _, p := range []string{"/iso/../../etc/passwd", "/iso/..%2f..%2fetc%2fpasswd", "/iso/sub/dir.iso"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
@@ -68,7 +69,7 @@ func TestMediaHandlerRefusesPathsThatClimbOut(t *testing.T) {
 // lookup the name check guards.
 func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedNameThatIsAbsent(t *testing.T) {
 	dir := t.TempDir()
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/iso/"+tok+".iso", nil))
 	if rr.Code != http.StatusNotFound {
@@ -88,7 +89,7 @@ func TestMediaHandlerRefusesAWellFormedRouteNameThatIsNotAnImageName(t *testing.
 	if err := os.WriteFile(filepath.Join(dir, "not-an-image-name"), []byte("ISO"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/iso/not-an-image-name", nil))
 	if rr.Code != http.StatusNotFound {
@@ -103,7 +104,7 @@ func TestMediaHandlerServesAPreseedAndRefusesToWriteOne(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, tok+".cfg"), []byte("PRESEED"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 
 	for _, tc := range []struct {
 		method, path string
@@ -126,7 +127,7 @@ func TestMediaHandlerServesAPreseedAndRefusesToWriteOne(t *testing.T) {
 // the new route.
 func TestMediaHandlerRefusesPreseedPathsThatClimbOut(t *testing.T) {
 	dir := t.TempDir()
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	for _, p := range []string{"/preseed/../../etc/passwd", "/preseed/..%2f..%2fetc%2fpasswd", "/preseed/sub/dir.cfg"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
@@ -148,7 +149,7 @@ func TestMediaHandlerRefusesPreseedPathsThatClimbOut(t *testing.T) {
 // actual proof).
 func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedPreseedNameThatIsAbsent(t *testing.T) {
 	dir := t.TempDir()
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".cfg", nil))
 	if rr.Code != http.StatusNotFound {
@@ -171,7 +172,7 @@ func TestMediaHandlerRefusesAWellFormedPreseedRouteNameThatIsNotAPreseedName(t *
 	if err := os.WriteFile(filepath.Join(dir, "not-a-preseed-name"), []byte("PRESEED"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/not-a-preseed-name", nil))
 	if rr.Code != http.StatusNotFound {
@@ -252,7 +253,7 @@ func TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, tok+".sh"), []byte(NetcfgRerunScript), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".sh", nil))
@@ -291,7 +292,7 @@ func TestMediaHandlerRefusesARunScriptNameThatIsNotARunScriptName(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	h := MediaHandler(dir)
+	h := MediaHandler(dir, nil)
 	for _, name := range []string{"not-a-run-script.sh", tok + ".sh.txt", tok + ".bash"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+name, nil))
@@ -343,7 +344,7 @@ func TestBuildHandlerServesTheRunScriptAtTheAddressThePreseedNames(t *testing.T)
 
 	path := strings.TrimPrefix(runURL, testMediaURL)
 	got := httptest.NewRecorder()
-	MediaHandler(dir).ServeHTTP(got, httptest.NewRequest(http.MethodGet, path, nil))
+	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, path, nil))
 	if got.Code != http.StatusOK {
 		t.Fatalf("GET %s (the address the preseed itself names) = %d, want 200", path, got.Code)
 	}
@@ -505,7 +506,7 @@ func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
 	// Fetched through the media listener, not read off disk: that is the
 	// surface the question is about.
 	got := httptest.NewRecorder()
-	MediaHandler(dir).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
+	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
 	if got.Code != http.StatusOK {
 		t.Fatalf("GET the served preseed = %d", got.Code)
 	}
@@ -559,7 +560,7 @@ func TestBuildHandlerServesAPreseedThatDoesCarryThePublicKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := httptest.NewRecorder()
-	MediaHandler(dir).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
+	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
 	if got.Code != http.StatusOK {
 		t.Fatalf("GET the served preseed = %d", got.Code)
 	}
@@ -608,5 +609,72 @@ func TestValidateMediaURLRefusesTheReservedPlaceholderButItsSyntaxDoesNot(t *tes
 	// And a name that merely contains "invalid" is not the reserved one.
 	if err := ValidateMediaURL("http://invalid-host.example.net:30581"); err != nil {
 		t.Errorf("a host whose name merely contains \"invalid\" was refused: %v", err)
+	}
+}
+
+func TestMediaHandlerRecordsABeacon(t *testing.T) {
+	store := NewBeaconStore(8)
+	h := MediaHandler(t.TempDir(), store)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+	got, ok := store.Get(testBeaconToken)
+	if !ok || got.LastCheckpoint != CheckpointEarly {
+		t.Errorf("store after a beacon = %+v, ok=%v; want the early checkpoint", got, ok)
+	}
+}
+
+// The 404 is the point: a checkpoint outside the closed set must not be
+// stored, and the store must be asked, not merely the status code.
+func TestMediaHandlerRefusesABeaconItDoesNotRecognise(t *testing.T) {
+	store := NewBeaconStore(8)
+	h := MediaHandler(t.TempDir(), store)
+
+	for _, path := range []string{
+		"/beacon/" + testBeaconToken + "/bogus",
+		"/beacon/not-a-token/" + CheckpointEarly,
+		"/beacon/" + testBeaconToken,
+		"/beacon/" + testBeaconToken + "/" + CheckpointEarly + "/extra",
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", path, rr.Code)
+		}
+	}
+	if _, ok := store.Get(testBeaconToken); ok {
+		t.Error("a refused beacon still created an entry")
+	}
+}
+
+// The LAN-facing listener writes beacons. It must never be able to read
+// them back: that would publish one install's progress to anything that can
+// guess -- or observe -- its token.
+func TestMediaHandlerDoesNotServeBeaconsBack(t *testing.T) {
+	store := NewBeaconStore(8)
+	store.Record(testBeaconToken, CheckpointEarly, time.Unix(1_700_000_000, 0))
+	h := MediaHandler(t.TempDir(), store)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken, nil))
+	if rr.Code == http.StatusOK {
+		t.Fatalf("the media listener answered a beacon read with 200:\n%s", rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), CheckpointEarly) {
+		t.Errorf("the media listener leaked beacon state in a %d body:\n%s", rr.Code, rr.Body.String())
+	}
+}
+
+// Without a store there is no route at all -- not a route that quietly
+// accepts and discards.
+func TestMediaHandlerWithoutAStoreHasNoBeaconRoute(t *testing.T) {
+	rr := httptest.NewRecorder()
+	MediaHandler(t.TempDir(), nil).ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
 	}
 }
