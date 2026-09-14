@@ -67,11 +67,15 @@ func BeaconURL(base, token, checkpoint string) string {
 // It ends in `|| true` because the alternative is an installation aborted by
 // its own diagnostics: these run inside preseed commands, whose exit status
 // d-i can act on, and a beacon is never worth a wiped disk.
+//
+// The URL is wrapped in single quotes to prevent shell metacharacters in the
+// base from escaping the command. checkPreseedValue already forbids ' and \,
+// so nothing that passes ValidateBeaconBase can close the quote.
 func BeaconSend(base, token, checkpoint string) string {
 	if strings.TrimSpace(base) == "" {
 		return ""
 	}
-	return "wget -q -T 5 -O /dev/null " + BeaconURL(base, token, checkpoint) + " || true"
+	return "wget -q -T 5 -O /dev/null '" + BeaconURL(base, token, checkpoint) + "' || true"
 }
 
 // BeaconHeartbeat is the liveness signal: a backgrounded loop that reports
