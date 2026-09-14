@@ -244,9 +244,15 @@ Three layers of one subsystem:
 
 1. **`FrameApplication` CRD** — the model. An application declares its components, the services it requires (binding to S1), its quotas and its scheduling policy; a controller reconciles it.
 2. **Deploy from Frame** — the action. Install and update an application (Helm chart or manifests) from the UI, with Frame owning the lifecycle.
-3. **A grouped view** — the surface. Today `ApplicationsView` lists Deployments read through the SDK. Group by application rather than by Deployment, with health, logs and rollback.
+3. ✅ **A grouped view — largely shipped.** This item described `ApplicationsView` as listing Deployments; it has not done that for some time. `ApplicationClient.list()` groups workloads by their `app.kubernetes.io/instance` label — a Helm release — falling back to the namespace, which is how Neura (api + client + worker + postgres + redis) appears as one entry. `Application` carries typed `components` (kind, role, image, ready/desired replicas) and a three-state health, and the screen adds two actions the item never asked for: per-component restart behind a confirmation, and ±1 scaling.
 
-Layer 3 ships on its own, immediately: it is UI grouping over reads that already work, and needs neither the CRD nor S1. Layers 1 and 2 follow S1, since an application binding to services requires services to exist.
+   Three things from the item's own wording are **not** done, and they are not equal:
+
+   - **Logs are not reachable from this screen.** They exist — `WorkloadClient.logs()` — but only from Workloads, so getting from an unhealthy application to its output means finding the pod by hand. Small, and reuses the existing mechanism.
+   - **The screen does not refresh itself.** It loads once and offers a button. Phase C converted twenty-two views to watch streams to kill exactly this behaviour and this one was missed, so a scale or restart the operator just triggered stays invisible until they click again. Small, and it is the defect a user actually notices.
+   - **Rollback does not exist anywhere** — no occurrence in `src/`, and the ReplicaSets the SDK reads are used only to build the workload tree, never to offer a previous revision. This one is a design question before it is work: **Argo CD converges this cluster**, so a rollback issued from the UI is reverted at the next sync. Frame has to decide whether it refuses, warns, or suspends the Argo application — and that is the same "can the cluster afford this right now" judgment S3's update screen exists to make, so the two should answer it once, together.
+
+Layer 3 needed neither the CRD nor S1, which is why it arrived first. Layers 1 and 2 follow S1, since an application binding to services requires services to exist.
 
 ### Phase E — Stabilize the new groups
 
