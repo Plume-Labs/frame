@@ -460,6 +460,12 @@ func (r *FrameInstallReconciler) failRestarted(ctx context.Context, fi *framev1b
 	fi.Status.Message = truncateString(msg, 512)
 	now := metav1.Now()
 	fi.Status.PhaseSince = &now
+	// An InstallerResponding condition from before the restart would
+	// otherwise survive on this now-terminal object: inFlight/tokens are
+	// lost on restart, but status.conditions is durable, and this is the
+	// one exit that reaches Failed without going through finishStatus's own
+	// removal of it.
+	meta.RemoveStatusCondition(&fi.Status.Conditions, "InstallerResponding")
 	if err := r.Status().Patch(ctx, fi, patch); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -576,16 +582,19 @@ func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi
 		// before this method is ever called.
 		//
 		// What actually reaches this line: inFlight is keyed by machineRef,
-		// tokens by UID. A second FrameInstall naming the same machineRef
-		// can claim inFlight[machineRef] (nothing refuses that -- see
-		// inFlight's own doc comment) while *this* object is still sitting
-		// at Installing from a run this manager no longer has a token for.
-		// r.running(machineRef) then reads true for this object too, this
-		// method runs, and tokenFor(fi.UID) finds nothing, because the
-		// token in memory now belongs to the other object's UID. Said
-		// plainly rather than reported as a silent machine.
+		// tokens by UID. startInstall's own check-and-set does refuse two
+		// goroutines from concurrently claiming the same machineRef -- but
+		// nothing stops two different FrameInstall objects from naming the
+		// same machineRef in their Spec in the first place (see inFlight's
+		// own doc comment). When that happens, whichever object wins
+		// inFlight[machineRef] is not necessarily the one tokens holds a
+		// token for: a second object, still sitting at Installing from an
+		// earlier run, sees r.running(machineRef) turn true because of the
+		// winner, takes this branch, and finds tokenFor(fi.UID) empty
+		// because the token in memory belongs to the winner's UID, not its
+		// own. Said plainly rather than reported as a silent machine.
 		r.setCondition(ctx, fi, installerRespondingCondition(provision.BeaconState{}, false,
-			fmt.Errorf("this manager holds no image token for this installation -- either it restarted, or another FrameInstall now owns machine %q", fi.Spec.MachineRef), time.Now()))
+			fmt.Errorf("this manager holds no image token for this installation -- another FrameInstall now owns machine %q", fi.Spec.MachineRef), time.Now()))
 		return
 	}
 	// Bounded independently of ctx, which is controller-runtime's reconcile
