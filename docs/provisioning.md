@@ -151,7 +151,7 @@ answers on SSH carrying this installation's UID. While it runs, the
 | `False` / `HeartbeatLost` | `netcfg-done` | **the machine refused**: a named disk was not the size the `FrameInstall` declared, and `preseed/early_command` powered it off. Check `spec.layout.disks[].sizeBytes` against the machine. |
 | `False` / `HeartbeatLost` | `netcfg` (no `netcfg-done`) | the `preseed/run` script started but the netcfg re-run never brought the interface up on its static address, so nothing past this ever ran |
 | `False` / `NeverSeen` | none | it never booted the media, or the network never came up |
-| `Unknown` / `Unavailable` | — | Frame could not ask `frame-provisiond`; `frame-provisiond` restarted and lost its beacon history for an installation it had already reported on; or this manager restarted mid-install and no longer knows the image token. Says nothing about the machine. |
+| `Unknown` / `Unavailable` | — | Frame could not ask `frame-provisiond`; `frame-provisiond` restarted and lost its beacon history for an installation it had already reported on; or two `FrameInstall` objects name the same `machineRef` and this one lost the race for it. **Not** a manager restart mid-install -- that case fails closed (`Failed`, via `failRestarted`) before this condition is ever written again. Says nothing about the machine. |
 
 The checkpoint in the message is the furthest the installation has reached,
 not the checkpoint of the most recent beacon: the machine re-sends `early`

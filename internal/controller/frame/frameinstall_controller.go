@@ -250,8 +250,15 @@ type FrameInstallReconciler struct {
 	// handle protecting both the beacon route and the preseed (which carries
 	// the install UID) on an unauthenticated LAN listener. Putting it on an
 	// object widens who can read it to everyone with get on frameinstalls.
-	// The cost is that a manager restart loses it -- and the condition then
-	// reports Unavailable, which is the honest answer.
+	//
+	// A manager restart losing this map is NOT the reachable no-token case
+	// -- a restarted object's own next Reconcile finds running() false and
+	// goes to failRestarted before reportInstallerLiveness is ever called,
+	// so that object never asks tokenFor at all. What actually reaches an
+	// empty lookup is two different FrameInstall objects naming the same
+	// machineRef in their Spec: see reportInstallerLiveness's own comment
+	// on its no-token branch for why, and why the condition it writes
+	// there says so by name rather than reporting a silent machine.
 	tokens map[types.UID]string
 
 	// seenBeacon remembers, by object UID, that provisiond has answered
