@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   __testing,
+  APPLICATION_WATCH_PATHS,
   createFrameClient,
   FrameAPIError,
   machinesPath,
@@ -954,6 +955,19 @@ describe('WorkloadClient', () => {
       '/apis/apps/v1/statefulsets',
       '/apis/batch/v1/jobs',
     ])
+  })
+
+  // The contract this asserts is between two pieces of data, not a snapshot of
+  // either: whatever `apps.list()` reads is what ApplicationsView has to
+  // watch, and APPLICATION_WATCH_PATHS is the single place that pair is
+  // written down. It goes red if a third collection is ever fetched without
+  // being watched -- a screen watching Deployments but not StatefulSets would
+  // sit frozen through a database scaling while tracking its API perfectly,
+  // and nothing about it would look wrong.
+  it('reads exactly the collections an applications screen is told to watch', async () => {
+    const seen = capture(() => json({ items: [] }))
+    await createFrameClient().apps.list()
+    expect(seen.map((s) => s.url).sort()).toEqual([...APPLICATION_WATCH_PATHS].sort())
   })
 
   it('attaches a Deployment pod through its ReplicaSet', async () => {

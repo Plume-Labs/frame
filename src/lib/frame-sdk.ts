@@ -2708,20 +2708,39 @@ class ClusterClient {
   }
 }
 
+/**
+ * The collections an application is assembled from, and therefore exactly the
+ * collections a screen showing applications must watch.
+ *
+ * `ApplicationClient.list()` builds its own reads from this array rather than
+ * naming the paths again, and `ApplicationsView` watches it. That is what
+ * keeps the two from drifting: a screen that watched Deployments but not
+ * StatefulSets would sit frozen through a database scaling while tracking its
+ * API perfectly, and nothing about it would look wrong.
+ *
+ * Order is load-bearing — it pairs with APPLICATION_KINDS below.
+ */
+export const APPLICATION_WATCH_PATHS = [
+  '/apis/apps/v1/deployments',
+  '/apis/apps/v1/statefulsets',
+] as const
+
+const APPLICATION_KINDS: readonly AppComponent['kind'][] = ['Deployment', 'StatefulSet']
+
 class ApplicationClient {
   /**
    * List deployed applications across all non-system namespaces by reading
-   * Deployments and StatefulSets and grouping them by Helm release.
+   * every collection in APPLICATION_WATCH_PATHS and grouping them by Helm
+   * release.
    */
   async list(): Promise<Application[]> {
-    const [deps, sts] = await Promise.all([
-      k8sFetch<ListResponse<WorkloadCR>>('/apis/apps/v1/deployments'),
-      k8sFetch<ListResponse<WorkloadCR>>('/apis/apps/v1/statefulsets'),
-    ])
+    const [deps, sts] = await Promise.all(
+      APPLICATION_WATCH_PATHS.map((path) => k8sFetch<ListResponse<WorkloadCR>>(path)),
+    )
 
     const workloads: Array<{ cr: WorkloadCR; kind: AppComponent['kind'] }> = [
-      ...(deps.items ?? []).map((cr) => ({ cr, kind: 'Deployment' as const })),
-      ...(sts.items ?? []).map((cr) => ({ cr, kind: 'StatefulSet' as const })),
+      ...(deps.items ?? []).map((cr) => ({ cr, kind: APPLICATION_KINDS[0] })),
+      ...(sts.items ?? []).map((cr) => ({ cr, kind: APPLICATION_KINDS[1] })),
     ].filter(({ cr }) => !SYSTEM_NAMESPACES.has(cr.metadata.namespace))
 
     const groups = new Map<string, Application>()
