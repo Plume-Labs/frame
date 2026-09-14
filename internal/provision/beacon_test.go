@@ -83,3 +83,32 @@ func TestValidateBeaconBaseAcceptsEmptyAsMeaningNoBeacons(t *testing.T) {
 		t.Errorf("BeaconHeartbeat with no base = %q, want \"\"", got)
 	}
 }
+
+// Shell metacharacters in a validated base must be contained within the
+// single-quoted word, not allowed to escape and create a second command.
+// A base containing ; or $(...) or backticks should produce them inside
+// quotes, so they cannot splice additional commands into preseed/early_command.
+func TestBeaconSendContainsShellMetacharactersInQuotes(t *testing.T) {
+	// This base would normally splice a second command: the semicolon closes
+	// the wget and runs 'touch'. But it passes ValidateBeaconBase (which
+	// forbids only \n, \r, ', and \), so the quoting must contain it.
+	baseWithSemicolon := "http://192.168.2.10:30581; touch /tmp/pwned"
+	if err := ValidateBeaconBase(baseWithSemicolon); err != nil {
+		t.Fatalf("ValidateBeaconBase should accept %q; the quote guard must handle it", baseWithSemicolon)
+	}
+	cmd := BeaconSend(baseWithSemicolon, testBeaconToken, CheckpointEarly)
+	// The semicolon must appear inside the single-quoted URL, between
+	// the opening quote after /dev/null and the closing quote before || true.
+	if !strings.Contains(cmd, "'http://192.168.2.10:30581; touch /tmp/pwned/beacon/") {
+		t.Errorf("BeaconSend(%q, ...) = %q; the semicolon must be inside the quoted URL", baseWithSemicolon, cmd)
+	}
+	// The closing quote must come after the checkpoint, before the || true.
+	quoteBeforeTrueIdx := strings.Index(cmd, "' || true")
+	if quoteBeforeTrueIdx == -1 {
+		t.Errorf("BeaconSend(%q, ...) = %q; no closing quote found before || true", baseWithSemicolon, cmd)
+	}
+	semiIdx := strings.Index(cmd, ";")
+	if semiIdx > quoteBeforeTrueIdx {
+		t.Errorf("BeaconSend(%q, ...) = %q; the semicolon appears after the closing quote (would escape)", baseWithSemicolon, cmd)
+	}
+}
