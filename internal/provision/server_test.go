@@ -751,13 +751,27 @@ func TestBuildHandlerForgetsBeaconsWhenTheImageIsRemoved(t *testing.T) {
 	}
 }
 
-// The in-cluster listener reads. It must never be a second way to write.
+// The in-cluster listener reads. It must never be a second way to write --
+// under either verb. GET is the shape MediaHandler's real write route uses
+// (GET /beacon/{token}/{checkpoint}, Task 3), so it is the likely mistake:
+// copying that route verbatim into BuildHandler. POST is the unlikely one,
+// but http.ServeMux dispatches on method and pattern together, so a write
+// route registered here as POST would 405 a GET without the handler ever
+// running -- a GET-only version of this test would pass whether or not
+// that write route existed.
 func TestBuildHandlerDoesNotAcceptBeacons(t *testing.T) {
-	store := NewBeaconStore(8)
-	rr := httptest.NewRecorder()
-	BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store).
-		ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
-	if _, ok := store.Get(testBeaconToken); ok {
-		t.Errorf("the build listener recorded a beacon (status %d)", rr.Code)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			store := NewBeaconStore(8)
+			rr := httptest.NewRecorder()
+			BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store).
+				ServeHTTP(rr, httptest.NewRequest(method, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
+			if rr.Code >= 200 && rr.Code < 300 {
+				t.Errorf("status = %d, want non-2xx: a write-shaped request must not succeed here", rr.Code)
+			}
+			if _, ok := store.Get(testBeaconToken); ok {
+				t.Errorf("the build listener recorded a beacon (status %d)", rr.Code)
+			}
+		})
 	}
 }
