@@ -207,7 +207,17 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 		preseedURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".cfg"
 		runURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".sh"
 
-		preseed, err := RenderPreseed(spec, runURL, "", token)
+		// Built from mediaURL like the two above, and for the same reason:
+		// the address baked into the image and the address this deployment
+		// actually serves must be one construction, not two that happen to
+		// agree. Empty when no store exists, which renders a preseed with
+		// no beacons rather than one pointing at a route that is not there.
+		beaconBase := mediaURL
+		if beacons == nil {
+			beaconBase = ""
+		}
+
+		preseed, err := RenderPreseed(spec, runURL, beaconBase, token)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -222,7 +232,7 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 		// it the preseed's preseed/run directive names a 404 and netcfg
 		// never re-runs -- which is indistinguishable, from here, from the
 		// install simply taking a long time.
-		if err := os.WriteFile(filepath.Join(dir, token+".sh"), []byte(RenderRunScript("", token)), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, token+".sh"), []byte(RenderRunScript(beaconBase, token)), 0o644); err != nil {
 			http.Error(w, fmt.Sprintf("writing preseed/run script: %v", err), http.StatusInternalServerError)
 			return
 		}
