@@ -541,15 +541,21 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "framemachine")
 		os.Exit(1)
 	}
+	// provisiondImages is both the ImageStore that builds/removes install
+	// media and the ProgressReader that asks provisiond what an installation
+	// has reported -- one HTTP client against frame-provisiond's build
+	// listener, not two.
+	provisiondImages := &provision.HTTPImageStore{
+		BuildURL: provisiondBuildURL,
+		MediaURL: provisiondMediaURL,
+	}
 	if err := (&controller.FrameInstallReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("frameinstall"), //nolint:staticcheck
 		NewBMC:   controller.BuildRedfishBMC,
-		Images: &provision.HTTPImageStore{
-			BuildURL: provisiondBuildURL,
-			MediaURL: provisiondMediaURL,
-		},
+		Images:   provisiondImages,
+		Progress: provisiondImages,
 		// Passed separately from the ImageStore because the reconciler
 		// refuses a FrameInstall in Pending on this value, before the BMC
 		// is touched -- an ImageStore behind an interface cannot be asked

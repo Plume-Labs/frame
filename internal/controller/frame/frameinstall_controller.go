@@ -29,6 +29,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -80,6 +81,50 @@ var defaultPhaseTimeouts = map[provision.Phase]time.Duration{
 
 const defaultPoll = 5 * time.Second
 
+// beaconLostAfter is how long without a beacon before the installer is
+// called unresponsive. The machine sends every 15 seconds, so this is four
+// missed sends.
+//
+// Not one or two: the machine is mid-installation on a network Frame just
+// reconfigured under it, and the cost of calling a live installer dead is an
+// operator sent to a machine that needed nothing. It is a guess with a
+// reason, and the first number to revisit once real installs have run.
+const beaconLostAfter = 60 * time.Second
+
+// installerRespondingCondition turns what provisiond reported into the one
+// condition an operator reads. It is a pure function of its arguments --
+// no client, no clock of its own -- because its whole job is a judgment that
+// must be testable at every boundary without standing up a cluster.
+//
+// It returns a condition and nothing else. It cannot fail an install, end a
+// phase, or shorten a timeout, and the test beside it asserts exactly that.
+func installerRespondingCondition(st provision.BeaconState, known bool, err error, now time.Time) metav1.Condition {
+	cond := metav1.Condition{Type: "InstallerResponding"}
+	switch {
+	case err != nil:
+		// Frame could not ask. Never conflated with "the machine is silent":
+		// one is a fact about the machine, the other about this process.
+		cond.Status = metav1.ConditionUnknown
+		cond.Reason = "Unavailable"
+		cond.Message = fmt.Sprintf("could not read installer progress: %v", err)
+	case !known:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "NeverSeen"
+		cond.Message = "nothing has been heard from the installer: it may not have booted the media, or the network may never have come up"
+	case now.Sub(st.LastSeen) > beaconLostAfter:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "HeartbeatLost"
+		cond.Message = fmt.Sprintf("last reached %s, %s ago, and has not reported since",
+			st.LastCheckpoint, now.Sub(st.LastSeen).Round(time.Second))
+	default:
+		cond.Status = metav1.ConditionTrue
+		cond.Reason = "Heartbeat"
+		cond.Message = fmt.Sprintf("at %s, last reported %s ago; an installer that stays here is waiting on a question",
+			st.LastCheckpoint, now.Sub(st.LastSeen).Round(time.Second))
+	}
+	return cond
+}
+
 // FrameInstallReconciler turns a FrameInstall into a running installation.
 //
 // It is thin on purpose: every judgment about what an installation does --
@@ -105,6 +150,13 @@ type FrameInstallReconciler struct {
 	Images provision.ImageStore
 	SSH    provision.SSHClient
 	Nodes  provision.NodeChecker
+
+	// Progress reads what an installation has reported to provisiond. It is
+	// diagnosis only: nothing read through it may end, advance or fail a
+	// phase. Left nil, the InstallerResponding condition is simply never
+	// written and every install behaves exactly as it did before this
+	// existed.
+	Progress provision.ProgressReader
 
 	// ProvisiondMediaURL is the address a machine's BMC reaches
 	// frame-provisiond's media listener at. It is the same value Images was
@@ -153,6 +205,19 @@ type FrameInstallReconciler struct {
 	// the comment on the ObservedGeneration check in Reconcile.
 	mu       sync.Mutex
 	inFlight map[string]types.UID
+
+	// tokens is the image token of each in-flight install, by object UID.
+	// provision.Install produces it (Deps.ReportToken) and it is absent from
+	// Result, so this is the only way to know it while the install is still
+	// running -- which is exactly when it is needed.
+	//
+	// Deliberately NOT written to status: the token is the unguessable
+	// handle protecting both the beacon route and the preseed (which carries
+	// the install UID) on an unauthenticated LAN listener. Putting it on an
+	// object widens who can read it to everyone with get on frameinstalls.
+	// The cost is that a manager restart loses it -- and the condition then
+	// reports Unavailable, which is the honest answer.
+	tokens map[types.UID]string
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameinstalls,verbs=get;list;watch;update;patch
@@ -196,6 +261,7 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// same machine. Either way, nothing more may start against this
 	// machineRef right now.
 	if r.running(fi.Spec.MachineRef) {
+		r.reportInstallerLiveness(ctx, &fi)
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
@@ -285,7 +351,7 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	patch := client.MergeFrom(fi.DeepCopy())
 	fi.Status.ObservedGeneration = fi.Generation
 	if err := r.Status().Patch(ctx, &fi, patch); err != nil {
-		r.finishInstall(fi.Spec.MachineRef)
+		r.finishInstall(fi.Spec.MachineRef, fi.UID)
 		return ctrl.Result{}, err
 	}
 
@@ -316,25 +382,32 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// mid-install is a failed install either way (failRestarted above).
 	installUID, err := newInstallUID()
 	if err != nil {
-		r.finishInstall(fi.Spec.MachineRef)
+		r.finishInstall(fi.Spec.MachineRef, fi.UID)
 		return r.failPending(ctx, &fi, fmt.Sprintf("generating an install UID: %v", err))
 	}
 
 	spec := toProvisionSpec(&fi, installUID, sshPub, joinToken)
 	opts := r.options(&fi, sshPriv)
 	key := client.ObjectKeyFromObject(&fi)
+	// Captured as a scalar rather than read through &fi inside the closure
+	// below: that closure runs on the goroutine spawned a few lines down,
+	// after Reconcile has returned and &fi has been handed to recordTask in
+	// between -- reading fi.UID from inside the closure would be reading an
+	// object someone else has had a pointer to.
+	uid := fi.UID
 	deps := provision.Deps{
-		BMC:    bmc,
-		Images: r.Images,
-		SSH:    r.SSH,
-		Nodes:  r.Nodes,
-		Report: func(p provision.Phase) { r.reportPhase(context.WithoutCancel(ctx), key, p) },
+		BMC:         bmc,
+		Images:      r.Images,
+		SSH:         r.SSH,
+		Nodes:       r.Nodes,
+		Report:      func(p provision.Phase) { r.reportPhase(context.WithoutCancel(ctx), key, p) },
+		ReportToken: func(tok string) { r.rememberToken(uid, tok) },
 	}
 
 	r.recordTask(ctx, &fi, framev1beta1.TaskVerbCreate,
 		fmt.Sprintf("install %s on machine %s", fi.Spec.Hostname, fi.Spec.MachineRef))
 
-	go r.runInstall(ctx, fi.Spec.MachineRef, key, deps, spec, opts)
+	go r.runInstall(ctx, fi.Spec.MachineRef, uid, key, deps, spec, opts)
 
 	log.Info("started FrameInstall", "frameinstall", req.NamespacedName, "machine", fi.Spec.MachineRef)
 	return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
@@ -413,8 +486,8 @@ func (r *FrameInstallReconciler) failRestarted(ctx context.Context, fi *framev1b
 // status-writing calls below use a value derived with context.WithoutCancel
 // for the same reason install.go's own cleanup does: the record of what
 // happened must still be written even if ctx is already Done.
-func (r *FrameInstallReconciler) runInstall(ctx context.Context, machineRef string, key client.ObjectKey, deps provision.Deps, spec provision.Spec, opts provision.Options) {
-	defer r.finishInstall(machineRef)
+func (r *FrameInstallReconciler) runInstall(ctx context.Context, machineRef string, uid types.UID, key client.ObjectKey, deps provision.Deps, spec provision.Spec, opts provision.Options) {
+	defer r.finishInstall(machineRef, uid)
 	res, err := provision.Install(ctx, deps, spec, opts)
 	r.finishStatus(context.WithoutCancel(ctx), key, machineRef, res, err)
 }
@@ -453,10 +526,74 @@ func (r *FrameInstallReconciler) startInstall(machineRef string, uid types.UID) 
 	return true
 }
 
-func (r *FrameInstallReconciler) finishInstall(machineRef string) {
+func (r *FrameInstallReconciler) finishInstall(machineRef string, uid types.UID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.inFlight, machineRef)
+	delete(r.tokens, uid)
+}
+
+// rememberToken records the image token of an in-flight install, keyed by
+// the FrameInstall's UID. It is provision.Deps.ReportToken's callback,
+// invoked once an image exists -- see the comment on Deps.ReportToken for
+// why this is the only place that token is ever kept.
+func (r *FrameInstallReconciler) rememberToken(uid types.UID, token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.tokens == nil {
+		r.tokens = map[types.UID]string{}
+	}
+	r.tokens[uid] = token
+}
+
+// tokenFor returns the image token remembered for uid, if any. Absent means
+// either no image has been built yet, or this manager did not start this
+// installation (a restart loses tokens along with inFlight).
+func (r *FrameInstallReconciler) tokenFor(uid types.UID) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tok, ok := r.tokens[uid]
+	return tok, ok
+}
+
+// reportInstallerLiveness refreshes the InstallerResponding condition on the
+// requeue this reconciler already performs every 15 seconds while an install
+// is in flight. It returns nothing: there is no outcome here a caller could
+// act on, which is the point.
+//
+// Only during Installing. In every other phase Frame has a better signal than
+// a beacon -- it is talking to the BMC, or to the machine itself -- and a
+// liveness condition there would be noise competing with fact.
+func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi *framev1beta1.FrameInstall) {
+	if r.Progress == nil || fi.Status.Phase != string(provision.PhaseInstalling) {
+		return
+	}
+	token, ok := r.tokenFor(fi.UID)
+	if !ok {
+		// No token means this manager did not start this install (it
+		// restarted), so it cannot ask about it. Said plainly rather than
+		// reported as a silent machine.
+		r.setCondition(ctx, fi, installerRespondingCondition(provision.BeaconState{}, false,
+			fmt.Errorf("this manager did not start this installation, so it does not know its image token"), time.Now()))
+		return
+	}
+	st, known, err := r.Progress.Progress(ctx, token)
+	r.setCondition(ctx, fi, installerRespondingCondition(st, known, err, time.Now()))
+}
+
+// setCondition writes one condition, in the Get-then-Patch shape reportPhase
+// uses. A failure to write is dropped on purpose: this is a diagnostic, and
+// failing a reconcile because a diagnostic could not be recorded would let it
+// affect the installation it only exists to describe.
+func (r *FrameInstallReconciler) setCondition(ctx context.Context, fi *framev1beta1.FrameInstall, cond metav1.Condition) {
+	var latest framev1beta1.FrameInstall
+	if err := r.Get(ctx, client.ObjectKeyFromObject(fi), &latest); err != nil {
+		return
+	}
+	patch := client.MergeFrom(latest.DeepCopy())
+	cond.ObservedGeneration = latest.Generation
+	meta.SetStatusCondition(&latest.Status.Conditions, cond)
+	_ = r.Status().Patch(ctx, &latest, patch)
 }
 
 // reportPhase is provision.Deps.Report: called on entering every phase,
