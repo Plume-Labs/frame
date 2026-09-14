@@ -55,12 +55,27 @@ Crossed, they name all four:
 | alive | not advancing | **a debconf question** — a human must answer it | 1 |
 | stopped | `partman` or `late` | died during partitioning, `pkgsel`, or base install | 2 |
 | stopped | `early` | died between the disk guard and partitioning | 2 |
-| never started | `netcfg` only | **the size guard's `poweroff -f`** — a refusal, not a fault | 3 |
-| never seen | none | media never booted, or `netcfg` never came up | 4 |
+| stopped | `late` | **the install succeeded** — d-i rebooted, which kills the heartbeat; `Installing` ends minutes later on SSH | — |
+| never started | `netcfg-done` | **the size guard's `poweroff -f`** — a refusal, not a fault | 3 |
+| never started | `netcfg` only | the run script ran but the network never came up on the static address | 4 |
+| never seen | none | media never booted at all | 4 |
 
-The fourth row is the one this design exists for. It is reachable only because
-`early` is emitted *after* the size assertion (§5): a machine that refused
-carries `netcfg` and nothing more, which no other outcome produces.
+The `netcfg-done` row is the one this design exists for, and it took a
+correction to make true. An earlier draft claimed `netcfg` alone identified
+the refusal and that "no other outcome produces" it. That was wrong: `netcfg`
+is emitted at the *top* of the run script, before `kill-all-dhcp`, so
+anything that stops the machine between there and the size assertion — above
+all a netcfg re-run that fails to take the static address, the step §10 marks
+unproven — gives the identical signature. A fifth checkpoint, emitted after
+`netcfg` returns, is what separates them: a machine that never reached the
+static address cannot send it, and a machine the guard refuses will have.
+
+The `late` row matters for a different reason: it is the **normal** end of a
+successful install, not a failure at all. The heartbeat dies when d-i reboots
+after `late_command`, and `WaitForOurSystem` then waits out a POST and boot —
+routinely longer than the 60-second threshold. Reported as an ordinary
+`HeartbeatLost` it would tell an operator that every successful install died
+during `pkgsel`.
 
 The heartbeat is the signal the machine cannot fake in the dangerous
 direction. It runs from `debian-installer`'s own shell: it cannot outlive the
@@ -120,7 +135,8 @@ Four checkpoints, at points d-i already gives Frame a shell:
 
 | checkpoint | where | means |
 |---|---|---|
-| `netcfg` | the `preseed/run` script (already used for the netcfg re-run, `preseed.go:17`) | preseed fetched, script running |
+| `netcfg` | the top of the `preseed/run` script (already used for the netcfg re-run, `preseed.go:17`) | preseed fetched, script running |
+| `netcfg-done` | the end of that same script, after `netcfg` returns | the machine is on its static address |
 | `early` | `preseed/early_command`, **after** the size assertion | the disk guard passed |
 | `partman` | `partman/early_command` | about to partition |
 | `late` | `preseed/late_command` | base system installed, about to reboot |
@@ -192,8 +208,12 @@ Bounded and boring on purpose:
 `replicas: 1` in both the chart and `config/provisiond`
 (`charts/frame/templates/provisiond-deployment.yaml:17`). This design makes
 that a requirement rather than a default, and says so in a comment at both
-sites. A provisiond restart loses beacon history; the condition of §7 reports
-`Unknown` and the install is unaffected — which is the correct behaviour for
+sites. A provisiond restart loses beacon history. An empty store answers 404, which
+is indistinguishable *at the wire* from an installation that never reported —
+so the controller remembers, per installation, that it has once seen beacons,
+and a later 404 against that memory is state loss rather than silence. Without
+that, a restart would make Frame report a live machine as never having booted.
+The condition then reports `Unknown` and the install is unaffected — which is the correct behaviour for
 a diagnostic that is not allowed to decide anything.
 
 ## 7. What the operator sees
@@ -203,7 +223,7 @@ One condition on `FrameInstall`, no new status struct:
 ```
 type: InstallerResponding
 status: True | False | Unknown
-reason: Heartbeat | HeartbeatLost | NeverSeen | Unavailable
+reason: Heartbeat | Rebooting | HeartbeatLost | NeverSeen | Unavailable
 message: "last checkpoint partman, 4m12s ago; heartbeat lost 3m01s ago"
 ```
 
@@ -216,7 +236,11 @@ message: "last checkpoint partman, 4m12s ago; heartbeat lost 3m01s ago"
   reason says whether Frame is being spoken to, the message says how far it
   got.
 - `False`/`NeverSeen` — the phase is `Installing` and nothing ever arrived.
-- `Unknown`/`Unavailable` — provisiond could not be reached, or restarted.
+- `False`/`Rebooting` — the last checkpoint is `late`, so the heartbeat
+  stopped because d-i rebooted. The status stays `False` — the installer
+  genuinely is not answering — but the reason says why, and it is good news.
+- `Unknown`/`Unavailable` — provisiond could not be reached, or lost its
+  memory, or this manager does not hold the token.
   Never conflated with `NeverSeen`: one says the machine is silent, the other
   says Frame cannot hear.
 
@@ -288,6 +312,12 @@ of §2, not the plumbing:
 Each of these is currently belief, and each is cheap to falsify on the ML350
 Gen9. None of them may be written down as fact until it has been.
 
+0. **The backgrounded heartbeat does not hold `early_command` open.** d-i runs
+   preseed hooks under `log-output`, which reads the hook's output; a reader
+   waiting for EOF rather than for the child's exit would block on the loop's
+   inherited copy of the pipe. The loop redirects all three descriptors to
+   `/dev/null` so it cannot, but that the redirect is sufficient on this d-i
+   version is still an observation to make, not a fact.
 1. **A backgrounded loop started in `preseed/early_command` survives** for the
    rest of the installation. This is the single load-bearing assumption; if it
    is false, the heartbeat becomes per-checkpoint only and the "alive and not
