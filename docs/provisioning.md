@@ -133,3 +133,31 @@ precisely because of this.
 Whether Frame owns image building at all, whether provisioning is PXE or
 written media, and what replaces `TalosUpgrade`. This document scopes the
 problem; it does not answer it.
+
+## Reading a stuck `Installing`
+
+`Installing` runs for up to twenty minutes and ends only when the machine
+answers on SSH carrying this installation's UID. While it runs, the
+`InstallerResponding` condition says whether the installer is speaking:
+
+    kubectl get frameinstall <name> -o jsonpath='{.status.conditions[?(@.type=="InstallerResponding")]}'
+
+| condition | last checkpoint in the message | what it means |
+|---|---|---|
+| `True` / `Heartbeat` | not advancing between reads | the installer is alive and waiting on a debconf question — go look at the console |
+| `False` / `HeartbeatLost` | `partman` or `late` | it died during partitioning, `pkgsel`, or the base install |
+| `False` / `HeartbeatLost` | `early` | it died between the disk-size guard and partitioning |
+| `False` / `HeartbeatLost` | `netcfg` | **the machine refused**: a named disk was not the size the `FrameInstall` declared, and `preseed/early_command` powered it off. Check `spec.layout.disks[].sizeBytes` against the machine. |
+| `False` / `NeverSeen` | none | it never booted the media, or the network never came up |
+| `Unknown` / `Unavailable` | — | Frame could not ask `frame-provisiond`, or this manager restarted mid-install and no longer knows the image token. Says nothing about the machine. |
+
+The checkpoint in the message is the furthest the installation has reached,
+not the checkpoint of the most recent beacon: the machine re-sends `early`
+every fifteen seconds while it works, so a last-write-wins reading of it
+would make every stopped-mid-install case look identical. Liveness comes
+from how long ago a beacon last arrived; progress comes from the checkpoint;
+the two move independently, and both are in the message.
+
+This condition is diagnosis only. It never ends the phase, never fails the
+install and never shortens the twenty-minute budget: the phase still ends
+only when the machine proves it is ours.
