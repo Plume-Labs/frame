@@ -139,8 +139,11 @@ func run() error {
 	mediaMux.Handle("/", provision.MediaHandler(cfg.ImagesDir, nil))
 
 	buildSrv := &http.Server{
-		Addr:              cfg.BuildAddr,
-		Handler:           provision.BuildHandler(cfg.ImagesDir, provision.DefaultBase(), cfg.MediaURL),
+		Addr: cfg.BuildAddr,
+		// nil for now, same as MediaHandler above: this task only adds the
+		// read route's plumbing to BuildHandler itself. Task 6 builds the
+		// shared BeaconStore and hands it to both listeners here.
+		Handler:           provision.BuildHandler(cfg.ImagesDir, provision.DefaultBase(), cfg.MediaURL, nil),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	mediaSrv := &http.Server{

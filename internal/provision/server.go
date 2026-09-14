@@ -157,8 +157,11 @@ func MediaHandler(dir string, beacons *BeaconStore) http.Handler {
 // (the one the BMC reaches, not this one). token is 32 hex characters from
 // crypto/rand. DELETE /iso/{name} removes a previously built image and its
 // preseed together, guarded by the same imageName check as the read-only
-// listener.
-func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
+// listener, and -- when beacons is non-nil -- forgets that token's beacon
+// state too. GET /beacon/{token} is the read half of the beacon mechanism;
+// see its registration below for why it lives on this listener and not the
+// other one.
+func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconStore) http.Handler {
 	mux := http.NewServeMux()
 	baseDir := filepath.Join(dir, "base")
 
@@ -259,8 +262,34 @@ func BuildHandler(dir string, base BaseSource, mediaURL string) http.Handler {
 				return
 			}
 		}
+		// Beacon state is dropped with the image it belongs to, so its
+		// lifetime cannot outlive the installation it describes.
+		if beacons != nil {
+			beacons.Forget(token)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+
+	// The read half. It lives here and nowhere else: this listener is the
+	// in-cluster one, on a Service nothing outside the cluster reaches,
+	// which is why it may disclose what the LAN-facing listener collected.
+	//
+	// A 404 means "nothing has been heard from this installation". The
+	// controller maps that to NeverSeen, and maps a failure to reach this
+	// endpoint at all to Unavailable -- two different things that must not
+	// be collapsed, which is why "no beacons" is a status code rather than
+	// a zero-valued 200.
+	if beacons != nil {
+		mux.HandleFunc("GET /beacon/{token}", func(w http.ResponseWriter, r *http.Request) {
+			st, ok := beacons.Get(r.PathValue("token"))
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(st)
+		})
+	}
 
 	return mux
 }

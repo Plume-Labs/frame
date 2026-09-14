@@ -181,7 +181,7 @@ func TestMediaHandlerRefusesAWellFormedPreseedRouteNameThatIsNotAPreseedName(t *
 }
 
 func TestBuildHandlerRejectsASpecItWouldRefuseToRender(t *testing.T) {
-	h := BuildHandler(t.TempDir(), DefaultBase(), testMediaURL)
+	h := BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, nil)
 	body := `{"uid":"","hostname":"g9"}`
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", strings.NewReader(body)))
@@ -208,7 +208,7 @@ func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
 	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
 
 	dir := t.TempDir()
-	h := BuildHandler(dir, base, testMediaURL)
+	h := BuildHandler(dir, base, testMediaURL, nil)
 
 	spec := goodSpec()
 	reqBody, err := json.Marshal(spec)
@@ -324,7 +324,7 @@ func TestBuildHandlerServesTheRunScriptAtTheAddressThePreseedNames(t *testing.T)
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	BuildHandler(dir, base, testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	BuildHandler(dir, base, testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
 	}
@@ -379,7 +379,7 @@ func TestBuildHandlerDeleteRemovesThePreseedAndTheRunScriptWithTheImage(t *testi
 		}
 	}
 	rr := httptest.NewRecorder()
-	BuildHandler(dir, DefaultBase(), testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+tok+".iso", nil))
+	BuildHandler(dir, DefaultBase(), testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+tok+".iso", nil))
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("DELETE = %d, want 204: %s", rr.Code, rr.Body.String())
 	}
@@ -487,7 +487,7 @@ func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	BuildHandler(dir, base, testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	BuildHandler(dir, base, testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
 
 	// The secret-laden key must be refused outright -- that is the primary
 	// guard, and it is what keeps the preseed clean. If it ever is not, the
@@ -551,7 +551,7 @@ func TestBuildHandlerServesAPreseedThatDoesCarryThePublicKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	BuildHandler(dir, base, testMediaURL).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	BuildHandler(dir, base, testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
 	}
@@ -694,5 +694,70 @@ func TestMediaHandlerWithoutAStoreHasNoBeaconRoute(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, path, nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("POST %s: status = %d, want 404 (405 would mean the route is registered)", path, rr.Code)
+	}
+}
+
+func TestBuildHandlerServesBeaconStateBack(t *testing.T) {
+	store := NewBeaconStore(8)
+	seen := time.Unix(1_700_000_000, 0).UTC()
+	store.Record(testBeaconToken, CheckpointPartman, seen)
+
+	rr := httptest.NewRecorder()
+	BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store).
+		ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken, nil))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var got BeaconState
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.LastCheckpoint != CheckpointPartman || !got.LastSeen.Equal(seen) || got.Count != 1 {
+		t.Errorf("beacon state = %+v, want partman at %v with count 1", got, seen)
+	}
+}
+
+// "Nothing has been heard" and "I cannot tell" are different answers, and
+// the controller maps them to different reasons. A 404 is what carries the
+// difference.
+func TestBuildHandlerAnswers404ForAnInstallThatHasNotReported(t *testing.T) {
+	rr := httptest.NewRecorder()
+	BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, NewBeaconStore(8)).
+		ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken, nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
+	}
+}
+
+// Beacon lifetime must match image lifetime. Otherwise a token's state
+// outlives the install it describes and occupies a slot until eviction.
+func TestBuildHandlerForgetsBeaconsWhenTheImageIsRemoved(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBeaconStore(8)
+	store.Record(testBeaconToken, CheckpointLate, time.Unix(1_700_000_000, 0))
+	if err := os.WriteFile(filepath.Join(dir, testBeaconToken+".iso"), []byte("iso"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, DefaultBase(), testMediaURL, store).
+		ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+testBeaconToken+".iso", nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rr.Code)
+	}
+	if _, ok := store.Get(testBeaconToken); ok {
+		t.Error("beacon state survived the removal of its image")
+	}
+}
+
+// The in-cluster listener reads. It must never be a second way to write.
+func TestBuildHandlerDoesNotAcceptBeacons(t *testing.T) {
+	store := NewBeaconStore(8)
+	rr := httptest.NewRecorder()
+	BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store).
+		ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+testBeaconToken+"/"+CheckpointEarly, nil))
+	if _, ok := store.Get(testBeaconToken); ok {
+		t.Errorf("the build listener recorded a beacon (status %d)", rr.Code)
 	}
 }
