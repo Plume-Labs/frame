@@ -570,14 +570,38 @@ func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi
 	}
 	token, ok := r.tokenFor(fi.UID)
 	if !ok {
-		// No token means this manager did not start this install (it
-		// restarted), so it cannot ask about it. Said plainly rather than
-		// reported as a silent machine.
+		// Reachable, but not by a restart of *this* object: a restart loses
+		// both inFlight and tokens together, and a restarted object's own
+		// next Reconcile finds running() false and goes to failRestarted
+		// before this method is ever called.
+		//
+		// What actually reaches this line: inFlight is keyed by machineRef,
+		// tokens by UID. A second FrameInstall naming the same machineRef
+		// can claim inFlight[machineRef] (nothing refuses that -- see
+		// inFlight's own doc comment) while *this* object is still sitting
+		// at Installing from a run this manager no longer has a token for.
+		// r.running(machineRef) then reads true for this object too, this
+		// method runs, and tokenFor(fi.UID) finds nothing, because the
+		// token in memory now belongs to the other object's UID. Said
+		// plainly rather than reported as a silent machine.
 		r.setCondition(ctx, fi, installerRespondingCondition(provision.BeaconState{}, false,
-			fmt.Errorf("this manager did not start this installation, so it does not know its image token"), time.Now()))
+			fmt.Errorf("this manager holds no image token for this installation -- either it restarted, or another FrameInstall now owns machine %q", fi.Spec.MachineRef), time.Now()))
 		return
 	}
-	st, known, err := r.Progress.Progress(ctx, token)
+	// Bounded independently of ctx, which is controller-runtime's reconcile
+	// context and carries no deadline of its own. Progress is the one call
+	// on this ImageStore that runs synchronously on the reconcile path
+	// itself (Build/Remove run on the per-install goroutine instead), and
+	// this reconciler processes one request at a time
+	// (SetupWithManager sets no MaxConcurrentReconciles override). A
+	// provisiond that accepts the connection and never answers would
+	// otherwise wedge every FrameInstall reconcile indefinitely, including
+	// the finalizer's media-eject -- the diagnostic this method exists to
+	// report would itself become the outage. Do not remove this: a timeout
+	// surfaces as InstallerResponding=Unavailable, which is already handled.
+	pollCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	st, known, err := r.Progress.Progress(pollCtx, token)
 	r.setCondition(ctx, fi, installerRespondingCondition(st, known, err, time.Now()))
 }
 
@@ -585,9 +609,22 @@ func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi
 // uses. A failure to write is dropped on purpose: this is a diagnostic, and
 // failing a reconcile because a diagnostic could not be recorded would let it
 // affect the installation it only exists to describe.
+//
+// Re-checks Phase == Installing against the freshly-Get object, not the
+// caller's possibly-stale fi: without this, a condition written just before
+// Installing ends (the ordinary case -- WaitForOurSystem regularly outlasts
+// beaconLostAfter after the installer's own reboot, so the last beacon-based
+// write before Ready is usually HeartbeatLost) is never corrected, and every
+// successfully installed machine keeps a permanent "installer stopped
+// responding" condition. finishStatus removes the condition outright once
+// Install returns, for the same reason: this reconciler must never be the
+// last writer of a condition describing a phase that has already ended.
 func (r *FrameInstallReconciler) setCondition(ctx context.Context, fi *framev1beta1.FrameInstall, cond metav1.Condition) {
 	var latest framev1beta1.FrameInstall
 	if err := r.Get(ctx, client.ObjectKeyFromObject(fi), &latest); err != nil {
+		return
+	}
+	if latest.Status.Phase != string(provision.PhaseInstalling) {
 		return
 	}
 	patch := client.MergeFrom(latest.DeepCopy())
@@ -647,6 +684,18 @@ func (r *FrameInstallReconciler) finishStatus(ctx context.Context, key client.Ob
 	}
 	fi.Status.HostKey = res.HostKey
 	fi.Status.NodeName = res.NodeName
+
+	// This call is the one point that knows Installing has just ended, one
+	// way or another -- res.Phase is never Installing itself. A condition
+	// that stops describing anything is worse than none: WaitForOurSystem
+	// routinely outlasts beaconLostAfter after the installer's own reboot,
+	// so without this, the LAST InstallerResponding write before a normal,
+	// successful Ready would almost always be HeartbeatLost, and it would
+	// never be corrected -- every successfully installed machine keeping a
+	// permanent "installer stopped responding" condition. A no-op if
+	// reportInstallerLiveness never got here (installs that fail before
+	// Installing never had this condition to begin with).
+	meta.RemoveStatusCondition(&fi.Status.Conditions, "InstallerResponding")
 
 	// NOT gated on res.Phase == Ready. provision.Join returns the
 	// kubeconfig in the Joining phase; two later things can still fail the
