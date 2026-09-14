@@ -62,6 +62,42 @@ func TestBeaconStoreForgetsAnImageThatIsGone(t *testing.T) {
 	}
 }
 
+// TestBeaconStoreKeepsTheFurthestCheckpointAcrossAHeartbeat is the assertion
+// the feature's value rests on. BeaconHeartbeat resends the checkpoint it
+// was started at -- CheckpointEarly, per preseed.go's own RenderPreseed
+// call -- every 15 seconds for the life of the installer environment. If a
+// heartbeat sent under CheckpointEarly regressed LastCheckpoint after the
+// install had already reported CheckpointPartman, every install's progress
+// signal would collapse to "early" within 15 seconds of leaving it,
+// regardless of where the machine actually stopped.
+func TestBeaconStoreKeepsTheFurthestCheckpointAcrossAHeartbeat(t *testing.T) {
+	s := NewBeaconStore(8)
+	t0 := time.Unix(1_700_000_000, 0)
+
+	s.Record(testBeaconToken, CheckpointNetcfg, t0)
+	s.Record(testBeaconToken, CheckpointEarly, t0.Add(1*time.Second))
+	s.Record(testBeaconToken, CheckpointPartman, t0.Add(2*time.Second))
+
+	// The heartbeat loop started back at CheckpointEarly is still firing --
+	// this is exactly what it sends.
+	heartbeatAt := t0.Add(17 * time.Second)
+	s.Record(testBeaconToken, CheckpointEarly, heartbeatAt)
+
+	got, ok := s.Get(testBeaconToken)
+	if !ok {
+		t.Fatal("Get after Record found nothing")
+	}
+	if got.LastCheckpoint != CheckpointPartman {
+		t.Errorf("LastCheckpoint = %q, want %q -- a heartbeat must not regress the furthest checkpoint reached", got.LastCheckpoint, CheckpointPartman)
+	}
+	if !got.LastSeen.Equal(heartbeatAt) {
+		t.Errorf("LastSeen = %v, want %v -- liveness must still move on a heartbeat that does not advance the checkpoint", got.LastSeen, heartbeatAt)
+	}
+	if got.Count != 4 {
+		t.Errorf("Count = %d, want 4 -- every accepted beacon counts, whether or not it advances the checkpoint", got.Count)
+	}
+}
+
 // Unbounded memory behind an unauthenticated route is a way to kill
 // provisiond from the management network.
 func TestBeaconStoreEvictsTheOldestWhenFull(t *testing.T) {
