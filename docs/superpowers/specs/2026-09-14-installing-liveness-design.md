@@ -78,8 +78,19 @@ move a phase, anything on that network could declare a machine installed.
 This is not left to convention. The read side lives in the **controller**, and
 `provision.Install` is never given a way to see it:
 
-- `internal/provision` only *writes* the beacon URL into the rendered preseed
-  and boot arguments. `Deps` gains no field. `Install` gains no branch.
+- `internal/provision` only *writes*: it renders the beacon URL into the
+  preseed and the `preseed/run` script, and it *tells* the caller which token
+  it is using, through one new write-only callback on `Deps`
+  (`ReportToken func(string)`, alongside the existing `Report func(Phase)`).
+  It is given no way to *ask* what has arrived — no reader appears in `Deps`,
+  and `Install` gains no branch that reads beacon state.
+
+  This is weaker than "`Deps` gains no field", which an earlier draft of this
+  section claimed. The controller cannot learn the token any other way: the
+  token is produced inside `Install` by `Images.Build` and is absent from
+  `Result`, which the controller only sees once the install is over. The
+  boundary that matters survives intact — telling is not asking — but it is
+  worth being exact about which one it is.
 - `frame-provisiond` records what arrives and serves it back **on the build
   listener** — the in-cluster one — never on the LAN-facing media listener it
   was collected on.
