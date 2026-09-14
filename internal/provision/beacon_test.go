@@ -52,6 +52,24 @@ func TestBeaconHeartbeatRunsInTheBackgroundAndKeepsGoing(t *testing.T) {
 	}
 }
 
+// TestBeaconHeartbeatDoesNotInheritStdio is finding 4: the loop is
+// backgrounded inside early_command's shell and keeps running for the rest
+// of the install. d-i runs preseed hooks under log-output, which reads the
+// hook's output; if its reader waits for EOF on the hook's stdout/stderr
+// pipes rather than only for the hook process's own exit, an open copy of
+// those fds held by this loop -- which never exits on its own -- would
+// block that reader for the rest of the install. Unprovable without
+// hardware, and the mitigation is free: the loop must hold no reference to
+// the hook's own stdio at all.
+func TestBeaconHeartbeatDoesNotInheritStdio(t *testing.T) {
+	got := BeaconHeartbeat(testBeaconBase, testBeaconToken, CheckpointEarly)
+	for _, want := range []string{"</dev/null", ">/dev/null 2>&1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("BeaconHeartbeat = %q; it does not redirect %q, so the loop keeps a copy of early_command's own stdio open for the rest of the install", got, want)
+		}
+	}
+}
+
 // The beacon base is interpolated into a preseed directive and into a
 // single-quoted shell word, exactly like the run URL. It gets the same
 // guard, and this asserts the refusal rather than the rendering.
