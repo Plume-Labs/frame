@@ -6,21 +6,29 @@ import (
 	"strings"
 )
 
-// The four checkpoints an installation reports, and the only strings
+// The five checkpoints an installation reports, and the only strings
 // provisiond will ever store. The set is closed on purpose: the write route
 // is unauthenticated and reachable from the management network, so a
 // checkpoint that is not one of these must never reach memory.
 //
 // They are ordered by when they happen, and the order is what makes a
-// failure legible: `netcfg` alone means the size guard in
-// preseed/early_command powered the machine off (preseed.go's
-// SizeAssertion), because `early` is emitted immediately after that
-// assertion and would otherwise be here too.
+// failure legible. `netcfg` is emitted at the TOP of the run script,
+// before kill-all-dhcp -- so on its own it means only "the preseed/run
+// script started", which covers every outcome between there and the disk
+// guard, above all a netcfg re-run that never takes the static address
+// (preseed.go's own comment marks that UNPROVEN ON HARDWARE). `netcfg-done`
+// is what actually discriminates: it is emitted after netcfg returns, so
+// its absence -- `netcfg` with nothing past it -- is a machine that never
+// got onto the static address, and its presence with nothing past it is a
+// machine that reached preseed/early_command and was refused there
+// (`early` is emitted immediately after the size assertion and would
+// otherwise be here too).
 const (
-	CheckpointNetcfg  = "netcfg"  // the preseed/run script is running
-	CheckpointEarly   = "early"   // the disk-size assertion passed
-	CheckpointPartman = "partman" // about to partition
-	CheckpointLate    = "late"    // base system installed, about to reboot
+	CheckpointNetcfg     = "netcfg"      // the preseed/run script started
+	CheckpointNetcfgDone = "netcfg-done" // netcfg returned; the machine is on its static address
+	CheckpointEarly      = "early"       // the disk-size assertion passed
+	CheckpointPartman    = "partman"     // about to partition
+	CheckpointLate       = "late"        // base system installed, about to reboot
 )
 
 // beaconToken is the shape of a token this package produces -- the same 32
@@ -28,18 +36,18 @@ const (
 // caller-supplied token is used as a map key or a path element.
 var beaconToken = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
-// ValidCheckpoint reports whether s is one of the four. Written as an
-// explicit switch rather than a map so that adding a fifth checkpoint is a
+// ValidCheckpoint reports whether s is one of the five. Written as an
+// explicit switch rather than a map so that adding a sixth checkpoint is a
 // change a reviewer sees in the same diff as the code that emits it.
 func ValidCheckpoint(s string) bool {
 	switch s {
-	case CheckpointNetcfg, CheckpointEarly, CheckpointPartman, CheckpointLate:
+	case CheckpointNetcfg, CheckpointNetcfgDone, CheckpointEarly, CheckpointPartman, CheckpointLate:
 		return true
 	}
 	return false
 }
 
-// checkpointRank gives the four checkpoints above a machine-readable form of
+// checkpointRank gives the five checkpoints above a machine-readable form of
 // the same order their own doc comment already states. BeaconStore.Record
 // uses it to keep the furthest-progressed checkpoint rather than the most
 // recently reported one: BeaconHeartbeat is a background loop that keeps
@@ -49,10 +57,11 @@ func ValidCheckpoint(s string) bool {
 // checkpoint every heartbeat happens to be rendered with -- would overwrite
 // `partman` or `late` within 15 seconds of either firing, on every install.
 var checkpointRank = map[string]int{
-	CheckpointNetcfg:  0,
-	CheckpointEarly:   1,
-	CheckpointPartman: 2,
-	CheckpointLate:    3,
+	CheckpointNetcfg:     0,
+	CheckpointNetcfgDone: 1,
+	CheckpointEarly:      2,
+	CheckpointPartman:    3,
+	CheckpointLate:       4,
 }
 
 // ValidateBeaconBase refuses a base URL that would break out of the two
