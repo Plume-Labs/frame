@@ -775,3 +775,63 @@ func TestBuildHandlerDoesNotAcceptBeacons(t *testing.T) {
 		})
 	}
 }
+
+// The URL a machine will call and the route that will answer it are both
+// built from mediaURL here. This asserts they are the same address by
+// construction -- the same property the preseed/run URL already has.
+func TestBuildHandlerBakesTheBeaconURLTheMediaListenerServes(t *testing.T) {
+	requireXorriso(t)
+
+	baseISOPath := realBaseISO(t)
+	baseBytes, err := os.ReadFile(baseISOPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := serveBytes(t, baseBytes)
+	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
+
+	dir := t.TempDir()
+	spec := goodSpec()
+	reqBody, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, base, testMediaURL, NewBeaconStore(8)).
+		ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp buildResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(dir, resp.Token+".cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := BeaconURL(testMediaURL, resp.Token, CheckpointEarly)
+	if !strings.Contains(string(cfg), want) {
+		t.Errorf("the written preseed does not carry %q", want)
+	}
+
+	sh, err := os.ReadFile(filepath.Join(dir, resp.Token+".sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sh), BeaconURL(testMediaURL, resp.Token, CheckpointNetcfg)) {
+		t.Errorf("the written preseed/run script does not report the netcfg checkpoint:\n%s", sh)
+	}
+
+	// And the route that URL names actually records, on a media listener
+	// sharing the store.
+	store := NewBeaconStore(8)
+	got := httptest.NewRecorder()
+	MediaHandler(dir, store).ServeHTTP(got,
+		httptest.NewRequest(http.MethodGet, "/beacon/"+resp.Token+"/"+CheckpointEarly, nil))
+	if got.Code != http.StatusNoContent {
+		t.Errorf("the media listener answered the baked-in beacon URL with %d", got.Code)
+	}
+}

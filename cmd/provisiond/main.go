@@ -124,6 +124,12 @@ func run() error {
 		return err
 	}
 
+	// One store, both listeners: the media listener writes to it, the build
+	// listener reads from it. This is the only object the two share, and it
+	// is why frame-provisiond stays at replicas: 1 -- a second replica would
+	// answer the controller's reads from a memory the machine never wrote to.
+	beacons := provision.NewBeaconStore(0)
+
 	// The media mux adds one route MediaHandler itself does not: a
 	// readinessProbe target. It is registered as its own exact pattern,
 	// alongside MediaHandler's own "GET /iso/{name}", never as a trailing-
@@ -133,17 +139,11 @@ func run() error {
 	mediaMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	// nil for now: this task only adds the write route's plumbing to
-	// MediaHandler itself. Task 6 builds the shared BeaconStore and hands it
-	// to both listeners here.
-	mediaMux.Handle("/", provision.MediaHandler(cfg.ImagesDir, nil))
+	mediaMux.Handle("/", provision.MediaHandler(cfg.ImagesDir, beacons))
 
 	buildSrv := &http.Server{
-		Addr: cfg.BuildAddr,
-		// nil for now, same as MediaHandler above: this task only adds the
-		// read route's plumbing to BuildHandler itself. Task 6 builds the
-		// shared BeaconStore and hands it to both listeners here.
-		Handler:           provision.BuildHandler(cfg.ImagesDir, provision.DefaultBase(), cfg.MediaURL, nil),
+		Addr:              cfg.BuildAddr,
+		Handler:           provision.BuildHandler(cfg.ImagesDir, provision.DefaultBase(), cfg.MediaURL, beacons),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	mediaSrv := &http.Server{
