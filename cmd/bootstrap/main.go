@@ -151,7 +151,7 @@ func run() error {
 	}
 	defer func() { _ = os.RemoveAll(imagesDir) }()
 
-	mediaSrv, err := startMediaListener(mediaAddr, provision.MediaHandler(imagesDir))
+	mediaSrv, err := startMediaListener(mediaAddr, provision.MediaHandler(imagesDir, nil))
 	if err != nil {
 		return err
 	}
