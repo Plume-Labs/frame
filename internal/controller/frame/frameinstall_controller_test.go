@@ -1296,6 +1296,7 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 		name       string
 		state      provision.BeaconState
 		known      bool
+		everKnown  bool
 		err        error
 		wantStatus metav1.ConditionStatus
 		wantReason string
@@ -1349,6 +1350,19 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 			wantInMsg:  "nothing",
 		},
 		{
+			// A 404 after this installation has previously been known is
+			// provisiond having lost its memory (a restart), not the
+			// machine having gone silent. Must never be conflated with
+			// NeverSeen -- one says the machine is silent, the other says
+			// Frame cannot hear.
+			name:       "provisiond restarted and lost beacon history for an installation it had already seen",
+			known:      false,
+			everKnown:  true,
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "Unavailable",
+			wantInMsg:  "beacon history was lost",
+		},
+		{
 			name:       "provisiond could not be asked",
 			err:        errors.New("connection refused"),
 			wantStatus: metav1.ConditionUnknown,
@@ -1357,7 +1371,7 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := installerRespondingCondition(tc.state, tc.known, tc.err, now)
+			got := installerRespondingCondition(tc.state, tc.known, tc.everKnown, tc.err, now)
 			if got.Status != tc.wantStatus {
 				t.Errorf("status = %q, want %q", got.Status, tc.wantStatus)
 			}
@@ -1452,6 +1466,58 @@ func TestBeaconStateNeverEndsOrFailsAnInstall(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestReportInstallerLivenessNeverUnknowsAPreviouslySeenInstallation drives
+// Reconcile through two beacon polls for the same installation: the first
+// finds it known, the second a 404 -- the shape provisiond losing its
+// in-memory store (a restart) actually produces on the next poll after an
+// install it had already been reporting on. Design §6/§7 requires that
+// second poll to read as Unavailable ("Frame cannot hear"), never as
+// NeverSeen ("the machine is silent") -- a real, alive installation must
+// never be told apart from one that never booted.
+func TestReportInstallerLivenessNeverUnknowsAPreviouslySeenInstallation(t *testing.T) {
+	fi := fiInstall("fi-ctrl-beacon-restart", "fi-ctrl-beacon-restart-machine")
+	fi.Finalizers = []string{frameInstallFinalizer}
+	fi.Status.Phase = string(provision.PhaseInstalling)
+	c := fiTestClient(t, fi)
+	r := fiTestReconciler(c, &fakeInstallBMC{}, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{})
+	key := fiKey(fi)
+
+	if !r.startInstall(fi.Spec.MachineRef, fi.UID) {
+		t.Fatal("startInstall refused a machineRef with nothing running yet")
+	}
+	r.rememberToken(fi.UID, "fi-ctrl-beacon-restart-token")
+	defer r.finishInstall(fi.Spec.MachineRef, fi.UID)
+
+	// First poll: the installation has reported.
+	r.Progress = &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointPartman, LastSeen: time.Now()}}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	first := meta.FindStatusCondition(fiGet(t, c, key).Status.Conditions, "InstallerResponding")
+	if first == nil || first.Reason != "Heartbeat" {
+		t.Fatalf("first poll = %+v, want reason Heartbeat -- setup must establish 'this installation has been seen' before the second poll means anything", first)
+	}
+
+	// Second poll: provisiond lost its memory (a restart). The store
+	// answers as if nothing had ever arrived -- exactly what fakeProgress's
+	// zero value reports.
+	r.Progress = &fakeProgress{known: false}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	second := meta.FindStatusCondition(fiGet(t, c, key).Status.Conditions, "InstallerResponding")
+	if second == nil {
+		t.Fatal("no InstallerResponding condition after the second poll")
+	}
+	if second.Status != metav1.ConditionUnknown || second.Reason != "Unavailable" {
+		t.Errorf("second poll: status=%q reason=%q, want Unknown/Unavailable -- a previously-known installation going silent is provisiond losing state, not the machine going silent",
+			second.Status, second.Reason)
+	}
+	if second.Reason == "NeverSeen" {
+		t.Error("the condition regressed to NeverSeen: a genuinely alive installation now reads as one that never booted")
 	}
 }
 

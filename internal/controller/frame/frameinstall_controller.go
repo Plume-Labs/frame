@@ -96,9 +96,19 @@ const beaconLostAfter = 60 * time.Second
 // no client, no clock of its own -- because its whole job is a judgment that
 // must be testable at every boundary without standing up a cluster.
 //
+// everKnown is whether *this* installation has previously been reported
+// known == true, remembered by the caller across calls (see the
+// reconciler's seenBeacon field). It exists to tell a provisiond restart
+// apart from a genuinely silent machine: both produce known == false, but
+// only the restart follows a call that once had known == true. Design §6/§7
+// says the two must never be conflated -- one says the machine is silent,
+// the other says Frame cannot hear -- and an empty in-memory store cannot
+// tell them apart on its own; only the caller's memory of "have I seen this
+// one before" can.
+//
 // It returns a condition and nothing else. It cannot fail an install, end a
 // phase, or shorten a timeout, and the test beside it asserts exactly that.
-func installerRespondingCondition(st provision.BeaconState, known bool, err error, now time.Time) metav1.Condition {
+func installerRespondingCondition(st provision.BeaconState, known, everKnown bool, err error, now time.Time) metav1.Condition {
 	cond := metav1.Condition{Type: "InstallerResponding"}
 	switch {
 	case err != nil:
@@ -107,6 +117,17 @@ func installerRespondingCondition(st provision.BeaconState, known bool, err erro
 		cond.Status = metav1.ConditionUnknown
 		cond.Reason = "Unavailable"
 		cond.Message = fmt.Sprintf("could not read installer progress: %v", err)
+	case !known && everKnown:
+		// This installation was known before and is not now: provisiond
+		// lost its beacon history (a restart -- it stays replicas: 1, but a
+		// restart still empties the in-memory store), not the machine
+		// going silent. Reported the same way as "could not be asked" --
+		// Unknown/Unavailable -- because it is the same kind of fact, about
+		// this process rather than the machine, and design §7 already
+		// reserves that reason for exactly this case.
+		cond.Status = metav1.ConditionUnknown
+		cond.Reason = "Unavailable"
+		cond.Message = "beacon history was lost (frame-provisiond likely restarted); this says nothing about whether the installer is still running"
 	case !known:
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = "NeverSeen"
@@ -232,6 +253,23 @@ type FrameInstallReconciler struct {
 	// The cost is that a manager restart loses it -- and the condition then
 	// reports Unavailable, which is the honest answer.
 	tokens map[types.UID]string
+
+	// seenBeacon remembers, by object UID, that provisiond has answered
+	// known == true for this installation at least once. Guarded by mu
+	// alongside inFlight and tokens.
+	//
+	// It exists so a later known == false is not misread. Progress alone
+	// cannot tell "the machine has never spoken" from "provisiond restarted
+	// and lost its in-memory store" -- both are a 404 today. Once this
+	// installation has been seen, a later false is the second case:
+	// provisiond's memory, not the machine's silence.
+	//
+	// Once set, never cleared for the life of this installation --
+	// deliberately: a beacon that arrived and then stopped is still a fact
+	// that happened, and provisiond losing its own memory of it must not
+	// make this reconciler forget too. Dropped in finishInstall alongside
+	// the token, so it cannot leak past the installation it describes.
+	seenBeacon map[types.UID]bool
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frameinstalls,verbs=get;list;watch;update;patch
@@ -551,6 +589,7 @@ func (r *FrameInstallReconciler) finishInstall(machineRef string, uid types.UID)
 	defer r.mu.Unlock()
 	delete(r.inFlight, machineRef)
 	delete(r.tokens, uid)
+	delete(r.seenBeacon, uid)
 }
 
 // rememberToken records the image token of an in-flight install, keyed by
@@ -574,6 +613,26 @@ func (r *FrameInstallReconciler) tokenFor(uid types.UID) (string, bool) {
 	defer r.mu.Unlock()
 	tok, ok := r.tokens[uid]
 	return tok, ok
+}
+
+// markSeenBeacon records that provisiond has answered known == true for uid
+// at least once. See seenBeacon's own doc comment for why this is never
+// unset for the life of the installation.
+func (r *FrameInstallReconciler) markSeenBeacon(uid types.UID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.seenBeacon == nil {
+		r.seenBeacon = map[types.UID]bool{}
+	}
+	r.seenBeacon[uid] = true
+}
+
+// everSeenBeacon reports whether markSeenBeacon has ever been called for
+// uid.
+func (r *FrameInstallReconciler) everSeenBeacon(uid types.UID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.seenBeacon[uid]
 }
 
 // reportInstallerLiveness refreshes the InstallerResponding condition on the
@@ -607,7 +666,7 @@ func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi
 		// winner, takes this branch, and finds tokenFor(fi.UID) empty
 		// because the token in memory belongs to the winner's UID, not its
 		// own. Said plainly rather than reported as a silent machine.
-		r.setCondition(ctx, fi, installerRespondingCondition(provision.BeaconState{}, false,
+		r.setCondition(ctx, fi, installerRespondingCondition(provision.BeaconState{}, false, r.everSeenBeacon(fi.UID),
 			fmt.Errorf("this manager holds no image token for this installation -- another FrameInstall now owns machine %q", fi.Spec.MachineRef), time.Now()))
 		return
 	}
@@ -625,7 +684,15 @@ func (r *FrameInstallReconciler) reportInstallerLiveness(ctx context.Context, fi
 	pollCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	st, known, err := r.Progress.Progress(pollCtx, token)
-	r.setCondition(ctx, fi, installerRespondingCondition(st, known, err, time.Now()))
+	// Recorded before the condition is computed, so this same call's own
+	// known == true (if any) already counts for "has this ever been seen".
+	// Only on a successful read: an err != nil poll says nothing about
+	// whether the installation is known, so it must not be allowed to
+	// stand in for either known or !known here.
+	if err == nil && known {
+		r.markSeenBeacon(fi.UID)
+	}
+	r.setCondition(ctx, fi, installerRespondingCondition(st, known, r.everSeenBeacon(fi.UID), err, time.Now()))
 }
 
 // setCondition writes one condition, in the Get-then-Patch shape reportPhase
