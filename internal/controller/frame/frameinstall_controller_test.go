@@ -29,6 +29,7 @@ import (
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1322,29 +1323,158 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 
 // The load-bearing test of the whole design. If someone later makes beacon
 // state able to fail an install, this goes red.
+// TestBeaconStateNeverEndsOrFailsAnInstall is the load-bearing test of the
+// whole design. A version once existed that only called
+// installerRespondingCondition directly and asserted on the returned
+// struct -- which restates that pure function's own signature and cannot go
+// red no matter what a *caller* does with the result. This version drives
+// Reconcile itself, the way a real losing beacon outcome would arrive, and
+// asserts on what the install actually did: if a future change makes
+// reportInstallerLiveness act on beacon state -- change the phase, shorten
+// the requeue, anything -- this goes red.
 func TestBeaconStateNeverEndsOrFailsAnInstall(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		state provision.BeaconState
-		known bool
-		err   error
+		name       string
+		progress   provision.ProgressReader
+		wantReason string
 	}{
-		{name: "never seen", known: false},
-		{name: "heartbeat lost", known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: time.Unix(0, 0)}},
-		{name: "provisiond unreachable", err: errors.New("connection refused")},
+		{
+			name:       "heartbeat lost",
+			progress:   &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: time.Unix(0, 0)}},
+			wantReason: "HeartbeatLost",
+		},
+		{
+			name:       "never seen",
+			progress:   &fakeProgress{known: false},
+			wantReason: "NeverSeen",
+		},
+		{
+			name:       "provisiond unreachable",
+			progress:   &fakeProgress{err: errors.New("connection refused")},
+			wantReason: "Unavailable",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cond := installerRespondingCondition(tc.state, tc.known, tc.err, time.Now())
-			// A condition, and nothing else. No phase, no failure, no
-			// message that a caller could mistake for a terminal verdict.
-			if cond.Type != "InstallerResponding" {
-				t.Fatalf("condition type = %q", cond.Type)
+			fi := fiInstall("fi-ctrl-beacon-"+tc.name, "fi-ctrl-beacon-"+tc.name+"-machine")
+			fi.Finalizers = []string{frameInstallFinalizer}
+			fi.Status.Phase = string(provision.PhaseInstalling)
+			c := fiTestClient(t, fi)
+			r := fiTestReconciler(c, &fakeInstallBMC{}, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{})
+			r.Progress = tc.progress
+			key := fiKey(fi)
+
+			// r.running(machineRef) must already be true before Reconcile
+			// runs, and tokenFor(fi.UID) must resolve, or reportInstallerLiveness
+			// takes the no-token branch instead of consulting tc.progress at
+			// all -- exactly what TestFrameInstallFinalizerWaitsForARunningInstallRatherThanRacingIt
+			// does to simulate "a goroutine this process started is driving
+			// this machine" without actually running provision.Install.
+			if !r.startInstall(fi.Spec.MachineRef, fi.UID) {
+				t.Fatal("startInstall refused a machineRef with nothing running yet")
 			}
+			r.rememberToken(fi.UID, "fi-ctrl-beacon-token")
+			defer r.finishInstall(fi.Spec.MachineRef, fi.UID)
+
+			res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+			if err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+			if res.RequeueAfter != 15*time.Second {
+				t.Errorf("RequeueAfter = %v, want 15s -- a losing beacon outcome must not change the in-flight requeue", res.RequeueAfter)
+			}
+
+			got := fiGet(t, c, key)
+			if got.Status.Phase != string(provision.PhaseInstalling) {
+				t.Errorf("phase = %q, want still %q -- a beacon outcome must never end or fail a phase",
+					got.Status.Phase, provision.PhaseInstalling)
+			}
+
+			cond := meta.FindStatusCondition(got.Status.Conditions, "InstallerResponding")
+			if cond == nil {
+				t.Fatal("no InstallerResponding condition was written")
+			}
+			if cond.Reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", cond.Reason, tc.wantReason)
+			}
+			// A diagnostic must not read as a verdict: the message must
+			// never name a terminal phase, whatever the beacon said.
 			for _, forbidden := range []string{string(provision.PhaseFailed), string(provision.PhaseReady), string(provision.PhaseInstalled)} {
 				if strings.Contains(cond.Message, forbidden) {
 					t.Errorf("the condition message names the phase %q; a diagnostic must not read as a verdict: %q", forbidden, cond.Message)
 				}
 			}
 		})
+	}
+}
+
+// TestFinishStatusRemovesAStaleInstallerRespondingCondition covers finding
+// 2's fix in finishStatus: once Install has returned, whatever
+// InstallerResponding said while still Installing must not survive as a
+// permanent verdict on an install that has since ended. Without this, the
+// last beacon-based write before a normal, successful Ready is usually
+// HeartbeatLost -- WaitForOurSystem regularly outlasts beaconLostAfter after
+// the installer's own reboot -- so every successfully installed machine
+// would keep a permanent "installer stopped responding" condition.
+func TestFinishStatusRemovesAStaleInstallerRespondingCondition(t *testing.T) {
+	fi := fiInstall("fi-ctrl-condition-cleanup", "fi-ctrl-condition-cleanup-machine")
+	fi.Finalizers = []string{frameInstallFinalizer}
+	fi.Status.Phase = string(provision.PhaseInstalling)
+	c := fiTestClient(t, fi)
+	r := fiTestReconciler(c, &fakeInstallBMC{}, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{})
+	r.Progress = &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: time.Unix(0, 0)}}
+	key := fiKey(fi)
+
+	if !r.startInstall(fi.Spec.MachineRef, fi.UID) {
+		t.Fatal("startInstall refused a machineRef with nothing running yet")
+	}
+	r.rememberToken(fi.UID, "fi-ctrl-condition-cleanup-token")
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if cond := meta.FindStatusCondition(fiGet(t, c, key).Status.Conditions, "InstallerResponding"); cond == nil {
+		t.Fatal("setup did not write an InstallerResponding condition to clean up -- this test proves nothing without one")
+	}
+
+	// Simulate the install ending, the way runInstall's own defer/call
+	// sequence would: free the in-flight slot, then record the result.
+	r.finishInstall(fi.Spec.MachineRef, fi.UID)
+	r.finishStatus(context.Background(), key, fi.Spec.MachineRef, provision.Result{Phase: provision.PhaseReady}, nil)
+
+	got := fiGet(t, c, key)
+	if got.Status.Phase != string(provision.PhaseReady) {
+		t.Fatalf("finishStatus did not record the phase: got %q", got.Status.Phase)
+	}
+	if cond := meta.FindStatusCondition(got.Status.Conditions, "InstallerResponding"); cond != nil {
+		t.Errorf("InstallerResponding condition survived finishStatus: %+v -- a condition describing a phase that has already ended must not remain", cond)
+	}
+}
+
+// TestSetConditionRefusesAStaleWriteOnceInstallingHasEnded is the other half
+// of finding 2's fix: setCondition re-checks Phase against a fresh Get, not
+// the possibly-stale fi a caller might hand it. Without this, a condition
+// write that was already in flight when a concurrent finishStatus moved the
+// object past Installing would land after finishStatus's own removal,
+// leaving the stale write as the last word.
+func TestSetConditionRefusesAStaleWriteOnceInstallingHasEnded(t *testing.T) {
+	fi := fiInstall("fi-ctrl-condition-stale", "fi-ctrl-condition-stale-machine")
+	fi.Status.Phase = string(provision.PhaseReady) // the object, as stored, has already left Installing
+	c := fiTestClient(t, fi)
+	r := fiTestReconciler(c, &fakeInstallBMC{}, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{})
+	key := fiKey(fi)
+
+	// A caller's own copy, stale: it still says Installing, the way fi
+	// inside Reconcile's in-flight branch would if a concurrent finishStatus
+	// moved the stored object past Installing between that Get and this call.
+	stale := fiGet(t, c, key)
+	stale.Status.Phase = string(provision.PhaseInstalling)
+
+	r.setCondition(context.Background(), &stale, metav1.Condition{
+		Type: "InstallerResponding", Status: metav1.ConditionFalse, Reason: "HeartbeatLost", Message: "test",
+	})
+
+	got := fiGet(t, c, key)
+	if cond := meta.FindStatusCondition(got.Status.Conditions, "InstallerResponding"); cond != nil {
+		t.Errorf("setCondition wrote a condition after the stored object had already left Installing: %+v", cond)
 	}
 }

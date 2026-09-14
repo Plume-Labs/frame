@@ -347,3 +347,17 @@ func (n *fakeInstallNodes) NodeReady(context.Context, []byte, string) (bool, err
 	defer n.mu.Unlock()
 	return n.ready, nil
 }
+
+// fakeProgress is provision.ProgressReader for
+// TestBeaconStateNeverEndsOrFailsAnInstall: a fixed outcome, so that test can
+// drive Reconcile itself through each losing beacon state without a real
+// provisiond.
+type fakeProgress struct {
+	state provision.BeaconState
+	known bool
+	err   error
+}
+
+func (p *fakeProgress) Progress(context.Context, string) (provision.BeaconState, bool, error) {
+	return p.state, p.known, p.err
+}
