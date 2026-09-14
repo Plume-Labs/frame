@@ -128,6 +128,22 @@ Four checkpoints, at points d-i already gives Frame a shell:
 Plus a heartbeat: a background loop started at `early`, hitting the same
 endpoint every 15 seconds with the checkpoint it last passed.
 
+**The store keeps the furthest-progressed checkpoint, not the latest one.**
+This is a correction to an earlier draft of this section, and it is
+load-bearing rather than a detail. The heartbeat re-sends the checkpoint it
+started at — `early` — every fifteen seconds. Against a last-write-wins
+store, that means `LastCheckpoint` reverts to `early` within fifteen seconds
+of `partman` firing and stays there for the rest of the install, and §2's
+table collapses: every stopped-mid-install row reads `early`, whatever
+actually happened. Only the `netcfg` refusal survives, because there the
+heartbeat never started.
+
+So `Record` ranks the four checkpoints in their fixed d-i order and keeps the
+higher one. `LastSeen` and `Count` still move on every beacon including a
+heartbeat that advances nothing — **liveness comes from `LastSeen`, progress
+from `LastCheckpoint`**, and keeping them independent is the whole reason two
+signals are worth collecting.
+
 **A heartbeat is called lost after 60 seconds** — four missed sends. Not one
 or two: the machine is mid-installation on a network Frame just reconfigured
 under it, and the cost of calling a live installer dead is an operator sent to
