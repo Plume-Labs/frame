@@ -835,3 +835,51 @@ func TestBuildHandlerBakesTheBeaconURLTheMediaListenerServes(t *testing.T) {
 		t.Errorf("the media listener answered the baked-in beacon URL with %d", got.Code)
 	}
 }
+
+func TestHTTPImageStoreProgressReadsTheBuildListener(t *testing.T) {
+	seen := time.Unix(1_700_000_000, 0).UTC()
+	store := NewBeaconStore(8)
+	store.Record(testBeaconToken, CheckpointPartman, seen)
+	srv := httptest.NewServer(BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store))
+	defer srv.Close()
+
+	s := &HTTPImageStore{BuildURL: srv.URL, MediaURL: testMediaURL}
+	got, known, err := s.Progress(context.Background(), testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !known {
+		t.Fatal("known = false for an install that has reported")
+	}
+	if got.LastCheckpoint != CheckpointPartman || !got.LastSeen.Equal(seen) {
+		t.Errorf("progress = %+v, want partman at %v", got, seen)
+	}
+}
+
+// Silence is not an error, and an error is not silence. The controller
+// reports them as different reasons, so this boundary must not blur.
+func TestHTTPImageStoreProgressSeparatesSilenceFromFailure(t *testing.T) {
+	srv := httptest.NewServer(BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, NewBeaconStore(8)))
+	defer srv.Close()
+
+	s := &HTTPImageStore{BuildURL: srv.URL, MediaURL: testMediaURL}
+	_, known, err := s.Progress(context.Background(), testBeaconToken)
+	if err != nil {
+		t.Errorf("err = %v; an install that has not reported is not an error", err)
+	}
+	if known {
+		t.Error("known = true for an install that has not reported")
+	}
+
+	srv.Close()
+	if _, _, err := s.Progress(context.Background(), testBeaconToken); err == nil {
+		t.Error("err = nil although the build listener is unreachable")
+	}
+}
+
+func TestHTTPImageStoreProgressRefusesAMalformedToken(t *testing.T) {
+	s := &HTTPImageStore{BuildURL: "http://127.0.0.1:1", MediaURL: testMediaURL}
+	if _, _, err := s.Progress(context.Background(), "../../secrets"); err == nil {
+		t.Error("Progress accepted a token that is not a token")
+	}
+}
