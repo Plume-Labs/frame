@@ -18,8 +18,8 @@ Running both tracks with a single operator means alternating between them, not a
 > `TalosUpgrade`, and the provisioning half of `FrameNode` — is scoped
 > against a mechanism this estate no longer uses, and the auto-update track
 > loses the mechanism it assumed. What survives, what dies, and the order to
-> rebuild it in are in [provisioning.md](provisioning.md). Nothing below has
-> been rewritten to match yet.
+> rebuild it in are in [provisioning.md](provisioning.md). **S3 has been
+> rewritten to match; everything else below has not.**
 
 The bar for each phase is its **Exit criteria** — a phase is not done until those are demonstrable, not just coded.
 
@@ -221,7 +221,13 @@ The design spec posed three hypotheses under "Where this may force the core API 
 
 ### S3 — Auto-update
 
-Frame itself. `TalosUpgrade` already covers the node OS; nothing covered the operator, the UI or authd. Designed as two pieces, neither of which is an API group:
+Frame itself — **and now the node OS too, which this section used to inherit rather than own.**
+
+`TalosUpgrade` covered the node OS while the estate ran Talos. It does not any more: since 2026-09-10 a node is a Debian machine installed by `FrameInstall`, and **nothing upgrades it**. The `TalosUpgrade` CRD and its controller still exist and are still frozen at `v1beta1`, but they drive a mechanism no node here runs; retiring them is work item 3 of [provisioning.md](provisioning.md), deliberately kept for last so the CRDs outlive the transition rather than being pulled from under it.
+
+So S3 has three pieces, not two, and the third is the one that needs a design before anything else:
+
+- **node OS updates — unscoped.** Whatever replaces `TalosUpgrade` has to answer what an update *is* on a Debian node: unattended-upgrades in place, a rebuild through `FrameInstall`, or an image-based scheme. Each implies a different reboot story, a different rollback story and a different relationship with `FrameNode`'s drain. This is a design question, not a backlog item, and the two specs below do not touch it.
 
 - a release chain (`docs/superpowers/specs/2026-08-09-frame-release-chain-design.md`) publishing the three images to GHCR from a git tag — a prerequisite, and the place where CI's own defect gets fixed: `build.yml` builds the root Dockerfile, which is the UI, and publishes it under the bare repository name as though it were the project, while the operator and authd are built by CI nowhere
 - an update screen (`docs/superpowers/specs/2026-08-09-frame-update-screen-design.md`) showing what runs, what is available, and what an update would disturb right now
