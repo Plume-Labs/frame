@@ -396,6 +396,50 @@ func (s *HTTPImageStore) Remove(ctx context.Context, token string) error {
 	return nil
 }
 
+// ProgressReader is how the controller asks provisiond what an installation
+// has reported. It is deliberately NOT part of Deps: provision.Install has
+// no business reading beacon state, and the surest way to keep it that way
+// is to give it no interface that could.
+type ProgressReader interface {
+	Progress(ctx context.Context, token string) (BeaconState, bool, error)
+}
+
+// Progress reads one installation's beacon state from the build API.
+//
+// The three outcomes are kept apart on purpose: known state, a 404 meaning
+// nothing has been heard from that installation, and an error meaning this
+// process could not ask. A caller that collapsed the last two would report
+// a silent machine when the truth was a provisiond it could not reach.
+func (s *HTTPImageStore) Progress(ctx context.Context, token string) (BeaconState, bool, error) {
+	if !beaconToken.MatchString(token) {
+		return BeaconState{}, false, fmt.Errorf("token %q is not a valid image token", token)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimSuffix(s.BuildURL, "/")+"/beacon/"+token, nil)
+	if err != nil {
+		return BeaconState{}, false, err
+	}
+	resp, err := s.client().Do(req)
+	if err != nil {
+		return BeaconState{}, false, fmt.Errorf("reading progress from %s: %w", s.BuildURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return BeaconState{}, false, nil
+	case http.StatusOK:
+		var st BeaconState
+		if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+			return BeaconState{}, false, fmt.Errorf("decoding progress response: %w", err)
+		}
+		return st, true, nil
+	default:
+		b, _ := io.ReadAll(resp.Body)
+		return BeaconState{}, false, fmt.Errorf("progress %s: HTTP %d: %s", s.BuildURL, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+}
+
 // ValidateMediaURLSyntax refuses anything that is not a well-formed http(s)
 // base URL.
 //
