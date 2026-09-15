@@ -74,6 +74,7 @@ spec:
           # base URL a machine's BMC can actually reach frame-provisiond's
           # media listener at before applying this outside hack/helm-parity.sh.
           - --provisiond-media-url=http://ci-placeholder.invalid:30581
+          - --alert-receiver-bind-address=:8445
         image: controller:latest
         name: manager
         env:
@@ -84,6 +85,9 @@ spec:
         ports:
         - containerPort: 8081
           name: health
+          protocol: TCP
+        - containerPort: 8445
+          name: alert-receiver
           protocol: TCP
         securityContext:
           readOnlyRootFilesystem: true

@@ -1,0 +1,38 @@
+# Alertmanager may reach the manager's alert receiver (8445); nothing else may.
+#
+# Selecting the manager pod isolates it for EVERY port, so the ports that
+# already worked stay open to any source, exactly as before this policy:
+# 9443 (conversion webhook — the apiserver calls it on every read of a
+# converted CRD; closing it breaks the whole cluster's view of Frame objects),
+# 8443 (metrics) and 8081 (kubelet probes). Only 8445 is narrowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frame-alert-receiver
+  namespace: frame-system
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: frame
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - protocol: TCP
+          port: 8445
+    - ports:
+        - protocol: TCP
+          port: 9443
+        - protocol: TCP
+          port: 8443
+        - protocol: TCP
+          port: 8081

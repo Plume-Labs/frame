@@ -60,6 +60,7 @@ spec:
         {{- if .Values.provisiond.enabled }}
         - --provisiond-media-url={{ required "provisiond.media.url is required when provisiond.enabled is true: the base URL a machine's BMC (on the management network, not the pod network) can reach frame-provisiond's NodePort media listener at, e.g. http://192.168.2.10:30581. Set provisiond.enabled=false if this cluster will never provision a machine." .Values.provisiond.media.url }}
         {{- end }}
+        - --alert-receiver-bind-address=:8445
         {{- if .Values.webhooks.enabled }}
         - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
         {{- end }}
@@ -85,6 +86,9 @@ spec:
         ports:
         - containerPort: 8081
           name: health
+          protocol: TCP
+        - containerPort: 8445
+          name: alert-receiver
           protocol: TCP
         {{- if .Values.webhooks.enabled }}
         - containerPort: 9443

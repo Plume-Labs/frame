@@ -50,6 +50,7 @@ import (
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 	servicesv1alpha1 "github.com/rmocq/frame/api/services/v1alpha1"
 	servicesv1beta1 "github.com/rmocq/frame/api/services/v1beta1"
+	"github.com/rmocq/frame/internal/alerting"
 	controller "github.com/rmocq/frame/internal/controller/frame"
 	servicescontroller "github.com/rmocq/frame/internal/controller/services"
 	"github.com/rmocq/frame/internal/provision"
@@ -308,6 +309,16 @@ func main() {
 		"The base URL a machine's BMC -- on the management network, not the pod network -- can reach "+
 			"frame-provisiond's media listener at (config/provisiond/service.yaml's NodePort Service). "+
 			"FrameInstall creation fails until this is set: there is no address a BMC could safely default to.")
+	var alertReceiverAddr, alertNamespace, alertTokenSecret string
+	var alertRetentionDays int
+	flag.StringVar(&alertReceiverAddr, "alert-receiver-bind-address", ":8445",
+		"Address of the Alertmanager webhook receiver. Set to 0 to disable it.")
+	flag.StringVar(&alertNamespace, "alert-namespace", "frame-system",
+		"Namespace holding FrameAlerts, FrameAlertSubscriptions and their token Secrets.")
+	flag.StringVar(&alertTokenSecret, "alert-receiver-token-secret", "frame-alert-receiver-token",
+		"Secret (key `token`) Alertmanager must present as a bearer token.")
+	flag.IntVar(&alertRetentionDays, "alert-retention-days", 14,
+		"Days a resolved, fully delivered FrameAlert is kept before purge.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -682,6 +693,30 @@ func main() {
 		}
 	}
 	// +kubebuilder:scaffold:builder
+
+	if err := (&alerting.RelayReconciler{
+		Client: mgr.GetClient(), TokenReader: mgr.GetAPIReader(), Namespace: alertNamespace,
+		Sender: alerting.NewSender(), Retention: time.Duration(alertRetentionDays) * 24 * time.Hour, Now: time.Now,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "framealert-relay")
+		os.Exit(1)
+	}
+	if err := (&alerting.SubscriptionStatusReconciler{
+		Client: mgr.GetClient(), Namespace: alertNamespace, Now: time.Now,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "framealertsubscription-status")
+		os.Exit(1)
+	}
+	if alertReceiverAddr != "0" {
+		if err := mgr.Add(&alerting.Receiver{
+			Client: mgr.GetClient(), TokenReader: mgr.GetAPIReader(), Namespace: alertNamespace,
+			TokenSecret: alertTokenSecret, Addr: alertReceiverAddr, Now: time.Now,
+			Log: ctrl.Log.WithName("alert-receiver"),
+		}); err != nil {
+			setupLog.Error(err, "Failed to add the alert receiver")
+			os.Exit(1)
+		}
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Failed to set up health check")

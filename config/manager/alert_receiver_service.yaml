@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-receiver
+  namespace: system
+  labels:
+    app.kubernetes.io/name: frame
+spec:
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: frame
+  ports:
+    - name: http
+      port: 8445
+      targetPort: alert-receiver
+      protocol: TCP

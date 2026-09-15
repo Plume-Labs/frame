@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "frame.name" . }}-alert-receiver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: frame
+spec:
+  ports:
+  - name: http
+    port: 8445
+    protocol: TCP
+    targetPort: alert-receiver
+  selector:
+    {{- include "frame.selectorLabels" . | nindent 4 }}
