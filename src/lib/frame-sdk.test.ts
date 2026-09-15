@@ -926,6 +926,78 @@ describe('FrameTask reads', () => {
   })
 })
 
+// FrameAlert/FrameAlertSubscription live beside FrameTask, in the same
+// operational namespace — same trap as above, so the path is spelled out in
+// full here too rather than asserted with a substring match.
+describe('ClusterClient.alertRegistry / alertSubscriptions', () => {
+  const ALERTS_PATH = '/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/framealerts'
+  const SUBSCRIPTIONS_PATH =
+    '/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/framealertsubscriptions'
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  it('reads the alert registry from the Frame task namespace', async () => {
+    vi.stubGlobal('window', globalThis)
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+
+    await createFrameClient().cluster.alertRegistry()
+
+    expect(urls).toEqual([ALERTS_PATH])
+  })
+
+  it('projects [] when the alert registry response carries no items', async () => {
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })),
+    )
+
+    expect(await createFrameClient().cluster.alertRegistry()).toEqual([])
+  })
+
+  it('reads subscription health from the Frame task namespace', async () => {
+    vi.stubGlobal('window', globalThis)
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+
+    await createFrameClient().cluster.alertSubscriptions()
+
+    expect(urls).toEqual([SUBSCRIPTIONS_PATH])
+  })
+
+  it('projects [] when the subscriptions response carries no items', async () => {
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })),
+    )
+
+    expect(await createFrameClient().cluster.alertSubscriptions()).toEqual([])
+  })
+})
+
 // Every path is spelled out in full. A `url.includes('/deployments')` test
 // passes against `/apis/apps/v1/namespaces/default/deployments`, which is the
 // exact failure the Accounts screen shipped with — a list that comes back

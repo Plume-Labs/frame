@@ -176,7 +176,11 @@ export function AlertsView() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {registry.filter((a) => a.state === view).length === 0 ? (
+          {registryState.phase === 'error' ? (
+            <p className="text-sm font-mono text-destructive">
+              Cannot read the alert registry: {registryState.message}
+            </p>
+          ) : registry.filter((a) => a.state === view).length === 0 ? (
             <p className="text-sm font-mono text-muted-foreground">
               {view === 'Firing' ? 'No active alert in the registry.' : 'No resolved alert within retention.'}
             </p>
@@ -210,7 +214,11 @@ export function AlertsView() {
           <CardTitle className="font-mono text-base">Subscriptions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {subscriptions.length === 0 ? (
+          {subsState.phase === 'error' ? (
+            <p className="text-sm font-mono text-destructive">
+              Cannot read alert subscriptions: {subsState.message}
+            </p>
+          ) : subscriptions.length === 0 ? (
             <p className="text-sm font-mono text-muted-foreground">No tenant receives the cluster's alerts.</p>
           ) : (
             subscriptions.map((s) => (
