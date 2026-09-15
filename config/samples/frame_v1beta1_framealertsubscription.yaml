@@ -1,0 +1,8 @@
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameAlertSubscription
+metadata:
+  name: example-tenant
+  namespace: frame-system
+spec:
+  url: http://tenant.tenant-ns.svc.cluster.local:3000/alerts
+  tokenSecretRef: { name: example-tenant-alert-token, key: token }
