@@ -1,0 +1,37 @@
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants the full set of verbs over frame.plume-labs.io/framealertsubscriptions,
+# enumerated explicitly (no deletecollection, same reasoning as
+# frametask_admin_role.yaml — a frozen tier does not silently acquire a bulk
+# verb). Deciding who receives the cluster's alerts is an admin call: this is
+# the only tier that may create, update or delete a subscription. See
+# framealertsubscription_viewer_role.yaml for why there is no editor role.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: admin
+  name: framealertsubscription-admin-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions/status
+  verbs:
+  - get

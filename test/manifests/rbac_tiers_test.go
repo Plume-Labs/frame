@@ -370,3 +370,44 @@ func TestTheManifestEditorIsNotAClusterWideGrant(t *testing.T) {
 		}
 	}
 }
+
+// Alert relay, spec §7. Reading the registry is what the Alerts screen does
+// for everyone; deciding who receives the cluster's alerts is an admin call;
+// and no human writes a FrameAlert — only the manager's ServiceAccount does.
+func TestAlertRegistryTiers(t *testing.T) {
+	roles := ClusterRoles(t, tierRoleFiles(t)...)
+	viewer := AggregatedRules(roles, "viewer")
+	editor := AggregatedRules(roles, "editor")
+	admin := AggregatedRules(roles, "admin")
+
+	for _, res := range []string{"framealerts", "framealertsubscriptions"} {
+		for _, verb := range []string{"get", "list", "watch"} {
+			a := Access{Group: "frame.plume-labs.io", Resource: res, Verb: verb}
+			if !Grants(viewer, a) {
+				t.Errorf("frame-viewer does not aggregate %s — the Alerts screen cannot load", a)
+			}
+		}
+	}
+
+	for _, tier := range []struct {
+		name  string
+		rules []rbacv1.PolicyRule
+	}{{"viewer", viewer}, {"editor", editor}, {"admin", admin}} {
+		for _, verb := range []string{"create", "update", "patch", "delete"} {
+			a := Access{Group: "frame.plume-labs.io", Resource: "framealerts", Verb: verb}
+			if Grants(tier.rules, a) {
+				t.Errorf("frame-%s aggregates %s: a human could forge or erase an alert", tier.name, a)
+			}
+		}
+	}
+
+	for _, verb := range []string{"create", "update", "patch", "delete"} {
+		a := Access{Group: "frame.plume-labs.io", Resource: "framealertsubscriptions", Verb: verb}
+		if Grants(editor, a) {
+			t.Errorf("frame-editor aggregates %s: an operator could redirect the cluster's alerts", a)
+		}
+		if !Grants(admin, a) {
+			t.Errorf("frame-admin does not aggregate %s — nobody can manage subscriptions", a)
+		}
+	}
+}

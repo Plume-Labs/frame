@@ -55,6 +55,10 @@ resources:
 - frametask_admin_role.yaml
 - frametask_editor_role.yaml
 - frametask_viewer_role.yaml
+- framealert_admin_role.yaml
+- framealert_viewer_role.yaml
+- framealertsubscription_admin_role.yaml
+- framealertsubscription_viewer_role.yaml
 - framemachine_admin_role.yaml
 - framemachine_editor_role.yaml
 - framemachine_viewer_role.yaml

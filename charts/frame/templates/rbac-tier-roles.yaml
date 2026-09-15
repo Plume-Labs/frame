@@ -150,3 +150,138 @@ rules:
 ---
 {{- end }}
 {{- end }}
+{{- /*
+Alert relay (2026-09-15). framealert and framealertsubscription do not fit
+the generic shape above and are rendered by hand instead of through
+frame.tierRoleCRDs:
+
+  framealert — read-only on EVERY tier, including admin. A FrameAlert is not
+    a human-authored object: only the alert manager's ServiceAccount writes
+    one, by relaying what Alertmanager fired. There is no "admin write" for
+    this kind, by design — see config/rbac/framealert_admin_role.yaml.
+  framealertsubscription — admin gets the full verb set minus
+    deletecollection (same reasoning as frametask: a frozen tier does not
+    silently acquire a bulk verb a future version might add), viewer is
+    read-only, and there is no editor role at all: the editor tier gets
+    nothing beyond what it already inherits from the viewer role through
+    aggregation, so an unlabelled editor role (the framemachine/frameinstall/
+    frameuser pattern) would grant nothing new. See
+    config/rbac/framealertsubscription_viewer_role.yaml.
+
+This must stay byte-for-byte equivalent to config/rbac/framealert*_role.yaml
+— same caveat as above: there is no `make helm-sync-rbac`, `make
+helm-parity` is what keeps the two copies in step.
+*/}}
+{{- if .Values.rbac.tierRoles.install }}
+{{- $labels := include "frame.chartLabels" . }}
+{{- $namePrefix := include "frame.name" . }}
+# This rule is not used by the project frame itself. It is provided to allow
+# the cluster admin to help manage permissions for users.
+#
+# Grants read-only access to FrameAlert resources — the record of an alert
+# the cluster has fired. This is what the Alerts screen reads for everyone;
+# no tier, including admin, ever writes a FrameAlert.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $namePrefix }}-framealert-admin-role
+  labels:
+    {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: admin
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealerts
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealerts/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $namePrefix }}-framealert-viewer-role
+  labels:
+    {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: viewer
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealerts
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealerts/status
+  verbs:
+  - get
+---
+# Grants the full set of verbs over frame.plume-labs.io/framealertsubscriptions,
+# enumerated explicitly (no deletecollection). Deciding who receives the
+# cluster's alerts is an admin call: this is the only tier that may create,
+# update or delete a subscription. No editor role exists for this kind — see
+# the header above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $namePrefix }}-framealertsubscription-admin-role
+  labels:
+    {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: admin
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions/status
+  verbs:
+  - get
+---
+# Grants read-only access to FrameAlertSubscription resources — who receives
+# the cluster's alerts and where.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $namePrefix }}-framealertsubscription-viewer-role
+  labels:
+    {{- $labels | nindent 4 }}
+    rbac.frame.plume-labs.io/tier: viewer
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions/status
+  verbs:
+  - get
+---
+{{- end }}
