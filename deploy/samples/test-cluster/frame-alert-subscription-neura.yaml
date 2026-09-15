@@ -1,0 +1,13 @@
+# Neura receives every cluster alert except the two meta alerts (defaulted).
+# The token is the one Neura already expects in neura-neura-secret
+# (IT_ALERT_WEBHOOK_TOKEN); it is sealed into frame-system/neura-alert-webhook.
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameAlertSubscription
+metadata:
+  name: neura
+  namespace: frame-system
+spec:
+  url: http://neura-neura-api.neura.svc.cluster.local:3000/api/it/alerts/webhook
+  tokenSecretRef:
+    name: neura-alert-webhook
+    key: token
