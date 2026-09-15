@@ -30,6 +30,7 @@ kind: Kustomization
 resources:
   - rbac-integration-proxy.yaml
   - networkpolicy-cluster-control.yaml
+  - networkpolicy-frame-alert-receiver.yaml
 
 labels:
   - includeSelectors: false
