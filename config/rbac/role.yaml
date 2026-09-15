@@ -109,6 +109,47 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framealerts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealerts/status
+  - framealertsubscriptions/status
+  - framediskclaims/status
+  - frameinstalls/status
+  - framejobs/status
+  - framemachines/status
+  - framenodes/status
+  - frameresourcequotas/status
+  - framestorages/status
+  - frametasks/status
+  - nodetunings/status
+  - schedulingpolicies/status
+  - talosmachineconfigs/status
+  - talosupgrades/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions
+  - frameusers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
   - framediskclaims
   - frameinstalls
   - framemachines
@@ -133,25 +174,6 @@ rules:
   - talosmachineconfigs/finalizers
   - talosupgrades/finalizers
   verbs:
-  - update
-- apiGroups:
-  - frame.plume-labs.io
-  resources:
-  - framediskclaims/status
-  - frameinstalls/status
-  - framejobs/status
-  - framemachines/status
-  - framenodes/status
-  - frameresourcequotas/status
-  - framestorages/status
-  - frametasks/status
-  - nodetunings/status
-  - schedulingpolicies/status
-  - talosmachineconfigs/status
-  - talosupgrades/status
-  verbs:
-  - get
-  - patch
   - update
 - apiGroups:
   - frame.plume-labs.io
@@ -188,14 +210,6 @@ rules:
   - frametasks
   verbs:
   - create
-- apiGroups:
-  - frame.plume-labs.io
-  resources:
-  - frameusers
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - scheduling.k8s.io
   resources:
