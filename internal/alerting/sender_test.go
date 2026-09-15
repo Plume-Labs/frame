@@ -1,8 +1,10 @@
 package alerting
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -108,5 +110,36 @@ func TestBackoff(t *testing.T) {
 		if got := Backoff(attempts); got != want {
 			t.Errorf("Backoff(%d) = %v, want %v", attempts, got, want)
 		}
+	}
+}
+
+func TestSendNilLabelsAndAnnotationsBecomEmptyObjects(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("ReadAll: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	// Create alert with nil labels and annotations
+	alert := &framev1beta1.FrameAlert{Spec: framev1beta1.FrameAlertSpec{
+		Fingerprint: "ab12", AlertName: "X",
+		Labels:      nil,
+		Annotations: nil,
+		StartsAt:    metav1.NewTime(time.Date(2026, 9, 15, 11, 0, 0, 0, time.UTC)),
+		EndsAt:      nil,
+	}}
+
+	_, _ = NewSender().Send(context.Background(), srv.URL, "tok", "neura", alert, framev1beta1.AlertStateFiring)
+
+	// Check that labels and annotations are sent as empty objects, not null
+	if !bytes.Contains(body, []byte(`"labels":{}`)) {
+		t.Errorf("labels not sent as empty object: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"annotations":{}`)) {
+		t.Errorf("annotations not sent as empty object: %s", body)
 	}
 }
