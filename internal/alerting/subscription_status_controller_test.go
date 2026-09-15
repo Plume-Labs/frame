@@ -196,6 +196,36 @@ func TestSubscriptionStatusExcludedEntriesDoNotCountAsPendingOrSuccess(t *testin
 	}
 }
 
+// Re-review of d14e418 (Minor #1): a subscription's filter no longer
+// matching an alert must not hide a resolution that is stuck on the relay's
+// resolution-only path (paused, permanent failure, backoff) — it is still
+// due, and its error is still the most relevant one to surface.
+func TestSubscriptionStatusCountsAStuckResolutionOutsideTheFilterAsPending(t *testing.T) {
+	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{Severities: []string{"critical"}})
+	objs := []client.Object{
+		sub,
+		// alertWith uses severity "" (unset): does not match [critical].
+		alertWith("fa-1", "Resolved", framev1beta1.AlertDelivery{Subscription: "neura", DeliveredState: "Firing",
+			LastError: "HTTP 503", LastAttemptAt: at(4)}),
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlertSubscription{}).WithObjects(objs...).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 10, 0, 0, time.UTC)}
+	r := &SubscriptionStatusReconciler{Client: c, Namespace: ns, Now: ck.now}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "neura"}}); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameAlertSubscription
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &got)
+	if got.Status.PendingDeliveries != 1 {
+		t.Errorf("pending = %d, want 1 (resolution stuck outside the filter)", got.Status.PendingDeliveries)
+	}
+	if got.Status.LastError != "HTTP 503" {
+		t.Errorf("lastError = %q, want %q", got.Status.LastError, "HTTP 503")
+	}
+}
+
 func TestSubscriptionStatusKeepsLastSuccessAfterAlertsArePurged(t *testing.T) {
 	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{})
 	sub.Status.LastSuccessAt = at(3)

@@ -16,6 +16,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -456,6 +457,146 @@ func TestRelayStillResolvesAnAlertThatLeftTheFilter(t *testing.T) {
 	}
 	if d := delivery(getAlert(t, c), "neura"); d == nil || d.DeliveredState != "Resolved" || d.Excluded {
 		t.Fatalf("delivery: %+v", d)
+	}
+}
+
+// Re-review of d14e418 (Minor #2): once the resolution-only path (still
+// mid-incident, filter no longer matches) genuinely delivers Resolved, that
+// entry is a real delivery. The next reconcile must not relabel it Excluded
+// nor write the status again.
+func TestRelayKeepsAGenuinelyResolvedEntryUnchangedOnASecondReconcile(t *testing.T) {
+	tn := newTenant()
+	defer tn.srv.Close()
+	fa := storedAlert("Firing", nil)
+	sub := subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{})
+	writes := 0
+	funcs := interceptor.Funcs{
+		SubResourcePatch: func(ctx context.Context, c client.Client, subr string, obj client.Object, p client.Patch, o ...client.SubResourcePatchOption) error {
+			writes++
+			return c.SubResource(subr).Patch(ctx, obj, p, o...)
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlert{}, &framev1beta1.FrameAlertSubscription{}).
+		WithObjects(fa, sub, subToken("neura")).WithInterceptorFuncs(funcs).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	r := &RelayReconciler{Client: c, TokenReader: c, Namespace: ns, Sender: NewSender(), Retention: 14 * 24 * time.Hour, Now: ck.now}
+
+	reconcileAlert(t, r) // matching, Firing delivered
+	if len(tn.received) != 1 || tn.received[0] != "firing" {
+		t.Fatalf("tenant received %v, want [firing]", tn.received)
+	}
+
+	// Narrow the filter, then resolve: the resolution-only path still
+	// drives this subscription (it already has the incident open).
+	var s framev1beta1.FrameAlertSubscription
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Spec.Filter.Severities = []string{"critical"}
+	s.Generation = 2
+	if err := c.Update(context.Background(), &s); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameAlert
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "fa-ab12"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	end := metav1.NewTime(ck.t)
+	got.Spec.EndsAt = &end
+	if err := c.Update(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+	got.Status.State = framev1beta1.AlertStateResolved
+	if err := c.Status().Update(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAlert(t, r)
+	if len(tn.received) != 2 || tn.received[1] != "resolved" {
+		t.Fatalf("tenant received %v, want [firing resolved]", tn.received)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d == nil || d.Excluded || d.DeliveredState != "Resolved" {
+		t.Fatalf("delivery after the resolution-only delivery: %+v, want DeliveredState=Resolved Excluded=false", d)
+	}
+
+	writes = 0
+	reconcileAlert(t, r) // second reconcile: same non-matching filter, same Resolved state
+	if writes != 0 {
+		t.Fatalf("second reconcile wrote the FrameAlert status %d times, want 0", writes)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d == nil || d.Excluded {
+		t.Fatalf("genuinely delivered entry relabelled Excluded: %+v", d)
+	}
+}
+
+// Re-review of d14e418 (Minor #3): a never-delivered entry that becomes
+// Excluded must not drag along stale Attempts/LastError/PermanentFailure
+// from attempts made while it still matched the filter — none of that
+// describes anything the tenant needs to see once it's excluded.
+func TestRelayResetsStaleFailureFieldsWhenAnUndeliveredEntryBecomesExcluded(t *testing.T) {
+	end := metav1.NewTime(time.Date(2026, 9, 15, 11, 30, 0, 0, time.UTC))
+	fa := storedAlert("Resolved", &end)
+	fa.Status.Deliveries = []framev1beta1.AlertDelivery{{
+		Subscription: "neura", Attempts: 3, LastError: "HTTP 503",
+		LastAttemptAt:    &metav1.Time{Time: time.Date(2026, 9, 15, 11, 45, 0, 0, time.UTC)},
+		PermanentFailure: true, FailedState: "Firing", SubscriptionGeneration: 1,
+	}}
+	// Severities: [critical] does not match storedAlert's "warning".
+	sub := subscription("neura", "http://unused.invalid", framev1beta1.AlertFilter{Severities: []string{"critical"}})
+	r, c, _ := newRelay(t, fa, sub, subToken("neura"))
+
+	reconcileAlert(t, r)
+
+	d := delivery(getAlert(t, c), "neura")
+	if d == nil || !d.Excluded || d.DeliveredState != "Resolved" {
+		t.Fatalf("delivery: %+v, want Excluded Resolved", d)
+	}
+	if d.Attempts != 0 || d.LastError != "" || d.PermanentFailure || d.FailedState != "" ||
+		d.LastAttemptAt != nil || d.SubscriptionGeneration != 0 {
+		t.Fatalf("stale fields not reset when becoming excluded: %+v", d)
+	}
+}
+
+// Re-review of d14e418 (Minor #4): an already-excluded entry for a
+// subscription whose filter still does not match must not be touched at
+// all (not even SubscriptionGeneration) — otherwise every unrelated
+// subscription-spec edit forces a FrameAlert status write.
+func TestRelayDoesNotTouchAnAlreadyExcludedEntryOnAnUnrelatedGenerationBump(t *testing.T) {
+	end := metav1.NewTime(time.Date(2026, 9, 15, 11, 30, 0, 0, time.UTC))
+	fa := storedAlert("Resolved", &end)
+	fa.Status.Deliveries = []framev1beta1.AlertDelivery{{Subscription: "neura", Excluded: true, DeliveredState: "Resolved"}}
+	sub := subscription("neura", "http://unused.invalid", framev1beta1.AlertFilter{Severities: []string{"critical"}})
+	sub.Generation = 1
+	writes := 0
+	funcs := interceptor.Funcs{
+		SubResourcePatch: func(ctx context.Context, c client.Client, subr string, obj client.Object, p client.Patch, o ...client.SubResourcePatchOption) error {
+			writes++
+			return c.SubResource(subr).Patch(ctx, obj, p, o...)
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlert{}, &framev1beta1.FrameAlertSubscription{}).
+		WithObjects(fa, sub, subToken("neura")).WithInterceptorFuncs(funcs).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}
+	r := &RelayReconciler{Client: c, TokenReader: c, Namespace: ns, Sender: NewSender(), Retention: 14 * 24 * time.Hour, Now: ck.now}
+
+	// An unrelated subscription-spec edit (e.g. the URL) bumps Generation
+	// without changing the filter: still non-matching.
+	var s framev1beta1.FrameAlertSubscription
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Generation = 2
+	if err := c.Update(context.Background(), &s); err != nil {
+		t.Fatal(err)
+	}
+
+	reconcileAlert(t, r)
+	if writes != 0 {
+		t.Fatalf("reconcile wrote the FrameAlert status %d times, want 0", writes)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d == nil || !d.Excluded || d.SubscriptionGeneration != 0 {
+		t.Fatalf("already-excluded entry touched: %+v", d)
 	}
 }
 

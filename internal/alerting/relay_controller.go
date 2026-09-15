@@ -87,18 +87,35 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// once its filter stops matching: the tenant already has it open.
 		keepDriving := ok && d.DeliveredState == framev1beta1.AlertStateFiring && !d.Excluded
 		if !Matches(sub.Spec.Filter, &fa) && !keepDriving {
-			// Spec §5.3: a filter that does not match must not manufacture
+			// Spec 5.3: a filter that does not match must not manufacture
 			// an alert the tenant never had open, nor let a later widen
-			// replay one it already missed. A Resolved alert gets an
-			// Excluded record so a widen sees it "delivered" already; a
-			// Firing alert with nothing open gets no entry at all.
-			if state == framev1beta1.AlertStateResolved {
-				if !ok {
-					d = framev1beta1.AlertDelivery{Subscription: sub.Name}
-				}
-				d.Excluded, d.DeliveredState, d.SubscriptionGeneration = true, state, sub.Generation
-				next = append(next, d)
+			// replay one it already missed.
+			if state != framev1beta1.AlertStateResolved {
+				// Firing, and keepDriving already ruled out anything
+				// genuinely open for this subscription: no entry at all
+				// (also drops any stale Excluded entry from a prior
+				// resolution once the alert reopens as a new incident).
+				continue
 			}
+			switch {
+			case ok && d.Excluded:
+				// Already recorded as excluded and still resolved: leave
+				// it untouched -- not even SubscriptionGeneration -- so an
+				// unrelated subscription-spec edit cannot force a status
+				// write here.
+			case ok && d.DeliveredState == state:
+				// Really delivered while the tenant still had the incident
+				// open (the resolution-only path below); keep the genuine
+				// record as-is, do not relabel it Excluded.
+			default:
+				// Never delivered Resolved for this subscription: record
+				// it as excluded without ever sending, on a clean slate --
+				// any Attempts/LastError/PermanentFailure left over from
+				// when it still matched the filter no longer describe
+				// anything the tenant needs to see.
+				d = framev1beta1.AlertDelivery{Subscription: sub.Name, Excluded: true, DeliveredState: state}
+			}
+			next = append(next, d)
 			continue
 		}
 		if !ok {
