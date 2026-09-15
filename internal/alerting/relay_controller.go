@@ -81,10 +81,26 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	var requeue time.Duration
 	for i := range subs.Items {
 		sub := &subs.Items[i]
-		if !Matches(sub.Spec.Filter, &fa) {
-			continue // not in the filter (any more): no entry, nothing sent
-		}
 		d, ok := existing[sub.Name]
+		// A subscription still mid-incident (delivered Firing, not yet
+		// Excluded) keeps being driven below for the resolution alone, even
+		// once its filter stops matching: the tenant already has it open.
+		keepDriving := ok && d.DeliveredState == framev1beta1.AlertStateFiring && !d.Excluded
+		if !Matches(sub.Spec.Filter, &fa) && !keepDriving {
+			// Spec §5.3: a filter that does not match must not manufacture
+			// an alert the tenant never had open, nor let a later widen
+			// replay one it already missed. A Resolved alert gets an
+			// Excluded record so a widen sees it "delivered" already; a
+			// Firing alert with nothing open gets no entry at all.
+			if state == framev1beta1.AlertStateResolved {
+				if !ok {
+					d = framev1beta1.AlertDelivery{Subscription: sub.Name}
+				}
+				d.Excluded, d.DeliveredState, d.SubscriptionGeneration = true, state, sub.Generation
+				next = append(next, d)
+			}
+			continue
+		}
 		if !ok {
 			d = framev1beta1.AlertDelivery{Subscription: sub.Name}
 		}
@@ -175,6 +191,7 @@ func (r *RelayReconciler) deliver(ctx context.Context, sub *framev1beta1.FrameAl
 		deliveries.WithLabelValues(sub.Name, Delivered.String()).Inc()
 		t := metav1.NewTime(now)
 		d.DeliveredState, d.Attempts, d.LastError, d.LastAttemptAt, d.LastDeliveredAt = st, 0, "", &t, &t
+		d.Excluded = false
 	}
 	return 0
 }
