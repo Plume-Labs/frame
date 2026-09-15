@@ -126,7 +126,13 @@ func TestRelaySendsFiringThenResolvedForAnAlertNeverDelivered(t *testing.T) {
 	tn := newTenant()
 	defer tn.srv.Close()
 	end := metav1.NewTime(time.Date(2026, 9, 15, 11, 30, 0, 0, time.UTC))
-	r, c, _ := newRelay(t, storedAlert("Resolved", &end), subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{}), subToken("neura"))
+	fa := storedAlert("Resolved", &end)
+	fa.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC))
+	// A pre-existing subscription: it was there before the alert ever fired,
+	// so it must still get the firing-then-resolved replay.
+	sub := subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{})
+	sub.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC))
+	r, c, _ := newRelay(t, fa, sub, subToken("neura"))
 
 	reconcileAlert(t, r)
 
@@ -134,6 +140,28 @@ func TestRelaySendsFiringThenResolvedForAnAlertNeverDelivered(t *testing.T) {
 		t.Fatalf("tenant received %v, want [firing resolved]", tn.received)
 	}
 	if d := delivery(getAlert(t, c), "neura"); d.DeliveredState != "Resolved" {
+		t.Fatalf("delivery: %+v", d)
+	}
+}
+
+// Spec §5.3: a subscription created after an alert already resolved must not
+// see a firing incident it never subscribed to.
+func TestRelayDoesNotReplayResolvedAlertsToANewSubscription(t *testing.T) {
+	tn := newTenant()
+	defer tn.srv.Close()
+	end := metav1.NewTime(time.Date(2026, 9, 15, 11, 30, 0, 0, time.UTC))
+	fa := storedAlert("Resolved", &end)
+	fa.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 11, 0, 0, 0, time.UTC))
+	sub := subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{})
+	sub.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC))
+	r, c, _ := newRelay(t, fa, sub, subToken("neura"))
+
+	reconcileAlert(t, r)
+
+	if len(tn.received) != 0 {
+		t.Fatalf("tenant received %v, want nothing", tn.received)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d == nil || d.DeliveredState != "Resolved" || d.LastDeliveredAt != nil {
 		t.Fatalf("delivery: %+v", d)
 	}
 }
@@ -185,6 +213,34 @@ func TestRelayStopsOnAPermanentFailureUntilTheSubscriptionChanges(t *testing.T) 
 	reconcileAlert(t, r)
 	if len(tn.received) != 2 {
 		t.Fatalf("generation change did not lift the failure: %v", tn.received)
+	}
+}
+
+func TestRelayLiftsAPermanentFailureWhenTheAlertChangesState(t *testing.T) {
+	tn := newTenant(401)
+	defer tn.srv.Close()
+	sub := subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{})
+	r, c, ck := newRelay(t, storedAlert("Firing", nil), sub, subToken("neura"))
+
+	reconcileAlert(t, r)
+	if d := delivery(getAlert(t, c), "neura"); !d.PermanentFailure || d.FailedState != "Firing" {
+		t.Fatalf("not marked permanent for Firing: %+v", d)
+	}
+
+	var fa framev1beta1.FrameAlert
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "fa-ab12"}, &fa)
+	end := metav1.NewTime(ck.t)
+	fa.Spec.EndsAt = &end
+	_ = c.Update(context.Background(), &fa)
+	fa.Status.State = framev1beta1.AlertStateResolved
+	_ = c.Status().Update(context.Background(), &fa)
+
+	reconcileAlert(t, r)
+	if d := delivery(getAlert(t, c), "neura"); d.PermanentFailure || d.DeliveredState != "Resolved" {
+		t.Fatalf("permanent failure not lifted on state change: %+v", d)
+	}
+	if got := tn.received[len(tn.received)-1]; got != "resolved" {
+		t.Fatalf("tenant did not get resolved after the lift: %v", tn.received)
 	}
 }
 

@@ -11,8 +11,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
@@ -41,15 +44,15 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.Client.Get(ctx, req.NamespacedName, &fa); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	state := fa.Status.State
+	if state == "" {
+		return ctrl.Result{}, nil // the receiver has not written the state yet
+	}
 	var subs framev1beta1.FrameAlertSubscriptionList
 	if err := r.Client.List(ctx, &subs, client.InNamespace(r.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}
 	now := r.Now()
-	state := fa.Status.State
-	if state == "" {
-		return ctrl.Result{}, nil // the receiver has not written the state yet
-	}
 
 	existing := map[string]framev1beta1.AlertDelivery{}
 	for _, d := range fa.Status.Deliveries {
@@ -73,8 +76,16 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if d.PermanentFailure && d.FailedState != state {
 			d.PermanentFailure, d.FailedState = false, ""
 		}
-		if wait := r.deliver(ctx, sub, &fa, &d, state, now); wait > 0 && (requeue == 0 || wait < requeue) {
-			requeue = wait
+		switch {
+		case !ok && state == framev1beta1.AlertStateResolved && sub.CreationTimestamp.After(fa.CreationTimestamp.Time):
+			// Spec §5.3: a subscription created after the alert already
+			// resolved must not be replayed the incident it never
+			// subscribed to. Mark it delivered without sending anything.
+			d.DeliveredState = state
+		default:
+			if wait := r.deliver(ctx, sub, &fa, &d, state, now); wait > 0 && (requeue == 0 || wait < requeue) {
+				requeue = wait
+			}
 		}
 		next = append(next, d)
 	}
@@ -92,7 +103,14 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if state == framev1beta1.AlertStateResolved && fa.Spec.EndsAt != nil && allDelivered(next, state) {
 		purgeAt := fa.Spec.EndsAt.Add(r.Retention)
 		if !now.Before(purgeAt) {
-			return ctrl.Result{}, client.IgnoreNotFound(r.Client.Delete(ctx, &fa))
+			// A resourceVersion precondition: if the object changed underneath
+			// us since the Get above (e.g. a concurrent delivery write), a
+			// stale delete could otherwise discard that write's effect.
+			err := r.Client.Delete(ctx, &fa, client.Preconditions{ResourceVersion: &fa.ResourceVersion})
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
+			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
 		if wait := purgeAt.Sub(now); requeue == 0 || wait < requeue {
 			requeue = wait
@@ -193,7 +211,12 @@ func (r *RelayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("framealert-relay").
+		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).
 		For(&framev1beta1.FrameAlert{}).
-		Watches(&framev1beta1.FrameAlertSubscription{}, allAlerts).
+		// GenerationChangedPredicate: Task 7 writes subscription status (up to
+		// once a minute) without touching spec, which must not re-enqueue
+		// every FrameAlert in the namespace on that cadence. Delete events
+		// still pass through — they carry no generation to compare.
+		Watches(&framev1beta1.FrameAlertSubscription{}, allAlerts, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Complete(r)
 }
