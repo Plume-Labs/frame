@@ -202,6 +202,45 @@ func TestReceiverDoesNotRewriteAnIdenticalResendWithin15Minutes(t *testing.T) {
 	}
 }
 
+// M1: real Alertmanager timestamps carry sub-second precision, but the
+// object read back from a real apiserver only has second precision (metav1.Time
+// truncates on JSON encode). Simulate that by seeding the store with an
+// already-truncated FrameAlert, then resend at nanosecond precision: without
+// truncating before the DeepEqual comparison, this looks like a spec change
+// on every single notification and issues an empty PATCH each time.
+func TestReceiverTruncatesSubSecondPrecisionSoAnIdenticalResendDoesNotPatch(t *testing.T) {
+	startsAt := time.Date(2026, 9, 15, 11, 0, 0, 0, time.UTC)
+	existing := &framev1beta1.FrameAlert{
+		ObjectMeta: metav1.ObjectMeta{Name: "fa-ab12", Namespace: ns},
+		Spec: framev1beta1.FrameAlertSpec{Fingerprint: "ab12", AlertName: "KubeCPUOvercommit", Severity: "warning",
+			Namespace: "kube-system", StartsAt: metav1.NewTime(startsAt),
+			Labels: BoundMap(firing("ab12").Alerts[0].Labels)},
+		Status: framev1beta1.FrameAlertStatus{State: framev1beta1.AlertStateFiring, LastReceivedAt: &metav1.Time{Time: startsAt}},
+	}
+	writes := 0
+	funcs := &interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, p client.Patch, o ...client.PatchOption) error {
+			writes++
+			return c.Patch(ctx, obj, p, o...)
+		},
+		SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, p client.Patch, o ...client.SubResourcePatchOption) error {
+			writes++
+			return c.SubResource(sub).Patch(ctx, obj, p, o...)
+		},
+	}
+	r, _, ck := newReceiver(t, funcs, existing, tokenSecret("s3cret"))
+	ck.t = startsAt.Add(time.Minute) // within the 15-minute lastReceivedAt refresh window
+
+	p := firing("ab12")
+	p.Alerts[0].StartsAt = startsAt.Add(123456789 * time.Nanosecond)
+	if code := post(r, "s3cret", p).Code; code != http.StatusOK {
+		t.Fatalf("got %d", code)
+	}
+	if writes != 0 {
+		t.Fatalf("nanosecond-precision resend within 15 min wrote %d times, want 0", writes)
+	}
+}
+
 func TestReceiverBoundsLabelsBeforeWriting(t *testing.T) {
 	r, c, _ := newReceiver(t, nil, tokenSecret("s3cret"))
 	p := firing("ab12")
@@ -211,6 +250,27 @@ func TestReceiverBoundsLabelsBeforeWriting(t *testing.T) {
 	_ = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "fa-ab12"}, &fa)
 	if len(fa.Spec.Annotations["description"]) != 4096 {
 		t.Fatalf("annotation not truncated: %d bytes", len(fa.Spec.Annotations["description"]))
+	}
+}
+
+// M4: authorized() previously answered 401 for any Secret read error,
+// including an apiserver/kine hiccup — indistinguishable from an actually
+// unconfigured token. Alertmanager does not retry a 401 within the flush
+// window, so a transient read failure silently dropped the alert. Only a
+// genuinely absent Secret (NotFound) should mean "unconfigured" (401); any
+// other read error must answer 503 so Alertmanager retries.
+func TestReceiverAnswers503WhenTheTokenSecretLookupFailsForANonNotFoundReason(t *testing.T) {
+	funcs := &interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, o ...client.GetOption) error {
+			if _, ok := obj.(*corev1.Secret); ok {
+				return errors.New("etcdserver: request timed out")
+			}
+			return c.Get(ctx, key, obj, o...)
+		},
+	}
+	r, _, _ := newReceiver(t, funcs, tokenSecret("s3cret"))
+	if code := post(r, "s3cret", firing("ab12")).Code; code != http.StatusServiceUnavailable {
+		t.Fatalf("got %d, want 503 so Alertmanager retries instead of treating this as unconfigured", code)
 	}
 }
 
