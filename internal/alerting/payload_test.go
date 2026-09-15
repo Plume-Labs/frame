@@ -76,3 +76,46 @@ func TestBoundMapOfNilIsNil(t *testing.T) {
 		t.Fatal("nil map became non-nil")
 	}
 }
+
+func TestBoundMapDoesNotCollapseDistinctKeyPrefixes(t *testing.T) {
+	// Two keys with identical 300-byte prefix but different suffixes
+	// should not collapse after truncation; the first in sort order wins.
+	prefix := strings.Repeat("a", 300)
+	key1 := prefix + "b" // sorts first after prefix
+	key2 := prefix + "c" // sorts second after prefix
+	m := map[string]string{
+		key1: "value1",
+		key2: "value2",
+	}
+	got := BoundMap(m)
+	if len(got) != 1 {
+		t.Fatalf("want 1 entry after truncation collision, got %d", len(got))
+	}
+	// The truncated key should hold the value of the key that sorts first.
+	for k, v := range got {
+		if v != "value1" {
+			t.Fatalf("want value1 (from first sorted key), got %q", v)
+		}
+		if len(k) > 256 {
+			t.Fatalf("truncated key exceeds 256 bytes: %d", len(k))
+		}
+	}
+}
+
+func TestTruncateHandlesInvalidUTF8AtStart(t *testing.T) {
+	// A string starting with invalid byte 0xff followed by ASCII 'a's,
+	// truncated to 256 bytes, should remain valid and non-empty.
+	invalid := "\xff" + strings.Repeat("a", 500)
+	got := BoundMap(map[string]string{invalid: invalid})
+	for k, v := range got {
+		if !utf8.ValidString(k) || !utf8.ValidString(v) {
+			t.Fatal("result contains invalid UTF-8")
+		}
+		if len(k) == 0 || len(v) == 0 {
+			t.Fatal("result is empty")
+		}
+		if len(k) > 256 || len(v) > 4096 {
+			t.Fatalf("result exceeds bounds: key %d, value %d", len(k), len(v))
+		}
+	}
+}

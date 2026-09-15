@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -67,6 +68,7 @@ func AlertObjectName(fingerprint string) string { return "fa-" + fingerprint }
 
 // BoundMap keeps the 64 smallest keys (sorted, so two replicas bound the
 // same alert identically) and truncates keys and values on rune boundaries.
+// If two distinct keys truncate to the same value, the first in sorted order wins.
 func BoundMap(m map[string]string) map[string]string {
 	if m == nil {
 		return nil
@@ -81,16 +83,23 @@ func BoundMap(m map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(keys))
 	for _, k := range keys {
-		out[truncate(k, maxKeyBytes)] = truncate(m[k], maxValueBytes)
+		truncatedKey := truncate(k, maxKeyBytes)
+		// Only insert if this truncated key is not already present.
+		if _, exists := out[truncatedKey]; !exists {
+			out[truncatedKey] = truncate(m[k], maxValueBytes)
+		}
 	}
 	return out
 }
 
 func truncate(s string, max int) string {
+	// Sanitize invalid UTF-8 first.
+	s = strings.ToValidUTF8(s, "�")
 	if len(s) <= max {
 		return s
 	}
 	s = s[:max]
+	// Back off to rune boundary if needed.
 	for !utf8.ValidString(s) {
 		s = s[:len(s)-1]
 	}
