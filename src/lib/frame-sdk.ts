@@ -36,6 +36,9 @@ import {
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
 import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
+import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
+
+export type { RegistryAlert, AlertSubscriptionHealth }
 
 // ── Domain types ─────────────────────────────────────────────────────────────
 
@@ -758,6 +761,15 @@ export function frameClusterListPath(plural: string): string {
  */
 export function taskListPath(): string {
   return frameListPath('frametasks', config().taskNamespace)
+}
+
+/** FrameAlerts live beside FrameTasks, in Frame's operational namespace. */
+export function alertRegistryPath(): string {
+  return frameListPath('framealerts', config().taskNamespace)
+}
+
+export function alertSubscriptionsPath(): string {
+  return frameListPath('framealertsubscriptions', config().taskNamespace)
 }
 
 /** The list endpoint for a core Kubernetes collection, e.g. `nodes`, `events`. */
@@ -2660,6 +2672,18 @@ class ClusterClient {
       (a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9) || b.startsAt.localeCompare(a.startsAt),
     )
     return { alerts, bySeverity }
+  }
+
+  /** The alert registry (FrameAlert), active and resolved, with relay state. */
+  async alertRegistry(): Promise<RegistryAlert[]> {
+    const list = await k8sFetch<ListResponse<unknown>>(alertRegistryPath())
+    return projectAlerts(list.items ?? [])
+  }
+
+  /** Tenant subscriptions and the health of their relay link. */
+  async alertSubscriptions(): Promise<AlertSubscriptionHealth[]> {
+    const list = await k8sFetch<ListResponse<unknown>>(alertSubscriptionsPath())
+    return projectSubscriptions(list.items ?? [])
   }
 
   /**
