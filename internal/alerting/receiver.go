@@ -65,8 +65,8 @@ func (r *Receiver) serve(req *http.Request) int {
 	if req.URL.Path != "/alertmanager" || req.Method != http.MethodPost {
 		return http.StatusNotFound
 	}
-	if !r.authorized(req) {
-		return http.StatusUnauthorized
+	if code := r.authorize(req); code != 0 {
+		return code
 	}
 	// Size (413) is checked before format (400): io.ReadAll drains the
 	// MaxBytesReader fully, so an oversized body always trips the byte
@@ -98,18 +98,30 @@ func (r *Receiver) serve(req *http.Request) int {
 	return http.StatusOK
 }
 
-func (r *Receiver) authorized(req *http.Request) bool {
+// authorize returns 0 when the bearer token matches, otherwise the HTTP
+// status to answer with. A missing/wrong/unconfigured token (including the
+// Secret genuinely not existing) is 401. Any other failure to read the
+// Secret — an apiserver/kine hiccup — is 503, so Alertmanager retries
+// instead of treating a transient error as "unconfigured" and dropping the
+// alert for good within its flush window.
+func (r *Receiver) authorize(req *http.Request) int {
 	got, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
 	if !ok || got == "" {
-		return false
+		return http.StatusUnauthorized
 	}
 	var s corev1.Secret
 	key := types.NamespacedName{Namespace: r.Namespace, Name: r.TokenSecret}
 	if err := r.TokenReader.Get(req.Context(), key, &s); err != nil {
-		return false
+		if apierrors.IsNotFound(err) {
+			return http.StatusUnauthorized
+		}
+		return http.StatusServiceUnavailable
 	}
 	want := s.Data["token"]
-	return len(want) > 0 && subtle.ConstantTimeCompare([]byte(got), want) == 1
+	if len(want) == 0 || subtle.ConstantTimeCompare([]byte(got), want) != 1 {
+		return http.StatusUnauthorized
+	}
+	return 0
 }
 
 func (r *Receiver) record(ctx context.Context, a Alert) error {
@@ -118,11 +130,17 @@ func (r *Receiver) record(ctx context.Context, a Alert) error {
 	var endsAt *metav1.Time
 	if a.Status == "resolved" {
 		state = framev1beta1.AlertStateResolved
-		t := metav1.NewTime(a.EndsAt)
+		t := metav1.NewTime(a.EndsAt.Truncate(time.Second))
 		endsAt = &t
 	}
 	alertsReceived.WithLabelValues(state).Inc()
 
+	// StartsAt/EndsAt are truncated to the second: Alertmanager sends
+	// sub-second precision, but metav1.Time only round-trips whole seconds
+	// through JSON, so the object read back from a real apiserver never
+	// carries the original nanoseconds. Without truncating here first, the
+	// DeepEqual comparison below never matches on a resend and every single
+	// notification would issue an empty PATCH.
 	spec := framev1beta1.FrameAlertSpec{
 		Fingerprint:  a.Fingerprint,
 		AlertName:    truncate(a.Labels["alertname"], 256),
@@ -130,7 +148,7 @@ func (r *Receiver) record(ctx context.Context, a Alert) error {
 		Namespace:    truncate(a.Labels["namespace"], 63),
 		Labels:       BoundMap(a.Labels),
 		Annotations:  BoundMap(a.Annotations),
-		StartsAt:     metav1.NewTime(a.StartsAt),
+		StartsAt:     metav1.NewTime(a.StartsAt.Truncate(time.Second)),
 		EndsAt:       endsAt,
 		GeneratorURL: truncate(a.GeneratorURL, 2048),
 	}
