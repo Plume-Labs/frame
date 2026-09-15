@@ -1,0 +1,37 @@
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants read-only access to FrameAlertSubscription resources — who receives
+# the cluster's alerts and where. This role is intended for users who need
+# visibility into the routing without permissions to change it.
+#
+# NO EDITOR ROLE FOR THIS KIND. Deciding who receives the cluster's alerts is
+# an admin call (see framealertsubscription_admin_role.yaml); the editor tier
+# gets nothing beyond what it already inherits from this viewer role through
+# aggregation (frame-editor selects tier: viewer too, see commit 092720e), so
+# a separate, unlabelled editor role — the framemachine/frameinstall/
+# frameuser pattern — would grant nothing this role does not already cover.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+    rbac.frame.plume-labs.io/tier: viewer
+  name: framealertsubscription-viewer-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framealertsubscriptions/status
+  verbs:
+  - get
