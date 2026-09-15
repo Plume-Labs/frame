@@ -71,8 +71,10 @@ type FrameAlertSubscriptionStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=1024
 	LastError string `json:"lastError,omitempty"`
+	// A merge patch to 0 must still send the field explicitly: omitempty
+	// would drop it, and the rollout proof reads pendingDeliveries: 0.
 	// +optional
-	PendingDeliveries int32 `json:"pendingDeliveries,omitempty"`
+	PendingDeliveries int32 `json:"pendingDeliveries"`
 	// When the status was last computed; bounds recomputation to once a minute.
 	// +optional
 	ComputedAt *metav1.Time `json:"computedAt,omitempty"`
