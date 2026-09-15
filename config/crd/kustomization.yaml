@@ -16,6 +16,8 @@ resources:
 - bases/frame.plume-labs.io_frameinstalls.yaml
 - bases/frame.plume-labs.io_framestorages.yaml
 - bases/frame.plume-labs.io_framediskclaims.yaml
+- bases/frame.plume-labs.io_framealerts.yaml
+- bases/frame.plume-labs.io_framealertsubscriptions.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
