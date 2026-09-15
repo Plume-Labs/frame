@@ -75,13 +75,22 @@ spec:
               paused:
                 type: boolean
               tokenSecretRef:
-                description: AlertTokenRef names a Secret key in the subscription's
-                  own namespace.
+                description: |-
+                  AlertTokenRef names a Secret key in the subscription's own namespace. The
+                  relay only reads Secrets carrying the label
+                  frame.plume-labs.io/alert-token: "true"; anything else is a permanent
+                  delivery failure and is never sent. This stops a subscription (writable by
+                  a frame-admin, who has no Secret access) from pointing tokenSecretRef at
+                  an arbitrary Secret and exfiltrating its value to the subscription's URL.
                 properties:
                   key:
                     maxLength: 253
                     type: string
                   name:
+                    description: |-
+                      The Secret must carry the label frame.plume-labs.io/alert-token: "true",
+                      otherwise the relay treats it as a permanent misconfiguration and does
+                      not send.
                     maxLength: 253
                     type: string
                 required:
@@ -113,6 +122,9 @@ spec:
                 format: int64
                 type: integer
               pendingDeliveries:
+                description: |-
+                  A merge patch to 0 must still send the field explicitly: omitempty
+                  would drop it, and the rollout proof reads pendingDeliveries: 0.
                 format: int32
                 type: integer
             type: object

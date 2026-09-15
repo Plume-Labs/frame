@@ -2,6 +2,8 @@ package alerting
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
@@ -96,6 +99,73 @@ func TestSubscriptionStatusDropsTheGaugeOfADeletedSubscription(t *testing.T) {
 	// (the first delete happens in Reconcile, the second here should return false)
 	if deleted := pendingDeliveries.DeleteLabelValues("gone"); deleted {
 		t.Error("gauge series not deleted; second DeleteLabelValues returned true")
+	}
+}
+
+// M2: recomputing every minute is fine, but writing the status every minute
+// even when nothing changed is ~1440 unnecessary PATCHes/day per
+// subscription. When ObservedGeneration, PendingDeliveries, LastSuccessAt and
+// LastError all come out the same as what's already stored, Reconcile must
+// not call Status().Patch at all — it still requeues after a minute.
+func TestSubscriptionStatusSkipsTheWriteWhenNothingChanged(t *testing.T) {
+	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{})
+	sub.Status.ObservedGeneration = 1 // matches sub.Generation set by subscription()
+	sub.Status.PendingDeliveries = 1  // matches what fa-3 below will recompute to
+	sub.Status.ComputedAt = at(0)
+	writes := 0
+	funcs := interceptor.Funcs{
+		SubResourcePatch: func(ctx context.Context, c client.Client, subr string, obj client.Object, p client.Patch, o ...client.SubResourcePatchOption) error {
+			writes++
+			return c.SubResource(subr).Patch(ctx, obj, p, o...)
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlertSubscription{}).
+		WithObjects(sub, alertWith("fa-3", "Firing")). // matches, never delivered: pending stays 1
+		WithInterceptorFuncs(funcs).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 11, 0, 0, time.UTC)} // past the 1-minute gate from ComputedAt=12:00
+	r := &SubscriptionStatusReconciler{Client: c, Namespace: ns, Now: ck.now}
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "neura"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatalf("unchanged recompute wrote the status %d times, want 0", writes)
+	}
+	if res.RequeueAfter != statusRecomputeEvery {
+		t.Fatalf("requeue %v, want %v", res.RequeueAfter, statusRecomputeEvery)
+	}
+}
+
+// M3: PendingDeliveries carried `omitempty`, so a merge patch to 0 sends
+// null and the field disappears from the stored status, while the rollout
+// proof reads `pendingDeliveries: 0`. Force a real write (ObservedGeneration
+// stale) with pending draining to 0 and check the field survives JSON
+// marshalling explicitly, not just the Go struct's zero value.
+func TestSubscriptionStatusKeepsPendingDeliveriesZeroExplicitInJSON(t *testing.T) {
+	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{})
+	sub.Status.PendingDeliveries = 3
+	sub.Status.ObservedGeneration = 0 // stale vs sub.Generation == 1: forces a write
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlertSubscription{}).WithObjects(sub).Build() // no FrameAlerts: pending drains to 0
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 10, 0, 0, time.UTC)}
+	r := &SubscriptionStatusReconciler{Client: c, Namespace: ns, Now: ck.now}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "neura"}}); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameAlertSubscription
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &got)
+	if got.Status.PendingDeliveries != 0 {
+		t.Fatalf("pending = %d, want 0", got.Status.PendingDeliveries)
+	}
+	b, err := json.Marshal(got.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"pendingDeliveries":0`) {
+		t.Fatalf("pendingDeliveries not explicit in the JSON status: %s", b)
 	}
 }
 
