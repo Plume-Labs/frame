@@ -590,7 +590,7 @@ describe('ClusterClient.capacity', () => {
         return json({ data: { result: [{ value: [0, String(v)] }] } })
       }
       // Prometheus pod discovery, before the query itself.
-      if (url.includes('/namespaces/monitoring/pods')) return json({ items: [{ metadata: { name: 'prom-0' } }] })
+      if (url.includes('/namespaces/monitoring/pods')) return json({ items: [{ metadata: { name: 'prom-0' }, status: { phase: 'Running' } }] })
       if (url.includes('/api/v1/nodes')) return json(NODES)
       if (url.includes('/apis/metrics.k8s.io')) return json({ items: [] })
       if (url.includes('/api/v1/pods')) {
@@ -771,7 +771,7 @@ describe('integration proxy requests carry the bearer token', () => {
     return seen
   }
 
-  const POD_LIST = JSON.stringify({ items: [{ metadata: { name: 'alertmanager-0' } }] })
+  const POD_LIST = JSON.stringify({ items: [{ metadata: { name: 'alertmanager-0' }, status: { phase: 'Running' } }] })
 
   it('reads Alertmanager silences with an Authorization header', async () => {
     const seen = stubTokenAnd((url) =>
