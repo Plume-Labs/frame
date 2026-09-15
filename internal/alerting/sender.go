@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -47,6 +48,7 @@ func (s *Sender) Send(ctx context.Context, url, token, receiver string, a *frame
 	if err != nil {
 		return Retry, err
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	switch c := resp.StatusCode; {
 	case c >= 200 && c < 300:
@@ -67,9 +69,17 @@ func buildPayload(receiver string, a *framev1beta1.FrameAlert, state string) Pay
 			endsAt = a.Spec.EndsAt.Time
 		}
 	}
+	labels := a.Spec.Labels
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	annotations := a.Spec.Annotations
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
 	return Payload{Version: "4", Status: status, Receiver: receiver, Alerts: []Alert{{
 		Status: status, Fingerprint: a.Spec.Fingerprint,
-		Labels: a.Spec.Labels, Annotations: a.Spec.Annotations,
+		Labels: labels, Annotations: annotations,
 		StartsAt: a.Spec.StartsAt.Time, EndsAt: endsAt, GeneratorURL: a.Spec.GeneratorURL,
 	}}}
 }
