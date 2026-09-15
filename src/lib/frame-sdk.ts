@@ -706,6 +706,20 @@ function integrationPods(i: Integration): string {
   return `/api/v1${scope}/pods?labelSelector=${encodeURIComponent(i.selector)}`
 }
 
+/**
+ * The integration pod a proxy call may target: Running and not being deleted.
+ *
+ * A label selector also lists pods an old ReplicaSet or an eviction left
+ * behind in Succeeded/Failed, and proxying to one answers 400. Taking the
+ * first item broke the TEI panel on 2026-09-15 while TEI itself was healthy,
+ * because a 22-day-old Completed pod sorted first.
+ */
+export function servingPod<T extends { metadata: { name: string; deletionTimestamp?: string }; status?: { phase?: string } }>(
+  items: T[] | undefined,
+): T | undefined {
+  return items?.find((p) => p.status?.phase === 'Running' && !p.metadata.deletionTimestamp)
+}
+
 /** Proxy URL to `path` on one of an integration's pods. */
 function integrationProxy(i: Integration, pod: string, path: string): string {
   return `/api/v1/namespaces/${i.namespace}/pods/${pod}:${i.port}/proxy${path}`
@@ -1367,7 +1381,7 @@ async function requestedFromPrometheus(): Promise<[number, number] | null> {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(config().integrations.prometheus),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) return null
     const base = integrationProxy(config().integrations.prometheus, name, '/api/v1/query')
 
@@ -1693,7 +1707,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(alluxio),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) throw new FrameAPIError(404, 'Alluxio not deployed')
 
     const res = await proxyFetch(integrationProxy(alluxio, name, '/metrics/json/'))
@@ -2171,7 +2185,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(dcgm),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) throw new FrameAPIError(404, 'DCGM exporter not deployed')
     const res = await proxyFetch(integrationProxy(dcgm, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read DCGM metrics')
@@ -2223,7 +2237,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string }; spec: { nodeName?: string } }>>(
       integrationPods(llamacpp),
     )
-    const pod = pods.items?.find((p) => p.metadata.name)
+    const pod = servingPod(pods.items)
     if (!pod) return null
     const name = pod.metadata.name
     const base = integrationProxy(llamacpp, name, '')
@@ -2273,7 +2287,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string }; spec: { nodeName?: string } }>>(
       integrationPods(tei),
     )
-    const pod = pods.items?.find((p) => p.metadata.name)
+    const pod = servingPod(pods.items)
     if (!pod) return null
     const name = pod.metadata.name
     const base = integrationProxy(tei, name, '')
@@ -2316,7 +2330,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(falco),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) return null
     const res = await proxyFetch(integrationProxy(falco, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Falco metrics')
@@ -2435,7 +2449,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(tetragon),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) return null
     const res = await proxyFetch(integrationProxy(tetragon, name, '/metrics'))
     if (!res.ok) throw new FrameAPIError(res.status, 'cannot read Tetragon metrics')
@@ -2588,7 +2602,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(config().integrations.prometheus),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) return null
     const base = integrationProxy(config().integrations.prometheus, name, '/api/v1/query_range')
     const end = Math.floor(Date.now() / 1000)
@@ -2641,7 +2655,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(config().integrations.alertmanager),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) return null
     const res = await proxyFetch(
       integrationProxy(config().integrations.alertmanager, name, '/api/v2/alerts'),
@@ -2696,7 +2710,7 @@ class ClusterClient {
     const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(
       integrationPods(config().integrations.alertmanager),
     )
-    const name = pods.items?.[0]?.metadata.name
+    const name = servingPod(pods.items)?.metadata.name
     if (!name) throw new FrameAPIError(404, 'Alertmanager pod not found')
     return integrationProxy(config().integrations.alertmanager, name, '/api/v2')
   }
