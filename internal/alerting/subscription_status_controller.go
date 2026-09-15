@@ -94,7 +94,7 @@ func (r *SubscriptionStatusReconciler) Reconcile(ctx context.Context, req ctrl.R
 	lastError := ""
 	for i := range alerts.Items {
 		a := &alerts.Items[i]
-		if a.Status.State == "" || !Matches(sub.Spec.Filter, a) {
+		if a.Status.State == "" {
 			continue
 		}
 		var d *framev1beta1.AlertDelivery
@@ -102,6 +102,17 @@ func (r *SubscriptionStatusReconciler) Reconcile(ctx context.Context, req ctrl.R
 			if a.Status.Deliveries[j].Subscription == sub.Name {
 				d = &a.Status.Deliveries[j]
 			}
+		}
+		// A subscription whose filter no longer matches can still have a
+		// resolution due: relay_controller.go's resolution-only path keeps
+		// driving an entry that was delivered Firing (and not yet
+		// Excluded) until the alert's Resolved state is actually sent —
+		// paused, a permanent failure, or backoff can all stall that. That
+		// must keep showing here as pending, not silently as done.
+		stillOpenForResolution := d != nil && d.DeliveredState == framev1beta1.AlertStateFiring && !d.Excluded &&
+			a.Status.State == framev1beta1.AlertStateResolved
+		if !Matches(sub.Spec.Filter, a) && !stillOpenForResolution {
+			continue
 		}
 		if d == nil || d.DeliveredState != a.Status.State {
 			pending++

@@ -122,8 +122,10 @@ spec:
                         True when this entry was recorded without ever sending anything,
                         because the subscription's filter did not match the alert at the
                         time it resolved. Spec §5.3: a filter that widens afterwards must not
-                        replay the incident to a tenant who never had it open. Cleared back
-                        to false the next time a delivery actually succeeds.
+                        replay the incident to a tenant who never had it open. Never set on
+                        an entry that was genuinely delivered (deliveredState reached by an
+                        actual send survives a filter that stops matching afterwards).
+                        Cleared back to false the next time a delivery actually succeeds.
                       type: boolean
                     failedState:
                       description: The alert state the permanent failure was recorded
