@@ -7,8 +7,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
@@ -27,6 +29,10 @@ type SubscriptionStatusReconciler struct {
 func (r *SubscriptionStatusReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var sub framev1beta1.FrameAlertSubscription
 	if err := r.Client.Get(ctx, req.NamespacedName, &sub); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// Subscription was deleted; clean up the gauge series
+			pendingDeliveries.DeleteLabelValues(req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	now := r.Now()
@@ -73,6 +79,10 @@ func (r *SubscriptionStatusReconciler) Reconcile(ctx context.Context, req ctrl.R
 	computed := metav1.NewTime(now)
 	sub.Status.ObservedGeneration = sub.Generation
 	sub.Status.PendingDeliveries = pending
+	// Preserve lastSuccessAt: never regress to an older value
+	if lastSuccess == nil || (sub.Status.LastSuccessAt != nil && sub.Status.LastSuccessAt.After(lastSuccess.Time)) {
+		lastSuccess = sub.Status.LastSuccessAt
+	}
 	sub.Status.LastSuccessAt = lastSuccess
 	sub.Status.LastError = lastError
 	sub.Status.ComputedAt = &computed
@@ -96,7 +106,7 @@ func (r *SubscriptionStatusReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	})
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("framealertsubscription-status").
-		For(&framev1beta1.FrameAlertSubscription{}).
+		For(&framev1beta1.FrameAlertSubscription{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&framev1beta1.FrameAlert{}, allSubs).
 		Complete(r)
 }

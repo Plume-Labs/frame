@@ -76,3 +76,49 @@ func TestSubscriptionStatusIsRecomputedAtMostOncePerMinute(t *testing.T) {
 		t.Fatalf("requeue %v, want 40s", res.RequeueAfter)
 	}
 }
+
+func TestSubscriptionStatusDropsTheGaugeOfADeletedSubscription(t *testing.T) {
+	// Pre-populate the gauge for the deleted subscription
+	pendingDeliveries.WithLabelValues("gone").Set(3)
+
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlertSubscription{}).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 10, 0, 0, time.UTC)}
+	r := &SubscriptionStatusReconciler{Client: c, Namespace: ns, Now: ck.now}
+
+	// Reconcile a request for a subscription that does not exist
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "gone"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the gauge series is removed by checking that a second delete returns false
+	// (the first delete happens in Reconcile, the second here should return false)
+	if deleted := pendingDeliveries.DeleteLabelValues("gone"); deleted {
+		t.Error("gauge series not deleted; second DeleteLabelValues returned true")
+	}
+}
+
+func TestSubscriptionStatusKeepsLastSuccessAfterAlertsArePurged(t *testing.T) {
+	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{})
+	sub.Status.LastSuccessAt = at(3)
+	sub.Status.ComputedAt = at(0)
+	sub.Status.ObservedGeneration = 1
+	// No FrameAlerts at all (all purged)
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlertSubscription{}).WithObjects(sub).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 10, 0, 0, time.UTC)}
+	r := &SubscriptionStatusReconciler{Client: c, Namespace: ns, Now: ck.now}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "neura"}}); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameAlertSubscription
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &got)
+	if got.Status.LastSuccessAt == nil || !got.Status.LastSuccessAt.Equal(at(3)) {
+		t.Errorf("lastSuccessAt = %v, want 12:03 (preserved from previous state)", got.Status.LastSuccessAt)
+	}
+	if got.Status.PendingDeliveries != 0 {
+		t.Errorf("pending = %d, want 0 (no alerts)", got.Status.PendingDeliveries)
+	}
+}
