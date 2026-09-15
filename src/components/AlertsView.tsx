@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ActiveAlert, AlertSilence, AlertsStatus, createFrameClient } from '@/lib/frame-sdk'
+import {
+  ActiveAlert,
+  AlertSilence,
+  AlertsStatus,
+  AlertSubscriptionHealth,
+  RegistryAlert,
+  alertRegistryPath,
+  alertSubscriptionsPath,
+  createFrameClient,
+} from '@/lib/frame-sdk'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -44,6 +53,19 @@ export function AlertsView() {
     [],
     30_000,
   )
+  const { state: registryState } = useLiveResource<RegistryAlert[]>(
+    () => frame.cluster.alertRegistry(),
+    [],
+    [alertRegistryPath()],
+  )
+  const { state: subsState } = useLiveResource<AlertSubscriptionHealth[]>(
+    () => frame.cluster.alertSubscriptions(),
+    [],
+    [alertSubscriptionsPath()],
+  )
+  const [view, setView] = useState<'Firing' | 'Resolved'>('Firing')
+  const registry = registryState.phase === 'ready' ? registryState.data : []
+  const subscriptions = subsState.phase === 'ready' ? subsState.data : []
   const data = state.phase === 'ready' ? state.data : null
   const silences = silenceState.phase === 'ready' ? silenceState.data : []
   const [silenceTarget, setSilenceTarget] = useState<ActiveAlert | null>(null)
@@ -141,6 +163,69 @@ export function AlertsView() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <CardTitle className="font-mono text-base">Registry</CardTitle>
+          <div className="ml-auto flex gap-1">
+            {(['Firing', 'Resolved'] as const).map((v) => (
+              <Button key={v} size="sm" variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
+                {v === 'Firing' ? 'Active' : 'History'}
+              </Button>
+            ))}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {registry.filter((a) => a.state === view).length === 0 ? (
+            <p className="text-sm font-mono text-muted-foreground">
+              {view === 'Firing' ? 'No active alert in the registry.' : 'No resolved alert within retention.'}
+            </p>
+          ) : (
+            registry
+              .filter((a) => a.state === view)
+              .map((a) => (
+                <div key={a.name} className="flex items-center gap-3 p-2 rounded border border-border font-mono text-xs">
+                  <span className={TONE[a.severity] ?? TONE.none}>{a.alertName}</span>
+                  <span className="text-muted-foreground">{a.namespace || 'cluster'}</span>
+                  <span className="ml-auto flex gap-1">
+                    {a.deliveries.map((d) => (
+                      <Badge
+                        key={d.subscription}
+                        variant="outline"
+                        className={d.delivered ? 'text-accent' : d.permanent ? 'text-destructive' : 'text-warning'}
+                        title={d.lastError || undefined}
+                      >
+                        {d.subscription} {d.delivered ? '✓' : d.permanent ? '✗' : '…'}
+                      </Badge>
+                    ))}
+                  </span>
+                </div>
+              ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-base">Subscriptions</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {subscriptions.length === 0 ? (
+            <p className="text-sm font-mono text-muted-foreground">No tenant receives the cluster's alerts.</p>
+          ) : (
+            subscriptions.map((s) => (
+              <div key={s.name} className="flex items-center gap-3 p-2 rounded border border-border font-mono text-xs">
+                <span className="font-bold">{s.name}</span>
+                <span className="text-muted-foreground truncate">{s.url}</span>
+                {s.paused && <Badge variant="outline">paused</Badge>}
+                <span className="ml-auto">pending {s.pending}</span>
+                <span className="text-muted-foreground">{s.lastSuccessAt ? `last ok ${s.lastSuccessAt}` : 'never delivered'}</span>
+                {s.lastError && <span className="text-destructive">{s.lastError}</span>}
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       {silences.length > 0 && (
         <Card>
