@@ -2,6 +2,8 @@ package alerting
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -20,6 +22,23 @@ import (
 
 	framev1beta1 "github.com/rmocq/frame/api/frame/v1beta1"
 )
+
+// AlertTokenLabel must be set to "true" on any Secret the relay is allowed to
+// read as a subscription's bearer token. A FrameAlertSubscription lives in a
+// namespace a frame-admin can write to without holding Secret access there;
+// without this check, tokenSecretRef could be pointed at an arbitrary Secret
+// (e.g. the receiver's own token) and its value exfiltrated to the
+// subscription's URL.
+const AlertTokenLabel = "frame.plume-labs.io/alert-token"
+
+// errUnlabelledToken means the Secret exists and has the requested key, but
+// is missing AlertTokenLabel: this is a permanent misconfiguration, not a
+// transient read failure, so the relay must not retry it.
+type errUnlabelledToken struct{ secret string }
+
+func (e *errUnlabelledToken) Error() string {
+	return fmt.Sprintf("token Secret %s is not labelled %s=true", e.secret, AlertTokenLabel)
+}
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framealerts,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framealerts/status,verbs=get;patch;update
@@ -133,6 +152,10 @@ func (r *RelayReconciler) deliver(ctx context.Context, sub *framev1beta1.FrameAl
 	}
 	token, err := r.token(ctx, sub)
 	if err != nil {
+		var unlabelled *errUnlabelledToken
+		if errors.As(err, &unlabelled) {
+			return r.fail(sub, d, Permanent, err, state, now)
+		}
 		return r.fail(sub, d, Retry, err, state, now)
 	}
 	sequence := []string{state}
@@ -177,6 +200,9 @@ func (r *RelayReconciler) token(ctx context.Context, sub *framev1beta1.FrameAler
 	key := types.NamespacedName{Namespace: sub.Namespace, Name: sub.Spec.TokenSecretRef.Name}
 	if err := r.TokenReader.Get(ctx, key, &s); err != nil {
 		return "", err
+	}
+	if s.Labels[AlertTokenLabel] != "true" {
+		return "", &errUnlabelledToken{secret: key.Name}
 	}
 	v, ok := s.Data[sub.Spec.TokenSecretRef.Key]
 	if !ok || len(v) == 0 {

@@ -3020,7 +3020,14 @@ kubectl create secret generic frame-alert-receiver-token -n frame-system --dry-r
 kubectl create secret generic frame-alert-receiver-token -n monitoring --dry-run=client -o yaml --from-literal=token="$RT" \
   | kubeseal --controller-namespace kube-system --format yaml > deploy/samples/test-cluster/frame-alert-receiver-token.monitoring.sealed.yaml
 NT=$(kubectl -n neura get secret neura-neura-secret -o jsonpath='{.data.IT_ALERT_WEBHOOK_TOKEN}' | base64 -d)
+# Labelled frame.plume-labs.io/alert-token=true: this is the Secret the relay
+# reads via tokenSecretRef, and it refuses to send using any Secret without
+# the label (I1 — a frame-admin has no Secret access, so an unlabelled Secret
+# could otherwise be used to exfiltrate one it does not own).
+# frame-alert-receiver-token above must NOT carry this label: the receiver
+# reads it directly, not through a subscription.
 kubectl create secret generic neura-alert-webhook -n frame-system --dry-run=client -o yaml --from-literal=token="$NT" \
+  | kubectl label --local -f - frame.plume-labs.io/alert-token=true -o yaml \
   | kubeseal --controller-namespace kube-system --format yaml > deploy/samples/test-cluster/neura-alert-webhook.frame-system.sealed.yaml
 unset RT NT
 kubectl apply -f deploy/samples/test-cluster/frame-alert-receiver-token.sealed.yaml \

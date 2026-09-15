@@ -55,7 +55,8 @@ func subscription(name, url string, f framev1beta1.AlertFilter) *framev1beta1.Fr
 }
 
 func subToken(name string) *corev1.Secret {
-	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-token", Namespace: ns},
+	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-token", Namespace: ns,
+		Labels: map[string]string{AlertTokenLabel: "true"}},
 		Data: map[string][]byte{"token": []byte("tok")}}
 }
 
@@ -289,6 +290,29 @@ func TestRelayPurgesOnlyDeliveredAlertsPastRetention(t *testing.T) {
 	err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "fa-ab12"}, &fa)
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("delivered alert past retention not purged: %v", err)
+	}
+}
+
+// I1: a frame-admin has no Secret access, but could still create a
+// subscription pointing tokenSecretRef at a Secret it does not own (e.g. the
+// receiver's own token). Without the label check, the relay would send that
+// value as a Bearer token to the subscription's URL: Secret exfiltration.
+func TestRelayRefusesAnUnlabelledTokenSecretAndRecordsAPermanentFailure(t *testing.T) {
+	tn := newTenant()
+	defer tn.srv.Close()
+	unlabelled := subToken("neura")
+	unlabelled.Labels = nil
+	r, c, _ := newRelay(t, storedAlert("Firing", nil), subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{}), unlabelled)
+
+	reconcileAlert(t, r)
+
+	if len(tn.received) != 0 {
+		t.Fatalf("tenant received %v, want nothing", tn.received)
+	}
+	want := "token Secret neura-token is not labelled " + AlertTokenLabel + "=true"
+	d := delivery(getAlert(t, c), "neura")
+	if d == nil || !d.PermanentFailure || d.LastError != want {
+		t.Fatalf("delivery: %+v, want PermanentFailure with lastError %q", d, want)
 	}
 }
 

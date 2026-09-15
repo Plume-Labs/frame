@@ -97,7 +97,7 @@ d'alertes non borné.
 | Champ | Type | Note |
 |---|---|---|
 | `url` | string | `http` ou `https`, requis |
-| `tokenSecretRef` | `{name, key}` | Secret dans `frame-system` |
+| `tokenSecretRef` | `{name, key}` | Secret dans `frame-system`, labellisé `frame.plume-labs.io/alert-token: "true"` (sinon échec permanent, rien n'est envoyé) |
 | `filter.excludeAlertNames` | []string | défaut `[Watchdog, InfoInhibitor]` |
 | `filter.severities` | []string | vide = toutes |
 | `filter.namespaces` | []string | vide = tout le cluster |
@@ -267,7 +267,10 @@ puis `kubectl apply`, **sans** `frame-provisiond`.
 1. CRD + RBAC, puis manager.
 2. Jetons scellés : `frame-system/frame-alert-receiver-token`,
    `frame-system/neura-alert-webhook` (copie du jeton déjà dans
-   `neura/neura-neura-secret`), `monitoring/frame-alert-receiver-token`.
+   `neura/neura-neura-secret`, **labellisé** `frame.plume-labs.io/alert-token:
+   "true"` — c'est le Secret que lit le relais via `tokenSecretRef`, contrairement
+   à `frame-alert-receiver-token` que le récepteur lit directement et qui ne
+   porte pas ce label), `monitoring/frame-alert-receiver-token`.
    Retrait du SealedSecret `monitoring/neura-alert-webhook` posé le matin même.
 3. `FrameAlertSubscription` `neura` →
    `http://neura-neura-api.neura.svc.cluster.local:3000/api/it/alerts/webhook`,
