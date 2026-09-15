@@ -23,16 +23,26 @@ alertmanager:
         - matchers: [severity = "critical"]
           receiver: critical
     receivers:
-      # On-cluster webhook sink (verifiable without external creds). Swap for
-      # Slack/email/PagerDuty for real fan-out — see the commented block below.
+      # Frame's alert receiver records every alert (FrameAlert) and relays it
+      # to tenant subscriptions — see docs/superpowers/specs/2026-09-15-alert-relay-design.md.
+      # `critical` stays a separate receiver so critical routing (grouping,
+      # future fan-out) can diverge without touching the default path.
       - name: default
         webhook_configs:
-          - url: http://alert-sink.monitoring.svc.cluster.local:80/
+          - url: http://frame-alert-receiver.frame-system.svc:8445/alertmanager
             send_resolved: true
+            max_alerts: 100
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/frame-alert-receiver-token/token
       - name: critical
         webhook_configs:
-          - url: http://alert-sink.monitoring.svc.cluster.local:80/critical
+          - url: http://frame-alert-receiver.frame-system.svc:8445/alertmanager
             send_resolved: true
+            max_alerts: 100
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/frame-alert-receiver-token/token
       # - name: critical
       #   slack_configs:
       #     - api_url_file: /etc/alertmanager/secrets/slack/url   # from a Secret
@@ -43,6 +53,7 @@ alertmanager:
         target_matchers: [severity = "warning"]
         equal: [alertname, namespace]
   alertmanagerSpec:
+    secrets: [frame-alert-receiver-token]   # mounted under /etc/alertmanager/secrets/
     resources: { requests: { cpu: 20m, memory: 64Mi } }
     storage:
       volumeClaimTemplate:

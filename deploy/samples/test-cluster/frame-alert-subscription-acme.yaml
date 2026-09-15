@@ -1,0 +1,13 @@
+# Acme receives every cluster alert except the two meta alerts (defaulted).
+# The token is the one Acme already expects in acme-acme-secret
+# (IT_ALERT_WEBHOOK_TOKEN); it is sealed into frame-system/acme-alert-webhook.
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameAlertSubscription
+metadata:
+  name: acme
+  namespace: frame-system
+spec:
+  url: http://acme-acme-api.acme.svc.cluster.local:3000/api/it/alerts/webhook
+  tokenSecretRef:
+    name: acme-alert-webhook
+    key: token
