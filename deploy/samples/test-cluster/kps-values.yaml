@@ -20,8 +20,18 @@ alertmanager:
       repeat_interval: 4h
       receiver: default
       routes:
+        # Neura first, with `continue`: every alert still reaches the routes
+        # below. Meta alerts would open never-closing incidents. Neura reads
+        # them into it.incidents (POST /api/it/alerts/webhook, bearer token).
+        - matchers: [alertname !~ "Watchdog|InfoInhibitor"]
+          receiver: neura
+          continue: true
         - matchers: [severity = "critical"]
           receiver: critical
+        # Explicit catch-all: once the neura route has matched, the parent's
+        # `receiver: default` is no longer used — without this, non-critical
+        # alerts would stop reaching alert-sink (checked with amtool routes test).
+        - receiver: default
     receivers:
       # On-cluster webhook sink (verifiable without external creds). Swap for
       # Slack/email/PagerDuty for real fan-out — see the commented block below.
@@ -33,6 +43,16 @@ alertmanager:
         webhook_configs:
           - url: http://alert-sink.monitoring.svc.cluster.local:80/critical
             send_resolved: true
+      # Token shared with neura-neura-secret/IT_ALERT_WEBHOOK_TOKEN, sealed in
+      # neura-alert-webhook.sealed.yaml next to this file.
+      - name: neura
+        webhook_configs:
+          - url: http://neura-neura-api.neura.svc.cluster.local:3000/api/it/alerts/webhook
+            send_resolved: true
+            max_alerts: 100   # Neura rejects more per request (MAX_ALERTES_PAR_REQUETE)
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/neura-alert-webhook/token
       # - name: critical
       #   slack_configs:
       #     - api_url_file: /etc/alertmanager/secrets/slack/url   # from a Secret
@@ -43,6 +63,7 @@ alertmanager:
         target_matchers: [severity = "warning"]
         equal: [alertname, namespace]
   alertmanagerSpec:
+    secrets: [neura-alert-webhook]   # mounted under /etc/alertmanager/secrets/
     resources: { requests: { cpu: 20m, memory: 64Mi } }
     storage:
       volumeClaimTemplate:
