@@ -1,3 +1,5 @@
+# The token Secret must carry the label frame.plume-labs.io/alert-token:
+# "true"; the relay refuses to read (and send) any Secret without it.
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameAlertSubscription
 metadata:

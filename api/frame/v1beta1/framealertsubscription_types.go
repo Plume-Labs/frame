@@ -18,8 +18,16 @@ package v1beta1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// AlertTokenRef names a Secret key in the subscription's own namespace.
+// AlertTokenRef names a Secret key in the subscription's own namespace. The
+// relay only reads Secrets carrying the label
+// frame.plume-labs.io/alert-token: "true"; anything else is a permanent
+// delivery failure and is never sent. This stops a subscription (writable by
+// a frame-admin, who has no Secret access) from pointing tokenSecretRef at
+// an arbitrary Secret and exfiltrating its value to the subscription's URL.
 type AlertTokenRef struct {
+	// The Secret must carry the label frame.plume-labs.io/alert-token: "true",
+	// otherwise the relay treats it as a permanent misconfiguration and does
+	// not send.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name"`
