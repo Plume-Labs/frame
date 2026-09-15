@@ -31,6 +31,21 @@ describe('projectAlerts', () => {
   it('skips objects the receiver has not given a state yet', () => {
     expect(projectAlerts([{ ...raw, status: {} }])).toEqual([])
   })
+
+  it('hides excluded deliveries from the badges (finding 1: filter widening must not surface a replay)', () => {
+    const withExcluded = {
+      ...raw,
+      status: {
+        state: 'Firing',
+        deliveries: [
+          { subscription: 'neura', deliveredState: 'Firing' },
+          { subscription: 'late', deliveredState: 'Resolved', excluded: true },
+        ],
+      },
+    }
+    const [a] = projectAlerts([withExcluded])
+    expect(a.deliveries).toEqual([{ subscription: 'neura', delivered: true, lastError: '', permanent: false }])
+  })
 })
 
 describe('projectSubscriptions', () => {

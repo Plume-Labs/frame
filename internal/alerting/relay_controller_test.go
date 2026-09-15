@@ -316,6 +316,149 @@ func TestRelayRefusesAnUnlabelledTokenSecretAndRecordsAPermanentFailure(t *testi
 	}
 }
 
+// Spec §5.3: a subscription whose filter does not match must not replay a
+// resolved alert once the filter widens. The non-matching pass while the
+// alert is Resolved must record an Excluded entry so a later widen sees it
+// already "delivered" and sends nothing.
+func TestRelayDoesNotReplayResolvedAlertsWhenAFilterWidens(t *testing.T) {
+	tn := newTenant()
+	defer tn.srv.Close()
+	fa := storedAlert("Firing", nil)
+	fa.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC))
+	sub := subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{Severities: []string{"critical"}})
+	sub.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC))
+	r, c, ck := newRelay(t, fa, sub, subToken("neura"))
+
+	// Warning alert, Firing, filter wants only critical: no entry, nothing sent.
+	reconcileAlert(t, r)
+	if len(tn.received) != 0 {
+		t.Fatalf("tenant received %v while firing and excluded, want nothing", tn.received)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d != nil {
+		t.Fatalf("delivery created for a non-matching firing alert: %+v", d)
+	}
+
+	// Alert resolves while still excluded: Excluded record, nothing sent.
+	ck.t = ck.t.Add(time.Minute)
+	var got framev1beta1.FrameAlert
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "fa-ab12"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	end := metav1.NewTime(ck.t)
+	got.Spec.EndsAt = &end
+	if err := c.Update(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+	got.Status.State = framev1beta1.AlertStateResolved
+	if err := c.Status().Update(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAlert(t, r)
+	if len(tn.received) != 0 {
+		t.Fatalf("tenant received %v on resolution while excluded, want nothing", tn.received)
+	}
+	d := delivery(getAlert(t, c), "neura")
+	if d == nil || !d.Excluded || d.DeliveredState != "Resolved" {
+		t.Fatalf("delivery: %+v, want Excluded Resolved", d)
+	}
+
+	// Filter widens to include warning: the resolved incident must not replay.
+	var s framev1beta1.FrameAlertSubscription
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Spec.Filter.Severities = append(s.Spec.Filter.Severities, "warning")
+	s.Generation = 2 // the fake client does not bump generation
+	if err := c.Update(context.Background(), &s); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAlert(t, r)
+	if len(tn.received) != 0 {
+		t.Fatalf("tenant received %v after the filter widened, want nothing", tn.received)
+	}
+}
+
+// Spec §5.3: widening a filter onto an alert that is still Firing (not
+// excluded yet, since it never resolved) must deliver the firing normally.
+func TestRelaySendsFiringWhenAFilterWidensOnAnActiveAlert(t *testing.T) {
+	tn := newTenant()
+	defer tn.srv.Close()
+	fa := storedAlert("Firing", nil)
+	fa.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC))
+	sub := subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{Severities: []string{"critical"}})
+	sub.CreationTimestamp = metav1.NewTime(time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC))
+	r, c, _ := newRelay(t, fa, sub, subToken("neura"))
+
+	reconcileAlert(t, r)
+	if len(tn.received) != 0 {
+		t.Fatalf("tenant received %v before the filter widened, want nothing", tn.received)
+	}
+
+	var s framev1beta1.FrameAlertSubscription
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Spec.Filter.Severities = append(s.Spec.Filter.Severities, "warning")
+	s.Generation = 2
+	if err := c.Update(context.Background(), &s); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAlert(t, r)
+	if len(tn.received) != 1 || tn.received[0] != "firing" {
+		t.Fatalf("tenant received %v after the filter widened on an active alert, want [firing]", tn.received)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d == nil || d.DeliveredState != "Firing" || d.Excluded {
+		t.Fatalf("delivery: %+v", d)
+	}
+}
+
+// Spec §5.3: an alert that leaves a subscription's filter after being
+// delivered Firing must still be resolved for that subscription — the
+// tenant already has the incident open.
+func TestRelayStillResolvesAnAlertThatLeftTheFilter(t *testing.T) {
+	tn := newTenant()
+	defer tn.srv.Close()
+	r, c, ck := newRelay(t, storedAlert("Firing", nil), subscription("neura", tn.srv.URL, framev1beta1.AlertFilter{}), subToken("neura"))
+
+	reconcileAlert(t, r)
+	if len(tn.received) != 1 || tn.received[0] != "firing" {
+		t.Fatalf("tenant received %v, want [firing]", tn.received)
+	}
+
+	var s framev1beta1.FrameAlertSubscription
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Spec.Filter.Severities = []string{"critical"} // narrows: alert severity is "warning"
+	s.Generation = 2
+	if err := c.Update(context.Background(), &s); err != nil {
+		t.Fatal(err)
+	}
+
+	ck.t = ck.t.Add(time.Minute)
+	var got framev1beta1.FrameAlert
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "fa-ab12"}, &got); err != nil {
+		t.Fatal(err)
+	}
+	end := metav1.NewTime(ck.t)
+	got.Spec.EndsAt = &end
+	if err := c.Update(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+	got.Status.State = framev1beta1.AlertStateResolved
+	if err := c.Status().Update(context.Background(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	reconcileAlert(t, r)
+	if len(tn.received) != 2 || tn.received[1] != "resolved" {
+		t.Fatalf("tenant received %v, want [firing resolved]", tn.received)
+	}
+	if d := delivery(getAlert(t, c), "neura"); d == nil || d.DeliveredState != "Resolved" || d.Excluded {
+		t.Fatalf("delivery: %+v", d)
+	}
+}
+
 func TestRelayRequeuesAResolvedAlertAtItsPurgeTime(t *testing.T) {
 	end := metav1.NewTime(time.Date(2026, 9, 15, 11, 0, 0, 0, time.UTC))
 	fa := storedAlert("Resolved", &end)

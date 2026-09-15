@@ -14,7 +14,14 @@ kubeEtcd: { enabled: false }
 alertmanager:
   config:
     route:
-      group_by: [alertname, severity]
+      # '...' is Alertmanager's special group_by value: group by every label,
+      # i.e. one alert per group per notification. Finding 2 (2026-09-15):
+      # grouping by [alertname, severity] let a single group exceed
+      # max_alerts, silently truncating alerts (and their resolutions)
+      # beyond the cap. One alert per notification removes the cap's ceiling
+      # entirely, at the cost of one webhook POST per alert instead of one
+      # per group.
+      group_by: ['...']
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 4h
@@ -31,6 +38,9 @@ alertmanager:
         webhook_configs:
           - url: http://frame-alert-receiver.frame-system.svc:8445/alertmanager
             send_resolved: true
+            # Safety net only: with group_by: ['...'] above, every
+            # notification carries exactly one alert, so this can no longer
+            # be reached.
             max_alerts: 100
             http_config:
               authorization:
@@ -39,6 +49,7 @@ alertmanager:
         webhook_configs:
           - url: http://frame-alert-receiver.frame-system.svc:8445/alertmanager
             send_resolved: true
+            # Safety net only: see the `default` receiver above.
             max_alerts: 100
             http_config:
               authorization:

@@ -117,6 +117,14 @@ spec:
                       - Firing
                       - Resolved
                       type: string
+                    excluded:
+                      description: |-
+                        True when this entry was recorded without ever sending anything,
+                        because the subscription's filter did not match the alert at the
+                        time it resolved. Spec §5.3: a filter that widens afterwards must not
+                        replay the incident to a tenant who never had it open. Cleared back
+                        to false the next time a delivery actually succeeds.
+                      type: boolean
                     failedState:
                       description: The alert state the permanent failure was recorded
                         against.

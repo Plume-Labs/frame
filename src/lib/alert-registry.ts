@@ -32,7 +32,7 @@ type RawAlert = {
   spec?: { fingerprint?: string; alertName?: string; severity?: string; namespace?: string; startsAt?: string; endsAt?: string }
   status?: {
     state?: string
-    deliveries?: { subscription?: string; deliveredState?: string; lastError?: string; permanentFailure?: boolean }[]
+    deliveries?: { subscription?: string; deliveredState?: string; lastError?: string; permanentFailure?: boolean; excluded?: boolean }[]
   }
 }
 
@@ -50,12 +50,17 @@ export function projectAlerts(items: unknown[]): RegistryAlert[] {
         state,
         startsAt: i.spec?.startsAt ?? '',
         endsAt: i.spec?.endsAt ?? '',
-        deliveries: (i.status?.deliveries ?? []).map((d) => ({
-          subscription: d.subscription ?? '',
-          delivered: d.deliveredState === state,
-          lastError: d.lastError ?? '',
-          permanent: d.permanentFailure ?? false,
-        })),
+        // Excluded deliveries were recorded without ever being sent (the
+        // subscription's filter did not match when the alert resolved) —
+        // spec §5.3: they must not appear as a badge the tenant never saw.
+        deliveries: (i.status?.deliveries ?? [])
+          .filter((d) => !d.excluded)
+          .map((d) => ({
+            subscription: d.subscription ?? '',
+            delivered: d.deliveredState === state,
+            lastError: d.lastError ?? '',
+            permanent: d.permanentFailure ?? false,
+          })),
       }
     })
     .sort((a, b) => (a.state === b.state ? b.startsAt.localeCompare(a.startsAt) : a.state === 'Firing' ? -1 : 1))

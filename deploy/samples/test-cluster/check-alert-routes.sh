@@ -20,4 +20,16 @@ check default severity=warning alertname=KubeCPUOvercommit
 check default alertname=Watchdog
 grep -q 'frame-alert-receiver.frame-system.svc' "$tmp" || { echo "FAIL receivers do not point at Frame"; fail=1; }
 grep -q 'alert-sink' "$tmp" && { echo "FAIL alert-sink still configured"; fail=1; }
+
+# Finding 2 (2026-09-15): group_by must be Alertmanager's special ['...']
+# value (one alert per notification) so max_alerts:100 can no longer be
+# reached and silently truncate a group.
+if python3 -c 'import sys, yaml
+route = yaml.safe_load(open("kps-values.yaml"))["alertmanager"]["config"]["route"]
+sys.exit(0 if route.get("group_by") == ["..."] else 1)'; then
+  echo "ok   route.group_by -> ['...']"
+else
+  echo "FAIL route.group_by is not ['...']"
+  fail=1
+fi
 exit $fail

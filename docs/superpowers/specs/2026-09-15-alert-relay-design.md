@@ -78,7 +78,7 @@ sans index à maintenir.
 |---|---|
 | `state` | `Firing` \| `Resolved` |
 | `lastReceivedAt` | dernière réception, mise à jour au plus toutes les 15 min |
-| `deliveries[]` | une entrée par abonnement concerné : `subscription`, `deliveredState` (dernier état envoyé avec succès), `attempts`, `lastError`, `lastAttemptAt`, `permanentFailure` (bool) |
+| `deliveries[]` | une entrée par abonnement concerné : `subscription`, `deliveredState` (dernier état envoyé avec succès), `attempts`, `lastError`, `lastAttemptAt`, `permanentFailure` (bool), `excluded` (bool, §5.3 : enregistrée sans jamais avoir été envoyée, remise à faux au prochain envoi réussi) |
 
 Colonnes d'affichage : `Alert`, `Severity`, `State`, `Age`.
 
@@ -154,6 +154,13 @@ effet de bord. Le relais n'est **jamais** fait dans cette requête.
   `http_config.authorization.credentials_file` monté depuis
   `alertmanagerSpec.secrets`. `alert-sink` sort de la configuration (son
   Deployment reste, sa suppression est hors périmètre).
+- `route.group_by: ['...']` (valeur spéciale d'Alertmanager : une alerte par
+  groupe) plutôt que `[alertname, severity]` : un groupe qui dépasse
+  `max_alerts` est tronqué silencieusement par Alertmanager, donc les
+  alertes (et leurs résolutions) au-delà de 100 dans un même groupe
+  n'atteignaient jamais Frame ; `max_alerts: 100` reste posé comme filet de
+  sécurité, mais ne peut plus être atteint puisque chaque notification ne
+  porte plus qu'une seule alerte.
 - Watchdog et InfoInhibitor **sont** reçues et enregistrées ; le filtrage est
   fait par abonnement, au même endroit pour tous les tenants.
 - Routage vérifié avant application par `amtool config routes test`. Rappel
@@ -199,8 +206,8 @@ Pour chaque abonnement non `paused` dont le filtre accepte l'alerte, si
 | Réouverture après résolution | `Firing` à nouveau → envoi → le tenant ouvre un nouvel incident |
 | Abonnement `paused` | rien n'est envoyé, l'attente s'accumule |
 | Abonnement supprimé | ses `deliveries[]` sont retirées au prochain passage |
-| Nouvel abonnement ou filtre élargi | les alertes **actives** qui entrent dans le filtre partent ; les résolues ne sont pas rejouées |
-| Alerte sortie du filtre | son entrée `deliveries[]` est retirée, rien n'est envoyé |
+| Nouvel abonnement ou filtre élargi | les alertes **actives** qui entrent dans le filtre partent ; les résolues ne sont pas rejouées — l'abonnement n'ayant pas le filtre au moment de la résolution reçoit une entrée `excluded: true` (`deliveredState` déjà égal à l'état de l'alerte), qu'un élargissement ultérieur du filtre lit comme « déjà livrée » sans rien envoyer |
+| Alerte sortie du filtre | si aucune livraison `Firing` n'était en cours pour cet abonnement, son entrée `deliveries[]` est retirée (ou remplacée par `excluded: true` si l'alerte est déjà résolue), rien n'est envoyé ; si `Firing` avait déjà été livré (et `excluded: false`), l'abonnement reste piloté normalement pour la seule résolution — le tenant a déjà l'incident ouvert |
 
 ### 5.4 Purge
 

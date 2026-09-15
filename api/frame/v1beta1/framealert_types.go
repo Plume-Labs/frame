@@ -85,6 +85,13 @@ type AlertDelivery struct {
 	// The subscription generation this entry was last evaluated against.
 	// +optional
 	SubscriptionGeneration int64 `json:"subscriptionGeneration,omitempty"`
+	// True when this entry was recorded without ever sending anything,
+	// because the subscription's filter did not match the alert at the
+	// time it resolved. Spec §5.3: a filter that widens afterwards must not
+	// replay the incident to a tenant who never had it open. Cleared back
+	// to false the next time a delivery actually succeeds.
+	// +optional
+	Excluded bool `json:"excluded,omitempty"`
 }
 
 // FrameAlertStatus: state and lastReceivedAt belong to the receiver,

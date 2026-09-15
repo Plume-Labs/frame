@@ -169,6 +169,33 @@ func TestSubscriptionStatusKeepsPendingDeliveriesZeroExplicitInJSON(t *testing.T
 	}
 }
 
+// Finding 1, rule (e): an Excluded entry (recorded without sending, because
+// the filter did not match the alert when it resolved) must not count as
+// pending or as a success once the filter widens enough to see it again.
+func TestSubscriptionStatusExcludedEntriesDoNotCountAsPendingOrSuccess(t *testing.T) {
+	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{}) // now matches everything
+	objs := []client.Object{
+		sub,
+		alertWith("fa-1", "Resolved", framev1beta1.AlertDelivery{Subscription: "neura", DeliveredState: "Resolved", Excluded: true}),
+	}
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+		WithStatusSubresource(&framev1beta1.FrameAlertSubscription{}).WithObjects(objs...).Build()
+	ck := &clock{t: time.Date(2026, 9, 15, 12, 10, 0, 0, time.UTC)}
+	r := &SubscriptionStatusReconciler{Client: c, Namespace: ns, Now: ck.now}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: "neura"}}); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameAlertSubscription
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: "neura"}, &got)
+	if got.Status.PendingDeliveries != 0 {
+		t.Errorf("pending = %d, want 0 (excluded entry already matches the alert's state)", got.Status.PendingDeliveries)
+	}
+	if got.Status.LastSuccessAt != nil {
+		t.Errorf("lastSuccessAt = %v, want nil (excluded entry never sent anything)", got.Status.LastSuccessAt)
+	}
+}
+
 func TestSubscriptionStatusKeepsLastSuccessAfterAlertsArePurged(t *testing.T) {
 	sub := subscription("neura", "http://x", framev1beta1.AlertFilter{})
 	sub.Status.LastSuccessAt = at(3)
