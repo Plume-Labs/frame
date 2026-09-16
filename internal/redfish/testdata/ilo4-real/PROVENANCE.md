@@ -177,3 +177,38 @@ panne, l'avertissement pourrait persister.
 action** (`Actions`, `AvailableActions` : absents). Sur cet iLO4, rien ne
 s'écrit côté stockage par Redfish — effacer des métadonnées résiduelles passe
 par SSA au démarrage ou `ssacli` depuis l'OS.
+
+## État `_running` — capturé le 2026-09-11 à 14:34
+
+Suffixe `_running`. **`PowerState: On`, `Oem.Hp.PostState: FinishedPost`**,
+système chargé : un installateur Debian 13.6 démarré par média virtuel, arrêté
+à une de ses étapes. 100 W (moyenne 99, pic 203 pendant le POST).
+
+Ce sont les trois fichiers attendus pour lever la dernière hypothèse du lot 1.
+
+### ✅ Ce qu'ils tranchent
+
+**`PostState` vaut bien `FinishedPost` sur un système chargé.** La règle de
+confiance tient sur cette machine.
+
+**`10-P/S 1` porte toujours `UpperThresholdCritical: 0` machine allumée**, POST
+terminé, `Health: OK`, 40 °C. Ce n'était donc **pas** un artefact de l'état
+POST-terminé-sans-OS. Traiter un seuil nul ou négatif comme « pas de seuil »
+est juste au-delà d'un état d'alimentation particulier.
+
+46 capteurs, `Offline: 0`, **27 seulement rendent une valeur non nulle** — les
+19 autres sont les emplacements vides déjà identifiés par `Status.State`.
+
+### ⚠️ Ce qu'ils ne tranchent PAS
+
+**La température du CPU ne discrimine rien.** `02-CPU 1` rend **40 °C, la même
+valeur que machine éteinte**, pour une ambiante de 20 °C. C'est plausible pour
+un processeur au repos, et ça ne prouve donc ni que la lecture est fraîche ni
+qu'elle est rejouée.
+
+Quelques capteurs bougent bien entre les états — `22-Storage Batt` passe de
+22 à 21 °C, `04-P1 DIMM 1-6` rend 22 °C — mais pas le CPU.
+
+**Ce qu'il faudrait pour conclure : une charge.** Un installateur arrêté à un
+menu n'en produit aucune. La démonstration demande un système installé sur
+lequel on peut lancer un calcul, et elle reste donc à faire.
