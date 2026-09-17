@@ -1,8 +1,11 @@
 # Frame — Mainframe Framework for Kubernetes
 
-Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-grade computing platform: nine CRDs across two API groups — the eight frozen at `v1beta1` with `v1alpha1` still served and deprecated, plus `NodeTuning` added after the freeze — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
+You need big hardware to run big workloads with unified approach like mainframe do, but you don't have the money for a real mainframe ?
 
-> Single physical location only — multi-site federation is out of scope.
+Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-like computing platform:
+nine CRDs across two API groups — the eight frozen at `v1beta1` with `v1alpha1` still served and deprecated, plus `NodeTuning` added after the freeze — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
+
+> Single physical location only — multi-site federation is out of scope for now.
 
 ---
 
@@ -12,7 +15,7 @@ Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe
 UI / SDK / CI
     │  direct K8s API calls (/apis/frame.plume-labs.io/v1beta1/…)
     ▼
-Frame CRDs  →  Frame operator  →  cluster primitives (Argo, PriorityClasses, Talos gRPC, …)
+Frame CRDs  →  Frame operator  →  cluster primitives (Argo, PriorityClasses, …)
 ```
 
 Dev: `kubectl proxy --port=8001`. Prod: ServiceAccount Bearer token via `window.__FRAME_TOKEN__`.
