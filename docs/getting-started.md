@@ -2,22 +2,31 @@
 
 ## Prerequisites
 
-### Operator workstation
+### Bare-metal cluster nodes
 
-| Tool | Version |
-|---|---|
-| `kubectl` | 1.28+ |
-| `kustomize` | 5.0+ (or `kubectl kustomize`) |
-| `talosctl` | 1.9+ |
-| Node.js | 20+ |
-| Go | 1.25+ |
-| Docker | any recent version |
+Your node can have many roles for optimal resource utilization (e.g., compute, storage, GPU, controller).
 
-### Bare-metal nodes (for a real cluster)
+Frame provisionning it with roles based on detected hardware and user preference. The operator will automatically detect the node's hardware and assign the appropriate role.
 
-- RDMA-capable NIC (InfiniBand HCA or RoCE NIC)
-- PXE boot support (UEFI or legacy BIOS)
+#### Default :
+- 64-bit x86_64 CPU (Dual socket recommended for redundancy and memory bandwidth, RISC-V and ARM64 are not supported yet)
+- 16+ GB ECC RAM (32+ GB recommended, be careful with memory channels for bandwidth)
+- HBA/IT mode storage controller (for ZFS and CEPH storage, RAID mode is not supported)
+- 100+ GB local storage (NVMe or SSD recommended, ZFS mirror is a good option for redundancy)
+- 100+ GB OSD storage (NVMe or SSD recommended, the more you have, the better is performance and redundancy)
+- 10+ Gbps network (RDMA-capable NIC recommended for low-latency workloads)
+
+#### Recommended for high-performance workloads and big cluster management :
+- GPU (NVIDIA has better support for now with official operator) with supported drivers
+- ASIC or FPGA accelerators (if your workloads require them, no default support in Frame for now)
+- 40+ Gbps RDMA-capable NIC (InfiniBand HCA or RoCE NIC, for high-throughput workloads and large clusters)
+- PXE boot support (For automated node provisioning and OS installation)
 - IPMI / BMC for remote power management
+
+### Single-node cluster for testing
+For testing and development, you can use a single-node cluster.
+
+ /!\ Frame is designed for multi-node clusters. Running on a single node may lead to unexpected behavior and is not recommended for production use.
 
 ---
 
