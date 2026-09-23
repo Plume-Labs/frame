@@ -123,8 +123,11 @@ spec:
             requests:
               cpu: "50m"
               memory: 32Mi
+            # 1 CPU, not 200m: the MPS daemon this sidecar restarts lives in its
+            # cgroup, and its short bursts were CFS-throttled (CPUThrottlingHigh,
+            # ~200 alerts in a week at ~0m average). The cap stays as a guard.
             limits:
-              cpu: "200m"
+              cpu: "1"
               memory: 64Mi
 
       volumes:

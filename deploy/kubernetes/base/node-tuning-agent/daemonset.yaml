@@ -93,8 +93,11 @@ spec:
             requests:
               cpu: 10m
               memory: 64Mi
+            # 1 CPU, not 200m: reconcile bursts were CFS-throttled
+            # (CPUThrottlingHigh, ~450 alerts in a week at ~10m average). Keep a
+            # cap: the agent is privileged and writes to the host.
             limits:
-              cpu: 200m
+              cpu: "1"
               memory: 256Mi
       volumes:
         - name: host
