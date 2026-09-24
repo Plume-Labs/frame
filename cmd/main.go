@@ -135,12 +135,14 @@ func readCephHealth(c client.Client) func(context.Context) (string, []string, er
 
 		health, _, err := unstructured.NestedString(cc.Object, "status", "ceph", "health")
 		if err != nil {
-			return "", nil, fmt.Errorf("reading status.ceph.health off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+			return "", nil, fmt.Errorf("reading status.ceph.health off CephCluster %s/%s: %w",
+				cephClusterNamespace, cephClusterName, err)
 		}
 
 		details, _, err := unstructured.NestedMap(cc.Object, "status", "ceph", "details")
 		if err != nil {
-			return "", nil, fmt.Errorf("reading status.ceph.details off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+			return "", nil, fmt.Errorf("reading status.ceph.details off CephCluster %s/%s: %w",
+				cephClusterNamespace, cephClusterName, err)
 		}
 		reasons := make([]string, 0, len(details))
 		for _, v := range details {
@@ -184,11 +186,13 @@ func readCephCapacity(c client.Client) func(context.Context, string) (uint64, ui
 
 		rawBytes, _, err := unstructured.NestedInt64(cc.Object, "status", "ceph", "capacity", "bytesTotal")
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("reading status.ceph.capacity.bytesTotal off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+			return 0, 0, 0, fmt.Errorf("reading status.ceph.capacity.bytesTotal off CephCluster %s/%s: %w",
+				cephClusterNamespace, cephClusterName, err)
 		}
 		usedBytes, _, err := unstructured.NestedInt64(cc.Object, "status", "ceph", "capacity", "bytesUsed")
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("reading status.ceph.capacity.bytesUsed off CephCluster %s/%s: %w", cephClusterNamespace, cephClusterName, err)
+			return 0, 0, 0, fmt.Errorf("reading status.ceph.capacity.bytesUsed off CephCluster %s/%s: %w",
+				cephClusterNamespace, cephClusterName, err)
 		}
 
 		return uint64(rawBytes), uint64(usedBytes), readReplicationFactor(ctx, c, storageClassName), nil

@@ -161,7 +161,11 @@ func run() error {
 		_ = mediaSrv.Shutdown(sctx)
 	}()
 
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.BMC.InsecureSkipVerify} //nolint:gosec // operator-configured, matches the controller's identical construction
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		// operator-configured, matches the controller's identical construction
+		InsecureSkipVerify: cfg.BMC.InsecureSkipVerify, //nolint:gosec
+	}
 	bmc := provision.NewRedfishBMC("https://"+cfg.BMC.Address, cfg.BMC.Username, cfg.BMC.Password, tlsCfg)
 
 	images := &provision.LocalImageStore{

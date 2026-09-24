@@ -285,7 +285,9 @@ func applyMatched(root string, matching []*framev1beta1.NodeTuning, runner agent
 // is what unblocks the whole lifecycle, and it is published on every tick
 // rather than once, because the timestamp is exactly the value that has to
 // change for a restart to count as done.
-func publishNodeState(ctx context.Context, kc client.Client, node *corev1.Node, root, unit string, runner agent.CommandRunner) {
+func publishNodeState(
+	ctx context.Context, kc client.Client, node *corev1.Node, root, unit string, runner agent.CommandRunner,
+) {
 	migProfile, err := agent.RecordedMIGProfile(root)
 	if err != nil {
 		slog.Error("reading recorded MIG profile", "error", err)

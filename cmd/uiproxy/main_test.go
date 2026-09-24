@@ -67,6 +67,7 @@ func TestConfigFromEnvRequiresAJWKSCA(t *testing.T) {
 		return ""
 	})
 	if err == nil {
-		t.Fatal("accepted a configuration with no JWKS CA — every JWKS fetch would fail on an unknown authority and the proxy would 401 everything")
+		t.Fatal("accepted a configuration with no JWKS CA — every JWKS fetch would fail on an unknown authority and the " +
+			"proxy would 401 everything")
 	}
 }
