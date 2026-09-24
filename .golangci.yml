@@ -35,6 +35,12 @@ linters:
     modernize:
       disable:
         - omitzero
+    misspell:
+      # misspell splits words on non-ASCII letters, so the French
+      # "redémarrage"/"démarrage" (restart/start) reach it as "marrage" and get
+      # "corrected" to "marriage". French labels are legitimate test data here.
+      ignore-rules:
+        - marrage
   exclusions:
     generated: lax
     rules:
