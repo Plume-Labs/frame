@@ -17,7 +17,7 @@ permissions: {}
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  NODE_VERSION: '20'
+  NODE_VERSION: '24'
   SMOKE_RETRIES: '15'
   SMOKE_RETRY_DELAY_SECONDS: '2'
   # Pinned rather than resolved at run time: see the Install kustomize step.
