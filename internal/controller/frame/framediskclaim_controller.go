@@ -338,8 +338,8 @@ func (r *FrameDiskClaimReconciler) setPhase(ctx context.Context, c *framev1beta1
 	return r.Status().Patch(ctx, c, client.MergeFrom(base))
 }
 
-func (r *FrameDiskClaimReconciler) fail(ctx context.Context, c *framev1beta1.FrameDiskClaim, msg string, conditions ...metav1.Condition) error {
-	return r.setPhase(ctx, c, "Failed", c.Status.ClaimUID, msg, conditions...)
+func (r *FrameDiskClaimReconciler) fail(ctx context.Context, c *framev1beta1.FrameDiskClaim, msg string) error {
+	return r.setPhase(ctx, c, "Failed", c.Status.ClaimUID, msg)
 }
 
 func (r *FrameDiskClaimReconciler) succeed(ctx context.Context, c *framev1beta1.FrameDiskClaim, claimUID, msg string, conditions ...metav1.Condition) error {

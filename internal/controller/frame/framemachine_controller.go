@@ -94,25 +94,11 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// power action is never lost even when the probe doesn't succeed.
 	patch := client.MergeFrom(fm.DeepCopy())
 
-	// runPowerRequest never returns a non-nil error today — every branch of
-	// its internal switch ends in `return true, nil`, action failure and
-	// all — but if that ever changes, the patch below must still run: by
-	// this point runPowerRequest may already have mutated
-	// fm.Status.LastPowerAction/LastPowerActionAt on fm directly (not
-	// through patch), and returning before Status().Patch would silently
-	// drop that mutation instead of persisting it.
-	if _, err := r.runPowerRequest(ctx, &fm, rc); err != nil {
-		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
-			// Both the power request and the status patch meant to record it
-			// failed: returning perr alone would silently drop err, the same
-			// dropped-error shape this patch-before-returning path exists to
-			// prevent in the first place (see the comment above). errors.Join
-			// keeps both in the error Reconcile returns instead of picking
-			// one to discard.
-			return ctrl.Result{}, errors.Join(err, perr)
-		}
-		return ctrl.Result{}, err
-	}
+	// runPowerRequest never fails the reconcile: an action that fails is
+	// recorded in status.lastPowerActionError and a Warning Event on fm, and
+	// the timestamp advances either way. Every branch below patches status
+	// through the patch captured above, so that record is always persisted.
+	r.runPowerRequest(ctx, &fm, rc)
 
 	snap, err := rc.Probe(ctx)
 	if err != nil {
@@ -158,13 +144,13 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 //
 // Returns true when it acted, so Reconcile knows the status carries a change
 // even if the probe that follows fails.
-func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev1beta1.FrameMachine, rc redfish.Client) (bool, error) {
+func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev1beta1.FrameMachine, rc redfish.Client) bool {
 	req := fm.Spec.PowerRequest
 	if req == nil {
-		return false, nil
+		return false
 	}
 	if last := fm.Status.LastPowerActionAt; last != nil && !req.RequestedAt.After(last.Time) {
-		return false, nil
+		return false
 	}
 
 	var err error
@@ -207,13 +193,13 @@ func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev
 		fm.Status.LastPowerActionError = truncateError(err, 256)
 		r.Recorder.Event(fm, corev1.EventTypeWarning, "PowerActionFailed",
 			fmt.Sprintf("%s: %v", req.Action, err))
-		return true, nil
+		return true
 	}
 	// A later success clears an earlier failure — without this, the field
 	// would keep reporting an error the machine has since recovered from.
 	fm.Status.LastPowerActionError = ""
 	r.Recorder.Event(fm, corev1.EventTypeNormal, "PowerAction", string(req.Action))
-	return true, nil
+	return true
 }
 
 // truncateError renders err's text, cut to at most n runes, so it always

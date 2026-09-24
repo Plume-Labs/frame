@@ -99,10 +99,7 @@ func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	r.reconcileCapacity(ctx, &fs)
 
-	fs.Status.Phase, err = r.reconcileHealth(ctx, &fs)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	fs.Status.Phase = r.reconcileHealth(ctx, &fs)
 
 	r.reconcileAvailability(&fs)
 
@@ -255,9 +252,9 @@ func bytesToQuantityString(bytes uint64) string {
 // entry stays Unknown: claiming Ready would assert something nothing
 // measured, and this lot exists because of checks that passed for reasons
 // other than the ones they named.
-func (r *FrameStorageReconciler) reconcileHealth(ctx context.Context, fs *framev1beta1.FrameStorage) (string, error) {
+func (r *FrameStorageReconciler) reconcileHealth(ctx context.Context, fs *framev1beta1.FrameStorage) string {
 	if !strings.HasPrefix(fs.Spec.Type, "ceph-") || r.CephHealth == nil {
-		return "Unknown", nil
+		return "Unknown"
 	}
 
 	health, reasons, err := r.CephHealth(ctx)
@@ -269,7 +266,7 @@ func (r *FrameStorageReconciler) reconcileHealth(ctx context.Context, fs *framev
 			Message:            fmt.Sprintf("could not read Ceph health: %v", err),
 			ObservedGeneration: fs.Generation,
 		})
-		return "Unknown", nil
+		return "Unknown"
 	}
 
 	if health == "HEALTH_OK" {
@@ -277,7 +274,7 @@ func (r *FrameStorageReconciler) reconcileHealth(ctx context.Context, fs *framev
 			Type: "Healthy", Status: metav1.ConditionTrue, Reason: "CephHealthOK",
 			Message: health, ObservedGeneration: fs.Generation,
 		})
-		return "Ready", nil
+		return "Ready"
 	}
 
 	msg := health
@@ -288,7 +285,7 @@ func (r *FrameStorageReconciler) reconcileHealth(ctx context.Context, fs *framev
 		Type: "Healthy", Status: metav1.ConditionFalse, Reason: "CephDegraded",
 		Message: msg, ObservedGeneration: fs.Generation,
 	})
-	return "Degraded", nil
+	return "Degraded"
 }
 
 // reconcileAvailability says where this entry can be used. An empty

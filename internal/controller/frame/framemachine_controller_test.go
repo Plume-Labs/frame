@@ -491,8 +491,7 @@ var _ = Describe("FrameMachine controller", func() {
 			RequestedAt: metav1.Now(),
 		}
 
-		acted, err := r.runPowerRequest(ctx, fm, fake)
-		Expect(err).NotTo(HaveOccurred())
+		acted := r.runPowerRequest(ctx, fm, fake)
 		Expect(acted).To(BeTrue())
 		Expect(fm.Status.LastPowerActionError).To(ContainSubstring("Frobnicate"))
 		Expect(fake.resets).To(BeEmpty())
