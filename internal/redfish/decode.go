@@ -218,14 +218,14 @@ func (c *client) resolveSystemPath(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path, err := c.firstMember(ctx, root.Systems.ODataID)
+	systemPath, err := c.firstMember(ctx, root.Systems.ODataID)
 	if err != nil {
 		return "", fmt.Errorf("redfish: resolve system: %w", err)
 	}
-	if path == "" {
+	if systemPath == "" {
 		return "", fmt.Errorf("redfish: no system members")
 	}
-	return path, nil
+	return systemPath, nil
 }
 
 // readManager fills in the BMC firmware version from /redfish/v1/Managers/1/.
