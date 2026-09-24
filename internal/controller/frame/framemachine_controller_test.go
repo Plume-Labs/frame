@@ -299,7 +299,7 @@ var _ = Describe("FrameMachine controller", func() {
 		var got framev1beta1.FrameMachine
 		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
 		Expect(got.Status.EventLog).To(HaveLen(1))
-		Expect(len(got.Status.EventLog[0].Message)).To(Equal(512))
+		Expect(got.Status.EventLog[0].Message).To(HaveLen(512))
 	})
 
 	It("reports a timeout distinctly from other probe failures", func() {
