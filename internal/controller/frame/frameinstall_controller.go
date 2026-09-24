@@ -1138,7 +1138,7 @@ func newInstallUID() (string, error) {
 }
 
 func toProvisionSpec(fi *framev1beta1.FrameInstall, installUID, sshPublicKey, joinToken string) provision.Spec {
-	var disks []provision.Disk
+	disks := make([]provision.Disk, 0, len(fi.Spec.Layout.Disks))
 	for _, d := range fi.Spec.Layout.Disks {
 		disks = append(disks, provision.Disk{ByID: d.ByID, SizeBytes: d.SizeBytes})
 	}

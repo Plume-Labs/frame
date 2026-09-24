@@ -674,7 +674,7 @@ func TestOneMissingDiskDocumentCostsOnlyThatDisk(t *testing.T) {
 		t.Errorf("got %d drives, want 7 — one 404 document must cost exactly one disk, not the rest of the walk",
 			len(snap.Inventory.Drives))
 	}
-	var serials []string
+	serials := make([]string, 0, len(snap.Inventory.Drives))
 	for _, d := range snap.Inventory.Drives {
 		serials = append(serials, d.SerialNumber)
 	}
