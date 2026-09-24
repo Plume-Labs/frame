@@ -952,11 +952,15 @@ spec:
 			Expect(err).To(HaveOccurred(), "an editor must not be able to mint an account with a known password")
 			Expect(out).To(ContainSubstring("status.passwordHash"))
 
-			By("still letting the editor edit everything else at v1alpha1")
+			// spec.passwordAuth, not spec.email: since ee8f69e the webhook
+			// gates spec.email behind an admin, like spec.role and
+			// spec.state, so an editor renaming the account is refused for
+			// a reason that has nothing to do with the hash.
+			By("still letting the editor edit the fields no admin guard covers at v1alpha1")
 			_, err = utils.Run(exec.Command("kubectl", "patch",
 				"frameusers.v1alpha1.frame.plume-labs.io", "e2e-hash-victim",
 				"-n", crNamespace, "--type=merge", "--as="+editor,
-				"-p", `{"spec":{"email":"renamed@example.test"}}`))
+				"-p", `{"spec":{"passwordAuth":"disabled"}}`))
 			Expect(err).NotTo(HaveOccurred(), "the guard must be narrow, or it breaks the deprecation window")
 			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
 
