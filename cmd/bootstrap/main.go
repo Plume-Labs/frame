@@ -175,7 +175,7 @@ func run() error {
 		Images: images,
 		SSH:    provision.NewSSHClient(),
 		Nodes:  kubeconfigNodeChecker{},
-		Report: func(p provision.Phase) { fmt.Fprintf(os.Stdout, "frame bootstrap: %s\n", p) },
+		Report: func(p provision.Phase) { fmt.Printf("frame bootstrap: %s\n", p) },
 	}
 
 	spec := provision.Spec{

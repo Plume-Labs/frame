@@ -143,7 +143,7 @@ func (v *JWKSVerifier) fetch(ctx context.Context) (*jose.JSONWebKeySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s", res.Status)
 	}
