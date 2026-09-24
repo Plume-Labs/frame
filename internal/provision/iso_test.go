@@ -23,38 +23,10 @@ func requireXorriso(t *testing.T) {
 	}
 }
 
-// A stand-in for the netinst, for tests that need a deliberately degenerate
-// image: no kernel line anywhere, or only one of the two boot config trees
-// present. Anything asserting what a real remaster produces uses
-// realBaseISO instead -- this fixture's two-file, two-line shape does not
-// match the real image (see testdata/debian-13.6.0-boot/PROVENANCE.md for
-// what that gap hid).
-func tinyBaseISO(t *testing.T) string {
-	t.Helper()
-	requireXorriso(t)
-	src := t.TempDir()
-	for path, body := range map[string]string{
-		"isolinux/txt.cfg":   "default install\nlabel install\n  kernel /install.amd/vmlinuz\n  append vga=788 initrd=/install.amd/initrd.gz --- quiet\n",
-		"boot/grub/grub.cfg": "menuentry --hotkey=i 'Install' {\n  linux /install.amd/vmlinuz vga=788 --- quiet\n  initrd /install.amd/initrd.gz\n}\n",
-	} {
-		full := filepath.Join(src, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	out := filepath.Join(t.TempDir(), "base.iso")
-	cmd := exec.Command("xorriso", "-as", "mkisofs", "-o", out, "-V", "TESTBASE", src)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the test base ISO failed: %v\n%s", err, b)
-	}
-	return out
-}
-
 // buildISO packages an arbitrary set of files into an ISO, for tests that
-// need a base image shaped differently from tinyBaseISO's two-config default.
+// need a deliberately degenerate base image: no kernel line anywhere, or only
+// one of the two boot config trees present. Anything asserting what a real
+// remaster produces uses realBaseISO instead.
 func buildISO(t *testing.T, files map[string]string) string {
 	t.Helper()
 	requireXorriso(t)
@@ -79,7 +51,7 @@ func buildISO(t *testing.T, files map[string]string) string {
 // realBaseISO packages the real, checksum-verified boot configuration
 // extracted from the pinned netinst (testdata/debian-13.6.0-boot; see the
 // PROVENANCE.md beside it) into an ISO. This is the fixture for every test
-// that asserts what a real remaster produces -- unlike tinyBaseISO, it
+// that asserts what a real remaster produces -- unlike a buildISO fixture, it
 // carries the real eighteen-file isolinux menu graph, the real gtk.cfg
 // default entry, and Debian's own five pre-existing "Automated install"
 // grub.cfg entries.

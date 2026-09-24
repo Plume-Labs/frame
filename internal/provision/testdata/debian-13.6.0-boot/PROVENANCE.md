@@ -146,9 +146,10 @@ image.** The invented fixture made a two-file, two-line-format rewrite look
 sufficient; it was not. The gaps below were found only by extracting the real
 files and reading them, which is why this directory — not another synthetic
 fixture — is now the basis for every test that asserts what a real remaster
-produces. `tinyBaseISO` (the original synthetic fixture) is kept for the
-handful of cases that need a deliberately degenerate image: no kernel line
-anywhere, or only one of the two boot config trees present.
+produces. The handful of cases that need a deliberately degenerate image (no
+kernel line anywhere, or only one of the two boot config trees present) build
+their own with `buildISO`; `tinyBaseISO`, the original synthetic fixture, had
+no caller left and was removed.
 
 ## What the real files show that the invented fixture hid
 
