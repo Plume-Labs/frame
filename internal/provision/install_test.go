@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -295,21 +296,11 @@ func TestInstallNeverRetries(t *testing.T) {
 }
 
 func contains(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, want)
 }
 
 func containsPhase(ps []Phase, want Phase) bool {
-	for _, p := range ps {
-		if p == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ps, want)
 }
 
 // --- fix round 1 ---

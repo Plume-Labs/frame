@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -294,12 +295,7 @@ func SubjectNames(subs []rbacv1.Subject) []string {
 
 // Has reports whether the list contains v.
 func Has(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, v)
 }
 
 // Join is a small helper for failure messages.

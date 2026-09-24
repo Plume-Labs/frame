@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -379,12 +380,7 @@ func resolveResetType(requested string, allowable []string) (string, error) {
 }
 
 func containsString(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 
 // ClearLog POSTs a LogService.ClearLog action to the target the IML log

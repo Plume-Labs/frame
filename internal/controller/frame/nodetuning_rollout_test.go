@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 
@@ -170,9 +171,7 @@ var _ = Describe("NodeTuning rollout", func() {
 			if n.Annotations == nil {
 				n.Annotations = map[string]string{}
 			}
-			for k, v := range kv {
-				n.Annotations[k] = v
-			}
+			maps.Copy(n.Annotations, kv)
 			return k8sClient.Update(ctx, n)
 		}, "5s", "50ms").Should(Succeed())
 	}
@@ -673,7 +672,7 @@ var _ = Describe("NodeTuning rollout", func() {
 
 		By("the uncordon failing on every attempt, so node-1 is never actually finished")
 		failing := patchFailingClient{Client: k8sClient, failNode: "node-1"}
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			reconcileWith(failing, "a")
 		}
 
@@ -706,7 +705,7 @@ var _ = Describe("NodeTuning rollout", func() {
 
 		By("reconciling b off the pre-cordon snapshot")
 		lagging := staleNodeListClient{Client: k8sClient, snapshot: stale}
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			reconcileWith(lagging, "b")
 		}
 

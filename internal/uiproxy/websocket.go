@@ -42,7 +42,7 @@ const bearerProtocolPrefix = "base64url.bearer.authorization.k8s.io."
 // apiserver offering a subprotocol it never offered and never asked for.
 func tokenFromProtocols(values []string) (token string, remaining []string, sawBearer bool) {
 	for _, v := range values {
-		for _, p := range strings.Split(v, ",") {
+		for p := range strings.SplitSeq(v, ",") {
 			p = strings.TrimSpace(p)
 			if p == "" {
 				continue

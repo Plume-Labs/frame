@@ -1033,8 +1033,8 @@ func (r *FrameInstallReconciler) checkHostnameNotTaken(ctx context.Context, fi *
 // CIDR, per its CEL rule -- can be compared against a corev1.NodeAddress,
 // which never carries one.
 func addressWithoutCIDR(s string) string {
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, "/"); ok {
+		return before
 	}
 	return s
 }

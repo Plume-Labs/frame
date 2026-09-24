@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
@@ -251,9 +252,7 @@ func stashFrameJobContainer(dst *FrameJob, src *v1beta1.FrameJob) error {
 		return fmt.Errorf("stashing spec.container/spec.type for v1alpha1: %w", err)
 	}
 	annotations := make(map[string]string, len(dst.Annotations)+1)
-	for k, v := range dst.Annotations {
-		annotations[k] = v
-	}
+	maps.Copy(annotations, dst.Annotations)
 	annotations[framejobContainerAnnotation] = string(raw)
 	dst.Annotations = annotations
 	return nil

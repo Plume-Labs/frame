@@ -286,8 +286,8 @@ func startMediaListener(addr string, handler http.Handler) (*http.Server, error)
 // NodeAddress is a bare address the installer dials, not the CIDR notation
 // Network.Address carries for the preseed's netcfg directives.
 func addressWithoutCIDR(s string) string {
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, "/"); ok {
+		return before
 	}
 	return s
 }

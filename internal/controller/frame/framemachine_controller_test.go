@@ -254,7 +254,7 @@ var _ = Describe("FrameMachine controller", func() {
 		// asserting which IDs survive is what makes this discriminating.
 		entries := make([]redfish.LogEntry, 0, 40)
 		now := time.Now()
-		for i := 0; i < 40; i++ {
+		for i := range 40 {
 			entries = append(entries, redfish.LogEntry{
 				ID:       strconv.Itoa(i),
 				Severity: "OK",

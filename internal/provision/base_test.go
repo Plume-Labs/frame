@@ -55,7 +55,7 @@ func TestFetchBaseReusesAMatchingCachedFileWithoutDownloading(t *testing.T) {
 	dir := t.TempDir()
 	src := BaseSource{URL: srv.URL + "/x.iso", SHA256: sum(body)}
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		p, err := FetchBase(context.Background(), dir, src)
 		if err != nil {
 			t.Fatal(err)

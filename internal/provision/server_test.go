@@ -361,7 +361,7 @@ func TestBuildHandlerServesTheRunScriptAtTheAddressThePreseedNames(t *testing.T)
 func runURLFromPreseed(t *testing.T, preseed string) string {
 	t.Helper()
 	const prefix = "d-i preseed/run string "
-	for _, line := range strings.Split(preseed, "\n") {
+	for line := range strings.SplitSeq(preseed, "\n") {
 		if v, ok := strings.CutPrefix(line, prefix); ok {
 			return strings.TrimSpace(v)
 		}
@@ -709,7 +709,7 @@ func TestMediaHandlerRefusesEnoughFakeBeaconsToEvictALiveInstall(t *testing.T) {
 		t.Fatalf("the real install's own beacon was refused: status = %d", rr.Code)
 	}
 
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		fake := fmt.Sprintf("%032x", i+1)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+fake+"/"+CheckpointEarly, nil))

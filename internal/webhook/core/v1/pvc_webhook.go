@@ -19,6 +19,7 @@ package v1
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -109,10 +110,8 @@ func (v *PVCCustomValidator) validate(ctx context.Context, pvc *corev1.Persisten
 		if e.Spec.StorageClassName != *pvc.Spec.StorageClassName {
 			continue
 		}
-		for _, allowed := range e.Spec.Content {
-			if allowed == usage {
-				return nil
-			}
+		if slices.Contains(e.Spec.Content, usage) {
+			return nil
 		}
 		return fmt.Errorf(
 			"storage entry %q (class %q) accepts content types [%s]; this claim declares %q",

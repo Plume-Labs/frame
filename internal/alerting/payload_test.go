@@ -44,7 +44,7 @@ func TestValidateRejects(t *testing.T) {
 
 func TestBoundMapKeepsAtMost64EntriesDeterministically(t *testing.T) {
 	m := map[string]string{}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		m[strings.Repeat("k", 3)+string(rune('A'+i%26))+strings.Repeat("x", i)] = "v"
 	}
 	a, b := BoundMap(m), BoundMap(m)

@@ -163,7 +163,7 @@ func realRoutes(state string) map[string]string {
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/":            "smartstorage_arraycontrollers_0_degraded.json",
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/": "smartstorage_diskdrives_degraded.json",
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
 	}
@@ -537,7 +537,7 @@ func TestSmartStorageRootIsDiscoveredNotGuessed(t *testing.T) {
 	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/", "smartstorage_arraycontrollers_degraded.json")
 	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/", "smartstorage_arraycontrollers_0_degraded.json")
 	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/", "smartstorage_diskdrives_degraded.json")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		serve(
 			fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i),
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i),
@@ -631,7 +631,7 @@ func realSmartStorageRoutes() map[string]string {
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/":            "smartstorage_arraycontrollers_0_degraded.json",
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/": "smartstorage_diskdrives_degraded.json",
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
 	}

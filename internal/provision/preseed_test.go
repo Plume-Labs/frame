@@ -553,7 +553,7 @@ func TestRenderPreseedNeverLetsABeaconFailTheInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(got, "\n") {
+	for line := range strings.SplitSeq(got, "\n") {
 		if !strings.Contains(line, "/beacon/") {
 			continue
 		}
@@ -645,7 +645,7 @@ func TestRenderRunScriptReportsNetcfgDoneAfterNetcfgReturns(t *testing.T) {
 func directiveLine(t *testing.T, preseed, directive string) string {
 	t.Helper()
 	joined := strings.ReplaceAll(preseed, "\\\n", " ")
-	for _, line := range strings.Split(joined, "\n") {
+	for line := range strings.SplitSeq(joined, "\n") {
 		if strings.Contains(line, directive) {
 			return line
 		}
