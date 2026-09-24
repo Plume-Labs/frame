@@ -23,6 +23,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # internal/provision builds and inspects real installer ISOs with
+      # xorriso, and fails (deliberately, not skips) when it is missing: an
+      # image-building lot whose image tests silently skip proves nothing.
+      # ubuntu-latest does not ship it.
+      - name: Install xorriso
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso
+
       - name: Running Tests
         run: |
           go mod tidy
