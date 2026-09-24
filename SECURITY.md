@@ -6,12 +6,13 @@ seriously.
 
 ## Supported versions
 
-Frame has not cut a tagged release yet. Until it does, **only the current
-`main` branch is supported**, and fixes land there rather than on a backport
-branch. Once releases begin, this table will name the supported minor series.
+Frame's first tagged release is `v1.0.0`. Fixes land on `main` and ship in
+the next release of the current minor series; there is no backport branch
+for older series.
 
 | Version  | Supported |
 | -------- | --------- |
+| `1.0.x`  | ✅        |
 | `main`   | ✅        |
 | Anything built from an older commit | ❌ — rebuild from `main` |
 

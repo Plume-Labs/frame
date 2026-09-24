@@ -373,13 +373,16 @@ scalar dereferences after that; `preemption` was the only one.
 
 ## 4. What is still not covered
 
-- **There is no published, versioned chart yet.** `Chart.yaml` is at
-  `version: 0.1.0`/`appVersion: 0.1.0`, and `image.repository` has no
-  default because no operator image is published anywhere. "Upgrading" the
-  chart today means moving between two locally built dev versions, not
-  pulling a new release from a chart repository — the "one-command install
-  from a published, versioned Helm chart" in the roadmap's V1 definition of
-  done has not happened yet.
+- **The chart is versioned, but not yet published.** `Chart.yaml` is at
+  `version: 1.0.0`/`appVersion: 1.0.0` since the `v1.0.0` release was
+  prepared (2026-09-24), but nothing in this repository publishes it — no
+  chart repository, no CI job — and `image.repository` still has no
+  default because no operator image is published anywhere. Until the
+  publication steps in `docs/release-v1.0.0-publication.md` are carried
+  out, "upgrading" the chart means moving between two locally built
+  versions, not pulling a release from a chart repository — the "one-command
+  install from a published, versioned Helm chart" in the roadmap's V1
+  definition of done has not happened yet.
 - **Nothing has upgraded across the freeze for real.** Section 3's ordering,
   script and rollback story are rehearsed, asserted in the Kind e2e suite,
   and unexercised on any cluster that matters. Test against a disposable

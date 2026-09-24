@@ -18,10 +18,10 @@ the controller, not the UI** — it uses `Dockerfile.controller`. The UI is the
 unsuffixed `Dockerfile` (React + Vite, served by nginx) and has its own target.
 
 ```bash
-make docker-build       docker-push        IMG=ghcr.io/<org>/frame-controller:v0.1.0
-make docker-build-ui    docker-push-ui     IMG_UI=ghcr.io/<org>/frame-ui:v0.1.0
-make docker-build-authd docker-push-authd  IMG_AUTHD=ghcr.io/<org>/frame-authd:v0.1.0
-make docker-build-agent docker-push-agent  IMG_AGENT=ghcr.io/<org>/frame-agent:v0.1.0
+make docker-build       docker-push        IMG=ghcr.io/<org>/frame-controller:1.0.0
+make docker-build-ui    docker-push-ui     IMG_UI=ghcr.io/<org>/frame-ui:1.0.0
+make docker-build-authd docker-push-authd  IMG_AUTHD=ghcr.io/<org>/frame-authd:1.0.0
+make docker-build-agent docker-push-agent  IMG_AGENT=ghcr.io/<org>/frame-agent:1.0.0
 ```
 
 Or directly:
