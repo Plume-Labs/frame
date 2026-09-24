@@ -799,23 +799,23 @@ metadata:
 spec:
   email: two@example.test
   role: admin
-`, crNamespace, crNamespace))
+`, crNamespace, crNamespace), breakGlass...)
 
 			By("allowing one admin to go while another remains")
-			_, err := utils.Run(exec.Command("kubectl", "delete", "frameuser",
-				"e2e-admin-two", "-n", crNamespace))
+			_, err := utils.Run(exec.Command("kubectl", append([]string{"delete", "frameuser",
+				"e2e-admin-two", "-n", crNamespace}, breakGlass...)...))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("refusing the deletion of the last one")
-			out, err := utils.Run(exec.Command("kubectl", "delete", "frameuser",
-				"e2e-admin-one", "-n", crNamespace))
+			out, err := utils.Run(exec.Command("kubectl", append([]string{"delete", "frameuser",
+				"e2e-admin-one", "-n", crNamespace}, breakGlass...)...))
 			Expect(err).To(HaveOccurred(), "The last admin must not be deletable")
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
 
 			By("refusing the demotion of the last one just as firmly")
-			out, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+			out, err = utils.Run(exec.Command("kubectl", append([]string{"patch", "frameuser",
 				"e2e-admin-one", "-n", crNamespace, "--type=merge",
-				"-p", `{"spec":{"role":"viewer"}}`))
+				"-p", `{"spec":{"role":"viewer"}}`}, breakGlass...)...))
 			Expect(err).To(HaveOccurred(), "The last admin must not be demotable")
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
 		})
@@ -1188,11 +1188,24 @@ func storageVersionPatch(crd, version string) (names []string, patch string, err
 	return names, "[" + strings.Join(ops, ",") + "]", nil
 }
 
-// applyCR pipes a manifest through kubectl apply. Manifests are written inline
+// breakGlass impersonates the identity the FrameUser admission webhook
+// accepts as a cluster admin: a member of system:masters (clusterAdminGroup in
+// internal/webhook/frame/v1beta1/frameuser_webhook.go). The suite's own
+// kubeconfig is not one. kind builds its cluster with kubeadm, and since
+// Kubernetes 1.29 kubeadm's admin.conf user, kubernetes-admin, holds
+// cluster-admin through the kubeadm:cluster-admins group instead of
+// system:masters -- so every admin-affecting FrameUser write made as the
+// suite itself is refused as "not an admin". Talos and k3s, the clusters
+// Frame targets, still issue system:masters admin credentials. cluster-admin
+// may impersonate, so this needs no extra grant.
+var breakGlass = []string{"--as=e2e-break-glass", "--as-group=system:masters"}
+
+// applyCR pipes a manifest through kubectl apply, with any extra kubectl
+// arguments (breakGlass, for instance). Manifests are written inline
 // so each spec reads as one thing: the input, and what the cluster does with it.
-func applyCR(manifest string) {
+func applyCR(manifest string, kubectlArgs ...string) {
 	GinkgoHelper()
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd := exec.Command("kubectl", append([]string{"apply", "-f", "-"}, kubectlArgs...)...)
 	cmd.Stdin = strings.NewReader(manifest)
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to apply manifest:\n%s", manifest)
