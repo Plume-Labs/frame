@@ -1,7 +1,9 @@
 package provision
 
-import "strings"
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // mirror is exactly two disks. One is a typo that would silently install on a
 // single disk with no redundancy; three is a typo that would consume a disk
