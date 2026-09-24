@@ -543,6 +543,25 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 			}).Should(Succeed())
 
+			// The previous spec leaves a ResourceQuota counting FrameJobs in
+			// this namespace. Until the quota controller has counted them
+			// (status.used carries the resource) the apiserver refuses every
+			// create the quota covers: "status unknown for quota:
+			// frame-high". status.hard alone is not enough, it is copied from
+			// the spec before anything is counted. If the quota was first
+			// synced before the controller's discovery had picked up the
+			// framejobs CRD, nothing recounts it until the full resync
+			// (kube-controller-manager --resource-quota-sync-period, 5m by
+			// default) -- which is why the wait is 6 minutes, and why this
+			// spec passed or failed on fresh kind clusters depending on timing.
+			By("waiting for the frame-high ResourceQuota to count FrameJobs")
+			Eventually(func(g Gomega) {
+				used, err := kubectlGet(g, "resourcequota", "frame-high", crNamespace,
+					`{.status.used.count/framejobs\.frame\.plume-labs\.io}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(used).NotTo(BeEmpty())
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+
 			applyCR(fmt.Sprintf(`
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: FrameJob
