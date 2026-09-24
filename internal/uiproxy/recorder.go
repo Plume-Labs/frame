@@ -226,7 +226,7 @@ func (t *TaskRecorder) Purge(ctx context.Context, olderThan time.Duration) error
 	cutoff := time.Now().Add(-olderThan)
 	for i := range list.Items {
 		f := list.Items[i].Status.FinishedAt
-		if f == nil || f.Time.After(cutoff) {
+		if f == nil || f.After(cutoff) {
 			continue
 		}
 		if err := t.c.Delete(ctx, &list.Items[i]); err != nil {

@@ -163,7 +163,7 @@ func (r *FrameMachineReconciler) runPowerRequest(ctx context.Context, fm *framev
 	if req == nil {
 		return false, nil
 	}
-	if last := fm.Status.LastPowerActionAt; last != nil && !req.RequestedAt.Time.After(last.Time) {
+	if last := fm.Status.LastPowerActionAt; last != nil && !req.RequestedAt.After(last.Time) {
 		return false, nil
 	}
 

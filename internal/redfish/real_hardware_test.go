@@ -230,7 +230,7 @@ func TestTheCachedTemperatureIsIdenticalInEveryPowerState(t *testing.T) {
 	if len(readings) != 3 {
 		t.Fatalf("expected a CPU reading in each state, got %v", readings)
 	}
-	if !(readings[0] == readings[1] && readings[1] == readings[2]) {
+	if readings[0] != readings[1] || readings[1] != readings[2] {
 		t.Fatalf("readings differ across power states (%v) — the premise of this lot's "+
 			"trustworthiness flag no longer holds and Finding 1 must be re-derived", readings)
 	}

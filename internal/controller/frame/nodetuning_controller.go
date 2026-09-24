@@ -225,7 +225,7 @@ func (r *NodeTuningReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			ns.AppliedGeneration = nt.Generation
 			ns.Message = fmt.Sprintf(
 				"%s; restart already verified at %s for generation %d — not restarting again (approve a new generation, or clear status.nodes[].restartedAt to retry)",
-				reason, ns.RestartedAt.Time.Format(time.RFC3339), nt.Generation,
+				reason, ns.RestartedAt.Format(time.RFC3339), nt.Generation,
 			)
 
 		case needsRestart:
