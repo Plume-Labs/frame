@@ -76,7 +76,6 @@ func TestRedfishBMCInsertMediaPostsTheHPOEMAction(t *testing.T) {
 // "return true, nil".
 func TestRedfishBMCMediaInsertedDecodesBothOutcomes(t *testing.T) {
 	for _, want := range []bool{true, false} {
-		want := want
 		t.Run(fmt.Sprintf("inserted=%v", want), func(t *testing.T) {
 			var gotMethod, gotPath string
 			b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +179,6 @@ func TestRedfishBMCSetBootOnceSendsTheStandardBootOverrideProperties(t *testing.
 // argument fails on the second case.
 func TestRedfishBMCSetBootOncePassesModeThrough(t *testing.T) {
 	for _, mode := range []string{"UEFI", "Legacy"} {
-		mode := mode
 		t.Run(mode, func(t *testing.T) {
 			var gotBody []byte
 			b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
