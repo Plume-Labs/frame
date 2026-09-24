@@ -87,35 +87,9 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// once its filter stops matching: the tenant already has it open.
 		keepDriving := ok && d.DeliveredState == framev1beta1.AlertStateFiring && !d.Excluded
 		if !Matches(sub.Spec.Filter, &fa) && !keepDriving {
-			// Spec 5.3: a filter that does not match must not manufacture
-			// an alert the tenant never had open, nor let a later widen
-			// replay one it already missed.
-			if state != framev1beta1.AlertStateResolved {
-				// Firing, and keepDriving already ruled out anything
-				// genuinely open for this subscription: no entry at all
-				// (also drops any stale Excluded entry from a prior
-				// resolution once the alert reopens as a new incident).
-				continue
+			if d, keep := unmatchedDelivery(sub.Name, d, ok, state); keep {
+				next = append(next, d)
 			}
-			switch {
-			case ok && d.Excluded:
-				// Already recorded as excluded and still resolved: leave
-				// it untouched -- not even SubscriptionGeneration -- so an
-				// unrelated subscription-spec edit cannot force a status
-				// write here.
-			case ok && d.DeliveredState == state:
-				// Really delivered while the tenant still had the incident
-				// open (the resolution-only path below); keep the genuine
-				// record as-is, do not relabel it Excluded.
-			default:
-				// Never delivered Resolved for this subscription: record
-				// it as excluded without ever sending, on a clean slate --
-				// any Attempts/LastError/PermanentFailure left over from
-				// when it still matched the filter no longer describe
-				// anything the tenant needs to see.
-				d = framev1beta1.AlertDelivery{Subscription: sub.Name, Excluded: true, DeliveredState: state}
-			}
-			next = append(next, d)
 			continue
 		}
 		if !ok {
@@ -169,6 +143,41 @@ func (r *RelayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 	return ctrl.Result{RequeueAfter: requeue}, nil
+}
+
+// unmatchedDelivery is the delivery record for a subscription whose filter
+// does not match the alert and that has nothing open for it (d and ok are
+// the existing record, if any). keep is false when the subscription gets no
+// entry at all.
+//
+// Spec 5.3: a filter that does not match must not manufacture an alert the
+// tenant never had open, nor let a later widen replay one it already missed.
+func unmatchedDelivery(sub string, d framev1beta1.AlertDelivery, ok bool, state string) (_ framev1beta1.AlertDelivery, keep bool) {
+	if state != framev1beta1.AlertStateResolved {
+		// Firing, and the caller already ruled out anything genuinely open
+		// for this subscription: no entry at all (also drops any stale
+		// Excluded entry from a prior resolution once the alert reopens as a
+		// new incident).
+		return d, false
+	}
+	switch {
+	case ok && d.Excluded:
+		// Already recorded as excluded and still resolved: leave it
+		// untouched -- not even SubscriptionGeneration -- so an unrelated
+		// subscription-spec edit cannot force a status write here.
+	case ok && d.DeliveredState == state:
+		// Really delivered while the tenant still had the incident open (the
+		// resolution-only path in Reconcile); keep the genuine record as-is,
+		// do not relabel it Excluded.
+	default:
+		// Never delivered Resolved for this subscription: record it as
+		// excluded without ever sending, on a clean slate -- any
+		// Attempts/LastError/PermanentFailure left over from when it still
+		// matched the filter no longer describe anything the tenant needs to
+		// see.
+		d = framev1beta1.AlertDelivery{Subscription: sub, Excluded: true, DeliveredState: state}
+	}
+	return d, true
 }
 
 // deliver updates d in place and returns how long to wait before the next
