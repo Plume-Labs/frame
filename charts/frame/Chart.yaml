@@ -9,9 +9,9 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.29.0-0"
-home: https://github.com/gothshoot/frame
+home: https://github.com/Plume-Labs/frame
 sources:
-  - https://github.com/gothshoot/frame
+  - https://github.com/Plume-Labs/frame
 keywords:
   - frame
   - kubebuilder

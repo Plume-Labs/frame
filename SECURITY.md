@@ -23,7 +23,7 @@ before there is a fix.
 
 Report privately through GitHub's Private Vulnerability Reporting:
 
-> **<https://github.com/gothshoot/frame/security/advisories/new>**
+> **<https://github.com/Plume-Labs/frame/security/advisories/new>**
 
 That form is the only supported reporting channel. It opens a draft advisory
 visible to the maintainers and to you, and it is where the fix, the CVE
