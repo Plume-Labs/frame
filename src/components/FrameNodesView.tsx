@@ -91,7 +91,8 @@ export function FrameNodesView() {
         <CardContent>
           <p className="text-sm text-muted-foreground">
             Machines the Frame operator knows about, from discovery through to cluster membership.
-            Use <span className="font-mono">Provision Node</span> on the Nodes screen to add one.
+            A machine appears here once registered as a <span className="font-mono">FrameMachine</span>;
+            a <span className="font-mono">FrameInstall</span> takes it through to a node.
           </p>
         </CardContent>
       </Card>

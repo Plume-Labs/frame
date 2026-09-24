@@ -1,12 +1,10 @@
 import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { NavigationContext } from '@/hooks/useNavigation'
 import { ClusterNode } from '@/lib/types'
-import { useClusterSimulation } from '@/hooks/useClusterSimulation'
 import { currentSession, ensureToken, identityFromToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
 import { inviteTokenFromLocation } from '@/lib/accounts'
 import { loadConfig } from '@/lib/frame-config'
 
-import { NodeDetailPanel } from '@/components/NodeDetailPanel'
 import { PasskeysDialog } from '@/components/PasskeysDialog'
 import { HeaderStats } from '@/components/HeaderStats'
 import { NotEnabledView } from '@/components/NotEnabledView'
@@ -444,7 +442,6 @@ function App() {
   // whichever notices first (whole-branch review, I1).
   useEffect(() => onSessionLost(() => setSessionState({ phase: 'signed-out' })), [])
 
-  const [selectedNode, setSelectedNode] = useState<ClusterNode | null>(null)
   const [screen, setScreen] = useState('overview')
   // Set when a navigation targets a specific tab; consumed by the Tabs below so
   // "3 nodes not ready" can land on Nodes › Fleet rather than Nodes' first tab.
@@ -455,15 +452,6 @@ function App() {
     setPendingTab(tab)
   }, [])
   const [passkeysOpen, setPasskeysOpen] = useState(false)
-
-  const { nodes } = useClusterSimulation(32)
-
-  // Derive the selected node from the authoritative nodes array so the detail
-  // panel always shows up-to-date metrics without an extra state update cycle.
-  const syncedSelectedNode = useMemo(
-    () => (selectedNode ? (nodes.find((n) => n.id === selectedNode.id) ?? null) : null),
-    [nodes, selectedNode],
-  )
 
   // The nav gate is a courtesy, not a control: the token is decoded, not
   // verified (see identityFromToken), and every write the screen makes is
@@ -788,11 +776,6 @@ function App() {
         </div>
       </SidebarInset>
 
-      <NodeDetailPanel
-        node={syncedSelectedNode}
-        open={!!syncedSelectedNode}
-        onClose={() => setSelectedNode(null)}
-      />
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
       <Toaster position="bottom-right" />
     </SidebarProvider>
