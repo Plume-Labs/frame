@@ -40,6 +40,12 @@ import (
 // otherwise Ready object.
 const conditionCompletionRecorded = "CompletionRecorded"
 
+// The two terminal FrameDiskClaim phases.
+const (
+	diskClaimPhaseReady  = "Ready"
+	diskClaimPhaseFailed = "Failed"
+)
+
 // observationMaxAge is how old the agent's disk report may be and still
 // authorise a destructive act. The agent reports every 30 seconds; five
 // minutes is ten missed reports, which is a node that has stopped talking.
@@ -88,7 +94,7 @@ func (r *FrameDiskClaimReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// A terminal phase is terminal. Re-running means a new object.
-	if c.Status.Phase == "Ready" || c.Status.Phase == "Failed" {
+	if c.Status.Phase == diskClaimPhaseReady || c.Status.Phase == diskClaimPhaseFailed {
 		return ctrl.Result{}, nil
 	}
 
@@ -339,11 +345,11 @@ func (r *FrameDiskClaimReconciler) setPhase(ctx context.Context, c *framev1beta1
 }
 
 func (r *FrameDiskClaimReconciler) fail(ctx context.Context, c *framev1beta1.FrameDiskClaim, msg string) error {
-	return r.setPhase(ctx, c, "Failed", c.Status.ClaimUID, msg)
+	return r.setPhase(ctx, c, diskClaimPhaseFailed, c.Status.ClaimUID, msg)
 }
 
 func (r *FrameDiskClaimReconciler) succeed(ctx context.Context, c *framev1beta1.FrameDiskClaim, claimUID, msg string, conditions ...metav1.Condition) error {
-	return r.setPhase(ctx, c, "Ready", claimUID, msg, conditions...)
+	return r.setPhase(ctx, c, diskClaimPhaseReady, claimUID, msg, conditions...)
 }
 
 func (r *FrameDiskClaimReconciler) SetupWithManager(mgr ctrl.Manager) error {

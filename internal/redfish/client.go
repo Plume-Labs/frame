@@ -427,15 +427,22 @@ func (c *client) ClearLog(ctx context.Context) error {
 }
 
 // SetIndicatorLED PATCHes the system document's IndicatorLED field.
+// The two IndicatorLED values SetIndicatorLED writes (Redfish also defines
+// "Blinking", which Frame never sets).
+const (
+	indicatorLEDOff = "Off"
+	indicatorLEDLit = "Lit"
+)
+
 func (c *client) SetIndicatorLED(ctx context.Context, on bool) error {
 	systemPath, err := c.resolveSystemPath(ctx)
 	if err != nil {
 		return err
 	}
 
-	state := "Off"
+	state := indicatorLEDOff
 	if on {
-		state = "Lit"
+		state = indicatorLEDLit
 	}
 	body := struct {
 		IndicatorLED string `json:"IndicatorLED"`

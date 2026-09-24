@@ -90,6 +90,10 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 	return disks, nil
 }
 
+// occupancyMounted is the occupancy of a disk that it or one of its
+// partitions is mounted.
+const occupancyMounted = "mounted"
+
 // occupancyOf says what is using the disk, and errs towards "occupied".
 // FrameDiskClaim's third guard fails closed on anything that is not "free",
 // so a signature this function does not recognise must never fall through
@@ -97,11 +101,11 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 // unknown filesystem is still a filesystem.
 func occupancyOf(dev lsblkDevice) string {
 	if dev.MountPoint != nil && *dev.MountPoint != "" {
-		return "mounted"
+		return occupancyMounted
 	}
 	for _, child := range dev.Children {
 		if child.MountPoint != nil && *child.MountPoint != "" {
-			return "mounted"
+			return occupancyMounted
 		}
 	}
 

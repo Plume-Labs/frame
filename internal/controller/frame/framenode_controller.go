@@ -52,6 +52,9 @@ const (
 	nodePhaseDiscovered = "Discovered"
 	// nodePhaseOnline means the corresponding Kubernetes Node is Ready.
 	nodePhaseOnline = "Online"
+	// nodePhaseDegraded means the corresponding Kubernetes Node reports
+	// Ready=False.
+	nodePhaseDegraded = "Degraded"
 )
 
 // nodePhaseFromStatus is the FrameNode reconciler's state-machine input.
@@ -473,7 +476,7 @@ func nodePhase(node *corev1.Node) string {
 			case corev1.ConditionTrue:
 				return nodePhaseOnline
 			case corev1.ConditionFalse:
-				return "Degraded"
+				return nodePhaseDegraded
 			}
 		}
 	}

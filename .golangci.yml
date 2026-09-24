@@ -51,6 +51,14 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Tests state their expected values literally ("Resolved", "firing",
+      # "alice@example.com"): an assertion reads as the contract it pins, and
+      # routing it through a shared constant would let a typo in the
+      # constant change both sides at once. goconst still covers
+      # non-test code.
+      - linters:
+          - goconst
+        path: _test\.go
     paths:
       - third_party$
       - builtin$

@@ -54,7 +54,7 @@ func verbForMethod(method string) string {
 // pods/exec`. The record says `create` so it can be read against the RBAC rule
 // that allowed it.
 func verbForRequest(r *http.Request, ref framev1beta1.ObjectRef) string {
-	if ref.Subresource == "exec" && isExecUpgrade(r) {
+	if ref.Subresource == subresourceExec && isExecUpgrade(r) {
 		return framev1beta1.TaskVerbCreate
 	}
 	return verbForMethod(r.Method)
@@ -165,7 +165,7 @@ func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) 
 		return ""
 	}
 	action := boundAction(r.Header.Get("X-Frame-Action"))
-	if action == "" && ref.Subresource == "exec" && isExecUpgrade(r) {
+	if action == "" && ref.Subresource == subresourceExec && isExecUpgrade(r) {
 		action = execAction(ref, q)
 	}
 	task := &framev1beta1.FrameTask{
