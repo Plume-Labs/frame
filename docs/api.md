@@ -305,8 +305,6 @@ has no `/namespaces/<ns>` segment, and a namespaced list will never return it.
 | FrameNode | `frame.plume-labs.io` | `framenodes` | `fn` | namespaced |
 | SchedulingPolicy | `frame.plume-labs.io` | `schedulingpolicies` | `sp` | namespaced |
 | FrameResourceQuota | `frame.plume-labs.io` | `frameresourcequotas` | `frq` | namespaced |
-| TalosMachineConfig | `frame.plume-labs.io` | `talosmachineconfigs` | `tmc` | namespaced |
-| TalosUpgrade | `frame.plume-labs.io` | `talosupgrades` | `tu` | namespaced |
 | FrameUser | `frame.plume-labs.io` | `frameusers` | — | namespaced |
 | NodeTuning | `frame.plume-labs.io` | `nodetunings` | — | **cluster** |
 | FrameService | `services.plume-labs.io` | `frameservices` | — | namespaced |

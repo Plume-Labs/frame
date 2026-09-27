@@ -318,13 +318,11 @@ frozen tier. Admin is `create, delete, deletecollection, get, list, patch,
 update, watch`; editor is the same minus `deletecollection`; viewer is `get,
 list, watch`.
 
-**FrameUser and Talos writes are not in the aggregation at all.**
-`frameuser-viewer-role`, `frameuser-editor-role`,
-`talosmachineconfig-editor-role` and `talosupgrade-editor-role` carry no
+**FrameUser is not in the aggregation at all.**
+`frameuser-viewer-role` and `frameuser-editor-role` carry no
 `rbac.frame.plume-labs.io/tier` label, so no `frame:` group holds them by
 installing the chart. Account management is `frameuser-admin-role`, admin tier
-only, and Talos writes are admin only — `cluster-control-operator`'s own
-header excludes them by name. The reason is one sentence and it is the whole
+only. The reason is one sentence and it is the whole
 of it: `get frameusers` is every password hash (see below), and `patch
 frameusers` is a promotion to admin one token lifetime later.
 
@@ -415,7 +413,7 @@ is the single exception, because a shell creates no pod and bounding it would
 close nothing. State the corollary plainly rather than leaving it to be
 inferred: a shell **inherits** the target pod's privilege, so exec into one of
 the deliberately privileged pods in an exempt namespace — Ceph's OSDs, the
-node-tuning agent, the Talos tooling — is root on the node. Pod Security has no
+node-tuning agent — is root on the node. Pod Security has no
 bearing there precisely because the privilege is already present. That is the
 argument for keeping exec admin-only and recorded, and anyone weighing whether
 to widen it below admin should weigh it against that sentence, not against the
@@ -481,8 +479,8 @@ enforced on the application namespaces
 label** so the aggregation cannot make it cluster-wide.
 
 The shape is the control. Infrastructure namespaces are not labelled — Ceph's
-OSDs, the node-tuning agent's `hostPID`, node-exporter's `hostPath`, the CNI
-and the Talos tooling all need what `baseline` forbids — so a cluster-wide
+OSDs, the node-tuning agent's `hostPID`, node-exporter's `hostPath` and the
+CNI all need what `baseline` forbids — so a cluster-wide
 grant would reach precisely the namespaces where nothing refuses the payload.
 `go test ./test/manifests/` asserts both halves: that the RoleBinding exists in
 every enforced namespace, and that it exists in no other.
@@ -765,7 +763,7 @@ fine — there is no chicken-and-egg.
 
    Check what a tier grants before trusting it. `go test ./test/manifests/`
    asserts the invariants that matter — an operator can cordon, a viewer
-   cannot, and no tier below admin reaches `frameusers` or a Talos write.
+   cannot, and no tier below admin reaches `frameusers`.
 
 4. **Apply the new `Deployment` (the `uiproxy` sidecar swap and the new UI
    image) and the ServiceAccount's RBAC change together.** These are one
@@ -1121,8 +1119,9 @@ switched by a click.
 
 ## Provisioning a machine with Debian
 
-The 2026-09-11 provisioning-Debian lot replaces Talos maintenance-mode
-discovery (dead, see [provisioning.md](provisioning.md)) with a Debian
+The 2026-09-11 provisioning-Debian lot replaced Talos maintenance-mode
+discovery (dead, see [provisioning.md](provisioning.md), and removed from the
+code on 2026-09-27) with a Debian
 preseed built and served per machine: `internal/provision` renders the
 preseed and the partman layout, remasters a netinst ISO, drives the install
 over SSH and a k3s join, and the `FrameInstall` CRD plus its controller

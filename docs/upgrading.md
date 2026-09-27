@@ -264,8 +264,8 @@ are leaving:
 |---|---|
 | `status.phase` removed from FrameJob, FrameNode and FrameService | Still readable at `v1alpha1`, computed from `status.conditions` on the way down. Never stored. Writing it has no effect. |
 | `FrameJob.spec.namespace` removed | Ignored. The Argo Workflow is created in the FrameJob's own namespace. A read at `v1alpha1` returns the object's own namespace, not the value you set. |
-| `TalosSecretReference.namespace` removed | Ignored. The Secret is read from the CR's own namespace, which is what an empty value always meant. A read returns empty. |
-| `TalosSecretReference.name` now required | A `v1beta1` write without it is rejected. |
+| `TalosSecretReference.namespace` removed | Moot since 2026-09-27: TalosMachineConfig and TalosUpgrade are no longer served, in either version (see below). |
+| `TalosSecretReference.name` now required | Same. |
 | `FrameUser.spec.passwordHash` moved to `status.passwordHash` | Read-only at `v1alpha1`. A write that changes it is rejected by the validating webhook, and so is a full replace that omits it — omitting it would erase the credential. Set it through the `v1beta1` `frameusers/status` subresource. Reading it is unaffected — see below. |
 | `FrameNode.spec.serviceClass` no longer accepts `""` | Omit the field instead; absence means unclassified. |
 | `FrameJob.spec.serviceClass` and `spec.priority` default in the schema, not only in the webhook | Unchanged values (`LOW`, `medium`), but they are now applied before CEL rather than after. |
@@ -395,3 +395,26 @@ installs from a published chart on a fresh cluster, passes e2e, and survives
 a manager failover and an upgrade from the prior release") is the bar this
 document does not yet meet. Phase B's exit criteria, which closed the
 schema-stability gap, is met.
+
+## 2026-09-27 — Talos removed
+
+`TalosMachineConfig` and `TalosUpgrade` are gone, in both versions: types,
+controllers, webhooks, RBAC roles, CRDs, the console panel, and the
+`siderolabs/talos` Go dependency. FrameNode loses its Talos provisioning
+half — `spec.disk`, `status.discoveredHostname`, `discoveredTalosVersion`,
+`discoveredDisks`, `discoveredNICs`, and the CEL rule tying `disk` to a
+complete `network` block — and keeps its classification half. A FrameNode
+whose node is absent now reports `Ready.reason: AwaitingNode` instead of
+dialling a maintenance API.
+
+Upgrading an existing install:
+
+1. Check nothing uses the two kinds:
+   `kubectl get talosmachineconfigs,talosupgrades -A` must list nothing.
+2. Roll out the new manager and CRDs. The FrameNode CRD's schema no longer
+   carries the removed fields; the apiserver prunes them from any stored
+   object on its next write.
+3. Delete the two CRDs, which the new release no longer ships:
+   `kubectl delete crd talosmachineconfigs.frame.plume-labs.io talosupgrades.frame.plume-labs.io`.
+   Deleting a CRD deletes every object of that kind — step 1 is what makes
+   this safe.

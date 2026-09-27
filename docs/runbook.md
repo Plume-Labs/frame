@@ -205,8 +205,6 @@ spec:
     - frameresourcequotas.frame.plume-labs.io
     - frameusers.frame.plume-labs.io
     - schedulingpolicies.frame.plume-labs.io
-    - talosmachineconfigs.frame.plume-labs.io
-    - talosupgrades.frame.plume-labs.io
     - frameservices.services.plume-labs.io
   includedNamespaces: ["*"]
   ttl: 720h0m0s
@@ -237,7 +235,7 @@ because a restore is into a cluster where Frame is installed and the chart owns
 the schema — restoring a stale CRD over a newer one would be a downgrade, not a
 recovery. And `status` is restored as recorded, so an object mid-operation
 comes back describing a world that has moved on; the controllers correct it on
-the next reconcile, but a `TalosUpgrade` restored mid-reboot deserves a look
+the next reconcile, but a `FrameInstall` restored mid-install deserves a look
 before you trust its status.
 
 ## Logs and metrics

@@ -21,14 +21,14 @@ Frame is three cooperating layers in one repo.
 ┌──────────────────────▼───────────────────────────────────┐
 │                  Kubernetes API Server                   │
 │                                                          │
-│  frame.plume-labs.io/v1beta1 CRDs (8)                   │
+│  frame.plume-labs.io/v1beta1 CRDs (6)                   │
 │  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
 │  │  FrameJob    │ │  FrameNode    │ │SchedulingPolicy │ │
 │  └──────────────┘ └───────────────┘ └─────────────────┘ │
-│  ┌──────────────┐ ┌───────────────┐ ┌─────────────────┐ │
-│  │FrameResource │ │TalosMachine   │ │  TalosUpgrade   │ │
-│  │    Quota     │ │    Config     │ │                 │ │
-│  └──────────────┘ └───────────────┘ └─────────────────┘ │
+│  ┌──────────────┐                                       │
+│  │FrameResource │                                       │
+│  │    Quota     │                                       │
+│  └──────────────┘                                       │
 │  ┌──────────────┐ ┌───────────────┐                     │
 │  │  FrameUser   │ │  NodeTuning   │ ← cluster-scoped    │
 │  └──────────────┘ └───────────────┘   v1beta1 only      │
@@ -45,13 +45,11 @@ Frame is three cooperating layers in one repo.
 │  FrameJob controller  → Argo Workflow                    │
 │  FrameNode controller → core v1.Node watch               │
 │  SchedulingPolicy     → PriorityClass + Volcano/YuniKorn │
-│  TalosMachineConfig   → Talos gRPC ApplyConfiguration    │
-│  TalosUpgrade         → Talos gRPC Upgrade               │
 │  FrameResourceQuota   → namespace ResourceQuota          │
 │  FrameService         → per-type provider (llama.cpp …) │
 │  NodeTuning           → node agent + gated restart       │
 │                                                          │
-│  Webhooks: validation on 8 kinds, defaulting on 2        │
+│  Webhooks: validation on 6 kinds, defaulting on 2        │
 │  (NodeTuning has none)                                   │
 └──────────────────────┬───────────────────────────────────┘
                        │
@@ -65,7 +63,6 @@ Frame is three cooperating layers in one repo.
 │           Cluster Primitives (deploy/)                   │
 │                                                          │
 │  Argo Workflows · PriorityClasses · ResourceQuotas       │
-│  Talos MachineConfigs · Omni (planned) · PXE boot        │
 │  Ceph (Rook, RGW) · Cilium · SR-IOV · RDMA               │
 │  Prometheus · Grafana · Jaeger · DCGM · OpenLineage      │
 └──────────────────────────────────────────────────────────┘
@@ -106,10 +103,8 @@ Frame is three cooperating layers in one repo.
 | Controller | Real effect |
 |---|---|
 | `FrameJob` | Creates/updates/deletes an Argo `Workflow`; syncs `spec.suspend` → `Workflow.spec.suspend`; secondary-watches Argo Workflows for event-driven `Ready`-condition updates |
-| `FrameNode` | Secondary-watches core `v1.Node` (label mapping `nodeToFrameNode`) to reflect readiness and versions into status |
+| `FrameNode` | Projects role, rack, zone, service class and RDMA onto the named `v1.Node` as labels; secondary-watches core `v1.Node` (`nodeToFrameNode`) to reflect readiness and versions into status. Provisions nothing — the Talos path it once carried is removed |
 | `SchedulingPolicy` | Reconciles a `PriorityClass`; when Volcano/YuniKorn CRD is present, also reconciles the scheduler-native queue. Gracefully degrades when CRD is absent |
-| `TalosMachineConfig` | Builds a Talos gRPC client from a referenced Secret; calls `ApplyConfiguration` with inline patch or ConfigMap ref |
-| `TalosUpgrade` | Calls Talos gRPC `Upgrade`; generation-based idempotency guard prevents re-trigger on unchanged spec |
 | `FrameResourceQuota` | Projects a `corev1.ResourceQuota` into every namespace labelled with the matching service class, and aggregates their `status.used` back into `status.used`/`status.namespaces`. Scheduler queue limits are deliberately not projected — `SchedulingPolicy` owns those |
 | `FrameService` | Dispatches to a registered provider (`internal/services/provider/`) by `spec.type`; the `inference` provider creates a llama.cpp Deployment + Service, sized from `spec.parameters`, and a credentials Secret |
 | `NodeTuning` | Diffs desired against the state the node agent **measured**, and reports per node. Disruptive changes wait for a per-node, per-generation approval annotation, then roll one node at a time: cordon → evict → detached unit restart → verify `ActiveEnterTimestamp` moved → uncordon. Any failure halts the campaign with the node left cordoned |
@@ -118,9 +113,9 @@ All controllers follow the same pattern: add finalizer on create, reconcile desi
 
 **Node agent** (`cmd/agent`, DaemonSet in `deploy/kubernetes/base/node-tuning-agent/`): the other half of NodeTuning. Runs on every node — tainted ones and the control-plane server included — privileged with `hostPID`, so every host command is `nsenter`ed into PID 1's namespaces. It observes every 30 s and publishes what the node *measures* (`systemctl show -p MemoryKSM`, the KSM sysfs counters, tuned's active profile), never what it wrote. Because privileged + `hostPID` is host-root-equivalent, the units it may restart are a compile-time allowlist — `k3s`, `k3s-agent`, `kubelet`, `containerd`, exact match — and that allowlist is its entire security boundary. It supersedes the old `ksm-tuner` DaemonSet, which could only report what it had written.
 
-**Webhooks** (`internal/webhook/frame/v1beta1/` and `internal/webhook/services/v1beta1/`): validation on eight of the nine kinds — `NodeTuning` has none, its bounds being carried by CRD schema markers alone; defaulting on FrameNode and FrameJob only. They register on `v1beta1` alone — `matchPolicy: Equivalent` converts a `v1alpha1` request to the storage version before dispatch, so one registration covers both. Cert-manager manages TLS; see `config/certmanager/`.
+**Webhooks** (`internal/webhook/frame/v1beta1/` and `internal/webhook/services/v1beta1/`): validation on six of the seven kinds — `NodeTuning` has none, its bounds being carried by CRD schema markers alone; defaulting on FrameNode and FrameJob only. They register on `v1beta1` alone — `matchPolicy: Equivalent` converts a `v1alpha1` request to the storage version before dispatch, so one registration covers both. Cert-manager manages TLS; see `config/certmanager/`.
 
-**Conversion webhook** (`api/frame/v1alpha1/conversion.go`, `api/services/v1alpha1/conversion.go`): every CRD that has two versions — the eight pre-freeze kinds, so all but `NodeTuning` — declares `conversion.strategy: Webhook` pointing at the manager's `/convert`, with the same cert-manager-injected CA. `v1beta1` is the hub; `v1alpha1` is the spoke and implements `ConvertTo`/`ConvertFrom`. Seven kinds are field-wise strict subsets of `v1alpha1`, and `FrameUser` is a bijection (`spec.passwordHash` ↔ `status.passwordHash`), so no annotation escape hatch is needed anywhere. controller-runtime registers `/convert` implicitly, through the same `registerWebhooks()` every `SetupXWebhookWithManager` already goes through — which means **both** GVKs must be in `cmd/main.go`'s scheme or `conversion.IsConvertible` sees one version per GroupKind, `/convert` is never registered, and every `v1alpha1` request 404s against CRDs that declare `strategy: Webhook`. `cmd/scheme_test.go` pins that.
+**Conversion webhook** (`api/frame/v1alpha1/conversion.go`, `api/services/v1alpha1/conversion.go`): every CRD that has two versions — the six pre-freeze kinds, so all but `NodeTuning` — declares `conversion.strategy: Webhook` pointing at the manager's `/convert`, with the same cert-manager-injected CA. `v1beta1` is the hub; `v1alpha1` is the spoke and implements `ConvertTo`/`ConvertFrom`. Five kinds are field-wise strict subsets of `v1alpha1`, and `FrameUser` is a bijection (`spec.passwordHash` ↔ `status.passwordHash`), so no annotation escape hatch is needed anywhere. controller-runtime registers `/convert` implicitly, through the same `registerWebhooks()` every `SetupXWebhookWithManager` already goes through — which means **both** GVKs must be in `cmd/main.go`'s scheme or `conversion.IsConvertible` sees one version per GroupKind, `/convert` is never registered, and every `v1alpha1` request 404s against CRDs that declare `strategy: Webhook`. `cmd/scheme_test.go` pins that.
 
 Two consequences worth knowing before changing anything here. Conversion output is stored **without re-validation**, so a `v1alpha1` write is the only way to violate a bound `v1beta1` adds. And it is not re-defaulted either, so a CEL rule dereferencing an `omitempty` scalar must be `has()`-guarded on both versions.
 
@@ -132,9 +127,6 @@ Everything needed to stand up the bare-metal cluster the operator runs on.
 
 | Directory | What it provisions |
 |---|---|
-| `deploy/talos/` | Talos MachineConfigs, Image Factory schematics |
-| `deploy/omni/` | Omni bare-metal server lifecycle (prepared, not deployed) |
-| `deploy/pxe/` | PXE / DHCP / TFTP boot configuration |
 | `deploy/ceph/` | Rook-Ceph operator + cluster CRs (block + file storage) |
 | `deploy/networking/` | Cilium, SR-IOV device plugin, DPDK, RDMA device plugin |
 | `deploy/monitoring/` | Prometheus + Grafana + Jaeger + DCGM Exporter |
