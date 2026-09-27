@@ -181,12 +181,17 @@ func TestConflictingWriteIsRetriedThenRestart(t *testing.T) {
 		},
 	})
 	now := t0
+	// The conflict is re-read and retried within the same pass: the login
+	// goes out once, and is recorded as refused.
+	if p := place(process(&cfg, gate, &now)); p.State != "AuthRefused" || f.logins != 1 {
+		t.Fatalf("first process: state %q (%s), %d logins", p.State, p.Message, f.logins)
+	}
 	for i := 0; i < 3; i++ {
 		now = now.Add(DefaultInterval)
 		place(process(&cfg, gate, &now))
 	}
-	if f.logins > 1 {
-		t.Fatalf("%d failed logins, want at most 1", f.logins)
+	if f.logins != 1 {
+		t.Fatalf("%d failed logins in total, want 1", f.logins)
 	}
 }
 
@@ -331,5 +336,15 @@ func TestMACIsKeyed(t *testing.T) {
 	k2, _ := newKey()
 	if accountMAC(k1, cfg) == accountMAC(k2, cfg) {
 		t.Fatal("same MAC under two keys")
+	}
+}
+
+// A reader without a gate never logs in.
+func TestNoGateNoLogin(t *testing.T) {
+	f := newFake(t)
+	cfg := f.cfg()
+	now := t0
+	if p := place(process(&cfg, nil, &now)); f.logins != 0 || p.State != "Error" {
+		t.Fatalf("%d logins, state %q", f.logins, p.State)
 	}
 }
