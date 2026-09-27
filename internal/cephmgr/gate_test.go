@@ -461,3 +461,29 @@ func TestTwoConcurrentLeaders(t *testing.T) {
 		}
 	}
 }
+
+// pending is never trimmed: a full list forbids every new login (fail
+// closed) instead of forgetting an account whose outcome is unknown.
+func TestFullPendingMeansNoLogin(t *testing.T) {
+	gate, c := stateGate(t, true, interceptor.Funcs{})
+	ctx := context.Background()
+	for i := 0; i < MaxRefused; i++ {
+		if err := gate.Begin(ctx, Config{BaseURL: "https://d", Username: "u", Password: fmt.Sprint(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := newFake(t)
+	cfg := f.cfg()
+	now := t0
+	p := place(process(&cfg, gate, &now))
+	if f.logins != 0 || p.State != "Error" || !strings.Contains(p.Message, "too many unresolved logins") {
+		t.Fatalf("full pending: %d login(s), state %s %q", f.logins, p.State, p.Message)
+	}
+	pending := parsedList(t, stateSecret(t, c).Data["pending"])
+	if len(pending) != MaxRefused {
+		t.Fatalf("%d pending kept, want %d", len(pending), MaxRefused)
+	}
+	if err := gate.Begin(ctx, Config{BaseURL: "https://d", Username: "u", Password: "0"}); !errors.Is(err, ErrLoginOutcomeUnknown) {
+		t.Errorf("the oldest unresolved login was forgotten: %v", err)
+	}
+}

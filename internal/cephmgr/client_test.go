@@ -550,3 +550,32 @@ func TestPanicInAReadEndsAsError(t *testing.T) {
 		t.Fatalf("reader did not recover: %+v", p)
 	}
 }
+
+// The login gate reads WroteRequest as "the login left", which holds only
+// in HTTP/1.1. Against a server offering h2, the client must stay on
+// HTTP/1.1 — even if someone later sets ForceAttemptHTTP2.
+func TestTransportIsHTTP1Only(t *testing.T) {
+	var protoMajor atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protoMajor.Store(int32(r.ProtoMajor))
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code": "invalid_credentials"}`))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	cfg := Config{BaseURL: srv.URL, Username: "u", Password: "p", ServerName: "example.com",
+		CAPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})}
+	for _, force := range []bool{false, true} {
+		c, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.http.Transport.(*http.Transport).ForceAttemptHTTP2 = force
+		protoMajor.Store(0)
+		_, _ = c.Read(context.Background())
+		if got := protoMajor.Load(); got != 1 {
+			t.Fatalf("ForceAttemptHTTP2=%v: login sent over HTTP/%d, want HTTP/1.1", force, got)
+		}
+	}
+}

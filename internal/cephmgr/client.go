@@ -167,6 +167,13 @@ func New(cfg Config) (*Client, error) {
 		TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: cfg.ServerName, MinVersion: tls.VersionTLS12},
 		Proxy:           nil,
 	}
+	// HTTP/1.1 only, stated rather than left to defaults. The login gate
+	// tells "never sent" from "sent" by httptrace's WroteRequest, which is
+	// exact in HTTP/1.1; in HTTP/2 it fires only after the body and a
+	// cancelled request returns without waiting, so an intention could be
+	// cleared for a login that did leave.
+	tr.Protocols = new(http.Protocols)
+	tr.Protocols.SetHTTP1(true)
 	return &Client{
 		cfg:  cfg,
 		base: &url.URL{Scheme: u.Scheme, Host: u.Host},

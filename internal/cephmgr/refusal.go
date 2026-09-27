@@ -60,8 +60,11 @@ import (
 // charts/frame/templates/ceph-dashboard-state.yaml).
 const StateSecretName = "frame-ceph-dashboard-state"
 
-// MaxRefused bounds each list. Past it the oldest entry is forgotten, and
-// that account could cost one more failed login if it came back.
+// MaxRefused bounds each list. refused is a FIFO: past it the oldest entry
+// is forgotten, and that account could cost one more failed login if it
+// came back. pending is not: a full pending list forbids every new login
+// (ErrTooManyUnresolved) — dropping an entry would unblock an account whose
+// last login has an unknown outcome.
 const MaxRefused = 64
 
 // writeAttempts bounds the Get/validate/Update rounds of one write (a
@@ -79,6 +82,9 @@ var (
 	// ErrLoginOutcomeUnknown: the account is in pending — a login was
 	// started and its outcome was never recorded.
 	ErrLoginOutcomeUnknown = errors.New("outcome of a previous login unknown")
+	// ErrTooManyUnresolved: pending is full; no new login until an
+	// operator clears it.
+	ErrTooManyUnresolved = errors.New("too many unresolved logins, clear pending (see docs/storage-mgr-account.md)")
 )
 
 // LoginGate is what the client asks before and tells after every login.
@@ -177,6 +183,8 @@ func contains(list []string, mac string) bool {
 	return false
 }
 
+// bounded keeps the MaxRefused newest entries of refused (FIFO). pending
+// is never trimmed: Begin refuses to add to a full one.
 func bounded(list []string) []string {
 	if len(list) > MaxRefused {
 		return list[len(list)-MaxRefused:]
@@ -235,7 +243,7 @@ func (g *SecretLoginGate) update(ctx context.Context, generateKey bool, change f
 		}
 		sec.Data["hmac-key"] = st.key
 		sec.Data["key-fp"] = []byte(keyFingerprint(st.key))
-		sec.Data["pending"] = []byte(strings.Join(bounded(st.pending), "\n"))
+		sec.Data["pending"] = []byte(strings.Join(st.pending, "\n"))
 		sec.Data["refused"] = []byte(strings.Join(bounded(st.refused), "\n"))
 		if last = g.Writer.Update(ctx, sec); last == nil {
 			return nil
@@ -253,6 +261,9 @@ func (g *SecretLoginGate) Begin(ctx context.Context, c Config) error {
 		}
 		if contains(st.pending, mac) {
 			return ErrLoginOutcomeUnknown
+		}
+		if len(st.pending) >= MaxRefused {
+			return ErrTooManyUnresolved
 		}
 		st.pending = append(st.pending, mac)
 		return nil

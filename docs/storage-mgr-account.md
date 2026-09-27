@@ -21,6 +21,10 @@ dashboard account configured)". Nothing breaks.
 - The connection is HTTPS only. The server certificate is verified against
   the one stored in the Secret (pinned), under an explicit server name. A
   plain-HTTP URL is refused.
+- HTTP/1.1 only, set explicitly on the transport. The "not sent" test
+  below relies on `WroteRequest`, which is exact in HTTP/1.1; in HTTP/2 it
+  fires only after the body, and a cancelled request returns without
+  waiting, so a login that did leave could be counted as not sent.
 
 ## Why a custom role, not `read-only`
 
@@ -143,7 +147,7 @@ The state Secret holds:
   Secret is entirely empty, in the same update as the first intention;
 - `key-fp`: the first 8 bytes of SHA-256(`hmac-key`), in hex;
 - `pending` and `refused`: one HMAC-SHA256(`hmac-key`, url, username,
-  password) per line, in hex, at most 64 each, oldest dropped first.
+  password) per line, in hex, at most 64 each (see Limits).
 
 The password is never stored, and without the key the values can't be
 checked against guesses. The FrameStorage status carries only
@@ -159,10 +163,15 @@ FrameStorage is readable by every Frame viewer; the state Secret is not.
 - lists or a fingerprint without a key;
 - an entry that isn't a MAC.
 
-**Limits.** Each list, `refused` and `pending`, keeps 64 accounts. Past
-64 distinct refused accounts, or 64 logins with an unknown outcome, the
-oldest entry is forgotten. If that account came back, it could cost one
-more failed login.
+**Limits.** `refused` keeps 64 accounts. Past 64 distinct refused
+accounts, the oldest entry is forgotten; if that account came back, it
+could cost one more failed login.
+
+`pending` is never trimmed. With 64 logins of unknown outcome, the
+manager logs in no more, for any account, and the status is an `Error`
+"too many unresolved logins, clear pending". Forgetting one of them
+would unblock an account that may already have failed. Clear `pending`
+(below) once the accounts are checked.
 
 The deployment manifests create `frame-ceph-dashboard-state` empty
 (`config/manager/ceph_dashboard_state.yaml`,
@@ -196,6 +205,13 @@ read logs in.
   then set a new password (`ceph dashboard ac-user-set-password
   frame-storage-reader -i <file>`) and put it in the account Secret. The
   first successful login resets Ceph's counter.
+- **"too many unresolved logins"**: check the accounts on the Ceph side
+  (counter, enabled), then clear `pending` only:
+
+  ```sh
+  kubectl -n frame-system patch secret frame-ceph-dashboard-state --type json \
+    -p '[{"op":"remove","path":"/data/pending"}]'
+  ```
 - **Retry the same account deliberately** ("outcome unknown", or after
   re-enabling it in Ceph): clear the lists and keep the key:
 
