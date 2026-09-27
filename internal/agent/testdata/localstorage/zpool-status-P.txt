@@ -1,0 +1,42 @@
+  pool: data
+ state: DEGRADED
+status: One or more devices are faulted in response to persistent errors.
+	Sufficient replicas exist for the pool to continue functioning in a
+	degraded state.
+action: Replace the faulted device, or use 'zpool clear' to mark the device
+	repaired.
+  scan: scrub repaired 0B in 05:12:44 with 2 errors on Sun Sep 14 00:24:01 2026
+config:
+
+	NAME                                            STATE     READ WRITE CKSUM
+	data                                            DEGRADED     0     0     0
+	  raidz1-0                                      DEGRADED     0     0     0
+	    /dev/disk/by-id/ata-HDD4T_SER-Z1-part1      ONLINE       0     0     0
+	    /dev/disk/by-id/ata-HDD4T_SER-Z2-part1      ONLINE       0     0     0
+	    /dev/disk/by-id/wwn-0x5000c500deadbe03-part1 FAULTED     12     0 1.2K  too many errors
+	    /dev/disk/by-id/ata-HDD4T_SER-Z4-part1      ONLINE       0     0     0
+	logs
+	  mirror-1                                      ONLINE       0     0     0
+	    /dev/disk/by-id/ata-SSD-A_SER-L1-part1      ONLINE       0     0     0
+	    /dev/disk/by-id/ata-SSD-B_SER-L2-part1      ONLINE       0     0     0
+	cache
+	  /dev/disk/by-id/nvme-NVME1T_SER-N1-part4      ONLINE       0     0     0
+	spares
+	  /dev/disk/by-id/ata-HDD4T_SER-Z5-part1        AVAIL   
+
+errors: No known data errors
+
+  pool: rpool
+ state: ONLINE
+  scan: scrub in progress since Sat Sep 27 01:00:00 2026
+	120G / 248G scanned at 1.00G/s, 60G / 248G issued at 500M/s
+	0B repaired, 24.19% done, 00:06:16 to go
+config:
+
+	NAME                                           STATE     READ WRITE CKSUM
+	rpool                                          ONLINE       0     0     0
+	  mirror-0                                     ONLINE       0     0     0
+	    /dev/disk/by-id/ata-SSD250_SER-R1-part3    ONLINE       0     0     0
+	    /dev/disk/by-id/ata-SSD250_SER-R2-part3    ONLINE       0     0     0
+
+errors: No known data errors

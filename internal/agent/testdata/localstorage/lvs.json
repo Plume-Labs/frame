@@ -1,0 +1,10 @@
+  {
+      "report": [
+          {
+              "lv": [
+                  {"lv_name":"root", "vg_name":"vg0", "lv_size":"53687091200", "lv_attr":"-wi-ao----", "segtype":"linear", "data_percent":""},
+                  {"lv_name":"thin", "vg_name":"vg0", "lv_size":"845987542016", "lv_attr":"twi-aotz--", "segtype":"thin-pool", "data_percent":"37.12"}
+              ]
+          }
+      ]
+  }

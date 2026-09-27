@@ -4,6 +4,7 @@ import { describeDivergence, formatIec } from '@/lib/storage'
 import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, osdsWithoutMachine } from '@/lib/disk-inventory'
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { MachineDiskTable } from '@/components/storage/MachineDiskTable'
+import { MdLvmCard, ZfsCard } from '@/components/storage/LocalStacksCards'
 import { osdDiskLabel } from '@/lib/storage-labels'
 import type { Machine } from '@/lib/machines'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -198,6 +199,13 @@ export function MachineDisksPanel() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {selected && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <ZfsCard machine={selected} />
+          <MdLvmCard machine={selected} />
+        </div>
       )}
 
       {vmOsds.length > 0 && (

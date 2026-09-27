@@ -147,16 +147,39 @@ func str(p *string) string {
 //     look" and "there is nothing there" are the two answers that must
 //     never be confused: the second authorises a wipe.
 func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
+	disks, _, err := ObserveDisksIndexed(runner)
+	return disks, err
+}
+
+// ObserveDisksIndexed is ObserveDisks plus an index from every kernel name
+// under a serial-bearing disk (the disk itself and its partitions, e.g.
+// "sdc" and "sdc2") to that disk's serial. The local-storage reader uses it
+// to name the disk behind an md member or an LVM PV; built from the same
+// lsblk call, so the kernel names and the serials belong to one instant.
+func ObserveDisksIndexed(runner CommandRunner) ([]framev1beta1.ObservedDisk, map[string]string, error) {
 	out, err := runner.Run("lsblk", "-J", "-b", "-o", lsblkColumns)
 	if err != nil {
-		return nil, fmt.Errorf("running lsblk: %w", err)
+		return nil, nil, fmt.Errorf("running lsblk: %w", err)
 	}
 
 	var payload struct {
 		BlockDevices []lsblkDevice `json:"blockdevices"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		return nil, fmt.Errorf("parsing lsblk output: %w", err)
+		return nil, nil, fmt.Errorf("parsing lsblk output: %w", err)
+	}
+
+	index := make(map[string]string)
+	for _, dev := range payload.BlockDevices {
+		serial := str(dev.Serial)
+		if dev.Type != "disk" || serial == "" {
+			continue
+		}
+		walk(dev, func(d lsblkDevice) {
+			if d.Type == "disk" || d.Type == "part" {
+				index[d.Name] = serial
+			}
+		})
 	}
 
 	disks := make([]framev1beta1.ObservedDisk, 0, len(payload.BlockDevices))
@@ -202,7 +225,7 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 			Members:      membersOf(dev),
 		})
 	}
-	return disks, nil
+	return disks, index, nil
 }
 
 // byIDPathFromWWN derives the /dev/disk/by-id link udev creates for a

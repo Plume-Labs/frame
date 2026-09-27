@@ -450,3 +450,18 @@ with an md or ZFS member, which on a typical host is the system disk.
 
 FrameDiskClaim refuses both new occupancies, as it refuses anything that is
 not `free`.
+
+## 2026-09-27 — Node-local storage stacks (FrameMachine)
+
+`status.storage.local` is new: the node agent publishes the node's ZFS
+pools (health, capacity, scrub, vdev tree, datasets), mdadm arrays (from
+`/proc/mdstat`) and LVM (PVs, VGs, LVs), each with a `state` of `present`,
+`absent` or `error`.
+
+The field is additive: a new agent against the old CRD has it pruned, and
+the rest of `status.storage` still lands, so the order is free this time.
+Apply the CRD first anyway if you want the stacks to show from the first
+agent cycle. The agent needs no new privilege, capability or mount: it
+reads `/proc/mdstat` and `/sys/module/zfs` from its own view, and runs the
+host's `zpool`, `zfs`, `pvs`, `vgs` and `lvs` (listing verbs only, fixed
+argv, under the host's `timeout 10`) through the nsenter it already uses.

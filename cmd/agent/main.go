@@ -213,10 +213,18 @@ func tick(ctx context.Context, kc client.Client, nodeName, root string, runner a
 	//    with step 5 above for the same reason — a failure reading the
 	//    node's tuning state must not silently suppress publishing its
 	//    disks, or vice versa.
-	if disks, err := agent.ObserveDisks(runner); err != nil {
+	//
+	//    The node's local storage stacks (ZFS, md, LVM) ride in the same
+	//    patch, read after lsblk so md members and PVs can be named by the
+	//    serial of the disk under them. Reading them never fails the tick:
+	//    a stack that cannot be read is published as state "error".
+	if disks, serialOf, err := agent.ObserveDisksIndexed(runner); err != nil {
 		slog.Error("reading node disks", "error", err)
-	} else if err := agent.PatchObservedDisks(ctx, kc, nodeName, disks); err != nil {
-		slog.Error("publishing node disks", "node", nodeName, "error", err)
+	} else {
+		local := agent.ObserveLocalStorage(agent.DefaultLocalSources(), serialOf)
+		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local); err != nil {
+			slog.Error("publishing node disks", "node", nodeName, "error", err)
+		}
 	}
 }
 

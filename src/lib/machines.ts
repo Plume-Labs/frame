@@ -99,6 +99,81 @@ export interface MachineStorage {
   observed: ObservedDisk[]
   divergences: DiskDivergence[]
   observedAt: string | null
+  /** The node's ZFS/md/LVM stacks (`status.storage.local`); null from an agent that predates them. */
+  local: LocalStorage | null
+}
+
+export type StackState = 'present' | 'absent' | 'error'
+
+export interface ZVdev {
+  name: string
+  depth: number
+  state?: string
+  readErrors?: number
+  writeErrors?: number
+  checksumErrors?: number
+  note?: string
+}
+
+export interface ZPool {
+  name: string
+  health?: string
+  sizeBytes?: number
+  allocatedBytes?: number
+  freeBytes?: number
+  fragmentationPercent?: number
+  capacityPercent?: number
+  scan?: string
+  scrubErrors?: number
+  lastScrub?: string
+  errors?: string
+  vdevs?: ZVdev[]
+  vdevsOmitted?: number
+}
+
+export interface ZFSDataset {
+  name: string
+  type?: string
+  usedBytes?: number
+  availBytes?: number
+  referBytes?: number
+  mountPoint?: string
+}
+
+export interface MDMember {
+  device: string
+  serial?: string
+  failed?: boolean
+  spare?: boolean
+}
+
+export interface MDArray {
+  name: string
+  level?: string
+  state?: string
+  raidDisks?: number
+  activeDisks?: number
+  slots?: string
+  degraded: boolean
+  sync?: string
+  members?: MDMember[]
+}
+
+export interface LVMPhysicalVolume { name: string; vg?: string; sizeBytes?: number; freeBytes?: number; attr?: string; serial?: string }
+export interface LVMVolumeGroup { name: string; sizeBytes?: number; freeBytes?: number; pvCount?: number; lvCount?: number; attr?: string }
+export interface LVMLogicalVolume { name: string; vg: string; sizeBytes?: number; attr?: string; segType?: string; dataPercent?: string }
+
+export interface LocalStorage {
+  zfs: { state: StackState; error?: string; pools?: ZPool[]; poolsOmitted?: number; datasets?: ZFSDataset[]; datasetsOmitted?: number }
+  md: { state: StackState; error?: string; arrays?: MDArray[]; arraysOmitted?: number }
+  lvm: {
+    state: StackState
+    error?: string
+    pvs?: LVMPhysicalVolume[]
+    vgs?: LVMVolumeGroup[]
+    lvs?: LVMLogicalVolume[]
+    omitted?: number
+  }
 }
 
 export interface NetworkAdapterInfo {
@@ -207,7 +282,7 @@ export interface MachineCR {
     postState?: string
     indicatorLED?: string
     inventory?: MachineInventory
-    storage?: { observed?: ObservedDisk[]; divergences?: DiskDivergence[]; observedAt?: string }
+    storage?: { observed?: ObservedDisk[]; divergences?: DiskDivergence[]; observedAt?: string; local?: LocalStorage }
     sensors?: MachineSensors
     sensorsValidAt?: string
     eventLog?: MachineEvent[]
@@ -247,6 +322,7 @@ export function toMachine(cr: MachineCR): Machine {
           observed: status.storage.observed ?? [],
           divergences: status.storage.divergences ?? [],
           observedAt: status.storage.observedAt ?? null,
+          local: status.storage.local ?? null,
         }
       : null,
     sensors: status.sensors ?? null,

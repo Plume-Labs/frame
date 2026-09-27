@@ -13,6 +13,7 @@ import type { DiskRow, MdArray } from './disk-inventory'
 import { duplicateSerials } from './disk-inventory'
 import type { Machine } from './machines'
 import { describeDivergence } from './storage'
+import { localStackItems, nodesWithPublishedMd } from './local-storage'
 
 export type AttentionSeverity = 'critical' | 'warning' | 'info'
 
@@ -130,14 +131,19 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({ severity: 'warning', code: 'mon-out-of-quorum', text: `Monitor(s) out of quorum: ${i.quorum.monsOut.join(', ')}` })
   }
 
+  // A node whose agent publishes its md arrays is judged from that (below,
+  // with member serials); node-exporter's view of it would say it twice.
+  const publishedMd = nodesWithPublishedMd(i.machines)
   for (const a of i.mdArrays) {
-    if (!a.degraded) continue
+    if (!a.degraded || publishedMd.has(a.node)) continue
     out.push({
       severity: 'critical',
       code: 'md-degraded',
       text: `${a.node} ${a.device}: ${a.active} active${a.required !== null ? `/${a.required}` : ''}, ${a.failed} failed, state ${a.state}`,
     })
   }
+
+  for (const m of i.machines) out.push(...localStackItems(m))
 
   for (const m of i.machines) {
     for (const d of m.storage?.divergences ?? []) {

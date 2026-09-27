@@ -366,6 +366,13 @@ type MachineStorage struct {
 	// both, deliberately, but the screens must be able to tell them apart.
 	// +optional
 	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
+
+	// Local is the node's own storage stacks — ZFS pools, mdadm arrays,
+	// LVM — read by the node agent in the same cycle as Observed. Nil means
+	// an agent that predates it; a stack the node does not run is reported
+	// with state "absent", never as an empty "present".
+	// +optional
+	Local *LocalStorage `json:"local,omitempty"`
 }
 
 // NetworkAdapterInfo describes one network port.

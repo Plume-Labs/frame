@@ -715,6 +715,55 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(back.Status.Storage.Divergences).To(HaveLen(2))
 	})
 
+	// The local-storage schema as the apiserver enforces it: a full,
+	// realistic payload (every stack, every enum state) must be accepted,
+	// and a state outside the enum refused — the agent's whole storage
+	// write rides on this.
+	It("accepte les piles locales publiees par l'agent, refuse un etat hors enum", func() {
+		m := newMachine("local-stacks")
+		m.Spec.NodeRef = "node-local-stacks"
+		Expect(k8sClient.Create(ctx, m)).To(Succeed())
+
+		frag, capPct, scrubErr := int32(12), int32(31), int32(2)
+		local := &framev1beta1.LocalStorage{
+			ZFS: framev1beta1.ZFSStatus{
+				State: framev1beta1.StackPresent,
+				Pools: []framev1beta1.ZPool{{
+					Name: "data", Health: "DEGRADED", SizeBytes: 15994458210304, AllocatedBytes: 5000000000000,
+					FreeBytes: 10994458210304, FragmentationPercent: &frag, CapacityPercent: &capPct,
+					Scan: "scrub repaired 0B in 05:12:44 with 2 errors on Sun Sep 14 00:24:01 2026", ScrubErrors: &scrubErr,
+					LastScrub: "Sun Sep 14 00:24:01 2026", Errors: "No known data errors",
+					Vdevs: []framev1beta1.ZVdev{
+						{Name: "raidz1-0", Depth: 0, State: "DEGRADED"},
+						{Name: "/dev/disk/by-id/ata-HDD4T_SER-Z1-part1", Depth: 1, State: "FAULTED", ReadErrors: 12, ChecksumErrors: 1200, Note: "too many errors"},
+					},
+				}},
+				Datasets: []framev1beta1.ZFSDataset{{Name: "data", Type: "filesystem", UsedBytes: 1, AvailBytes: 2, ReferBytes: 3, MountPoint: "/data"}},
+			},
+			MD: framev1beta1.MDStatus{State: framev1beta1.StackPresent, Arrays: []framev1beta1.MDArray{{
+				Name: "md0", Level: "raid1", State: "active", RaidDisks: 2, ActiveDisks: 1, Slots: "U_", Degraded: true,
+				Sync: "recovery 8.5%", Members: []framev1beta1.MDMember{{Device: "sdd2", Serial: "SER-SSD2"}, {Device: "sdc2", Failed: true}},
+			}}},
+			LVM: framev1beta1.LVMStatus{State: framev1beta1.StackAbsent},
+		}
+		Expect(agent.PatchObservedStorage(ctx, k8sClient, "node-local-stacks",
+			[]framev1beta1.ObservedDisk{{Path: "/dev/sdd", SerialNumber: "SER-SSD2", SizeGB: 1024, Occupancy: "md-member"}}, local,
+		)).To(Succeed())
+
+		var back framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(m), &back)).To(Succeed())
+		Expect(back.Status.Storage.Local).NotTo(BeNil())
+		Expect(back.Status.Storage.Local.ZFS.Pools[0].Vdevs).To(HaveLen(2))
+		Expect(back.Status.Storage.Local.MD.Arrays[0].Degraded).To(BeTrue())
+		Expect(back.Status.Storage.Local.LVM.State).To(Equal(framev1beta1.StackAbsent))
+
+		bad := local.DeepCopy()
+		bad.LVM.State = "unknown"
+		err := agent.PatchObservedStorage(ctx, k8sClient, "node-local-stacks", nil, bad)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("lvm.state"))
+	})
+
 	It("refuse d'ecrire quand aucune FrameMachine ne nomme ce noeud", func() {
 		err := agent.PatchObservedDisks(ctx, k8sClient, "node-that-no-machine-claims",
 			[]framev1beta1.ObservedDisk{{Path: "/dev/sda", SerialNumber: "X1", SizeGB: 1, Occupancy: "free"}})

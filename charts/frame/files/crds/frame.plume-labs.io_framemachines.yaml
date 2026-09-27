@@ -657,6 +657,375 @@ spec:
                       type: object
                     maxItems: 64
                     type: array
+                  local:
+                    description: |-
+                      Local is the node's own storage stacks — ZFS pools, mdadm arrays,
+                      LVM — read by the node agent in the same cycle as Observed. Nil means
+                      an agent that predates it; a stack the node does not run is reported
+                      with state "absent", never as an empty "present".
+                    properties:
+                      lvm:
+                        description: LVMStatus is `pvs`, `vgs` and `lvs` in JSON.
+                        properties:
+                          error:
+                            maxLength: 256
+                            type: string
+                          lvs:
+                            items:
+                              description: LVMLogicalVolume is one LV.
+                              properties:
+                                attr:
+                                  maxLength: 16
+                                  type: string
+                                dataPercent:
+                                  description: |-
+                                    DataPercent is lvs's data_percent for thin pools and snapshots,
+                                    verbatim ("" otherwise).
+                                  maxLength: 16
+                                  type: string
+                                name:
+                                  maxLength: 128
+                                  type: string
+                                segType:
+                                  maxLength: 32
+                                  type: string
+                                sizeBytes:
+                                  format: int64
+                                  type: integer
+                                vg:
+                                  maxLength: 128
+                                  type: string
+                              required:
+                              - name
+                              - vg
+                              type: object
+                            maxItems: 128
+                            type: array
+                          omitted:
+                            format: int32
+                            type: integer
+                          pvs:
+                            items:
+                              description: LVMPhysicalVolume is one PV.
+                              properties:
+                                attr:
+                                  maxLength: 16
+                                  type: string
+                                freeBytes:
+                                  format: int64
+                                  type: integer
+                                name:
+                                  maxLength: 512
+                                  type: string
+                                serial:
+                                  maxLength: 128
+                                  type: string
+                                sizeBytes:
+                                  format: int64
+                                  type: integer
+                                vg:
+                                  maxLength: 128
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            maxItems: 64
+                            type: array
+                          state:
+                            description: |-
+                              StackState says whether a storage stack runs on the node.
+
+                              absent: the node does not run it (no zfs module, no LVM tools) — normal,
+                              not an error. present: it was read. error: it runs but could not be read;
+                              Error says why, and the lists are empty rather than stale.
+                            enum:
+                            - present
+                            - absent
+                            - error
+                            type: string
+                          vgs:
+                            items:
+                              description: |-
+                                LVMVolumeGroup is one VG. Attr's fourth character 'p' means partial —
+                                a PV is missing.
+                              properties:
+                                attr:
+                                  maxLength: 16
+                                  type: string
+                                freeBytes:
+                                  format: int64
+                                  type: integer
+                                lvCount:
+                                  format: int32
+                                  type: integer
+                                name:
+                                  maxLength: 128
+                                  type: string
+                                pvCount:
+                                  format: int32
+                                  type: integer
+                                sizeBytes:
+                                  format: int64
+                                  type: integer
+                              required:
+                              - name
+                              type: object
+                            maxItems: 32
+                            type: array
+                        required:
+                        - state
+                        type: object
+                      md:
+                        description: MDStatus is /proc/mdstat.
+                        properties:
+                          arrays:
+                            items:
+                              description: MDArray is one md device.
+                              properties:
+                                activeDisks:
+                                  format: int32
+                                  type: integer
+                                degraded:
+                                  description: |-
+                                    Degraded is computed by the agent: fewer active than raid disks, a
+                                    '_' slot, a failed member, or an inactive array.
+                                  type: boolean
+                                level:
+                                  maxLength: 16
+                                  type: string
+                                members:
+                                  items:
+                                    description: MDMember is one component device.
+                                    properties:
+                                      device:
+                                        description: Device is the kernel name as
+                                          mdstat prints it (sdc2).
+                                        maxLength: 64
+                                        type: string
+                                      failed:
+                                        type: boolean
+                                      serial:
+                                        description: |-
+                                          Serial is the serial of the whole disk holding Device, resolved from
+                                          the same agent cycle's lsblk; empty when it could not be.
+                                        maxLength: 128
+                                        type: string
+                                      spare:
+                                        type: boolean
+                                    required:
+                                    - device
+                                    type: object
+                                  maxItems: 32
+                                  type: array
+                                name:
+                                  maxLength: 32
+                                  type: string
+                                raidDisks:
+                                  description: |-
+                                    RaidDisks and ActiveDisks are the [n/m] of mdstat; zero when mdstat
+                                    prints none (raid0, linear, an inactive array).
+                                  format: int32
+                                  type: integer
+                                slots:
+                                  description: 'Slots is mdstat''s [UU_] string: one
+                                    U per working member.'
+                                  maxLength: 64
+                                  type: string
+                                state:
+                                  description: State is active or inactive (and "active
+                                    (auto-read-only)"…), verbatim.
+                                  maxLength: 32
+                                  type: string
+                                sync:
+                                  description: |-
+                                    Sync is the resync/recovery/check/reshape progress line, e.g.
+                                    "recovery 8.5%", or "resync DELAYED".
+                                  maxLength: 64
+                                  type: string
+                              required:
+                              - degraded
+                              - name
+                              type: object
+                            maxItems: 16
+                            type: array
+                          arraysOmitted:
+                            format: int32
+                            type: integer
+                          error:
+                            maxLength: 256
+                            type: string
+                          state:
+                            description: |-
+                              StackState says whether a storage stack runs on the node.
+
+                              absent: the node does not run it (no zfs module, no LVM tools) — normal,
+                              not an error. present: it was read. error: it runs but could not be read;
+                              Error says why, and the lists are empty rather than stale.
+                            enum:
+                            - present
+                            - absent
+                            - error
+                            type: string
+                        required:
+                        - state
+                        type: object
+                      zfs:
+                        description: ZFSStatus is `zpool list`, `zpool status -P`
+                          and `zfs list`.
+                        properties:
+                          datasets:
+                            items:
+                              description: ZFSDataset is one filesystem or volume
+                                (`zfs list`, snapshots excluded).
+                              properties:
+                                availBytes:
+                                  format: int64
+                                  type: integer
+                                mountPoint:
+                                  maxLength: 512
+                                  type: string
+                                name:
+                                  maxLength: 256
+                                  type: string
+                                referBytes:
+                                  format: int64
+                                  type: integer
+                                type:
+                                  maxLength: 16
+                                  type: string
+                                usedBytes:
+                                  format: int64
+                                  type: integer
+                              required:
+                              - name
+                              type: object
+                            maxItems: 64
+                            type: array
+                          datasetsOmitted:
+                            format: int32
+                            type: integer
+                          error:
+                            maxLength: 256
+                            type: string
+                          pools:
+                            items:
+                              description: ZPool is one pool.
+                              properties:
+                                allocatedBytes:
+                                  format: int64
+                                  type: integer
+                                capacityPercent:
+                                  format: int32
+                                  type: integer
+                                errors:
+                                  description: Errors is zpool status's errors line
+                                    ("No known data errors").
+                                  maxLength: 256
+                                  type: string
+                                fragmentationPercent:
+                                  format: int32
+                                  type: integer
+                                freeBytes:
+                                  format: int64
+                                  type: integer
+                                health:
+                                  description: |-
+                                    Health as zpool reports it: ONLINE, DEGRADED, FAULTED, OFFLINE,
+                                    UNAVAIL, REMOVED, SUSPENDED.
+                                  maxLength: 32
+                                  type: string
+                                lastScrub:
+                                  description: LastScrub is the completion date as
+                                    zpool prints it.
+                                  maxLength: 64
+                                  type: string
+                                name:
+                                  maxLength: 128
+                                  type: string
+                                scan:
+                                  description: Scan is zpool status's scan line, verbatim
+                                    (clipped).
+                                  maxLength: 512
+                                  type: string
+                                scrubErrors:
+                                  description: |-
+                                    ScrubErrors is the error count of the last completed scrub; nil when
+                                    no scrub has completed (none requested, or one in progress).
+                                  format: int32
+                                  type: integer
+                                sizeBytes:
+                                  format: int64
+                                  type: integer
+                                vdevs:
+                                  description: |-
+                                    Vdevs is the config tree flattened in display order; Depth is the
+                                    nesting under the pool (0 = top-level vdev or a logs/cache/spares
+                                    group). A CRD schema cannot recurse, hence the flat list.
+                                  items:
+                                    description: ZVdev is one row of a pool's config
+                                      tree.
+                                    properties:
+                                      checksumErrors:
+                                        format: int64
+                                        type: integer
+                                      depth:
+                                        format: int32
+                                        type: integer
+                                      name:
+                                        description: |-
+                                          Name is the vdev name or, for a leaf, its device path (zpool status
+                                          -P): the by-id path is what the console joins to a disk's serial.
+                                        maxLength: 512
+                                        type: string
+                                      note:
+                                        maxLength: 256
+                                        type: string
+                                      readErrors:
+                                        format: int64
+                                        type: integer
+                                      state:
+                                        maxLength: 32
+                                        type: string
+                                      writeErrors:
+                                        format: int64
+                                        type: integer
+                                    required:
+                                    - depth
+                                    - name
+                                    type: object
+                                  maxItems: 64
+                                  type: array
+                                vdevsOmitted:
+                                  format: int32
+                                  type: integer
+                              required:
+                              - name
+                              type: object
+                            maxItems: 16
+                            type: array
+                          poolsOmitted:
+                            format: int32
+                            type: integer
+                          state:
+                            description: |-
+                              StackState says whether a storage stack runs on the node.
+
+                              absent: the node does not run it (no zfs module, no LVM tools) — normal,
+                              not an error. present: it was read. error: it runs but could not be read;
+                              Error says why, and the lists are empty rather than stale.
+                            enum:
+                            - present
+                            - absent
+                            - error
+                            type: string
+                        required:
+                        - state
+                        type: object
+                    required:
+                    - lvm
+                    - md
+                    - zfs
+                    type: object
                   observed:
                     items:
                       description: |-

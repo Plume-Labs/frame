@@ -1,0 +1,13 @@
+  {
+      "report": [
+          {
+              "pv": [
+                  {"pv_name":"/dev/sdb2", "vg_name":"vg0", "pv_size":"499570991104", "pv_free":"0", "pv_attr":"a--"},
+                  {"pv_name":"/dev/sdc", "vg_name":"vg0", "pv_size":"500103643136", "pv_free":"100000000000", "pv_attr":"a-m"}
+              ]
+          }
+      ]
+      ,
+      "log": [
+      ]
+  }

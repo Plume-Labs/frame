@@ -1,0 +1,14 @@
+Personalities : [raid1] [raid0] [raid6] [raid5] [raid4] [raid10] 
+md0 : active raid1 sde2[2] sdd2[0] sdc2[1](F)
+      999546880 blocks super 1.2 [2/1] [U_]
+      [=>...................]  recovery =  8.5% (85012480/999546880) finish=76.1min speed=200218K/sec
+      bitmap: 4/8 pages [16KB], 65536KB chunk
+
+md1 : active (auto-read-only) raid1 sdf1[0] sdg1[1]
+      1046528 blocks super 1.2 [2/2] [UU]
+      	resync=PENDING
+
+md127 : inactive sdh[0](S)
+      976630488 blocks super 1.2
+       
+unused devices: <none>

@@ -58,6 +58,20 @@ func PatchObservedDisks(
 	nodeName string,
 	disks []framev1beta1.ObservedDisk,
 ) error {
+	return PatchObservedStorage(ctx, c, nodeName, disks, nil)
+}
+
+// PatchObservedStorage is PatchObservedDisks plus the node's local storage
+// stacks (ZFS, md, LVM), written into status.storage.local in the same
+// patch, so the disks and the stacks built on them always describe one
+// agent cycle. A nil local leaves status.storage.local unset.
+func PatchObservedStorage(
+	ctx context.Context,
+	c client.Client,
+	nodeName string,
+	disks []framev1beta1.ObservedDisk,
+	local *framev1beta1.LocalStorage,
+) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var machines framev1beta1.FrameMachineList
 		if err := c.List(ctx, &machines); err != nil {
@@ -85,6 +99,7 @@ func PatchObservedDisks(
 			Observed:    disks,
 			Divergences: storage.Join(bmcDrives, disks),
 			ObservedAt:  &now,
+			Local:       local,
 		}
 
 		return c.Status().Patch(ctx, target, client.MergeFromWithOptions(
