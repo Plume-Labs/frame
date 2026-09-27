@@ -175,6 +175,20 @@ func readCephHealth(c client.Client) func(context.Context) (string, []string, er
 // already known independent of any one class, so it comes back as
 // replication 0 (unknown) with a nil error -- reconcileCapacity's rule is
 // what refuses to turn that into a usable figure, not this function.
+// readCephCapacity reports the whole cluster's raw bytes and the class's
+// pool replication, which reconcileCapacity divides. Known limits, stated
+// rather than hidden (docs/storage-mgr-account.md, "Usable capacity"):
+//
+//   - the raw figure is the whole cluster's, every device class together;
+//     a pool whose CRUSH rule selects one class (or, as on the park, a mix
+//     of classes per replica) can only use part of it, so usable is
+//     overstated when classes differ in size;
+//   - an erasure-coded pool has no spec.replicated.size: replication reads
+//     0 and usable stays unknown rather than guessed.
+//
+// Ceph's own per-pool answer is max_avail (ceph_pool_max_avail), which the
+// console already shows per pool from Prometheus; the manager has no
+// Prometheus client, so it is not used here.
 func readCephCapacity(c client.Client) func(context.Context, string) (uint64, uint64, int32, error) {
 	return func(ctx context.Context, storageClassName string) (uint64, uint64, int32, error) {
 		cc := &unstructured.Unstructured{}

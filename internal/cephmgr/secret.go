@@ -52,6 +52,7 @@ func SecretLoader(r client.Reader, namespace string) func(context.Context) (Conf
 			Password:   strings.TrimRight(string(s.Data["password"]), "\r\n"),
 			CAPEM:      s.Data["ca.crt"],
 			ServerName: strings.TrimSpace(string(s.Data["serverName"])),
+			Version:    s.ResourceVersion,
 		}, nil
 	}
 }

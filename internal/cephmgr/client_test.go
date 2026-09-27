@@ -25,7 +25,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -36,10 +36,20 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
 
-// fakeDashboard serves the fixtures (anonymised, in the shape of the Ceph
-// dashboard API v1.0) over TLS and records every request.
+// fakeDashboard serves the fixtures (anonymised) the way Ceph v20.2.2's
+// dashboard does, including what the client must get right:
+//   - each endpoint's API version, checked on the Accept header like
+//     BaseController does (same major, client minor <= endpoint minor,
+//     415 otherwise): pool 1.0, osd 1.1, crush_rule 2.0, auth 1.0;
+//   - /api/osd paginated, limit=10 by default, limit=-1 for all, with
+//     X-Total-Count;
+//   - optionally a redirect on /api/auth, or a refused login.
+//
+// It records every request.
 type fakeDashboard struct {
 	t        *testing.T
 	srv      *httptest.Server
@@ -47,16 +57,44 @@ type fakeDashboard struct {
 	requests []string
 	expire   int // answer 401 to the next n authenticated GETs
 	tokens   int
+	logins   int
+	redirect bool // answer 307 on /api/auth
+	fail     map[string]int
+}
+
+var fakeVersions = map[string][2]int{"/api/pool": {1, 0}, "/api/osd": {1, 1}, "/api/crush_rule": {2, 0}, "/api/auth": {1, 0}}
+
+func versionOK(accept, path string) bool {
+	v, ok := fakeVersions[path]
+	if !ok {
+		return false
+	}
+	var major, minor int
+	if _, err := fmt.Sscanf(accept, "application/vnd.ceph.api.v%d.%d+json", &major, &minor); err != nil {
+		return false
+	}
+	return major == v[0] && minor <= v[1]
 }
 
 func newFake(t *testing.T) *fakeDashboard {
-	f := &fakeDashboard{t: t}
+	f := &fakeDashboard{t: t, fail: map[string]int{}}
 	files := map[string]string{PathPools: "pools.json", PathOSDs: "osds.json", PathCrushRules: "crush_rules.json"}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
 		f.mu.Unlock()
+		if !versionOK(r.Header.Get("Accept"), r.URL.Path) {
+			w.WriteHeader(http.StatusUnsupportedMediaType)
+			return
+		}
 		if r.Method == http.MethodPost && r.URL.Path == pathAuth {
+			f.mu.Lock()
+			f.logins++
+			f.mu.Unlock()
+			if f.redirect {
+				http.Redirect(w, r, "/api/auth-elsewhere", http.StatusTemporaryRedirect)
+				return
+			}
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["username"] != "frame-storage-reader" || body["password"] != "s3cret" {
@@ -81,6 +119,11 @@ func newFake(t *testing.T) *fakeDashboard {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		if code := f.fail[r.URL.Path]; code != 0 {
+			f.mu.Unlock()
+			w.WriteHeader(code)
+			return
+		}
 		f.mu.Unlock()
 		name, ok := files[r.URL.Path]
 		if r.Method != http.MethodGet || !ok {
@@ -90,6 +133,20 @@ func newFake(t *testing.T) *fakeDashboard {
 		b, err := os.ReadFile(filepath.Join("testdata", name))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if r.URL.Path == PathOSDs {
+			var all []json.RawMessage
+			_ = json.Unmarshal(b, &all)
+			limit := 10
+			if l := r.URL.Query().Get("limit"); l != "" {
+				_, _ = fmt.Sscanf(l, "%d", &limit)
+			}
+			page := all
+			if limit >= 0 && limit < len(all) {
+				page = all[:limit]
+			}
+			w.Header().Set("X-Total-Count", fmt.Sprint(len(all)))
+			b, _ = json.Marshal(page)
 		}
 		_, _ = w.Write(b)
 	}))
@@ -122,8 +179,13 @@ func TestReadPoolsOSDsAndRules(t *testing.T) {
 	if p.Name != "replicapool" || p.Size != 4 || p.MinSize != 2 || p.CrushRule != "20 hdd2_ssd2" {
 		t.Errorf("replicapool = %+v", p)
 	}
-	if len(snap.OSDs) != 7 {
-		t.Fatalf("OSDs with a CRUSH weight = %d, want 7 (osd.7 has none and must be absent, not 0)", len(snap.OSDs))
+	// 12 OSDs in the fixture, more than the dashboard's default page of 10:
+	// all must come, osd.7 excepted (not in the CRUSH map: absent, not 0).
+	if len(snap.OSDs) != 11 || len(snap.Errors) != 0 {
+		t.Fatalf("OSDs with a CRUSH weight = %d (errors %v), want 11", len(snap.OSDs), snap.Errors)
+	}
+	if last := snap.OSDs[10]; last.ID != 11 || last.CrushWeight != 0 {
+		t.Errorf("osd.11 = %+v, want weight 0 (a real 0)", last)
 	}
 	if snap.OSDs[0].CrushWeight != 2.0 || snap.OSDs[3].CrushWeight < 1.089 || snap.OSDs[3].DeviceClass != "hdd" {
 		t.Errorf("osds = %+v", snap.OSDs)
@@ -138,7 +200,7 @@ func TestOnlyTheAuthPostAndListedGETsAreSent(t *testing.T) {
 	if _, err := c.Read(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"POST /api/auth", "GET /api/pool", "GET /api/osd", "GET /api/crush_rule"}
+	want := []string{"POST /api/auth", "GET /api/pool", "GET /api/osd?limit=-1", "GET /api/crush_rule"}
 	if !slices.Equal(f.requests, want) {
 		t.Fatalf("requests %q, want %q", f.requests, want)
 	}
@@ -150,10 +212,64 @@ func TestOnlyTheAuthPostAndListedGETsAreSent(t *testing.T) {
 	}
 }
 
-// The reviewed list, written out a second time: a new path is a decision.
-func TestReadPathsAreTheReviewedList(t *testing.T) {
-	if !slices.Equal(readPaths, []string{"/api/pool", "/api/osd", "/api/crush_rule"}) {
-		t.Fatalf("readPaths = %q", readPaths)
+// The reviewed list, written out a second time: a new endpoint, query or
+// version is a decision.
+func TestReadEndpointsAreTheReviewedList(t *testing.T) {
+	want := []endpoint{
+		{Path: "/api/pool", Version: "1.0"},
+		{Path: "/api/osd", Query: "limit=-1", Version: "1.1"},
+		{Path: "/api/crush_rule", Version: "2.0"},
+	}
+	if !slices.Equal(readEndpoints, want) {
+		t.Fatalf("readEndpoints = %+v", readEndpoints)
+	}
+}
+
+// One endpoint failing (here the dashboard rejects the rule list) must not
+// discard the pools and OSDs read alongside.
+func TestOneEndpointFailingKeepsTheOthers(t *testing.T) {
+	f := newFake(t)
+	f.fail[PathCrushRules] = http.StatusUnsupportedMediaType
+	c, _ := New(f.cfg())
+	snap, err := c.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Pools) != 10 || len(snap.OSDs) != 11 || snap.Errors[PathCrushRules] == nil {
+		t.Fatalf("pools %d, osds %d, errors %v", len(snap.Pools), len(snap.OSDs), snap.Errors)
+	}
+	if snap.Pools[1].CrushRule != "hdd2_ssd2" {
+		t.Errorf("rule without the rule list = %q, want the name alone", snap.Pools[1].CrushRule)
+	}
+}
+
+// A redirect on /api/auth would re-send the password to wherever it points.
+func TestLoginRedirectIsNotFollowed(t *testing.T) {
+	f := newFake(t)
+	f.redirect = true
+	c, _ := New(f.cfg())
+	if _, err := c.Read(context.Background()); err == nil || !strings.Contains(err.Error(), "HTTP 307") {
+		t.Fatalf("err %v, want the 307 surfaced", err)
+	}
+	for _, r := range f.requests {
+		if strings.Contains(r, "auth-elsewhere") {
+			t.Fatalf("the redirect was followed: %q", f.requests)
+		}
+	}
+}
+
+// Error text reaches status.message: never the Secret's credentials or query.
+func TestURLErrorsNameSchemeAndHostOnly(t *testing.T) {
+	for _, raw := range []string{"http://Xuser:Xpw@dash:7000/?Xtok=Xabc#Xfrag", "https://Xuser:Xpw@dash:8443/Xpath?Xtok=Xabc#Xfrag"} {
+		_, err := New(Config{BaseURL: raw, Username: "u", Password: "p", CAPEM: newFake(t).caPEM()})
+		if err == nil {
+			t.Fatalf("%s accepted", raw)
+		}
+		for _, leak := range []string{"Xuser", "Xpw", "Xtok", "Xabc", "Xfrag", "Xpath"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("%q leaks %q", err.Error(), leak)
+			}
+		}
 	}
 }
 
@@ -204,7 +320,7 @@ func TestExpiredTokenIsRenewedOnce(t *testing.T) {
 		t.Errorf("logins = %d, want 2", f.tokens)
 	}
 	f.expire = 10
-	if _, err := c.Read(context.Background()); err == nil {
+	if snap, err := c.Read(context.Background()); err == nil && len(snap.Errors) == 0 {
 		t.Error("a persistent 401 did not surface")
 	}
 }
@@ -230,6 +346,13 @@ func otherCA(t *testing.T) []byte {
 
 // ── Reader ─────────────────────────────────────────────────────────────────
 
+// place calls Placement and waits for the refresh it may have started.
+func place(r *Reader) *framev1beta1.CephPlacement {
+	r.Placement(context.Background())
+	r.wait()
+	return r.Placement(context.Background())
+}
+
 func TestReaderStates(t *testing.T) {
 	f := newFake(t)
 	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)
@@ -238,14 +361,14 @@ func TestReaderStates(t *testing.T) {
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, loadErr }, Now: func() time.Time { return now }}
 
 	loadErr = ErrNotConfigured
-	if p := r.Placement(context.Background()); p.State != "NotConfigured" || len(p.Pools) != 0 {
+	if p := place(r); p.State != "NotConfigured" || len(p.Pools) != 0 {
 		t.Fatalf("no Secret: %+v", p)
 	}
 
 	loadErr = nil
 	now = now.Add(DefaultInterval)
-	p := r.Placement(context.Background())
-	if p.State != "Collected" || len(p.Pools) != 10 || len(p.OSDs) != 7 || p.OSDs[3].CrushWeight != "1.0900" || p.Pools[0].Name != ".mgr" {
+	p := place(r)
+	if p.State != "Collected" || len(p.Pools) != 10 || len(p.OSDs) != 11 || p.OSDs[3].CrushWeight != "1.0900" || p.Pools[0].Name != ".mgr" || p.Pools[1].CrushRule != "20 hdd2_ssd2" {
 		t.Fatalf("collected: %+v", p)
 	}
 	collectedAt := p.CollectedAt
@@ -253,19 +376,84 @@ func TestReaderStates(t *testing.T) {
 	// Within the interval: no new read.
 	n := len(f.requests)
 	now = now.Add(time.Minute)
-	r.Placement(context.Background())
+	place(r)
 	if len(f.requests) != n {
 		t.Errorf("read again within the interval: %q", f.requests[n:])
 	}
 
-	// A failed read keeps the last lists, dated, and says why.
-	cfg.Password = "wrong"
+	// A partial failure keeps what was read and says what was not.
+	f.fail[PathOSDs] = http.StatusInternalServerError
 	now = now.Add(DefaultInterval)
-	p = r.Placement(context.Background())
-	if p.State != "Error" || len(p.OSDs) != 7 || !p.CollectedAt.Equal(collectedAt) || !strings.Contains(p.Message, "login") {
+	p = place(r)
+	if p.State != "Error" || !strings.Contains(p.Message, "partial read") || len(p.OSDs) != 11 || len(p.Pools) != 10 {
+		t.Fatalf("partial: state %q, message %q, %d OSDs", p.State, p.Message, len(p.OSDs))
+	}
+	collectedAt = p.CollectedAt // the pools were fresh
+	delete(f.fail, PathOSDs)
+
+	// A transport failure keeps the last lists, dated.
+	cfg.ServerName = "wrong.example"
+	now = now.Add(DefaultInterval)
+	p = place(r)
+	if p.State != "Error" || len(p.OSDs) != 11 || !p.CollectedAt.Equal(collectedAt) {
 		t.Fatalf("failed read: state %q, %d OSDs, collectedAt %v, message %q", p.State, len(p.OSDs), p.CollectedAt, p.Message)
 	}
-	if errors.Is(nil, ErrNotConfigured) {
-		t.Fatal("unreachable")
+}
+
+// The reconcile asking never waits on the network.
+func TestPlacementNeverBlocks(t *testing.T) {
+	release := make(chan struct{})
+	r := &Reader{Load: func(context.Context) (Config, error) { <-release; return Config{}, ErrNotConfigured }}
+	start := time.Now()
+	if p := r.Placement(context.Background()); p != nil {
+		t.Errorf("first call returned %+v before any read completed", p)
+	}
+	r.Placement(context.Background())
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("Placement blocked for %s", time.Since(start))
+	}
+	close(release)
+	r.wait()
+	if p := r.Placement(context.Background()); p == nil || p.State != "NotConfigured" {
+		t.Fatalf("after the read: %+v", p)
+	}
+}
+
+// A refused account is retried with a doubling backoff, not every interval
+// (the dashboard locks an account after repeated failures), and at once
+// when the Secret changes.
+func TestRefusedLoginBacksOff(t *testing.T) {
+	f := newFake(t)
+	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)
+	cfg := f.cfg()
+	cfg.Password, cfg.Version = "wrong", "1"
+	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Now: func() time.Time { return now }}
+
+	if p := place(r); p.State != "AuthRefused" || f.logins != 1 {
+		t.Fatalf("state %q after %d login(s)", p.State, f.logins)
+	}
+	// Every interval for an hour: at most the backoff's attempts (5, 10, 20 min…).
+	for i := 0; i < 12; i++ {
+		now = now.Add(DefaultInterval)
+		place(r)
+	}
+	// Attempts at 0, 5, 15 and 35 min (5-min start, doubling).
+	if f.logins > 4 {
+		t.Fatalf("%d logins in one hour with a refused account", f.logins)
+	}
+	// Six hours later the backoff has grown past an hour.
+	for i := 0; i < 72; i++ {
+		now = now.Add(DefaultInterval)
+		place(r)
+	}
+	if f.logins > 7 {
+		t.Fatalf("%d logins in 7 hours", f.logins)
+	}
+	// A new Secret is tried at once.
+	before := f.logins
+	cfg.Password, cfg.Version = "s3cret", "2"
+	now = now.Add(DefaultInterval)
+	if p := place(r); p.State != "Collected" || f.logins != before+1 {
+		t.Fatalf("after the Secret changed: state %q, logins %d → %d", p.State, before, f.logins)
 	}
 }

@@ -85,6 +85,22 @@ If a step fails, the screen shows why: `Error` with the message, and it
 keeps the last good read with its date. The manager needs no new RBAC:
 it already reads Secrets.
 
+## Usable capacity: what the figure is, and what it ignores
+
+The usable capacity of a `ceph-rbd` FrameStorage entry is the cluster's
+raw bytes divided by the pool's replicated size. This has two limits:
+
+- The raw figure counts every device class. A pool whose CRUSH rule
+  selects some classes only (or, like `hdd2_ssd2`, a fixed number of
+  replicas per class) can use part of it. When classes differ in size,
+  usable is overstated.
+- An erasure-coded pool has no replicated size. Its usable stays
+  "unknown" and is not guessed.
+
+Ceph's own per-pool figure is `max_avail`. It takes the rule and the
+fullest OSD into account, and the Pools table shows it (from Prometheus).
+Read that column before sizing anything.
+
 To remove access: `ceph dashboard ac-user-delete frame-storage-reader`, then
 `kubectl -n frame-system delete secret frame-ceph-dashboard`. The state goes
 back to `NotConfigured`.

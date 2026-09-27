@@ -51,6 +51,22 @@ func TestReconcilePlacementKeepsKnownListsOnAFailedRead(t *testing.T) {
 	}
 }
 
+// A refused account keeps the known lists too; a removed account does not.
+func TestReconcilePlacementAuthRefusedKeepsNotConfiguredClears(t *testing.T) {
+	at := metav1.Now()
+	prev := &framev1beta1.CephPlacement{State: "Collected", CollectedAt: &at, OSDs: []framev1beta1.CephOSDWeight{{ID: 3, CrushWeight: "1.0900"}}}
+	for state, keep := range map[string]bool{"AuthRefused": true, "NotConfigured": false} {
+		r := &FrameStorageReconciler{CephPlacement: func(context.Context) *framev1beta1.CephPlacement {
+			return &framev1beta1.CephPlacement{State: state}
+		}}
+		fs := placementEntry("ceph-rbd", prev.DeepCopy())
+		r.reconcilePlacement(context.Background(), fs)
+		if got := len(fs.Status.CephPlacement.OSDs) == 1; got != keep {
+			t.Errorf("%s: lists kept = %v, want %v", state, got, keep)
+		}
+	}
+}
+
 func TestReconcilePlacementOnlyForCephEntries(t *testing.T) {
 	called := false
 	r := &FrameStorageReconciler{CephPlacement: func(context.Context) *framev1beta1.CephPlacement {

@@ -23,8 +23,9 @@ limitations under the License.
 //
 //   - one POST, to /api/auth, to exchange the dedicated account's password
 //     for a token — the dashboard has no other way to authenticate;
-//   - GETs on the paths of readPaths, exactly as written (no parameter from
-//     the cluster, the CR or the caller ever reaches a URL).
+//   - GETs on the endpoints of readEndpoints, path, query and API version
+//     exactly as written (no parameter from the cluster, the CR or the
+//     caller ever reaches a URL).
 //
 // The account is meant to hold a custom role with read on the `pool` and
 // `osd` scopes only (see docs/storage-mgr-account.md); a GET outside those
@@ -53,7 +54,7 @@ import (
 	"time"
 )
 
-// Paths the client may GET, verbatim.
+// Paths the client may GET.
 const (
 	PathPools      = "/api/pool"
 	PathOSDs       = "/api/osd"
@@ -61,10 +62,39 @@ const (
 	pathAuth       = "/api/auth"
 )
 
-var readPaths = []string{PathPools, PathOSDs, PathCrushRules}
+// endpoint is one GET the client may send: path, fixed query, and the API
+// version the dashboard declares for it. The dashboard answers 415 when the
+// Accept header's major version differs from the endpoint's, so each
+// version is the one declared in the Ceph v20.2.2 source
+// (src/pybind/mgr/dashboard/controllers/):
+//
+//   - pool.py       Pool.list        — default version, 1.0;
+//   - osd.py        Osd.list         — MethodMap(version=APIVersion(1, 1)),
+//     paginated, `limit: int = 10` by default: `limit=-1` asks for all;
+//   - crush_rule.py CrushRule.list   — MethodMap(version=APIVersion(2, 0)).
+type endpoint struct {
+	Path    string
+	Query   string
+	Version string // "major.minor"
+}
 
-// acceptV1 pins the dashboard API version the parsers are written against.
-const acceptV1 = "application/vnd.ceph.api.v1.0+json"
+var readEndpoints = []endpoint{
+	{Path: PathPools, Version: "1.0"},
+	{Path: PathOSDs, Query: "limit=-1", Version: "1.1"},
+	{Path: PathCrushRules, Version: "2.0"},
+}
+
+// authVersion is /api/auth's (auth.py: default version, 1.0).
+const authVersion = "1.0"
+
+func acceptFor(version string) string {
+	return "application/vnd.ceph.api.v" + version + "+json"
+}
+
+// ErrAuthRefused is a refused login (HTTP 401 on /api/auth): a wrong or
+// disabled account. The dashboard locks an account after repeated
+// failures, so the Reader backs off rather than retrying on its schedule.
+var ErrAuthRefused = errors.New("dashboard login refused")
 
 // maxBody bounds a response read: pool and OSD lists of a large cluster
 // are well under this, and an endless body must not exhaust the manager.
@@ -78,6 +108,9 @@ type Config struct {
 	CAPEM      []byte // required: the dashboard's certificate or its CA
 	ServerName string // name to verify the certificate against
 	Timeout    time.Duration
+	// Version identifies the Secret revision (its resourceVersion): a
+	// changed account ends an authentication backoff at once.
+	Version string
 }
 
 // Client talks to one dashboard.
@@ -95,13 +128,17 @@ type Client struct {
 func New(cfg Config) (*Client, error) {
 	u, err := url.Parse(cfg.BaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("dashboard URL: %w", err)
+		// url.Parse's own error quotes the whole string: not reproduced.
+		return nil, errors.New("dashboard URL: not a valid URL")
 	}
+	// Error messages end up in status.message: they name scheme://host
+	// only, never a userinfo, path, query or fragment the Secret may hold.
+	shown := (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 	if u.Scheme != "https" {
-		return nil, fmt.Errorf("dashboard URL %q is not https: the password would travel in clear; enable spec.dashboard.ssl on the CephCluster", cfg.BaseURL)
+		return nil, fmt.Errorf("dashboard URL %s is not https: the password would travel in clear; enable spec.dashboard.ssl on the CephCluster", shown)
 	}
-	if u.Path != "" && u.Path != "/" {
-		return nil, fmt.Errorf("dashboard URL %q carries a path; give scheme://host:port only", cfg.BaseURL)
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("dashboard URL %s: give scheme://host:port only (no credentials, path, query or fragment)", shown)
 	}
 	if cfg.Username == "" || cfg.Password == "" {
 		return nil, errors.New("dashboard account: username and password are required")
@@ -142,13 +179,18 @@ func (c *Client) login(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", acceptV1)
+	req.Header.Set("Accept", acceptFor(authVersion))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("dashboard login: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return ErrAuthRefused
+	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		// A 3xx lands here too: redirects are never followed (the POST
+		// carries the password).
 		return fmt.Errorf("dashboard login: HTTP %d", resp.StatusCode)
 	}
 	var out struct {
@@ -163,12 +205,14 @@ func (c *Client) login(ctx context.Context) error {
 	return nil
 }
 
-// get fetches one listed path, logging in first if needed and once more on
-// a 401 (an expired token).
+// get fetches one listed endpoint, logging in first if needed and once more
+// on a 401 (an expired token).
 func (c *Client) get(ctx context.Context, path string, into any) error {
-	if !slices.Contains(readPaths, path) {
+	i := slices.IndexFunc(readEndpoints, func(e endpoint) bool { return e.Path == path })
+	if i < 0 {
 		return fmt.Errorf("refusing GET %q: not on the dashboard read list", path)
 	}
+	ep := readEndpoints[i]
 	for attempt := 0; attempt < 2; attempt++ {
 		c.mu.Lock()
 		tok := c.token
@@ -181,11 +225,13 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 			tok = c.token
 			c.mu.Unlock()
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(path), nil)
+		u := *c.base
+		u.Path, u.RawQuery = ep.Path, ep.Query
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Accept", acceptV1)
+		req.Header.Set("Accept", acceptFor(ep.Version))
 		req.Header.Set("Authorization", "Bearer "+tok)
 		resp, err := c.http.Do(req)
 		if err != nil {
@@ -229,10 +275,13 @@ type OSD struct {
 	DeviceClass string
 }
 
-// Snapshot is one read of the three lists.
+// Snapshot is one read of the three lists. A list whose GET failed is nil
+// and its error is in Errors: one endpoint failing never discards the
+// others.
 type Snapshot struct {
-	Pools []Pool
-	OSDs  []OSD
+	Pools  []Pool
+	OSDs   []OSD
+	Errors map[string]error // path → why it could not be read
 }
 
 type rawPool struct {
@@ -256,39 +305,69 @@ type rawRule struct {
 	RuleName string `json:"rule_name"`
 }
 
-// Read fetches pools, OSDs and CRUSH rules. The dashboard names a pool's
-// rule in /api/pool; an older one gives its id; either way it is rendered
-// "<id> <name>" through /api/crush_rule.
+// Read fetches pools, OSDs and CRUSH rules, each on its own: a failure is
+// recorded in Snapshot.Errors and the other lists are still returned. The
+// error return is reserved for a failed login (ErrAuthRefused when the
+// account is refused), which makes every GET pointless. Pool rules are rendered "<id> <name>" when the
+// rule list was read, by name alone otherwise.
 func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
+	// Log in once up front: a login that fails fails every GET the same
+	// way, and is reported as such rather than three times.
+	c.mu.Lock()
+	tok := c.token
+	c.mu.Unlock()
+	if tok == "" {
+		if err := c.login(ctx); err != nil {
+			return nil, err
+		}
+	}
+	out := &Snapshot{Errors: map[string]error{}}
 	var pools []rawPool
 	if err := c.get(ctx, PathPools, &pools); err != nil {
-		return nil, err
+		if errors.Is(err, ErrAuthRefused) {
+			return nil, err
+		}
+		out.Errors[PathPools] = err
+		pools = nil
 	}
 	var osds []rawOSD
 	if err := c.get(ctx, PathOSDs, &osds); err != nil {
-		return nil, err
+		if errors.Is(err, ErrAuthRefused) {
+			return nil, err
+		}
+		out.Errors[PathOSDs] = err
+		osds = nil
 	}
 	var rules []rawRule
 	if err := c.get(ctx, PathCrushRules, &rules); err != nil {
-		return nil, err
+		if errors.Is(err, ErrAuthRefused) {
+			return nil, err
+		}
+		out.Errors[PathCrushRules] = err
+		rules = nil
 	}
 	names := map[int32]string{}
 	for _, r := range rules {
 		names[r.RuleID] = r.RuleName
 	}
-	out := &Snapshot{}
-	for _, p := range pools {
-		out.Pools = append(out.Pools, Pool{Name: p.PoolName, Size: p.Size, MinSize: p.MinSize, CrushRule: ruleName(p.CrushRule, names)})
+	if _, failed := out.Errors[PathPools]; !failed {
+		out.Pools = []Pool{}
+		for _, p := range pools {
+			out.Pools = append(out.Pools, Pool{Name: p.PoolName, Size: p.Size, MinSize: p.MinSize, CrushRule: ruleName(p.CrushRule, names)})
+		}
 	}
-	for _, o := range osds {
-		if o.Tree.CrushWeight == nil {
-			continue // not in the CRUSH map: no weight to report, rather than 0
+	if _, failed := out.Errors[PathOSDs]; !failed {
+		out.OSDs = []OSD{}
+		for _, o := range osds {
+			if o.Tree.CrushWeight == nil {
+				continue // not in the CRUSH map: no weight to report, rather than 0
+			}
+			id := o.OSD
+			if id == 0 {
+				id = o.ID
+			}
+			out.OSDs = append(out.OSDs, OSD{ID: id, CrushWeight: *o.Tree.CrushWeight, DeviceClass: o.Tree.DeviceClass})
 		}
-		id := o.OSD
-		if id == 0 {
-			id = o.ID
-		}
-		out.OSDs = append(out.OSDs, OSD{ID: id, CrushWeight: *o.Tree.CrushWeight, DeviceClass: o.Tree.DeviceClass})
 	}
 	return out, nil
 }

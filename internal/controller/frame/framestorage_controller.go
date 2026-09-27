@@ -217,6 +217,12 @@ func (r *FrameStorageReconciler) countClaims(ctx context.Context, className stri
 // exceeding usable, which is the raw/usable confusion this lot exists to
 // remove, restated in a shorter sentence.
 //
+// Usable is raw / replication over the whole cluster's raw bytes: it
+// ignores the device classes the pool's CRUSH rule selects, and an
+// erasure-coded pool's replication is unknown (see readCephCapacity in
+// cmd/main.go). The pool's max_avail, on the console's Pools table, is
+// Ceph's own figure.
+//
 // When the replication factor is not known (zero, negative, or simply not
 // resolvable for this entry's class), Usable AND Used are both left empty
 // -- an undivided Used beside a missing Usable is the same lie. Raw, which
@@ -247,12 +253,15 @@ func (r *FrameStorageReconciler) reconcileCapacity(ctx context.Context, fs *fram
 	fs.Status.Capacity = capacity
 }
 
-// reconcilePlacement sets status.cephPlacement on ceph-* entries. A read
-// that did not collect (Error, or NotConfigured after a Secret was removed)
-// and carries no lists keeps the lists already in status — typically after
-// a manager restart, when the reader has no last good read in memory — so
-// an outage never blanks weights that were known, and the state and
-// message still say the read failed.
+// reconcilePlacement sets status.cephPlacement on ceph-* entries. A failed
+// read (Error or AuthRefused) that carries no lists keeps the lists already
+// in status — typically after a manager restart, when the reader has no
+// last good read in memory — so an outage never blanks weights that were
+// known, and the state and message still say the read failed.
+// NotConfigured does clear them: the account was removed on purpose, and
+// figures nobody can refresh any more are not kept on screen. A nil result
+// (no read has completed yet; the reader never blocks) leaves the status
+// as it is.
 func (r *FrameStorageReconciler) reconcilePlacement(ctx context.Context, fs *framev1beta1.FrameStorage) {
 	if !strings.HasPrefix(fs.Spec.Type, "ceph-") || r.CephPlacement == nil {
 		return
@@ -261,7 +270,8 @@ func (r *FrameStorageReconciler) reconcilePlacement(ctx context.Context, fs *fra
 	if p == nil {
 		return
 	}
-	if prev := fs.Status.CephPlacement; prev != nil && p.State == "Error" && len(p.Pools) == 0 && len(p.OSDs) == 0 {
+	failed := p.State == "Error" || p.State == "AuthRefused"
+	if prev := fs.Status.CephPlacement; prev != nil && failed && len(p.Pools) == 0 && len(p.OSDs) == 0 {
 		p.Pools, p.OSDs, p.CollectedAt = prev.Pools, prev.OSDs, prev.CollectedAt
 	}
 	fs.Status.CephPlacement = p

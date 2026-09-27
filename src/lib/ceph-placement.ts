@@ -9,7 +9,7 @@
 import type { StorageCapacity } from './storage'
 
 export interface CephPlacement {
-  state: 'Collected' | 'NotConfigured' | 'Error'
+  state: 'Collected' | 'NotConfigured' | 'Error' | 'AuthRefused'
   message?: string
   collectedAt?: string
   pools?: Array<{ name: string; size?: number; minSize?: number; crushRule?: string }>
@@ -62,6 +62,8 @@ export function placementSourceLine(p: CephPlacement | null): string {
       return `min_size, CRUSH rule and CRUSH weight: ceph-mgr dashboard, read ${p.collectedAt ?? '?'}`
     case 'NotConfigured':
       return 'min_size, CRUSH rule and CRUSH weight: not collected (no read-only dashboard account configured)'
+    case 'AuthRefused':
+      return `min_size, CRUSH rule and CRUSH weight: the dashboard refused the account — ${p.message || 'retried later'}${p.collectedAt ? `; showing the read of ${p.collectedAt}` : ''}`
     default:
       return `min_size, CRUSH rule and CRUSH weight: last read failed — ${p.message || 'no reason'}${p.collectedAt ? `; showing the read of ${p.collectedAt}` : ''}`
   }

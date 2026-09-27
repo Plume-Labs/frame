@@ -59,6 +59,9 @@ describe('placement ceph-mgr', () => {
   it('dit d-où viennent les chiffres, ou pourquoi ils manquent', () => {
     expect(placementSourceLine(null)).toContain('not collected (no ceph FrameStorage entry)')
     expect(placementSourceLine({ state: 'NotConfigured' })).toContain('no read-only dashboard account')
+    expect(placementSourceLine({ state: 'AuthRefused', message: 'next attempt 22:05', collectedAt: 'T' })).toBe(
+      'min_size, CRUSH rule and CRUSH weight: the dashboard refused the account — next attempt 22:05; showing the read of T',
+    )
     expect(placementSourceLine({ state: 'Error', message: 'dashboard login: HTTP 401', collectedAt: 'T' })).toBe(
       'min_size, CRUSH rule and CRUSH weight: last read failed — dashboard login: HTTP 401; showing the read of T',
     )

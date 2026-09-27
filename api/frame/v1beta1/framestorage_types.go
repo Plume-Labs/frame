@@ -125,10 +125,13 @@ type FrameStorageStatus struct {
 // CephPlacement is one read of the ceph-mgr dashboard API.
 type CephPlacement struct {
 	// State is Collected, NotConfigured (no dashboard account Secret: the
-	// normal state until one is created) or Error (the last read failed;
-	// Message says why and the lists are the last good read, dated by
-	// CollectedAt — never zeroed, which would read as weight 0).
-	// +kubebuilder:validation:Enum=Collected;NotConfigured;Error
+	// normal state until one is created), Error (the last read failed, in
+	// whole or in part; Message says why and a list that could not be read
+	// is the last good one, dated by CollectedAt — never zeroed, which
+	// would read as weight 0) or AuthRefused (the dashboard refused the
+	// account; logins are spaced out — the dashboard locks an account after
+	// repeated failures — and retried at once when the Secret changes).
+	// +kubebuilder:validation:Enum=Collected;NotConfigured;Error;AuthRefused
 	State string `json:"state"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
