@@ -164,13 +164,23 @@ func parseZpoolStatus(out string) []zpoolStatus {
 			if len(f) == 0 || (f[0] == "NAME" && len(f) > 1 && f[1] == "STATE") {
 				continue
 			}
-			// Split name | state | counters | note on the state word.
+			// Split name | state | counters | note on the state word. The
+			// state is the rightmost state word followed by three counters
+			// (a name may itself contain "ONLINE"); a row without counters
+			// (a spare, AVAIL) ends with its state.
 			si := -1
-			for k := 1; k < len(f); k++ {
+			for k := len(f) - 4; k >= 1 && si < 0; k-- {
 				if zpoolStates[f[k]] {
-					si = k
-					break
+					_, ok1 := zpoolCounter(f[k+1])
+					_, ok2 := zpoolCounter(f[k+2])
+					_, ok3 := zpoolCounter(f[k+3])
+					if ok1 && ok2 && ok3 {
+						si = k
+					}
 				}
+			}
+			if si < 0 && len(f) > 1 && zpoolStates[f[len(f)-1]] {
+				si = len(f) - 1
 			}
 			name := strings.Join(f, " ")
 			var rest []string

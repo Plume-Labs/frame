@@ -56,8 +56,9 @@ import (
 //  1. the host's `timeout --foreground -k 2 10` sends TERM at 10 s and KILL
 //     2 s later, to the command itself;
 //  2. the agent kills the whole process group at its hard deadline if the
-//     host side has not ended, and cmd.WaitDelay stops it waiting on a pipe
-//     a surviving grandchild still holds;
+//     host side has not ended, and again unconditionally once the command
+//     returns (a grandchild that ignored TERM does not outlive it), and
+//     cmd.WaitDelay stops it waiting on a pipe a surviving grandchild holds;
 //  3. a command whose previous run is still alive on the host (a process
 //     in D state survives SIGKILL) is not started again: the stack is
 //     published "busy" with its last complete read;
@@ -86,11 +87,13 @@ var storageCommands = [][]string{
 	{"pvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "pv_name,vg_name,pv_size,pv_free,pv_attr"},
 	{"vgs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "vg_name,vg_size,vg_free,pv_count,lv_count,vg_attr"},
 	{"lvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "lv_name,vg_name,lv_size,lv_attr,segtype,data_percent"},
+	timeoutProbe,
 }
 
 // timeoutProbe tells "the host has no `timeout`" from "the host has no
-// zpool": both surface as exit 127 through `timeout`. Run bare (not under
-// timeout), only after a 127.
+// zpool": both surface as exit 127 through `timeout`. It is on the list like
+// any other command and runs the same way — `timeout … timeout --version`
+// still answers 127 when timeout itself is missing — only after a 127.
 var timeoutProbe = []string{"timeout", "--version"}
 
 var (
@@ -111,13 +114,20 @@ type StorageExecutor interface {
 	Exec(argv []string) (stdout, stderr string, err error)
 }
 
-// runStorage runs argv — which must be, element for element, one of
-// storageCommands — under the host's timeout.
-func runStorage(x StorageExecutor, argv []string) (string, error) {
+// execListed runs argv — which must be, element for element, one of
+// storageCommands — under the host's timeout. The only way anything here
+// reaches the executor.
+func execListed(x StorageExecutor, argv []string) (string, string, error) {
 	if !slices.ContainsFunc(storageCommands, func(c []string) bool { return slices.Equal(c, argv) }) {
-		return "", fmt.Errorf("refusing %q: not on the local-storage command list", strings.Join(argv, " "))
+		return "", "", fmt.Errorf("refusing %q: not on the local-storage command list", strings.Join(argv, " "))
 	}
-	stdout, stderr, err := x.Exec(append(slices.Clone(timeoutPrefix), argv...))
+	return x.Exec(append(slices.Clone(timeoutPrefix), argv...))
+}
+
+// runStorage runs a listed command and turns its failure into what the
+// stack reports: absent tool, missing timeout, timed out, busy, or error.
+func runStorage(x StorageExecutor, argv []string) (string, error) {
+	stdout, stderr, err := execListed(x, argv)
 	if err == nil {
 		return stdout, nil
 	}
@@ -126,7 +136,7 @@ func runStorage(x StorageExecutor, argv []string) (string, error) {
 	}
 	switch exitCode(err) {
 	case 127: // timeout could not find the command — or timeout itself is missing
-		if _, _, perr := x.Exec(slices.Clone(timeoutProbe)); exitCode(perr) == 127 {
+		if _, _, perr := execListed(x, timeoutProbe); exitCode(perr) == 127 {
 			return "", errTimeoutAbsent
 		}
 		return "", errToolAbsent

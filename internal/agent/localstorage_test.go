@@ -56,6 +56,7 @@ var reviewedStorageCommands = [][]string{
 	{"pvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "pv_name,vg_name,pv_size,pv_free,pv_attr"},
 	{"vgs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "vg_name,vg_size,vg_free,pv_count,lv_count,vg_attr"},
 	{"lvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "lv_name,vg_name,lv_size,lv_attr,segtype,data_percent"},
+	{"timeout", "--version"},
 }
 
 func TestStorageCommandsAreExactlyTheReviewedList(t *testing.T) {
@@ -76,6 +77,7 @@ func TestStorageCommandsCarryNoWritingVerb(t *testing.T) {
 		"zpool": {"list", "status"},
 		"zfs":   {"list"},
 		"pvs":   nil, "vgs": nil, "lvs": nil,
+		"timeout": {"--version"},
 	}
 	writing := []string{
 		"create", "destroy", "set", "import", "export", "scrub", "clear", "online", "offline",
@@ -113,7 +115,10 @@ type recordingRunner struct {
 
 func (r *recordingRunner) Exec(argv []string) (string, string, error) {
 	r.calls = append(r.calls, argv)
-	if slices.Equal(argv, timeoutProbe) {
+	// The probe as it must reach the executor: listed, and under the same
+	// timeout prefix as everything else (literal, not the package variables,
+	// so a change to either is seen here).
+	if slices.Equal(argv, []string{"timeout", "--foreground", "-k", "2", "10", "timeout", "--version"}) {
 		return "timeout (GNU coreutils) 9.7", "", r.probe
 	}
 	cmd := argv[len(timeoutPrefix):]
@@ -458,5 +463,31 @@ func TestMDMembersPastTheCapAreCounted(t *testing.T) {
 	a := parseMdstat(b.String())
 	if len(a[0].Members) != maxMDMembers || a[0].MembersOmitted != 8 {
 		t.Fatalf("members %d, omitted %d", len(a[0].Members), a[0].MembersOmitted)
+	}
+}
+
+// A leaf whose name holds a state word: the row's state is the rightmost
+// state word followed by three counters, not the first one met.
+func TestZpoolRowStateIsTakenFromTheRight(t *testing.T) {
+	out := "  pool: tank\n state: DEGRADED\nconfig:\n\n" +
+		"\tNAME                                            STATE     READ WRITE CKSUM\n" +
+		"\ttank                                            DEGRADED     0     0     0\n" +
+		"\t  /dev/disk/by-id/usb-My ONLINE Disk-0:0        DEGRADED     0     0     3  too many errors\n" +
+		"\t  /dev/disk/by-id/ata-HDD_SER-T9                 AVAIL\n" +
+		// Worst case: the name itself reads "state + three counters".
+		"\t  /dev/disk/by-id/usb-Odd ONLINE 1 2 3 x         FAULTED      4     5     6\n" +
+		"\nerrors: No known data errors\n"
+	v := parseZpoolStatus(out)[0].vdevs
+	if len(v) != 3 {
+		t.Fatalf("vdevs = %+v", v)
+	}
+	if v[2].Name != "/dev/disk/by-id/usb-Odd ONLINE 1 2 3 x" || v[2].State != "FAULTED" || v[2].ReadErrors != 4 {
+		t.Errorf("row whose name reads like a state = %+v", v[2])
+	}
+	if v[0].Name != "/dev/disk/by-id/usb-My ONLINE Disk-0:0" || v[0].State != "DEGRADED" || v[0].ChecksumErrors != 3 || v[0].Note != "too many errors" {
+		t.Errorf("row = %+v", v[0])
+	}
+	if v[1].State != "AVAIL" || v[1].Name != "/dev/disk/by-id/ata-HDD_SER-T9" {
+		t.Errorf("spare row = %+v", v[1])
 	}
 }

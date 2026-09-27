@@ -466,7 +466,9 @@ reads `/proc/mdstat` and `/sys/module/zfs` from its own view, and runs the
 host's `zpool`, `zfs`, `pvs`, `vgs` and `lvs` (listing verbs only, fixed
 argv, under the host's `timeout --foreground -k 2 10`) through the nsenter
 it already uses. A command that outlives that (a `zpool status` blocked on
-a suspended pool) is killed as a process group at 15 s and never started
+a suspended pool) is killed as a process group at 15 s; the group is
+killed again as soon as the command returns, so a child that ignored the
+host timeout's TERM does not live on; and the command is never started
 again while any of its processes is alive: the stack is then published
 `busy` with its last complete read and its `readAt`. The collection runs in
 the background, so it never holds the agent's cycle; LVM is re-read every

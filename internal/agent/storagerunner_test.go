@@ -28,35 +28,27 @@ import (
 )
 
 // The audit's proof, replayed with real processes (no nsenter: Prefix is
-// empty, the host is this machine). A command that ignores SIGTERM and
-// leaves a grandchild holding stdout — what a zpool blocked on a suspended
-// pool looks like from here — must:
-//   - be KILLed by the host-side `timeout -k` (exit 137), not by waiting;
-//   - return shortly after, not when the grandchild finally exits (Wait
-//     must not block on the pipe it holds: WaitDelay);
-//   - not be started again while any process of its group is alive.
-func TestHostStorageExecutorBoundsACommandThatWillNotDie(t *testing.T) {
+// empty, the host is this machine). A child and a grandchild that both
+// ignore SIGTERM, the grandchild holding stdout — what a stuck storage
+// command looks like from here — must:
+//   - be KILLed by the host-side `timeout -k` (exit 137), not waited for;
+//   - return shortly after, not when the grandchild would end (WaitDelay);
+//   - leave nothing behind: the grandchild, which `timeout --foreground`
+//     never signals, is killed with the group when Exec returns.
+func TestHostStorageExecutorLeavesNothingBehind(t *testing.T) {
 	if _, err := exec.LookPath("timeout"); err != nil {
 		t.Skip("no coreutils timeout on this machine")
 	}
 	x := &HostStorageExecutor{HardDeadline: 6 * time.Second, WaitDelay: 500 * time.Millisecond}
-	// sh ignores TERM; its child sleep 8 inherits the ignore and holds stdout.
-	argv := []string{"timeout", "--foreground", "-k", "1", "1", "sh", "-c", `trap "" TERM; sleep 8; echo late`}
-	var pgid atomic.Int64
-	t.Cleanup(func() {
-		if p := pgid.Load(); p > 0 {
-			_ = syscall.Kill(-int(p), syscall.SIGKILL)
-		}
-	})
+	// sh ignores TERM; its child sleep inherits the ignore and holds stdout.
+	argv := []string{"timeout", "--foreground", "-k", "1", "1", "sh", "-c", `trap "" TERM; sleep 8 & wait`}
 
+	var pgid int
+	x.onStart = func(p int) { pgid = p }
 	start := time.Now()
 	_, _, err := x.Exec(argv)
 	elapsed := time.Since(start)
-	x.mu.Lock()
-	for _, p := range x.inflight {
-		pgid.Store(int64(p))
-	}
-	x.mu.Unlock()
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
 
 	if code := exitCode(err); code != 137 {
 		t.Errorf("exit code %d (err %v), want 137: the host-side timeout must KILL after the grace period", code, err)
@@ -64,16 +56,51 @@ func TestHostStorageExecutorBoundsACommandThatWillNotDie(t *testing.T) {
 	if elapsed > 4*time.Second {
 		t.Errorf("returned after %s: Wait blocked on the grandchild's pipe", elapsed)
 	}
-	if pgid.Load() == 0 {
-		t.Fatal("the surviving grandchild was not recorded as in flight")
+	if !waitGroupGone(pgid, time.Second) {
+		t.Fatalf("group %d still alive after Exec returned: the TERM-ignoring grandchild survived", pgid)
 	}
+}
 
-	start = time.Now()
-	if _, _, err := x.Exec(argv); !errors.Is(err, errBusy) {
-		t.Errorf("second run while the first is alive: err %v, want errBusy", err)
+// waitGroupGone polls until no process of the group exists (killed
+// processes take a moment to be reaped).
+func waitGroupGone(pgid int, within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for groupAlive(pgid) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
 	}
-	if time.Since(start) > time.Second {
-		t.Error("the busy check waited instead of refusing")
+	return !groupAlive(pgid)
+}
+
+// The busy lock, on a group the test controls (a process SIGKILL cannot
+// stop, in D state, cannot be staged here — the lock is what matters): a
+// command whose previous group is alive is refused, and runs again as soon
+// as that group is gone.
+func TestHostStorageExecutorBusyLockHoldsThenReleases(t *testing.T) {
+	stuck := exec.Command("sleep", "30")
+	stuck.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := stuck.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pgid := stuck.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(-pgid, syscall.SIGKILL); _ = stuck.Wait() })
+
+	argv := []string{"true"}
+	x := &HostStorageExecutor{HardDeadline: 5 * time.Second, WaitDelay: 200 * time.Millisecond}
+	x.inflight = map[string]int{"true": pgid}
+
+	if _, _, err := x.Exec(argv); !errors.Is(err, errBusy) {
+		t.Fatalf("run while the previous group lives: err %v, want errBusy", err)
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	_ = stuck.Wait()
+	if !waitGroupGone(pgid, time.Second) {
+		t.Fatal("staged group did not die")
+	}
+	if _, _, err := x.Exec(argv); err != nil {
+		t.Fatalf("run after the previous group died: err %v, want it to run", err)
+	}
+	if _, ok := x.inflight["true"]; ok {
+		t.Error("the lock was not released")
 	}
 }
 
@@ -91,11 +118,7 @@ func TestHostStorageExecutorKillsTheGroupAtTheHardDeadline(t *testing.T) {
 	// whole is empty well within a second, one whose grandchild survived is
 	// not (sleep 5).
 	for _, pgid := range x.inflight {
-		deadline := time.Now().Add(2 * time.Second)
-		for groupAlive(pgid) && time.Now().Before(deadline) {
-			time.Sleep(50 * time.Millisecond)
-		}
-		if groupAlive(pgid) {
+		if !waitGroupGone(pgid, 2*time.Second) {
 			_ = syscall.Kill(-pgid, syscall.SIGKILL)
 			t.Errorf("group %d still alive 2 s after the hard-deadline kill", pgid)
 		}

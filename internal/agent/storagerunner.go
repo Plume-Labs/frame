@@ -37,7 +37,11 @@ import (
 //     WaitDelay stops Wait from blocking on a pipe that a surviving
 //     grandchild still holds open — without it, Wait returns only when that
 //     grandchild exits (observed: 6 s for a 2 s backstop).
-//   - After Wait, if any process of the group is still alive (a zpool in
+//   - When Wait returns — deadline or not — the group is SIGKILLed once
+//     more, unconditionally: a grandchild that ignored the host timeout's
+//     TERM (timeout --foreground signals only its own child) must not live
+//     on until its natural end.
+//   - After that, if any process of the group is still alive (a zpool in
 //     uninterruptible sleep survives SIGKILL), the command is marked busy:
 //     it is not started again until that group is empty, so a stuck pool
 //     never accumulates orphans on the host.
@@ -50,6 +54,9 @@ type HostStorageExecutor struct {
 
 	mu       sync.Mutex
 	inflight map[string]int // argv key → process group still alive
+
+	// onStart, when set (tests), is told the process group of each command.
+	onStart func(pgid int)
 }
 
 // NewHostStorageExecutor runs through nsenter, with a hard deadline past the
@@ -99,7 +106,13 @@ func (h *HostStorageExecutor) Exec(argv []string) (string, string, error) {
 		return "", "", err
 	}
 	pgid := cmd.Process.Pid
+	if h.onStart != nil {
+		h.onStart(pgid)
+	}
 	err := cmd.Wait()
+	// Nothing of this command outlives its return but what SIGKILL cannot
+	// reach (ESRCH when the group is already empty, the normal case).
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	if groupAlive(pgid) {
 		h.mu.Lock()
 		h.inflight[key] = pgid
