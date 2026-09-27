@@ -150,7 +150,6 @@ export function FrameNodesView() {
           </Card>
         ))}
 
-
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

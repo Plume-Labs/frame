@@ -335,4 +335,70 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(fetched.Labels).NotTo(HaveKey("topology.kubernetes.io/rack"),
 			"the reserved-prefix key must be cleaned up on reconcile")
 	})
+
+	// Deleting a FrameNode is what an operator does to stop classifying a
+	// node, and the finalizer is the only thing that takes the labels back.
+	// Every label the write path projects must go, service-class first: it is
+	// the one the inference provider selects on, and a leftover keeps
+	// workloads landing on a node nobody classifies any more. Labels Frame
+	// does not own stay.
+	It("strips every projected label from the node when the FrameNode is deleted", func() {
+		ctx := context.Background()
+
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+			Name:   "declassified-node",
+			Labels: map[string]string{"kubernetes.io/hostname": "declassified-node"},
+		}}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		fn := &framev1beta1.FrameNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "declassified", Namespace: "default"},
+			Spec: framev1beta1.FrameNodeSpec{
+				IP: "127.0.0.1", Hostname: "declassified-node", Role: "worker",
+				Rack: "rack-03", Zone: "zone-b", ServiceClass: "HIGH", RDMAInterface: "ib0",
+			},
+		}
+		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+		key := types.NamespacedName{Name: "declassified", Namespace: "default"}
+		DeferCleanup(func() {
+			fresh := &framev1beta1.FrameNode{}
+			if err := k8sClient.Get(ctx, key, fresh); err == nil {
+				fresh.Finalizers = nil
+				_ = k8sClient.Update(ctx, fresh)
+				_ = k8sClient.Delete(ctx, fresh)
+			}
+		})
+
+		reconciler := &FrameNodeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: record.NewFakeRecorder(20)}
+		req := reconcile.Request{NamespacedName: key}
+		for range 2 { // finalizer, then projection
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		fetched := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "declassified-node"}, fetched)).To(Succeed())
+		for _, k := range frameNodeLabels {
+			Expect(fetched.Labels).To(HaveKey(k), "precondition: %s projected", k)
+		}
+
+		Expect(k8sClient.Delete(ctx, fn)).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "declassified-node"}, fetched)).To(Succeed())
+		// Literal keys, not frameNodeLabels: a key dropped from that list must
+		// fail here, not vanish from both sides of the assertion.
+		for _, k := range []string{
+			"frame.plume-labs.io/service-class", "frame.plume-labs.io/role", "frame.plume-labs.io/rack",
+			"frame.plume-labs.io/rdma", "topology.kubernetes.io/zone",
+		} {
+			Expect(fetched.Labels).NotTo(HaveKey(k), "the finalizer must take %s back", k)
+		}
+		Expect(fetched.Labels).To(HaveKeyWithValue("kubernetes.io/hostname", "declassified-node"),
+			"labels Frame does not own stay")
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.FrameNode{}))
+		}, "5s").Should(BeTrue(), "the finalizer is released")
+	})
 })
