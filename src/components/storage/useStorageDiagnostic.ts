@@ -17,7 +17,6 @@ import {
 } from '@/lib/ceph-pools'
 import { buildDiskRows, ioIndex, mdArrays, type DiskIo, type MdArray } from '@/lib/disk-inventory'
 import { attentionItems, undeclaredOsdDiskItems, unreadableDiagnosticItems, type AttentionItem } from '@/lib/storage-attention'
-import { zfsSourceItems, type ZfsSourceResult } from '@/lib/zfs-source'
 import { useLiveResource } from '@/hooks/useLiveResource'
 
 const frame = createFrameClient()
@@ -36,8 +35,6 @@ export interface StorageDiagnostic {
   md: MdArray[]
   io: Map<string, DiskIo>
   machines: Machine[]
-  zfs: ZfsSourceResult | null
-  nodeUuids: Record<string, string>
   cephDevices: string[]
   attention: AttentionItem[]
   reload: () => void
@@ -45,20 +42,15 @@ export interface StorageDiagnostic {
 
 /**
  * One read of everything both Storage tabs join: ceph-mgr metrics, OSD
- * pods, FrameMachines and the hypervisor's ZFS. Metrics drift continuously,
+ * pods and FrameMachines. Metrics drift continuously,
  * so this polls (30 s, the agent's own cadence) rather than watches.
  */
 export function useStorageDiagnostic(frameStorageCount: number | null): StorageDiagnostic {
   const { state, reload } = useLiveResource<CephDiagnosticRaw>(() => frame.cluster.cephDiagnostic(), [], [], 30_000)
   const { state: mState } = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
-  const { state: zState } = useLiveResource<ZfsSourceResult>(() => frame.cluster.zfsHosts(), [], [], 60_000)
 
   const raw = state.phase === 'ready' ? state.data : null
   const machines = useMemo(() => (mState.phase === 'ready' ? mState.data : []), [mState])
-  const zfs = useMemo<ZfsSourceResult | null>(
-    () => (zState.phase === 'ready' ? zState.data : zState.phase === 'error' ? { status: 'error', message: zState.message } : null),
-    [zState],
-  )
 
   return useMemo(() => {
     const prom = raw?.prom ?? {}
@@ -74,7 +66,6 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
     const cephDevices = raw?.cephDevices ?? []
     const extra = [
       ...machines.flatMap((m) => undeclaredOsdDiskItems(m.name, buildDiskRows(m, osds, io, cephDevices))),
-      ...zfsSourceItems(zfs, now),
     ]
     return {
       loading: state.phase === 'loading',
@@ -90,8 +81,6 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
       md,
       io,
       machines,
-      zfs,
-      nodeUuids: raw?.nodeUuids ?? {},
       cephDevices,
       attention: raw
         ? attentionItems({
@@ -112,5 +101,5 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
           : [],
       reload,
     }
-  }, [raw, machines, zfs, frameStorageCount, state, reload])
+  }, [raw, machines, frameStorageCount, state, reload])
 }

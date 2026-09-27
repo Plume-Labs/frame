@@ -4,7 +4,6 @@
 import type { OsdRow } from './ceph-diagnostic'
 import type { PgTally } from './ceph-pools'
 import { PG_DISPLAY_STATES } from './ceph-pools'
-import { zvolForVirtualOsd, type ZfsSourceResult } from './zfs-source'
 
 /** "active 121 · clean 121" — only states present, in reading order. States overlap. */
 export function pgLine(t: PgTally): string {
@@ -12,18 +11,16 @@ export function pgLine(t: PgTally): string {
   return parts.join(' · ') || 'no state reported'
 }
 
-/** Where an OSD's data physically sits: machine and bay, or VM disk and zvol. */
-export function osdDiskLabel(o: OsdRow, zfs: ZfsSourceResult | null, nodeUuids: Record<string, string>): string {
+/** Where an OSD's data physically sits: machine and bay, or the VM disk. */
+export function osdDiskLabel(o: OsdRow): string {
   switch (o.disk.kind) {
     case 'physical':
       if (!o.disk.machine) return `serial ${o.disk.serial} (no FrameMachine)`
       return `${o.disk.machine} ${o.disk.bay ?? 'bay ?'} · ${o.disk.serial}`
-    case 'virtual': {
-      const hosts = zfs?.status === 'ok' ? zfs.hosts : []
-      const z = zvolForVirtualOsd(o.disk.drive, nodeUuids[o.host], hosts)
-      if (z) return `VM ${z.vm.vmid} ${z.vm.slot} → ${z.host}:${z.vm.volume.slice(z.vm.volume.indexOf(':') + 1)}`
-      return `VM (QEMU ${o.disk.drive}) · zvol: ${zfs?.status === 'ok' ? 'not matched' : 'ZFS source not configured'}`
-    }
+    case 'virtual':
+      // Hypervisor storage is out of Frame's scope (arbitration of 27/09):
+      // the VM disk is named, what backs it on the host is not read.
+      return `VM disk (QEMU ${o.disk.drive})`
     default:
       return o.disk.reason
   }

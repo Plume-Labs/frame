@@ -224,7 +224,7 @@ export function MachineDisksPanel() {
                   <tr key={o.id} className="border-t border-border">
                     <td className="pr-3">{o.host || '—'}</td>
                     <td className="pr-3">{o.name}</td>
-                    <td className="pr-3">{osdDiskLabel(o, diag.zfs, diag.nodeUuids)}</td>
+                    <td className="pr-3">{osdDiskLabel(o)}</td>
                     <td className="pr-3 text-right">{formatIec(o.bytesTotal)}</td>
                     <td>{o.state}</td>
                   </tr>

@@ -13,7 +13,6 @@ import { AttentionBanner } from '@/components/storage/AttentionBanner'
 import { OsdTable } from '@/components/storage/OsdTable'
 import { CapacityByClass, PoolsTable } from '@/components/storage/PoolsTable'
 import { pgLine } from '@/lib/storage-labels'
-import { ZfsHostsCard } from '@/components/storage/ZfsHostsCard'
 import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -276,9 +275,8 @@ export function ClusterStorageView() {
             </CardContent>
           </Card>
 
-          <OsdTable osds={diag.osds} zfs={diag.zfs} nodeUuids={diag.nodeUuids} />
+          <OsdTable osds={diag.osds} />
           <PoolsTable pools={diag.pools} />
-          <ZfsHostsCard result={diag.zfs} />
         </>
       )}
 

@@ -1,6 +1,5 @@
 import { Fragment, useState } from 'react'
 import type { OsdRow } from '@/lib/ceph-diagnostic'
-import type { ZfsSourceResult } from '@/lib/zfs-source'
 import { osdDiskLabel } from '@/lib/storage-labels'
 import { formatIec, NOT_COLLECTED } from '@/lib/storage'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -25,15 +24,7 @@ function podCell(o: OsdRow): string {
   return `${o.pod.ready ? 'Running' : 'Running, not ready'}${r}`
 }
 
-export function OsdTable({
-  osds,
-  zfs,
-  nodeUuids,
-}: {
-  osds: OsdRow[]
-  zfs: ZfsSourceResult | null
-  nodeUuids: Record<string, string>
-}) {
+export function OsdTable({ osds }: { osds: OsdRow[] }) {
   const [open, setOpen] = useState<number | null>(null)
   return (
     <Card>
@@ -82,7 +73,7 @@ export function OsdTable({
                     {(o.bluestoreSlow ?? 0) > 0 ? ` (+${o.bluestoreSlow} BlueStore)` : ''}
                   </td>
                   <td className="pr-3 text-right text-muted-foreground">{o.crushWeight ?? '—'}</td>
-                  <td className="pr-3 truncate max-w-[22rem]">{osdDiskLabel(o, zfs, nodeUuids)}</td>
+                  <td className="pr-3 truncate max-w-[22rem]">{osdDiskLabel(o)}</td>
                   <td className={o.state === 'unstable' ? 'text-warning' : ''}>{podCell(o)}</td>
                 </tr>
                 {open === o.id && (
