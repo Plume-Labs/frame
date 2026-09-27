@@ -40,8 +40,9 @@ const FEEDS: Record<IntegrationKey, string> = {
   tei: 'Inference',
   falcosidekick: 'Security (runtime)',
   tetragon: 'Security (network)',
-  prometheus: 'Capacity (forecast)',
+  prometheus: 'Capacity (forecast) · Storage (OSD, PG, pools)',
   alertmanager: 'Alerts',
+  pveReader: 'Storage (hypervisor ZFS, read-only Proxmox API)',
   acmeSandbox: 'Jobs (Acme sandbox pods)',
 }
 

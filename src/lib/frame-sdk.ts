@@ -36,6 +36,8 @@ import {
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
 import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
+import { CEPH_DIAG_QUERIES, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
+import { parseProxmoxHost, type PveHostPayload, type ZfsSource, type ZfsSourceResult } from './zfs-source'
 import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
 
 export type { RegistryAlert, AlertSubscriptionHealth }
@@ -588,6 +590,16 @@ export interface CephStatus {
   details: Record<string, { message?: string; severity?: string }>
 }
 
+/** Raw inputs of the diagnostic Storage screen; see `ClusterClient.cephDiagnostic`. */
+export interface CephDiagnosticRaw {
+  /** Null when Prometheus is not deployed or unreachable. */
+  prom: PromSnapshot | null
+  pods: OsdPod[]
+  healthDetails: Record<string, { message?: string; severity?: string }>
+  /** Kubernetes node name → lower-cased SMBIOS system UUID. */
+  nodeUuids: Record<string, string>
+}
+
 /** A real Kubernetes event. */
 export interface ClusterEvent {
   reason: string
@@ -975,6 +987,75 @@ function proxyFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) }
   if (tok) headers['Authorization'] = `Bearer ${tok}`
   return globalThis.fetch(url, { ...init, headers })
+}
+
+/**
+ * `ZfsSource` over the Proxmox API, reached through the pveReader
+ * integration: a reader pod that holds a read-only (PVEAuditor) API token
+ * and forwards GETs on the disk, qemu-config and storage-content paths only
+ * (deploy/samples/pve-reader/). The token never reaches the browser.
+ */
+export function pveReaderSource(): ZfsSource {
+  return {
+    async read(): Promise<ZfsSourceResult> {
+      const reader = config().integrations.pveReader
+      if (!reader.selector) return { status: 'unconfigured', reason: 'no Proxmox reader configured' }
+      let pod: string | undefined
+      try {
+        const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(integrationPods(reader))
+        pod = servingPod(pods.items)?.metadata.name
+      } catch (e) {
+        return { status: 'error', message: e instanceof Error ? e.message : String(e) }
+      }
+      if (!pod) return { status: 'unconfigured', reason: `no running pod matches ${reader.selector} in ${reader.namespace}` }
+
+      const get = async <T,>(path: string): Promise<T> => {
+        const res = await proxyFetch(integrationProxy(reader, pod!, `/api2/json${path}`))
+        if (!res.ok) throw new FrameAPIError(res.status, `Proxmox ${path}: HTTP ${res.status}`)
+        return ((await res.json()) as { data: T }).data
+      }
+      try {
+        const nodes = await get<Array<{ node: string; status?: string }>>('/nodes')
+        const hosts = await Promise.all(
+          nodes
+            .filter((n) => n.status !== 'offline')
+            .map(async ({ node }): Promise<PveHostPayload> => {
+              const n = encodeURIComponent(node)
+              const [zfs, disks, qemu, storages] = await Promise.all([
+                get<PveHostPayload['zfs']>(`/nodes/${n}/disks/zfs`),
+                get<PveHostPayload['disks']>(`/nodes/${n}/disks/list`),
+                get<Array<{ vmid: number; name?: string }>>(`/nodes/${n}/qemu`),
+                get<Array<{ storage: string; type?: string; active?: number }>>(`/nodes/${n}/storage`),
+              ])
+              const [details, vms, zfsStorages] = await Promise.all([
+                Promise.all(zfs.map((z) => get<PveHostPayload['details'][number]>(`/nodes/${n}/disks/zfs/${encodeURIComponent(z.name)}`))),
+                Promise.all(
+                  qemu.map(async (v) => ({
+                    vmid: v.vmid,
+                    name: v.name,
+                    config: await get<Record<string, string | number | undefined>>(`/nodes/${n}/qemu/${v.vmid}/config`),
+                  })),
+                ),
+                Promise.all(
+                  storages
+                    .filter((st) => st.type === 'zfspool' && st.active !== 0)
+                    .map(async (st) => ({
+                      storage: st.storage,
+                      items: await get<PveHostPayload['zfsStorages'][number]['items']>(
+                        `/nodes/${n}/storage/${encodeURIComponent(st.storage)}/content`,
+                      ),
+                    })),
+                ),
+              ])
+              return { node, zfs, details, disks, vms, zfsStorages }
+            }),
+        )
+        return { status: 'ok', hosts: hosts.map(parseProxmoxHost), readAt: new Date().toISOString() }
+      } catch (e) {
+        return { status: 'error', message: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  }
 }
 
 /**
@@ -1647,6 +1728,79 @@ class ClusterClient {
       // Carried through verbatim — R18. No remap here: see CephStatus.details.
       details: cluster.status?.ceph?.details ?? {},
     }
+  }
+
+  /**
+   * Instant PromQL, several queries at once, by key. Null when Prometheus is
+   * not deployed — distinct from a query that returned nothing (an empty
+   * list) or failed (the key is absent), so a caller can tell "no
+   * monitoring" from "no such series" from "that one query broke".
+   */
+  async promInstant<K extends string>(queries: Record<K, string>): Promise<Partial<Record<K, PromSample[]>> | null> {
+    const prom = config().integrations.prometheus
+    const pods = await k8sFetch<ListResponse<{ metadata: { name: string } }>>(integrationPods(prom))
+    const name = servingPod(pods.items)?.metadata.name
+    if (!name) return null
+    const base = integrationProxy(prom, name, '/api/v1/query')
+    const out: Partial<Record<K, PromSample[]>> = {}
+    await Promise.all(
+      (Object.entries(queries) as Array<[K, string]>).map(async ([key, q]) => {
+        try {
+          const res = await proxyFetch(`${base}?query=${encodeURIComponent(q)}`)
+          if (!res.ok) return
+          const json = (await res.json()) as {
+            data?: { result?: Array<{ metric?: Record<string, string>; value?: [number, string] }> }
+          }
+          out[key] = (json.data?.result ?? []).map((r) => ({
+            labels: r.metric ?? {},
+            value: Number(r.value?.[1]),
+          }))
+        } catch {
+          // Left absent: the builders read a missing key as "unknown", never as zero.
+        }
+      }),
+    )
+    return out
+  }
+
+  /**
+   * Everything the diagnostic Storage screen reads besides the machines:
+   * the mgr/exporter metrics, the OSD pods, the CephCluster health details
+   * and each node's system UUID (the key from a VM node to its hypervisor
+   * disks). Pure judgement happens in ceph-diagnostic.ts and friends.
+   */
+  async cephDiagnostic(): Promise<CephDiagnosticRaw> {
+    const cfg = config()
+    const [prom, pods, clusters, nodes] = await Promise.all([
+      this.promInstant(CEPH_DIAG_QUERIES).catch(() => null),
+      k8sFetch<ListResponse<OsdPodCR>>(integrationPods(cfg.integrations.cephOsd)),
+      k8sFetch<
+        ListResponse<{ status?: { ceph?: { details?: Record<string, { message?: string; severity?: string }> } } }>
+      >(`/apis/ceph.rook.io/v1/namespaces/${cfg.namespaces.ceph}/cephclusters`),
+      k8sFetch<ListResponse<{ metadata: { name: string }; status?: { nodeInfo?: { systemUUID?: string } } }>>(
+        '/api/v1/nodes',
+      ).catch(() => ({ items: [] }) as ListResponse<{ metadata: { name: string }; status?: { nodeInfo?: { systemUUID?: string } } }>),
+    ])
+    const nodeUuids: Record<string, string> = {}
+    for (const n of nodes.items ?? []) {
+      const u = n.status?.nodeInfo?.systemUUID
+      if (u) nodeUuids[n.metadata.name] = u.toLowerCase()
+    }
+    return {
+      prom,
+      pods: (pods.items ?? []).map(toOsdPod).filter((p): p is OsdPod => p !== null),
+      healthDetails: clusters.items?.[0]?.status?.ceph?.details ?? {},
+      nodeUuids,
+    }
+  }
+
+  /**
+   * The hypervisor's ZFS, through the read-only Proxmox API reader
+   * (`integrations.pveReader`). "unconfigured" when no reader pod runs —
+   * the normal state until one is deployed — never an empty host list.
+   */
+  async zfsHosts(): Promise<ZfsSourceResult> {
+    return pveReaderSource().read()
   }
 
   /**

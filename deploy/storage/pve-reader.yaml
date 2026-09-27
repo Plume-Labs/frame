@@ -1,0 +1,122 @@
+# Read-only Proxmox VE API reader — the source of the hypervisor's ZFS pools,
+# disks and zvols on the Storage screen (console integration `pveReader`,
+# selector app.kubernetes.io/name=frame-pve-reader, port 8080).
+#
+# Why a pod: the console only talks to the Kubernetes apiserver, and the
+# apiserver's pod proxy cannot carry a Proxmox token. This nginx holds the
+# token (a PVEAuditor API token, read-only by role) and forwards GET requests
+# on the handful of paths the console reads — nothing else — so the token
+# never reaches a browser and no other Proxmox endpoint is reachable through
+# it. Nothing is installed on the hypervisor.
+#
+# Prerequisites, created by hand (values are site-specific, never committed):
+#
+#   on the Proxmox host, as root:
+#     pveum user add frame-reader@pve --comment "Frame console, read-only"
+#     pveum acl modify / --users frame-reader@pve --roles PVEAuditor
+#     pveum user token add frame-reader@pve console --privsep 1
+#     pveum acl modify / --tokens 'frame-reader@pve!console' --roles PVEAuditor
+#
+#   in the cluster:
+#     kubectl -n frame-system create secret generic frame-pve-reader \
+#       --from-literal=PVE_HOST=<host address> \
+#       --from-literal=PVE_TLS_NAME=<node name on the Proxmox certificate> \
+#       --from-literal=PVE_TOKEN='frame-reader@pve!console=<token secret>'
+#     kubectl -n frame-system create configmap frame-pve-ca \
+#       --from-file=pve-root-ca.pem=<copy of /etc/pve/pve-root-ca.pem>
+#     kubectl apply -f deploy/storage/pve-reader.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frame-pve-reader-nginx
+  namespace: frame-system
+  labels:
+    app.kubernetes.io/name: frame-pve-reader
+    app.kubernetes.io/part-of: frame
+data:
+  # Rendered by the image's envsubst step at start: only ${PVE_*} are
+  # substituted, nginx's own $variables are left alone.
+  default.conf.template: |
+    server {
+      listen 8080;
+      server_tokens off;
+
+      location = /healthz { return 200 "ok\n"; }
+
+      # The only paths the console reads (src/lib/frame-sdk.ts pveReaderSource).
+      location ~ "^/api2/json/nodes(/[A-Za-z0-9.-]+/(disks/zfs(/[A-Za-z0-9._-]+)?|disks/list|qemu(/[0-9]+/config)?|storage(/[A-Za-z0-9._-]+/content)?))?$" {
+        limit_except GET { deny all; }
+        proxy_set_header Authorization "PVEAPIToken=${PVE_TOKEN}";
+        proxy_set_header Cookie "";
+        proxy_ssl_verify on;
+        proxy_ssl_server_name on;
+        proxy_ssl_name ${PVE_TLS_NAME};
+        proxy_ssl_trusted_certificate /etc/pve-ca/pve-root-ca.pem;
+        proxy_pass https://${PVE_HOST}:8006;
+      }
+
+      location / { return 403; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frame-pve-reader
+  namespace: frame-system
+  labels:
+    app.kubernetes.io/name: frame-pve-reader
+    app.kubernetes.io/part-of: frame
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frame-pve-reader
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frame-pve-reader
+        app.kubernetes.io/part-of: frame
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: docker.io/nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - secretRef:
+                name: frame-pve-reader
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: template
+              mountPath: /etc/nginx/templates
+              readOnly: true
+            - name: ca
+              mountPath: /etc/pve-ca
+              readOnly: true
+      volumes:
+        - name: template
+          configMap:
+            name: frame-pve-reader-nginx
+        - name: ca
+          configMap:
+            name: frame-pve-ca

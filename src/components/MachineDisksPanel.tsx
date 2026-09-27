@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
 import { DiskClaim, createFrameClient } from '@/lib/frame-sdk'
-import { describeDivergence } from '@/lib/storage'
+import { describeDivergence, formatIec } from '@/lib/storage'
+import { agentFreshness, buildDiskRows, chassisDiskTemp, osdsWithoutMachine } from '@/lib/disk-inventory'
+import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
+import { MachineDiskTable } from '@/components/storage/MachineDiskTable'
+import { osdDiskLabel } from '@/lib/storage-labels'
 import type { Machine } from '@/lib/machines'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useLiveResource } from '@/hooks/useLiveResource'
@@ -51,6 +54,13 @@ export function MachineDisksPanel() {
   )
   const selected = useMemo(() => machines.find((m) => m.name === selectedName), [machines, selectedName])
   const selectedClaims = selected ? claims.filter((c) => c.machineName === selected.name) : []
+  const diag = useStorageDiagnostic(null)
+  const diskRows = useMemo(
+    () => (selected ? buildDiskRows(selected, diag.osds, diag.io) : []),
+    [selected, diag.osds, diag.io],
+  )
+  const vmOsds = osdsWithoutMachine(diag.osds, machines)
+  const now = Date.now()
 
   return (
     <div className="space-y-6">
@@ -112,67 +122,39 @@ export function MachineDisksPanel() {
             <CardTitle className="font-mono text-lg">{selected.name}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide">
-                  BMC inventory (inventory.drives)
-                </div>
-                {(selected.inventory?.drives ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground font-mono">No drives reported by the BMC.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {(selected.inventory?.drives ?? []).map((d, i) => (
-                      <div
-                        key={`${d.serialNumber || d.name}-${i}`}
-                        className="p-2 rounded-md border border-border bg-secondary/30 text-xs font-mono space-y-0.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="truncate">{d.serialNumber || d.name || '—'}</span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {d.sizeGB ? `${d.sizeGB} GB` : '—'}
-                          </Badge>
-                        </div>
-                        <div className="text-muted-foreground">
-                          {d.location || '—'} · {d.protocol || d.mediaType || '—'} · {d.health || 'unknown'}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide">
-                  Node-reported (storage.observed)
-                </div>
-                {!selected.storage ? (
-                  <p className="text-xs text-muted-foreground font-mono">
-                    Never reported by this node's agent.
-                  </p>
-                ) : selected.storage.observed.length === 0 ? (
-                  <p className="text-xs text-muted-foreground font-mono">Agent reports no disks.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {selected.storage.observed.map((d, i) => (
-                      <div
-                        key={`${d.serialNumber}-${i}`}
-                        className="p-2 rounded-md border border-border bg-secondary/30 text-xs font-mono space-y-0.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="truncate">{d.serialNumber}</span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {d.sizeGB ? `${d.sizeGB} GB` : '—'}
-                          </Badge>
-                        </div>
-                        <div className="text-muted-foreground truncate">
-                          {d.path} · {d.occupancy}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono">
+              <span>node {selected.nodeRef || '—'}</span>
+              <span className={selected.reachable ? 'text-accent' : 'text-warning'}>
+                BMC {selected.reachable ? 'reachable' : 'unreachable'}
+              </span>
+              {(() => {
+                const f = agentFreshness(selected.storage?.observedAt ?? null, now)
+                return (
+                  <span className={f.stale ? 'text-warning' : ''}>
+                    agent {f.ageS === null ? 'never reported' : `read ${f.ageS} s ago${f.stale ? ' (stale)' : ''}`}
+                  </span>
+                )
+              })()}
+              {(() => {
+                const t = chassisDiskTemp(selected)
+                return <span>{t ? `${t.name} ${t.celsius} °C (chassis)` : 'disk temperature not reported'}</span>
+              })()}
+              {diag.md
+                .filter((a) => a.node === selected.nodeRef)
+                .map((a) => (
+                  <span key={a.device} className={a.degraded ? 'text-destructive' : ''}>
+                    {a.device}: {a.active}/{a.required ?? '?'} active, {a.failed} failed, {a.state}
+                  </span>
+                ))}
             </div>
+            <p className="text-[10px] text-muted-foreground font-mono">
+              Controller model, firmware and cache battery: not collected yet. md members are not named by the agent yet.
+            </p>
+            {diskRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground font-mono">No disk reported by the BMC or the node agent.</p>
+            ) : (
+              <MachineDiskTable rows={diskRows} claims={selectedClaims} />
+            )}
 
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
@@ -210,6 +192,41 @@ export function MachineDisksPanel() {
                 </ul>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {vmOsds.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-lg">Nodes without a FrameMachine</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs font-mono">
+            <p className="text-muted-foreground">
+              No BMC and no agent publication behind these nodes: their OSD disks are listed from Ceph alone.
+            </p>
+            <table className="w-full">
+              <thead className="text-muted-foreground text-left">
+                <tr>
+                  <th className="pr-3">node</th>
+                  <th className="pr-3">OSD</th>
+                  <th className="pr-3">disk</th>
+                  <th className="pr-3 text-right">size</th>
+                  <th>state</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vmOsds.map((o) => (
+                  <tr key={o.id} className="border-t border-border">
+                    <td className="pr-3">{o.host || '—'}</td>
+                    <td className="pr-3">{o.name}</td>
+                    <td className="pr-3">{osdDiskLabel(o, diag.zfs, diag.nodeUuids)}</td>
+                    <td className="pr-3 text-right">{formatIec(o.bytesTotal)}</td>
+                    <td>{o.state}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       )}

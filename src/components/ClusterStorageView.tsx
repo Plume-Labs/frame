@@ -7,7 +7,13 @@ import {
   coreListPath,
   crdListPath,
 } from '@/lib/frame-sdk'
-import { capacityLine, cephWarningReasons } from '@/lib/storage'
+import { capacityLine, cephWarningReasons, formatIec } from '@/lib/storage'
+import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
+import { AttentionBanner } from '@/components/storage/AttentionBanner'
+import { OsdTable } from '@/components/storage/OsdTable'
+import { CapacityByClass, PoolsTable } from '@/components/storage/PoolsTable'
+import { pgLine } from '@/lib/storage-labels'
+import { ZfsHostsCard } from '@/components/storage/ZfsHostsCard'
 import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -18,7 +24,7 @@ import { LiveStates } from '@/components/LiveStates'
 import { Stat } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { Tone, TONE_TEXT, inverseScoreTone } from '@/lib/thresholds'
-import { Database, ArrowClockwise, HardDrives, Cube, Stack, Lightning, TrendUp } from '@phosphor-icons/react'
+import { Database, ArrowClockwise, Stack, Lightning, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
@@ -142,6 +148,9 @@ export function ClusterStorageView() {
   const cephEntry = entries.find((e) => e.type.startsWith('ceph-') && e.capacity.usable)
     ?? entries.find((e) => e.type.startsWith('ceph-'))
   const usedPct = c && c.bytesTotal ? (c.bytesUsed / c.bytesTotal) * 100 : 0
+  const diag = useStorageDiagnostic(storageState.phase === 'ready' ? entries.length : null)
+  const upCount = diag.osds.filter((o) => o.up === true).length
+  const inCount = diag.osds.filter((o) => o.in === true).length
 
   return (
     <div className="space-y-6">
@@ -154,7 +163,10 @@ export function ClusterStorageView() {
               variant="outline"
               size="sm"
               className="ml-auto font-mono gap-1.5"
-              onClick={reload}
+              onClick={() => {
+                reload()
+                diag.reload()
+              }}
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
@@ -166,8 +178,16 @@ export function ClusterStorageView() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <Stat label="Health" value={c.health.replace('HEALTH_', '')} tone={healthTone(c.health)} />
-              <Stat label="OSDs" value={c.osds} />
-              <Stat label="Monitors" value={c.mons} />
+              <Stat
+                label="OSDs up / in"
+                value={diag.promAvailable ? `${upCount}/${inCount} of ${diag.osds.length}` : `${c.osds} pods`}
+                tone={diag.promAvailable && (upCount < diag.osds.length || inCount < diag.osds.length) ? 'warning' : undefined}
+              />
+              <Stat
+                label="Mon quorum"
+                value={diag.promAvailable ? `${diag.quorum.monsInQuorum.length}/${c.mons}` : c.mons}
+                tone={diag.quorum.monsOut.length > 0 ? 'warning' : undefined}
+              />
               <Stat label="Ceph version" value={c.version || '—'} size="sm" tone="muted" />
             </div>
 
@@ -194,6 +214,8 @@ export function ClusterStorageView() {
           </CardContent>
         )}
       </Card>
+
+      {c && <AttentionBanner items={diag.attention} />}
 
       {trend && (
         <Card>
@@ -223,36 +245,41 @@ export function ClusterStorageView() {
       <LiveStates state={state} emptyLabel="Rook-Ceph is not installed on this cluster." />
 
       {c && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-mono text-lg flex items-center gap-2">
-              <HardDrives className="text-primary" />
-              Pools
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {c.pools.length === 0 ? (
-              <p className="text-sm text-muted-foreground font-mono">No block pools defined.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {c.pools.map((p) => (
-                  <div
-                    key={p.name}
-                    className="p-3 rounded-lg border border-border bg-secondary/30 flex items-center justify-between"
-                  >
-                    <span className="font-mono text-xs font-bold flex items-center gap-2">
-                      <Cube className="text-primary" size={14} />
-                      {p.name}
-                    </span>
-                    <Badge variant="outline" className="font-mono text-[10px]">
-                      ×{p.replication}
-                    </Badge>
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-mono text-base">Placement groups and capacity</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs font-mono">
+              {diag.promAvailable ? (
+                <>
+                  <div>
+                    PG {diag.pgs.total}: {pgLine(diag.pgs)}{' '}
+                    <span className="text-muted-foreground">(a PG carries several states; counts overlap)</span>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  <div>
+                    Degraded object copies {diag.objects.degraded ?? '—'}
+                    {diag.objects.degradedPct !== null ? ` (${diag.objects.degradedPct.toFixed(1)} %)` : ''} · misplaced{' '}
+                    {diag.objects.misplaced ?? '—'} · recovery {formatIec(diag.objects.recoveryBytesPerSec)}/s
+                  </div>
+                  <div>
+                    Mon in quorum: {diag.quorum.monsInQuorum.join(', ') || '—'}
+                    {diag.quorum.monsOut.length ? ` · out: ${diag.quorum.monsOut.join(', ')}` : ''} · mgr active:{' '}
+                    {diag.quorum.mgrActive.join(', ') || '—'}
+                    {diag.flags.length ? ` · flags: ${diag.flags.join(', ')}` : ''}
+                  </div>
+                  <CapacityByClass classes={diag.classes} />
+                </>
+              ) : (
+                <p className="text-muted-foreground">Prometheus unreachable: PG, OSD and pool detail unknown.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <OsdTable osds={diag.osds} zfs={diag.zfs} nodeUuids={diag.nodeUuids} />
+          <PoolsTable pools={diag.pools} />
+          <ZfsHostsCard result={diag.zfs} />
+        </>
       )}
 
       <AlluxioTiersCard />

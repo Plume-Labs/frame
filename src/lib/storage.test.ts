@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeDivergence, capacityLine, claimGapLine, cephWarningReasons } from './storage'
+import { describeDivergence, capacityLine, claimGapLine, cephWarningReasons, formatIec } from './storage'
 
 describe('describeDivergence', () => {
   it('nomme la baie pour un disque que seul le BMC voit', () => {
@@ -138,5 +138,14 @@ describe('cephWarningReasons', () => {
     const reasons = cephWarningReasons({ health: 'HEALTH_WARN', details: {} })
     expect(reasons).toHaveLength(1)
     expect(reasons[0].toLowerCase()).toContain('reason')
+  })
+})
+
+describe('formatIec', () => {
+  it('rend les unités binaires et un tiret pour une valeur absente', () => {
+    expect(formatIec(2 * 1024 ** 4)).toBe('2.00 TiB')
+    expect(formatIec(1_200_243_695_616)).toBe('1.09 TiB')
+    expect(formatIec(512)).toBe('512 B')
+    expect(formatIec(null)).toBe('—')
   })
 })

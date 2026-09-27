@@ -111,3 +111,23 @@ export function cephWarningReasons(payload: CephHealthPayload): string[] {
   }
   return reasons
 }
+
+/**
+ * Bytes in binary units, the way Ceph and ZFS print them (GiB, TiB). A
+ * null input is a value nobody collected and renders as "—", never "0 B".
+ */
+export function formatIec(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return '—'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  let v = Math.abs(bytes)
+  let u = 0
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u++
+  }
+  const digits = u === 0 || v >= 100 ? 0 : v >= 10 ? 1 : 2
+  return `${bytes < 0 ? '-' : ''}${v.toFixed(digits)} ${units[u]}`
+}
+
+/** The label every screen uses for a value no source collects yet. */
+export const NOT_COLLECTED = 'not collected'

@@ -51,6 +51,11 @@ export interface FrameConfig {
     tetragon: Integration
     prometheus: Integration
     alertmanager: Integration
+    /**
+     * Read-only Proxmox API reader (deploy/samples/pve-reader/): the source
+     * of the hypervisor's ZFS pools. No running pod = "source not configured".
+     */
+    pveReader: Integration
     /** Cluster-wide (namespace ignored) — sandbox pods run wherever Acme puts them. */
     acmeSandbox: Integration
   }
@@ -95,6 +100,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
       selector: 'app.kubernetes.io/name=alertmanager',
       port: 9093,
     },
+    pveReader: { namespace: 'frame-system', selector: 'app.kubernetes.io/name=frame-pve-reader', port: 8080 },
     acmeSandbox: { namespace: '', selector: 'app=acme-sandbox' },
   },
   namespaces: {
