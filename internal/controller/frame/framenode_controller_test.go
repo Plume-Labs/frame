@@ -92,7 +92,7 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(res.RequeueAfter).To(Equal(30*time.Second), "polls as a backstop to the Node watch")
 
 		Expect(k8sClient.Get(ctx, key, fn)).To(Succeed())
-		Expect(nodePhaseFromStatus(fn)).To(Equal(nodePhaseAwaitingNode))
+		Expect(nodePhaseFromStatus(fn)).To(Equal("AwaitingNode"), "part of the Ready.reason contract (docs/crd-reference.md)")
 	})
 
 	It("sets Ready=False condition while awaiting the node", func() {
@@ -108,7 +108,7 @@ var _ = Describe("FrameNode Controller", func() {
 		}
 		Expect(readyCond).NotTo(BeNil())
 		Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
-		Expect(readyCond.Reason).To(Equal(nodePhaseAwaitingNode))
+		Expect(readyCond.Reason).To(Equal("AwaitingNode"))
 	})
 
 	// The defect this closes, measured on the live cluster on 2026-09-12: three
