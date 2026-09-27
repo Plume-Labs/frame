@@ -25,6 +25,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -48,7 +49,9 @@ import (
 //     415 otherwise): pool 1.0, osd 1.1, crush_rule 2.0, auth 1.0;
 //   - /api/osd paginated, limit=10 by default, limit=-1 for all, with
 //     X-Total-Count;
-//   - optionally a redirect on /api/auth, or a refused login.
+//   - a refused login answered as Ceph does: HTTP 400 with
+//     {"code": "invalid_credentials"} (auth.py, InvalidCredentialsError);
+//   - optionally a redirect on /api/auth.
 //
 // It records every request.
 type fakeDashboard struct {
@@ -59,7 +62,8 @@ type fakeDashboard struct {
 	expire   int // answer 401 to the next n authenticated GETs
 	tokens   int
 	logins   int
-	redirect bool // answer 307 on /api/auth
+	redirect bool   // answer 307 on /api/auth
+	password string // the password the account has now
 	fail     map[string]int
 }
 
@@ -78,7 +82,7 @@ func versionOK(accept, path string) bool {
 }
 
 func newFake(t *testing.T) *fakeDashboard {
-	f := &fakeDashboard{t: t, fail: map[string]int{}}
+	f := &fakeDashboard{t: t, fail: map[string]int{}, password: "s3cret"}
 	files := map[string]string{PathPools: "pools.json", PathOSDs: "osds.json", PathCrushRules: "crush_rules.json"}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -98,8 +102,12 @@ func newFake(t *testing.T) *fakeDashboard {
 			}
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["username"] != "frame-storage-reader" || body["password"] != "s3cret" {
-				w.WriteHeader(http.StatusUnauthorized)
+			f.mu.Lock()
+			good := body["username"] == "frame-storage-reader" && body["password"] == f.password
+			f.mu.Unlock()
+			if !good {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"component": "auth", "code": "invalid_credentials", "detail": "Invalid credentials"}`))
 				return
 			}
 			f.mu.Lock()
@@ -349,9 +357,9 @@ func otherCA(t *testing.T) []byte {
 
 // place calls Placement and waits for the refresh it may have started.
 func place(r *Reader) *framev1beta1.CephPlacement {
-	r.Placement(context.Background())
+	r.Placement(context.Background(), nil)
 	r.wait()
-	return r.Placement(context.Background())
+	return r.Placement(context.Background(), nil)
 }
 
 func TestReaderStates(t *testing.T) {
@@ -389,7 +397,10 @@ func TestReaderStates(t *testing.T) {
 	if p.State != "Error" || !strings.Contains(p.Message, "partial read") || len(p.OSDs) != 11 || len(p.Pools) != 10 {
 		t.Fatalf("partial: state %q, message %q, %d OSDs", p.State, p.Message, len(p.OSDs))
 	}
-	collectedAt = p.CollectedAt // the pools were fresh
+	// Each list carries its own date: pools fresh, OSDs from the last pass.
+	if p.PoolsReadAt == nil || !p.PoolsReadAt.Time.Equal(now) || p.OSDsReadAt == nil || p.OSDsReadAt.Time.Equal(now) || !p.CollectedAt.Equal(collectedAt) {
+		t.Fatalf("partial dates: pools %v, osds %v, collected %v (last complete %v)", p.PoolsReadAt, p.OSDsReadAt, p.CollectedAt, collectedAt)
+	}
 	delete(f.fail, PathOSDs)
 
 	// Every GET failing after a good login: nothing fresh, the last read's
@@ -419,10 +430,10 @@ func TestPlacementNeverBlocks(t *testing.T) {
 	var loads atomic.Int32
 	r := &Reader{Load: func(context.Context) (Config, error) { loads.Add(1); <-release; return Config{}, ErrNotConfigured }}
 	start := time.Now()
-	if p := r.Placement(context.Background()); p != nil {
+	if p := r.Placement(context.Background(), nil); p != nil {
 		t.Errorf("first call returned %+v before any read completed", p)
 	}
-	r.Placement(context.Background())
+	r.Placement(context.Background(), nil)
 	if time.Since(start) > 200*time.Millisecond {
 		t.Fatalf("Placement blocked for %s", time.Since(start))
 	}
@@ -432,46 +443,110 @@ func TestPlacementNeverBlocks(t *testing.T) {
 	}
 	close(release)
 	r.wait()
-	if p := r.Placement(context.Background()); p == nil || p.State != "NotConfigured" {
+	if p := r.Placement(context.Background(), nil); p == nil || p.State != "NotConfigured" {
 		t.Fatalf("after the read: %+v", p)
 	}
 }
 
-// A refused account is retried with a doubling backoff, not every interval
-// (the dashboard locks an account after repeated failures), and at once
-// when the Secret changes.
-func TestRefusedLoginBacksOff(t *testing.T) {
+// Ceph answers a refused login with 400 invalid_credentials: that is a
+// refusal, not a transient error.
+func TestRefusedLoginIsRecognised(t *testing.T) {
+	f := newFake(t)
+	cfg := f.cfg()
+	cfg.Password = "wrong"
+	c, _ := New(cfg)
+	if _, err := c.Read(context.Background()); !errors.Is(err, ErrAuthRefused) {
+		t.Fatalf("err %v, want ErrAuthRefused", err)
+	}
+}
+
+// Once a login fails, the pass stops logging in: an expired token met on
+// every GET must not turn into one refused login per GET.
+func TestAFailedLoginEndsThePass(t *testing.T) {
+	f := newFake(t)
+	c, _ := New(f.cfg())
+	if _, err := c.Read(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.expire, f.password = 100, "changed-on-the-dashboard"
+	before := f.logins
+	f.mu.Unlock()
+	if _, err := c.Read(context.Background()); !errors.Is(err, ErrAuthRefused) {
+		t.Fatalf("err %v, want ErrAuthRefused", err)
+	}
+	if n := f.logins - before; n != 1 {
+		t.Fatalf("%d logins in the pass, want 1", n)
+	}
+}
+
+// After a refusal: no login at all, however long, until the account's
+// content in the Secret changes. An annotation (a new resourceVersion)
+// changes nothing.
+func TestRefusedAccountIsNeverRetriedUntilItChanges(t *testing.T) {
 	f := newFake(t)
 	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)
 	cfg := f.cfg()
 	cfg.Password, cfg.Version = "wrong", "1"
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Now: func() time.Time { return now }}
 
-	if p := place(r); p.State != "AuthRefused" || f.logins != 1 {
-		t.Fatalf("state %q after %d login(s)", p.State, f.logins)
+	p := place(r)
+	if p.State != "AuthRefused" || f.logins != 1 || p.RefusedCredentials == "" || strings.Contains(p.RefusedCredentials, "wrong") {
+		t.Fatalf("state %q, %d login(s), refused %q", p.State, f.logins, p.RefusedCredentials)
 	}
-	// Every interval for an hour: at most the backoff's attempts (5, 10, 20 min…).
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 24*12; i++ { // a day of 5-minute passes
 		now = now.Add(DefaultInterval)
+		if i == 100 {
+			cfg.Version = "2" // an annotation on the Secret
+		}
 		place(r)
 	}
-	// Attempts at 0, 5, 15 and 35 min (5-min start, doubling).
-	if f.logins > 4 {
-		t.Fatalf("%d logins in one hour with a refused account", f.logins)
+	if f.logins != 1 {
+		t.Fatalf("%d logins in a day with a refused account, want 1", f.logins)
 	}
-	// Six hours later the backoff has grown past an hour.
-	for i := 0; i < 72; i++ {
-		now = now.Add(DefaultInterval)
-		place(r)
-	}
-	if f.logins > 7 {
-		t.Fatalf("%d logins in 7 hours", f.logins)
-	}
-	// A new Secret is tried at once.
-	before := f.logins
-	cfg.Password, cfg.Version = "s3cret", "2"
+	cfg.Password = "s3cret"
 	now = now.Add(DefaultInterval)
-	if p := place(r); p.State != "Collected" || f.logins != before+1 {
-		t.Fatalf("after the Secret changed: state %q, logins %d → %d", p.State, before, f.logins)
+	if p := place(r); p.State != "Collected" || f.logins != 2 {
+		t.Fatalf("after the password changed: state %q, %d logins", p.State, f.logins)
+	}
+}
+
+// A restarted manager reads the refusal back from status: no login with
+// the refused account.
+func TestRefusalSurvivesARestart(t *testing.T) {
+	f := newFake(t)
+	cfg := f.cfg()
+	cfg.Password = "wrong"
+	first := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }}
+	persisted := place(first)
+	if persisted.State != "AuthRefused" {
+		t.Fatalf("state %q", persisted.State)
+	}
+
+	restarted := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }}
+	restarted.Placement(context.Background(), persisted)
+	restarted.wait()
+	p := restarted.Placement(context.Background(), persisted)
+	if p.State != "AuthRefused" || f.logins != 1 {
+		t.Fatalf("after restart: state %q, %d logins, want AuthRefused and still 1", p.State, f.logins)
+	}
+}
+
+// A panic inside a read ends as an Error state and the reader keeps going.
+func TestPanicInAReadEndsAsError(t *testing.T) {
+	calls := 0
+	r := &Reader{Load: func(context.Context) (Config, error) {
+		calls++
+		if calls == 1 {
+			panic("boom")
+		}
+		return Config{}, ErrNotConfigured
+	}}
+	if p := place(r); p == nil || p.State != "Error" || !strings.Contains(p.Message, "boom") {
+		t.Fatalf("after a panic: %+v", p)
+	}
+	r.lastAt = time.Time{}
+	if p := place(r); p.State != "NotConfigured" {
+		t.Fatalf("reader did not recover: %+v", p)
 	}
 }

@@ -147,6 +147,18 @@ func (in *CephPlacement) DeepCopyInto(out *CephPlacement) {
 		in, out := &in.CollectedAt, &out.CollectedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.PoolsReadAt != nil {
+		in, out := &in.PoolsReadAt, &out.PoolsReadAt
+		*out = (*in).DeepCopy()
+	}
+	if in.OSDsReadAt != nil {
+		in, out := &in.OSDsReadAt, &out.OSDsReadAt
+		*out = (*in).DeepCopy()
+	}
+	if in.RulesReadAt != nil {
+		in, out := &in.RulesReadAt, &out.RulesReadAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Pools != nil {
 		in, out := &in.Pools, &out.Pools
 		*out = make([]CephPoolPlacement, len(*in))

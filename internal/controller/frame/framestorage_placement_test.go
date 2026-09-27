@@ -40,7 +40,7 @@ func TestReconcilePlacementKeepsKnownListsOnAFailedRead(t *testing.T) {
 		State: "Collected", CollectedAt: &at,
 		OSDs: []framev1beta1.CephOSDWeight{{ID: 3, CrushWeight: "1.0900"}},
 	}
-	r := &FrameStorageReconciler{CephPlacement: func(context.Context) *framev1beta1.CephPlacement {
+	r := &FrameStorageReconciler{CephPlacement: func(context.Context, *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
 		return &framev1beta1.CephPlacement{State: "Error", Message: "dashboard login: HTTP 401"}
 	}}
 	fs := placementEntry("ceph-rbd", prev)
@@ -56,7 +56,7 @@ func TestReconcilePlacementAuthRefusedKeepsNotConfiguredClears(t *testing.T) {
 	at := metav1.Now()
 	prev := &framev1beta1.CephPlacement{State: "Collected", CollectedAt: &at, OSDs: []framev1beta1.CephOSDWeight{{ID: 3, CrushWeight: "1.0900"}}}
 	for state, keep := range map[string]bool{"AuthRefused": true, "NotConfigured": false} {
-		r := &FrameStorageReconciler{CephPlacement: func(context.Context) *framev1beta1.CephPlacement {
+		r := &FrameStorageReconciler{CephPlacement: func(context.Context, *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
 			return &framev1beta1.CephPlacement{State: state}
 		}}
 		fs := placementEntry("ceph-rbd", prev.DeepCopy())
@@ -67,9 +67,25 @@ func TestReconcilePlacementAuthRefusedKeepsNotConfiguredClears(t *testing.T) {
 	}
 }
 
+// The reader is handed the entry's current status: that is how a refused
+// account persisted there survives a manager restart.
+func TestReconcilePlacementHandsTheCurrentStatusToTheReader(t *testing.T) {
+	prev := &framev1beta1.CephPlacement{State: "AuthRefused", RefusedCredentials: "abc"}
+	var got *framev1beta1.CephPlacement
+	r := &FrameStorageReconciler{CephPlacement: func(_ context.Context, persisted *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
+		got = persisted
+		return nil
+	}}
+	fs := placementEntry("ceph-rbd", prev)
+	r.reconcilePlacement(context.Background(), fs)
+	if got == nil || got.RefusedCredentials != "abc" || fs.Status.CephPlacement != prev {
+		t.Fatalf("reader got %+v; status now %+v", got, fs.Status.CephPlacement)
+	}
+}
+
 func TestReconcilePlacementOnlyForCephEntries(t *testing.T) {
 	called := false
-	r := &FrameStorageReconciler{CephPlacement: func(context.Context) *framev1beta1.CephPlacement {
+	r := &FrameStorageReconciler{CephPlacement: func(context.Context, *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
 		called = true
 		return &framev1beta1.CephPlacement{State: "Collected"}
 	}}

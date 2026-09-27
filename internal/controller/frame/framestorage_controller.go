@@ -66,8 +66,11 @@ type FrameStorageReconciler struct {
 	CephCapacity func(ctx context.Context, storageClassName string) (rawBytes, usedBytes uint64, replication int32, err error)
 	// CephPlacement reads pools' min_size and CRUSH rule and OSDs' CRUSH
 	// weight from the ceph-mgr dashboard (internal/cephmgr). It never
-	// fails: an unreadable dashboard is a State. Nil leaves the field unset.
-	CephPlacement func(ctx context.Context) *framev1beta1.CephPlacement
+	// fails nor blocks: an unreadable dashboard is a State, nil means no
+	// read has completed yet. It is handed the entry's current status, so
+	// a refused account persisted there survives a manager restart.
+	// A nil field leaves status.cephPlacement unset.
+	CephPlacement func(ctx context.Context, persisted *framev1beta1.CephPlacement) *framev1beta1.CephPlacement
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framestorages,verbs=get;list;watch;create;update;patch
@@ -266,7 +269,7 @@ func (r *FrameStorageReconciler) reconcilePlacement(ctx context.Context, fs *fra
 	if !strings.HasPrefix(fs.Spec.Type, "ceph-") || r.CephPlacement == nil {
 		return
 	}
-	p := r.CephPlacement(ctx)
+	p := r.CephPlacement(ctx, fs.Status.CephPlacement)
 	if p == nil {
 		return
 	}

@@ -175,9 +175,9 @@ func readCephHealth(c client.Client) func(context.Context) (string, []string, er
 // already known independent of any one class, so it comes back as
 // replication 0 (unknown) with a nil error -- reconcileCapacity's rule is
 // what refuses to turn that into a usable figure, not this function.
-// readCephCapacity reports the whole cluster's raw bytes and the class's
-// pool replication, which reconcileCapacity divides. Known limits, stated
-// rather than hidden (docs/storage-mgr-account.md, "Usable capacity"):
+//
+// Known limits of the usable figure this feeds, stated rather than hidden
+// (docs/storage-mgr-account.md, "Usable capacity"):
 //
 //   - the raw figure is the whole cluster's, every device class together;
 //     a pool whose CRUSH rule selects one class (or, as on the park, a mix

@@ -91,9 +91,13 @@ func acceptFor(version string) string {
 	return "application/vnd.ceph.api.v" + version + "+json"
 }
 
-// ErrAuthRefused is a refused login (HTTP 401 on /api/auth): a wrong or
-// disabled account. The dashboard locks an account after repeated
-// failures, so the Reader backs off rather than retrying on its schedule.
+// ErrAuthRefused is a refused login: a wrong, disabled or locked account.
+// Ceph v20.2.2 answers a refused login with HTTP 400 and the body
+// {"code": "invalid_credentials", "component": "auth", ...}
+// (dashboard/controllers/auth.py, exceptions.py InvalidCredentialsError);
+// a 401 on /api/auth is taken the same way. Ceph counts failed logins per
+// user and only a successful login resets the count, so after this error
+// no login is attempted again with the same account (see Reader).
 var ErrAuthRefused = errors.New("dashboard login refused")
 
 // maxBody bounds a response read: pool and OSD lists of a large cluster
@@ -121,6 +125,9 @@ type Client struct {
 
 	mu    sync.Mutex
 	token string
+	// loginFailed stops a pass at its first failed login: no GET of the
+	// same pass logs in again (each attempt counts against the account).
+	loginFailed error
 }
 
 // New validates cfg and builds a client. It refuses anything but https
@@ -188,6 +195,15 @@ func (c *Client) login(ctx context.Context) error {
 	if resp.StatusCode == http.StatusUnauthorized {
 		return ErrAuthRefused
 	}
+	if resp.StatusCode == http.StatusBadRequest {
+		var e struct {
+			Code string `json:"code"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&e) == nil && e.Code == "invalid_credentials" {
+			return ErrAuthRefused
+		}
+		return errors.New("dashboard login: HTTP 400")
+	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		// A 3xx lands here too: redirects are never followed (the POST
 		// carries the password).
@@ -218,7 +234,16 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 		tok := c.token
 		c.mu.Unlock()
 		if tok == "" {
+			c.mu.Lock()
+			failed := c.loginFailed
+			c.mu.Unlock()
+			if failed != nil {
+				return failed
+			}
 			if err := c.login(ctx); err != nil {
+				c.mu.Lock()
+				c.loginFailed = err
+				c.mu.Unlock()
 				return err
 			}
 			c.mu.Lock()
@@ -279,9 +304,10 @@ type OSD struct {
 // and its error is in Errors: one endpoint failing never discards the
 // others.
 type Snapshot struct {
-	Pools  []Pool
-	OSDs   []OSD
-	Errors map[string]error // path → why it could not be read
+	Pools   []Pool
+	OSDs    []OSD
+	Errors  map[string]error // path → why it could not be read
+	Fetched map[string]bool  // paths read in this pass
 }
 
 type rawPool struct {
@@ -314,6 +340,7 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 	// Log in once up front: a login that fails fails every GET the same
 	// way, and is reported as such rather than three times.
 	c.mu.Lock()
+	c.loginFailed = nil // a new pass
 	tok := c.token
 	c.mu.Unlock()
 	if tok == "" {
@@ -321,7 +348,7 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 			return nil, err
 		}
 	}
-	out := &Snapshot{Errors: map[string]error{}}
+	out := &Snapshot{Errors: map[string]error{}, Fetched: map[string]bool{}}
 	var pools []rawPool
 	if err := c.get(ctx, PathPools, &pools); err != nil {
 		if errors.Is(err, ErrAuthRefused) {
@@ -329,6 +356,8 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 		}
 		out.Errors[PathPools] = err
 		pools = nil
+	} else {
+		out.Fetched[PathPools] = true
 	}
 	var osds []rawOSD
 	if err := c.get(ctx, PathOSDs, &osds); err != nil {
@@ -337,6 +366,8 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 		}
 		out.Errors[PathOSDs] = err
 		osds = nil
+	} else {
+		out.Fetched[PathOSDs] = true
 	}
 	var rules []rawRule
 	if err := c.get(ctx, PathCrushRules, &rules); err != nil {
@@ -345,6 +376,8 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 		}
 		out.Errors[PathCrushRules] = err
 		rules = nil
+	} else {
+		out.Fetched[PathCrushRules] = true
 	}
 	names := map[int32]string{}
 	for _, r := range rules {

@@ -127,17 +127,34 @@ type CephPlacement struct {
 	// State is Collected, NotConfigured (no dashboard account Secret: the
 	// normal state until one is created), Error (the last read failed, in
 	// whole or in part; Message says why and a list that could not be read
-	// is the last good one, dated by CollectedAt — never zeroed, which
+	// is the last good one, dated by its own *ReadAt — never zeroed, which
 	// would read as weight 0) or AuthRefused (the dashboard refused the
-	// account; logins are spaced out — the dashboard locks an account after
-	// repeated failures — and retried at once when the Secret changes).
+	// account: no login is attempted again until the account in the Secret
+	// changes — Ceph's failed-login counter only resets on a successful
+	// login, so every retry brings the lockout closer).
 	// +kubebuilder:validation:Enum=Collected;NotConfigured;Error;AuthRefused
 	State string `json:"state"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	Message string `json:"message,omitempty"`
+	// CollectedAt is when every list was last read in the same pass.
 	// +optional
 	CollectedAt *metav1.Time `json:"collectedAt,omitempty"`
+	// PoolsReadAt, OSDsReadAt and RulesReadAt date each list on its own:
+	// after a partial read they differ, and the stale one says so.
+	// +optional
+	PoolsReadAt *metav1.Time `json:"poolsReadAt,omitempty"`
+	// +optional
+	OSDsReadAt *metav1.Time `json:"osdsReadAt,omitempty"`
+	// +optional
+	RulesReadAt *metav1.Time `json:"rulesReadAt,omitempty"`
+	// RefusedCredentials identifies the account the dashboard refused (a
+	// truncated SHA-256 of url, username and password), so that a manager
+	// restart does not log in again with it. Empty unless State is
+	// AuthRefused.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	RefusedCredentials string `json:"refusedCredentials,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
 	Pools []CephPoolPlacement `json:"pools,omitempty"`
