@@ -32,22 +32,27 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Where the refusal of an account lives. Ceph counts failed dashboard
-// logins per user and only a successful login resets the count, so a
-// refusal must outlive the process that met it — a manager restarting in a
-// loop must not add one failure per restart. It is kept in a dedicated
-// Secret, not in FrameStorage status: status is readable by every Frame
-// viewer, a Secret is not.
+// The login gate. Ceph counts failed dashboard logins per user and only a
+// successful login resets the count, so no login may happen that the
+// cluster could forget: the intention of every login is written, durably,
+// BEFORE the login is sent (write-ahead).
 //
-// The Secret holds two keys:
-//   - hmac-key: 32 random bytes, generated the first time a refusal is
-//     recorded;
-//   - refused:  one HMAC-SHA256(hmac-key, url \x00 username \x00 password)
-//     per refused account, hex, one per line, the MaxRefused newest.
+// The state Secret (StateSecretName) holds:
+//   - hmac-key: exactly 32 random bytes;
+//   - key-fp:   hex of the first 8 bytes of SHA-256(hmac-key), so a key
+//     replaced or damaged by hand is detected rather than trusted;
+//   - pending:  MACs of accounts whose login was started and whose outcome
+//     is not known (yet, or ever: a crash, a network error);
+//   - refused:  MACs of accounts the dashboard refused.
 //
-// The HMAC (rather than a plain hash) means that even a leaked Secret does
-// not let anyone test password guesses offline without also knowing the
-// key — which is in the same Secret, but a plain hash would need nothing.
+// MAC = HMAC-SHA256(hmac-key, url \x00 username \x00 password), hex, one per
+// line, at most MaxRefused per list (oldest dropped first).
+//
+// A MAC in pending or refused forbids the login; the operator unblocks
+// (docs/storage-mgr-account.md). A state that cannot be read, is missing,
+// or fails strict validation forbids every login. The key is generated only
+// when the Secret is entirely empty, in the same Update as the first
+// intention.
 
 // StateSecretName is the dedicated Secret, in the manager's namespace. The
 // deployment manifests create it empty, so the manager needs only get and
@@ -55,22 +60,39 @@ import (
 // charts/frame/templates/ceph-dashboard-state.yaml).
 const StateSecretName = "frame-ceph-dashboard-state"
 
-// MaxRefused bounds the refused accounts kept, oldest dropped first: A
-// refused, then B, then back to A must still find A refused.
-const MaxRefused = 16
+// MaxRefused bounds each list. Past it the oldest entry is forgotten, and
+// that account could cost one more failed login if it came back.
+const MaxRefused = 64
 
-// ErrStateMissing: the state Secret does not exist. It is created by the
-// deployment manifests and never by the manager (get/update only), so no
-// login is attempted — a refusal could not be recorded, and every restart
-// would add a failure to Ceph's counter.
-var ErrStateMissing = errors.New("state Secret missing")
+// writeAttempts bounds the Get/validate/Update rounds of one write (a
+// conflict with another writer is re-read and retried).
+const writeAttempts = 3
 
-// RefusalStore persists refusals.
-type RefusalStore interface {
-	// IsRefused reports whether this account was refused.
-	IsRefused(ctx context.Context, c Config) (bool, error)
-	// Record adds this account to the refused ones.
-	Record(ctx context.Context, c Config) error
+var (
+	// ErrStateMissing: the state Secret does not exist (never created by
+	// the manager).
+	ErrStateMissing = errors.New("state Secret missing")
+	// ErrStateCorrupt: the state Secret fails strict validation.
+	ErrStateCorrupt = errors.New("state Secret corrupt")
+	// ErrLoginRefusedBefore: the account is in refused.
+	ErrLoginRefusedBefore = errors.New("account refused before")
+	// ErrLoginOutcomeUnknown: the account is in pending — a login was
+	// started and its outcome was never recorded.
+	ErrLoginOutcomeUnknown = errors.New("outcome of a previous login unknown")
+)
+
+// LoginGate is what the client asks before and tells after every login.
+type LoginGate interface {
+	// Begin writes the intention to log in with c; it returns nil only once
+	// that write has succeeded, and an error — never a login — otherwise
+	// (ErrLoginRefusedBefore, ErrLoginOutcomeUnknown, ErrStateMissing,
+	// ErrStateCorrupt, a write failure).
+	Begin(ctx context.Context, c Config) error
+	// Succeeded removes the intention (best effort: if it fails, the next
+	// login is blocked, fail-closed).
+	Succeeded(ctx context.Context, c Config) error
+	// Refused moves the intention to refused.
+	Refused(ctx context.Context, c Config) error
 }
 
 // accountMAC identifies an account by content, under key.
@@ -78,6 +100,11 @@ func accountMAC(key []byte, c Config) string {
 	m := hmac.New(sha256.New, key)
 	m.Write([]byte(c.BaseURL + "\x00" + c.Username + "\x00" + c.Password))
 	return hex.EncodeToString(m.Sum(nil))
+}
+
+func keyFingerprint(key []byte) string {
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:8])
 }
 
 // newKey returns a fresh HMAC key.
@@ -89,88 +116,160 @@ func newKey() ([]byte, error) {
 	return k, nil
 }
 
-// SecretRefusalStore keeps the refusal in StateSecretName. Reads go
-// through a non-caching reader (the manager must not watch every Secret);
-// writes are updates of the existing Secret — it is created by the
-// deployment manifests, and a missing one is reported, not created.
-type SecretRefusalStore struct {
+// state is the parsed, validated Secret.
+type state struct {
+	key     []byte
+	pending []string
+	refused []string
+}
+
+func parseList(raw []byte) ([]string, error) {
+	var out []string
+	for _, l := range strings.Split(string(raw), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		if b, err := hex.DecodeString(l); err != nil || len(b) != sha256.Size {
+			return nil, fmt.Errorf("%w: an entry is not a MAC", ErrStateCorrupt)
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
+
+// parseState validates the Secret strictly. empty reports a Secret with
+// none of the keys at all (the only case where a key may be generated).
+func parseState(sec *corev1.Secret) (st state, empty bool, err error) {
+	d := sec.Data
+	key, fp := d["hmac-key"], string(d["key-fp"])
+	if len(key) == 0 && fp == "" && len(strings.TrimSpace(string(d["pending"]))) == 0 && len(strings.TrimSpace(string(d["refused"]))) == 0 {
+		return state{}, true, nil
+	}
+	if len(key) != 32 {
+		return state{}, false, fmt.Errorf("%w: hmac-key is %d bytes, want 32", ErrStateCorrupt, len(key))
+	}
+	if !hmac.Equal([]byte(fp), []byte(keyFingerprint(key))) {
+		return state{}, false, fmt.Errorf("%w: key-fp does not match hmac-key", ErrStateCorrupt)
+	}
+	if st.pending, err = parseList(d["pending"]); err != nil {
+		return state{}, false, err
+	}
+	if st.refused, err = parseList(d["refused"]); err != nil {
+		return state{}, false, err
+	}
+	st.key = key
+	return st, false, nil
+}
+
+func contains(list []string, mac string) bool {
+	for _, x := range list {
+		if hmac.Equal([]byte(x), []byte(mac)) {
+			return true
+		}
+	}
+	return false
+}
+
+func bounded(list []string) []string {
+	if len(list) > MaxRefused {
+		return list[len(list)-MaxRefused:]
+	}
+	return list
+}
+
+// SecretLoginGate keeps the gate in StateSecretName. Reads go through a
+// non-caching reader; writes are updates of the existing Secret, which the
+// deployment manifests create — a missing one is reported, never created.
+type SecretLoginGate struct {
 	Reader    client.Reader
 	Writer    client.Client
 	Namespace string
 }
 
-func (s *SecretRefusalStore) get(ctx context.Context) (*corev1.Secret, error) {
+func (g *SecretLoginGate) get(ctx context.Context) (*corev1.Secret, error) {
 	var sec corev1.Secret
-	err := s.Reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: StateSecretName}, &sec)
+	err := g.Reader.Get(ctx, client.ObjectKey{Namespace: g.Namespace, Name: StateSecretName}, &sec)
 	if apierrors.IsNotFound(err) {
-		return nil, fmt.Errorf("%w: %s/%s, recreate it (see docs/storage-mgr-account.md)", ErrStateMissing, s.Namespace, StateSecretName)
+		return nil, fmt.Errorf("%w: %s/%s, recreate it (see docs/storage-mgr-account.md)", ErrStateMissing, g.Namespace, StateSecretName)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading Secret %s/%s: %w", s.Namespace, StateSecretName, err)
+		return nil, fmt.Errorf("reading Secret %s/%s: %w", g.Namespace, StateSecretName, err)
 	}
 	return &sec, nil
 }
 
-// refusedList is the stored MACs, oldest first (one per line).
-func refusedList(sec *corev1.Secret) []string {
-	var out []string
-	for _, l := range strings.Split(string(sec.Data["refused"]), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
-		}
-	}
-	return out
-}
-
-// IsRefused implements RefusalStore.
-func (s *SecretRefusalStore) IsRefused(ctx context.Context, c Config) (bool, error) {
-	sec, err := s.get(ctx)
-	if err != nil {
-		return false, err
-	}
-	key := sec.Data["hmac-key"]
-	if len(key) == 0 {
-		return false, nil
-	}
-	mac := accountMAC(key, c)
-	for _, r := range refusedList(sec) {
-		if hmac.Equal([]byte(r), []byte(mac)) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// Record implements RefusalStore. The key is the one in the Secret at the
-// time of this Get/Update (generated if there is none yet), never one read
-// earlier; the list keeps the MaxRefused newest.
-func (s *SecretRefusalStore) Record(ctx context.Context, c Config) error {
-	sec, err := s.get(ctx)
-	if err != nil {
-		return err
-	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
-	}
-	key := sec.Data["hmac-key"]
-	list := refusedList(sec)
-	if len(key) == 0 {
-		if key, err = newKey(); err != nil {
+// update runs one read-validate-change-write round, retried on a failed
+// write (a conflict re-reads). change returns the new lists, or an error
+// that stops everything (no write).
+func (g *SecretLoginGate) update(ctx context.Context, generateKey bool, change func(st *state) error) error {
+	var last error
+	for i := 0; i < writeAttempts; i++ {
+		sec, err := g.get(ctx)
+		if err != nil {
 			return err
 		}
-		list = nil // MACs under another key (or none) mean nothing now
+		st, empty, err := parseState(sec)
+		if err != nil {
+			return err
+		}
+		if empty {
+			if !generateKey {
+				return nil // nothing recorded, nothing to change
+			}
+			if st.key, err = newKey(); err != nil {
+				return err
+			}
+		}
+		if err := change(&st); err != nil {
+			return err
+		}
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+		sec.Data["hmac-key"] = st.key
+		sec.Data["key-fp"] = []byte(keyFingerprint(st.key))
+		sec.Data["pending"] = []byte(strings.Join(bounded(st.pending), "\n"))
+		sec.Data["refused"] = []byte(strings.Join(bounded(st.refused), "\n"))
+		if last = g.Writer.Update(ctx, sec); last == nil {
+			return nil
+		}
 	}
-	mac := accountMAC(key, c)
-	if !slices.Contains(list, mac) {
-		list = append(list, mac)
-	}
-	if len(list) > MaxRefused {
-		list = list[len(list)-MaxRefused:]
-	}
-	sec.Data["hmac-key"] = key
-	sec.Data["refused"] = []byte(strings.Join(list, "\n"))
-	if err := s.Writer.Update(ctx, sec); err != nil {
-		return fmt.Errorf("writing Secret %s/%s: %w", s.Namespace, StateSecretName, err)
-	}
-	return nil
+	return fmt.Errorf("writing Secret %s/%s: %w", g.Namespace, StateSecretName, last)
+}
+
+// Begin implements LoginGate.
+func (g *SecretLoginGate) Begin(ctx context.Context, c Config) error {
+	return g.update(ctx, true, func(st *state) error {
+		mac := accountMAC(st.key, c)
+		if contains(st.refused, mac) {
+			return ErrLoginRefusedBefore
+		}
+		if contains(st.pending, mac) {
+			return ErrLoginOutcomeUnknown
+		}
+		st.pending = append(st.pending, mac)
+		return nil
+	})
+}
+
+// Succeeded implements LoginGate.
+func (g *SecretLoginGate) Succeeded(ctx context.Context, c Config) error {
+	return g.update(ctx, false, func(st *state) error {
+		mac := accountMAC(st.key, c)
+		st.pending = slices.DeleteFunc(st.pending, func(x string) bool { return x == mac })
+		return nil
+	})
+}
+
+// Refused implements LoginGate.
+func (g *SecretLoginGate) Refused(ctx context.Context, c Config) error {
+	return g.update(ctx, false, func(st *state) error {
+		mac := accountMAC(st.key, c)
+		st.pending = slices.DeleteFunc(st.pending, func(x string) bool { return x == mac })
+		if !contains(st.refused, mac) {
+			st.refused = append(st.refused, mac)
+		}
+		return nil
+	})
 }

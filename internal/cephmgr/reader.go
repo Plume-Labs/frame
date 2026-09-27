@@ -18,8 +18,6 @@ package cephmgr
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -42,21 +40,14 @@ var ErrNotConfigured = errors.New("no ceph-mgr dashboard account configured")
 // read per interval.
 const DefaultInterval = 5 * time.Minute
 
-// After a refused login there is no automatic retry. Ceph counts failed
-// logins per user and resets the count only on a successful login
-// (dashboard/controllers/auth.py): any schedule of retries, however
-// spaced, ends in a locked account. The account is tried again only when
-// its content — url, username, password — changes; a new annotation or
-// resourceVersion on the account Secret changes nothing.
-//
-// The refusal is written to the state Secret (RefusalStore, refusal.go)
-// synchronously, before the refresh returns — before anything is
-// published — and read back before every login, the first one after a
-// start included: a manager restarting in a loop, or a new leader after a
-// lost lease, never logs in again with a refused account. If that write
-// fails, the process still never retries the account while it lives
-// (fail-closed), and the state says the refusal is not persisted. If the
-// store cannot be read, no login is attempted.
+// Logins go through a write-ahead gate (LoginGate, refusal.go): the
+// intention of a login is written durably to the state Secret before the
+// login is sent, and its outcome after. Ceph counts failed logins per user
+// and resets the count only on a successful login, so an account that was
+// refused — or whose login outcome was never recorded (a crash, a network
+// error) — is not tried again until an operator clears it. A new
+// annotation or resourceVersion on the account Secret changes nothing; a
+// changed url, username or password is a different account.
 
 // readDeadline bounds one background read (login and three GETs).
 const readDeadline = 60 * time.Second
@@ -80,22 +71,12 @@ type Reader struct {
 	inflight bool
 	done     chan struct{} // closed when the in-flight refresh ends (tests)
 
-	// Store persists refusals (nil: this process only).
-	Store RefusalStore
+	// Gate is written before every login. Nil means no login at all.
+	Gate LoginGate
 
 	// Only touched by the refresh goroutine (one at a time).
 	client *Client
 	cfgKey string
-	// refusedHere is the accounts this process met a refusal for, kept in
-	// memory only (never written anywhere): the fail-closed fallback when
-	// the store could not be written.
-	refusedHere map[string]bool
-}
-
-// inMemoryID identifies an account inside this process.
-func inMemoryID(c Config) string {
-	sum := sha256.Sum256([]byte(c.BaseURL + "\x00" + c.Username + "\x00" + c.Password))
-	return hex.EncodeToString(sum[:])
 }
 
 // Placement returns the current placement status without blocking: the
@@ -186,16 +167,16 @@ func refusedStatus(prev *framev1beta1.CephPlacement, note string) *framev1beta1.
 	return withLast(&framev1beta1.CephPlacement{State: "AuthRefused", Message: clip(refusedMessage+note, 256)}, prev)
 }
 
-// recordRefusal writes the refusal of cfg to the store. It returns a note
-// for the message when the refusal could not be persisted.
-func (r *Reader) recordRefusal(ctx context.Context, cfg Config) string {
-	if r.Store == nil {
-		return ""
+// gateStatus says why no login was sent.
+func gateStatus(prev *framev1beta1.CephPlacement, err error) *framev1beta1.CephPlacement {
+	switch {
+	case errors.Is(err, ErrLoginRefusedBefore):
+		return refusedStatus(prev, "")
+	case errors.Is(err, ErrLoginOutcomeUnknown):
+		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: "no login: the outcome of a previous login with this account is unknown (outcome unknown); an operator must clear it (see docs/storage-mgr-account.md)"}, prev)
+	default:
+		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
 	}
-	if err := r.Store.Record(ctx, cfg); err != nil {
-		return " — refusal not persisted, kept by this process only: " + err.Error()
-	}
-	return ""
 }
 
 func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
@@ -206,21 +187,8 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 	if err != nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
 	}
-	// Before any login: this process's own memory, then the store.
-	if r.refusedHere[inMemoryID(cfg)] {
-		return refusedStatus(prev, "")
-	}
-	if r.Store != nil {
-		refused, err := r.Store.IsRefused(ctx, cfg)
-		if err != nil {
-			// A missing or unreadable state Secret: no login, since a
-			// refusal could not be recorded (ErrStateMissing names the
-			// Secret to recreate).
-			return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip("no login: "+err.Error(), 256)}, prev)
-		}
-		if refused {
-			return refusedStatus(prev, "")
-		}
+	if r.Gate == nil {
+		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: "no login: no login gate (state Secret) configured"}, prev)
 	}
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%x", cfg.BaseURL, cfg.Username, cfg.Password, cfg.ServerName, cfg.CAPEM)
 	if r.client == nil || key != r.cfgKey {
@@ -233,15 +201,23 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 			r.client = nil
 			return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
 		}
+		c.gate = r.Gate
 		r.client, r.cfgKey = c, key
 	}
 	snap, err := r.client.Read(ctx)
+	r.client.mu.Lock()
+	note := r.client.gateNote
+	r.client.gateNote = ""
+	r.client.mu.Unlock()
+	if note != "" {
+		note = " — " + note
+	}
+	var gerr *GateError
+	if errors.As(err, &gerr) {
+		return gateStatus(prev, gerr.Err)
+	}
 	if errors.Is(err, ErrAuthRefused) {
-		if r.refusedHere == nil {
-			r.refusedHere = map[string]bool{}
-		}
-		r.refusedHere[inMemoryID(cfg)] = true
-		return refusedStatus(prev, r.recordRefusal(ctx, cfg))
+		return refusedStatus(prev, note)
 	}
 	if err != nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
@@ -265,6 +241,9 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 		out.Message = clip("partial read: "+strings.Join(parts, "; "), 256)
 		out.CollectedAt = nil // not a complete pass: keep the last complete one's date
 		withLast(out, prev)
+	}
+	if note != "" {
+		out.Message = clip(strings.TrimPrefix(out.Message+note, " — "), 256)
 	}
 	return out
 }

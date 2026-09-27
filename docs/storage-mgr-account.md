@@ -100,46 +100,70 @@ the account is disabled. Any retry schedule, however spaced out, ends in
 a locked account. Ceph answers a refused login with HTTP 400 and
 `"code": "invalid_credentials"`.
 
-So the manager:
+So the manager never sends a login that the cluster could forget. Before
+each login it writes the intention of that login, durably, to a
+dedicated Secret, `frame-system/frame-ceph-dashboard-state`
+(write-ahead):
 
-- stops the pass at the first failed login: no GET of that pass logs in
-  again;
-- records the refusal in a dedicated Secret,
-  `frame-system/frame-ceph-dashboard-state`, synchronously and before it
-  publishes anything. The Secret holds `hmac-key` (32 random bytes, made
-  once) and `refused`: one HMAC-SHA256 of url, username and password per
-  refused account under that key, the 16 most recent. Going back to an
-  account refused earlier doesn't cost a new failure. The password itself
-  is never stored, and without the key the values can't be checked
-  against guesses;
-- reads that Secret before every login, the first one after a start
-  included. A manager that restarts in a loop, or a new leader after a
-  lost lease, never logs in again with a refused account;
-- tries the account again only when its content in the account Secret
-  changes (url, username or password). An annotation or a label on it
-  changes nothing;
-- publishes only `AuthRefused` and a message in the FrameStorage status,
-  never the HMAC. FrameStorage is readable by every Frame viewer; the
-  state Secret is not;
-- fails closed if the state Secret can't be written (the message then
-  says "refusal not persisted"). This process still never retries the
-  account while it runs. If the state Secret can't be read, no login is
-  attempted at all.
+1. It reads the Secret and validates it strictly (see below). Then it
+   updates it to add the account to `pending`. A write that fails, a
+   conflict with another writer for instance, is re-read and retried up
+   to 3 times. If it still fails, there is no login.
+2. The login is sent only after that update succeeds.
+3. After the login:
+   - **success**: the account is removed from `pending`. The token stays
+     in memory, and there's no new login until it expires. If the removal
+     fails, the next login (after a restart) is blocked with "outcome
+     unknown". This is fail-closed, and an operator unblocks it;
+   - **refused** (HTTP 400 `invalid_credentials`, or 401): the account
+     moves from `pending` to `refused`;
+   - **anything else** (network error, 5xx, an unexpected answer): the
+     account stays in `pending`, because the outcome is unknown.
+
+An account in `pending` or in `refused` is never tried again. An operator
+unblocks it (below). An account is identified by its content, url,
+username and password. An annotation or a label on the account Secret
+changes nothing. A new password is a different account. A pass
+also stops at its first failed login: no GET of that pass logs in again.
+
+The state Secret holds:
+
+- `hmac-key`: exactly 32 random bytes. It is generated only when the
+  Secret is entirely empty, in the same update as the first intention;
+- `key-fp`: the first 8 bytes of SHA-256(`hmac-key`), in hex;
+- `pending` and `refused`: one HMAC-SHA256(`hmac-key`, url, username,
+  password) per line, in hex, at most 64 each, oldest dropped first.
+
+The password is never stored, and without the key the values can't be
+checked against guesses. The FrameStorage status carries only
+`AuthRefused` or an `Error` and its message, never these values.
+FrameStorage is readable by every Frame viewer; the state Secret is not.
+
+**Strict validation.** The manager does not log in, and the status says
+"state Secret corrupt", in any of these cases:
+
+- a key other than 32 bytes;
+- a `key-fp` that doesn't match the key, e.g. a key replaced by someone
+  else;
+- lists or a fingerprint without a key;
+- an entry that isn't a MAC.
+
+**Limit.** Each list keeps 64 accounts. Past 64 distinct refused
+accounts, the oldest is forgotten. If that account came back, it could
+cost one more failed login.
 
 The deployment manifests create `frame-ceph-dashboard-state` empty
 (`config/manager/ceph_dashboard_state.yaml`,
-`charts/frame/templates/ceph-dashboard-state.yaml`, kept on uninstall). The
-manager's RBAC names it: get and update on that one Secret, and no create
-verb, since `resourceNames` can't restrict a create.
+`charts/frame/templates/ceph-dashboard-state.yaml`, kept on uninstall).
+The manager's RBAC names it: get and update on that one Secret. There is
+no create verb, since `resourceNames` can't restrict a create.
 
 ### A missing state Secret
 
 If `frame-ceph-dashboard-state` doesn't exist, the manager does not log
-in. A refusal couldn't be recorded, and every restart would add a failure
-to Ceph's counter. The status says `Error` with "state Secret missing:
-frame-system/frame-ceph-dashboard-state, recreate it". The manager never
-creates it (it only holds get and update on that name). Recreate it
-empty:
+in, because the intention couldn't be written. The status says `Error`
+with "state Secret missing: frame-system/frame-ceph-dashboard-state,
+recreate it". The manager never creates it. Recreate it empty:
 
 ```sh
 kubectl -n frame-system create secret generic frame-ceph-dashboard-state
@@ -149,23 +173,29 @@ A `helm upgrade` of the chart (`templates/ceph-dashboard-state.yaml`) or a
 re-apply of `kustomize build config/default` recreates it too. The next
 read logs in.
 
-To unblock:
+### Unblocking
 
-- **the password in the account Secret is wrong**: put the right one in
+- **The password in the account Secret is wrong**: put the right one in
   (`kubectl -n frame-system create secret generic frame-ceph-dashboard …
-  --dry-run=client -o yaml | kubectl apply -f -`). The next read uses it;
-- **the account itself is disabled or its counter is high**: on the Ceph
-  side, `ceph dashboard ac-user-enable frame-storage-reader`, then set a
-  new password (`ceph dashboard ac-user-set-password frame-storage-reader
-  -i <file>`) and put it in the account Secret. The first successful
-  login resets Ceph's counter;
-- **to retry the same account deliberately** (after re-enabling it in
-  Ceph, for instance): clear the refusals with
-  `kubectl -n frame-system patch secret frame-ceph-dashboard-state --type json -p '[{"op":"remove","path":"/data/refused"}]'`.
-  Deleting the Secret is not enough on its own: without it the manager
-  doesn't log in at all, so recreate it empty right away (see above). If
-  the manager process has itself met the refusal and couldn't persist it,
-  restart the manager too.
+  --dry-run=client -o yaml | kubectl apply -f -`). It is a different
+  account, and the next read tries it.
+- **The account is disabled in Ceph, or its counter is high**: on the
+  Ceph side, run `ceph dashboard ac-user-enable frame-storage-reader`,
+  then set a new password (`ceph dashboard ac-user-set-password
+  frame-storage-reader -i <file>`) and put it in the account Secret. The
+  first successful login resets Ceph's counter.
+- **Retry the same account deliberately** ("outcome unknown", or after
+  re-enabling it in Ceph): clear the lists and keep the key:
+
+  ```sh
+  kubectl -n frame-system patch secret frame-ceph-dashboard-state --type json \
+    -p '[{"op":"remove","path":"/data/pending"},{"op":"remove","path":"/data/refused"}]'
+  ```
+
+  Or empty the Secret completely (remove every key, or delete and
+  recreate it at once). A new key is then generated with the next
+  intention. Deleting the Secret without recreating it blocks every
+  login.
 
 ## Usable capacity: what the figure is, and what it ignores
 

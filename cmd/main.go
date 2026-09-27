@@ -239,13 +239,13 @@ func readReplicationFactor(ctx context.Context, c client.Client, storageClassNam
 }
 
 // cephPlacementReader wires the ceph-mgr reader: the account from the
-// frame-ceph-dashboard Secret, and refusals kept in
+// frame-ceph-dashboard Secret, and every login written ahead to
 // frame-ceph-dashboard-state, both in the manager's namespace. Without a
 // namespace there is no account to read and nothing to keep.
 func cephPlacementReader(mgr ctrl.Manager, namespace string) *cephmgr.Reader {
 	r := &cephmgr.Reader{Load: cephmgr.SecretLoader(mgr.GetAPIReader(), namespace)}
 	if namespace != "" {
-		r.Store = &cephmgr.SecretRefusalStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: namespace}
+		r.Gate = &cephmgr.SecretLoginGate{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: namespace}
 	}
 	return r
 }

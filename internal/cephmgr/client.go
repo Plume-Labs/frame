@@ -128,6 +128,10 @@ type Client struct {
 	// loginFailed stops a pass at its first failed login: no GET of the
 	// same pass logs in again (each attempt counts against the account).
 	loginFailed error
+	// gate is written before, and told after, every login (reader.go).
+	gate LoginGate
+	// gateNote says what the gate could not record, for the status.
+	gateNote string
 }
 
 // New validates cfg and builds a client. It refuses anything but https
@@ -179,7 +183,45 @@ func (c *Client) url(path string) string {
 	return u.String()
 }
 
+// GateError wraps an error of the LoginGate: no login was sent, and the
+// pass stops.
+type GateError struct{ Err error }
+
+func (e *GateError) Error() string { return "no login: " + e.Err.Error() }
+func (e *GateError) Unwrap() error { return e.Err }
+
+// login writes the intention to the gate first (no gate: tests only), then
+// logs in, then records the outcome: success clears the intention, a
+// refusal moves it to refused, anything else (network, 5xx, a bad answer)
+// leaves it pending — its outcome is unknown, so the account stays
+// blocked until an operator clears it.
 func (c *Client) login(ctx context.Context) error {
+	if c.gate != nil {
+		if err := c.gate.Begin(ctx, c.cfg); err != nil {
+			return &GateError{Err: err}
+		}
+	}
+	err := c.doLogin(ctx)
+	if c.gate != nil {
+		switch {
+		case err == nil:
+			if gerr := c.gate.Succeeded(ctx, c.cfg); gerr != nil {
+				c.mu.Lock()
+				c.gateNote = "login succeeded but its intention could not be cleared: the next login after a restart is blocked (" + gerr.Error() + ")"
+				c.mu.Unlock()
+			}
+		case errors.Is(err, ErrAuthRefused):
+			if gerr := c.gate.Refused(ctx, c.cfg); gerr != nil {
+				c.mu.Lock()
+				c.gateNote = "refusal not moved to refused, still pending (blocked either way): " + gerr.Error()
+				c.mu.Unlock()
+			}
+		}
+	}
+	return err
+}
+
+func (c *Client) doLogin(ctx context.Context) error {
 	body, _ := json.Marshal(map[string]string{"username": c.cfg.Username, "password": c.cfg.Password})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(pathAuth), bytes.NewReader(body))
 	if err != nil {
@@ -351,7 +393,8 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 	out := &Snapshot{Errors: map[string]error{}, Fetched: map[string]bool{}}
 	var pools []rawPool
 	if err := c.get(ctx, PathPools, &pools); err != nil {
-		if errors.Is(err, ErrAuthRefused) {
+		var gerr *GateError
+		if errors.Is(err, ErrAuthRefused) || errors.As(err, &gerr) {
 			return nil, err
 		}
 		out.Errors[PathPools] = err
@@ -361,7 +404,8 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 	}
 	var osds []rawOSD
 	if err := c.get(ctx, PathOSDs, &osds); err != nil {
-		if errors.Is(err, ErrAuthRefused) {
+		var gerr *GateError
+		if errors.Is(err, ErrAuthRefused) || errors.As(err, &gerr) {
 			return nil, err
 		}
 		out.Errors[PathOSDs] = err
@@ -371,7 +415,8 @@ func (c *Client) Read(ctx context.Context) (*Snapshot, error) {
 	}
 	var rules []rawRule
 	if err := c.get(ctx, PathCrushRules, &rules); err != nil {
-		if errors.Is(err, ErrAuthRefused) {
+		var gerr *GateError
+		if errors.Is(err, ErrAuthRefused) || errors.As(err, &gerr) {
 			return nil, err
 		}
 		out.Errors[PathCrushRules] = err
