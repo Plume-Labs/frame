@@ -45,7 +45,7 @@ var _ = Describe("FrameNode Controller", func() {
 		*fn = framev1beta1.FrameNode{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: framev1beta1.FrameNodeSpec{
-				IP: "10.0.0.1", Role: "worker", Disk: "/dev/nvme0n1",
+				IP: "10.0.0.1", Role: "worker",
 				Rack: "rack1", Zone: "zone-a", ServiceClass: "HIGH",
 				Network: framev1beta1.NetworkSpec{
 					Address: "10.0.0.1/24",
@@ -82,16 +82,20 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(controllerutil.ContainsFinalizer(fn, frameNodeFinalizer)).To(BeTrue())
 	})
 
-	It("sets phase=Provisioning when k8s Node does not exist", func() {
+	// FrameNode no longer provisions anything (the Talos path is gone), so a
+	// FrameNode whose node is absent waits for it, and says so, rather than
+	// dialling a machine.
+	It("sets phase=AwaitingNode when k8s Node does not exist", func() {
 		_, _ = r().Reconcile(ctx, req) // add finalizer
-		_, err := r().Reconcile(ctx, req)
+		res, err := r().Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(Equal(30*time.Second), "polls as a backstop to the Node watch")
 
 		Expect(k8sClient.Get(ctx, key, fn)).To(Succeed())
-		Expect(nodePhaseFromStatus(fn)).To(Equal("Provisioning"))
+		Expect(nodePhaseFromStatus(fn)).To(Equal("AwaitingNode"), "part of the Ready.reason contract (docs/crd-reference.md)")
 	})
 
-	It("sets Ready=False condition when Provisioning", func() {
+	It("sets Ready=False condition while awaiting the node", func() {
 		_, _ = r().Reconcile(ctx, req)
 		_, _ = r().Reconcile(ctx, req)
 
@@ -104,7 +108,7 @@ var _ = Describe("FrameNode Controller", func() {
 		}
 		Expect(readyCond).NotTo(BeNil())
 		Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
-		Expect(readyCond.Reason).To(Equal("Provisioning"))
+		Expect(readyCond.Reason).To(Equal("AwaitingNode"))
 	})
 
 	// The defect this closes, measured on the live cluster on 2026-09-12: three
@@ -133,8 +137,8 @@ var _ = Describe("FrameNode Controller", func() {
 				Role:         "worker",
 				Rack:         "rack-09",
 				ServiceClass: "HIGH",
-				// Disk deliberately empty: this machine was never provisioned
-				// by Frame, which is true of every node in this estate.
+				// Never provisioned by Frame, which is true of every node in
+				// this estate.
 			},
 		}
 		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
@@ -166,11 +170,11 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRack, "rack-09"))
 		Expect(fetched.Labels).To(HaveKeyWithValue(nodeLabelRole, "worker"))
 
-		// And it must not report a discovery it never performed.
+		// And it must not report waiting for a node that is there.
 		updated := &framev1beta1.FrameNode{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "unprovisioned", Namespace: "default"}, updated)).To(Succeed())
-		Expect(nodePhaseFromStatus(updated)).NotTo(Equal(nodePhaseDiscovered),
-			"a node that is in the cluster is not awaiting discovery")
+		Expect(nodePhaseFromStatus(updated)).NotTo(Equal(nodePhaseAwaitingNode),
+			"a node that is in the cluster is not awaited")
 	})
 
 	// The escalation the classification guards close. A principal bound to
@@ -330,5 +334,71 @@ var _ = Describe("FrameNode Controller", func() {
 		Expect(fetched.Labels).NotTo(HaveKey(nodeLabelRDMA), "no RDMA interface, no label")
 		Expect(fetched.Labels).NotTo(HaveKey("topology.kubernetes.io/rack"),
 			"the reserved-prefix key must be cleaned up on reconcile")
+	})
+
+	// Deleting a FrameNode is what an operator does to stop classifying a
+	// node, and the finalizer is the only thing that takes the labels back.
+	// Every label the write path projects must go, service-class first: it is
+	// the one the inference provider selects on, and a leftover keeps
+	// workloads landing on a node nobody classifies any more. Labels Frame
+	// does not own stay.
+	It("strips every projected label from the node when the FrameNode is deleted", func() {
+		ctx := context.Background()
+
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+			Name:   "declassified-node",
+			Labels: map[string]string{"kubernetes.io/hostname": "declassified-node"},
+		}}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		fn := &framev1beta1.FrameNode{
+			ObjectMeta: metav1.ObjectMeta{Name: "declassified", Namespace: "default"},
+			Spec: framev1beta1.FrameNodeSpec{
+				IP: "127.0.0.1", Hostname: "declassified-node", Role: "worker",
+				Rack: "rack-03", Zone: "zone-b", ServiceClass: "HIGH", RDMAInterface: "ib0",
+			},
+		}
+		Expect(k8sClient.Create(ctx, fn)).To(Succeed())
+		key := types.NamespacedName{Name: "declassified", Namespace: "default"}
+		DeferCleanup(func() {
+			fresh := &framev1beta1.FrameNode{}
+			if err := k8sClient.Get(ctx, key, fresh); err == nil {
+				fresh.Finalizers = nil
+				_ = k8sClient.Update(ctx, fresh)
+				_ = k8sClient.Delete(ctx, fresh)
+			}
+		})
+
+		reconciler := &FrameNodeReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Recorder: record.NewFakeRecorder(20)}
+		req := reconcile.Request{NamespacedName: key}
+		for range 2 { // finalizer, then projection
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		fetched := &corev1.Node{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "declassified-node"}, fetched)).To(Succeed())
+		for _, k := range frameNodeLabels {
+			Expect(fetched.Labels).To(HaveKey(k), "precondition: %s projected", k)
+		}
+
+		Expect(k8sClient.Delete(ctx, fn)).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "declassified-node"}, fetched)).To(Succeed())
+		// Literal keys, not frameNodeLabels: a key dropped from that list must
+		// fail here, not vanish from both sides of the assertion.
+		for _, k := range []string{
+			"frame.plume-labs.io/service-class", "frame.plume-labs.io/role", "frame.plume-labs.io/rack",
+			"frame.plume-labs.io/rdma", "topology.kubernetes.io/zone",
+		} {
+			Expect(fetched.Labels).NotTo(HaveKey(k), "the finalizer must take %s back", k)
+		}
+		Expect(fetched.Labels).To(HaveKeyWithValue("kubernetes.io/hostname", "declassified-node"),
+			"labels Frame does not own stay")
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, key, &framev1beta1.FrameNode{}))
+		}, "5s").Should(BeTrue(), "the finalizer is released")
 	})
 })

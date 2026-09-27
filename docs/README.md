@@ -14,7 +14,7 @@ Engineering documentation for the Frame operator and control plane. For the prod
 | [deployment.md](deployment.md) | Build image, kustomize overlays, in-cluster auth, cert-manager, installing the operator via Helm, [provisioning a machine with Debian](deployment.md#provisioning-a-machine-with-debian) |
 | [upgrading.md](upgrading.md) | Migrating a kustomize install to Helm, chart-to-chart upgrades, what schema stability to expect pre-Phase B |
 | [roadmap.md](roadmap.md) | Path from the `v1beta1` beta to stable V1, plus the new API groups building alongside it |
-| [provisioning.md](provisioning.md) | How a machine becomes a node: the 2026-09-10 decision to drop Talos, what it invalidates, and the three pieces of work that follow (piece 2, provisioning on Debian, is designed and implemented — runbook in [deployment.md](deployment.md#provisioning-a-machine-with-debian)) |
+| [provisioning.md](provisioning.md) | How a machine becomes a node: the 2026-09-10 decision to drop Talos, what it invalidated, and the three pieces of work that followed (piece 2, provisioning on Debian, is designed and implemented — runbook in [deployment.md](deployment.md#provisioning-a-machine-with-debian); the Talos code itself was removed on 2026-09-27) |
 | [runbook.md](runbook.md) | Operating the live cluster: health, failover, certificates, storage migration, backup/restore, control-plane containment |
 
 ## 30-second model
@@ -29,7 +29,7 @@ Frame CRDs (frame.plume-labs.io/v1beta1, services.plume-labs.io/v1beta1)
 Frame operator (controllers + webhooks)   ← api/, internal/, cmd/
         │  reconciles into
         ▼
-Cluster primitives (ArgoWorkflows, PriorityClasses, Talos gRPC, llama.cpp, …)
+Cluster primitives (ArgoWorkflows, PriorityClasses, node labels, llama.cpp, …)
         │
         ▼
 Bare-metal IaC (deploy/)
@@ -37,7 +37,7 @@ Bare-metal IaC (deploy/)
 
 - **Control plane** (`src/`) — React UI + TypeScript SDK. Both talk **directly to the Kubernetes API** — no intermediate server. Dev: `kubectl proxy`. Prod: ServiceAccount Bearer token.
 - **Operator** (`internal/`) — Kubebuilder v4 controllers for nine of the eleven CRDs, across two API groups. FrameUser and FrameTask are the exceptions: FrameUser is a record `authd` reads, not something reconciled, and FrameTask is a proxy-written audit trail, not something reconciled either. Two more Go binaries ship with it: `cmd/authd` (per-user auth) and `cmd/agent` (the node-tuning agent DaemonSet).
-- **IaC** (`deploy/`) — Talos provisioning (Omni for bare metal, prepared), Ceph (RGW) storage, Cilium RDMA networking, caching (Alluxio, NVMe burst buffer), resilience (Velero), GitOps, and Argo Workflows manifests.
+- **IaC** (`deploy/`) — Ceph (RGW) storage, Cilium RDMA networking, caching (Alluxio, NVMe burst buffer), resilience (Velero), GitOps, and Argo Workflows manifests.
 
 ## Scope
 

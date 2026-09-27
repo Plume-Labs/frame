@@ -420,8 +420,8 @@ func main() {
 		// then continuously exercise, the right to read every Secret in the
 		// cluster, holding them all in memory besides.
 		//
-		// Every Secret this manager touches is named: the Talos PKI Secret in
-		// buildTalosClient, the API-key Secret the inference provider owns, and
+		// Every Secret this manager touches is named: a FrameMachine's BMC
+		// credentials, the API-key Secret the inference provider owns, and
 		// the binding coordinates in internal/controller/services/binding.go.
 		// None of them is enumerated, so none of them needs a cache. Disabling
 		// it here is what lets the rbac markers on those controllers drop
@@ -513,22 +513,6 @@ func main() {
 		Recorder: mgr.GetEventRecorderFor("frameresourcequota"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "frameresourcequota")
-		os.Exit(1)
-	}
-	if err := (&controller.TalosMachineConfigReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("talosmachineconfig"), //nolint:staticcheck
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "talosmachineconfig")
-		os.Exit(1)
-	}
-	if err := (&controller.TalosUpgradeReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("talosupgrade"), //nolint:staticcheck
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "talosupgrade")
 		os.Exit(1)
 	}
 	if err := (&controller.NodeTuningReconciler{
@@ -650,18 +634,6 @@ func main() {
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1beta1.SetupFrameResourceQuotaWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameResourceQuota")
-			os.Exit(1)
-		}
-	}
-	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1beta1.SetupTalosMachineConfigWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosMachineConfig")
-			os.Exit(1)
-		}
-	}
-	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
-		if err := webhookv1beta1.SetupTalosUpgradeWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "TalosUpgrade")
 			os.Exit(1)
 		}
 	}

@@ -270,12 +270,10 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 					},
 				},
 				Status: framev1alpha1.FrameNodeStatus{
-					ObservedGeneration:     1,
-					Phase:                  "Discovered",
-					DiscoveredHostname:     "node-cp",
-					DiscoveredTalosVersion: "v1.8.0",
-					KubeletVersion:         "v1.31.0",
-					NodeName:               "node-cp",
+					ObservedGeneration: 1,
+					Phase:              "Online",
+					KubeletVersion:     "v1.31.0",
+					NodeName:           "node-cp",
 					Capacity: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse("8"),
 						corev1.ResourceMemory: resource.MustParse("32Gi"),
@@ -284,13 +282,11 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 						corev1.ResourceCPU:    resource.MustParse("7500m"),
 						corev1.ResourceMemory: resource.MustParse("30Gi"),
 					},
-					DiscoveredDisks: []framev1alpha1.DiskInfo{{Name: "/dev/nvme0n1", Size: "1Ti", Type: "nvme"}},
-					DiscoveredNICs:  []framev1alpha1.NICInfo{{Name: "eth0", MAC: "aa:bb:cc:dd:ee:ff", Speed: "10Gbps"}},
 					Conditions: []metav1.Condition{{
 						Type:               "Ready",
-						Status:             metav1.ConditionFalse,
-						Reason:             "Discovered",
-						Message:            "waiting for user to set spec.disk",
+						Status:             metav1.ConditionTrue,
+						Reason:             "Online",
+						Message:            "Synced from k8s Node",
 						ObservedGeneration: 1,
 						LastTransitionTime: metav1.Now().Rfc3339Copy(),
 					}},
@@ -372,69 +368,6 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 			}
 			conversionSurvivesStorage(alpha, &framev1beta1.SchedulingPolicy{},
 				&framev1alpha1.SchedulingPolicy{}, "conv-policy-hub")
-		})
-	})
-
-	Context("TalosMachineConfig", func() {
-		It("survives a trip through v1beta1 storage, dropping only the secret ref's namespace", func() {
-			alpha := &framev1alpha1.TalosMachineConfig{
-				ObjectMeta: metav1.ObjectMeta{Name: "conv-tmc", Namespace: "default"},
-				Spec: framev1alpha1.TalosMachineConfigSpec{
-					NodeName:       "node-w2",
-					TalosEndpoint:  "192.0.2.203:50000",
-					ConfigPatch:    "machine:\n  install:\n    disk: /dev/nvme0n1\n",
-					TalosSecretRef: framev1alpha1.TalosSecretReference{Name: "talos-certs", Namespace: "kube-system"},
-				},
-				Status: framev1alpha1.TalosMachineConfigStatus{
-					ObservedGeneration: 1,
-					Conditions: []metav1.Condition{{
-						Type:               "Ready",
-						Status:             metav1.ConditionTrue,
-						Reason:             "Applied",
-						ObservedGeneration: 1,
-						LastTransitionTime: metav1.Now().Rfc3339Copy(),
-					}},
-				},
-			}
-			back := &framev1alpha1.TalosMachineConfig{}
-			conversionSurvivesStorage(alpha, &framev1beta1.TalosMachineConfig{}, back, "conv-tmc-hub",
-				cmpopts.IgnoreFields(framev1alpha1.TalosSecretReference{}, "Namespace"))
-
-			// The one announced normalisation, asserted rather than merely
-			// ignored: empty already meant "this CR's own namespace" (F6).
-			Expect(back.Spec.TalosSecretRef.Namespace).To(BeEmpty())
-			Expect(back.Spec.TalosSecretRef.Name).To(Equal("talos-certs"))
-			Expect(back.Annotations).To(BeEmpty(), "nothing is stashed in an annotation")
-		})
-	})
-
-	Context("TalosUpgrade", func() {
-		It("survives a trip through v1beta1 storage, dropping only the secret ref's namespace", func() {
-			alpha := &framev1alpha1.TalosUpgrade{
-				ObjectMeta: metav1.ObjectMeta{Name: "conv-tu", Namespace: "default"},
-				Spec: framev1alpha1.TalosUpgradeSpec{
-					NodeName:       "node-w2",
-					TalosEndpoint:  "192.0.2.203:50000",
-					Image:          "ghcr.io/siderolabs/installer:v1.8.0",
-					TalosSecretRef: framev1alpha1.TalosSecretReference{Name: "talos-certs", Namespace: "kube-system"},
-				},
-				Status: framev1alpha1.TalosUpgradeStatus{
-					ObservedGeneration: 1,
-					Conditions: []metav1.Condition{{
-						Type:               "Ready",
-						Status:             metav1.ConditionFalse,
-						Reason:             "Upgrading",
-						ObservedGeneration: 1,
-						LastTransitionTime: metav1.Now().Rfc3339Copy(),
-					}},
-				},
-			}
-			back := &framev1alpha1.TalosUpgrade{}
-			conversionSurvivesStorage(alpha, &framev1beta1.TalosUpgrade{}, back, "conv-tu-hub",
-				cmpopts.IgnoreFields(framev1alpha1.TalosSecretReference{}, "Namespace"))
-
-			Expect(back.Spec.TalosSecretRef.Namespace).To(BeEmpty())
-			Expect(back.Spec.Image).To(Equal("ghcr.io/siderolabs/installer:v1.8.0"))
 		})
 	})
 

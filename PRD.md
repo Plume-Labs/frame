@@ -55,10 +55,10 @@ Frame is a full-stack mainframe framework: a React control-plane UI, a TypeScrip
 ## Essential Features (Continued)
 
 **GitOps Deployment Infrastructure**
-- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, PXE boot, Ceph (RGW) storage, HPC scheduling (Volcano/YuniKorn), Argo Workflows, and GitOps workflows
+- Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, Ceph (RGW) storage, HPC scheduling (Volcano/YuniKorn), Argo Workflows, and GitOps workflows
 - Purpose: Production-ready deployment scripts for mainframe-like clustering with automated provisioning and continuous delivery
-- Trigger: Operations team uses deployment scripts plus Talos/Sidero resources to provision infrastructure
-- Progression: Run Talos bootstrap script → PXE/Sidero provisions bare metal → Talos configures K8s nodes → Flux/ArgoCD syncs from Git → Frame API + UI deployed
+- Trigger: Operations team registers each machine's BMC (FrameMachine) and installs it (FrameInstall)
+- Progression: Register BMC → FrameInstall builds a Debian preseed and boots it over virtual media → k3s join → FrameNode classifies the node → Flux/ArgoCD syncs from Git → Frame API + UI deployed
 - Success criteria: Full cluster deployed with RDMA networking, Ceph (RGW) storage, automated GitOps, hot-add node capability, HPC scheduler, and Frame API server running
 
 ## Edge Case Handling

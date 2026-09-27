@@ -61,22 +61,17 @@ spec:
           spec:
             description: spec defines the desired state of FrameNode
             properties:
-              disk:
-                description: Disk device for Talos installation (e.g., /dev/nvme0n1).
-                  Set after discovery.
-                type: string
               hostname:
                 description: Hostname for the node
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               ip:
-                description: IP address of the node in maintenance mode
+                description: IP address of the node
                 format: ip
                 type: string
               network:
-                description: Network configuration. Set after discovery to trigger
-                  provisioning.
+                description: Network configuration, descriptive only.
                 properties:
                   address:
                     type: string
@@ -104,8 +99,7 @@ spec:
                 description: RDMA interface name (e.g., ib0, mlx5_0)
                 type: string
               role:
-                description: Role of the node in the cluster. Empty during initial
-                  discovery phase.
+                description: Role of the node in the cluster. Empty until classified.
                 enum:
                 - controlplane
                 - worker
@@ -125,13 +119,6 @@ spec:
             required:
             - ip
             type: object
-            x-kubernetes-validations:
-            - message: network.address, network.gateway, and at least one network.dns
-                entry are required once disk is set
-              rule: '!has(self.disk) || size(self.disk) == 0 || (has(self.network)
-                && has(self.network.address) && size(self.network.address) > 0 &&
-                has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns)
-                && self.network.dns.size() > 0)'
           status:
             description: status defines the observed state of FrameNode
             properties:
@@ -214,52 +201,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              discoveredDisks:
-                description: DiscoveredDisks contains disk information from maintenance
-                  mode discovery
-                items:
-                  description: DiskInfo describes a disk discovered on a node in maintenance
-                    mode
-                  properties:
-                    name:
-                      type: string
-                    size:
-                      type: string
-                    type:
-                      type: string
-                  required:
-                  - name
-                  - size
-                  - type
-                  type: object
-                type: array
-              discoveredHostname:
-                description: DiscoveredHostname is the hostname reported by the node
-                  in maintenance mode
-                type: string
-              discoveredNICs:
-                description: DiscoveredNICs contains network interface information
-                  from maintenance mode discovery
-                items:
-                  description: NICInfo describes a network interface discovered on
-                    a node in maintenance mode
-                  properties:
-                    mac:
-                      type: string
-                    name:
-                      type: string
-                    speed:
-                      type: string
-                  required:
-                  - mac
-                  - name
-                  - speed
-                  type: object
-                type: array
-              discoveredTalosVersion:
-                description: DiscoveredTalosVersion is the Talos version reported
-                  during maintenance mode discovery
-                type: string
               kubeletVersion:
                 description: Kubelet version running on the node
                 type: string
@@ -337,10 +278,6 @@ spec:
           spec:
             description: spec defines the desired state of FrameNode
             properties:
-              disk:
-                description: Disk device for Talos installation (e.g. /dev/nvme0n1).
-                  Set after discovery.
-                type: string
               hostname:
                 description: Hostname for the node.
                 maxLength: 63
@@ -348,7 +285,7 @@ spec:
                 type: string
               ip:
                 description: |-
-                  IP address of the node in maintenance mode.
+                  IP address of the node.
 
                   Validated by CEL, not by Format. v1alpha1 carried a
                   validation:Format=ip marker, which does nothing: `ip` is not a
@@ -373,8 +310,9 @@ spec:
                 - message: ip must be a valid IP address
                   rule: isIP(self)
               network:
-                description: Network configuration. Set after discovery to trigger
-                  provisioning.
+                description: |-
+                  Network configuration, descriptive only: Frame installs machines through
+                  FrameInstall, not through FrameNode.
                 properties:
                   address:
                     description: |-
@@ -384,9 +322,8 @@ spec:
                       tightening that applies isIP here would strand all three.
 
                       The format is *documented and deliberately not validated*, and the
-                      MaxLength is deliberately the only bound. This field is the one node
-                      field written into a Talos machine config, so leaving it wholly
-                      unbounded was not acceptable past the freeze; but the field is named
+                      MaxLength is deliberately the only bound. Leaving it wholly unbounded
+                      was not acceptable past the freeze; but the field is named
                       "address" while every value is a prefix, nothing in the code enforces
                       either reading, and a pattern would freeze a decision nobody has taken.
                       A bound cannot strand anything and can be raised later; a pattern could
@@ -432,10 +369,8 @@ spec:
                   and rejected there, leaving the FrameNode permanently short of Online
                   behind an error naming label validation rather than this field (T1).
 
-                  The bound is prophylactic, not a fix for an observed outage: the
-                  label-projection path has never run on this cluster — all three stored
-                  FrameNodes sit at the discovery stage with no spec.disk — and every one
-                  of them uses "rack-01", which passes. What the bound buys is that the
+                  The bound is prophylactic, not a fix for an observed outage: every
+                  stored FrameNode uses "rack-01", which passes. What the bound buys is that the
                   failure can no longer be introduced, and after the freeze it could
                   never be added.
                 maxLength: 63
@@ -447,8 +382,7 @@ spec:
                   projected onto the Kubernetes Node as frame.plume-labs.io/rdma=true.
                 type: string
               role:
-                description: Role of the node in the cluster. Empty during initial
-                  discovery.
+                description: Role of the node in the cluster. Empty until classified.
                 enum:
                 - controlplane
                 - worker
@@ -460,9 +394,8 @@ spec:
                   the Kubernetes Node as frame.plume-labs.io/service-class and read by
                   the inference provider's NodeSelector.
 
-                  Optional and deliberately undefaulted: a node is discovered before it
-                  is classified, and defaulting it would classify hardware nobody has
-                  looked at. v1alpha1's enum also admitted the empty string; that member
+                  Optional and deliberately undefaulted: defaulting it would classify
+                  hardware nobody has looked at. v1alpha1's enum also admitted the empty string; that member
                   is gone, because absence already means unclassified. Dropping it is
                   field-level, so ratcheting protects stored objects — and none of the
                   three that exist uses it.
@@ -481,13 +414,6 @@ spec:
             required:
             - ip
             type: object
-            x-kubernetes-validations:
-            - message: network.address, network.gateway, and at least one network.dns
-                entry are required once disk is set
-              rule: '!has(self.disk) || size(self.disk) == 0 || (has(self.network)
-                && has(self.network.address) && size(self.network.address) > 0 &&
-                has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns)
-                && self.network.dns.size() > 0)'
           status:
             description: status defines the observed state of FrameNode
             properties:
@@ -571,52 +497,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              discoveredDisks:
-                description: DiscoveredDisks contains disk information from maintenance
-                  mode discovery.
-                items:
-                  description: DiskInfo describes a disk discovered on a node in maintenance
-                    mode.
-                  properties:
-                    name:
-                      type: string
-                    size:
-                      type: string
-                    type:
-                      type: string
-                  required:
-                  - name
-                  - size
-                  - type
-                  type: object
-                type: array
-              discoveredHostname:
-                description: DiscoveredHostname is the hostname reported by the node
-                  in maintenance mode.
-                type: string
-              discoveredNICs:
-                description: DiscoveredNICs contains network interface information
-                  from maintenance mode discovery.
-                items:
-                  description: NICInfo describes a network interface discovered on
-                    a node in maintenance mode.
-                  properties:
-                    mac:
-                      type: string
-                    name:
-                      type: string
-                    speed:
-                      type: string
-                  required:
-                  - mac
-                  - name
-                  - speed
-                  type: object
-                type: array
-              discoveredTalosVersion:
-                description: DiscoveredTalosVersion is the Talos version reported
-                  during maintenance mode discovery.
-                type: string
               kubeletVersion:
                 description: KubeletVersion is the kubelet version running on the
                   node.

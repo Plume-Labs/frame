@@ -93,7 +93,7 @@ type FrameTaskSpec struct {
 	Action string `json:"action,omitempty"`
 
 	// There was a `ref` field here, pointing at an object that carried the
-	// action's progress — a FrameJob, a TalosUpgrade, a Velero Backup — so
+	// action's progress — a FrameJob, a FrameInstall, a Velero Backup — so
 	// the Tasks screen could read that object's status instead of copying
 	// it. It is removed, and the reason is worth recording so it is not
 	// re-added on the same reasoning.

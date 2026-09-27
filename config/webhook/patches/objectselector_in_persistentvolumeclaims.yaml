@@ -22,8 +22,8 @@
 # /webhooks/6 is `vpersistentvolumeclaim.kb.io`'s current index — manifests.yaml
 # is controller-gen's alphabetical-by-name ordering of all ValidatingWebhookConfiguration
 # entries: framejob(0) framenode(1) frameresourcequota(2) frameservice(3)
-# framestorage(4) frameuser(5) persistentvolumeclaim(6) schedulingpolicy(7)
-# talosmachineconfig(8) talosupgrade(9). If `make manifests` ever reorders
+# framestorage(4) frameuser(5) persistentvolumeclaim(6) schedulingpolicy(7).
+# If `make manifests` ever reorders
 # this list (a new webhook whose name sorts before "vpersistentvolumeclaim"),
 # this index must move with it — hack/helm-parity.sh's objectSelector/
 # failurePolicy assertion (see the PVC webhook section there) will fail

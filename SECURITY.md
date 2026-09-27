@@ -99,7 +99,7 @@ not.
 
 Out of scope, because they are not Frame's to fix — report these upstream:
 
-- Vulnerabilities in Kubernetes itself, in Talos, or in Argo Workflows
+- Vulnerabilities in Kubernetes itself, in k3s, or in Argo Workflows
 - Vulnerabilities in base images (`nginx`, `golang`, `distroless`,
   `ghcr.io/ggml-org/llama.cpp`) that Frame merely consumes, unless Frame's use
   of them is what makes the issue exploitable

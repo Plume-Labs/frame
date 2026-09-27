@@ -270,9 +270,22 @@ describe('mapNodePhase', () => {
     expect(degraded.status).toBe('degraded')
   })
 
+  it('reads AwaitingNode as provisioning, not offline', () => {
+    // What the controller writes since the Talos path left: a FrameNode whose
+    // node has not joined yet. It is on its way in, not down — reading it as
+    // offline would put a red dot on every freshly classified machine.
+    const awaiting = __testing.crToNode({
+      metadata: { name: 'g9' },
+      spec: { ip: '10.0.0.9', serviceClass: 'HIGH' },
+      status: { conditions: [{ type: 'Ready', status: 'False', reason: 'AwaitingNode' }] },
+    })
+    expect(awaiting.status).toBe('provisioning')
+  })
+
   it('reads a reason outside the frozen vocabulary as offline, not provisioning', () => {
-    // v1beta1 froze the reasons at Discovered|Provisioning|Online|Degraded|
-    // Offline. Anything else is a controller bug, and offline is the answer
+    // The reasons are Online|Degraded|Offline|AwaitingNode, plus Discovered
+    // and Provisioning left by the retired Talos path. Anything else is a
+    // controller bug, and offline is the answer
     // that does not claim work is in progress that is not.
     const unknown = __testing.crToNode({
       metadata: { name: 'w4' },

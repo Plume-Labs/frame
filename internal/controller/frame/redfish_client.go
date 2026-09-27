@@ -30,8 +30,8 @@ import (
 	"github.com/gothshoot/frame/internal/redfish"
 )
 
-// BuildRedfishClient mirrors buildTalosClient: it is the one place the
-// controller reads a credential, so the Secret never travels further.
+// BuildRedfishClient is the one place the controller reads a BMC credential,
+// so the Secret never travels further.
 func BuildRedfishClient(ctx context.Context, kube client.Client, namespace string, bmc framev1beta1.BMCSpec) (redfish.Client, error) {
 	var sec corev1.Secret
 	if err := kube.Get(ctx, types.NamespacedName{Name: bmc.CredentialsRef, Namespace: namespace}, &sec); err != nil {

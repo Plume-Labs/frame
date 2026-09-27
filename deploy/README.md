@@ -1,6 +1,6 @@
 # GitOps Deployment Infrastructure
 
-This directory contains all Infrastructure as Code (IaC) for deploying the bare-metal Kubernetes cluster with Talos/Omni provisioning, RDMA networking, Ceph distributed storage, and the Cluster Control monitoring interface.
+This directory contains all Infrastructure as Code (IaC) for deploying the bare-metal Kubernetes cluster with RDMA networking, Ceph distributed storage, and the Cluster Control monitoring interface.
 
 ## Directory Structure
 
@@ -8,9 +8,6 @@ This directory contains all Infrastructure as Code (IaC) for deploying the bare-
 deploy/
 ├── kubernetes/           # K8s manifests for the monitoring app
 ├── gitops/              # Flux/ArgoCD configurations
-├── talos/               # Talos MachineConfigs and schematics
-├── omni/                # Omni bare-metal provisioning (values, MachineClasses, patches)
-├── pxe/                 # PXE boot configurations
 ├── ceph/                # Ceph cluster configurations
 ├── networking/          # RDMA and network fabric configs
 ├── monitoring/          # Observability stack (Prometheus, Grafana)
@@ -21,21 +18,19 @@ deploy/
 
 - Bare metal servers with:
   - RDMA-capable NICs (InfiniBand or RoCE)
-  - PXE boot support
-  - IPMI/BMC access
+  - Redfish BMC access (machines are registered as FrameMachine and
+    installed with Debian through FrameInstall — see docs/deployment.md)
 - Control plane with:
-  - talosctl 1.9+
   - kubectl 1.28+
   - Flux CLI 2.2+ or ArgoCD CLI 2.9+
 
 ## Quick Start
 
-### 1. Bootstrap Bare Metal Provisioning
+### 1. Install the machines
 
-```bash
-cd deploy
-./scripts/bootstrap-talos.sh <controlplane-ip> <worker-ips-comma-separated>
-```
+Register each machine's BMC as a `FrameMachine` and install it with a
+`FrameInstall` (Debian preseed, k3s join) — see docs/deployment.md,
+"Provisioning a machine with Debian".
 
 ### 2. Initialize GitOps
 
@@ -88,9 +83,5 @@ kubectl apply -k deploy/kubernetes/overlays/production/
 See individual subdirectories for detailed configuration options:
 - [Kubernetes manifests](./kubernetes/README.md)
 - [GitOps setup](./gitops/README.md)
-- [Talos provisioning](./talos/README.md)
-- [Omni bare-metal provisioning](./omni/README.md)
-- [Omni bare-metal provisioning](./omni/README.md)
-- [PXE configuration](./pxe/README.md)
 - [Ceph storage](./ceph/README.md)
 - [RDMA networking](./networking/README.md)

@@ -14,12 +14,12 @@ The gate is narrow on purpose: the freeze waits for S1's *model* to settle, prov
 Running both tracks with a single operator means alternating between them, not advancing both at once. Whichever gets attention, the other waits.
 
 > **The OS decision moved on 2026-09-10: Talos is out, a custom Debian-based
-> image is in.** Every Talos-shaped item below — `TalosMachineConfig`,
-> `TalosUpgrade`, and the provisioning half of `FrameNode` — is scoped
-> against a mechanism this estate no longer uses, and the auto-update track
-> loses the mechanism it assumed. What survives, what dies, and the order to
-> rebuild it in are in [provisioning.md](provisioning.md). **S3 has been
-> rewritten to match; everything else below has not.**
+> image is in.** The Talos-shaped items — `TalosMachineConfig`,
+> `TalosUpgrade`, and the provisioning half of `FrameNode` — were removed
+> from the code on 2026-09-27; the auto-update track lost the mechanism it
+> assumed. What survived, what died, and the order it was rebuilt in are in
+> [provisioning.md](provisioning.md). **S3 has been rewritten to match;
+> older items below still mention Talos as history.**
 
 The bar for each phase is its **Exit criteria** — a phase is not done until those are demonstrable, not just coded.
 
@@ -37,7 +37,7 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
 
 ## Current state (baseline)
 
-- ✅ 7 CRDs in `frame.plume-labs.io`, frozen at `v1beta1` with `v1alpha1` served and deprecated: FrameJob, FrameNode, FrameResourceQuota, FrameUser, SchedulingPolicy, TalosMachineConfig, TalosUpgrade — with generated manifests and per-kind RBAC tiers
+- ✅ 5 CRDs in `frame.plume-labs.io`, frozen at `v1beta1` with `v1alpha1` served and deprecated: FrameJob, FrameNode, FrameResourceQuota, FrameUser, SchedulingPolicy — with generated manifests and per-kind RBAC tiers (TalosMachineConfig and TalosUpgrade were the sixth and seventh until their removal on 2026-09-27)
 - ✅ **NodeTuning**, an eighth kind in the same group, added **after** the freeze (17/08): cluster-scoped, `v1beta1` only, no webhook, no conversion, **no RBAC tiers**. Controller + a privileged node-agent DaemonSet (`cmd/agent`) that reports measured node state and performs approval-gated, one-node-at-a-time restarts. See [crd-reference.md](crd-reference.md) and [deployment.md](deployment.md)
 - ✅ **FrameTask**, a ninth kind in the same group, added post-freeze (2026-09-08, per-user identity and tasks lot): namespaced, `v1beta1` only, no webhook, no conversion, **no controller** — a record of one mutating request the UI made through `frame-uiproxy`, purged 7 days after it finishes. It does have RBAC tiers, unlike NodeTuning. See [crd-reference.md](crd-reference.md)
 - ✅ **`FrameUser.spec.state`**, added post-freeze (2026-09-09, lot 0c): the
@@ -64,8 +64,8 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
   they belong to Acme's own Helm chart, and labelling them here would be a
   server-side-apply ownership conflict — so neither shows a Restart or Scale
   button. Infrastructure namespaces are deliberately exempt too — Ceph, the
-  node-tuning agent, the CNI, node-exporter and the Talos tooling all need
-  what `baseline` forbids. This is what earned back the `apps/deployments`
+  node-tuning agent, the CNI and node-exporter all need what `baseline`
+  forbids. This is what earned back the `apps/deployments`
   `patch` grant removed on 2026-08-10 as "the single grant that turned the
   unauthenticated UI into cluster-admin": it is now bound by a `RoleBinding`
   into exactly the enforced namespaces — and so is the YAML editor's
@@ -100,9 +100,9 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
 - ✅ Every CRD with a controller produces real cluster effects, with finalizers, Kubernetes Events and Prometheus metrics — all except FrameUser and FrameTask, neither of which is reconciled; see [crd-reference.md](crd-reference.md)
 - ✅ Validating/defaulting webhooks + envtest coverage threshold ≥ 45% on `internal/controller`, tracked in CI
 - ✅ UI (13 tabbed screens behind an Overview landing, plus a Tasks view) and SDK reach the Kubernetes API through the in-pod `frame-uiproxy` sidecar, which impersonates the signed-in `FrameUser` — the direct-ServiceAccount-token path this bullet used to describe as "Prod" is gone; see [deployment.md](deployment.md)'s RBAC section. (Local development against a developer's own kubeconfig via `kubectl proxy` is a separate workflow, outside the deployed pod, but it is **not** unaffected, as this sentence claimed until 2026-09-08: the console now calls `currentSession()` before it renders anything, and `kubectl proxy` serves no `/auth`. `npm run dev` needs authd reachable too — a port-forward, or `AUTH_PROXY_TARGET`. See [development.md](development.md).)
-- ✅ `deploy/` IaC: Talos, Ceph (RGW), Cilium/RDMA, Argo, monitoring, GitOps
+- ✅ `deploy/` IaC: Ceph (RGW), Cilium/RDMA, Argo, monitoring, GitOps
 - ✅ **authd is consumed.** Argon2id passwords, ES256 OIDC issuer with JWKS, usernameless WebAuthn, FrameUser store with a last-admin webhook guard — all merged and running in `cluster-control` since Stage 1. Stages 2 and 3 are done, by a different route than either was originally planned: Stage 2 was to configure the apiserver's `--oidc-issuer-url` to trust authd directly (native OIDC); instead, the `frame-uiproxy` sidecar (replacing the `kubectl proxy` sidecar) validates authd's ES256 token itself and forwards the request to the apiserver as an impersonated user, which needs no apiserver flag. Stage 3 (switching the UI over) landed the same way: the UI now requires a session, and every request carries the impersonated identity through to RBAC. Native `--oidc-issuer-url` configuration remains a real follow-up — it belongs in the G9 cluster's `/etc/rancher/k3s/config.yaml`, not as an unfinished stage of this work, since it changes apiserver flags on a running control plane rather than anything this repository deploys. The login screen offers **both** password and usernameless passkey sign-in (`src/components/LoginView.tsx`), and enrolment is in the sidebar footer (`src/components/PasskeysDialog.tsx`) — the rollout in [deployment.md](deployment.md) depends on that dialog, because the bootstrapped first admin has `passwordAuth: disabled` and a passkey is the only credential it can ever acquire.
-- 🚧 Bare-metal provisioning (`deploy/omni/`): manifests and install script ready, never executed — Omni manages Talos machines, the test cluster is k3s, and there is no bare metal yet. Sidero Metal was dropped: upstream no longer develops it. `deploy/pxe/` is still only a README.
+- ✅ Bare-metal provisioning on Debian (`FrameMachine` + `FrameInstall`, `internal/provision`). The Talos/Omni path (`deploy/talos`, `deploy/omni`, `deploy/pxe`, the two Talos CRDs, FrameNode's discovery half) was never executed and was removed on 2026-09-27; see [provisioning.md](provisioning.md) and [upgrading.md](upgrading.md).
 
 ---
 
@@ -223,7 +223,7 @@ The design spec posed three hypotheses under "Where this may force the core API 
 
 Frame itself — **and now the node OS too, which this section used to inherit rather than own.**
 
-`TalosUpgrade` covered the node OS while the estate ran Talos. It does not any more: since 2026-09-10 a node is a Debian machine installed by `FrameInstall`, and **nothing upgrades it**. The `TalosUpgrade` CRD and its controller still exist and are still frozen at `v1beta1`, but they drive a mechanism no node here runs; retiring them is work item 3 of [provisioning.md](provisioning.md), deliberately kept for last so the CRDs outlive the transition rather than being pulled from under it.
+`TalosUpgrade` covered the node OS while the estate ran Talos. It does not any more: since 2026-09-10 a node is a Debian machine installed by `FrameInstall`, and **nothing upgrades it**. The `TalosUpgrade` CRD and its controller were removed on 2026-09-27 (work item 3 of [provisioning.md](provisioning.md)).
 
 So S3 has three pieces, not two, and the third is the one that needs a design before anything else:
 
@@ -271,8 +271,6 @@ S1 is already through it: `services.plume-labs.io` was frozen alongside `frame.p
 ## Post-V1, unscheduled
 
 - Native OIDC (`--oidc-issuer-url` on the apiserver) — authd Stages 2 and 3 shipped instead through impersonation via the `frame-uiproxy` sidecar (2026-09-08 per-user identity and tasks lot; see "Current state" above and `docs/deployment.md`'s RBAC section). Configuring the apiserver directly remains open, and belongs in the G9 cluster's `/etc/rancher/k3s/config.yaml`.
-- `deploy/omni` execution — blocked on hardware: no bare metal, and the test cluster is k3s
-- `deploy/pxe` — README only
 - Autoscaling FrameNodes from spare bare metal
 - Cost/capacity forecasting beyond the current dashboards
 

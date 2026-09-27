@@ -113,10 +113,10 @@ type FrameMachineSpec struct {
 	PowerRequest *PowerRequestSpec `json:"powerRequest,omitempty"`
 
 	// NodeRef names the Kubernetes node this chassis carries, when it carries
-	// one. It names a Kubernetes node and not a FrameNode deliberately:
-	// FrameNode's provisioning flow is Talos-shaped and the estate moved to a
-	// Debian-based image (see docs/provisioning.md), whereas a Kubernetes node
-	// name is true regardless of how the machine was installed.
+	// one. It names a Kubernetes node and not a FrameNode deliberately: a
+	// FrameNode is a classification that may or may not exist for a node,
+	// whereas a Kubernetes node name is true regardless of how the machine was
+	// installed or classified.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	NodeRef string `json:"nodeRef,omitempty"`

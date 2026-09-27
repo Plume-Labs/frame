@@ -6,8 +6,6 @@ resources:
 - bases/frame.plume-labs.io_framejobs.yaml
 - bases/frame.plume-labs.io_schedulingpolicies.yaml
 - bases/frame.plume-labs.io_frameresourcequotas.yaml
-- bases/frame.plume-labs.io_talosmachineconfigs.yaml
-- bases/frame.plume-labs.io_talosupgrades.yaml
 - bases/frame.plume-labs.io_frameusers.yaml
 - bases/frame.plume-labs.io_nodetunings.yaml
 - bases/frame.plume-labs.io_frametasks.yaml
@@ -27,8 +25,6 @@ patches:
 - path: patches/webhook_in_frame_framejobs.yaml
 - path: patches/webhook_in_frame_schedulingpolicies.yaml
 - path: patches/webhook_in_frame_frameresourcequotas.yaml
-- path: patches/webhook_in_frame_talosmachineconfigs.yaml
-- path: patches/webhook_in_frame_talosupgrades.yaml
 - path: patches/webhook_in_frame_frameusers.yaml
 - path: patches/webhook_in_services_frameservices.yaml
 # +kubebuilder:scaffold:crdkustomizewebhookpatch

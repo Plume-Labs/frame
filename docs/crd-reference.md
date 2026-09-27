@@ -1,6 +1,6 @@
 # CRD Reference
 
-Eleven CRDs across two API groups: ten in `frame.plume-labs.io` and
+Nine CRDs across two API groups: eight in `frame.plume-labs.io` and
 `FrameService` in `services.plume-labs.io` — a separate group so the service
 catalog can move without blocking the `frame.plume-labs.io` freeze (see
 [roadmap.md](roadmap.md)). Generated CRDs live in `config/crd/bases/`; sample
@@ -9,12 +9,12 @@ CRs in `config/samples/`. Each kind has a controller
 webhook (`internal/webhook/<group>/v1beta1/`) except NodeTuning, FrameTask
 and FrameMachine.
 
-Eight of the eleven are namespaced and serve both **`v1beta1`** (storage) and
+Six of the nine are namespaced and serve both **`v1beta1`** (storage) and
 a deprecated `v1alpha1`. **NodeTuning, FrameTask and FrameMachine are the
 exceptions**: all three postdate the freeze, so all three have **no
 `v1alpha1`** (nothing to convert from) and **no webhook**. NodeTuning is
 additionally **cluster-scoped**; FrameTask and FrameMachine are namespaced,
-like the eight frozen kinds. NodeTuning and FrameTask also report status as
+like the six frozen kinds. NodeTuning and FrameTask also report status as
 a `phase` rather than a `Ready` condition — see each one's section for why
 those are two different reasons, and read both as documented divergences,
 not a licence to add more. **FrameMachine is not a third instance of that
@@ -94,11 +94,9 @@ branch on it:
 | Kind | `Ready.reason` vocabulary |
 |---|---|
 | FrameJob | `Submitted`, `Running`, `Suspended`, `Completed`, `Failed`. `status` is `True` only on `Completed`. |
-| FrameNode | `Discovered`, `Provisioning`, `Online`, `Degraded`, `Offline`. `status` is `True` only on `Online`. |
+| FrameNode | `Online`, `Degraded`, `Offline` once the node is in the cluster; `AwaitingNode` while no Kubernetes Node carries its name; `Unclassified` when it may not write labels (see below). `Discovered` and `Provisioning` were written by the retired Talos path and may linger on an object until its next reconcile. `status` is `True` only on `Online`. |
 | FrameResourceQuota | `Reconciled` on success. A reconcile that fails returns an error and requeues rather than writing a failure reason. |
 | SchedulingPolicy | `Applied` on success, `ReconcileError` otherwise (a missing scheduler Queue CRD degrades here rather than hard-failing, and also emits a `QueueCRDMissing` Event). |
-| TalosMachineConfig | `Applied`; failures `PatchResolveFailed`, `ClientBuildFailed`, `ApplyFailed`. |
-| TalosUpgrade | `UpgradeRequested`, `AlreadyAtVersion`; failures `ClientBuildFailed`, `UpgradeFailed`. |
 | FrameService | diagnostic, not a lifecycle: `Reconciled`, `UnknownType`, `NotProvisionable`, `SizeRefused`, `ModelCacheMissing`, and whatever else the provider returns. Read `status`, not `reason`. |
 | FrameUser | none — it has no controller. |
 | FrameTask | not applicable — it has no `Ready` condition at all; read `status.phase` (`Running`, `Succeeded`, `Failed`) instead, see below. |
@@ -131,14 +129,16 @@ branch on it:
 
 ## FrameNode
 
-A bare-metal machine Frame manages. Bridges a physical/Talos node to its
-Kubernetes `v1.Node`.
+How Frame classifies one Kubernetes `v1.Node`: role, rack, zone, service
+class and RDMA, projected onto the node as labels. It does not install
+anything — installing a machine is `FrameInstall`'s job, and the hardware
+itself is a `FrameMachine`. (Until 2026-09-27 FrameNode also carried a Talos
+provisioning half — `spec.disk`, `status.discovered*`, a maintenance-API
+client. None of the stored objects ever used it; it is removed.)
 
 **Spec:** `ip`, `role`, `network` (`address`, `gateway`, `dns[]`, optional
-`vlan`, `bond`), `disk`, `rack`, `zone`, `serviceClass`, optional
-`rdmaInterface`, `hostname`. `network.address`, `network.gateway`, and at
-least one `network.dns` entry become required once `disk` is set (CEL),
-mirroring what the webhook already enforced.
+`vlan`, `bond` — descriptive, none required), `rack`, `zone`,
+`serviceClass`, optional `rdmaInterface`, `hostname`.
 
 `spec.ip` is capped at 45 characters and validated by CEL `isIP()`. That is
 *stricter* than the `net.ParseIP` the `v1alpha1` webhook used: it rejects
@@ -151,8 +151,7 @@ write time with no admission error to explain it.
 `spec.serviceClass` no longer admits `""`; omit the field instead.
 `network.address` is length-bounded and documented as free-form: the name
 says address, every stored value is a CIDR, and nothing enforces either — so
-the freeze bounds the length and declines to guess a semantic pattern. It is
-the one node field written verbatim into a Talos machine config.
+the freeze bounds the length and declines to guess a semantic pattern.
 
 **Status:** `conditions[]`, `kubeletVersion`, `capacity`, `allocatable`,
 `nodeName`, `observedGeneration`. There is no `status.phase` — see "No
@@ -480,8 +479,7 @@ timestamp pattern lot 2 uses to restart a Deployment, chosen because a
 converged "desired: On" would fight someone who pressed the physical power
 button and could not express a restart at all), `nodeRef` (optional, names a
 Kubernetes node, not a `FrameNode` — a Kubernetes node name is true
-regardless of how the machine was provisioned, where `FrameNode`'s flow is
-Talos-shaped and the estate has moved to a Debian-based image).
+regardless of how the machine was installed or classified).
 
 **Status:** `powerState`, `postState` (the BMC's own POST-state string),
 `indicatorLED`, `inventory`, `sensors` (**nil whenever the reading cannot be
@@ -571,77 +569,6 @@ the `PostState` (and sensor behaviour) a *booted* machine reports has never
 been observed. See [deployment.md](deployment.md), "Registering a machine's
 BMC" and "The check that has never once been run end to end", for the
 prerequisites and the unexecuted verification sequence.
-
----
-
-## TalosMachineConfig
-
-Declarative Talos MachineConfig application to a node.
-
-**Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, and one of
-`configPatch` (inline YAML) or `configPatchRef` (ConfigMap key selector) —
-exactly one must be set (CEL, mirroring the existing webhook check).
-`talosEndpoint` carries a `host:port` pattern (bracketed IPv6 accepted,
-e.g. `[fd00::1]:50000`, matching what `net.SplitHostPort` in the webhook
-accepts), pushed down from the webhook. `nodeName` carries a DNS-1123
-subdomain pattern — net-new validation; no webhook ever checked
-`nodeName`'s shape. `talosSecretRef` is a local
-`TalosSecretReference { name }` type — one **required** field (F7), and no
-`namespace` (F6). The Secret is always read from this CR's own namespace,
-which is what an empty `namespace` always meant; the cross-namespace reach
-is gone rather than narrowed by RBAC. A `v1alpha1` client may still set
-`talosSecretRef.namespace`; it is ignored, and a read returns it empty.
-
-The type stays local rather than becoming `corev1.LocalObjectReference`,
-because `LocalObjectReference.Name` is `+optional` and a kubebuilder marker
-cannot be attached to a subfield of an external `k8s.io/api` type — the same
-limitation that created the local type in the first place. Making `name`
-required and reusing the external type were mutually exclusive.
-
-**Status:** `conditions[]`, `observedGeneration` (Ready=True reason
-`Applied`; False reasons: `PatchResolveFailed`, `ClientBuildFailed`,
-`ApplyFailed`).
-
-**Printer columns:** `NodeName`, `Ready`, `Reason` (hidden by default,
-`-o wide`), `Age` — previously none.
-
-**Controller:** reads TLS credentials from the referenced Secret (keys
-`ca`/`ca.crt`, `crt`/`tls.crt`, `key`/`tls.key`), resolves the patch,
-calls `ApplyConfiguration` gRPC with `mode=AUTO`, updates condition. Retries
-with 30 s backoff on transient failures. Uses a finalizer for clean deletion.
-
----
-
-## TalosUpgrade
-
-A Talos OS upgrade for a single node.
-
-**Spec:** `nodeName`, `talosEndpoint`, `talosSecretRef`, `image`. `nodeName`
-and `talosEndpoint` carry the same patterns as `TalosMachineConfig`;
-`talosSecretRef` is the same local `TalosSecretReference { name }` type, with
-the same required `name` and the same absent `namespace`; `image`
-must include a tag (CEL, mirroring the existing webhook check) and is
-capped at 255 characters (`MaxLength`, a new limit added solely to keep
-that CEL rule's cost bounded, not a mirror of anything the webhook checks).
-`preserveData` was removed pre-freeze: it defaulted to `true` but had no
-reader — the controller's `c.Upgrade(ctx, image, stage, force)` call is the
-deprecated Talos client method, whose signature has no wipe/preserve
-parameter at all to pass it to, so the field could not have been honored
-without first migrating that call to `LifecycleClient` (out of scope here;
-see the deferred-migration note already in
-`internal/controller/frame/talosupgrade_controller.go`).
-
-**Status:** `conditions[]`, `observedGeneration` (Ready=True reasons:
-`UpgradeRequested`, `AlreadyAtVersion`; False reasons: `ClientBuildFailed`,
-`UpgradeFailed`).
-
-**Printer columns:** `NodeName`, `Image`, `Ready`, `Reason` (hidden by
-default, `-o wide`), `Age` — previously none.
-
-**Controller:** generation-based idempotency guard — only calls `Upgrade` gRPC
-when the `Ready` condition's `observedGeneration` differs from `.metadata.generation`,
-preventing re-trigger while the node is rebooting. Uses `stage=false, force=false`.
-Retries with 30 s backoff on transient failures.
 
 ---
 
@@ -968,9 +895,9 @@ requests (including `nvidia.com/gpu`) and a node selector derived from
 
 ## Webhooks
 
-FrameNode and FrameJob have **defaulting + validation**; the other six —
-SchedulingPolicy, FrameResourceQuota, TalosMachineConfig, TalosUpgrade,
-FrameUser, and FrameService — have **validation** only. **NodeTuning,
+FrameNode and FrameJob have **defaulting + validation**; the other four —
+SchedulingPolicy, FrameResourceQuota, FrameUser, and FrameService — have
+**validation** only. **NodeTuning,
 FrameTask and FrameMachine have neither**: their bounds are CRD schema
 markers alone, CEL included. For NodeTuning that means nothing rejects a
 selector that overlaps another's — the agent detects that at apply time and

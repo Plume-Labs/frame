@@ -4,6 +4,14 @@
 Debian-based image. This document records what that invalidates, what it
 turns out never worked in the first place, and what has to be rebuilt.
 
+> **2026-09-27: done.** The Talos code described below is removed from the
+> repository: both Talos CRDs in both versions, their controllers, webhooks
+> and RBAC, FrameNode's discovery/provisioning half (`spec.disk`,
+> `status.discovered*`, the maintenance-API client), `deploy/talos`,
+> `deploy/omni`, `deploy/pxe`, the Talos scripts, the console panel and the
+> `siderolabs/talos` Go dependency. FrameNode keeps its classification
+> half. What follows is kept as the record of why.
+
 ## What the decision touches, measured
 
 Thirty-four files carry Talos in their name, totalling **4,412 lines**: two

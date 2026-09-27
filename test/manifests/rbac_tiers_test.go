@@ -119,27 +119,6 @@ func TestNoTierBelowAdminTouchesFrameUsers(t *testing.T) {
 	}
 }
 
-// C4, third half. `cluster-control-operator`'s own header says it grants
-// "write on safe Frame CRDs (not Talos, not /status)". Labelling
-// talosmachineconfig/talosupgrade's editor roles `tier: editor` reversed that
-// silently.
-func TestOperatorsGetNoTalosWrites(t *testing.T) {
-	editor := AggregatedRules(ClusterRoles(t, tierRoleFiles(t)...), "editor")
-	for _, res := range []string{"talosmachineconfigs", "talosupgrades"} {
-		for _, verb := range []string{"create", "update", "patch", "delete"} {
-			a := Access{Group: "frame.plume-labs.io", Resource: res, Verb: verb}
-			if Grants(editor, a) {
-				t.Errorf("frame-editor aggregates %s — cluster-control-operator excludes Talos writes on purpose "+
-					"(deploy/kubernetes/base/rbac.yaml)", a)
-			}
-		}
-		// Reads stay: the Talos screens are read-only for everyone below admin.
-		if !Grants(editor, Access{Group: "frame.plume-labs.io", Resource: res, Verb: "list"}) {
-			t.Errorf("frame-editor cannot list %s — the Talos screens go blank for operators", res)
-		}
-	}
-}
-
 // C3, second half. Two namespaced Role/RoleBindings still subjected the
 // ServiceAccount, which stopped being the identity making the request the
 // moment the proxy started impersonating. Every integration panel and the

@@ -132,8 +132,6 @@ rules:
   - frametasks/status
   - nodetunings/status
   - schedulingpolicies/status
-  - talosmachineconfigs/status
-  - talosupgrades/status
   verbs:
   - get
   - patch
@@ -171,8 +169,6 @@ rules:
   - framestorages/finalizers
   - nodetunings/finalizers
   - schedulingpolicies/finalizers
-  - talosmachineconfigs/finalizers
-  - talosupgrades/finalizers
   verbs:
   - update
 - apiGroups:
@@ -183,8 +179,6 @@ rules:
   - frameresourcequotas
   - nodetunings
   - schedulingpolicies
-  - talosmachineconfigs
-  - talosupgrades
   verbs:
   - create
   - delete

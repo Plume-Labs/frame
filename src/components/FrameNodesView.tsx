@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
-import { TalosOperationsPanel } from '@/components/TalosOperationsPanel'
 import { HardDrives, ArrowClockwise, Trash } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -35,16 +34,18 @@ const CLASS_TONE: Record<string, string> = {
 }
 
 /**
- * The FrameNode CRs the operator manages — the provisioning-side view of the
- * fleet, as opposed to the Nodes screen, which shows the Kubernetes nodes that
- * have actually joined. A machine appears here first (Discovered) and shows up
- * there only once it is a cluster member, so the two lists differing is normal.
+ * The FrameNode CRs the operator manages — the classification side of the
+ * fleet (role, rack, zone, service class, projected as labels onto the
+ * Kubernetes node), as opposed to the Nodes screen, which reads the Kubernetes
+ * nodes themselves. A node with no FrameNode (a machine that joined but was
+ * never classified) is on the Nodes screen and not here, so the two lists
+ * differing is normal.
  */
 export function FrameNodesView() {
   const { state, reload } = useLiveResource<{ items: FrameNode[]; total: number }>(
     () => frame.nodes.list(),
     [],
-    // Both sides move: the FrameNode as it provisions, and the Kubernetes
+    // Both sides move: the FrameNode as it is edited, and the Kubernetes
     // Node whose readiness the controller syncs back into its status.
     [frameListPath('framenodes'), coreListPath('nodes')],
   )
@@ -75,7 +76,7 @@ export function FrameNodesView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <HardDrives className="text-primary" />
-            Provisioned Nodes — FrameNode CRs
+            Node classification — FrameNode CRs
             <Button
               variant="outline"
               size="sm"
@@ -90,9 +91,11 @@ export function FrameNodesView() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Machines the Frame operator knows about, from discovery through to cluster membership.
-            A machine appears here once registered as a <span className="font-mono">FrameMachine</span>;
-            a <span className="font-mono">FrameInstall</span> takes it through to a node.
+            How the Frame operator classifies each Kubernetes node: role, rack, zone and service
+            class, projected onto the node as the labels the scheduler and the inference provider
+            select on. Machines themselves are on the Hardware screen
+            (<span className="font-mono">FrameMachine</span>); installing one is a{' '}
+            <span className="font-mono">FrameInstall</span>.
           </p>
         </CardContent>
       </Card>
@@ -147,17 +150,14 @@ export function FrameNodesView() {
           </Card>
         ))}
 
-      <TalosOperationsPanel />
-
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.id}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Removes the FrameNode resource, so the operator stops managing this machine. It does
-              not wipe, power off, or remove the node from Kubernetes — if it has already joined,
-              cordon and drain it from the Nodes screen first. Re-provisioning re-creates the
-              resource from scratch.
+              Removes the FrameNode resource: the operator strips the Frame labels (role, rack,
+              zone, service class) from the node, so workloads that select on them stop being
+              placed there. It does not wipe, power off, or remove the node from Kubernetes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

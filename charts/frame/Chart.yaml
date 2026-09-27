@@ -1,9 +1,9 @@
 apiVersion: v2
 name: frame
 description: |
-  Frame Kubernetes platform operator: Talos node lifecycle, workload
-  scheduling, resource quotas, and service provisioning, driven by CRDs with
-  validating/defaulting webhooks. Packages the operator only — the React
+  Frame Kubernetes platform operator: node classification, hardware over
+  Redfish, Debian provisioning, workload scheduling, resource quotas, and
+  service provisioning, driven by CRDs with validating/defaulting webhooks. Packages the operator only — the React
   control-plane UI and authd are out of scope for this chart.
 type: application
 version: 0.1.0
@@ -16,7 +16,6 @@ keywords:
   - frame
   - kubebuilder
   - operator
-  - talos
   - kubernetes
 maintainers:
   - name: Frame maintainers

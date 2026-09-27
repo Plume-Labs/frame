@@ -51,8 +51,6 @@ func TestSchemeServesConversion(t *testing.T) {
 		"FrameNode":             &framev1beta1.FrameNode{},
 		"FrameResourceQuota":    &framev1beta1.FrameResourceQuota{},
 		"SchedulingPolicy":      &framev1beta1.SchedulingPolicy{},
-		"TalosMachineConfig":    &framev1beta1.TalosMachineConfig{},
-		"TalosUpgrade":          &framev1beta1.TalosUpgrade{},
 		"FrameUser":             &framev1beta1.FrameUser{},
 		"services/FrameService": &servicesv1beta1.FrameService{},
 	}

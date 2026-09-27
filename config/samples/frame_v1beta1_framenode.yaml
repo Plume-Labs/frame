@@ -7,14 +7,12 @@ metadata:
   name: worker-01
   namespace: frame-system
 spec:
-  # Address the node answers on while it sits in Talos maintenance mode.
-  # This is the only required field: leave the rest empty on first apply and
-  # the controller populates status.discoveredDisks / discoveredNICs from the
-  # maintenance API, so you can fill in disk and network from what it found.
+  # A FrameNode classifies a Kubernetes node: the controller projects role,
+  # rack, zone and service class onto the node named by hostname (or by this
+  # object's name). ip is the only required field.
   ip: 192.168.10.10
   role: worker
   hostname: worker-01
-  disk: /dev/nvme0n1
   rack: rack-a
   zone: zone-1
   serviceClass: HIGH

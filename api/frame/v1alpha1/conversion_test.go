@@ -120,11 +120,11 @@ func newFiller() *randfill.Filler {
 // it and ConvertTo reads it back out and strips the annotation again.
 //
 // The reverse direction is deliberately not fuzzed. Everything it could lose
-// is v1alpha1-only, and there are exactly three such fields — status.phase,
-// FrameJob.spec.namespace and TalosSecretReference.namespace — all three of
-// which are *supposed* to change. A fuzz over that direction would need all
-// three excluded and would then be asserting nothing. They are pinned by name
-// in the two tests below instead.
+// is v1alpha1-only, and there are exactly two such fields — status.phase and
+// FrameJob.spec.namespace — both of which are *supposed* to change. A fuzz
+// over that direction would need both excluded and would then be asserting
+// nothing. They are pinned by name
+// in the tests below instead.
 //
 // normalizeResourceRequirements is the one deliberate exception to "exactly
 // lossless": corev1.ResourceRequirements is k8s.io/api's own type, and its
@@ -209,12 +209,6 @@ func TestHubRoundTripIsLossless(t *testing.T) {
 	hubRoundTrip(t, "SchedulingPolicy",
 		func() *v1beta1.SchedulingPolicy { return &v1beta1.SchedulingPolicy{} },
 		func() *SchedulingPolicy { return &SchedulingPolicy{} })
-	hubRoundTrip(t, "TalosMachineConfig",
-		func() *v1beta1.TalosMachineConfig { return &v1beta1.TalosMachineConfig{} },
-		func() *TalosMachineConfig { return &TalosMachineConfig{} })
-	hubRoundTrip(t, "TalosUpgrade",
-		func() *v1beta1.TalosUpgrade { return &v1beta1.TalosUpgrade{} },
-		func() *TalosUpgrade { return &TalosUpgrade{} })
 	hubRoundTrip(t, "FrameUser",
 		func() *v1beta1.FrameUser { return &v1beta1.FrameUser{} },
 		func() *FrameUser { return &FrameUser{} })
@@ -227,7 +221,6 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 	f := newFiller()
 	var (
 		populatedParams, emptyParams, nilParams int
-		populatedDisks, emptyDisks, nilDisks    int
 		nonEmptyHash                            int
 		populatedCreds                          int
 		nonEmptyState                           int
@@ -242,17 +235,6 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 			emptyParams++
 		default:
 			populatedParams++
-		}
-
-		node := &v1beta1.FrameNode{}
-		f.Fill(node)
-		switch {
-		case node.Status.DiscoveredDisks == nil:
-			nilDisks++
-		case len(node.Status.DiscoveredDisks) == 0:
-			emptyDisks++
-		default:
-			populatedDisks++
 		}
 
 		user := &v1beta1.FrameUser{}
@@ -278,9 +260,6 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 		{"populated parameter maps", populatedParams},
 		{"empty-but-present parameter maps", emptyParams},
 		{"nil parameter maps", nilParams},
-		{"populated discoveredDisks", populatedDisks},
-		{"empty-but-present discoveredDisks", emptyDisks},
-		{"nil discoveredDisks", nilDisks},
 		{"non-empty status.passwordHash", nonEmptyHash},
 		{"populated credentials", populatedCreds},
 		{"non-empty spec.state", nonEmptyState},
@@ -293,10 +272,11 @@ func TestFuzzCorpusReachesTheInterestingBranches(t *testing.T) {
 	}
 }
 
-// The other direction is deliberately *not* lossless, in exactly two places.
-// This test pins both, so a future change that starts silently preserving —
-// or silently dropping something else — fails here rather than in production.
-func TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields(t *testing.T) {
+// The other direction is deliberately *not* lossless, in exactly one place
+// (there were two, until TalosSecretReference left with the Talos kinds).
+// This test pins it, so a future change that starts silently preserving — or
+// silently dropping something else — fails here rather than in production.
+func TestSpokeRoundTripNormalisesTheRemovedNamespaceField(t *testing.T) {
 	// The namespace the CR itself lives in, as opposed to any namespace a
 	// removed field once named.
 	const ownNamespace = "team-a"
@@ -323,63 +303,6 @@ func TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields(t *testing.T) {
 		}
 		if len(back.Annotations) != 0 {
 			t.Fatalf("annotations = %v, want none — nothing is stashed", back.Annotations)
-		}
-	})
-
-	t.Run("TalosSecretRef.namespace is dropped, not stashed", func(t *testing.T) {
-		src := &TalosMachineConfig{}
-		src.Namespace = ownNamespace
-		src.Spec.NodeName = "w2"
-		src.Spec.TalosEndpoint = "10.0.0.2:50000"
-		src.Spec.ConfigPatch = "machine: {}"
-		src.Spec.TalosSecretRef = TalosSecretReference{Name: "talos-certs", Namespace: "kube-system"}
-
-		hub := &v1beta1.TalosMachineConfig{}
-		if err := src.ConvertTo(hub); err != nil {
-			t.Fatalf("ConvertTo: %v", err)
-		}
-		if hub.Spec.TalosSecretRef.Name != "talos-certs" {
-			t.Fatalf("name = %q, want talos-certs", hub.Spec.TalosSecretRef.Name)
-		}
-		back := &TalosMachineConfig{}
-		if err := back.ConvertFrom(hub); err != nil {
-			t.Fatalf("ConvertFrom: %v", err)
-		}
-		if back.Spec.TalosSecretRef.Namespace != "" {
-			t.Fatalf("namespace = %q, want empty — empty already meant "+
-				"'this CR's own namespace', so the normalised value is the truth",
-				back.Spec.TalosSecretRef.Namespace)
-		}
-		if len(back.Annotations) != 0 {
-			t.Fatalf("annotations = %v, want none — nothing is stashed", back.Annotations)
-		}
-	})
-
-	// TalosUpgrade carries the same reference type and the same removal. It is
-	// a separate pair of functions, so it needs a separate assertion: the two
-	// have already diverged once in this freeze (TalosUpgrade has no
-	// object-level CEL and TalosMachineConfig does).
-	t.Run("TalosUpgrade drops it too", func(t *testing.T) {
-		src := &TalosUpgrade{}
-		src.Namespace = ownNamespace
-		src.Spec.NodeName = "w2"
-		src.Spec.TalosEndpoint = "10.0.0.2:50000"
-		src.Spec.Image = "ghcr.io/siderolabs/installer:v1.8.0"
-		src.Spec.TalosSecretRef = TalosSecretReference{Name: "talos-certs", Namespace: "kube-system"}
-
-		hub := &v1beta1.TalosUpgrade{}
-		if err := src.ConvertTo(hub); err != nil {
-			t.Fatalf("ConvertTo: %v", err)
-		}
-		if hub.Spec.TalosSecretRef.Name != "talos-certs" {
-			t.Fatalf("name = %q, want talos-certs", hub.Spec.TalosSecretRef.Name)
-		}
-		back := &TalosUpgrade{}
-		if err := back.ConvertFrom(hub); err != nil {
-			t.Fatalf("ConvertFrom: %v", err)
-		}
-		if back.Spec.TalosSecretRef.Namespace != "" {
-			t.Fatalf("namespace = %q, want empty", back.Spec.TalosSecretRef.Namespace)
 		}
 	})
 
@@ -425,7 +348,7 @@ func TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields(t *testing.T) {
 // invariant, because conversion-webhook output is never re-validated. That
 // made documenting the gap insufficient; framejobContainerAnnotation closes
 // it. This test is the Go-level proof the annotation does its job: unlike
-// the three fields TestSpokeRoundTripNormalisesTheTwoRemovedNamespaceFields
+// the fields TestSpokeRoundTripNormalisesTheRemovedNamespaceField
 // pins as *supposed* to change, container and type are supposed to survive.
 func TestFrameJobContainerAndTypeSurviveAV1alpha1RoundTrip(t *testing.T) {
 	hub := &v1beta1.FrameJob{}
@@ -574,7 +497,7 @@ func TestFrameNodePhaseProjection(t *testing.T) {
 			{Type: "Ready", Status: metav1.ConditionFalse, Reason: "Offline"}}, "Offline"},
 		{"an unrecognised reason projects to absent, never to a guess",
 			[]metav1.Condition{
-				{Type: "Ready", Status: metav1.ConditionFalse, Reason: "TalosUnreachable"}}, ""},
+				{Type: "Ready", Status: metav1.ConditionFalse, Reason: "AwaitingNode"}}, ""},
 		{"a non-Ready condition alone is not a phase", []metav1.Condition{
 			{Type: "Progressing", Status: metav1.ConditionTrue, Reason: "Online"}}, ""},
 	}
@@ -612,7 +535,7 @@ func TestProjectedPhasesAreAllInsideTheV1alpha1Enums(t *testing.T) {
 	reasons := []string{
 		"", "Submitted", "Running", "Suspended", "Completed", "Failed",
 		"Discovered", "Provisioning", "Online", "Degraded", "Offline",
-		"WorkflowCreated", "Reconciled", "Applied", "TalosUnreachable",
+		"WorkflowCreated", "Reconciled", "Applied", "AwaitingNode", "Unclassified",
 		"UnknownType", "SizeRefused", "ModelCacheMissing",
 	}
 	for _, r := range reasons {

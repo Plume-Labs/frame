@@ -76,7 +76,7 @@ rules:
     resources: [nodes, pods]
     verbs: [get, list]
   - apiGroups: [frame.plume-labs.io]
-    resources: [framejobs, framenodes, schedulingpolicies, frameresourcequotas, talosmachineconfigs, talosupgrades]
+    resources: [framejobs, framenodes, schedulingpolicies, frameresourcequotas]
     verbs: [get, list, watch]
   # trivy-operator security posture for the Security screen.
   # frame-sdk.ts:1860-1861 and SecurityView.tsx:41-42 read these two kinds and
@@ -142,7 +142,7 @@ rules:
 # proxy can be made to impersonate as that string. Bind tiers to
 # `frame:viewers` / `frame:operators` / `frame:admins` only.
 #
-# Role 2: operator — write on safe Frame CRDs (not Talos, not /status),
+# Role 2: operator — write on safe Frame CRDs (not /status),
 # plus core node cordon/uncordon (patch only — no node delete/create).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -328,9 +328,6 @@ rules:
   - apiGroups: [frame.plume-labs.io]
     resources: [frameresourcequotas]
     verbs: [get, list, watch, create, patch]
-  - apiGroups: [frame.plume-labs.io]
-    resources: [talosmachineconfigs, talosupgrades]
-    verbs: [get, list, watch]
   #
   # REMOVED 2026-08-10 — same audit as the viewer role above:
   #   core `services`, `namespaces`, `resourcequotas`   — no call site
@@ -414,8 +411,8 @@ rules:
   # to the enforced namespaces would remove a capability without closing
   # anything. That is not a claim that it is harmless — a shell *inherits* the
   # target pod's privilege, and exec into one of the deliberately privileged
-  # pods in an exempt namespace (Ceph, the node-tuning agent, the Talos
-  # tooling) is root on the node. Hence admin-only, and hence every session is
+  # pods in an exempt namespace (Ceph, the node-tuning agent) is root on the
+  # node. Hence admin-only, and hence every session is
   # recorded.
   #
   # Also deliberately absent: `create` and `delete` on those kinds anywhere.

@@ -36,6 +36,4 @@ func (*FrameJob) Hub()           {}
 func (*FrameNode) Hub()          {}
 func (*FrameResourceQuota) Hub() {}
 func (*SchedulingPolicy) Hub()   {}
-func (*TalosMachineConfig) Hub() {}
-func (*TalosUpgrade) Hub()       {}
 func (*FrameUser) Hub()          {}

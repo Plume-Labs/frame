@@ -49,24 +49,6 @@ resources:
 - api:
     crdVersion: v1
     namespaced: true
-  controller: true
-  domain: plume-labs.io
-  group: frame
-  kind: TalosMachineConfig
-  path: github.com/gothshoot/frame/api/frame/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: plume-labs.io
-  group: frame
-  kind: TalosUpgrade
-  path: github.com/gothshoot/frame/api/frame/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
   domain: plume-labs.io
   group: frame
   kind: FrameUser
@@ -131,34 +113,6 @@ resources:
   domain: plume-labs.io
   group: frame
   kind: SchedulingPolicy
-  path: github.com/gothshoot/frame/api/frame/v1beta1
-  version: v1beta1
-  webhooks:
-    conversion: true
-    spoke:
-    - v1alpha1
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  domain: plume-labs.io
-  group: frame
-  kind: TalosMachineConfig
-  path: github.com/gothshoot/frame/api/frame/v1beta1
-  version: v1beta1
-  webhooks:
-    conversion: true
-    spoke:
-    - v1alpha1
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  domain: plume-labs.io
-  group: frame
-  kind: TalosUpgrade
   path: github.com/gothshoot/frame/api/frame/v1beta1
   version: v1beta1
   webhooks:

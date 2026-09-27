@@ -41,41 +41,21 @@ type NetworkSpec struct {
 	Bond *string `json:"bond,omitempty"`
 }
 
-// DiskInfo describes a disk discovered on a node in maintenance mode
-type DiskInfo struct {
-	Name string `json:"name"`
-	Size string `json:"size"`
-	Type string `json:"type"`
-}
-
-// NICInfo describes a network interface discovered on a node in maintenance mode
-type NICInfo struct {
-	Name  string `json:"name"`
-	MAC   string `json:"mac"`
-	Speed string `json:"speed"`
-}
-
 // FrameNodeSpec defines the desired state of FrameNode
-//
-// +kubebuilder:validation:XValidation:rule="!has(self.disk) || size(self.disk) == 0 || (has(self.network) && has(self.network.address) && size(self.network.address) > 0 && has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns) && self.network.dns.size() > 0)",message="network.address, network.gateway, and at least one network.dns entry are required once disk is set"
 type FrameNodeSpec struct {
-	// IP address of the node in maintenance mode
+	// IP address of the node
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Format=ip
 	IP string `json:"ip"`
 
-	// Role of the node in the cluster. Empty during initial discovery phase.
+	// Role of the node in the cluster. Empty until classified.
 	// +kubebuilder:validation:Enum=controlplane;worker;""
 	// +optional
 	Role string `json:"role,omitempty"`
 
-	// Network configuration. Set after discovery to trigger provisioning.
+	// Network configuration, descriptive only.
 	// +optional
 	Network NetworkSpec `json:"network,omitempty"`
-
-	// Disk device for Talos installation (e.g., /dev/nvme0n1). Set after discovery.
-	// +optional
-	Disk string `json:"disk,omitempty"`
 
 	// RDMA interface name (e.g., ib0, mlx5_0)
 	// +optional
@@ -113,22 +93,6 @@ type FrameNodeStatus struct {
 	// Current phase of the node
 	// +kubebuilder:validation:Enum=Discovering;Discovered;Provisioning;Online;Degraded;Offline;Failed
 	Phase string `json:"phase,omitempty"`
-
-	// DiscoveredHostname is the hostname reported by the node in maintenance mode
-	// +optional
-	DiscoveredHostname string `json:"discoveredHostname,omitempty"`
-
-	// DiscoveredTalosVersion is the Talos version reported during maintenance mode discovery
-	// +optional
-	DiscoveredTalosVersion string `json:"discoveredTalosVersion,omitempty"`
-
-	// DiscoveredDisks contains disk information from maintenance mode discovery
-	// +optional
-	DiscoveredDisks []DiskInfo `json:"discoveredDisks,omitempty"`
-
-	// DiscoveredNICs contains network interface information from maintenance mode discovery
-	// +optional
-	DiscoveredNICs []NICInfo `json:"discoveredNICs,omitempty"`
 
 	// Conditions represent the current state of the FrameNode resource.
 	// +listType=map
