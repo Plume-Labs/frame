@@ -1205,7 +1205,10 @@ function crToNode(cr: FrameNodeCR): FrameNode {
     zone:         cr.spec.zone ?? '',
     rackId:       cr.spec.rack ?? '',
     cpu:          quantityToNum(alloc['cpu']),
-    memory:       quantityToNum(alloc['memory']),
+    // A Kubernetes memory quantity ("20407156Ki" on this estate), not a
+    // number of GiB: quantityToNum would read the digits and drop the unit,
+    // and the Provisioned screen showed "20407156 GiB" for a 19 GiB node.
+    memory:       memToGiB(alloc['memory']),
     storage:      0,
     // FrameNodeSpec has no gpuCount and never did: the number shown here was
     // structurally always 0. status.allocatable is what the controller

@@ -29,8 +29,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 	"github.com/gothshoot/frame/internal/redfish"
@@ -441,9 +443,19 @@ func mapLogCounts(counts map[string]int) map[string]int32 {
 }
 
 // SetupWithManager sets up the controller with the Manager.
+//
+// Only generation changes wake the controller. Every successful probe writes
+// status (lastProbeAt at the least), and without this filter that write came
+// back as a watch event and started the next probe at once: on a real ML350
+// Gen9 the machine was re-probed every ~13 s, the time one full Redfish walk
+// takes, instead of every 60 s — the iLO answering one inventory walk after
+// another, with no pause. The agent's status.storage writes (internal/agent) woke it
+// too. A spec change (power request, nodeRef, BMC) bumps the generation and
+// still reconciles immediately; the cadence otherwise comes from RequeueAfter
+// alone.
 func (r *FrameMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&framev1beta1.FrameMachine{}).
+		For(&framev1beta1.FrameMachine{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("framemachine").
 		Complete(r)
 }
