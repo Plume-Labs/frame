@@ -715,6 +715,30 @@ func TestFailedRefusalWriteIsFailClosed(t *testing.T) {
 	}
 }
 
+// Unpersisted refusals of several accounts: A, B, back to A in the same
+// process — still no new login for A.
+func TestUnpersistedRefusalsOfSeveralAccounts(t *testing.T) {
+	f := newFake(t)
+	store, _ := stateStore(t, true, interceptor.Funcs{
+		Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+			return errors.New("forbidden")
+		},
+	})
+	a, b := f.cfg(), f.cfg()
+	a.Password, b.Password = "wrong-a", "wrong-b"
+	cur := a
+	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
+	r := &Reader{Load: func(context.Context) (Config, error) { return cur, nil }, Store: store, Now: func() time.Time { return now }}
+	for _, c := range []Config{a, b, a} {
+		cur = c
+		now = now.Add(DefaultInterval)
+		place(r)
+	}
+	if f.logins != 2 {
+		t.Fatalf("%d logins for A, B, A in one process, want 2", f.logins)
+	}
+}
+
 // The refusal state cannot be read: no login at all.
 func TestUnreadableRefusalStateMeansNoLogin(t *testing.T) {
 	f := newFake(t)
