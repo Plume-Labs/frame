@@ -393,6 +393,34 @@ var _ = Describe("FrameDiskClaim controller", func() {
 		Expect(back.Status.Message).To(ContainSubstring("ceph-osd"))
 	})
 
+	// GARDE 3, lot 2 du diagnostic stockage — les deux occupations ajoutees
+	// (membre d'une grappe md, membre d'un pool zfs) sont refusees comme
+	// toutes les autres. Le statut passe par l'apiserver d'envtest : ce test
+	// prouve aussi que l'Enum du CRD accepte ces deux valeurs, sans quoi
+	// l'ecriture du rapport echouerait avant meme la garde.
+	for _, tc := range []struct{ occ, path, serial string }{
+		{"md-member", "/dev/disk/by-id/wwn-0x5000c500deadbe01", "SER0001"},
+		{"zfs-member", "/dev/disk/by-id/wwn-0x5000c500deadbe02", "SER0002"},
+	} {
+		occ, path, serial := tc.occ, tc.path, tc.serial
+		It("refuse un disque "+occ, func(ctx SpecContext) {
+			name := "g3-" + occ
+			machineWithDisks(ctx, name, []framev1beta1.ObservedDisk{
+				{Path: path, SerialNumber: serial, SizeGB: 1000, Occupancy: occ},
+			})
+			c := claim(name, path, serial)
+			Expect(k8sClient.Create(ctx, c)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(c)})
+			Expect(err).NotTo(HaveOccurred())
+
+			var back framev1beta1.FrameDiskClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(c), &back)).To(Succeed())
+			Expect(back.Status.Phase).To(Equal("Failed"))
+			Expect(back.Status.Message).To(ContainSubstring(occ))
+		})
+	}
+
 	// GARDE 3, revue I2 — l'occupation doit fermer sur toute valeur qui
 	// n'est pas explicitement "free", y compris une chaine vide (une entree
 	// jamais renseignee). Un `!= "free" && != ""` ou une liste blanche qui

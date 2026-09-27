@@ -553,6 +553,54 @@ var _ = Describe("FrameMachine controller", func() {
 		Expect(d.StatusReasons).To(Equal([]string{"None"}))
 	})
 
+	// Storage diagnostic lot 2: the drive's firmware/speed/link and nullable
+	// counters, and the array controller, must reach status through
+	// Reconcile. A nil counter must stay nil (absent from status), never
+	// become a 0 the screens would render as a reading.
+	It("maps the lot 2 drive fields and storage controllers through Reconcile", func() {
+		Expect(k8sClient.Create(ctx, newSecret("fm-lot2-creds"))).To(Succeed())
+		fm := newMachine("fm-lot2")
+		Expect(k8sClient.Create(ctx, fm)).To(Succeed())
+
+		temp, hours := int32(38), int32(41234)
+		fake.snapshot.Inventory.Drives = []redfish.Drive{
+			{
+				Name: "1I:1:1", Location: "1I:1:1", SerialNumber: "SER0001",
+				Firmware: "FW01", RotationSpeedRPM: 10000, LinkSpeedMbps: 12000,
+				TemperatureCelsius: &temp, PowerOnHours: &hours,
+			},
+			{Name: "1I:1:2", Location: "1I:1:2", SerialNumber: "SER0002", Firmware: "FW02"},
+		}
+		fake.snapshot.Inventory.StorageControllers = []redfish.StorageController{{
+			Location: "Slot 9", Model: "Fake Array Controller", Firmware: "1.23",
+			Health: "Warning", BackupPowerStatus: "Failed", CacheStatus: "OK",
+		}}
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "fm-lot2", Namespace: "default"}}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
+		Expect(got.Status.Inventory).NotTo(BeNil())
+		Expect(got.Status.Inventory.Drives).To(HaveLen(2))
+		d := got.Status.Inventory.Drives[0]
+		Expect(d.Firmware).To(Equal("FW01"))
+		Expect(d.RotationSpeedRPM).To(BeNumerically("==", 10000))
+		Expect(d.LinkSpeedMbps).To(BeNumerically("==", 12000))
+		Expect(d.TemperatureCelsius).To(HaveValue(BeNumerically("==", 38)))
+		Expect(d.PowerOnHours).To(HaveValue(BeNumerically("==", 41234)))
+		Expect(d.SSDEnduranceUsedPercent).To(BeNil())
+		unreported := got.Status.Inventory.Drives[1]
+		Expect(unreported.TemperatureCelsius).To(BeNil())
+		Expect(unreported.PowerOnHours).To(BeNil())
+
+		Expect(got.Status.Inventory.StorageControllers).To(Equal([]framev1beta1.StorageControllerInfo{{
+			Location: "Slot 9", Model: "Fake Array Controller", Firmware: "1.23",
+			Health: "Warning", BackupPowerStatus: "Failed", CacheStatus: "OK",
+		}}))
+	})
+
 	It("reconciles a BMC with no SmartStorage tree without error, leaving drives empty", func() {
 		Expect(k8sClient.Create(ctx, newSecret("fm-nodrives-creds"))).To(Succeed())
 		fm := newMachine("fm-nodrives")

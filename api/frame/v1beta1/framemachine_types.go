@@ -188,6 +188,71 @@ type DriveInfo struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	StatusReasons []string `json:"statusReasons,omitempty"`
+
+	// Firmware is the drive's current firmware version string.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	Firmware string `json:"firmware,omitempty"`
+
+	// RotationSpeedRPM is 0 (omitted) for a solid-state drive or when the
+	// controller does not say.
+	// +optional
+	RotationSpeedRPM int32 `json:"rotationSpeedRPM,omitempty"`
+
+	// LinkSpeedMbps is the negotiated interface speed, e.g. 6000 or 12000.
+	// +optional
+	LinkSpeedMbps int32 `json:"linkSpeedMbps,omitempty"`
+
+	// TemperatureCelsius is nil when the controller does not report one.
+	// A reported 0 is treated as "not reported", never as a reading: the
+	// captured iLO4 answers 0 °C for SAS drives that are running warm.
+	// +optional
+	TemperatureCelsius *int32 `json:"temperatureCelsius,omitempty"`
+
+	// PowerOnHours is nil when not reported (null, absent, or 0 — a 0 is
+	// indistinguishable from a controller that fills the field with zero).
+	// +optional
+	PowerOnHours *int32 `json:"powerOnHours,omitempty"`
+
+	// SSDEnduranceUsedPercent is the share of rated write endurance
+	// consumed, for SSDs. Nil when not reported (null, absent, or 0).
+	// +optional
+	SSDEnduranceUsedPercent *int32 `json:"ssdEnduranceUsedPercent,omitempty"`
+}
+
+// StorageControllerInfo describes one storage (array) controller the BMC
+// reports. Its cache battery is the component whose failure silently turns
+// write-back into write-through, which is why it is surfaced at all.
+type StorageControllerInfo struct {
+	// Location is where the controller sits, as the BMC names it
+	// (e.g. "Slot 0").
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	Location string `json:"location,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Model string `json:"model,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	Firmware string `json:"firmware,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	Health string `json:"health,omitempty"`
+
+	// BackupPowerStatus is the cache battery / backup power source state
+	// verbatim (e.g. "Present", "NotPresent").
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	BackupPowerStatus string `json:"backupPowerStatus,omitempty"`
+
+	// CacheStatus is the cache module's health, when the controller
+	// reports one. A controller running in HBA mode reports none.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	CacheStatus string `json:"cacheStatus,omitempty"`
 }
 
 // ObservedDisk is one whole disk as the node's own kernel reports it —
@@ -211,11 +276,57 @@ type ObservedDisk struct {
 	SizeGB int32 `json:"sizeGB,omitempty"`
 
 	// Occupancy is what is using the disk: free, mounted, partitioned,
-	// lvm-pv, ceph-osd, or in-use for a signature the agent does not
-	// recognise. Anything but "free" makes FrameDiskClaim refuse.
-	// +kubebuilder:validation:Enum=free;mounted;partitioned;lvm-pv;ceph-osd;in-use
+	// lvm-pv, ceph-osd, md-member (a linux_raid_member signature on the
+	// disk or one of its partitions), zfs-member (likewise zfs_member), or
+	// in-use for a signature the agent does not recognise. A mount anywhere
+	// on the disk wins over every other value. Anything but "free" makes
+	// FrameDiskClaim refuse.
+	// +kubebuilder:validation:Enum=free;mounted;partitioned;lvm-pv;ceph-osd;md-member;zfs-member;in-use
 	// +kubebuilder:validation:MaxLength=32
 	Occupancy string `json:"occupancy,omitempty"`
+
+	// WWN is the World Wide Name lsblk reports, e.g. 0x5000c500deadbeef.
+	// Empty when the disk has none (many SATA disks behind an HBA).
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	WWN string `json:"wwn,omitempty"`
+
+	// ByIDPath is "/dev/disk/by-id/wwn-" + WWN, derived the way udev names
+	// that link — not read from the filesystem, so it is only as right as
+	// the node's udev rules are standard. Empty when WWN is empty.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	ByIDPath string `json:"byIdPath,omitempty"`
+
+	// Model is the model string the kernel reports, whitespace trimmed.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Model string `json:"model,omitempty"`
+
+	// Rotational is the kernel's ROTA flag. Nil means the kernel did not
+	// say, which is not the same as solid state.
+	// +optional
+	Rotational *bool `json:"rotational,omitempty"`
+
+	// MountPoint is the first non-empty mountpoint on the disk or on any
+	// device built on it (partition, md array), in lsblk order.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	MountPoint string `json:"mountPoint,omitempty"`
+
+	// FSType is the signature on the whole disk itself, not on its
+	// partitions. Empty for a partitioned or blank disk.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	FSType string `json:"fsType,omitempty"`
+
+	// Members names what the disk belongs to: the md devices built on it
+	// (e.g. "md0") and, for a zfs_member, the pool label when lsblk has
+	// one. Empty otherwise.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=128
+	Members []string `json:"members,omitempty"`
 }
 
 // DiskDivergence is one disagreement between the BMC's list and the node's.
@@ -293,6 +404,10 @@ type MachineInventory struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=32
 	Drives []DriveInfo `json:"drives,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	StorageControllers []StorageControllerInfo `json:"storageControllers,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:MaxItems=16

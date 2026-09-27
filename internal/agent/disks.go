@@ -28,7 +28,16 @@ import (
 // once, so the argv and the parser cannot drift apart — a column dropped
 // from the request but still read from the JSON yields a zero value that
 // looks exactly like a disk with nothing on it.
-const lsblkColumns = "NAME,PATH,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINT"
+//
+// WWN, MODEL, ROTA and LABEL exist in every util-linux lsblk this agent
+// can meet. ID-LINK is deliberately absent: it is recent, and an lsblk
+// that does not know a column refuses the whole invocation.
+const lsblkColumns = "NAME,PATH,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINT,WWN,MODEL,ROTA,LABEL"
+
+// maxMembers mirrors ObservedDisk.Members' MaxItems. A report over the
+// schema bound would be rejected whole by the apiserver, so the agent
+// trims rather than lose every disk for one oversized list.
+const maxMembers = 16
 
 type lsblkDevice struct {
 	Name       string        `json:"name"`
@@ -38,7 +47,58 @@ type lsblkDevice struct {
 	Type       string        `json:"type"`
 	FSType     *string       `json:"fstype"`
 	MountPoint *string       `json:"mountpoint"`
+	WWN        *string       `json:"wwn"`
+	Model      *string       `json:"model"`
+	Rota       lsblkBool     `json:"rota"`
+	Label      *string       `json:"label"`
 	Children   []lsblkDevice `json:"children"`
+}
+
+// lsblkBool is lsblk's ROTA column. Recent util-linux emits a JSON
+// boolean, older releases the string "0" or "1", and a device the kernel
+// says nothing about emits null. Null stays nil: "not reported" is not
+// "solid state".
+type lsblkBool struct {
+	Value *bool
+}
+
+func (b *lsblkBool) UnmarshalJSON(data []byte) error {
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	var out bool
+	switch t := v.(type) {
+	case nil:
+		b.Value = nil
+		return nil
+	case bool:
+		out = t
+	case float64:
+		out = t != 0
+	case string:
+		switch strings.TrimSpace(t) {
+		case "1", "true":
+			out = true
+		case "0", "false":
+			out = false
+		default:
+			b.Value = nil
+			return nil
+		}
+	default:
+		b.Value = nil
+		return nil
+	}
+	b.Value = &out
+	return nil
+}
+
+func str(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
 }
 
 // ObserveDisks reads the node's block devices through runner and returns one
@@ -80,14 +140,97 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 		if serial == "" {
 			continue
 		}
+		wwn := str(dev.WWN)
 		disks = append(disks, framev1beta1.ObservedDisk{
 			Path:         dev.Path,
 			SerialNumber: serial,
 			SizeGB:       int32(dev.Size / 1_000_000_000),
 			Occupancy:    occupancyOf(dev),
+			WWN:          wwn,
+			ByIDPath:     byIDPathFromWWN(wwn),
+			Model:        str(dev.Model),
+			Rotational:   dev.Rota.Value,
+			MountPoint:   firstMountPoint(dev),
+			FSType:       str(dev.FSType),
+			Members:      membersOf(dev),
 		})
 	}
 	return disks, nil
+}
+
+// byIDPathFromWWN derives the /dev/disk/by-id link udev creates for a
+// disk with a World Wide Name ("wwn-" followed by the WWN lsblk reports,
+// e.g. wwn-0x5000c500deadbeef). It is computed, not read from the
+// filesystem: the agent never lists /dev/disk/by-id, so a udev rule set
+// that names the link differently makes this string point nowhere. An
+// empty WWN yields an empty path rather than a bare "wwn-" that would
+// look like a link.
+func byIDPathFromWWN(wwn string) string {
+	if wwn == "" {
+		return ""
+	}
+	return "/dev/disk/by-id/wwn-" + wwn
+}
+
+// walk calls fn on dev and every descendant, depth first, in lsblk order.
+// A raid member's md device hangs below the partition, not below the
+// disk, so one level of children is not enough to see it.
+func walk(dev lsblkDevice, fn func(lsblkDevice)) {
+	fn(dev)
+	for _, c := range dev.Children {
+		walk(c, fn)
+	}
+}
+
+// firstMountPoint is the first non-empty mountpoint on the disk or any of
+// its descendants, in lsblk order.
+func firstMountPoint(dev lsblkDevice) string {
+	found := ""
+	walk(dev, func(d lsblkDevice) {
+		if found == "" {
+			found = str(d.MountPoint)
+		}
+	})
+	return found
+}
+
+// anyFSType reports whether the disk or any descendant carries fstype.
+func anyFSType(dev lsblkDevice, fstype string) bool {
+	hit := false
+	walk(dev, func(d lsblkDevice) {
+		if str(d.FSType) == fstype {
+			hit = true
+		}
+	})
+	return hit
+}
+
+// membersOf names what the disk is a member of: the md devices built on it
+// (descendants of type raid*, e.g. "md0") and, for a zfs_member, the pool
+// label lsblk reports. Duplicates are dropped — two partitions of one disk
+// in the same array are one membership — and the list is capped at
+// maxMembers.
+func membersOf(dev lsblkDevice) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		// A name over the schema's item bound is skipped, not truncated: a
+		// cut pool name would name a different pool.
+		if name == "" || len(name) > 128 || seen[name] || len(out) >= maxMembers {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	walk(dev, func(d lsblkDevice) {
+		switch {
+		case strings.HasPrefix(d.Type, "raid"):
+			add(d.Name)
+		case str(d.FSType) == "zfs_member":
+			add(str(d.Label))
+		}
+	})
+	return out
 }
 
 // occupancyOf says what is using the disk, and errs towards "occupied".
@@ -95,20 +238,22 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 // so a signature this function does not recognise must never fall through
 // to "free": the default branch returns "in-use" precisely because an
 // unknown filesystem is still a filesystem.
+//
+// Precedence: a mount anywhere on the disk wins ("mounted"), then a raid
+// or zfs membership anywhere on it, then the disk's own signature. Only a
+// disk with no signature, no children and no mount is "free".
 func occupancyOf(dev lsblkDevice) string {
-	if dev.MountPoint != nil && *dev.MountPoint != "" {
+	if firstMountPoint(dev) != "" {
 		return "mounted"
 	}
-	for _, child := range dev.Children {
-		if child.MountPoint != nil && *child.MountPoint != "" {
-			return "mounted"
-		}
+	if anyFSType(dev, "linux_raid_member") {
+		return "md-member"
+	}
+	if anyFSType(dev, "zfs_member") {
+		return "zfs-member"
 	}
 
-	fstype := ""
-	if dev.FSType != nil {
-		fstype = *dev.FSType
-	}
+	fstype := str(dev.FSType)
 	switch {
 	case fstype == "":
 		if len(dev.Children) > 0 {

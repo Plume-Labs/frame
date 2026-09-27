@@ -354,6 +354,23 @@ func mapInventory(inv *redfish.Inventory) *framev1beta1.MachineInventory {
 			Location:      d.Location,
 			MediaType:     d.MediaType,
 			StatusReasons: d.StatusReasons,
+
+			Firmware:                d.Firmware,
+			RotationSpeedRPM:        d.RotationSpeedRPM,
+			LinkSpeedMbps:           d.LinkSpeedMbps,
+			TemperatureCelsius:      d.TemperatureCelsius,
+			PowerOnHours:            d.PowerOnHours,
+			SSDEnduranceUsedPercent: d.SSDEnduranceUsedPercent,
+		})
+	}
+	for _, sc := range inv.StorageControllers {
+		out.StorageControllers = append(out.StorageControllers, framev1beta1.StorageControllerInfo{
+			Location:          sc.Location,
+			Model:             sc.Model,
+			Firmware:          sc.Firmware,
+			Health:            sc.Health,
+			BackupPowerStatus: sc.BackupPowerStatus,
+			CacheStatus:       sc.CacheStatus,
 		})
 	}
 	for _, n := range inv.NetworkAdapters {

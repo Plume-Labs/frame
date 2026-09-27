@@ -447,7 +447,8 @@ func (c *client) SetIndicatorLED(ctx context.Context, on bool) error {
 	return c.patch(ctx, systemPath, body)
 }
 
-// readSmartStorage walks HPE's OEM storage tree and fills snap.Inventory.Drives.
+// readSmartStorage walks HPE's OEM storage tree and fills snap.Inventory.Drives
+// and snap.Inventory.StorageControllers.
 //
 // An empty root (no SmartStorage link on the system document) returns nil
 // with no drives: see the call site. A 404 at any node of the walk — the
@@ -501,6 +502,14 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 			}
 			return fmt.Errorf("array controller %s: %w", ctrl.ODataID, err)
 		}
+		snap.Inventory.StorageControllers = append(snap.Inventory.StorageControllers, StorageController{
+			Location:          ac.Location,
+			Model:             ac.Model,
+			Firmware:          ac.FirmwareVersion.Current.VersionString,
+			Health:            ac.Status.Health,
+			BackupPowerStatus: ac.BackupPowerSourceStatus,
+			CacheStatus:       ac.cacheStatus(),
+		})
 		if ac.Links.PhysicalDrives.Href == "" {
 			continue
 		}
@@ -533,6 +542,13 @@ func (c *client) readSmartStorage(ctx context.Context, root string, snap *Snapsh
 				Location:      doc.Location,
 				MediaType:     doc.MediaType,
 				StatusReasons: doc.DiskDriveStatusReasons,
+
+				Firmware:                doc.FirmwareVersion.Current.VersionString,
+				RotationSpeedRPM:        plainInt32(doc.RotationalSpeedRpm),
+				LinkSpeedMbps:           plainInt32(doc.InterfaceSpeedMbps),
+				TemperatureCelsius:      reported(doc.CurrentTemperatureCelsius),
+				PowerOnHours:            reported(doc.PowerOnHours),
+				SSDEnduranceUsedPercent: reported(doc.SSDEnduranceUtilizationPercentage),
 			})
 		}
 	}

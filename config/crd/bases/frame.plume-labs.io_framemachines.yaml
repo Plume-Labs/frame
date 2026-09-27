@@ -307,9 +307,19 @@ spec:
                         FrameMachineStatus.Storage.Observed, and the two are joined on
                         SerialNumber alone (internal/storage.Join).
                       properties:
+                        firmware:
+                          description: Firmware is the drive's current firmware version
+                            string.
+                          maxLength: 64
+                          type: string
                         health:
                           maxLength: 64
                           type: string
+                        linkSpeedMbps:
+                          description: LinkSpeedMbps is the negotiated interface speed,
+                            e.g. 6000 or 12000.
+                          format: int32
+                          type: integer
                         location:
                           description: |-
                             Location is the physical bay, in the controller's
@@ -326,9 +336,21 @@ spec:
                         name:
                           maxLength: 256
                           type: string
+                        powerOnHours:
+                          description: |-
+                            PowerOnHours is nil when not reported (null, absent, or 0 — a 0 is
+                            indistinguishable from a controller that fills the field with zero).
+                          format: int32
+                          type: integer
                         protocol:
                           maxLength: 64
                           type: string
+                        rotationSpeedRPM:
+                          description: |-
+                            RotationSpeedRPM is 0 (omitted) for a solid-state drive or when the
+                            controller does not say.
+                          format: int32
+                          type: integer
                         serialNumber:
                           description: |-
                             SerialNumber is the only key this drive can be matched on. A Redfish
@@ -336,6 +358,12 @@ spec:
                           maxLength: 128
                           type: string
                         sizeGB:
+                          format: int32
+                          type: integer
+                        ssdEnduranceUsedPercent:
+                          description: |-
+                            SSDEnduranceUsedPercent is the share of rated write endurance
+                            consumed, for SSDs. Nil when not reported (null, absent, or 0).
                           format: int32
                           type: integer
                         statusReasons:
@@ -348,6 +376,13 @@ spec:
                             type: string
                           maxItems: 16
                           type: array
+                        temperatureCelsius:
+                          description: |-
+                            TemperatureCelsius is nil when the controller does not report one.
+                            A reported 0 is treated as "not reported", never as a reading: the
+                            captured iLO4 answers 0 °C for SAS drives that are running warm.
+                          format: int32
+                          type: integer
                       type: object
                     maxItems: 32
                     type: array
@@ -415,6 +450,43 @@ spec:
                   serialNumber:
                     maxLength: 128
                     type: string
+                  storageControllers:
+                    items:
+                      description: |-
+                        StorageControllerInfo describes one storage (array) controller the BMC
+                        reports. Its cache battery is the component whose failure silently turns
+                        write-back into write-through, which is why it is surfaced at all.
+                      properties:
+                        backupPowerStatus:
+                          description: |-
+                            BackupPowerStatus is the cache battery / backup power source state
+                            verbatim (e.g. "Present", "NotPresent").
+                          maxLength: 64
+                          type: string
+                        cacheStatus:
+                          description: |-
+                            CacheStatus is the cache module's health, when the controller
+                            reports one. A controller running in HBA mode reports none.
+                          maxLength: 64
+                          type: string
+                        firmware:
+                          maxLength: 64
+                          type: string
+                        health:
+                          maxLength: 64
+                          type: string
+                        location:
+                          description: |-
+                            Location is where the controller sits, as the BMC names it
+                            (e.g. "Slot 0").
+                          maxLength: 128
+                          type: string
+                        model:
+                          maxLength: 256
+                          type: string
+                      type: object
+                    maxItems: 8
+                    type: array
                   totalMemoryGiB:
                     format: int32
                     type: integer
@@ -593,17 +665,56 @@ spec:
                         DriveInfo: the gap between them is the datum (see
                         docs/superpowers/specs/2026-09-13-storage-design.md §3).
                       properties:
+                        byIdPath:
+                          description: |-
+                            ByIDPath is "/dev/disk/by-id/wwn-" + WWN, derived the way udev names
+                            that link — not read from the filesystem, so it is only as right as
+                            the node's udev rules are standard. Empty when WWN is empty.
+                          maxLength: 512
+                          type: string
+                        fsType:
+                          description: |-
+                            FSType is the signature on the whole disk itself, not on its
+                            partitions. Empty for a partitioned or blank disk.
+                          maxLength: 64
+                          type: string
+                        members:
+                          description: |-
+                            Members names what the disk belongs to: the md devices built on it
+                            (e.g. "md0") and, for a zfs_member, the pool label when lsblk has
+                            one. Empty otherwise.
+                          items:
+                            maxLength: 128
+                            type: string
+                          maxItems: 16
+                          type: array
+                        model:
+                          description: Model is the model string the kernel reports,
+                            whitespace trimmed.
+                          maxLength: 256
+                          type: string
+                        mountPoint:
+                          description: |-
+                            MountPoint is the first non-empty mountpoint on the disk or on any
+                            device built on it (partition, md array), in lsblk order.
+                          maxLength: 512
+                          type: string
                         occupancy:
                           description: |-
                             Occupancy is what is using the disk: free, mounted, partitioned,
-                            lvm-pv, ceph-osd, or in-use for a signature the agent does not
-                            recognise. Anything but "free" makes FrameDiskClaim refuse.
+                            lvm-pv, ceph-osd, md-member (a linux_raid_member signature on the
+                            disk or one of its partitions), zfs-member (likewise zfs_member), or
+                            in-use for a signature the agent does not recognise. A mount anywhere
+                            on the disk wins over every other value. Anything but "free" makes
+                            FrameDiskClaim refuse.
                           enum:
                           - free
                           - mounted
                           - partitioned
                           - lvm-pv
                           - ceph-osd
+                          - md-member
+                          - zfs-member
                           - in-use
                           maxLength: 32
                           type: string
@@ -615,6 +726,11 @@ spec:
                             design was written against.
                           maxLength: 512
                           type: string
+                        rotational:
+                          description: |-
+                            Rotational is the kernel's ROTA flag. Nil means the kernel did not
+                            say, which is not the same as solid state.
+                          type: boolean
                         serialNumber:
                           description: |-
                             SerialNumber is the join key. An entry never carries an empty one:
@@ -625,6 +741,12 @@ spec:
                         sizeGB:
                           format: int32
                           type: integer
+                        wwn:
+                          description: |-
+                            WWN is the World Wide Name lsblk reports, e.g. 0x5000c500deadbeef.
+                            Empty when the disk has none (many SATA disks behind an HBA).
+                          maxLength: 64
+                          type: string
                       type: object
                     maxItems: 64
                     type: array

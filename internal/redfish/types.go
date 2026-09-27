@@ -82,6 +82,28 @@ type Drive struct {
 	// is masked by residual logical-unit metadata. That absence is why the
 	// divergence is computed, never read.
 	StatusReasons []string
+
+	Firmware         string
+	RotationSpeedRPM int32
+	LinkSpeedMbps    int32
+
+	// TemperatureCelsius, PowerOnHours and SSDEnduranceUsedPercent are nil
+	// when the controller did not report them. A reported 0 is nil too:
+	// the captured iLO4 answers 0 °C for every SAS drive (see
+	// decode_storage.go's reported).
+	TemperatureCelsius      *int32
+	PowerOnHours            *int32
+	SSDEnduranceUsedPercent *int32
+}
+
+// StorageController is one array controller from HPE's SmartStorage tree.
+type StorageController struct {
+	Location          string
+	Model             string
+	Firmware          string
+	Health            string
+	BackupPowerStatus string
+	CacheStatus       string
 }
 
 type NetworkAdapter struct {
@@ -91,16 +113,19 @@ type NetworkAdapter struct {
 }
 
 type Inventory struct {
-	Manufacturer    string
-	Model           string
-	SerialNumber    string
-	BIOSVersion     string
-	BMCFirmware     string
-	Processors      []Processor
-	MemoryModules   []MemoryModule
-	TotalMemoryGiB  int32
-	Drives          []Drive
-	NetworkAdapters []NetworkAdapter
+	Manufacturer   string
+	Model          string
+	SerialNumber   string
+	BIOSVersion    string
+	BMCFirmware    string
+	Processors     []Processor
+	MemoryModules  []MemoryModule
+	TotalMemoryGiB int32
+	Drives         []Drive
+	// StorageControllers is filled by the same SmartStorage walk as
+	// Drives, and is nil on a BMC without that tree.
+	StorageControllers []StorageController
+	NetworkAdapters    []NetworkAdapter
 }
 
 type Temperature struct {
