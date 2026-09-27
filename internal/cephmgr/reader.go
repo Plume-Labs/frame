@@ -18,7 +18,6 @@ package cephmgr
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -87,10 +86,10 @@ type Reader struct {
 	// Only touched by the refresh goroutine (one at a time).
 	client *Client
 	cfgKey string
-	// refusedHere is the account this process met a refusal for, kept in
+	// refusedHere is the accounts this process met a refusal for, kept in
 	// memory only (never written anywhere): the fail-closed fallback when
 	// the store could not be written.
-	refusedHere string
+	refusedHere map[string]bool
 }
 
 // inMemoryID identifies an account inside this process.
@@ -187,22 +186,13 @@ func refusedStatus(prev *framev1beta1.CephPlacement, note string) *framev1beta1.
 	return withLast(&framev1beta1.CephPlacement{State: "AuthRefused", Message: clip(refusedMessage+note, 256)}, prev)
 }
 
-// recordRefusal writes the refusal of cfg to the store, generating the
-// HMAC key the first time. It returns a note for the message when the
-// refusal could not be persisted.
-func (r *Reader) recordRefusal(ctx context.Context, st RefusalState, cfg Config) string {
+// recordRefusal writes the refusal of cfg to the store. It returns a note
+// for the message when the refusal could not be persisted.
+func (r *Reader) recordRefusal(ctx context.Context, cfg Config) string {
 	if r.Store == nil {
 		return ""
 	}
-	key := st.Key
-	if len(key) == 0 {
-		k, err := newKey()
-		if err != nil {
-			return " — refusal not persisted: " + err.Error()
-		}
-		key = k
-	}
-	if err := r.Store.Save(ctx, RefusalState{Key: key, Refused: accountMAC(key, cfg)}); err != nil {
+	if err := r.Store.Record(ctx, cfg); err != nil {
 		return " — refusal not persisted, kept by this process only: " + err.Error()
 	}
 	return ""
@@ -217,16 +207,18 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
 	}
 	// Before any login: this process's own memory, then the store.
-	if inMemoryID(cfg) == r.refusedHere {
+	if r.refusedHere[inMemoryID(cfg)] {
 		return refusedStatus(prev, "")
 	}
-	var st RefusalState
 	if r.Store != nil {
-		st, err = r.Store.Load(ctx)
+		refused, err := r.Store.IsRefused(ctx, cfg)
 		if err != nil {
-			return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip("no login: the refusal state cannot be read: "+err.Error(), 256)}, prev)
+			// A missing or unreadable state Secret: no login, since a
+			// refusal could not be recorded (ErrStateMissing names the
+			// Secret to recreate).
+			return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip("no login: "+err.Error(), 256)}, prev)
 		}
-		if st.Refused != "" && len(st.Key) > 0 && hmac.Equal([]byte(accountMAC(st.Key, cfg)), []byte(st.Refused)) {
+		if refused {
 			return refusedStatus(prev, "")
 		}
 	}
@@ -245,8 +237,11 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 	}
 	snap, err := r.client.Read(ctx)
 	if errors.Is(err, ErrAuthRefused) {
-		r.refusedHere = inMemoryID(cfg)
-		return refusedStatus(prev, r.recordRefusal(ctx, st, cfg))
+		if r.refusedHere == nil {
+			r.refusedHere = map[string]bool{}
+		}
+		r.refusedHere[inMemoryID(cfg)] = true
+		return refusedStatus(prev, r.recordRefusal(ctx, cfg))
 	}
 	if err != nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)

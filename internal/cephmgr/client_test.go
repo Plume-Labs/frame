@@ -29,11 +29,16 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"slices"
 	"strings"
 	"sync"
@@ -527,12 +532,12 @@ func TestRefusedAccountIsNeverRetriedUntilItChanges(t *testing.T) {
 	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)
 	cfg := f.cfg()
 	cfg.Password, cfg.Version = "wrong", "1"
-	store := &memStore{}
+	store, c := stateStore(t, true, interceptor.Funcs{})
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Now: func() time.Time { return now }, Store: store}
 
 	p := place(r)
-	if p.State != "AuthRefused" || f.logins != 1 || store.state.Refused == "" || strings.Contains(store.state.Refused, "wrong") {
-		t.Fatalf("state %q, %d login(s), stored %q", p.State, f.logins, store.state.Refused)
+	if stored := string(stateSecret(t, c).Data["refused"]); p.State != "AuthRefused" || f.logins != 1 || stored == "" || strings.Contains(stored, "wrong") {
+		t.Fatalf("state %q, %d login(s), stored %q", p.State, f.logins, stored)
 	}
 	for i := 0; i < 24*12; i++ { // a day of 5-minute passes
 		now = now.Add(DefaultInterval)
@@ -551,52 +556,43 @@ func TestRefusedAccountIsNeverRetriedUntilItChanges(t *testing.T) {
 	}
 }
 
-// memStore is a RefusalStore in memory, shared between readers the way the
-// state Secret is shared between manager processes.
-type memStore struct {
-	mu       sync.Mutex
-	state    RefusalState
-	failSave error
-	failLoad error
-	saves    int
-}
-
-func (m *memStore) Load(context.Context) (RefusalState, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.state, m.failLoad
-}
-
-func (m *memStore) Save(_ context.Context, s RefusalState) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.saves++
-	if m.failSave != nil {
-		return m.failSave
+// stateStore is the real SecretRefusalStore over a fake API: with or
+// without the state Secret, and with optional injected failures.
+func stateStore(t *testing.T, withSecret bool, fns interceptor.Funcs) (*SecretRefusalStore, client.WithWatch) {
+	t.Helper()
+	b := fake.NewClientBuilder()
+	if withSecret {
+		b = b.WithObjects(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: StateSecretName, Namespace: "frame-system"}})
 	}
-	m.state = s
-	return nil
+	c := interceptor.NewClient(b.Build(), fns)
+	return &SecretRefusalStore{Reader: c, Writer: c, Namespace: "frame-system"}, c
 }
 
-func refusedSetup(t *testing.T) (*fakeDashboard, Config, *memStore) {
+func stateSecret(t *testing.T, c client.Client) *corev1.Secret {
+	t.Helper()
+	var sec corev1.Secret
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "frame-system", Name: StateSecretName}, &sec); err != nil {
+		t.Fatal(err)
+	}
+	return &sec
+}
+
+func refusedSetup(t *testing.T) (*fakeDashboard, Config) {
 	f := newFake(t)
 	cfg := f.cfg()
 	cfg.Password = "wrong"
-	return f, cfg, &memStore{}
+	return f, cfg
 }
 
 // The refusal is written before the refresh returns: a new process — a
 // restart, or another replica after a lost lease — reads it before its
 // very first login, with no FrameStorage status involved.
 func TestRestartedOrNewLeaderNeverRetriesARefusedAccount(t *testing.T) {
-	f, cfg, store := refusedSetup(t)
-	first := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
-	if p := place(first); p.State != "AuthRefused" || store.saves != 1 || store.state.Refused == "" {
-		t.Fatalf("state %q, saves %d, refused %q", p.State, store.saves, store.state.Refused)
-	}
-	for i := 0; i < 5; i++ { // five successive processes
-		next := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
-		if p := place(next); p.State != "AuthRefused" {
+	f, cfg := refusedSetup(t)
+	store, _ := stateStore(t, true, interceptor.Funcs{})
+	for i := 0; i < 6; i++ { // six successive processes
+		r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
+		if p := place(r); p.State != "AuthRefused" {
 			t.Fatalf("process %d: state %q", i, p.State)
 		}
 	}
@@ -605,23 +601,105 @@ func TestRestartedOrNewLeaderNeverRetriesARefusedAccount(t *testing.T) {
 	}
 }
 
-// The store's refusal is checked on the first call, before anything has
-// been published anywhere.
+// The store is checked on the very first call, before any login.
 func TestFirstCallChecksTheStoreBeforeAnyLogin(t *testing.T) {
-	f, cfg, store := refusedSetup(t)
-	key, _ := newKey()
-	store.state = RefusalState{Key: key, Refused: accountMAC(key, cfg)}
+	f, cfg := refusedSetup(t)
+	store, _ := stateStore(t, true, interceptor.Funcs{})
+	if err := store.Record(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
 	if p := place(r); p.State != "AuthRefused" || f.logins != 0 {
 		t.Fatalf("state %q, %d logins, want AuthRefused and none", p.State, f.logins)
 	}
 }
 
+// No state Secret: a refusal could not be recorded, so no login at all —
+// five processes, zero logins — and the state names the Secret.
+func TestMissingStateSecretMeansNoLogin(t *testing.T) {
+	f, cfg := refusedSetup(t)
+	store, _ := stateStore(t, false, interceptor.Funcs{})
+	for i := 0; i < 5; i++ {
+		r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
+		p := place(r)
+		if p.State != "Error" || !strings.Contains(p.Message, "state Secret missing: frame-system/frame-ceph-dashboard-state") {
+			t.Fatalf("process %d: state %q, message %q", i, p.State, p.Message)
+		}
+	}
+	if f.logins != 0 {
+		t.Fatalf("%d logins without a state Secret, want 0", f.logins)
+	}
+}
+
+// A refused, B refused, back to A: A is still known refused.
+func TestSeveralRefusedAccountsAreRemembered(t *testing.T) {
+	f := newFake(t)
+	store, _ := stateStore(t, true, interceptor.Funcs{})
+	a, b := f.cfg(), f.cfg()
+	a.Password, b.Password = "wrong-a", "wrong-b"
+	cur := a
+	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
+	r := &Reader{Load: func(context.Context) (Config, error) { return cur, nil }, Store: store, Now: func() time.Time { return now }}
+	for _, c := range []Config{a, b, a} {
+		cur = c
+		now = now.Add(DefaultInterval)
+		place(r)
+		r = &Reader{Load: func(context.Context) (Config, error) { return cur, nil }, Store: store, Now: func() time.Time { return now }} // a restart each time
+	}
+	if f.logins != 2 {
+		t.Fatalf("%d logins for A, B, A, want 2", f.logins)
+	}
+}
+
+// The list is bounded, oldest out first.
+func TestRefusedListIsBoundedFIFO(t *testing.T) {
+	store, c := stateStore(t, true, interceptor.Funcs{})
+	ctx := context.Background()
+	for i := 0; i < MaxRefused+2; i++ {
+		if err := store.Record(ctx, Config{BaseURL: "https://d", Username: "u", Password: fmt.Sprint(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(refusedList(stateSecret(t, c))); n != MaxRefused {
+		t.Fatalf("%d refused kept, want %d", n, MaxRefused)
+	}
+	if old, _ := store.IsRefused(ctx, Config{BaseURL: "https://d", Username: "u", Password: "0"}); old {
+		t.Error("the oldest refusal was not dropped")
+	}
+	if last, _ := store.IsRefused(ctx, Config{BaseURL: "https://d", Username: "u", Password: fmt.Sprint(MaxRefused + 1)}); !last {
+		t.Error("the newest refusal is missing")
+	}
+}
+
+// Record reads the key at the time of its own Get/Update: a key written
+// meanwhile (another process) is the one the new MAC is made with.
+func TestRecordUsesTheKeyInTheSecretNow(t *testing.T) {
+	store, c := stateStore(t, true, interceptor.Funcs{})
+	ctx := context.Background()
+	sec := stateSecret(t, c)
+	sec.Data = map[string][]byte{"hmac-key": []byte("key-written-by-another-process")}
+	if err := c.Update(ctx, sec); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{BaseURL: "https://d", Username: "u", Password: "p"}
+	if err := store.Record(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := stateSecret(t, c)
+	if string(got.Data["hmac-key"]) != "key-written-by-another-process" || string(got.Data["refused"]) != accountMAC([]byte("key-written-by-another-process"), cfg) {
+		t.Fatalf("key %q, refused %q", got.Data["hmac-key"], got.Data["refused"])
+	}
+}
+
 // Writing the refusal failed: the process still never retries the account
 // (fail-closed), and says the refusal is not persisted.
 func TestFailedRefusalWriteIsFailClosed(t *testing.T) {
-	f, cfg, store := refusedSetup(t)
-	store.failSave = errors.New("forbidden")
+	f, cfg := refusedSetup(t)
+	store, _ := stateStore(t, true, interceptor.Funcs{
+		Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+			return errors.New("forbidden")
+		},
+	})
 	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store, Now: func() time.Time { return now }}
 	p := place(r)
@@ -640,7 +718,11 @@ func TestFailedRefusalWriteIsFailClosed(t *testing.T) {
 // The refusal state cannot be read: no login at all.
 func TestUnreadableRefusalStateMeansNoLogin(t *testing.T) {
 	f := newFake(t)
-	store := &memStore{failLoad: errors.New("apiserver unavailable")}
+	store, _ := stateStore(t, true, interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errors.New("apiserver unavailable")
+		},
+	})
 	cfg := f.cfg()
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
 	if p := place(r); p.State != "Error" || f.logins != 0 {
@@ -653,12 +735,12 @@ func TestUnreadableRefusalStateMeansNoLogin(t *testing.T) {
 func TestOther400IsAnErrorNotARefusal(t *testing.T) {
 	f := newFake(t)
 	f.authFail = http.StatusBadRequest
-	store := &memStore{}
+	store, c := stateStore(t, true, interceptor.Funcs{})
 	cfg := f.cfg()
 	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
 	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store, Now: func() time.Time { return now }}
-	if p := place(r); p.State != "Error" || store.saves != 0 {
-		t.Fatalf("state %q, saves %d", p.State, store.saves)
+	if p := place(r); p.State != "Error" || len(stateSecret(t, c).Data["refused"]) != 0 {
+		t.Fatalf("state %q, refused %q", p.State, stateSecret(t, c).Data["refused"])
 	}
 	now = now.Add(DefaultInterval)
 	place(r)
@@ -684,7 +766,12 @@ func TestRefusalIsKeyedNotAPlainHash(t *testing.T) {
 	// A refusal recorded under another key does not block this account.
 	f := newFake(t)
 	good := f.cfg()
-	store := &memStore{state: RefusalState{Key: k2, Refused: accountMAC(k1, good)}}
+	store, c := stateStore(t, true, interceptor.Funcs{})
+	sec := stateSecret(t, c)
+	sec.Data = map[string][]byte{"hmac-key": k2, "refused": []byte(accountMAC(k1, good))}
+	if err := c.Update(context.Background(), sec); err != nil {
+		t.Fatal(err)
+	}
 	r := &Reader{Load: func(context.Context) (Config, error) { return good, nil }, Store: store}
 	if p := place(r); p.State != "Collected" {
 		t.Fatalf("state %q", p.State)

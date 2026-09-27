@@ -107,9 +107,11 @@ So the manager:
 - records the refusal in a dedicated Secret,
   `frame-system/frame-ceph-dashboard-state`, synchronously and before it
   publishes anything. The Secret holds `hmac-key` (32 random bytes, made
-  once) and `refused` (HMAC-SHA256 of url, username and password under
-  that key). The password itself is never stored, and without the key
-  the value can't be checked against guesses;
+  once) and `refused`: one HMAC-SHA256 of url, username and password per
+  refused account under that key, the 16 most recent. Going back to an
+  account refused earlier doesn't cost a new failure. The password itself
+  is never stored, and without the key the values can't be checked
+  against guesses;
 - reads that Secret before every login, the first one after a start
   included. A manager that restarts in a loop, or a new leader after a
   lost lease, never logs in again with a refused account;
@@ -130,6 +132,23 @@ The deployment manifests create `frame-ceph-dashboard-state` empty
 manager's RBAC names it: get and update on that one Secret, and no create
 verb, since `resourceNames` can't restrict a create.
 
+### A missing state Secret
+
+If `frame-ceph-dashboard-state` doesn't exist, the manager does not log
+in. A refusal couldn't be recorded, and every restart would add a failure
+to Ceph's counter. The status says `Error` with "state Secret missing:
+frame-system/frame-ceph-dashboard-state, recreate it". The manager never
+creates it (it only holds get and update on that name). Recreate it
+empty:
+
+```sh
+kubectl -n frame-system create secret generic frame-ceph-dashboard-state
+```
+
+A `helm upgrade` of the chart (`templates/ceph-dashboard-state.yaml`) or a
+re-apply of `kustomize build config/default` recreates it too. The next
+read logs in.
+
 To unblock:
 
 - **the password in the account Secret is wrong**: put the right one in
@@ -141,10 +160,11 @@ To unblock:
   -i <file>`) and put it in the account Secret. The first successful
   login resets Ceph's counter;
 - **to retry the same account deliberately** (after re-enabling it in
-  Ceph, for instance): clear the refusal with
-  `kubectl -n frame-system patch secret frame-ceph-dashboard-state --type json -p '[{"op":"remove","path":"/data/refused"}]'`,
-  or delete the whole state Secret and re-apply the manifest. If the
-  manager process has itself met the refusal and couldn't persist it,
+  Ceph, for instance): clear the refusals with
+  `kubectl -n frame-system patch secret frame-ceph-dashboard-state --type json -p '[{"op":"remove","path":"/data/refused"}]'`.
+  Deleting the Secret is not enough on its own: without it the manager
+  doesn't log in at all, so recreate it empty right away (see above). If
+  the manager process has itself met the refusal and couldn't persist it,
   restart the manager too.
 
 ## Usable capacity: what the figure is, and what it ignores

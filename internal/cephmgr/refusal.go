@@ -22,7 +22,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,8 +42,8 @@ import (
 // The Secret holds two keys:
 //   - hmac-key: 32 random bytes, generated the first time a refusal is
 //     recorded;
-//   - refused:  HMAC-SHA256(hmac-key, url \x00 username \x00 password) of
-//     the refused account, hex.
+//   - refused:  one HMAC-SHA256(hmac-key, url \x00 username \x00 password)
+//     per refused account, hex, one per line, the MaxRefused newest.
 //
 // The HMAC (rather than a plain hash) means that even a leaked Secret does
 // not let anyone test password guesses offline without also knowing the
@@ -52,16 +55,22 @@ import (
 // charts/frame/templates/ceph-dashboard-state.yaml).
 const StateSecretName = "frame-ceph-dashboard-state"
 
-// RefusalState is what the store holds.
-type RefusalState struct {
-	Key     []byte
-	Refused string // hex HMAC of the refused account; "" when none
-}
+// MaxRefused bounds the refused accounts kept, oldest dropped first: A
+// refused, then B, then back to A must still find A refused.
+const MaxRefused = 16
 
-// RefusalStore persists the refusal.
+// ErrStateMissing: the state Secret does not exist. It is created by the
+// deployment manifests and never by the manager (get/update only), so no
+// login is attempted — a refusal could not be recorded, and every restart
+// would add a failure to Ceph's counter.
+var ErrStateMissing = errors.New("state Secret missing")
+
+// RefusalStore persists refusals.
 type RefusalStore interface {
-	Load(ctx context.Context) (RefusalState, error)
-	Save(ctx context.Context, s RefusalState) error
+	// IsRefused reports whether this account was refused.
+	IsRefused(ctx context.Context, c Config) (bool, error)
+	// Record adds this account to the refused ones.
+	Record(ctx context.Context, c Config) error
 }
 
 // accountMAC identifies an account by content, under key.
@@ -90,31 +99,77 @@ type SecretRefusalStore struct {
 	Namespace string
 }
 
-// Load implements RefusalStore. A missing Secret is an empty state.
-func (s *SecretRefusalStore) Load(ctx context.Context) (RefusalState, error) {
+func (s *SecretRefusalStore) get(ctx context.Context) (*corev1.Secret, error) {
 	var sec corev1.Secret
 	err := s.Reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: StateSecretName}, &sec)
 	if apierrors.IsNotFound(err) {
-		return RefusalState{}, nil
+		return nil, fmt.Errorf("%w: %s/%s, recreate it (see docs/storage-mgr-account.md)", ErrStateMissing, s.Namespace, StateSecretName)
 	}
 	if err != nil {
-		return RefusalState{}, fmt.Errorf("reading Secret %s/%s: %w", s.Namespace, StateSecretName, err)
+		return nil, fmt.Errorf("reading Secret %s/%s: %w", s.Namespace, StateSecretName, err)
 	}
-	return RefusalState{Key: sec.Data["hmac-key"], Refused: string(sec.Data["refused"])}, nil
+	return &sec, nil
 }
 
-// Save implements RefusalStore.
-func (s *SecretRefusalStore) Save(ctx context.Context, st RefusalState) error {
-	var sec corev1.Secret
-	if err := s.Reader.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: StateSecretName}, &sec); err != nil {
-		return fmt.Errorf("reading Secret %s/%s: %w", s.Namespace, StateSecretName, err)
+// refusedList is the stored MACs, oldest first (one per line).
+func refusedList(sec *corev1.Secret) []string {
+	var out []string
+	for _, l := range strings.Split(string(sec.Data["refused"]), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// IsRefused implements RefusalStore.
+func (s *SecretRefusalStore) IsRefused(ctx context.Context, c Config) (bool, error) {
+	sec, err := s.get(ctx)
+	if err != nil {
+		return false, err
+	}
+	key := sec.Data["hmac-key"]
+	if len(key) == 0 {
+		return false, nil
+	}
+	mac := accountMAC(key, c)
+	for _, r := range refusedList(sec) {
+		if hmac.Equal([]byte(r), []byte(mac)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Record implements RefusalStore. The key is the one in the Secret at the
+// time of this Get/Update (generated if there is none yet), never one read
+// earlier; the list keeps the MaxRefused newest.
+func (s *SecretRefusalStore) Record(ctx context.Context, c Config) error {
+	sec, err := s.get(ctx)
+	if err != nil {
+		return err
 	}
 	if sec.Data == nil {
 		sec.Data = map[string][]byte{}
 	}
-	sec.Data["hmac-key"] = st.Key
-	sec.Data["refused"] = []byte(st.Refused)
-	if err := s.Writer.Update(ctx, &sec); err != nil {
+	key := sec.Data["hmac-key"]
+	list := refusedList(sec)
+	if len(key) == 0 {
+		if key, err = newKey(); err != nil {
+			return err
+		}
+		list = nil // MACs under another key (or none) mean nothing now
+	}
+	mac := accountMAC(key, c)
+	if !slices.Contains(list, mac) {
+		list = append(list, mac)
+	}
+	if len(list) > MaxRefused {
+		list = list[len(list)-MaxRefused:]
+	}
+	sec.Data["hmac-key"] = key
+	sec.Data["refused"] = []byte(strings.Join(list, "\n"))
+	if err := s.Writer.Update(ctx, sec); err != nil {
 		return fmt.Errorf("writing Secret %s/%s: %w", s.Namespace, StateSecretName, err)
 	}
 	return nil
