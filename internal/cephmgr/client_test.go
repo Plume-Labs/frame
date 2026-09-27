@@ -64,6 +64,7 @@ type fakeDashboard struct {
 	logins   int
 	redirect bool   // answer 307 on /api/auth
 	password string // the password the account has now
+	authFail int    // a status to answer every login with (0: normal)
 	fail     map[string]int
 }
 
@@ -98,6 +99,10 @@ func newFake(t *testing.T) *fakeDashboard {
 			f.mu.Unlock()
 			if f.redirect {
 				http.Redirect(w, r, "/api/auth-elsewhere", http.StatusTemporaryRedirect)
+				return
+			}
+			if f.authFail != 0 {
+				w.WriteHeader(f.authFail)
 				return
 			}
 			var body map[string]string
@@ -415,6 +420,17 @@ func TestReaderStates(t *testing.T) {
 	}
 	f.fail = map[string]int{}
 
+	// The rule list failing alone: pools and OSDs fresh, the rules' date is
+	// the previous one.
+	f.fail[PathCrushRules] = http.StatusUnsupportedMediaType
+	rulesBefore := p.RulesReadAt
+	now = now.Add(DefaultInterval)
+	p = place(r)
+	if p.RulesReadAt == nil || !p.RulesReadAt.Equal(rulesBefore) || !p.PoolsReadAt.Time.Equal(now) {
+		t.Fatalf("rules failing: rulesReadAt %v (was %v), poolsReadAt %v", p.RulesReadAt, rulesBefore, p.PoolsReadAt)
+	}
+	f.fail = map[string]int{}
+
 	// A transport failure keeps the last lists, dated.
 	cfg.ServerName = "wrong.example"
 	now = now.Add(DefaultInterval)
@@ -477,6 +493,27 @@ func TestAFailedLoginEndsThePass(t *testing.T) {
 	}
 	if n := f.logins - before; n != 1 {
 		t.Fatalf("%d logins in the pass, want 1", n)
+	}
+
+	// A login failing for another reason (the dashboard answering 500)
+	// does not stop Read, which goes on to the next endpoint: with a token
+	// that expires mid-pass, those GETs must not log in again either.
+	f.mu.Lock()
+	f.password, f.expire, f.authFail = "s3cret", 0, 0
+	f.mu.Unlock()
+	if _, err := c.Read(context.Background()); err != nil { // a fresh, valid token
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.expire, f.authFail = 100, http.StatusInternalServerError
+	before = f.logins
+	f.mu.Unlock()
+	snap, err := c.Read(context.Background())
+	if err != nil || len(snap.Errors) != 3 {
+		t.Fatalf("err %v, errors %v", err, snap)
+	}
+	if n := f.logins - before; n != 1 {
+		t.Fatalf("%d logins in a pass whose login keeps failing, want 1", n)
 	}
 }
 

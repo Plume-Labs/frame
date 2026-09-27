@@ -237,12 +237,9 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 	}
 	at := metav1.NewTime(now)
 	out := toStatus(snap, &at)
-	if snap.Fetched[PathPools] {
-		out.PoolsReadAt = &at
-	}
-	if snap.Fetched[PathOSDs] {
-		out.OSDsReadAt = &at
-	}
+	// Pools and OSDs are dated with their lists in toStatus; the rules have
+	// no list of their own (they name each pool's rule), so their date is
+	// set here, only when they were read.
 	if snap.Fetched[PathCrushRules] {
 		out.RulesReadAt = &at
 	}
@@ -272,6 +269,7 @@ const (
 func toStatus(s *Snapshot, at *metav1.Time) *framev1beta1.CephPlacement {
 	out := &framev1beta1.CephPlacement{State: "Collected", CollectedAt: at}
 	if s.Pools != nil {
+		out.PoolsReadAt = at
 		out.Pools = []framev1beta1.CephPoolPlacement{}
 		pools := append([]Pool(nil), s.Pools...)
 		sort.Slice(pools, func(i, j int) bool { return pools[i].Name < pools[j].Name })
@@ -286,6 +284,7 @@ func toStatus(s *Snapshot, at *metav1.Time) *framev1beta1.CephPlacement {
 		}
 	}
 	if s.OSDs != nil {
+		out.OSDsReadAt = at
 		out.OSDs = []framev1beta1.CephOSDWeight{}
 		osds := append([]OSD(nil), s.OSDs...)
 		sort.Slice(osds, func(i, j int) bool { return osds[i].ID < osds[j].ID })
