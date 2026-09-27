@@ -242,6 +242,18 @@ describe('mapNodePhase', () => {
     expect(discovered.serviceClass).toBe('MEDIUM')
   })
 
+  it('reads allocatable memory as GiB, unit included', () => {
+    // The shape the controller syncs from the corev1.Node: Ki, not bytes and
+    // not GiB. Read as a bare number it showed "20407156 GiB" in production.
+    const node = __testing.crToNode({
+      metadata: { name: 'node-cp' },
+      spec: { ip: '10.0.0.1' },
+      status: { allocatable: { cpu: '4', memory: '20407156Ki' } },
+    })
+    expect(node.memory).toBeCloseTo(19.46, 2)
+    expect(node.cpu).toBe(4)
+  })
+
   it('reads online and degraded off the same reason', () => {
     const online = __testing.crToNode({
       metadata: { name: 'w2' },
