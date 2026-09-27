@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { DiskClaim, createFrameClient } from '@/lib/frame-sdk'
 import { describeDivergence, formatIec } from '@/lib/storage'
-import { agentFreshness, buildDiskRows, chassisDiskTemp, osdsWithoutMachine } from '@/lib/disk-inventory'
+import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, osdsWithoutMachine } from '@/lib/disk-inventory'
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { MachineDiskTable } from '@/components/storage/MachineDiskTable'
 import { osdDiskLabel } from '@/lib/storage-labels'
@@ -56,8 +56,8 @@ export function MachineDisksPanel() {
   const selectedClaims = selected ? claims.filter((c) => c.machineName === selected.name) : []
   const diag = useStorageDiagnostic(null)
   const diskRows = useMemo(
-    () => (selected ? buildDiskRows(selected, diag.osds, diag.io) : []),
-    [selected, diag.osds, diag.io],
+    () => (selected ? buildDiskRows(selected, diag.osds, diag.io, diag.cephDevices) : []),
+    [selected, diag.osds, diag.io, diag.cephDevices],
   )
   const vmOsds = osdsWithoutMachine(diag.osds, machines)
   const now = Date.now()
@@ -147,9 +147,13 @@ export function MachineDisksPanel() {
                   </span>
                 ))}
             </div>
-            <p className="text-[10px] text-muted-foreground font-mono">
-              Controller model, firmware and cache battery: not collected yet. md members are not named by the agent yet.
-            </p>
+            <div className="text-xs font-mono">
+              {controllerLines(selected).length === 0 ? (
+                <span className="text-muted-foreground">Array controller: not reported by the BMC.</span>
+              ) : (
+                controllerLines(selected).map((l) => <div key={l}>Controller {l}</div>)
+              )}
+            </div>
             {diskRows.length === 0 ? (
               <p className="text-xs text-muted-foreground font-mono">No disk reported by the BMC or the node agent.</p>
             ) : (

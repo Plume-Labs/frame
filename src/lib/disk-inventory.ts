@@ -38,21 +38,44 @@ export interface DiskRow {
   osd: OsdRow | null
   role: string
   io: DiskIo
+  // Lot 2 — from the agent (identity, mount, membership) and the BMC (drive
+  // firmware and counters). null = not reported; a BMC 0 never gets here.
+  wwn: string | null
+  byIdPath: string | null
+  mountPoint: string | null
+  members: string[]
+  firmware: string | null
+  rotationSpeedRPM: number | null
+  linkSpeedMbps: number | null
+  temperatureCelsius: number | null
+  powerOnHours: number | null
+  /**
+   * Whether the disk's WWN by-id path is one the CephCluster spec declares.
+   * null when either side is unknown (no WWN published, or the spec lists no
+   * device and lets Rook pick).
+   */
+  declaredInCeph: boolean | null
 }
 
 /** What a disk is for, in the words an operator uses. */
-export function diskRole(osd: OsdRow | null, occupancy: string | null, presence: DiskPresence): string {
+export function diskRole(
+  osd: OsdRow | null,
+  occupancy: string | null,
+  presence: DiskPresence,
+  detail: { members?: string[]; mountPoint?: string } = {},
+): string {
   if (osd) return `${osd.name}${osd.deviceClass ? ` (${osd.deviceClass})` : ''}`
   if (presence === 'bmc-only') return 'not presented to the OS'
+  const members = (detail.members ?? []).join(', ')
   switch (occupancy) {
     case 'ceph-osd':
       return 'ceph-osd (OSD not identified)'
     case 'md-member':
-      return 'mdadm member'
+      return members ? `mdadm member (${members})` : 'mdadm member'
     case 'zfs-member':
-      return 'ZFS member'
+      return members ? `ZFS member (${members})` : 'ZFS member'
     case 'mounted':
-      return 'mounted'
+      return detail.mountPoint ? `mounted ${detail.mountPoint}` : 'mounted'
     case 'partitioned':
       return 'partitioned'
     case 'lvm-pv':
@@ -93,7 +116,12 @@ function osdFor(serial: string, machine: string, osds: OsdRow[]): OsdRow | null 
   )
 }
 
-export function buildDiskRows(machine: Machine, osds: OsdRow[], io: Map<string, DiskIo>): DiskRow[] {
+export function buildDiskRows(
+  machine: Machine,
+  osds: OsdRow[],
+  io: Map<string, DiskIo>,
+  cephDevices: string[] = [],
+): DiskRow[] {
   const bmc: DriveInfo[] = machine.inventory?.drives ?? []
   const os: ObservedDisk[] = machine.storage?.observed ?? []
   const serials: string[] = []
@@ -110,7 +138,7 @@ export function buildDiskRows(machine: Machine, osds: OsdRow[], io: Map<string, 
     return {
       serial,
       bay: b?.location || null,
-      model: b?.model || null,
+      model: b?.model || o?.model || null,
       sizeGB: b?.sizeGB || o?.sizeGB || null,
       protocol: b?.protocol || null,
       mediaType: b?.mediaType || null,
@@ -120,8 +148,18 @@ export function buildDiskRows(machine: Machine, osds: OsdRow[], io: Map<string, 
       occupancy: o?.occupancy ?? null,
       presence,
       osd,
-      role: diskRole(osd, o?.occupancy ?? null, presence),
+      role: diskRole(osd, o?.occupancy ?? null, presence, { members: o?.members, mountPoint: o?.mountPoint }),
       io: (osPath && io.get(`${machine.nodeRef}/${kernelName(osPath)}`)) || { utilPct: null, awaitMs: null },
+      wwn: o?.wwn || null,
+      byIdPath: o?.byIdPath || null,
+      mountPoint: o?.mountPoint || null,
+      members: o?.members ?? [],
+      firmware: b?.firmware || null,
+      rotationSpeedRPM: b?.rotationSpeedRPM || null,
+      linkSpeedMbps: b?.linkSpeedMbps || null,
+      temperatureCelsius: b?.temperatureCelsius || null,
+      powerOnHours: b?.powerOnHours || null,
+      declaredInCeph: o?.byIdPath && cephDevices.length > 0 ? cephDevices.includes(o.byIdPath) : null,
     }
   })
   // Bay order is the order a human walks the chassis in; disks with no bay last.
@@ -200,4 +238,20 @@ export function mdArrays(
 export function osdsWithoutMachine(osds: OsdRow[], machines: Machine[]): OsdRow[] {
   const covered = new Set(machines.map((m) => m.nodeRef).filter(Boolean))
   return osds.filter((o) => !covered.has(o.host))
+}
+
+/** The array controllers of a machine, one line each; empty when the BMC reports none. */
+export function controllerLines(machine: Machine): string[] {
+  return (machine.inventory?.storageControllers ?? []).map((c) =>
+    [
+      c.location || 'controller',
+      c.model || 'model not reported',
+      c.firmware ? `fw ${c.firmware}` : 'fw not reported',
+      `health ${c.health || 'not reported'}`,
+      `cache battery ${c.backupPowerStatus || 'not reported'}`,
+      c.cacheStatus ? `cache ${c.cacheStatus}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+  )
 }

@@ -598,6 +598,8 @@ export interface CephDiagnosticRaw {
   healthDetails: Record<string, { message?: string; severity?: string }>
   /** Kubernetes node name → lower-cased SMBIOS system UUID. */
   nodeUuids: Record<string, string>
+  /** Device paths the CephCluster spec declares (`spec.storage.devices` and per-node lists). */
+  cephDevices: string[]
 }
 
 /** A real Kubernetes event. */
@@ -1775,7 +1777,10 @@ class ClusterClient {
       this.promInstant(CEPH_DIAG_QUERIES).catch(() => null),
       k8sFetch<ListResponse<OsdPodCR>>(integrationPods(cfg.integrations.cephOsd)),
       k8sFetch<
-        ListResponse<{ status?: { ceph?: { details?: Record<string, { message?: string; severity?: string }> } } }>
+        ListResponse<{
+          spec?: { storage?: { devices?: Array<{ name?: string }>; nodes?: Array<{ devices?: Array<{ name?: string }> }> } }
+          status?: { ceph?: { details?: Record<string, { message?: string; severity?: string }> } }
+        }>
       >(`/apis/ceph.rook.io/v1/namespaces/${cfg.namespaces.ceph}/cephclusters`),
       k8sFetch<ListResponse<{ metadata: { name: string }; status?: { nodeInfo?: { systemUUID?: string } } }>>(
         '/api/v1/nodes',
@@ -1791,6 +1796,12 @@ class ClusterClient {
       pods: (pods.items ?? []).map(toOsdPod).filter((p): p is OsdPod => p !== null),
       healthDetails: clusters.items?.[0]?.status?.ceph?.details ?? {},
       nodeUuids,
+      cephDevices: [
+        ...(clusters.items?.[0]?.spec?.storage?.devices ?? []),
+        ...(clusters.items?.[0]?.spec?.storage?.nodes ?? []).flatMap((n) => n.devices ?? []),
+      ]
+        .map((d) => d.name ?? '')
+        .filter(Boolean),
     }
   }
 

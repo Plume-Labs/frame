@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { attentionItems, type AttentionInputs } from './storage-attention'
+import { attentionItems, undeclaredOsdDiskItems, type AttentionInputs } from './storage-attention'
+import type { DiskRow } from './disk-inventory'
 import { buildOsdRows } from './ceph-diagnostic'
 import { buildPoolRows, daemonQuorum, objectHealth, setFlags } from './ceph-pools'
 import { mdArrays } from './disk-inventory'
@@ -115,5 +116,21 @@ describe('bandeau À traiter', () => {
   it('dit qu-aucune FrameStorage n-est déclarée, mais pas quand la liste est inconnue', () => {
     expect(codes(inputs(healthyProm(), healthyPods(), { frameStorageCount: 0 }))).toContain('no-framestorage')
     expect(codes(inputs(healthyProm(), healthyPods(), { frameStorageCount: null }))).not.toContain('no-framestorage')
+  })
+})
+
+describe('disque d-OSD absent de la liste du CephCluster', () => {
+  it('ne signale que les disques d-OSD au verdict négatif', () => {
+    const base = { osd: { name: 'osd.4' }, bay: '2I:6:7', serial: 'SER-HDD4', byIdPath: '/dev/disk/by-id/wwn-x' }
+    const rows = [
+      { ...base, declaredInCeph: false },
+      { ...base, serial: 'SER-HDD3', declaredInCeph: true },
+      { ...base, serial: 'SER-HDD1', declaredInCeph: null },
+      { ...base, serial: 'SER-SSD1', osd: null, declaredInCeph: false },
+    ] as unknown as DiskRow[]
+    const items = undeclaredOsdDiskItems('srv-hw', rows)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ code: 'osd-disk-undeclared', severity: 'warning' })
+    expect(items[0].text).toContain('osd.4 on srv-hw 2I:6:7 (SER-HDD4)')
   })
 })

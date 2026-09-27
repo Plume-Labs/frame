@@ -56,8 +56,11 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                   <td className="pr-3 font-bold">{d.role}</td>
                   <td className="pr-3">{d.bmcHealth ?? 'not listed'}</td>
                   <td className="pr-3">{osCell(d)}</td>
-                  <td className="pr-3 text-muted-foreground" title="Per-disk temperature is not reported by this BMC">
-                    n/r
+                  <td
+                    className={`pr-3 ${d.temperatureCelsius === null ? 'text-muted-foreground' : ''}`}
+                    title={d.temperatureCelsius === null ? 'Not reported by the BMC (0 °C is never shown)' : undefined}
+                  >
+                    {d.temperatureCelsius === null ? 'n/r' : `${d.temperatureCelsius} °C`}
                   </td>
                   <td className="pr-3 text-muted-foreground">{NOT_COLLECTED}</td>
                   <td>{io(d)}</td>
@@ -67,6 +70,16 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                     <td colSpan={10} className="p-3 space-y-1">
                       <div>
                         {d.bay ?? 'no bay'} · {d.serial} · {d.model ?? '—'} · {d.protocol ?? '—'} {d.mediaType ?? ''}
+                        {d.linkSpeedMbps ? ` · link ${d.linkSpeedMbps / 1000} Gb/s` : ''}
+                        {d.rotationSpeedRPM ? ` · ${d.rotationSpeedRPM} rpm` : ''} · fw {d.firmware ?? NOT_COLLECTED}
+                      </div>
+                      <div>
+                        WWN {d.wwn ?? 'not published'}
+                        {d.byIdPath ? ` · ${d.byIdPath}` : ''}
+                        {d.declaredInCeph === true ? ' · declared in the CephCluster spec' : ''}
+                        {d.declaredInCeph === false && d.osd ? ' · NOT in the CephCluster device list' : ''}
+                        {d.mountPoint ? ` · mounted on ${d.mountPoint}` : ''}
+                        {d.members.length ? ` · member of ${d.members.join(', ')}` : ''}
                       </div>
                       {d.osd && (
                         <div>
@@ -80,7 +93,8 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                         {d.presence === 'bmc-only' ? ' — seen by the BMC, not presented to the node (masked, not failed)' : ''}
                       </div>
                       <div className="text-muted-foreground">
-                        SMART (reallocated, pending, grown defects, hours): {NOT_COLLECTED} · firmware: {NOT_COLLECTED}
+                        SMART (reallocated, pending, grown defects): {NOT_COLLECTED} · power-on hours:{' '}
+                        {d.powerOnHours ?? 'not reported'}
                       </div>
                       <div>
                         FrameDiskClaims:{' '}

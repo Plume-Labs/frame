@@ -15,8 +15,8 @@ import {
   type PgTally,
   type PoolRow,
 } from '@/lib/ceph-pools'
-import { ioIndex, mdArrays, type DiskIo, type MdArray } from '@/lib/disk-inventory'
-import { attentionItems, type AttentionItem } from '@/lib/storage-attention'
+import { buildDiskRows, ioIndex, mdArrays, type DiskIo, type MdArray } from '@/lib/disk-inventory'
+import { attentionItems, undeclaredOsdDiskItems, type AttentionItem } from '@/lib/storage-attention'
 import { zfsFindings, type ZfsSourceResult } from '@/lib/zfs-source'
 import { useLiveResource } from '@/hooks/useLiveResource'
 
@@ -38,6 +38,7 @@ export interface StorageDiagnostic {
   machines: Machine[]
   zfs: ZfsSourceResult | null
   nodeUuids: Record<string, string>
+  cephDevices: string[]
   attention: AttentionItem[]
   reload: () => void
 }
@@ -69,7 +70,12 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
     const objects = objectHealth(prom, pools)
     const md = mdArrays(prom.mdDisks, prom.mdRequired, prom.mdState)
     const promAvailable = raw !== null && raw.prom !== null
-    const extra = zfs?.status === 'ok' ? zfs.hosts.flatMap((h) => zfsFindings(h, now)) : []
+    const io = ioIndex(prom.diskUtil, prom.diskAwait)
+    const cephDevices = raw?.cephDevices ?? []
+    const extra = [
+      ...machines.flatMap((m) => undeclaredOsdDiskItems(m.name, buildDiskRows(m, osds, io, cephDevices))),
+      ...(zfs?.status === 'ok' ? zfs.hosts.flatMap((h) => zfsFindings(h, now)) : []),
+    ]
     return {
       loading: state.phase === 'loading',
       error: state.phase === 'error' ? state.message : null,
@@ -82,10 +88,11 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
       objects,
       quorum,
       md,
-      io: ioIndex(prom.diskUtil, prom.diskAwait),
+      io,
       machines,
       zfs,
       nodeUuids: raw?.nodeUuids ?? {},
+      cephDevices,
       attention: raw
         ? attentionItems({
             promAvailable,

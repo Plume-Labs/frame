@@ -9,7 +9,7 @@
 import type { OsdRow } from './ceph-diagnostic'
 import { osdRange } from './ceph-diagnostic'
 import type { PoolRow, DaemonQuorum, ObjectHealth } from './ceph-pools'
-import type { MdArray } from './disk-inventory'
+import type { DiskRow, MdArray } from './disk-inventory'
 import type { Machine } from './machines'
 import { describeDivergence } from './storage'
 
@@ -142,4 +142,18 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
 
   out.push(...(i.extra ?? []))
   return out.sort((a, b) => RANK[a.severity] - RANK[b.severity])
+}
+
+/**
+ * OSD disks whose WWN by-id path the CephCluster spec does not list. Only
+ * rows with a verdict (`declaredInCeph === false`) fire; unknown stays quiet.
+ */
+export function undeclaredOsdDiskItems(machine: string, rows: DiskRow[]): AttentionItem[] {
+  return rows
+    .filter((r) => r.osd && r.declaredInCeph === false)
+    .map((r) => ({
+      severity: 'warning' as const,
+      code: 'osd-disk-undeclared',
+      text: `${r.osd!.name} on ${machine} ${r.bay ?? ''} (${r.serial}): ${r.byIdPath} is not in the CephCluster device list`,
+    }))
 }

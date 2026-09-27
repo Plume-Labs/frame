@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { agentFreshness, buildDiskRows, chassisDiskTemp, diskRole, ioIndex, mdArrays, osdsWithoutMachine } from './disk-inventory'
+import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, diskRole, ioIndex, mdArrays, osdsWithoutMachine } from './disk-inventory'
 import { buildOsdRows } from './ceph-diagnostic'
 import { healthyPods, healthyProm, hwMachine, setSample, HW_NODE } from './testdata/ceph-cluster'
 
@@ -96,5 +96,64 @@ describe('divers', () => {
   it('liste les OSD des nœuds sans FrameMachine', () => {
     const osds = buildOsdRows({ prom: healthyProm(), pods: healthyPods(), machines: [hwMachine()], now: NOW })
     expect(osdsWithoutMachine(osds, [hwMachine()]).map((o) => o.id)).toEqual([0, 1, 2])
+  })
+})
+
+describe('lot 2 — identité et appartenance publiées par l-agent et le BMC', () => {
+  function lot2Machine() {
+    const m = hwMachine()
+    const hdd3 = m.storage!.observed.find((d) => d.serialNumber === 'SER-HDD3')!
+    hdd3.wwn = '0x5000c500deadbe03'
+    hdd3.byIdPath = '/dev/disk/by-id/wwn-0x5000c500deadbe03'
+    const hdd4 = m.storage!.observed.find((d) => d.serialNumber === 'SER-HDD4')!
+    hdd4.wwn = '0x5000c500deadbe04'
+    hdd4.byIdPath = '/dev/disk/by-id/wwn-0x5000c500deadbe04'
+    const ssd1 = m.storage!.observed.find((d) => d.serialNumber === 'SER-SSD1')!
+    ssd1.occupancy = 'md-member'
+    ssd1.members = ['md0']
+    const ssd2 = m.storage!.observed.find((d) => d.serialNumber === 'SER-SSD2')!
+    ssd2.mountPoint = '/var/lib/data'
+    const bmc = m.inventory!.drives.find((d) => d.serialNumber === 'SER-HDD3')!
+    bmc.firmware = 'FW01'
+    bmc.temperatureCelsius = 38
+    return m
+  }
+  const declared = ['/dev/disk/by-id/wwn-0x5000c500deadbe03']
+
+  function rows(m = lot2Machine(), devices = declared) {
+    const osds = buildOsdRows({ prom: healthyProm(), pods: healthyPods(), machines: [m], now: NOW })
+    return buildDiskRows(m, osds, new Map(), devices)
+  }
+
+  it('nomme le miroir md et le point de montage dans le rôle', () => {
+    const r = rows()
+    expect(r.find((d) => d.serial === 'SER-SSD1')?.role).toBe('mdadm member (md0)')
+    expect(r.find((d) => d.serial === 'SER-SSD2')?.role).toBe('mounted /var/lib/data')
+  })
+
+  it('confronte le by-id WWN à la liste de devices du CephCluster', () => {
+    const r = rows()
+    expect(r.find((d) => d.serial === 'SER-HDD3')?.declaredInCeph).toBe(true)
+    expect(r.find((d) => d.serial === 'SER-HDD4')?.declaredInCeph).toBe(false)
+    // No WWN published: no verdict.
+    expect(r.find((d) => d.serial === 'SER-HDD1')?.declaredInCeph).toBeNull()
+    // No device list (Rook picks devices itself): no verdict either.
+    expect(rows(lot2Machine(), []).every((d) => d.declaredInCeph === null)).toBe(true)
+  })
+
+  it('rend la température BMC quand elle est rapportée, jamais un 0', () => {
+    const m = lot2Machine()
+    m.inventory!.drives.find((d) => d.serialNumber === 'SER-HDD4')!.temperatureCelsius = 0
+    const r = rows(m)
+    expect(r.find((d) => d.serial === 'SER-HDD3')?.temperatureCelsius).toBe(38)
+    expect(r.find((d) => d.serial === 'SER-HDD4')?.temperatureCelsius).toBeNull()
+    expect(r.find((d) => d.serial === 'SER-HDD3')?.firmware).toBe('FW01')
+  })
+
+  it('décrit le contrôleur, « not reported » pour ce qui manque', () => {
+    const m = lot2Machine()
+    m.inventory!.storageControllers = [{ location: 'Slot 0', model: 'P440ar', firmware: '7.00', health: 'OK' }]
+    expect(controllerLines(m)).toEqual(['Slot 0 · P440ar · fw 7.00 · health OK · cache battery not reported'])
+    expect(controllerLines(hwMachine())).toEqual([])
   })
 })

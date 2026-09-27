@@ -46,6 +46,25 @@ export interface DriveInfo {
   location: string
   mediaType: string
   statusReasons: string[]
+  // Lot 2 (optional: absent on a status written before it). The three
+  // counters are absent — never 0 — when the BMC does not report them: the
+  // captured iLO4 answers 0 °C and null hours for every SAS drive.
+  firmware?: string
+  rotationSpeedRPM?: number
+  linkSpeedMbps?: number
+  temperatureCelsius?: number
+  powerOnHours?: number
+  ssdEnduranceUsedPercent?: number
+}
+
+/** One array controller as the BMC reports it (`status.inventory.storageControllers`). */
+export interface StorageControllerInfo {
+  location?: string
+  model?: string
+  firmware?: string
+  health?: string
+  backupPowerStatus?: string
+  cacheStatus?: string
 }
 
 /**
@@ -58,6 +77,16 @@ export interface ObservedDisk {
   serialNumber: string
   sizeGB: number
   occupancy: string
+  // Lot 2 (optional: absent on a status written before it).
+  wwn?: string
+  /** Derived from the WWN the way udev names the link, not read from the filesystem. */
+  byIdPath?: string
+  model?: string
+  rotational?: boolean | null
+  mountPoint?: string
+  fsType?: string
+  /** md arrays (`md0`) or the ZFS pool this disk belongs to. */
+  members?: string[]
 }
 
 /**
@@ -88,6 +117,7 @@ export interface MachineInventory {
   memoryModules: MemoryModuleInfo[]
   totalMemoryGiB: number
   drives: DriveInfo[]
+  storageControllers?: StorageControllerInfo[]
   networkAdapters: NetworkAdapterInfo[]
 }
 
