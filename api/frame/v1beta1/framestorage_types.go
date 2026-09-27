@@ -131,7 +131,8 @@ type CephPlacement struct {
 	// would read as weight 0) or AuthRefused (the dashboard refused the
 	// account: no login is attempted again until the account in the Secret
 	// changes — Ceph's failed-login counter only resets on a successful
-	// login, so every retry brings the lockout closer).
+	// login, so every retry brings the lockout closer). The refusal itself
+	// is kept in the frame-ceph-dashboard-state Secret, never here.
 	// +kubebuilder:validation:Enum=Collected;NotConfigured;Error;AuthRefused
 	State string `json:"state"`
 	// +optional
@@ -148,13 +149,6 @@ type CephPlacement struct {
 	OSDsReadAt *metav1.Time `json:"osdsReadAt,omitempty"`
 	// +optional
 	RulesReadAt *metav1.Time `json:"rulesReadAt,omitempty"`
-	// RefusedCredentials identifies the account the dashboard refused (a
-	// truncated SHA-256 of url, username and password), so that a manager
-	// restart does not log in again with it. Empty unless State is
-	// AuthRefused.
-	// +optional
-	// +kubebuilder:validation:MaxLength=64
-	RefusedCredentials string `json:"refusedCredentials,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
 	Pools []CephPoolPlacement `json:"pools,omitempty"`

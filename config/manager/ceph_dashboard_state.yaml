@@ -1,0 +1,13 @@
+# Where the manager keeps the refusal of a ceph-mgr dashboard account
+# (internal/cephmgr/refusal.go). Created empty so the manager needs only get
+# and update on this one name; it writes its own keys (hmac-key, refused),
+# which `kubectl apply` of this file leaves in place.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-dashboard-state  # namePrefix "frame-" (config/default) makes it frame-ceph-dashboard-state
+  namespace: system
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+type: Opaque

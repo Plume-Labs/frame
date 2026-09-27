@@ -15,7 +15,6 @@ export interface CephPlacement {
   poolsReadAt?: string
   osdsReadAt?: string
   rulesReadAt?: string
-  refusedCredentials?: string
   pools?: Array<{ name: string; size?: number; minSize?: number; crushRule?: string }>
   osds?: Array<{ id: number; crushWeight: string; deviceClass?: string }>
 }

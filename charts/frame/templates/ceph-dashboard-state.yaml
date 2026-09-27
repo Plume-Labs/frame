@@ -1,0 +1,16 @@
+# Where the manager keeps the refusal of a ceph-mgr dashboard account
+# (internal/cephmgr/refusal.go). Created empty so the manager needs only get
+# and update on this one name (rbac-manager.yaml). The manager writes its
+# own keys (hmac-key, refused); they are not in this template, so an
+# upgrade leaves them in place, and `resource-policy: keep` keeps the
+# Secret — and the refusal — across an uninstall/reinstall.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: frame-ceph-dashboard-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque

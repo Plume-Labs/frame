@@ -238,6 +238,18 @@ func readReplicationFactor(ctx context.Context, c client.Client, storageClassNam
 	return int32(size)
 }
 
+// cephPlacementReader wires the ceph-mgr reader: the account from the
+// frame-ceph-dashboard Secret, and refusals kept in
+// frame-ceph-dashboard-state, both in the manager's namespace. Without a
+// namespace there is no account to read and nothing to keep.
+func cephPlacementReader(mgr ctrl.Manager, namespace string) *cephmgr.Reader {
+	r := &cephmgr.Reader{Load: cephmgr.SecretLoader(mgr.GetAPIReader(), namespace)}
+	if namespace != "" {
+		r.Store = &cephmgr.SecretRefusalStore{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: namespace}
+	}
+	return r
+}
+
 // unconfiguredWiper is the FrameDiskClaim controller's destructive backend on
 // this build. The implementation that actually runs sgdisk/ceph-volume
 // against a node is deliberately not part of this lot — it is a physical,
@@ -606,9 +618,7 @@ func main() {
 		// dashboard API, read-only, with the account in the
 		// frame-ceph-dashboard Secret of this namespace (NotConfigured until
 		// it exists). One read per 5 minutes, shared by every entry.
-		CephPlacement: (&cephmgr.Reader{
-			Load: cephmgr.SecretLoader(mgr.GetAPIReader(), os.Getenv("POD_NAMESPACE")),
-		}).Placement,
+		CephPlacement: cephPlacementReader(mgr, os.Getenv("POD_NAMESPACE")).Placement,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framestorage")
 		os.Exit(1)

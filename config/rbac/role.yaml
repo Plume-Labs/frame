@@ -61,6 +61,15 @@ rules:
   - get
   - update
 - apiGroups:
+  - ""
+  resourceNames:
+  - frame-ceph-dashboard-state
+  resources:
+  - secrets
+  verbs:
+  - get
+  - update
+- apiGroups:
   - apps
   resources:
   - deployments

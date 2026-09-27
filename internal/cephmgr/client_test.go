@@ -21,8 +21,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -362,9 +364,9 @@ func otherCA(t *testing.T) []byte {
 
 // place calls Placement and waits for the refresh it may have started.
 func place(r *Reader) *framev1beta1.CephPlacement {
-	r.Placement(context.Background(), nil)
+	r.Placement(context.Background())
 	r.wait()
-	return r.Placement(context.Background(), nil)
+	return r.Placement(context.Background())
 }
 
 func TestReaderStates(t *testing.T) {
@@ -446,10 +448,10 @@ func TestPlacementNeverBlocks(t *testing.T) {
 	var loads atomic.Int32
 	r := &Reader{Load: func(context.Context) (Config, error) { loads.Add(1); <-release; return Config{}, ErrNotConfigured }}
 	start := time.Now()
-	if p := r.Placement(context.Background(), nil); p != nil {
+	if p := r.Placement(context.Background()); p != nil {
 		t.Errorf("first call returned %+v before any read completed", p)
 	}
-	r.Placement(context.Background(), nil)
+	r.Placement(context.Background())
 	if time.Since(start) > 200*time.Millisecond {
 		t.Fatalf("Placement blocked for %s", time.Since(start))
 	}
@@ -459,7 +461,7 @@ func TestPlacementNeverBlocks(t *testing.T) {
 	}
 	close(release)
 	r.wait()
-	if p := r.Placement(context.Background(), nil); p == nil || p.State != "NotConfigured" {
+	if p := r.Placement(context.Background()); p == nil || p.State != "NotConfigured" {
 		t.Fatalf("after the read: %+v", p)
 	}
 }
@@ -525,11 +527,12 @@ func TestRefusedAccountIsNeverRetriedUntilItChanges(t *testing.T) {
 	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)
 	cfg := f.cfg()
 	cfg.Password, cfg.Version = "wrong", "1"
-	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Now: func() time.Time { return now }}
+	store := &memStore{}
+	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Now: func() time.Time { return now }, Store: store}
 
 	p := place(r)
-	if p.State != "AuthRefused" || f.logins != 1 || p.RefusedCredentials == "" || strings.Contains(p.RefusedCredentials, "wrong") {
-		t.Fatalf("state %q, %d login(s), refused %q", p.State, f.logins, p.RefusedCredentials)
+	if p.State != "AuthRefused" || f.logins != 1 || store.state.Refused == "" || strings.Contains(store.state.Refused, "wrong") {
+		t.Fatalf("state %q, %d login(s), stored %q", p.State, f.logins, store.state.Refused)
 	}
 	for i := 0; i < 24*12; i++ { // a day of 5-minute passes
 		now = now.Add(DefaultInterval)
@@ -548,24 +551,143 @@ func TestRefusedAccountIsNeverRetriedUntilItChanges(t *testing.T) {
 	}
 }
 
-// A restarted manager reads the refusal back from status: no login with
-// the refused account.
-func TestRefusalSurvivesARestart(t *testing.T) {
+// memStore is a RefusalStore in memory, shared between readers the way the
+// state Secret is shared between manager processes.
+type memStore struct {
+	mu       sync.Mutex
+	state    RefusalState
+	failSave error
+	failLoad error
+	saves    int
+}
+
+func (m *memStore) Load(context.Context) (RefusalState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state, m.failLoad
+}
+
+func (m *memStore) Save(_ context.Context, s RefusalState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saves++
+	if m.failSave != nil {
+		return m.failSave
+	}
+	m.state = s
+	return nil
+}
+
+func refusedSetup(t *testing.T) (*fakeDashboard, Config, *memStore) {
 	f := newFake(t)
 	cfg := f.cfg()
 	cfg.Password = "wrong"
-	first := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }}
-	persisted := place(first)
-	if persisted.State != "AuthRefused" {
-		t.Fatalf("state %q", persisted.State)
-	}
+	return f, cfg, &memStore{}
+}
 
-	restarted := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }}
-	restarted.Placement(context.Background(), persisted)
-	restarted.wait()
-	p := restarted.Placement(context.Background(), persisted)
-	if p.State != "AuthRefused" || f.logins != 1 {
-		t.Fatalf("after restart: state %q, %d logins, want AuthRefused and still 1", p.State, f.logins)
+// The refusal is written before the refresh returns: a new process — a
+// restart, or another replica after a lost lease — reads it before its
+// very first login, with no FrameStorage status involved.
+func TestRestartedOrNewLeaderNeverRetriesARefusedAccount(t *testing.T) {
+	f, cfg, store := refusedSetup(t)
+	first := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
+	if p := place(first); p.State != "AuthRefused" || store.saves != 1 || store.state.Refused == "" {
+		t.Fatalf("state %q, saves %d, refused %q", p.State, store.saves, store.state.Refused)
+	}
+	for i := 0; i < 5; i++ { // five successive processes
+		next := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
+		if p := place(next); p.State != "AuthRefused" {
+			t.Fatalf("process %d: state %q", i, p.State)
+		}
+	}
+	if f.logins != 1 {
+		t.Fatalf("%d logins across 6 processes, want 1", f.logins)
+	}
+}
+
+// The store's refusal is checked on the first call, before anything has
+// been published anywhere.
+func TestFirstCallChecksTheStoreBeforeAnyLogin(t *testing.T) {
+	f, cfg, store := refusedSetup(t)
+	key, _ := newKey()
+	store.state = RefusalState{Key: key, Refused: accountMAC(key, cfg)}
+	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
+	if p := place(r); p.State != "AuthRefused" || f.logins != 0 {
+		t.Fatalf("state %q, %d logins, want AuthRefused and none", p.State, f.logins)
+	}
+}
+
+// Writing the refusal failed: the process still never retries the account
+// (fail-closed), and says the refusal is not persisted.
+func TestFailedRefusalWriteIsFailClosed(t *testing.T) {
+	f, cfg, store := refusedSetup(t)
+	store.failSave = errors.New("forbidden")
+	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
+	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store, Now: func() time.Time { return now }}
+	p := place(r)
+	if p.State != "AuthRefused" || !strings.Contains(p.Message, "not persisted") {
+		t.Fatalf("state %q, message %q", p.State, p.Message)
+	}
+	for i := 0; i < 50; i++ {
+		now = now.Add(DefaultInterval)
+		place(r)
+	}
+	if f.logins != 1 {
+		t.Fatalf("%d logins after an unpersisted refusal, want 1", f.logins)
+	}
+}
+
+// The refusal state cannot be read: no login at all.
+func TestUnreadableRefusalStateMeansNoLogin(t *testing.T) {
+	f := newFake(t)
+	store := &memStore{failLoad: errors.New("apiserver unavailable")}
+	cfg := f.cfg()
+	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store}
+	if p := place(r); p.State != "Error" || f.logins != 0 {
+		t.Fatalf("state %q, %d logins", p.State, f.logins)
+	}
+}
+
+// A 400 that is not invalid_credentials is an error, not a refusal: no
+// refusal is recorded, the account is retried next pass.
+func TestOther400IsAnErrorNotARefusal(t *testing.T) {
+	f := newFake(t)
+	f.authFail = http.StatusBadRequest
+	store := &memStore{}
+	cfg := f.cfg()
+	now := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC)
+	r := &Reader{Load: func(context.Context) (Config, error) { return cfg, nil }, Store: store, Now: func() time.Time { return now }}
+	if p := place(r); p.State != "Error" || store.saves != 0 {
+		t.Fatalf("state %q, saves %d", p.State, store.saves)
+	}
+	now = now.Add(DefaultInterval)
+	place(r)
+	if f.logins != 2 {
+		t.Fatalf("%d logins, want a retry after a non-refusal 400", f.logins)
+	}
+}
+
+// The stored value depends on the key: the same account under another key
+// (or as a plain hash) does not match, so a leaked value cannot be checked
+// against guesses without the key.
+func TestRefusalIsKeyedNotAPlainHash(t *testing.T) {
+	cfg := Config{BaseURL: "https://dash:8443", Username: "u", Password: "p"}
+	k1, _ := newKey()
+	k2, _ := newKey()
+	if accountMAC(k1, cfg) == accountMAC(k2, cfg) {
+		t.Fatal("same MAC under two keys")
+	}
+	plain := sha256.Sum256([]byte(cfg.BaseURL + "\x00" + cfg.Username + "\x00" + cfg.Password))
+	if accountMAC(k1, cfg) == hex.EncodeToString(plain[:]) {
+		t.Fatal("MAC equals the unkeyed hash")
+	}
+	// A refusal recorded under another key does not block this account.
+	f := newFake(t)
+	good := f.cfg()
+	store := &memStore{state: RefusalState{Key: k2, Refused: accountMAC(k1, good)}}
+	r := &Reader{Load: func(context.Context) (Config, error) { return good, nil }, Store: store}
+	if p := place(r); p.State != "Collected" {
+		t.Fatalf("state %q", p.State)
 	}
 }
 

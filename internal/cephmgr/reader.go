@@ -18,6 +18,7 @@ package cephmgr
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -46,10 +47,17 @@ const DefaultInterval = 5 * time.Minute
 // logins per user and resets the count only on a successful login
 // (dashboard/controllers/auth.py): any schedule of retries, however
 // spaced, ends in a locked account. The account is tried again only when
-// its content in the Secret — url, username, password — changes
-// (credentialsHash); a new annotation or resourceVersion alone changes
-// nothing. The refused hash is persisted in status.cephPlacement and read
-// back after a manager restart (Placement's prev argument).
+// its content — url, username, password — changes; a new annotation or
+// resourceVersion on the account Secret changes nothing.
+//
+// The refusal is written to the state Secret (RefusalStore, refusal.go)
+// synchronously, before the refresh returns — before anything is
+// published — and read back before every login, the first one after a
+// start included: a manager restarting in a loop, or a new leader after a
+// lost lease, never logs in again with a refused account. If that write
+// fails, the process still never retries the account while it lives
+// (fail-closed), and the state says the refusal is not persisted. If the
+// store cannot be read, no login is attempted.
 
 // readDeadline bounds one background read (login and three GETs).
 const readDeadline = 60 * time.Second
@@ -73,23 +81,22 @@ type Reader struct {
 	inflight bool
 	done     chan struct{} // closed when the in-flight refresh ends (tests)
 
-	// refused is the credentialsHash of the account the dashboard refused;
-	// guarded by mu (Placement seeds it from status after a restart).
-	refused string
-	seeded  bool
+	// Store persists refusals (nil: this process only).
+	Store RefusalStore
 
 	// Only touched by the refresh goroutine (one at a time).
 	client *Client
 	cfgKey string
+	// refusedHere is the account this process met a refusal for, kept in
+	// memory only (never written anywhere): the fail-closed fallback when
+	// the store could not be written.
+	refusedHere string
 }
 
-// credentialsHash identifies an account by content: a truncated SHA-256 of
-// url, username and password. It is stored in status (readable by anyone
-// who can read FrameStorage), which is why the procedure generates a long
-// random password: a hash of a guessable one could be brute-forced.
-func credentialsHash(c Config) string {
+// inMemoryID identifies an account inside this process.
+func inMemoryID(c Config) string {
 	sum := sha256.Sum256([]byte(c.BaseURL + "\x00" + c.Username + "\x00" + c.Password))
-	return hex.EncodeToString(sum[:16])
+	return hex.EncodeToString(sum[:])
 }
 
 // Placement returns the current placement status without blocking: the
@@ -97,24 +104,9 @@ func credentialsHash(c Config) string {
 // started in the background when the cache is older than Interval. A
 // failure is a State, never an error, and a failed list keeps its last
 // good value.
-//
-// persisted is the status the caller already holds (nil if none). Before
-// the first read, it seeds the reader: an AuthRefused status carries the
-// refused account's hash, so a restarted manager does not log in with it
-// again, and its lists become the last known ones.
-func (r *Reader) Placement(_ context.Context, persisted *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
+func (r *Reader) Placement(_ context.Context) *framev1beta1.CephPlacement {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.seeded && persisted != nil {
-		if persisted.State == "AuthRefused" && persisted.RefusedCredentials != "" {
-			r.refused = persisted.RefusedCredentials
-		}
-		if r.last == nil {
-			r.last = persisted.DeepCopy()
-			r.lastAt = time.Time{} // still due: refresh at once
-		}
-	}
-	r.seeded = true
 	now := r.now()
 	if !r.inflight && (r.last == nil || now.Sub(r.lastAt) >= r.interval()) {
 		r.inflight = true
@@ -189,12 +181,31 @@ func withLast(out *framev1beta1.CephPlacement, prev *framev1beta1.CephPlacement)
 	return out
 }
 
-func (r *Reader) refusedStatus(prev *framev1beta1.CephPlacement, hash string) *framev1beta1.CephPlacement {
-	return withLast(&framev1beta1.CephPlacement{
-		State:              "AuthRefused",
-		Message:            "the dashboard refused the account; no login until the account in the Secret changes (see docs/storage-mgr-account.md)",
-		RefusedCredentials: hash,
-	}, prev)
+const refusedMessage = "the dashboard refused the account; no login until the account in the Secret changes (see docs/storage-mgr-account.md)"
+
+func refusedStatus(prev *framev1beta1.CephPlacement, note string) *framev1beta1.CephPlacement {
+	return withLast(&framev1beta1.CephPlacement{State: "AuthRefused", Message: clip(refusedMessage+note, 256)}, prev)
+}
+
+// recordRefusal writes the refusal of cfg to the store, generating the
+// HMAC key the first time. It returns a note for the message when the
+// refusal could not be persisted.
+func (r *Reader) recordRefusal(ctx context.Context, st RefusalState, cfg Config) string {
+	if r.Store == nil {
+		return ""
+	}
+	key := st.Key
+	if len(key) == 0 {
+		k, err := newKey()
+		if err != nil {
+			return " — refusal not persisted: " + err.Error()
+		}
+		key = k
+	}
+	if err := r.Store.Save(ctx, RefusalState{Key: key, Refused: accountMAC(key, cfg)}); err != nil {
+		return " — refusal not persisted, kept by this process only: " + err.Error()
+	}
+	return ""
 }
 
 func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
@@ -205,12 +216,19 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 	if err != nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
 	}
-	hash := credentialsHash(cfg)
-	r.mu.Lock()
-	refused := r.refused
-	r.mu.Unlock()
-	if hash == refused {
-		return r.refusedStatus(prev, hash)
+	// Before any login: this process's own memory, then the store.
+	if inMemoryID(cfg) == r.refusedHere {
+		return refusedStatus(prev, "")
+	}
+	var st RefusalState
+	if r.Store != nil {
+		st, err = r.Store.Load(ctx)
+		if err != nil {
+			return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip("no login: the refusal state cannot be read: "+err.Error(), 256)}, prev)
+		}
+		if st.Refused != "" && len(st.Key) > 0 && hmac.Equal([]byte(accountMAC(st.Key, cfg)), []byte(st.Refused)) {
+			return refusedStatus(prev, "")
+		}
 	}
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%x", cfg.BaseURL, cfg.Username, cfg.Password, cfg.ServerName, cfg.CAPEM)
 	if r.client == nil || key != r.cfgKey {
@@ -227,10 +245,8 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 	}
 	snap, err := r.client.Read(ctx)
 	if errors.Is(err, ErrAuthRefused) {
-		r.mu.Lock()
-		r.refused = hash
-		r.mu.Unlock()
-		return r.refusedStatus(prev, hash)
+		r.refusedHere = inMemoryID(cfg)
+		return refusedStatus(prev, r.recordRefusal(ctx, st, cfg))
 	}
 	if err != nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)

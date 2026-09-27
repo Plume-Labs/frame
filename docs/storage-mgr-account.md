@@ -104,29 +104,48 @@ So the manager:
 
 - stops the pass at the first failed login: no GET of that pass logs in
   again;
-- publishes `AuthRefused`, along with the refused account's
-  `refusedCredentials` (a truncated SHA-256 of url, username and password,
-  never the password itself);
-- never logs in again with that account. It tries again only when the
-  account's content in the Secret changes (url, username or password). An
-  annotation or a label on the Secret changes nothing;
-- keeps the refusal across a restart: it reads `refusedCredentials` back
-  from the FrameStorage status before any login.
+- records the refusal in a dedicated Secret,
+  `frame-system/frame-ceph-dashboard-state`, synchronously and before it
+  publishes anything. The Secret holds `hmac-key` (32 random bytes, made
+  once) and `refused` (HMAC-SHA256 of url, username and password under
+  that key). The password itself is never stored, and without the key
+  the value can't be checked against guesses;
+- reads that Secret before every login, the first one after a start
+  included. A manager that restarts in a loop, or a new leader after a
+  lost lease, never logs in again with a refused account;
+- tries the account again only when its content in the account Secret
+  changes (url, username or password). An annotation or a label on it
+  changes nothing;
+- publishes only `AuthRefused` and a message in the FrameStorage status,
+  never the HMAC. FrameStorage is readable by every Frame viewer; the
+  state Secret is not;
+- fails closed if the state Secret can't be written (the message then
+  says "refusal not persisted"). This process still never retries the
+  account while it runs. If the state Secret can't be read, no login is
+  attempted at all.
 
-The hash is readable by anyone who can read FrameStorage. That is why the
-procedure uses a long random password: a hash of a guessable one could be
-brute-forced.
+The deployment manifests create `frame-ceph-dashboard-state` empty
+(`config/manager/ceph_dashboard_state.yaml`,
+`charts/frame/templates/ceph-dashboard-state.yaml`, kept on uninstall). The
+manager's RBAC names it: get and update on that one Secret, and no create
+verb, since `resourceNames` can't restrict a create.
 
 To unblock:
 
-- **the password in the Secret is wrong**: put the right one in
+- **the password in the account Secret is wrong**: put the right one in
   (`kubectl -n frame-system create secret generic frame-ceph-dashboard …
   --dry-run=client -o yaml | kubectl apply -f -`). The next read uses it;
 - **the account itself is disabled or its counter is high**: on the Ceph
   side, `ceph dashboard ac-user-enable frame-storage-reader`, then set a
   new password (`ceph dashboard ac-user-set-password frame-storage-reader
-  -i <file>`) and put it in the Secret. The new content ends the
-  refusal, and the first successful login resets Ceph's counter.
+  -i <file>`) and put it in the account Secret. The first successful
+  login resets Ceph's counter;
+- **to retry the same account deliberately** (after re-enabling it in
+  Ceph, for instance): clear the refusal with
+  `kubectl -n frame-system patch secret frame-ceph-dashboard-state --type json -p '[{"op":"remove","path":"/data/refused"}]'`,
+  or delete the whole state Secret and re-apply the manifest. If the
+  manager process has itself met the refusal and couldn't persist it,
+  restart the manager too.
 
 ## Usable capacity: what the figure is, and what it ignores
 

@@ -67,10 +67,10 @@ type FrameStorageReconciler struct {
 	// CephPlacement reads pools' min_size and CRUSH rule and OSDs' CRUSH
 	// weight from the ceph-mgr dashboard (internal/cephmgr). It never
 	// fails nor blocks: an unreadable dashboard is a State, nil means no
-	// read has completed yet. It is handed the entry's current status, so
-	// a refused account persisted there survives a manager restart.
+	// read has completed yet. A refused account is kept in the
+	// frame-ceph-dashboard-state Secret, not in this status.
 	// A nil field leaves status.cephPlacement unset.
-	CephPlacement func(ctx context.Context, persisted *framev1beta1.CephPlacement) *framev1beta1.CephPlacement
+	CephPlacement func(ctx context.Context) *framev1beta1.CephPlacement
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framestorages,verbs=get;list;watch;create;update;patch
@@ -80,6 +80,10 @@ type FrameStorageReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ceph.rook.io,resources=cephclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ceph.rook.io,resources=cephblockpools,verbs=get;list;watch
+// The ceph-mgr account's refusal state (internal/cephmgr/refusal.go): get and
+// update on that one Secret, which the deployment manifests create empty —
+// no create verb, since resourceNames cannot restrict a create.
+// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=frame-ceph-dashboard-state,verbs=get;update
 
 func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var fs framev1beta1.FrameStorage
@@ -269,7 +273,7 @@ func (r *FrameStorageReconciler) reconcilePlacement(ctx context.Context, fs *fra
 	if !strings.HasPrefix(fs.Spec.Type, "ceph-") || r.CephPlacement == nil {
 		return
 	}
-	p := r.CephPlacement(ctx, fs.Status.CephPlacement)
+	p := r.CephPlacement(ctx)
 	if p == nil {
 		return
 	}
