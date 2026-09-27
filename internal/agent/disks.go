@@ -99,11 +99,16 @@ func (b *lsblkBool) UnmarshalJSON(data []byte) error {
 // MachineStorage (api/frame/v1beta1/framemachine_types.go). The apiserver
 // rejects the whole status write when one value is one character too long or
 // the list one item too long, so the agent keeps within them: descriptive
-// strings are clipped, identifiers that clipping would falsify are dropped,
-// and disks past the 64th are left out (the BMC side then reports them as
-// bmc-only, which is visible, instead of the machine's disk list freezing).
+// strings are clipped, identifiers that clipping would falsify (serial,
+// WWN, kernel path) make the value — or, for serial and path, the disk — be
+// left out, and disks past the 64th are left out. A left-out disk the BMC
+// lists then shows up as a bmc-only divergence rather than freezing the
+// machine's disk list — unless the divergence list itself reaches its own
+// cap of 64, where internal/storage.Join keeps bmc-only entries first and
+// truncates the rest.
 const (
 	maxObservedDisks = 64
+	maxPathLen       = 512
 	maxSerialLen     = 128
 	maxWWNLen        = 64
 	maxModelLen      = 256
@@ -167,6 +172,11 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 		// would be a different identifier, and published whole it would get
 		// the entire status rejected.
 		if serial == "" || utf8.RuneCountInString(serial) > maxSerialLen {
+			continue
+		}
+		// The kernel path is shown and joined on as-is; clipped, it would
+		// name another device, so an over-long one drops the disk.
+		if utf8.RuneCountInString(dev.Path) > maxPathLen {
 			continue
 		}
 		if len(disks) == maxObservedDisks {

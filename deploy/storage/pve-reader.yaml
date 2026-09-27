@@ -140,7 +140,12 @@ data:
     # from outside the pod; the URI was already matched by the whitelist.
     server {
       listen 127.0.0.1:8081;
+      # Loopback is not a trust boundary: anything in the pod can reach it,
+      # so it is held to GET like the public server, and Proxmox only ever
+      # sees a GET from here whatever arrives.
       location ~ "^/api2/json/nodes/[A-Za-z0-9.-]+/qemu/[0-9]+/config$" {
+        limit_except GET { deny all; }
+        proxy_method GET;
         proxy_pass https://pve$uri;
       }
       location / { return 403; }

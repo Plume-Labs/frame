@@ -195,6 +195,22 @@ else
   echo "ok    no response spooled to disk"
 fi
 
+# The loopback fetch server (127.0.0.1:8081), from inside the container:
+# GET works, anything else is refused before reaching Proxmox.
+inner() {
+  local want="$1" method="$2" path="$3" code
+  code="$(podman exec "$net-reader" curl -s -o /dev/null -w '%{http_code}' -X "$method" "http://127.0.0.1:8081$path" || true)"
+  if [[ "$code" == "$want" ]]; then
+    printf 'ok    %s %-4s 127.0.0.1:8081%s\n' "$code" "$method" "$path"
+  else
+    printf 'FAIL  %s %-4s 127.0.0.1:8081%s (want %s)\n' "$code" "$method" "$path" "$want"; fail=1
+  fi
+}
+inner 200 GET "/api2/json/nodes/$N/qemu/201/config"
+inner 403 POST "/api2/json/nodes/$N/qemu/201/config"
+inner 403 PUT "/api2/json/nodes/$N/qemu/201/config"
+inner 403 GET "/api2/json/access/users"
+
 # Refused: anything but GET.
 expect 403 POST "/api2/json/nodes/$N/disks/zfs"
 expect 403 PUT "/api2/json/nodes/$N/qemu/201/config"

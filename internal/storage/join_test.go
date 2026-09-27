@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
@@ -99,5 +102,40 @@ func TestJoinReportsAnEmptyOSListAsTotalDivergence(t *testing.T) {
 	got := Join([]framev1beta1.DriveInfo{bmc("HDDTST01", "1I:6:4"), bmc("HDDTST04", "2I:6:5")}, nil)
 	if len(got) != 2 {
 		t.Fatalf("got %d divergences, want 2", len(got))
+	}
+}
+
+// 32 BMC drives and 64 node disks, none shared: 96 divergences, where the CRD
+// admits 64. The list must fit, and what it keeps must be the disks the node
+// cannot see.
+func TestJoinStaysWithinMaxItemsKeepingBMCOnlyFirst(t *testing.T) {
+	var bmc []framev1beta1.DriveInfo
+	var observed []framev1beta1.ObservedDisk
+	for i := 0; i < 32; i++ {
+		bmc = append(bmc, framev1beta1.DriveInfo{SerialNumber: fmt.Sprintf("Z-BMC%02d", i), Location: fmt.Sprintf("1I:1:%d", i)})
+	}
+	for i := 0; i < 64; i++ {
+		observed = append(observed, framev1beta1.ObservedDisk{SerialNumber: fmt.Sprintf("A-OS%02d", i), Path: fmt.Sprintf("/dev/sd%d", i)})
+	}
+	got := Join(bmc, observed)
+	if len(got) != MaxDivergences {
+		t.Fatalf("got %d divergences, want %d", len(got), MaxDivergences)
+	}
+	bmcOnly := 0
+	for _, d := range got {
+		if d.Reason == "bmc-only" {
+			bmcOnly++
+		}
+	}
+	if bmcOnly != 32 {
+		t.Fatalf("kept %d bmc-only divergences, want all 32 (they sort after the os-only ones, so a plain cut would drop them)", bmcOnly)
+	}
+}
+
+func TestJoinClipsDetailToTheCRDLength(t *testing.T) {
+	long := "/dev/" + strings.Repeat("p", 500)
+	got := Join(nil, []framev1beta1.ObservedDisk{{SerialNumber: "S1", Path: long}})
+	if n := utf8.RuneCountInString(got[0].Detail); n > 256 {
+		t.Fatalf("detail is %d characters, the CRD admits 256", n)
 	}
 }

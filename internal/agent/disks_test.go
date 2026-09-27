@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
 
 // fakeRunner returns a canned lsblk payload and records the argv it was
@@ -377,5 +379,51 @@ func TestObserveDisksStaysWithinCRDBounds(t *testing.T) {
 		if utf8.RuneCountInString(x.SerialNumber) > 128 {
 			t.Errorf("over-long serial published: %d characters", utf8.RuneCountInString(x.SerialNumber))
 		}
+	}
+}
+
+// The exact edges of the identifier bounds: at the CRD's limit a value is
+// published whole, one character past it the value (WWN) or the disk
+// (serial, path) is left out — never clipped into another identifier.
+func TestObserveDisksIdentifierBoundsAreExact(t *testing.T) {
+	disk := func(name, path, serial, wwn string) string {
+		return fmt.Sprintf(`{"name":%q,"path":%q,"serial":%q,"size":1,"type":"disk","wwn":%q}`, name, path, serial, wwn)
+	}
+	s128, s129 := strings.Repeat("S", 128), strings.Repeat("T", 129)
+	w64, w65 := "0x"+strings.Repeat("a", 62), "0x"+strings.Repeat("b", 63)
+	p512, p513 := "/dev/"+strings.Repeat("p", 507), "/dev/"+strings.Repeat("q", 508)
+	r := &fakeRunner{out: `{"blockdevices":[` + strings.Join([]string{
+		disk("a", "/dev/sda", s128, ""),
+		disk("b", "/dev/sdb", s129, ""),
+		disk("c", "/dev/sdc", "SER-W64", w64),
+		disk("d", "/dev/sdd", "SER-W65", w65),
+		disk("e", p512, "SER-P512", ""),
+		disk("f", p513, "SER-P513", ""),
+	}, ",") + `]}`}
+	disks, err := ObserveDisks(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]framev1beta1.ObservedDisk{}
+	for _, d := range disks {
+		by[d.SerialNumber] = d
+	}
+	if _, ok := by[s128]; !ok {
+		t.Error("128-character serial dropped, the CRD admits it")
+	}
+	if _, ok := by[s129]; ok {
+		t.Error("129-character serial published")
+	}
+	if by["SER-W64"].WWN != w64 {
+		t.Errorf("64-character WWN not published whole: %q", by["SER-W64"].WWN)
+	}
+	if d := by["SER-W65"]; d.WWN != "" || d.ByIDPath != "" {
+		t.Errorf("65-character WWN published: %q / %q", d.WWN, d.ByIDPath)
+	}
+	if by["SER-P512"].Path != p512 {
+		t.Error("512-character path dropped or changed, the CRD admits it")
+	}
+	if _, ok := by["SER-P513"]; ok {
+		t.Error("disk with a 513-character path published")
 	}
 }

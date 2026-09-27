@@ -23,6 +23,7 @@ package storage
 import (
 	"fmt"
 	"sort"
+	"unicode/utf8"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
@@ -38,6 +39,15 @@ import (
 //
 // The result is sorted by serial then reason, so a status field does not
 // churn on map iteration order.
+//
+// It never exceeds MaxDivergences (the CRD's MaxItems on
+// status.storage.divergences): one entry too many and the apiserver rejects
+// the machine's whole storage status. Past the cap the list is truncated —
+// the schema's Reason enum has no value for a "N more not listed" entry, and
+// changing it is not worth it for a case that needs 64 disagreeing disks.
+// What survives is chosen by what matters most: bmc-only first (a disk the
+// node cannot see), then mismatch, then os-only; within each, serial order.
+// Every Detail is clipped to the CRD's 256 characters.
 func Join(bmc []framev1beta1.DriveInfo, observed []framev1beta1.ObservedDisk) []framev1beta1.DiskDivergence {
 	byBMC := make(map[string]framev1beta1.DriveInfo, len(bmc))
 	var out []framev1beta1.DiskDivergence
@@ -93,11 +103,44 @@ func Join(bmc []framev1beta1.DriveInfo, observed []framev1beta1.ObservedDisk) []
 		})
 	}
 
+	for i := range out {
+		out[i].Detail = clipRunes(out[i].Detail, maxDetailLen)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].SerialNumber != out[j].SerialNumber {
 			return out[i].SerialNumber < out[j].SerialNumber
 		}
 		return out[i].Reason < out[j].Reason
 	})
-	return out
+	if len(out) <= MaxDivergences {
+		return out
+	}
+	kept := make([]framev1beta1.DiskDivergence, 0, MaxDivergences)
+	for _, reason := range []string{"bmc-only", "mismatch", "os-only"} {
+		for _, d := range out {
+			if d.Reason == reason && len(kept) < MaxDivergences {
+				kept = append(kept, d)
+			}
+		}
+	}
+	sort.SliceStable(kept, func(i, j int) bool {
+		if kept[i].SerialNumber != kept[j].SerialNumber {
+			return kept[i].SerialNumber < kept[j].SerialNumber
+		}
+		return kept[i].Reason < kept[j].Reason
+	})
+	return kept
+}
+
+// MaxDivergences mirrors the MaxItems marker on MachineStorage.Divergences.
+const MaxDivergences = 64
+
+// maxDetailLen mirrors the MaxLength marker on DiskDivergence.Detail.
+const maxDetailLen = 256
+
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
