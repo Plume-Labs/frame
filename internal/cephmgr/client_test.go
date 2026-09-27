@@ -34,6 +34,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -260,7 +261,7 @@ func TestLoginRedirectIsNotFollowed(t *testing.T) {
 
 // Error text reaches status.message: never the Secret's credentials or query.
 func TestURLErrorsNameSchemeAndHostOnly(t *testing.T) {
-	for _, raw := range []string{"http://Xuser:Xpw@dash:7000/?Xtok=Xabc#Xfrag", "https://Xuser:Xpw@dash:8443/Xpath?Xtok=Xabc#Xfrag"} {
+	for _, raw := range []string{"http://Xuser:Xpw@dash:7000/?Xtok=Xabc#Xfrag", "https://Xuser:Xpw@dash:8443/Xpath?Xtok=Xabc#Xfrag", "https://Xuser:Xpw@dash:8443"} {
 		_, err := New(Config{BaseURL: raw, Username: "u", Password: "p", CAPEM: newFake(t).caPEM()})
 		if err == nil {
 			t.Fatalf("%s accepted", raw)
@@ -391,6 +392,18 @@ func TestReaderStates(t *testing.T) {
 	collectedAt = p.CollectedAt // the pools were fresh
 	delete(f.fail, PathOSDs)
 
+	// Every GET failing after a good login: nothing fresh, the last read's
+	// date is kept.
+	for _, p := range []string{PathPools, PathOSDs, PathCrushRules} {
+		f.fail[p] = http.StatusInternalServerError
+	}
+	now = now.Add(DefaultInterval)
+	p = place(r)
+	if p.State != "Error" || !p.CollectedAt.Equal(collectedAt) || len(p.OSDs) != 11 {
+		t.Fatalf("all GETs failing: state %q, collectedAt %v (want %v)", p.State, p.CollectedAt, collectedAt)
+	}
+	f.fail = map[string]int{}
+
 	// A transport failure keeps the last lists, dated.
 	cfg.ServerName = "wrong.example"
 	now = now.Add(DefaultInterval)
@@ -403,7 +416,8 @@ func TestReaderStates(t *testing.T) {
 // The reconcile asking never waits on the network.
 func TestPlacementNeverBlocks(t *testing.T) {
 	release := make(chan struct{})
-	r := &Reader{Load: func(context.Context) (Config, error) { <-release; return Config{}, ErrNotConfigured }}
+	var loads atomic.Int32
+	r := &Reader{Load: func(context.Context) (Config, error) { loads.Add(1); <-release; return Config{}, ErrNotConfigured }}
 	start := time.Now()
 	if p := r.Placement(context.Background()); p != nil {
 		t.Errorf("first call returned %+v before any read completed", p)
@@ -411,6 +425,10 @@ func TestPlacementNeverBlocks(t *testing.T) {
 	r.Placement(context.Background())
 	if time.Since(start) > 200*time.Millisecond {
 		t.Fatalf("Placement blocked for %s", time.Since(start))
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := loads.Load(); n != 1 {
+		t.Errorf("%d refreshes started for two calls during one read, want 1", n)
 	}
 	close(release)
 	r.wait()
