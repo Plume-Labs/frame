@@ -47,10 +47,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -206,24 +208,42 @@ func (c *Client) login(ctx context.Context) error {
 		switch {
 		case err == nil:
 			if gerr := c.gate.Succeeded(ctx, c.cfg); gerr != nil {
-				c.mu.Lock()
-				c.gateNote = "login succeeded but its intention could not be cleared: the next login after a restart is blocked (" + gerr.Error() + ")"
-				c.mu.Unlock()
+				c.setNote("login succeeded but its intention could not be cleared: the next login — when this token expires — is blocked (" + gerr.Error() + ")")
 			}
 		case errors.Is(err, ErrAuthRefused):
 			if gerr := c.gate.Refused(ctx, c.cfg); gerr != nil {
-				c.mu.Lock()
-				c.gateNote = "refusal not moved to refused, still pending (blocked either way): " + gerr.Error()
-				c.mu.Unlock()
+				c.setNote("refusal not recorded, state Secret was reset or cannot be written: do not retry before fixing the password (" + gerr.Error() + ")")
+			}
+		case errors.Is(err, errNotSent):
+			// Provably never left: the attempt does not count.
+			if gerr := c.gate.NotSent(ctx, c.cfg); gerr != nil {
+				c.setNote("the login was not sent, but its intention could not be cleared: the account stays blocked (" + gerr.Error() + ")")
 			}
 		}
 	}
 	return err
 }
 
+func (c *Client) setNote(n string) {
+	c.mu.Lock()
+	c.gateNote = n
+	c.mu.Unlock()
+}
+
+// errNotSent marks a login error that happened before any byte of the
+// request was written (connection refused, DNS, TLS handshake): the
+// dashboard never saw it.
+var errNotSent = errors.New("login request not sent")
+
 func (c *Client) doLogin(ctx context.Context) error {
 	body, _ := json.Marshal(map[string]string{"username": c.cfg.Username, "password": c.cfg.Password})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(pathAuth), bytes.NewReader(body))
+	// WroteRequest fires once the transport has written the request (or
+	// failed while writing it). If it never fired, nothing left this
+	// process; if it did — even with a write error — the dashboard may
+	// have received the credentials, and the outcome is unknown.
+	var wrote atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { wrote.Store(true) }}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, c.url(pathAuth), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -231,6 +251,9 @@ func (c *Client) doLogin(ctx context.Context) error {
 	req.Header.Set("Accept", acceptFor(authVersion))
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if !wrote.Load() {
+			return fmt.Errorf("dashboard login: %w: %w", errNotSent, err)
+		}
 		return fmt.Errorf("dashboard login: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()

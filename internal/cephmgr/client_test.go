@@ -27,6 +27,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -66,6 +67,8 @@ type fakeDashboard struct {
 	redirect bool   // answer 307 on /api/auth
 	password string // the password the account has now
 	authFail int    // a status to answer every login with (0: normal)
+	authDrop bool   // read the login, then drop the connection with no answer
+	onLogin  func() // runs when a login has been received, before the answer
 	fail     map[string]int
 }
 
@@ -100,6 +103,16 @@ func newFake(t *testing.T) *fakeDashboard {
 			f.mu.Unlock()
 			if f.redirect {
 				http.Redirect(w, r, "/api/auth-elsewhere", http.StatusTemporaryRedirect)
+				return
+			}
+			if f.onLogin != nil {
+				f.onLogin()
+			}
+			if f.authDrop {
+				_, _ = io.ReadAll(r.Body)
+				hj, _ := w.(http.Hijacker)
+				conn, _, _ := hj.Hijack()
+				_ = conn.Close()
 				return
 			}
 			if f.authFail != 0 {

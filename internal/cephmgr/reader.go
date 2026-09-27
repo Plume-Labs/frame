@@ -220,7 +220,7 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 		return refusedStatus(prev, note)
 	}
 	if err != nil {
-		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
+		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error()+note, 256)}, prev)
 	}
 	at := metav1.NewTime(now)
 	out := toStatus(snap, &at)

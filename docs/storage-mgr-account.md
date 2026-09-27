@@ -113,12 +113,23 @@ dedicated Secret, `frame-system/frame-ceph-dashboard-state`
 3. After the login:
    - **success**: the account is removed from `pending`. The token stays
      in memory, and there's no new login until it expires. If the removal
-     fails, the next login (after a restart) is blocked with "outcome
-     unknown". This is fail-closed, and an operator unblocks it;
+     fails, the next login is blocked with "outcome unknown". That is as
+     soon as the token expires, in the same process, not only after a
+     restart. This is fail-closed, and an operator unblocks it;
    - **refused** (HTTP 400 `invalid_credentials`, or 401): the account
-     moves from `pending` to `refused`;
-   - **anything else** (network error, 5xx, an unexpected answer): the
-     account stays in `pending`, because the outcome is unknown.
+     moves from `pending` to `refused`. If the state Secret was emptied
+     during the login, the refusal is written again under a new key. If
+     it can't be written at all (the Secret was deleted, say), the status
+     says "refusal not recorded, state Secret was reset: do not retry
+     before fixing the password";
+   - **not sent** (connection refused, DNS, a failed TLS handshake:
+     errors that occur before the request is written, detected with
+     `httptrace`'s `WroteRequest`): the dashboard never saw the password,
+     so the account is removed from `pending` and the next pass tries
+     again;
+   - **anything else after the request was sent** (read timeout, 5xx,
+     connection reset after writing, an unexpected answer): the account
+     stays in `pending`, because the outcome is unknown.
 
 An account in `pending` or in `refused` is never tried again. An operator
 unblocks it (below). An account is identified by its content, url,
@@ -148,9 +159,10 @@ FrameStorage is readable by every Frame viewer; the state Secret is not.
 - lists or a fingerprint without a key;
 - an entry that isn't a MAC.
 
-**Limit.** Each list keeps 64 accounts. Past 64 distinct refused
-accounts, the oldest is forgotten. If that account came back, it could
-cost one more failed login.
+**Limits.** Each list, `refused` and `pending`, keeps 64 accounts. Past
+64 distinct refused accounts, or 64 logins with an unknown outcome, the
+oldest entry is forgotten. If that account came back, it could cost one
+more failed login.
 
 The deployment manifests create `frame-ceph-dashboard-state` empty
 (`config/manager/ceph_dashboard_state.yaml`,
@@ -196,6 +208,11 @@ read logs in.
   recreate it at once). A new key is then generated with the next
   intention. Deleting the Secret without recreating it blocks every
   login.
+
+  Do this while no login is in flight, for instance with the manager
+  scaled to zero or between two reads. Clearing the Secret races with a
+  login in progress. An emptied Secret is handled (the refusal is written
+  again), but a deleted one loses the refusal, and the status says so.
 
 ## Usable capacity: what the figure is, and what it ignores
 

@@ -89,9 +89,15 @@ type LoginGate interface {
 	// ErrStateCorrupt, a write failure).
 	Begin(ctx context.Context, c Config) error
 	// Succeeded removes the intention (best effort: if it fails, the next
-	// login is blocked, fail-closed).
+	// login — at the token's expiry, in the same process — is blocked,
+	// fail-closed).
 	Succeeded(ctx context.Context, c Config) error
-	// Refused moves the intention to refused.
+	// NotSent removes the intention of a login that provably never left
+	// (the connection or the TLS handshake failed before the request was
+	// written): it cannot have counted against the account.
+	NotSent(ctx context.Context, c Config) error
+	// Refused moves the intention to refused — into an emptied Secret too
+	// (a new key is made), so a reset during the login loses nothing.
 	Refused(ctx context.Context, c Config) error
 }
 
@@ -262,9 +268,16 @@ func (g *SecretLoginGate) Succeeded(ctx context.Context, c Config) error {
 	})
 }
 
-// Refused implements LoginGate.
+// NotSent implements LoginGate.
+func (g *SecretLoginGate) NotSent(ctx context.Context, c Config) error {
+	return g.Succeeded(ctx, c)
+}
+
+// Refused implements LoginGate. generateKey is true: if the Secret was
+// emptied between Begin and here, the refusal is written again under a new
+// key rather than silently dropped.
 func (g *SecretLoginGate) Refused(ctx context.Context, c Config) error {
-	return g.update(ctx, false, func(st *state) error {
+	return g.update(ctx, true, func(st *state) error {
 		mac := accountMAC(st.key, c)
 		st.pending = slices.DeleteFunc(st.pending, func(x string) bool { return x == mac })
 		if !contains(st.refused, mac) {

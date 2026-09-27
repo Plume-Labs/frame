@@ -20,8 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -346,5 +348,116 @@ func TestNoGateNoLogin(t *testing.T) {
 	now := t0
 	if p := place(process(&cfg, nil, &now)); f.logins != 0 || p.State != "Error" {
 		t.Fatalf("%d logins, state %q", f.logins, p.State)
+	}
+}
+
+// The state Secret emptied while the login is in flight: the refusal is
+// written again under a new key, and nothing retries.
+func TestSecretEmptiedDuringTheLogin(t *testing.T) {
+	f := newFake(t)
+	cfg := f.cfg()
+	cfg.Password = "wrong"
+	gate, c := stateGate(t, true, interceptor.Funcs{})
+	f.onLogin = func() { setData(t, c, nil) }
+	now := t0
+	if p := place(process(&cfg, gate, &now)); p.State != "AuthRefused" {
+		t.Fatalf("state %q (%s)", p.State, p.Message)
+	}
+	f.onLogin = nil
+	for i := 0; i < 3; i++ {
+		now = now.Add(DefaultInterval)
+		place(process(&cfg, gate, &now))
+	}
+	if f.logins != 1 {
+		t.Fatalf("%d failed logins, want 1", f.logins)
+	}
+}
+
+// The state Secret deleted while the login is in flight: the refusal
+// cannot be recorded, and the status says so.
+func TestSecretDeletedDuringTheLogin(t *testing.T) {
+	f := newFake(t)
+	cfg := f.cfg()
+	cfg.Password = "wrong"
+	gate, c := stateGate(t, true, interceptor.Funcs{})
+	f.onLogin = func() { _ = c.Delete(context.Background(), stateSecret(t, c)) }
+	now := t0
+	p := place(process(&cfg, gate, &now))
+	if p.State != "AuthRefused" || !strings.Contains(p.Message, "refusal not recorded") || !strings.Contains(p.Message, "do not retry before fixing the password") {
+		t.Fatalf("state %q (%s)", p.State, p.Message)
+	}
+}
+
+// A login that provably never left — connection refused, TLS handshake
+// failed — does not count: its intention is removed, nothing is blocked.
+func TestLoginNotSentIsNotBlocking(t *testing.T) {
+	f := newFake(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "https://" + l.Addr().String()
+	_ = l.Close()
+	for name, mutate := range map[string]func(*Config){
+		"connection refused":   func(c *Config) { c.BaseURL = closed },
+		"TLS handshake failed": func(c *Config) { c.ServerName = "not-the-dashboard.example" },
+	} {
+		cfg := f.cfg()
+		mutate(&cfg)
+		gate, c := stateGate(t, true, interceptor.Funcs{})
+		now := t0
+		p := place(process(&cfg, gate, &now))
+		if pending := parsedList(t, stateSecret(t, c).Data["pending"]); len(pending) != 0 || p.State != "Error" {
+			t.Errorf("%s: pending %v, state %q (%s)", name, pending, p.State, p.Message)
+		}
+		// And the next pass tries again rather than reporting "outcome unknown".
+		now = now.Add(DefaultInterval)
+		if p := place(process(&cfg, gate, &now)); strings.Contains(p.Message, "outcome unknown") {
+			t.Errorf("%s: blocked after a login that was never sent: %s", name, p.Message)
+		}
+	}
+	if f.logins != 0 {
+		t.Fatalf("the dashboard saw %d logins", f.logins)
+	}
+}
+
+// A login that did leave — the dashboard read it, then the connection
+// dropped with no answer — has an unknown outcome: it stays blocking.
+func TestLoginSentThenDroppedStaysBlocking(t *testing.T) {
+	f := newFake(t)
+	f.authDrop = true
+	cfg := f.cfg()
+	gate, c := stateGate(t, true, interceptor.Funcs{})
+	now := t0
+	place(process(&cfg, gate, &now))
+	if pending := parsedList(t, stateSecret(t, c).Data["pending"]); len(pending) != 1 {
+		t.Fatalf("pending %v, want the sent login kept", pending)
+	}
+	f.authDrop = false
+	now = now.Add(DefaultInterval)
+	if p := place(process(&cfg, gate, &now)); f.logins != 1 || !strings.Contains(p.Message, "outcome unknown") {
+		t.Fatalf("%d logins, state %q (%s)", f.logins, p.State, p.Message)
+	}
+}
+
+// Two leaders at once (a lease handover), same wrong account: at most one
+// failed login between them.
+func TestTwoConcurrentLeaders(t *testing.T) {
+	for round := 0; round < 10; round++ {
+		f := newFake(t)
+		cfg := f.cfg()
+		cfg.Password = "wrong"
+		gate, _ := stateGate(t, true, interceptor.Funcs{})
+		now := t0
+		a, b := process(&cfg, gate, &now), process(&cfg, gate, &now)
+		var wg sync.WaitGroup
+		for _, r := range []*Reader{a, b} {
+			wg.Add(1)
+			go func(r *Reader) { defer wg.Done(); place(r) }(r)
+		}
+		wg.Wait()
+		if f.logins > 1 {
+			t.Fatalf("round %d: %d failed logins from two leaders, want at most 1", round, f.logins)
+		}
 	}
 }
