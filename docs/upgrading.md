@@ -464,4 +464,11 @@ Apply the CRD first anyway if you want the stacks to show from the first
 agent cycle. The agent needs no new privilege, capability or mount: it
 reads `/proc/mdstat` and `/sys/module/zfs` from its own view, and runs the
 host's `zpool`, `zfs`, `pvs`, `vgs` and `lvs` (listing verbs only, fixed
-argv, under the host's `timeout 10`) through the nsenter it already uses.
+argv, under the host's `timeout --foreground -k 2 10`) through the nsenter
+it already uses. A command that outlives that (a `zpool status` blocked on
+a suspended pool) is killed as a process group at 15 s and never started
+again while any of its processes is alive: the stack is then published
+`busy` with its last complete read and its `readAt`. The collection runs in
+the background, so it never holds the agent's cycle; LVM is re-read every
+5 minutes, ZFS and md every cycle. The host needs GNU coreutils `timeout`
+(a missing one is reported as an explicit error, not as "no ZFS").

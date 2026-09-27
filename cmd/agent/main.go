@@ -121,6 +121,9 @@ func run() error {
 	// inside this container would be interrogating and restarting a systemd
 	// that does not exist — see HostCommandRunner.
 	runner := agent.HostCommandRunner{}
+	// The local-storage collector outlives the ticks: it holds the last
+	// result and the in-flight commands (see agent.LocalCollector).
+	local := agent.NewLocalCollector(agent.DefaultLocalSources())
 
 	ctx := ctrl.SetupSignalHandler()
 	slog.Info("frame-agent starting", "node", nodeName, "root", root, "interval", observeInterval)
@@ -129,7 +132,7 @@ func run() error {
 	// freshly (re)started agent reports current state right away instead of
 	// leaving status.nodes stale — and so a restart request that arrived
 	// while it was down is serviced now rather than in 30 seconds.
-	tick(ctx, kc, nodeName, root, runner)
+	tick(ctx, kc, nodeName, root, runner, local)
 
 	ticker := time.NewTicker(observeInterval)
 	defer ticker.Stop()
@@ -138,7 +141,7 @@ func run() error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			tick(ctx, kc, nodeName, root, runner)
+			tick(ctx, kc, nodeName, root, runner, local)
 		}
 	}
 }
@@ -149,7 +152,11 @@ func run() error {
 // error, an unparsable selector on one object, a node with no k3s unit) must
 // not stop the agent from doing the rest of its work or from trying again on
 // the next tick.
-func tick(ctx context.Context, kc client.Client, nodeName, root string, runner agent.CommandRunner) {
+// localStorageWait bounds what a tick spends waiting on the local-storage
+// collection.
+const localStorageWait = 5 * time.Second
+
+func tick(ctx context.Context, kc client.Client, nodeName, root string, runner agent.CommandRunner, localStorage *agent.LocalCollector) {
 	var node corev1.Node
 	if err := kc.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
 		// Nothing below is meaningful without the node: the selectors are
@@ -216,12 +223,17 @@ func tick(ctx context.Context, kc client.Client, nodeName, root string, runner a
 	//
 	//    The node's local storage stacks (ZFS, md, LVM) ride in the same
 	//    patch, read after lsblk so md members and PVs can be named by the
-	//    serial of the disk under them. Reading them never fails the tick:
-	//    a stack that cannot be read is published as state "error".
+	//    serial of the disk under them. They are collected in the
+	//    background: the tick waits for them at most localStorageWait and
+	//    otherwise publishes the previous result (a command hung on a
+	//    suspended pool must not freeze the disks, nor the tuning above).
 	if disks, serialOf, err := agent.ObserveDisksIndexed(runner); err != nil {
 		slog.Error("reading node disks", "error", err)
 	} else {
-		local := agent.ObserveLocalStorage(agent.DefaultLocalSources(), serialOf)
+		var local *framev1beta1.LocalStorage
+		if localStorage != nil {
+			local = localStorage.Latest(serialOf, localStorageWait)
+		}
 		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local); err != nil {
 			slog.Error("publishing node disks", "node", nodeName, "error", err)
 		}

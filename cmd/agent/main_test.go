@@ -319,7 +319,7 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 		`{"name":"sdc","path":"/dev/sdc","serial":"HDDTST01","size":1200000000000,"type":"disk","fstype":null,"mountpoint":null}` +
 		`]}`}
 
-	tick(context.Background(), kc, "node-1", root, runner)
+	tick(context.Background(), kc, "node-1", root, runner, nil)
 
 	var got framev1beta1.FrameMachine
 	if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {

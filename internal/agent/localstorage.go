@@ -17,14 +17,15 @@ limitations under the License.
 package agent
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
@@ -32,11 +33,11 @@ import (
 // Reading the node's local storage stacks — ZFS, mdadm, LVM — read-only.
 //
 // What this code may run is fixed at compile time: storageCommands is the
-// complete list of argv, each a listing or status verb, and runStorage
-// refuses anything else. Nothing here takes an argument from the cluster or
-// the CR; a pool or VG name never reaches an argv. localstorage_test.go
-// fails if an entry is added to the list without being added to its copy
-// there, and if any entry carries a verb that writes.
+// complete list of argv, each a listing or status verb, plus one probe
+// (timeoutProbe); runStorage refuses anything else. Nothing here takes an
+// argument from the cluster or the CR; a pool or VG name never reaches an
+// argv. localstorage_test.go fails if an entry is added to the list without
+// being added to its copy there, and if any entry carries a verb that writes.
 //
 // Privileges: none beyond what the agent already has (privileged, hostPID,
 // the host's / at /host — deploy/kubernetes/base/node-tuning-agent/
@@ -46,53 +47,101 @@ import (
 // through nsenter into PID 1's mount namespace, so they are the HOST's
 // binaries, matched to the host's kernel module — a userland shipped in
 // this image could disagree with the module and print wrong state, which
-// is why the image carries none. They reach /dev/zfs and the device-mapper
-// through the host's /dev, as the host's own tools would.
+// is why the image carries none.
 //
-// Each command runs under the host's coreutils `timeout` (the command is
-// killed on the host after storageCommandTimeout), and the whole nsenter
-// under a Go context a little longer, so a hung pool (a suspended pool's
-// zpool status can block) costs one bounded wait, not the agent's cycle.
+// A command can hang — `zpool status` on a suspended pool blocks in the
+// kernel, where no signal reaches it. Four guards keep that from costing
+// more than the stack it is about (storagerunner.go):
+//
+//  1. the host's `timeout --foreground -k 2 10` sends TERM at 10 s and KILL
+//     2 s later, to the command itself;
+//  2. the agent kills the whole process group at its hard deadline if the
+//     host side has not ended, and cmd.WaitDelay stops it waiting on a pipe
+//     a surviving grandchild still holds;
+//  3. a command whose previous run is still alive on the host (a process
+//     in D state survives SIGKILL) is not started again: the stack is
+//     published "busy" with its last complete read;
+//  4. the collection runs in the background (LocalCollector); the agent's
+//     tick waits for it a bounded time and otherwise publishes the last
+//     result.
 
-// storageCommandTimeout bounds one command on the host.
-const storageCommandTimeout = 10 * time.Second
+// storageTimeoutSeconds and storageKillAfterSeconds are the host-side
+// `timeout -k` values.
+const (
+	storageTimeoutSeconds   = 10
+	storageKillAfterSeconds = 2
+)
+
+// timeoutPrefix is prepended to every storage command: the host's GNU
+// timeout, in the foreground (so the command stays in the agent's process
+// group, where the busy check can see it), killing after the grace period.
+var timeoutPrefix = []string{"timeout", "--foreground", "-k", fmt.Sprint(storageKillAfterSeconds), fmt.Sprint(storageTimeoutSeconds)}
 
 // storageCommands is every argv the local-storage reader may run. Read-only
 // verbs only: `zpool list`, `zpool status`, `zfs list`, `pvs`, `vgs`, `lvs`.
 var storageCommands = [][]string{
 	{"zpool", "list", "-Hp", "-o", "name,size,alloc,free,frag,cap,health"},
 	{"zpool", "status", "-P"},
-	{"zfs", "list", "-Hp", "-o", "name,used,avail,refer,mountpoint,type"},
+	{"zfs", "list", "-Hp", "-t", "filesystem,volume", "-o", "name,used,avail,refer,mountpoint,type"},
 	{"pvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "pv_name,vg_name,pv_size,pv_free,pv_attr"},
 	{"vgs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "vg_name,vg_size,vg_free,pv_count,lv_count,vg_attr"},
 	{"lvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "lv_name,vg_name,lv_size,lv_attr,segtype,data_percent"},
 }
 
-// errToolAbsent is returned when the host has no such binary: the stack is
-// not installed, which is a state ("absent"), not a failure.
-var errToolAbsent = errors.New("tool not installed on the node")
+// timeoutProbe tells "the host has no `timeout`" from "the host has no
+// zpool": both surface as exit 127 through `timeout`. Run bare (not under
+// timeout), only after a 127.
+var timeoutProbe = []string{"timeout", "--version"}
+
+var (
+	// errToolAbsent: the host has no such binary — the stack is not
+	// installed, a state ("absent"), not a failure.
+	errToolAbsent = errors.New("tool not installed on the node")
+	// errTimeoutAbsent: the host has no coreutils `timeout`; nothing can be
+	// run safely, and it is said as such rather than as "no ZFS".
+	errTimeoutAbsent = errors.New("coreutils `timeout` not found on the node: storage commands are not run without it")
+	// errBusy: the previous run of this command is still alive on the host.
+	errBusy = errors.New("previous run still alive on the node")
+)
+
+// StorageExecutor runs one command and returns stdout and stderr apart —
+// the LVM reports are JSON on stdout, and a warning on stderr must not
+// break the parse.
+type StorageExecutor interface {
+	Exec(argv []string) (stdout, stderr string, err error)
+}
 
 // runStorage runs argv — which must be, element for element, one of
 // storageCommands — under the host's timeout.
-func runStorage(runner CommandRunner, argv []string) (string, error) {
+func runStorage(x StorageExecutor, argv []string) (string, error) {
 	if !slices.ContainsFunc(storageCommands, func(c []string) bool { return slices.Equal(c, argv) }) {
 		return "", fmt.Errorf("refusing %q: not on the local-storage command list", strings.Join(argv, " "))
 	}
-	args := append([]string{fmt.Sprintf("%d", int(storageCommandTimeout/time.Second))}, argv...)
-	out, err := runner.Run("timeout", args...)
-	if err != nil {
-		var exitErr interface{ ExitCode() int }
-		if errors.As(err, &exitErr) {
-			switch exitErr.ExitCode() {
-			case 127: // timeout: the command was not found
-				return "", errToolAbsent
-			case 124:
-				return "", fmt.Errorf("%s timed out after %s", argv[0], storageCommandTimeout)
-			}
-		}
-		return "", fmt.Errorf("%s: %w: %s", strings.Join(argv[:2], " "), err, firstLine(out))
+	stdout, stderr, err := x.Exec(append(slices.Clone(timeoutPrefix), argv...))
+	if err == nil {
+		return stdout, nil
 	}
-	return out, nil
+	if errors.Is(err, errBusy) {
+		return "", errBusy
+	}
+	switch exitCode(err) {
+	case 127: // timeout could not find the command — or timeout itself is missing
+		if _, _, perr := x.Exec(slices.Clone(timeoutProbe)); exitCode(perr) == 127 {
+			return "", errTimeoutAbsent
+		}
+		return "", errToolAbsent
+	case 124, 137: // TERM at the deadline, or KILL after the grace period
+		return "", fmt.Errorf("%s timed out after %ds", strings.Join(argv[:2], " "), storageTimeoutSeconds)
+	}
+	return "", fmt.Errorf("%s: %w: %s", strings.Join(argv[:2], " "), err, firstLine(stderr))
+}
+
+func exitCode(err error) int {
+	var e interface{ ExitCode() int }
+	if errors.As(err, &e) {
+		return e.ExitCode()
+	}
+	return -1
 }
 
 func firstLine(s string) string {
@@ -103,92 +152,108 @@ func firstLine(s string) string {
 	return clipRunes(s, 200)
 }
 
-// ExecTimeoutRunner execs a command and kills it after Timeout — the Go-side
-// backstop behind the host `timeout` (which would not fire if nsenter
-// itself hung).
-type ExecTimeoutRunner struct {
-	Timeout time.Duration
-}
-
-// Run implements CommandRunner.
-func (r ExecTimeoutRunner) Run(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.Timeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("%s: killed after %s", name, r.Timeout)
-	}
-	return string(out), err
-}
-
-// LocalSources is where ObserveLocalStorage reads from; tests substitute
-// fixtures, production uses the real /proc and /sys.
+// LocalSources is where a collection reads from; tests substitute fixtures,
+// production uses the real /proc and /sys and HostStorageExecutor.
 type LocalSources struct {
-	Runner    CommandRunner
+	Exec      StorageExecutor
 	ReadFile  func(string) ([]byte, error)
 	PathExist func(string) bool
+	Now       func() time.Time
 }
 
-// DefaultLocalSources reads the node: host binaries through nsenter with
-// both timeouts, /proc/mdstat and /sys/module/zfs from the agent's own view
-// (neither is namespaced).
+// DefaultLocalSources reads the node.
 func DefaultLocalSources() LocalSources {
 	return LocalSources{
-		Runner:   HostCommandRunner{Runner: ExecTimeoutRunner{Timeout: storageCommandTimeout + 5*time.Second}},
+		Exec:     NewHostStorageExecutor(),
 		ReadFile: os.ReadFile,
 		PathExist: func(p string) bool {
 			_, err := os.Stat(p)
 			return err == nil
 		},
+		Now: time.Now,
 	}
 }
 
-// ObserveLocalStorage reads the three stacks. It never fails as a whole: a
-// stack that cannot be read is reported with state "error" and its reason,
-// so one broken tool cannot hide the other two, nor the disks.
-// serialOf maps kernel names (sdc, sdc2) to disk serials — see
-// ObserveDisksIndexed.
-func ObserveLocalStorage(src LocalSources, serialOf map[string]string) *framev1beta1.LocalStorage {
-	return &framev1beta1.LocalStorage{
-		ZFS: observeZFS(src),
-		MD:  observeMD(src, serialOf),
-		LVM: observeLVM(src, serialOf),
+// lvmInterval spaces the LVM reads: pvs/vgs/lvs scan every block device,
+// which is not free every 30 s on a node with many disks. ZFS and md are
+// read every cycle.
+const lvmInterval = 5 * time.Minute
+
+// ObserveLocalStorage reads the three stacks once. It never fails as a
+// whole: a stack that cannot be read is reported with state "error" and its
+// reason, so one broken tool cannot hide the other two, nor the disks.
+// prev is the last result (nil at first): a busy stack keeps its lists, and
+// LVM is reused until lvmInterval has passed. serialOf maps kernel names
+// (sdc, sdc2) to disk serials — see ObserveDisksIndexed.
+func ObserveLocalStorage(src LocalSources, prev *framev1beta1.LocalStorage, serialOf map[string]string) *framev1beta1.LocalStorage {
+	now := metav1.NewTime(src.Now())
+	out := &framev1beta1.LocalStorage{
+		ZFS: observeZFS(src, now),
+		MD:  observeMD(src, serialOf, now),
 	}
+	if prev != nil && prev.LVM.ReadAt != nil && src.Now().Sub(prev.LVM.ReadAt.Time) < lvmInterval && prev.LVM.State != framev1beta1.StackBusy {
+		out.LVM = *prev.LVM.DeepCopy()
+	} else {
+		out.LVM = observeLVM(src, serialOf, now)
+	}
+	if prev != nil {
+		if out.ZFS.State == framev1beta1.StackBusy {
+			keepZFS(&out.ZFS, prev.ZFS)
+		}
+		if out.LVM.State == framev1beta1.StackBusy {
+			keepLVM(&out.LVM, prev.LVM)
+		}
+	}
+	return out
+}
+
+func keepZFS(cur *framev1beta1.ZFSStatus, prev framev1beta1.ZFSStatus) {
+	p := prev.DeepCopy()
+	cur.Pools, cur.PoolsOmitted, cur.Datasets, cur.DatasetsOmitted, cur.ReadAt = p.Pools, p.PoolsOmitted, p.Datasets, p.DatasetsOmitted, p.ReadAt
+}
+
+func keepLVM(cur *framev1beta1.LVMStatus, prev framev1beta1.LVMStatus) {
+	p := prev.DeepCopy()
+	cur.PVs, cur.VGs, cur.LVs, cur.Omitted, cur.ReadAt = p.PVs, p.VGs, p.LVs, p.Omitted, p.ReadAt
 }
 
 func errorText(err error) string {
 	return clipRunes(err.Error(), 256)
 }
 
-func observeZFS(src LocalSources) framev1beta1.ZFSStatus {
+func stackFailure(err error) (framev1beta1.StackState, string) {
+	if errors.Is(err, errBusy) {
+		return framev1beta1.StackBusy, errorText(err)
+	}
+	return framev1beta1.StackError, errorText(err)
+}
+
+func observeZFS(src LocalSources, now metav1.Time) framev1beta1.ZFSStatus {
 	// No module, no pool: nothing is run on a node without ZFS.
 	if !src.PathExist("/sys/module/zfs") {
 		return framev1beta1.ZFSStatus{State: framev1beta1.StackAbsent}
 	}
-	list, err := runStorage(src.Runner, storageCommands[0])
-	if errors.Is(err, errToolAbsent) {
-		return framev1beta1.ZFSStatus{State: framev1beta1.StackError, Error: "zfs module loaded but no zpool binary on the node"}
+	var outs [3]string
+	for i := range outs {
+		out, err := runStorage(src.Exec, storageCommands[i])
+		if errors.Is(err, errToolAbsent) {
+			return framev1beta1.ZFSStatus{State: framev1beta1.StackError, Error: "zfs module loaded but no " + storageCommands[i][0] + " binary on the node"}
+		}
+		if err != nil {
+			st, msg := stackFailure(err)
+			return framev1beta1.ZFSStatus{State: st, Error: msg}
+		}
+		outs[i] = out
 	}
-	if err != nil {
-		return framev1beta1.ZFSStatus{State: framev1beta1.StackError, Error: errorText(err)}
-	}
-	status, err := runStorage(src.Runner, storageCommands[1])
-	if err != nil {
-		return framev1beta1.ZFSStatus{State: framev1beta1.StackError, Error: errorText(err)}
-	}
-	datasets, err := runStorage(src.Runner, storageCommands[2])
-	if err != nil {
-		return framev1beta1.ZFSStatus{State: framev1beta1.StackError, Error: errorText(err)}
-	}
-	out := framev1beta1.ZFSStatus{State: framev1beta1.StackPresent}
-	pools := parseZpoolList(list)
-	mergeZpoolStatus(pools, parseZpoolStatus(status))
+	out := framev1beta1.ZFSStatus{State: framev1beta1.StackPresent, ReadAt: &now}
+	pools := parseZpoolList(outs[0])
+	mergeZpoolStatus(pools, parseZpoolStatus(outs[1]))
 	out.Pools, out.PoolsOmitted = capList(pools, maxZPools)
-	out.Datasets, out.DatasetsOmitted = capList(parseZfsList(datasets), maxZFSDatasets)
+	out.Datasets, out.DatasetsOmitted = capList(parseZfsList(outs[2]), maxZFSDatasets)
 	return out
 }
 
-func observeMD(src LocalSources, serialOf map[string]string) framev1beta1.MDStatus {
+func observeMD(src LocalSources, serialOf map[string]string, now metav1.Time) framev1beta1.MDStatus {
 	data, err := src.ReadFile("/proc/mdstat")
 	if errors.Is(err, os.ErrNotExist) {
 		// md_mod not loaded.
@@ -206,39 +271,36 @@ func observeMD(src LocalSources, serialOf map[string]string) framev1beta1.MDStat
 			arrays[i].Members[j].Serial = clipRunes(serialOf[arrays[i].Members[j].Device], 128)
 		}
 	}
-	out := framev1beta1.MDStatus{State: framev1beta1.StackPresent}
+	out := framev1beta1.MDStatus{State: framev1beta1.StackPresent, ReadAt: &now}
 	out.Arrays, out.ArraysOmitted = capList(arrays, maxMDArrays)
 	return out
 }
 
-func observeLVM(src LocalSources, serialOf map[string]string) framev1beta1.LVMStatus {
-	pvOut, err := runStorage(src.Runner, storageCommands[3])
-	if errors.Is(err, errToolAbsent) {
-		return framev1beta1.LVMStatus{State: framev1beta1.StackAbsent}
+func observeLVM(src LocalSources, serialOf map[string]string, now metav1.Time) framev1beta1.LVMStatus {
+	var outs [3]string
+	for i := range outs {
+		out, err := runStorage(src.Exec, storageCommands[3+i])
+		if errors.Is(err, errToolAbsent) {
+			return framev1beta1.LVMStatus{State: framev1beta1.StackAbsent, ReadAt: &now}
+		}
+		if err != nil {
+			st, msg := stackFailure(err)
+			return framev1beta1.LVMStatus{State: st, Error: msg}
+		}
+		outs[i] = out
 	}
-	if err != nil {
-		return framev1beta1.LVMStatus{State: framev1beta1.StackError, Error: errorText(err)}
-	}
-	vgOut, err := runStorage(src.Runner, storageCommands[4])
-	if err != nil {
-		return framev1beta1.LVMStatus{State: framev1beta1.StackError, Error: errorText(err)}
-	}
-	lvOut, err := runStorage(src.Runner, storageCommands[5])
-	if err != nil {
-		return framev1beta1.LVMStatus{State: framev1beta1.StackError, Error: errorText(err)}
-	}
-	pvs, vgs, lvs, err := parseLVM(pvOut, vgOut, lvOut)
+	pvs, vgs, lvs, err := parseLVM(outs[0], outs[1], outs[2])
 	if err != nil {
 		return framev1beta1.LVMStatus{State: framev1beta1.StackError, Error: errorText(err)}
 	}
 	// Installed tools, no PV: LVM is not in use here.
 	if len(pvs) == 0 && len(vgs) == 0 {
-		return framev1beta1.LVMStatus{State: framev1beta1.StackAbsent}
+		return framev1beta1.LVMStatus{State: framev1beta1.StackAbsent, ReadAt: &now}
 	}
 	for i := range pvs {
 		pvs[i].Serial = clipRunes(serialOf[strings.TrimPrefix(pvs[i].Name, "/dev/")], 128)
 	}
-	out := framev1beta1.LVMStatus{State: framev1beta1.StackPresent}
+	out := framev1beta1.LVMStatus{State: framev1beta1.StackPresent, ReadAt: &now}
 	var o1, o2, o3 int32
 	out.PVs, o1 = capList(pvs, maxLVMPVs)
 	out.VGs, o2 = capList(vgs, maxLVMVGs)
@@ -265,4 +327,56 @@ func capList[T any](xs []T, n int) ([]T, int32) {
 		return xs, 0
 	}
 	return xs[:n], int32(len(xs) - n)
+}
+
+// LocalCollector runs the collection in the background so that a hung
+// command never holds the agent's tick. Latest starts a collection if none
+// is running, waits for it at most `wait`, and returns the newest complete
+// result — possibly the previous cycle's, which its ReadAt dates.
+type LocalCollector struct {
+	src LocalSources
+
+	mu      sync.Mutex
+	running chan struct{} // closed when the current collection ends; nil when idle
+	last    *framev1beta1.LocalStorage
+}
+
+// NewLocalCollector returns a collector reading from src.
+func NewLocalCollector(src LocalSources) *LocalCollector {
+	return &LocalCollector{src: src}
+}
+
+// Latest returns the newest result, waiting at most wait for a collection
+// started now (or already running) to finish. nil only before the first
+// collection has ever completed.
+func (c *LocalCollector) Latest(serialOf map[string]string, wait time.Duration) *framev1beta1.LocalStorage {
+	c.mu.Lock()
+	done := c.running
+	if done == nil {
+		done = make(chan struct{})
+		c.running = done
+		prev := c.last
+		go func() {
+			res := ObserveLocalStorage(c.src, prev, serialOf)
+			c.mu.Lock()
+			c.last = res
+			c.running = nil
+			c.mu.Unlock()
+			close(done)
+		}()
+	}
+	c.mu.Unlock()
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.last == nil {
+		return nil
+	}
+	return c.last.DeepCopy()
 }

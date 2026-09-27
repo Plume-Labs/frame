@@ -16,6 +16,10 @@ limitations under the License.
 
 package v1beta1
 
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
 // The node's local storage stacks, as the node agent reads them
 // (internal/agent/localstorage.go). Every list and string is bounded: the
 // agent clips and truncates to these markers, because one value past them
@@ -27,14 +31,18 @@ package v1beta1
 //
 // absent: the node does not run it (no zfs module, no LVM tools) — normal,
 // not an error. present: it was read. error: it runs but could not be read;
-// Error says why, and the lists are empty rather than stale.
-// +kubebuilder:validation:Enum=present;absent;error
+// Error says why, and the lists are empty rather than stale. busy: a
+// previous read is still running on the node (a command blocked on a
+// suspended pool); it is not started again, and the lists are the last
+// complete read, dated by ReadAt.
+// +kubebuilder:validation:Enum=present;absent;error;busy
 type StackState string
 
 const (
 	StackPresent StackState = "present"
 	StackAbsent  StackState = "absent"
 	StackError   StackState = "error"
+	StackBusy    StackState = "busy"
 )
 
 // LocalStorage groups the three stacks.
@@ -47,6 +55,10 @@ type LocalStorage struct {
 // ZFSStatus is `zpool list`, `zpool status -P` and `zfs list`.
 type ZFSStatus struct {
 	State StackState `json:"state"`
+	// ReadAt is when the lists were read. Older than the agent's cycle
+	// when the state is busy, or for LVM, read every few minutes only.
+	// +optional
+	ReadAt *metav1.Time `json:"readAt,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	Error string `json:"error,omitempty"`
@@ -141,6 +153,10 @@ type ZFSDataset struct {
 // MDStatus is /proc/mdstat.
 type MDStatus struct {
 	State StackState `json:"state"`
+	// ReadAt is when the lists were read. Older than the agent's cycle
+	// when the state is busy, or for LVM, read every few minutes only.
+	// +optional
+	ReadAt *metav1.Time `json:"readAt,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	Error string `json:"error,omitempty"`
@@ -183,6 +199,8 @@ type MDArray struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=32
 	Members []MDMember `json:"members,omitempty"`
+	// +optional
+	MembersOmitted int32 `json:"membersOmitted,omitempty"`
 }
 
 // MDMember is one component device.
@@ -204,6 +222,10 @@ type MDMember struct {
 // LVMStatus is `pvs`, `vgs` and `lvs` in JSON.
 type LVMStatus struct {
 	State StackState `json:"state"`
+	// ReadAt is when the lists were read. Older than the agent's cycle
+	// when the state is busy, or for LVM, read every few minutes only.
+	// +optional
+	ReadAt *metav1.Time `json:"readAt,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=256
 	Error string `json:"error,omitempty"`

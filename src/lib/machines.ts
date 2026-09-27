@@ -103,7 +103,7 @@ export interface MachineStorage {
   local: LocalStorage | null
 }
 
-export type StackState = 'present' | 'absent' | 'error'
+export type StackState = 'present' | 'absent' | 'error' | 'busy'
 
 export interface ZVdev {
   name: string
@@ -157,6 +157,7 @@ export interface MDArray {
   degraded: boolean
   sync?: string
   members?: MDMember[]
+  membersOmitted?: number
 }
 
 export interface LVMPhysicalVolume { name: string; vg?: string; sizeBytes?: number; freeBytes?: number; attr?: string; serial?: string }
@@ -164,10 +165,11 @@ export interface LVMVolumeGroup { name: string; sizeBytes?: number; freeBytes?: 
 export interface LVMLogicalVolume { name: string; vg: string; sizeBytes?: number; attr?: string; segType?: string; dataPercent?: string }
 
 export interface LocalStorage {
-  zfs: { state: StackState; error?: string; pools?: ZPool[]; poolsOmitted?: number; datasets?: ZFSDataset[]; datasetsOmitted?: number }
-  md: { state: StackState; error?: string; arrays?: MDArray[]; arraysOmitted?: number }
+  zfs: { state: StackState; readAt?: string; error?: string; pools?: ZPool[]; poolsOmitted?: number; datasets?: ZFSDataset[]; datasetsOmitted?: number }
+  md: { state: StackState; readAt?: string; error?: string; arrays?: MDArray[]; arraysOmitted?: number }
   lvm: {
     state: StackState
+    readAt?: string
     error?: string
     pvs?: LVMPhysicalVolume[]
     vgs?: LVMVolumeGroup[]

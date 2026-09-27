@@ -52,7 +52,7 @@ func fixture(t *testing.T, name string) string {
 var reviewedStorageCommands = [][]string{
 	{"zpool", "list", "-Hp", "-o", "name,size,alloc,free,frag,cap,health"},
 	{"zpool", "status", "-P"},
-	{"zfs", "list", "-Hp", "-o", "name,used,avail,refer,mountpoint,type"},
+	{"zfs", "list", "-Hp", "-t", "filesystem,volume", "-o", "name,used,avail,refer,mountpoint,type"},
 	{"pvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "pv_name,vg_name,pv_size,pv_free,pv_attr"},
 	{"vgs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "vg_name,vg_size,vg_free,pv_count,lv_count,vg_attr"},
 	{"lvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", "lv_name,vg_name,lv_size,lv_attr,segtype,data_percent"},
@@ -100,20 +100,38 @@ func TestStorageCommandsCarryNoWritingVerb(t *testing.T) {
 	}
 }
 
+// recordingRunner answers by "tool verb" (the two words after the timeout
+// prefix); fail maps a tool to the error its run returns, probe to the
+// error of `timeout --version`.
 type recordingRunner struct {
 	calls   [][]string
 	answers map[string]string
+	stderr  map[string]string
 	fail    map[string]error
+	probe   error
 }
 
-func (r *recordingRunner) Run(name string, args ...string) (string, error) {
-	argv := append([]string{name}, args...)
+func (r *recordingRunner) Exec(argv []string) (string, string, error) {
 	r.calls = append(r.calls, argv)
-	key := strings.Join(args[1:3], " ") // after "timeout N": tool + verb
-	if err, ok := r.fail[args[1]]; ok {
-		return "", err
+	if slices.Equal(argv, timeoutProbe) {
+		return "timeout (GNU coreutils) 9.7", "", r.probe
 	}
-	return r.answers[key], nil
+	cmd := argv[len(timeoutPrefix):]
+	key := strings.Join(cmd[:2], " ")
+	if err, ok := r.fail[cmd[0]]; ok {
+		return "", r.stderr[key], err
+	}
+	return r.answers[key], r.stderr[key], nil
+}
+
+func toolCalls(r *recordingRunner) [][]string {
+	var out [][]string
+	for _, c := range r.calls {
+		if len(c) > len(timeoutPrefix) && slices.Equal(c[:len(timeoutPrefix)], timeoutPrefix) {
+			out = append(out, c[len(timeoutPrefix):])
+		}
+	}
+	return out
 }
 
 func TestRunStorageRefusesAnythingOffTheList(t *testing.T) {
@@ -138,7 +156,7 @@ func TestRunStorageWrapsEveryCommandInTheHostTimeout(t *testing.T) {
 	if _, err := runStorage(r, storageCommands[1]); err != nil {
 		t.Fatal(err)
 	}
-	want := append([]string{"timeout", "10"}, storageCommands[1]...)
+	want := append([]string{"timeout", "--foreground", "-k", "2", "10"}, storageCommands[1]...)
 	if !slices.Equal(r.calls[0], want) {
 		t.Fatalf("argv %q, want %q", r.calls[0], want)
 	}
@@ -155,19 +173,14 @@ func exitErr(t *testing.T, code int) error {
 	return err
 }
 
-func TestExecTimeoutRunnerKillsAHungCommand(t *testing.T) {
-	start := time.Now()
-	_, err := ExecTimeoutRunner{Timeout: 100 * time.Millisecond}.Run("sleep", "5")
-	if err == nil || time.Since(start) > 3*time.Second {
-		t.Fatalf("sleep 5 was not killed (err %v after %s)", err, time.Since(start))
-	}
-}
-
 // ── whole reads ────────────────────────────────────────────────────────────
+
+var testNow = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
 func sources(r *recordingRunner, files map[string]string, paths ...string) LocalSources {
 	return LocalSources{
-		Runner: r,
+		Exec: r,
+		Now:  func() time.Time { return testNow },
 		ReadFile: func(p string) ([]byte, error) {
 			if v, ok := files[p]; ok {
 				return []byte(v), nil
@@ -188,13 +201,14 @@ func TestObserveLocalStorageOnTheHardwareNode(t *testing.T) {
 	}}
 	got := ObserveLocalStorage(
 		sources(r, map[string]string{"/proc/mdstat": fixture(t, "mdstat-g9.txt")}),
+		nil,
 		map[string]string{"sdc2": "SER-SSD1", "sdd2": "SER-SSD2", "sdc": "SER-SSD1", "sdd": "SER-SSD2"},
 	)
 	if got.ZFS.State != framev1beta1.StackAbsent {
 		t.Errorf("ZFS state %q, want absent", got.ZFS.State)
 	}
-	for _, c := range r.calls {
-		if c[2] == "zpool" || c[2] == "zfs" {
+	for _, c := range toolCalls(r) {
+		if c[0] == "zpool" || c[0] == "zfs" {
 			t.Errorf("ran %q on a node without the zfs module", c)
 		}
 	}
@@ -216,7 +230,7 @@ func TestObserveLocalStorageOnTheHardwareNode(t *testing.T) {
 // A VM node: no zfs module, no md, no LVM tools at all.
 func TestObserveLocalStorageOnABareNodeIsAbsentNotError(t *testing.T) {
 	r := &recordingRunner{fail: map[string]error{"pvs": exitErr(t, 127)}}
-	got := ObserveLocalStorage(sources(r, nil), nil)
+	got := ObserveLocalStorage(sources(r, nil), nil, nil)
 	if got.ZFS.State != framev1beta1.StackAbsent || got.MD.State != framev1beta1.StackAbsent || got.LVM.State != framev1beta1.StackAbsent {
 		t.Fatalf("got %+v", got)
 	}
@@ -224,7 +238,7 @@ func TestObserveLocalStorageOnABareNodeIsAbsentNotError(t *testing.T) {
 
 func TestObserveLocalStorageReportsATimeoutAsAnError(t *testing.T) {
 	r := &recordingRunner{fail: map[string]error{"zpool": exitErr(t, 124)}}
-	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil)
+	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil, nil)
 	if got.ZFS.State != framev1beta1.StackError || !strings.Contains(got.ZFS.Error, "timed out") {
 		t.Fatalf("zfs = %+v", got.ZFS)
 	}
@@ -232,7 +246,7 @@ func TestObserveLocalStorageReportsATimeoutAsAnError(t *testing.T) {
 
 func TestObserveLocalStorageZFSModuleWithoutBinaryIsAnError(t *testing.T) {
 	r := &recordingRunner{fail: map[string]error{"zpool": exitErr(t, 127)}}
-	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil)
+	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil, nil)
 	if got.ZFS.State != framev1beta1.StackError {
 		t.Fatalf("zfs module loaded but no zpool: state %q, want error", got.ZFS.State)
 	}
@@ -250,7 +264,7 @@ func zfsNode(t *testing.T) *recordingRunner {
 }
 
 func TestObserveZFS(t *testing.T) {
-	got := ObserveLocalStorage(sources(zfsNode(t), nil, "/sys/module/zfs"), nil).ZFS
+	got := ObserveLocalStorage(sources(zfsNode(t), nil, "/sys/module/zfs"), nil, nil).ZFS
 	if got.State != framev1beta1.StackPresent || len(got.Pools) != 2 {
 		t.Fatalf("zfs = %+v", got)
 	}
@@ -328,7 +342,7 @@ func TestObserveMDDegradedRecoveryAndInactive(t *testing.T) {
 }
 
 func TestObserveLVM(t *testing.T) {
-	got := ObserveLocalStorage(sources(zfsNode(t), nil), map[string]string{"sdb2": "SER-A", "sdc": "SER-B"}).LVM
+	got := ObserveLocalStorage(sources(zfsNode(t), nil), nil, map[string]string{"sdb2": "SER-A", "sdc": "SER-B"}).LVM
 	if got.State != framev1beta1.StackPresent || len(got.PVs) != 2 || len(got.VGs) != 1 || len(got.LVs) != 2 {
 		t.Fatalf("lvm = %+v", got)
 	}
@@ -353,7 +367,7 @@ func TestLocalStorageListsAreCappedAndCounted(t *testing.T) {
 	}
 	r := zfsNode(t)
 	r.answers["zfs list"] = b.String()
-	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil).ZFS
+	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil, nil).ZFS
 	if len(got.Datasets) != maxZFSDatasets || got.DatasetsOmitted != 6 {
 		t.Fatalf("datasets %d, omitted %d", len(got.Datasets), got.DatasetsOmitted)
 	}
@@ -378,5 +392,71 @@ func TestMDDegradedReasonsOneByOne(t *testing.T) {
 	healthy := parseMdstat("md0 : active raid1 sda1[0] sdb1[1]\n      100 blocks super 1.2 [2/2] [UU]\n")
 	if healthy[0].Degraded {
 		t.Errorf("healthy mirror read as degraded: %+v", healthy[0])
+	}
+}
+
+// `timeout` missing on the host is not "no ZFS" and not "no LVM".
+func TestMissingHostTimeoutIsAnExplicitError(t *testing.T) {
+	r := &recordingRunner{fail: map[string]error{"zpool": exitErr(t, 127), "pvs": exitErr(t, 127)}, probe: exitErr(t, 127)}
+	got := ObserveLocalStorage(sources(r, nil, "/sys/module/zfs"), nil, nil)
+	if got.ZFS.State != framev1beta1.StackError || !strings.Contains(got.ZFS.Error, "timeout") {
+		t.Errorf("zfs = %+v", got.ZFS)
+	}
+	if got.LVM.State != framev1beta1.StackError || !strings.Contains(got.LVM.Error, "timeout") {
+		t.Errorf("lvm = %+v, want an error naming the missing timeout, not absent", got.LVM)
+	}
+}
+
+// LVM prints warnings on stderr ("WARNING: PV … has no metadata") next to
+// the JSON on stdout: the JSON must parse, and stderr must reach the error
+// text when the command fails.
+func TestLVMReadsStdoutOnlyAndKeepsStderrForErrors(t *testing.T) {
+	r := zfsNode(t)
+	r.stderr = map[string]string{"pvs --reportformat": "  WARNING: Device /dev/sdz has size of 0 sectors\n"}
+	got := ObserveLocalStorage(sources(r, nil), nil, nil).LVM
+	if got.State != framev1beta1.StackPresent || len(got.PVs) != 2 {
+		t.Fatalf("lvm with a stderr warning = %+v", got)
+	}
+	r.fail = map[string]error{"pvs": exitErr(t, 5)}
+	r.stderr = map[string]string{"pvs --reportformat": "  Failed to find device for physical volume\n"}
+	got = ObserveLocalStorage(sources(r, nil), nil, nil).LVM
+	if got.State != framev1beta1.StackError || !strings.Contains(got.Error, "Failed to find device") {
+		t.Errorf("lvm error = %+v", got)
+	}
+}
+
+func TestZpoolStatusEdgeCases(t *testing.T) {
+	st := parseZpoolStatus(fixture(t, "zpool-status-edge.txt"))
+	if len(st) != 1 {
+		t.Fatalf("got %d pools", len(st))
+	}
+	if strings.Contains(st[0].scan, "expand") {
+		t.Errorf("expand line appended to scan: %q", st[0].scan)
+	}
+	if !strings.HasPrefix(st[0].errors, "Permanent errors") {
+		t.Errorf("errors = %q", st[0].errors)
+	}
+	v := st[0].vdevs
+	if len(v) != 4 {
+		t.Fatalf("vdevs = %+v", v)
+	}
+	if v[2].Name != "12345678901234567890" || v[2].State != "UNAVAIL" || v[2].Note != "was /dev/disk/by-id/ata-HDD_SER-T2-part1" {
+		t.Errorf("GUID leaf = %+v", v[2])
+	}
+	if v[3].Name != "/dev/disk/by-id/usb-Vendor_My Disk_SER-T3-0:0" || v[3].State != "ONLINE" {
+		t.Errorf("leaf with a space = %+v", v[3])
+	}
+}
+
+func TestMDMembersPastTheCapAreCounted(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("md0 : active raid10")
+	for i := 0; i < 40; i++ {
+		b.WriteString(" sd" + strconv.Itoa(i) + "[" + strconv.Itoa(i) + "]")
+	}
+	b.WriteString("\n      100 blocks super 1.2 [40/40] [" + strings.Repeat("U", 40) + "]\n")
+	a := parseMdstat(b.String())
+	if len(a[0].Members) != maxMDMembers || a[0].MembersOmitted != 8 {
+		t.Fatalf("members %d, omitted %d", len(a[0].Members), a[0].MembersOmitted)
 	}
 }

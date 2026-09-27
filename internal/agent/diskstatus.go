@@ -64,7 +64,8 @@ func PatchObservedDisks(
 // PatchObservedStorage is PatchObservedDisks plus the node's local storage
 // stacks (ZFS, md, LVM), written into status.storage.local in the same
 // patch, so the disks and the stacks built on them always describe one
-// agent cycle. A nil local leaves status.storage.local unset.
+// agent cycle. A nil local (no collection has completed yet, or a caller
+// that does not read the stacks) keeps whatever status.storage.local holds.
 func PatchObservedStorage(
 	ctx context.Context,
 	c client.Client,
@@ -95,6 +96,9 @@ func PatchObservedStorage(
 			bmcDrives = target.Status.Inventory.Drives
 		}
 		now := metav1.Now()
+		if local == nil && target.Status.Storage != nil {
+			local = target.Status.Storage.Local
+		}
 		target.Status.Storage = &framev1beta1.MachineStorage{
 			Observed:    disks,
 			Divergences: storage.Join(bmcDrives, disks),

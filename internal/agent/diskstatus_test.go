@@ -116,3 +116,30 @@ func TestPatchObservedDisksWritesStorageOnTheClaimingMachine(t *testing.T) {
 		t.Errorf("the machine that does not claim node-1 was written too: %+v", untouched.Status.Storage)
 	}
 }
+
+// A tick whose local-storage collection has not completed yet publishes nil:
+// the stacks already in status must stay, not vanish for a cycle.
+func TestPatchObservedStorageKeepsTheStacksWhenNoneAreGiven(t *testing.T) {
+	m := &framev1beta1.FrameMachine{
+		ObjectMeta: metav1.ObjectMeta{Name: "m1", Namespace: "default"},
+		Spec: framev1beta1.FrameMachineSpec{
+			BMC:     framev1beta1.BMCSpec{Address: "192.0.2.10", CredentialsRef: "m1-creds"},
+			NodeRef: "node-1",
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(newDiskStatusScheme(t)).WithStatusSubresource(&framev1beta1.FrameMachine{}).WithObjects(m).Build()
+	local := &framev1beta1.LocalStorage{MD: framev1beta1.MDStatus{State: framev1beta1.StackPresent, Arrays: []framev1beta1.MDArray{{Name: "md0"}}}}
+	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, local); err != nil {
+		t.Fatal(err)
+	}
+	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameMachine
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(m), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Storage.Local == nil || len(got.Status.Storage.Local.MD.Arrays) != 1 {
+		t.Fatalf("local = %+v, want the previous stacks kept", got.Status.Storage.Local)
+	}
+}

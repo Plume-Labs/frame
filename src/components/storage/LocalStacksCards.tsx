@@ -4,10 +4,16 @@ import { formatIec } from '@/lib/storage'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Stack, Database } from '@phosphor-icons/react'
 
-function stateLine(state: string, error: string | undefined, absent: string) {
+function stateLine(state: string, error: string | undefined, absent: string, readAt?: string) {
   if (state === 'absent') return <p className="text-muted-foreground">{absent}</p>
   if (state === 'error') return <p className="text-warning">Could not be read: {error || 'no reason given'} — state unknown.</p>
-  return null
+  if (state === 'busy')
+    return (
+      <p className="text-warning">
+        Previous read still running on the node (not restarted); showing the read of {readAt ?? 'an earlier cycle'}.
+      </p>
+    )
+  return readAt ? <p className="text-muted-foreground">read {readAt}</p> : null
 }
 
 function diskLabel(machine: Machine, serial: string | undefined): string {
@@ -32,7 +38,7 @@ export function ZfsCard({ machine }: { machine: Machine }) {
           <p className="text-muted-foreground">{stackSummary(local)}.</p>
         ) : (
           <>
-            {stateLine(local.zfs.state, local.zfs.error, 'No ZFS on this node (no zfs module loaded).')}
+            {stateLine(local.zfs.state, local.zfs.error, 'No ZFS on this node (no zfs module loaded).', local.zfs.readAt)}
             {(local.zfs.pools ?? []).map((p) => (
               <div key={p.name} className="rounded-md border border-border p-2 space-y-1">
                 <div className="flex flex-wrap gap-x-4">
@@ -44,8 +50,9 @@ export function ZfsCard({ machine }: { machine: Machine }) {
                   </span>
                   <span>frag {p.fragmentationPercent ?? '—'} %</span>
                 </div>
-                <div className={(p.scrubErrors ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}>
-                  scan: {p.scan || '—'} · {p.errors || '—'}
+                <div className={(p.scrubErrors ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}>scan: {p.scan || '—'}</div>
+                <div className={p.errors && !/^No known data errors/i.test(p.errors) ? 'text-destructive' : 'text-muted-foreground'}>
+                  errors: {p.errors || '—'}
                 </div>
                 <div className="flex gap-3 text-muted-foreground">
                   <span className="flex-1">vdev</span>
@@ -59,7 +66,7 @@ export function ZfsCard({ machine }: { machine: Machine }) {
                     <div key={`${i}-${v.name}`} className={`flex gap-3 ${bad ? 'text-warning' : ''}`} style={{ paddingLeft: `${v.depth * 1.25}rem` }}>
                       <span className="flex-1 truncate">
                         {v.name}
-                        {diskLabel(machine, vdevDisk(v.name, observed)?.serialNumber)}
+                        {diskLabel(machine, vdevDisk(v.name, observed, v.note)?.serialNumber)}
                         {v.note ? ` — ${v.note}` : ''}
                       </span>
                       <span>{v.state || ''}</span>
@@ -117,7 +124,10 @@ export function MdLvmCard({ machine }: { machine: Machine }) {
           <>
             <div className="space-y-1">
               <div className="text-muted-foreground uppercase tracking-wide">mdadm</div>
-              {stateLine(local.md.state, local.md.error, 'No md array on this node.')}
+              {stateLine(local.md.state, local.md.error, 'No md array on this node.', local.md.readAt)}
+              {(local.md.arraysOmitted ?? 0) > 0 && (
+                <p className="text-warning">{local.md.arraysOmitted} more array(s) not listed (status size limit) — their state is unknown.</p>
+              )}
               {(local.md.arrays ?? []).map((a) => (
                 <div key={a.name} className={a.degraded ? 'text-destructive' : ''}>
                   {a.name} {a.level ?? ''} {a.state}
@@ -129,13 +139,14 @@ export function MdLvmCard({ machine }: { machine: Machine }) {
                     {(a.members ?? [])
                       .map((m) => `${m.device}${m.failed ? ' (failed)' : m.spare ? ' (spare)' : ''}${diskLabel(machine, m.serial)}`)
                       .join(' · ')}
+                    {(a.membersOmitted ?? 0) > 0 ? ` · … ${a.membersOmitted} more member(s) not listed` : ''}
                   </div>
                 </div>
               ))}
             </div>
             <div className="space-y-1">
               <div className="text-muted-foreground uppercase tracking-wide">LVM</div>
-              {stateLine(local.lvm.state, local.lvm.error, 'LVM not in use on this node.')}
+              {stateLine(local.lvm.state, local.lvm.error, 'LVM not in use on this node.', local.lvm.readAt)}
               {(local.lvm.vgs ?? []).map((vg) => (
                 <div key={vg.name} className={(vg.attr ?? '')[3] === 'p' ? 'text-destructive' : ''}>
                   VG {vg.name}: {formatIec(vg.sizeBytes ?? null)} ({formatIec(vg.freeBytes ?? null)} free) · {vg.pvCount ?? 0} PV ·{' '}

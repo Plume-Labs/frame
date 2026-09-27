@@ -79,7 +79,20 @@ type zpoolStatus struct {
 	vdevs              []framev1beta1.ZVdev
 }
 
-var zpoolKey = regexp.MustCompile(`^\s*(pool|state|status|action|see|scan|config|errors|remove|checkpoint):\s?(.*)$`)
+// zpoolKey is any "key:" line of zpool status (pool, state, status,
+// action, see, scan, expand, remove, checkpoint, config, errors — and any
+// key a later OpenZFS adds). Keys are right-aligned with at most a few
+// spaces (the files listed under "errors:" are indented further); continuation
+// lines and the config table start with a tab.
+var zpoolKey = regexp.MustCompile(`^ {0,4}([a-z][a-z ]*):(?:\s(.*))?$`)
+
+// zpoolStates are the words the STATE column can hold. A row is read by
+// finding its state word, so a name with spaces (a GUID row, a path with a
+// space) stays whole.
+var zpoolStates = map[string]bool{
+	"ONLINE": true, "DEGRADED": true, "FAULTED": true, "OFFLINE": true, "UNAVAIL": true,
+	"REMOVED": true, "AVAIL": true, "INUSE": true, "SPLIT": true, "SUSPENDED": true,
+}
 
 // zpoolCounter reads a READ/WRITE/CKSUM column. zpool abbreviates large
 // counts (1.2K, 3M); the value is rounded, never dropped — an error count
@@ -110,7 +123,7 @@ func parseZpoolStatus(out string) []zpoolStatus {
 	inGroup := false
 	for _, raw := range strings.Split(out, "\n") {
 		line := strings.TrimRight(raw, "\r")
-		if m := zpoolKey.FindStringSubmatch(line); m != nil && !strings.HasPrefix(line, "\t") {
+		if m := zpoolKey.FindStringSubmatch(line); m != nil {
 			key, val := m[1], strings.TrimSpace(m[2])
 			if key == "pool" {
 				all = append(all, zpoolStatus{name: val})
@@ -135,7 +148,9 @@ func parseZpoolStatus(out string) []zpoolStatus {
 		}
 		switch section {
 		case "scan":
-			// Continuation lines of an in-progress scan.
+			// Continuation lines of an in-progress scan. An expand: or
+			// remove: block has its own key (zpoolKey matches any key),
+			// so it ends the scan section instead of being appended.
 			if t := strings.TrimSpace(line); t != "" {
 				cur.scan += "; " + t
 			}
@@ -146,11 +161,25 @@ func parseZpoolStatus(out string) []zpoolStatus {
 			body := strings.TrimPrefix(line, "\t")
 			indent := len(body) - len(strings.TrimLeft(body, " "))
 			f := strings.Fields(body)
-			if len(f) == 0 || f[0] == "NAME" {
+			if len(f) == 0 || (f[0] == "NAME" && len(f) > 1 && f[1] == "STATE") {
 				continue
 			}
+			// Split name | state | counters | note on the state word.
+			si := -1
+			for k := 1; k < len(f); k++ {
+				if zpoolStates[f[k]] {
+					si = k
+					break
+				}
+			}
+			name := strings.Join(f, " ")
+			var rest []string
+			if si > 0 {
+				name = strings.Join(f[:si], " ")
+				rest = f[si:]
+			}
 			// The first row is the pool itself: its state is the pool's.
-			if !rootSeen && indent == 0 && f[0] == cur.name {
+			if !rootSeen && indent == 0 && name == cur.name {
 				rootSeen = true
 				continue
 			}
@@ -166,19 +195,22 @@ func parseZpoolStatus(out string) []zpoolStatus {
 			if !inGroup {
 				depth--
 			}
-			v := framev1beta1.ZVdev{Name: clipRunes(f[0], 512), Depth: int32(max(depth, 0))}
-			if len(f) >= 2 {
-				v.State = clipRunes(f[1], 32)
+			v := framev1beta1.ZVdev{Name: clipRunes(name, 512), Depth: int32(max(depth, 0))}
+			if len(rest) >= 1 {
+				v.State = clipRunes(rest[0], 32)
 			}
-			if len(f) >= 5 {
-				v.ReadErrors, _ = zpoolCounter(f[2])
-				v.WriteErrors, _ = zpoolCounter(f[3])
-				v.ChecksumErrors, _ = zpoolCounter(f[4])
-				if len(f) > 5 {
-					v.Note = clipRunes(strings.Join(f[5:], " "), 256)
+			n := 1
+			if len(rest) >= 4 {
+				r1, ok1 := zpoolCounter(rest[1])
+				r2, ok2 := zpoolCounter(rest[2])
+				r3, ok3 := zpoolCounter(rest[3])
+				if ok1 && ok2 && ok3 {
+					v.ReadErrors, v.WriteErrors, v.ChecksumErrors = r1, r2, r3
+					n = 4
 				}
-			} else if len(f) > 2 {
-				v.Note = clipRunes(strings.Join(f[2:], " "), 256)
+			}
+			if len(rest) > n {
+				v.Note = clipRunes(strings.Join(rest[n:], " "), 256)
 			}
 			cur.vdevs = append(cur.vdevs, v)
 		}
@@ -313,9 +345,13 @@ func parseMdHeader(name, rest string) framev1beta1.MDArray {
 		a.Level = clipRunes(f[i], 16)
 		i++
 	}
-	for ; i < len(f) && len(a.Members) < maxMDMembers; i++ {
+	for ; i < len(f); i++ {
 		m := mdMember.FindStringSubmatch(f[i])
 		if m == nil {
+			continue
+		}
+		if len(a.Members) == maxMDMembers {
+			a.MembersOmitted++
 			continue
 		}
 		a.Members = append(a.Members, framev1beta1.MDMember{

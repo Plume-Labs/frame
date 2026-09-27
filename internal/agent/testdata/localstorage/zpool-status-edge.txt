@@ -1,0 +1,21 @@
+  pool: tank
+ state: DEGRADED
+status: One or more devices could not be used because the label is missing or
+	invalid.  Sufficient replicas exist for the pool to continue
+	functioning in a degraded state.
+action: Replace the device using 'zpool replace'.
+   see: https://openzfs.github.io/openzfs-docs/msg/ZFS-8000-4J
+  scan: scrub repaired 0B in 00:10:02 with 0 errors on Sun Sep 21 00:34:03 2026
+expand: expanded raidz1-0 copied 1.20T in 03:02:11, on Mon Sep 22 10:00:00 2026
+config:
+
+	NAME                                          STATE     READ WRITE CKSUM
+	tank                                          DEGRADED     0     0     0
+	  raidz1-0                                    DEGRADED     0     0     0
+	    /dev/disk/by-id/ata-HDD_SER-T1-part1      ONLINE       0     0     0
+	    12345678901234567890                      UNAVAIL      0     0     0  was /dev/disk/by-id/ata-HDD_SER-T2-part1
+	    /dev/disk/by-id/usb-Vendor_My Disk_SER-T3-0:0 ONLINE   0     0     0
+
+errors: Permanent errors have been detected in the following files:
+
+        tank/data:<0x1>

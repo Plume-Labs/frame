@@ -128,3 +128,44 @@ describe('bandeau', () => {
     expect(nodesWithPublishedMd([machine(l)])).toEqual(new Set([HW_NODE]))
   })
 })
+
+describe('réserves du réaudit', () => {
+  it('remonte la ligne « Permanent errors » du pool', () => {
+    const l = zfsLocal()
+    l.zfs.pools![1].errors = 'Permanent errors have been detected in the following files:'
+    const item = localStackItems(machine(l)).find((i) => i.code === 'zfs-data-errors')
+    expect(item).toMatchObject({ severity: 'critical', text: 'srv-hw ZFS rpool: Permanent errors have been detected in the following files:' })
+    expect(codes()).not.toContain('zfs-data-errors')
+  })
+
+  it('traite une feuille GUID comme une feuille : bandeau et jointure par « was … »', () => {
+    const l = zfsLocal()
+    l.zfs.pools![1].vdevs = [
+      { name: 'mirror-0', depth: 0, state: 'DEGRADED' },
+      { name: '12345678901234567890', depth: 1, state: 'UNAVAIL', note: 'was /dev/disk/by-id/ata-HUC10121CLAR1200_SER-HDD2-part1' },
+    ]
+    const items = localStackItems(machine(l)).filter((i) => i.code === 'zfs-vdev' && i.text.includes('rpool'))
+    expect(items.map((i) => i.text)).toEqual([
+      expect.stringContaining('srv-hw ZFS rpool: mirror-0 / 12345678901234567890 UNAVAIL'),
+    ])
+    const observed = machine().storage!.observed
+    expect(vdevDisk('12345678901234567890', observed, 'was /dev/disk/by-id/ata-HUC10121CLAR1200_SER-HDD2-part1')?.serialNumber).toBe('SER-HDD2')
+  })
+
+  it('signale les tableaux md non listés', () => {
+    const l = g9Local()
+    l.md.arraysOmitted = 3
+    expect(localStackItems(machine(l)).map((i) => i.text)).toContain(
+      'srv-hw md: 3 array(s) not listed (status size limit) — their state is unknown',
+    )
+  })
+
+  it('dit qu-une pile est occupée et de quand date ce qu-elle montre', () => {
+    const l = zfsLocal()
+    l.zfs.state = 'busy'
+    l.zfs.readAt = '2026-09-27T11:59:00Z'
+    const item = localStackItems(machine(l)).find((i) => i.code === 'local-stack-busy')
+    expect(item?.text).toBe('srv-hw ZFS: previous read still running on the node — showing the read of 2026-09-27T11:59:00Z')
+    expect(stackSummary(l)).toContain('ZFS: 2 pool(s) (previous read still running)')
+  })
+})
