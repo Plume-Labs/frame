@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
@@ -94,6 +95,31 @@ func (b *lsblkBool) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Bounds mirrored from the kubebuilder markers on ObservedDisk and
+// MachineStorage (api/frame/v1beta1/framemachine_types.go). The apiserver
+// rejects the whole status write when one value is one character too long or
+// the list one item too long, so the agent keeps within them: descriptive
+// strings are clipped, identifiers that clipping would falsify are dropped,
+// and disks past the 64th are left out (the BMC side then reports them as
+// bmc-only, which is visible, instead of the machine's disk list freezing).
+const (
+	maxObservedDisks = 64
+	maxSerialLen     = 128
+	maxWWNLen        = 64
+	maxModelLen      = 256
+	maxMountPointLen = 512
+	maxFSTypeLen     = 64
+)
+
+// clipRunes cuts s to at most n characters (the CRD's MaxLength unit),
+// never inside a character.
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
 func str(p *string) string {
 	if p == nil {
 		return ""
@@ -137,10 +163,21 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 		if dev.Serial != nil {
 			serial = strings.TrimSpace(*dev.Serial)
 		}
-		if serial == "" {
+		// An over-long serial is dropped like a missing one: clipped, it
+		// would be a different identifier, and published whole it would get
+		// the entire status rejected.
+		if serial == "" || utf8.RuneCountInString(serial) > maxSerialLen {
 			continue
 		}
+		if len(disks) == maxObservedDisks {
+			break
+		}
+		// Same for the WWN: a clipped WWN names another disk, so an
+		// over-long one is not published (and no by-id path is derived).
 		wwn := str(dev.WWN)
+		if utf8.RuneCountInString(wwn) > maxWWNLen {
+			wwn = ""
+		}
 		disks = append(disks, framev1beta1.ObservedDisk{
 			Path:         dev.Path,
 			SerialNumber: serial,
@@ -148,10 +185,10 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 			Occupancy:    occupancyOf(dev),
 			WWN:          wwn,
 			ByIDPath:     byIDPathFromWWN(wwn),
-			Model:        str(dev.Model),
+			Model:        clipRunes(str(dev.Model), maxModelLen),
 			Rotational:   dev.Rota.Value,
-			MountPoint:   firstMountPoint(dev),
-			FSType:       str(dev.FSType),
+			MountPoint:   clipRunes(firstMountPoint(dev), maxMountPointLen),
+			FSType:       clipRunes(str(dev.FSType), maxFSTypeLen),
 			Members:      membersOf(dev),
 		})
 	}

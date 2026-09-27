@@ -2,8 +2,10 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // fakeRunner returns a canned lsblk payload and records the argv it was
@@ -332,5 +334,48 @@ func TestByIDPathFromWWN(t *testing.T) {
 	// A shape this function does not know gives no path, not a guess.
 	if got := byIDPathFromWWN("naa.5000c500deadbeef"); got != "" {
 		t.Errorf("unknown WWN shape gave %q, want empty", got)
+	}
+}
+
+// A node with an odd disk (a model string of 300 characters, a WWN from a
+// bridge that pads it) or with more disks than the CRD admits must still get
+// its status through: one value one character too long rejects the whole
+// write and freezes the machine's disk list.
+func TestObserveDisksStaysWithinCRDBounds(t *testing.T) {
+	long := strings.Repeat("é", 600)
+	var devs []string
+	devs = append(devs, fmt.Sprintf(`{"name":"sda","path":"/dev/sda","serial":"SER-LONG","size":1,"type":"disk","model":%q,"wwn":%q,"fstype":%q,"mountpoint":%q}`,
+		long, "0x"+strings.Repeat("a", 80), long, "/"+long))
+	devs = append(devs, fmt.Sprintf(`{"name":"sdb","path":"/dev/sdb","serial":%q,"size":1,"type":"disk"}`, strings.Repeat("S", 129)))
+	for i := 0; i < 70; i++ {
+		devs = append(devs, fmt.Sprintf(`{"name":"sd%d","path":"/dev/sd%d","serial":"SER%04d","size":1,"type":"disk"}`, i, i, i))
+	}
+	r := &fakeRunner{out: `{"blockdevices":[` + strings.Join(devs, ",") + `]}`}
+	disks, err := ObserveDisks(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disks) != maxObservedDisks {
+		t.Fatalf("got %d disks, want at most %d", len(disks), maxObservedDisks)
+	}
+	d := disks[0]
+	if d.SerialNumber != "SER-LONG" {
+		t.Fatalf("first disk = %q", d.SerialNumber)
+	}
+	for name, c := range map[string]struct {
+		v   string
+		max int
+	}{"model": {d.Model, 256}, "mountPoint": {d.MountPoint, 512}, "fsType": {d.FSType, 64}} {
+		if n := utf8.RuneCountInString(c.v); n != c.max {
+			t.Errorf("%s: %d characters, want clipped to %d", name, n, c.max)
+		}
+	}
+	if d.WWN != "" || d.ByIDPath != "" {
+		t.Errorf("over-long WWN published as %q / %q, want both empty (a clipped WWN names another disk)", d.WWN, d.ByIDPath)
+	}
+	for _, x := range disks {
+		if utf8.RuneCountInString(x.SerialNumber) > 128 {
+			t.Errorf("over-long serial published: %d characters", utf8.RuneCountInString(x.SerialNumber))
+		}
 	}
 }

@@ -60,20 +60,32 @@ server {
   ssl_certificate /fake/pve.crt;
   ssl_certificate_key /fake/pve.key;
   default_type application/json;
+  # A VM config larger than the reader's subrequest buffer.
+  location ~ /qemu/999/config$ {
+    alias /fake/big.json;
+  }
+  location ~ /disks/zfs/bigpool$ {
+    alias /fake/huge.json;
+  }
   location ~ /qemu/[0-9]+/config$ {
     return 200 '{"data":{"smbios1":"uuid=00000000-0000-4000-8000-000000000201","scsi2":"data:vm-201-disk-2,size=2T","ide2":"none,media=cdrom","net0":"virtio=00:00:00:00:00:01,bridge=vmbr0","cipassword":"leak","args":"-leak"}}';
   }
   location / {
-    return 200 '{"data":{"uri":"$request_uri","auth":"$http_authorization"}}';
+    return 200 '{"data":{"uri":"$request_uri","auth":"$http_authorization","cl":"$http_content_length","te":"$http_transfer_encoding","xff":"$http_x_forwarded_for","xri":"$http_x_real_ip","csrf":"$http_csrfpreventiontoken","cookie":"$http_cookie","probe":"$http_x_probe"}}';
   }
 }
 NGINX
+python3 -c 'import json,sys; json.dump({"data": {"smbios1": "uuid=x", "description": "y" * 300000}}, open(sys.argv[1], "w"))' "$work/big.json"
+# Larger than the kernel's socket buffers, so a slow reader makes nginx
+# either spool (bad) or apply back-pressure (expected).
+head -c 33554432 /dev/zero | tr '\0' 'y' > "$work/huge.json"
 chmod -R a+r "$work"
 
 podman network create "$net" >/dev/null
 podman run -d --name "$net-pve" --network "$net" --network-alias pve-test \
   -v "$work/fake.conf:/etc/nginx/conf.d/default.conf:ro,Z" \
   -v "$work/pve.crt:/fake/pve.crt:ro,Z" -v "$work/pve.key:/fake/pve.key:ro,Z" \
+  -v "$work/big.json:/fake/big.json:ro,Z" -v "$work/huge.json:/fake/huge.json:ro,Z" \
   "$image" >/dev/null
 
 podman run -d --name "$net-reader" --network "$net" -p "127.0.0.1:$port:8080" \
@@ -100,10 +112,12 @@ base="http://127.0.0.1:$port"
 N=host-01
 
 # expect <status> <method> <path> [body substring that must appear] [substring that must not]
+# Extra curl arguments (headers, a body) go in CURL_EXTRA for one call.
+CURL_EXTRA=()
 expect() {
   local want="$1" method="$2" path="$3" must="${4:-}" mustnot="${5:-}"
   local body code
-  body="$(curl -s --path-as-is -X "$method" -o - -w '\n%{http_code}' "$base$path" || true)"
+  body="$(curl -s --path-as-is "${CURL_EXTRA[@]}" -X "$method" -o - -w '\n%{http_code}' "$base$path" || true)"
   code="${body##*$'\n'}"
   body="${body%$'\n'*}"
   local ok=1
@@ -137,8 +151,8 @@ expect 403 GET "/api2/json/access/users"
 expect 403 GET "/api2/json/cluster/resources"
 expect 403 GET "/api2/json/nodes/$N/qemu/201/status/current"
 expect 403 GET "/api2/json/nodes/$N/disks/zfs/data/extra"
-# The internal subrequest prefix is not reachable from outside (internal → 404).
-expect 404 GET "/__pve/api2/json/access/users"
+# The loopback fetch server is not reachable from outside.
+expect 403 GET "/__pve/api2/json/access/users"
 # Refused: traversal, plain and encoded.
 expect 403 GET "/api2/json/nodes/$N/disks/list/../../../access/users"
 expect 403 GET "/api2/json/nodes/$N/disks/zfs/..%2F..%2F..%2Faccess%2Fusers"
@@ -149,6 +163,38 @@ expect 403 GET "/api2/json/nodes/$N/disks/zfs/..\\..\\access"
 expect 403 GET "/api2/json/nodes//$N/disks/list"
 expect 403 GET "/api2/json/nodes/$N/./disks/list"
 expect 403 GET "/api2/json/nodes/$N/disks/zfs/.hidden"
+# The guard, alternative by alternative. %2e and %2f each have a case the
+# whitelist alone would let through (decoded, "host.01" and "data/content"
+# are legal paths), so removing either from the guard turns a line red.
+expect 403 GET "/api2/json/nodes/host%2e01/disks/list"
+expect 403 GET "/api2/json/nodes/host%2E01/disks/list"
+# %5c and a literal backslash cannot be told apart from the whitelist: nginx
+# does not treat '\' as a separator on Linux, and no whitelisted path admits
+# one, so these stay 403 with or without their guard alternative. Kept as
+# regression cases, documented as defence in depth in the manifest.
+expect 403 GET "/api2/json/nodes/host%5c01/disks/list"
+expect 403 GET "/api2/json/nodes/host\\01/disks/list"
+
+# Oversized VM config: an explicit 502, never a cut connection.
+expect 502 GET "/api2/json/nodes/$N/qemu/999/config" 'larger than'
+
+# The client's headers and body never reach Proxmox.
+CURL_EXTRA=(-H 'X-Forwarded-For: 203.0.113.9' -H 'X-Real-IP: 203.0.113.9' -H 'CSRFPreventionToken: tok' -H 'Cookie: PVEAuthCookie=stolen' -H 'X-Probe: leak' --data 'body=1')
+expect 200 GET "/api2/json/nodes/$N/disks/list" '"xff":"","xri":"","csrf":"","cookie":""'
+expect 200 GET "/api2/json/nodes/$N/disks/list" '"cl":"","te":""'
+expect 200 GET "/api2/json/nodes/$N/disks/list" '"probe":""'
+expect 200 GET "/api2/json/nodes/$N/disks/list" 'PVEAPIToken=frame-reader@pve!console=00000000-test'
+CURL_EXTRA=()
+
+# A large answer read by a slow client streams; it is never spooled to /tmp
+# (proxy_max_temp_file_size 0 — /tmp is a 16Mi emptyDir).
+curl -s --limit-rate 200k --max-time 4 -o /dev/null "$base/api2/json/nodes/$N/disks/zfs/bigpool" || true
+if podman logs "$net-reader" 2>&1 | grep -q 'buffered to a temporary file'; then
+  echo "FAIL  a response was spooled to a temporary file"; fail=1
+else
+  echo "ok    no response spooled to disk"
+fi
+
 # Refused: anything but GET.
 expect 403 POST "/api2/json/nodes/$N/disks/zfs"
 expect 403 PUT "/api2/json/nodes/$N/qemu/201/config"

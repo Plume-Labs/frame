@@ -86,23 +86,36 @@ data:
     upstream pve {
       server ${PVE_HOST}:8006;
     }
+    # What every request to Proxmox carries, and only that: the client's own
+    # headers and body never travel (no X-Forwarded-For, X-Real-IP,
+    # CSRFPreventionToken, Cookie, Content-Length or body), and a response is
+    # never spooled to disk (proxy_max_temp_file_size 0 — /tmp is a small
+    # emptyDir; a large answer streams or fails, it does not fill the volume).
+    proxy_pass_request_headers off;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header X-Real-IP "";
+    proxy_set_header CSRFPreventionToken "";
+    proxy_set_header Cookie "";
+    proxy_set_header Authorization "PVEAPIToken=${PVE_TOKEN}";
+    proxy_set_header Host ${PVE_TLS_NAME};
+    proxy_max_temp_file_size 0;
+    proxy_ssl_verify on;
+    proxy_ssl_server_name on;
+    proxy_ssl_name ${PVE_TLS_NAME};
+    proxy_ssl_trusted_certificate /etc/pve-ca/pve-root-ca.pem;
+
     server {
       listen 8080;
 
       # Refuse, on the raw URI, anything normalisation could turn into another
       # path: encoded '.', '/', '\', a literal backslash (\x5c), dot segments
       # ("/." — written [.] so no escape is left to nginx's string parser),
-      # empty segments.
+      # empty segments. %5c and \x5c are defence in depth: no whitelisted path
+      # admits a backslash, so the whitelist alone already refuses them and no
+      # test can tell those two alternatives apart (see test-pve-reader.sh).
       if ($request_uri ~* "(%2e|%2f|%5c|\x5c|/[.]|//)") { return 403; }
-
-      proxy_set_header Authorization "PVEAPIToken=${PVE_TOKEN}";
-      proxy_set_header Cookie "";
-      proxy_set_header Host ${PVE_TLS_NAME};
-      proxy_ssl_verify on;
-      proxy_ssl_server_name on;
-      proxy_ssl_name ${PVE_TLS_NAME};
-      proxy_ssl_trusted_certificate /etc/pve-ca/pve-root-ca.pem;
-      subrequest_output_buffer_size 256k;
 
       location = /healthz { return 200 "ok\n"; }
 
@@ -118,34 +131,47 @@ data:
         proxy_pass https://pve$uri;
       }
 
-      # Only reachable from pve-reader.js; the prefix is stripped, the rest
-      # was already matched by the whitelist above.
-      location /__pve/ {
-        internal;
-        rewrite ^/__pve(/.*)$ $1 break;
-        proxy_pass https://pve;
-      }
+      location / { return 403; }
+    }
 
+    # Loopback only: where pve-reader.js fetches a VM config from (ngx.fetch,
+    # which can bound the body it accepts — a subrequest cannot, and an
+    # oversized one cut the client connection with no status). Not reachable
+    # from outside the pod; the URI was already matched by the whitelist.
+    server {
+      listen 127.0.0.1:8081;
+      location ~ "^/api2/json/nodes/[A-Za-z0-9.-]+/qemu/[0-9]+/config$" {
+        proxy_pass https://pve$uri;
+      }
       location / { return 403; }
     }
   pve-reader.js: |
     // Fetch a VM config and hand back only what the console joins on.
-    // Plain ES5 on purpose: the image's njs rejects for..of.
+    // Plain ES5 syntax on purpose: the image's njs rejects for..of.
     var DISK_SLOT = /^(scsi|sata|virtio|ide)[0-9]+$/;
+    // A VM config is a few KiB; anything past this is refused with a 502.
+    var MAX_CONFIG_BYTES = 262144;
     function qemuConfig(r) {
-      r.subrequest('/__pve' + r.uri, { method: 'GET' }, function (res) {
-        if (res.status !== 200) { r.return(res.status); return; }
-        var cfg;
-        try { cfg = JSON.parse(res.responseText).data || {}; } catch (e) { r.return(502); return; }
-        var keys = Object.keys(cfg);
-        var out = {};
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          if (k === 'smbios1' || DISK_SLOT.test(k)) out[k] = cfg[k];
-        }
-        r.headersOut['Content-Type'] = 'application/json';
-        r.return(200, JSON.stringify({ data: out }));
-      });
+      ngx.fetch('http://127.0.0.1:8081' + r.uri, { max_response_body_size: MAX_CONFIG_BYTES })
+        .then(function (res) {
+          if (res.status !== 200) { r.return(res.status); return null; }
+          return res.text().then(function (text) {
+            var cfg;
+            try { cfg = JSON.parse(text).data || {}; } catch (e) { r.return(502, 'unreadable VM config\n'); return; }
+            var keys = Object.keys(cfg);
+            var out = {};
+            for (var i = 0; i < keys.length; i++) {
+              var k = keys[i];
+              if (k === 'smbios1' || DISK_SLOT.test(k)) out[k] = cfg[k];
+            }
+            r.headersOut['Content-Type'] = 'application/json';
+            r.return(200, JSON.stringify({ data: out }));
+          });
+        })
+        .catch(function (e) {
+          r.error('VM config fetch failed: ' + e);
+          r.return(502, 'VM config unavailable or larger than ' + MAX_CONFIG_BYTES + ' bytes\n');
+        });
     }
     export default { qemuConfig };
 ---

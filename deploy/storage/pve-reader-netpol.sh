@@ -6,12 +6,20 @@
 #   PVE_HOST=<proxmox address> deploy/storage/pve-reader-netpol.sh | kubectl apply -f -
 #
 # Ingress: the console reaches the reader only through the apiserver's pod
-# proxy (console → uiproxy → apiserver → pod), so the only legitimate TCP
-# source is a node — the apiserver on its host network, and the kubelet for
-# the readiness probe. With flannel, a node reaching a pod leaves from its
-# node address, its cni0 bridge (.1 of its pod CIDR) or its flannel.1 VXLAN
-# interface (.0 of its pod CIDR). Those /32s are allowed on 8080; every pod
-# address is not, so no workload — the console's own pods included — can call
+# proxy (console → uiproxy → apiserver → pod), so the one legitimate caller
+# is the apiserver, which runs on the control-plane nodes. Only their
+# addresses are allowed on 8080: the node address, and — with flannel — the
+# cni0 bridge (.1 of the node's pod CIDR) and the flannel.1 VXLAN interface
+# (.0) the node's traffic to a pod leaves from.
+#
+# What this does NOT stop, stated rather than implied:
+#   - a pod in hostNetwork on a control-plane node shares that node's address
+#     and passes;
+#   - kube-router (k3s's NetworkPolicy engine) accepts traffic local to the
+#     pod's own node regardless of policy — that is also why the kubelet's
+#     readiness probe works without a rule here — so a hostNetwork pod on the
+#     reader's node passes too.
+# Ordinary pods, the console's own included, are refused: they cannot call
 # the reader directly and borrow its token.
 #
 # Egress: the Proxmox API (PVE_HOST:8006) only. PVE_HOST must be an IPv4
@@ -28,9 +36,9 @@ if ! [[ "$PVE_HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
   exit 1
 fi
 
-nodes="$(kubectl get nodes -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {.spec.podCIDR}{"\n"}{end}')"
+nodes="$(kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address} {.spec.podCIDR}{"\n"}{end}')"
 if [[ -z "$nodes" ]]; then
-  echo "no node read from the cluster" >&2
+  echo "no control-plane node read from the cluster (label node-role.kubernetes.io/control-plane)" >&2
   exit 1
 fi
 
