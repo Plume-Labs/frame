@@ -47,13 +47,12 @@ import (
 //     ConvertTo/ConvertFrom below for why a naive drop was unacceptable here
 //     specifically.
 //
-//  2. ConvertTo may normalise, and does so in exactly two places —
-//     FrameJob.spec.namespace and TalosSecretReference.namespace. Both name a
-//     namespace the CR does not live in, both are removed in v1beta1, and
-//     both are announced in the version's deprecation warning. They are not
-//     stashed in an annotation: a v1alpha1 client reading back
-//     `namespace: other-ns` and believing it still works would be worse than
-//     seeing the value the operator actually acts on.
+//  2. ConvertTo may normalise, and does so in exactly one place —
+//     FrameJob.spec.namespace. It names a namespace the CR does not live in,
+//     is removed in v1beta1, and is announced in the version's deprecation
+//     warning. It is not stashed in an annotation: a v1alpha1 client reading
+//     back `namespace: other-ns` and believing it still works would be worse
+//     than seeing the value the operator actually acts on.
 //
 // status.phase is never carried in either direction. It is computed on the way
 // down, out of conditions, and never stored (F2). See phase.go.
@@ -103,9 +102,8 @@ import (
 // the way up (ConvertTo), removing the annotation so it never reaches
 // storage. This is the standard multi-version-CRD escape hatch, and it is a
 // different situation from the one rule 2 below declines to use it for:
-// spec.namespace and TalosSecretReference.namespace are v1alpha1 fields a
-// client can still see and be misled by if their now-inert value were
-// preserved untouched; spec.container and spec.type have no v1alpha1 field
+// spec.namespace is a v1alpha1 field a client can still see and be misled
+// by if its now-inert value were preserved untouched; spec.container and spec.type have no v1alpha1 field
 // to be misled by at all; the annotation is visibly out-of-band extra data,
 // not a normal-looking field quietly lying. It restores rule 1 in full for
 // FrameJob: with the annotation round-tripping, a v1beta1 -> v1alpha1 ->
@@ -374,7 +372,6 @@ func (src *FrameNode) ConvertTo(dstRaw conversion.Hub) error {
 
 	dst.Spec.IP = src.Spec.IP
 	dst.Spec.Role = src.Spec.Role
-	dst.Spec.Disk = src.Spec.Disk
 	dst.Spec.RDMAInterface = src.Spec.RDMAInterface
 	dst.Spec.Hostname = src.Spec.Hostname
 	dst.Spec.Rack = src.Spec.Rack
@@ -392,25 +389,11 @@ func (src *FrameNode) ConvertTo(dstRaw conversion.Hub) error {
 	}
 
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.DiscoveredHostname = src.Status.DiscoveredHostname
-	dst.Status.DiscoveredTalosVersion = src.Status.DiscoveredTalosVersion
 	dst.Status.Conditions = src.Status.Conditions
 	dst.Status.KubeletVersion = src.Status.KubeletVersion
 	dst.Status.Capacity = src.Status.Capacity
 	dst.Status.Allocatable = src.Status.Allocatable
 	dst.Status.NodeName = src.Status.NodeName
-	if src.Status.DiscoveredDisks != nil {
-		dst.Status.DiscoveredDisks = make([]v1beta1.DiskInfo, len(src.Status.DiscoveredDisks))
-		for i, d := range src.Status.DiscoveredDisks {
-			dst.Status.DiscoveredDisks[i] = v1beta1.DiskInfo{Name: d.Name, Size: d.Size, Type: d.Type}
-		}
-	}
-	if src.Status.DiscoveredNICs != nil {
-		dst.Status.DiscoveredNICs = make([]v1beta1.NICInfo, len(src.Status.DiscoveredNICs))
-		for i, n := range src.Status.DiscoveredNICs {
-			dst.Status.DiscoveredNICs[i] = v1beta1.NICInfo{Name: n.Name, MAC: n.MAC, Speed: n.Speed}
-		}
-	}
 	// src.Status.Phase is dropped: conditions are the storage (F2).
 
 	return nil
@@ -426,7 +409,6 @@ func (dst *FrameNode) ConvertFrom(srcRaw conversion.Hub) error {
 
 	dst.Spec.IP = src.Spec.IP
 	dst.Spec.Role = src.Spec.Role
-	dst.Spec.Disk = src.Spec.Disk
 	dst.Spec.RDMAInterface = src.Spec.RDMAInterface
 	dst.Spec.Hostname = src.Spec.Hostname
 	dst.Spec.Rack = src.Spec.Rack
@@ -441,25 +423,11 @@ func (dst *FrameNode) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.DiscoveredHostname = src.Status.DiscoveredHostname
-	dst.Status.DiscoveredTalosVersion = src.Status.DiscoveredTalosVersion
 	dst.Status.Conditions = src.Status.Conditions
 	dst.Status.KubeletVersion = src.Status.KubeletVersion
 	dst.Status.Capacity = src.Status.Capacity
 	dst.Status.Allocatable = src.Status.Allocatable
 	dst.Status.NodeName = src.Status.NodeName
-	if src.Status.DiscoveredDisks != nil {
-		dst.Status.DiscoveredDisks = make([]DiskInfo, len(src.Status.DiscoveredDisks))
-		for i, d := range src.Status.DiscoveredDisks {
-			dst.Status.DiscoveredDisks[i] = DiskInfo{Name: d.Name, Size: d.Size, Type: d.Type}
-		}
-	}
-	if src.Status.DiscoveredNICs != nil {
-		dst.Status.DiscoveredNICs = make([]NICInfo, len(src.Status.DiscoveredNICs))
-		for i, n := range src.Status.DiscoveredNICs {
-			dst.Status.DiscoveredNICs[i] = NICInfo{Name: n.Name, MAC: n.MAC, Speed: n.Speed}
-		}
-	}
 	dst.Status.Phase = FrameNodePhaseFromConditions(src.Status.Conditions)
 
 	return nil
@@ -556,93 +524,6 @@ func (dst *SchedulingPolicy) ConvertFrom(srcRaw conversion.Hub) error {
 	dst.Status.OwnedPriorityClass = src.Status.OwnedPriorityClass
 	dst.Status.OwnedQueue = src.Status.OwnedQueue
 	dst.Status.OwnedQueueScheduler = src.Status.OwnedQueueScheduler
-	dst.Status.Conditions = src.Status.Conditions
-
-	return nil
-}
-
-// --- TalosMachineConfig -----------------------------------------------------
-
-func (src *TalosMachineConfig) ConvertTo(dstRaw conversion.Hub) error {
-	dst, ok := dstRaw.(*v1beta1.TalosMachineConfig)
-	if !ok {
-		return fmt.Errorf("ConvertTo: expected *v1beta1.TalosMachineConfig, got %T", dstRaw)
-	}
-
-	dst.ObjectMeta = src.ObjectMeta
-
-	dst.Spec.NodeName = src.Spec.NodeName
-	dst.Spec.TalosEndpoint = src.Spec.TalosEndpoint
-	// Namespace is dropped (F6). See the note on ConvertFrom for why it is not
-	// stashed anywhere.
-	dst.Spec.TalosSecretRef = v1beta1.TalosSecretReference{Name: src.Spec.TalosSecretRef.Name}
-	dst.Spec.ConfigPatch = src.Spec.ConfigPatch
-	dst.Spec.ConfigPatchRef = src.Spec.ConfigPatchRef
-
-	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.Conditions = src.Status.Conditions
-
-	return nil
-}
-
-func (dst *TalosMachineConfig) ConvertFrom(srcRaw conversion.Hub) error {
-	src, ok := srcRaw.(*v1beta1.TalosMachineConfig)
-	if !ok {
-		return fmt.Errorf("ConvertFrom: expected *v1beta1.TalosMachineConfig, got %T", srcRaw)
-	}
-
-	dst.ObjectMeta = src.ObjectMeta
-
-	dst.Spec.NodeName = src.Spec.NodeName
-	dst.Spec.TalosEndpoint = src.Spec.TalosEndpoint
-	// Namespace comes back empty rather than stashed: empty already meant
-	// "this CR's own namespace" — buildTalosClient falls back to it
-	// explicitly — so the normalised value is *the truth*, not a placeholder.
-	dst.Spec.TalosSecretRef = TalosSecretReference{Name: src.Spec.TalosSecretRef.Name}
-	dst.Spec.ConfigPatch = src.Spec.ConfigPatch
-	dst.Spec.ConfigPatchRef = src.Spec.ConfigPatchRef
-
-	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.Conditions = src.Status.Conditions
-
-	return nil
-}
-
-// --- TalosUpgrade -----------------------------------------------------------
-
-func (src *TalosUpgrade) ConvertTo(dstRaw conversion.Hub) error {
-	dst, ok := dstRaw.(*v1beta1.TalosUpgrade)
-	if !ok {
-		return fmt.Errorf("ConvertTo: expected *v1beta1.TalosUpgrade, got %T", dstRaw)
-	}
-
-	dst.ObjectMeta = src.ObjectMeta
-
-	dst.Spec.NodeName = src.Spec.NodeName
-	dst.Spec.TalosEndpoint = src.Spec.TalosEndpoint
-	dst.Spec.TalosSecretRef = v1beta1.TalosSecretReference{Name: src.Spec.TalosSecretRef.Name}
-	dst.Spec.Image = src.Spec.Image
-
-	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.Conditions = src.Status.Conditions
-
-	return nil
-}
-
-func (dst *TalosUpgrade) ConvertFrom(srcRaw conversion.Hub) error {
-	src, ok := srcRaw.(*v1beta1.TalosUpgrade)
-	if !ok {
-		return fmt.Errorf("ConvertFrom: expected *v1beta1.TalosUpgrade, got %T", srcRaw)
-	}
-
-	dst.ObjectMeta = src.ObjectMeta
-
-	dst.Spec.NodeName = src.Spec.NodeName
-	dst.Spec.TalosEndpoint = src.Spec.TalosEndpoint
-	dst.Spec.TalosSecretRef = TalosSecretReference{Name: src.Spec.TalosSecretRef.Name}
-	dst.Spec.Image = src.Spec.Image
-
-	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
 	dst.Status.Conditions = src.Status.Conditions
 
 	return nil

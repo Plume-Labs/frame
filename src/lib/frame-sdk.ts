@@ -67,24 +67,6 @@ export interface FrameNode {
   gpuModel: string
 }
 
-export interface FrameNodeSpec {
-  ip: string
-  role?: string
-  disk?: string
-  hostname?: string
-  rack?: string
-  zone?: string
-  serviceClass?: string
-  rdmaInterface?: string
-  network?: {
-    address?: string
-    gateway?: string
-    dns?: string[]
-    vlan?: number
-    bond?: string
-  }
-}
-
 export interface Job {
   id: string
   name: string
@@ -1092,9 +1074,6 @@ interface FrameNodeCR {
     conditions?: Condition[]
     observedGeneration?: number
     capacity?: Record<string, string>; allocatable?: Record<string, string>
-    discoveredHostname?: string; discoveredTalosVersion?: string
-    discoveredDisks?: Array<{ name: string; size: string; type: string }>
-    discoveredNICs?: Array<{ name: string; mac: string; speed: string }>
   }
 }
 
@@ -1178,6 +1157,10 @@ function mapNodePhase(cr: FrameNodeCR): NodeStatus {
   switch (readyCondition(cr.status?.conditions)?.reason) {
     case 'Online':       return 'online'
     case 'Degraded':     return 'degraded'
+    // Not in the cluster yet. AwaitingNode is what the controller writes
+    // now; Provisioning and Discovered are what the retired Talos path left
+    // on objects it last reconciled, until they are reconciled again.
+    case 'AwaitingNode':
     case 'Provisioning':
     case 'Discovered':   return 'provisioning'
     default:             return 'offline'
@@ -1197,8 +1180,8 @@ function crToNode(cr: FrameNodeCR): FrameNode {
     name:         cr.spec.hostname ?? cr.metadata.name,
     status:       mapNodePhase(cr),
     // No fallback, unlike FrameJob and FrameService. FrameNode.spec
-    // .serviceClass is deliberately undefaulted at v1beta1 — a node is
-    // discovered before anyone classifies its hardware — so inventing LOW
+    // .serviceClass is deliberately undefaulted at v1beta1 — a node can
+    // exist before anyone classifies its hardware — so inventing LOW
     // here would show a tier kubectl does not, which is the disagreement the
     // freeze removed, pointed the other way.
     serviceClass: (cr.spec.serviceClass ?? '') as ServiceClass | '',
@@ -3255,30 +3238,6 @@ class NodeClient {
     return crToNode(cr)
   }
 
-  async discover(ip: string): Promise<{ crName: string }> {
-    const crName = toK8sName('frame-node-' + ip.replace(/\./g, '-'))
-    await k8sFetch<FrameNodeCR>(apiBase('framenodes', this.ns), {
-      action: `discover node ${ip}`,
-      method: 'POST',
-      body: {
-        apiVersion: `${GROUP}/${VERSION}`,
-        kind: 'FrameNode',
-        metadata: { name: crName, namespace: frameNs(this.ns) },
-        spec: { ip },
-      },
-    })
-    return { crName }
-  }
-
-  async patchSpec(name: string, spec: FrameNodeSpec): Promise<void> {
-    await k8sFetch<FrameNodeCR>(`${apiBase('framenodes', this.ns)}/${name}`, {
-      action: `provision node ${name}`,
-      method: 'PATCH',
-      contentType: 'application/merge-patch+json',
-      body: { spec },
-    })
-  }
-
   async delete(name: string): Promise<void> {
     await k8sFetch<undefined>(`${apiBase('framenodes', this.ns)}/${name}`, {
       action: `delete node ${name}`, method: 'DELETE',
@@ -3428,139 +3387,6 @@ class ResourceClient {
         .reduce((s, n) => s + quantityToNum(n.status?.allocatable?.['nvidia.com/gpu']), 0),
     }))
     return { items }
-  }
-}
-
-// ── Talos ─────────────────────────────────────────────────────────────────────
-
-/** A machine-config patch or an OS upgrade, as the control plane sees it. */
-export interface TalosOperation {
-  kind: 'TalosMachineConfig' | 'TalosUpgrade'
-  name: string
-  nodeName: string
-  endpoint: string
-  /** The Talos image, for an upgrade. Absent on a config patch. */
-  image?: string
-  /** True, False, or Unknown while the controller has not reported yet. */
-  ready: 'True' | 'False' | 'Unknown'
-  /** What the controller did, or why it could not: Applied, ClientBuildFailed, … */
-  reason: string
-  message: string
-}
-
-interface TalosCR {
-  metadata: { name: string; namespace?: string }
-  spec: { nodeName?: string; talosEndpoint?: string; image?: string }
-  status?: {
-    conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>
-  }
-}
-
-function crToTalosOperation(kind: TalosOperation['kind'], cr: TalosCR): TalosOperation {
-  const ready = cr.status?.conditions?.find((c) => c.type === 'Ready')
-  return {
-    kind,
-    name: cr.metadata.name,
-    nodeName: cr.spec.nodeName ?? '',
-    endpoint: cr.spec.talosEndpoint ?? '',
-    image: cr.spec.image,
-    ready: (ready?.status as TalosOperation['ready']) ?? 'Unknown',
-    reason: ready?.reason ?? 'Pending',
-    message: ready?.message ?? '',
-  }
-}
-
-/**
- * TalosMachineConfig and TalosUpgrade — the two CRDs that reconfigure and
- * upgrade a node's operating system.
- *
- * Both are write-once-and-watch: the controller talks Talos gRPC and reports
- * the outcome in the Ready condition, so there is nothing to edit afterwards.
- * Re-running an operation means a new object, which is also what makes the
- * history readable.
- */
-class TalosClient {
-  constructor(private readonly ns?: string) {}
-
-  async listMachineConfigs(): Promise<TalosOperation[]> {
-    const res = await k8sFetch<ListResponse<TalosCR>>(apiBase('talosmachineconfigs', this.ns))
-    return (res.items ?? []).map((cr) => crToTalosOperation('TalosMachineConfig', cr))
-  }
-
-  async listUpgrades(): Promise<TalosOperation[]> {
-    const res = await k8sFetch<ListResponse<TalosCR>>(apiBase('talosupgrades', this.ns))
-    return (res.items ?? []).map((cr) => crToTalosOperation('TalosUpgrade', cr))
-  }
-
-  /** Both kinds, newest-looking first by node then name, for a single table. */
-  async list(): Promise<TalosOperation[]> {
-    const [configs, upgrades] = await Promise.all([
-      this.listMachineConfigs(),
-      this.listUpgrades(),
-    ])
-    return [...configs, ...upgrades].sort(
-      (a, b) => a.nodeName.localeCompare(b.nodeName) || a.name.localeCompare(b.name),
-    )
-  }
-
-  async applyMachineConfig(input: {
-    name: string
-    nodeName: string
-    talosEndpoint: string
-    configPatch: string
-    secretName: string
-  }): Promise<void> {
-    await k8sFetch<TalosCR>(apiBase('talosmachineconfigs', this.ns), {
-      action: `apply Talos machine config to ${input.nodeName}`,
-      method: 'POST',
-      body: {
-        apiVersion: `${GROUP}/${VERSION}`,
-        kind: 'TalosMachineConfig',
-        metadata: { name: toK8sName(input.name), namespace: frameNs(this.ns) },
-        spec: {
-          nodeName: input.nodeName,
-          talosEndpoint: input.talosEndpoint,
-          // No namespace (F6): TalosSecretReference is name-only at v1beta1,
-          // and the Secret is always resolved in the CR's own namespace. The
-          // value sent here was already that same namespace, so this is a
-          // field the server would now prune, not a behaviour change.
-          talosSecretRef: { name: input.secretName },
-          configPatch: input.configPatch,
-        },
-      },
-    })
-  }
-
-  async requestUpgrade(input: {
-    name: string
-    nodeName: string
-    talosEndpoint: string
-    image: string
-    secretName: string
-  }): Promise<void> {
-    await k8sFetch<TalosCR>(apiBase('talosupgrades', this.ns), {
-      action: `request Talos upgrade of ${input.nodeName}`,
-      method: 'POST',
-      body: {
-        apiVersion: `${GROUP}/${VERSION}`,
-        kind: 'TalosUpgrade',
-        metadata: { name: toK8sName(input.name), namespace: frameNs(this.ns) },
-        spec: {
-          nodeName: input.nodeName,
-          talosEndpoint: input.talosEndpoint,
-          // Name-only at v1beta1, as above (F6).
-          talosSecretRef: { name: input.secretName },
-          image: input.image,
-        },
-      },
-    })
-  }
-
-  async remove(op: Pick<TalosOperation, 'kind' | 'name'>): Promise<void> {
-    const plural = op.kind === 'TalosUpgrade' ? 'talosupgrades' : 'talosmachineconfigs'
-    await k8sFetch<undefined>(`${apiBase(plural, this.ns)}/${op.name}`, {
-      action: `delete ${op.kind} ${op.name}`, method: 'DELETE',
-    })
   }
 }
 
@@ -3897,7 +3723,6 @@ export class FrameClient {
   public readonly resources: ResourceClient
   public readonly apps: ApplicationClient
   public readonly cluster: ClusterClient
-  public readonly talos: TalosClient
   public readonly users: UserClient
   public readonly workloads: WorkloadClient
   public readonly machines: MachineClient
@@ -3912,7 +3737,6 @@ export class FrameClient {
     this.resources = new ResourceClient(opts.namespace)
     this.apps      = new ApplicationClient()
     this.cluster   = new ClusterClient()
-    this.talos     = new TalosClient(opts.namespace)
     this.users     = new UserClient()
     this.workloads = new WorkloadClient()
     this.machines  = new MachineClient(opts.namespace)

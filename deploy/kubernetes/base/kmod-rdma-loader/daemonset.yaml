@@ -17,7 +17,7 @@ spec:
       labels:
         app: kmod-rdma-loader
     spec:
-      # Temporary bridge until a custom Talos OFED extension is available.
+      # Loads the RDMA kernel modules on each node.
       priorityClassName: system-node-critical
       tolerations:
         - operator: Exists

@@ -29,8 +29,8 @@ import (
 // code exercising new code — readyReason doesn't exist before this task, so
 // it cannot be the regression proof. That proof is
 // TestSetConditionReasonRegression in setcondition_regression_test.go, which
-// goes through the pre-existing call path (TalosMachineConfigReconciler.setCondition)
-// instead and is verified to fail against the pre-fix helpers.go.
+// goes through a reconciler's own condition-writing path instead (see its
+// comment for how it was verified against the pre-fix helpers.go).
 func TestReadyReasonReturnsTheReadyConditionsReason(t *testing.T) {
 	var conds []metav1.Condition
 

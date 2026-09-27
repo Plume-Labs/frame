@@ -56,7 +56,7 @@ const e2ePriorityClass = "frame-e2e-high"
 // frameKinds is every Frame CRD, used to release finalizers before teardown.
 var frameKinds = []string{
 	"framejobs", "framenodes", "frameresourcequotas", "schedulingpolicies",
-	"talosmachineconfigs", "talosupgrades", "frameusers", "frameservices",
+	"frameusers", "frameservices",
 }
 
 // frameCRDs is every Frame CRD by its full resource name, for the checks that
@@ -66,8 +66,6 @@ var frameCRDs = []string{
 	"framenodes.frame.plume-labs.io",
 	"frameresourcequotas.frame.plume-labs.io",
 	"schedulingpolicies.frame.plume-labs.io",
-	"talosmachineconfigs.frame.plume-labs.io",
-	"talosupgrades.frame.plume-labs.io",
 	"frameusers.frame.plume-labs.io",
 	"frameservices.services.plume-labs.io",
 }
@@ -675,7 +673,6 @@ spec:
   ip: 127.0.0.1
   role: worker
   hostname: %s
-  disk: /dev/null
   rack: rack-e2e
   zone: zone-e2e
   serviceClass: HIGH
@@ -686,20 +683,8 @@ spec:
       - 1.1.1.1
 `, crNamespace, nodeName))
 
-			// Phase 3 (sync from the Kubernetes Node) is only reached once the
-			// node is past provisioning. Provisioning talks Talos gRPC, which
-			// has no counterpart in Kind, so the phase is set directly here —
-			// the point of this spec is the sync, not the provisioning that
-			// precedes it in production.
-			By("advancing the FrameNode past provisioning")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "patch", "framenode", "e2e-node",
-					"-n", crNamespace, "--subresource=status", "--type=merge",
-					"-p", `{"status":{"phase":"Provisioning"}}`)
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-			}).Should(Succeed())
-
+			// The node exists, so the controller classifies it straight away:
+			// there is no provisioning phase to get past any more.
 			By("checking the controller labelled the real Node")
 			Eventually(func(g Gomega) {
 				out, err := kubectlGet(g, "node", nodeName, "",
@@ -728,53 +713,6 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(out).To(BeEmpty(), "topology.kubernetes.io/ is reserved for upstream keys")
 			}).Should(Succeed())
-		})
-
-		// The two Talos kinds drive a gRPC endpoint that does not exist in Kind.
-		// What a real cluster can still prove is that an unreachable target ends
-		// as a reported failure rather than a hang or a crash — a controller
-		// that wedges on a missing endpoint is the failure mode worth catching.
-		It("reports a TalosMachineConfig it cannot apply", func() {
-			applyCR(fmt.Sprintf(`
-apiVersion: frame.plume-labs.io/v1alpha1
-kind: TalosMachineConfig
-metadata:
-  name: e2e-machineconfig
-  namespace: %s
-spec:
-  nodeName: nowhere
-  talosEndpoint: "127.0.0.1:50000"
-  talosSecretRef:
-    name: absent-talos-certs
-    namespace: %s
-  configPatch: |
-    machine:
-      sysctls:
-        vm.max_map_count: "524288"
-`, crNamespace, crNamespace))
-
-			Eventually(readyReason("talosmachineconfig", "e2e-machineconfig")).
-				Should(Equal("ClientBuildFailed"))
-		})
-
-		It("reports a TalosUpgrade it cannot request", func() {
-			applyCR(fmt.Sprintf(`
-apiVersion: frame.plume-labs.io/v1alpha1
-kind: TalosUpgrade
-metadata:
-  name: e2e-upgrade
-  namespace: %s
-spec:
-  nodeName: nowhere
-  talosEndpoint: "127.0.0.1:50000"
-  talosSecretRef:
-    name: absent-talos-certs
-    namespace: %s
-  image: ghcr.io/siderolabs/talos:v1.9.0
-`, crNamespace, crNamespace))
-
-			Eventually(readyReason("talosupgrade", "e2e-upgrade")).
-				Should(Equal("ClientBuildFailed"))
 		})
 
 		// FrameUser has no controller. Its cluster effect is the admission

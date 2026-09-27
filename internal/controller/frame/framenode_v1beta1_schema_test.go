@@ -85,13 +85,12 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 		Expect(node.Spec.Network.Address).To(Equal("192.0.2.201/24"))
 
 		node.Status.ObservedGeneration = 1
-		node.Status.DiscoveredHostname = liveHostname
 		node.Status.NodeName = liveHostname
 		node.Status.Conditions = []metav1.Condition{{
 			Type:               "Ready",
-			Status:             metav1.ConditionFalse,
-			Reason:             "Discovered",
-			Message:            "Node discovered in maintenance mode",
+			Status:             metav1.ConditionTrue,
+			Reason:             "Online",
+			Message:            "Synced from k8s Node",
 			ObservedGeneration: 1,
 			LastTransitionTime: metav1.Now(),
 		}}
@@ -108,7 +107,53 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 		// repoints framenode_controller.go off Status.Phase and onto exactly
 		// this string. If it stops round tripping, that move breaks silently.
 		Expect(back.Status.Conditions).To(HaveLen(1))
-		Expect(back.Status.Conditions[0].Reason).To(Equal("Discovered"))
+		Expect(back.Status.Conditions[0].Reason).To(Equal("Online"))
+	})
+
+	// The Talos provisioning half of FrameNode is gone: spec.disk gated it,
+	// and status.discovered* reported what the maintenance API answered. None
+	// of the stored FrameNodes ever carried any of them. Pruning is silent, so
+	// as for status.phase the fields are written through an unstructured
+	// client and must read back gone, beside a kept field that proves the
+	// writes happened.
+	It("no longer stores spec.disk or the Talos discovery status", func() {
+		node := liveShapedNode("no-talos-fields")
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
+
+		key := types.NamespacedName{Name: "no-talos-fields", Namespace: "default"}
+		raw := &unstructured.Unstructured{}
+		raw.SetGroupVersionKind(framev1beta1.GroupVersion.WithKind("FrameNode"))
+		Expect(k8sClient.Get(ctx, key, raw)).To(Succeed())
+		Expect(unstructured.SetNestedField(raw.Object, "/dev/nvme0n1", "spec", "disk")).To(Succeed())
+		Expect(unstructured.SetNestedField(raw.Object, "rack-02", "spec", "rack")).To(Succeed())
+		Expect(k8sClient.Update(ctx, raw)).To(Succeed())
+
+		Expect(k8sClient.Get(ctx, key, raw)).To(Succeed())
+		Expect(unstructured.SetNestedField(raw.Object, "v1.8.0", "status", "discoveredTalosVersion")).To(Succeed())
+		Expect(unstructured.SetNestedField(raw.Object, "cp", "status", "discoveredHostname")).To(Succeed())
+		Expect(unstructured.SetNestedSlice(raw.Object, []any{map[string]any{"name": "/dev/sda", "size": "1TB", "type": "ssd"}},
+			"status", "discoveredDisks")).To(Succeed())
+		Expect(unstructured.SetNestedField(raw.Object, liveHostname, "status", "nodeName")).To(Succeed())
+		Expect(k8sClient.Status().Update(ctx, raw)).To(Succeed())
+
+		back := &unstructured.Unstructured{}
+		back.SetGroupVersionKind(framev1beta1.GroupVersion.WithKind("FrameNode"))
+		Expect(k8sClient.Get(ctx, key, back)).To(Succeed())
+		for _, path := range [][]string{
+			{"spec", "disk"},
+			{"status", "discoveredTalosVersion"},
+			{"status", "discoveredHostname"},
+			{"status", "discoveredDisks"},
+		} {
+			_, found, err := unstructured.NestedFieldNoCopy(back.Object, path...)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(), "v1beta1 must not store %v", path)
+		}
+		rack, _, _ := unstructured.NestedString(back.Object, "spec", "rack")
+		Expect(rack).To(Equal("rack-02"), "the spec write happened")
+		nodeName, _, _ := unstructured.NestedString(back.Object, "status", "nodeName")
+		Expect(nodeName).To(Equal(liveHostname), "the status write happened")
 	})
 
 	It("does not store status.phase (F2)", func() {
@@ -184,18 +229,9 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 			func(s *framev1beta1.FrameNodeSpec) { s.Hostname = "Node-CP" }),
 		Entry("a dns entry that is not an IP", "reject-dns",
 			func(s *framev1beta1.FrameNodeSpec) { s.Network.DNS = []string{"resolver.local"} }),
-		// Fix Round 1: network.address is the one node field written into a
-		// Talos machine config. Length is the only thing bounding it.
+		// Fix Round 1: length is the only thing bounding network.address.
 		Entry("a network.address longer than 45 characters", "reject-address-length",
 			func(s *framev1beta1.FrameNodeSpec) { s.Network.Address = strings.Repeat("a", 46) }),
-		// The inherited object-level rule, which the freeze makes permanent.
-		// It is pinned here so a later task cannot loosen or drop it without
-		// noticing.
-		Entry("a disk set with no network configuration", "reject-disk-without-network",
-			func(s *framev1beta1.FrameNodeSpec) {
-				s.Disk = "/dev/nvme0n1"
-				s.Network = framev1beta1.NetworkSpec{}
-			}),
 	)
 
 	It("rejects an explicitly empty serviceClass on the wire, and does not default an absent one", func() {
@@ -252,9 +288,8 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 	})
 
 	It("bounds network.address by length only, deliberately not by format", func() {
-		// Fix Round 1. The bound exists because this field is written into a
-		// Talos machine config and an unbounded string had to not survive the
-		// freeze. The *absence* of a pattern is equally deliberate: the field
+		// Fix Round 1. The bound exists because an unbounded string had to
+		// not survive the freeze. The *absence* of a pattern is equally deliberate: the field
 		// is named "address" while every stored value is a prefix, and
 		// guessing at freeze time is worse than documenting the format and
 		// leaving it unenforced. Both halves are asserted, so a later reader
@@ -299,13 +334,4 @@ var _ = Describe("FrameNode v1beta1 schema", func() {
 		}
 	})
 
-	It("accepts a provisioning spec, so the inherited object-level rule is not a blanket ban on disk", func() {
-		// The disk-without-network rejection above must fail for the reason
-		// stated and not because disk is unsettable. This is the shape the
-		// three stored nodes take once someone fills in spec.disk.
-		node := liveShapedNode("provisioning-node")
-		node.Spec.Disk = "/dev/nvme0n1"
-		Expect(k8sClient.Create(ctx, node)).To(Succeed())
-		DeferCleanup(func() { _ = k8sClient.Delete(ctx, node) })
-	})
 })

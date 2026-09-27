@@ -279,24 +279,6 @@ replacements:
          create: true
      - select:
          kind: CustomResourceDefinition
-         name: talosmachineconfigs.frame.plume-labs.io
-       fieldPaths:
-         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-       options:
-         delimiter: '/'
-         index: 0
-         create: true
-     - select:
-         kind: CustomResourceDefinition
-         name: talosupgrades.frame.plume-labs.io
-       fieldPaths:
-         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-       options:
-         delimiter: '/'
-         index: 0
-         create: true
-     - select:
-         kind: CustomResourceDefinition
          name: frameusers.frame.plume-labs.io
        fieldPaths:
          - .metadata.annotations.[cert-manager.io/inject-ca-from]
@@ -351,24 +333,6 @@ replacements:
      - select:
          kind: CustomResourceDefinition
          name: frameresourcequotas.frame.plume-labs.io
-       fieldPaths:
-         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-       options:
-         delimiter: '/'
-         index: 1
-         create: true
-     - select:
-         kind: CustomResourceDefinition
-         name: talosmachineconfigs.frame.plume-labs.io
-       fieldPaths:
-         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-       options:
-         delimiter: '/'
-         index: 1
-         create: true
-     - select:
-         kind: CustomResourceDefinition
-         name: talosupgrades.frame.plume-labs.io
        fieldPaths:
          - .metadata.annotations.[cert-manager.io/inject-ca-from]
        options:

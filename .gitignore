@@ -34,7 +34,6 @@ pids
 .spark-workbench-id
 
 deploy/kubernetes/samples/*-filled.yaml
-deploy/talos/generated/
 
 # Go tool cache (controller-gen, kustomize, setup-envtest, golangci-lint)
 /bin/

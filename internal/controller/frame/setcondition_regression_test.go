@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
@@ -44,24 +45,23 @@ func readyConditionReason(conds []metav1.Condition) string {
 	return ""
 }
 
-// TestSetConditionReasonRegression exercises the exact path Frame calls in
-// production: TalosMachineConfigReconciler.setCondition, a thin wrapper that
-// forwards to this package's shared condition-writing call — the very call
-// site the fix repoints. It is not a test of meta.SetStatusCondition; it goes
-// through Frame's own reconciler method with a fake client, exactly as the
-// real controller does via r.Status().Patch.
+// TestSetConditionReasonRegression exercises a path Frame calls in
+// production: FrameNodeReconciler.setPhase, which writes the Ready condition
+// through r.Status().Patch. It is not a test of meta.SetStatusCondition; it
+// goes through Frame's own reconciler method with a fake client, exactly as
+// the real controller does.
 //
-// Two calls keep Status=False (a resolve failure, then a client-build
-// failure, same generation) but change Reason and Message. Against the
-// pre-fix helpers.go — where the shared call was the old setCondition, which
-// replaced an existing condition only when Status differed — the second
-// write is silently dropped and this test fails with readyConditionReason
-// still reporting "PatchResolveFailed". That is the same class of bug
-// FrameNode hits going Provisioning -> Degraded -> Offline (all Ready=False):
-// a different controller, the same shared helper, the same frozen reason.
+// Two calls keep Status=False (the node is absent, then the FrameNode may not
+// classify it, same generation) but change Reason and Message. Against the
+// pre-fix helpers.go — whose old setCondition replaced an existing condition
+// only when Status differed — the second write was silently dropped and the
+// reason stayed frozen. FrameNode walks exactly such transitions
+// (AwaitingNode -> Unclassified, Degraded -> Offline: all Ready=False).
 //
-// Verified: checked out at f79f55f (the pre-fix commit) this file compiles
-// unmodified and the test fails. On this commit it passes.
+// History: this test first ran through TalosMachineConfigReconciler, verified
+// failing at f79f55f (the pre-fix commit) and passing after it. That
+// reconciler left with the Talos kinds; FrameNode is the controller that
+// still writes Ready=False reasons in sequence.
 func TestSetConditionReasonRegression(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -71,29 +71,39 @@ func TestSetConditionReasonRegression(t *testing.T) {
 		t.Fatalf("AddToScheme (framev1beta1): %v", err)
 	}
 
-	tmc := &framev1beta1.TalosMachineConfig{
+	fn := &framev1beta1.FrameNode{
 		ObjectMeta: metav1.ObjectMeta{Name: "regression", Namespace: "default"},
+		Spec:       framev1beta1.FrameNodeSpec{IP: "192.0.2.1"},
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&framev1beta1.TalosMachineConfig{}).
-		WithObjects(tmc).
+		WithStatusSubresource(&framev1beta1.FrameNode{}).
+		WithObjects(fn).
 		Build()
-	r := &TalosMachineConfigReconciler{Client: c}
+	r := &FrameNodeReconciler{Client: c}
 	ctx := context.Background()
 
-	if err := r.setCondition(ctx, tmc, metav1.ConditionFalse, "PatchResolveFailed", "first failure"); err != nil {
-		t.Fatalf("first setCondition: %v", err)
+	if err := r.setPhase(ctx, fn, nodePhaseAwaitingNode, "first: node absent"); err != nil {
+		t.Fatalf("first setPhase: %v", err)
 	}
-	if got := readyConditionReason(tmc.Status.Conditions); got != "PatchResolveFailed" {
-		t.Fatalf("readyConditionReason after first write = %q, want PatchResolveFailed", got)
+	if got := readyConditionReason(fn.Status.Conditions); got != nodePhaseAwaitingNode {
+		t.Fatalf("readyConditionReason after first write = %q, want %s", got, nodePhaseAwaitingNode)
 	}
 
-	if err := r.setCondition(ctx, tmc, metav1.ConditionFalse, "ClientBuildFailed", "second failure, same Status"); err != nil {
-		t.Fatalf("second setCondition: %v", err)
+	if err := r.setPhase(ctx, fn, nodePhaseUnclassified, "second: same Status, new reason"); err != nil {
+		t.Fatalf("second setPhase: %v", err)
 	}
-	if got := readyConditionReason(tmc.Status.Conditions); got != "ClientBuildFailed" {
-		t.Fatalf("readyConditionReason after a reason-only change = %q, want ClientBuildFailed "+
-			"(pre-fix setCondition froze it at PatchResolveFailed)", got)
+	if got := readyConditionReason(fn.Status.Conditions); got != nodePhaseUnclassified {
+		t.Fatalf("readyConditionReason after a reason-only change = %q, want %s "+
+			"(pre-fix setCondition froze it at the first reason)", got, nodePhaseUnclassified)
+	}
+
+	// The write reached the object, not only the in-memory copy.
+	var stored framev1beta1.FrameNode
+	if err := c.Get(ctx, client.ObjectKeyFromObject(fn), &stored); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := readyConditionReason(stored.Status.Conditions); got != nodePhaseUnclassified {
+		t.Fatalf("stored reason = %q, want %s", got, nodePhaseUnclassified)
 	}
 }

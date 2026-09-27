@@ -90,7 +90,7 @@ type FrameServiceReconciler struct {
 // already knows by name: Get in claimNewCoordinates, CreateOrUpdate in
 // writeSecret, Delete in deleteSecrets. Nothing here ever enumerates. Adding
 // list/watch would turn "can write Secrets it names" into "can read every
-// Secret in the cluster", which includes the Talos PKI and every
+// Secret in the cluster", which includes every BMC credential and every
 // ServiceAccount token — a far larger grant than the feature needs.
 //
 // Keeping it out has two prerequisites, both satisfied deliberately, and

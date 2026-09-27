@@ -22,9 +22,9 @@
 #
 #   2. Objects are rewritten at the storage version on any write, so a no-op
 #      annotation patch is enough. A kind with *zero* objects has nothing to
-#      rewrite — four of Frame's eight are in exactly that state on the live
-#      cluster (FrameUser, TalosMachineConfig, TalosUpgrade, FrameService) —
-#      and for those the status patch is the whole migration.
+#      rewrite — FrameUser and FrameService were in exactly that state on
+#      the live cluster — and for those the status patch is the whole
+#      migration.
 #
 #   3. Rewriting a FrameJob or a FrameNode re-triggers its controller. That is
 #      wanted — the legacy stored `status.phase` does not survive conversion
@@ -56,8 +56,6 @@ CRDS=(
   framenodes.frame.plume-labs.io
   frameresourcequotas.frame.plume-labs.io
   schedulingpolicies.frame.plume-labs.io
-  talosmachineconfigs.frame.plume-labs.io
-  talosupgrades.frame.plume-labs.io
   frameusers.frame.plume-labs.io
   frameservices.services.plume-labs.io
 )

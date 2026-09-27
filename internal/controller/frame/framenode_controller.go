@@ -19,12 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
-	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
-	storageapi "github.com/siderolabs/talos/pkg/machinery/api/storage"
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -46,10 +42,11 @@ const frameNodeFinalizer = "frame.plume-labs.io/framenode"
 
 // FrameNode lifecycle phases.
 const (
-	// nodePhaseDiscovered means the maintenance API has been contacted (or an
-	// attempt was made) and status.discoveredDisks/discoveredTalosVersion are
-	// populated; the node is waiting for a user to fill in the full spec.
-	nodePhaseDiscovered = "Discovered"
+	// nodePhaseAwaitingNode means no Kubernetes Node carries the name this
+	// FrameNode classifies. FrameNode does not install machines —
+	// FrameInstall does — so there is nothing to do but wait for the node to
+	// join; the Node watch wakes the reconciler when it does.
+	nodePhaseAwaitingNode = "AwaitingNode"
 	// nodePhaseOnline means the corresponding Kubernetes Node is Ready.
 	nodePhaseOnline = "Online"
 )
@@ -127,139 +124,19 @@ func (r *FrameNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// No node of that name is in the cluster. What follows is the provisioning
-	// path exactly as it was, reached only in that case now. It dials a Talos
-	// maintenance API that no longer exists anywhere in this estate; retiring
-	// it is deliberately the last piece of docs/provisioning.md's work, and
-	// doing it here would mean removing the Talos CRDs, which v1beta1 being
-	// frozen makes a lot of its own.
-
-	// Phase 1: disk not yet set → contact maintenance API to discover disks/version.
-	if fn.Spec.Disk == "" {
-		return r.reconcileDiscovery(ctx, &fn)
-	}
-
-	// Phase 2: full spec present, not yet provisioned → apply machineConfig.
-	if p := nodePhaseFromStatus(&fn); p == "" || p == nodePhaseDiscovered {
-		return r.reconcileProvision(ctx, &fn)
-	}
-
-	// Phase 3: the node was provisioned but has not joined yet. reconcileOnline
-	// re-reads it, finds it absent, and requeues -- unchanged behaviour.
-	return r.reconcileOnline(ctx, &fn)
+	// No node of that name is in the cluster. This used to fall through to a
+	// provisioning path that dialled a Talos maintenance API; that path is
+	// gone, and FrameNode only classifies.
+	return r.awaitNode(ctx, &fn, nodeName)
 }
 
-// reconcileDiscovery contacts the node's Talos maintenance API (port 50000) and
-// populates status.discoveredDisks / discoveredTalosVersion. Even if the call
-// fails (node not yet reachable) the phase advances to Discovered so the UI can
-// let the user fill in spec manually.
-func (r *FrameNodeReconciler) reconcileDiscovery(ctx context.Context, fn *framev1beta1.FrameNode) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
-	if nodePhaseFromStatus(fn) == nodePhaseDiscovered {
-		// Waiting for user to patch spec with full disk/network/role info.
-		// The controller has still looked at this generation even though
-		// there's nothing else to do with it, so observedGeneration must
-		// still catch up — otherwise a spec-only edit that never sets Disk
-		// leaves it stuck behind metadata.generation indefinitely.
-		if fn.Status.ObservedGeneration != fn.Generation {
-			patch := client.MergeFrom(fn.DeepCopy())
-			fn.Status.ObservedGeneration = fn.Generation
-			return ctrl.Result{}, r.Status().Patch(ctx, fn, patch)
-		}
-		return ctrl.Result{}, nil
-	}
-
-	patch := client.MergeFrom(fn.DeepCopy())
-	fn.Status.ObservedGeneration = fn.Generation
-	fn.Status.DiscoveredDisks = nil
-	fn.Status.DiscoveredNICs = nil
-
-	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	c, err := buildTalosInsecureClient(tctx, fn.Spec.IP)
-	if err != nil {
-		log.Info("Cannot build maintenance client", "ip", fn.Spec.IP, "err", err)
-		r.Recorder.Event(fn, corev1.EventTypeWarning, "DiscoveryFailed", fmt.Sprintf("Cannot reach %s: %v", fn.Spec.IP, err))
-	} else {
-		defer c.Close() //nolint:errcheck // discovery already ran; a failed close of the maintenance-mode client isn't actionable
-		r.populateDiscovery(tctx, fn, c)
-		r.Recorder.Event(fn, corev1.EventTypeNormal, nodePhaseDiscovered, "Maintenance API contacted")
-	}
-
-	meta.SetStatusCondition(&fn.Status.Conditions, metav1.Condition{
-		Type:               conditionTypeReady,
-		Status:             metav1.ConditionFalse,
-		Reason:             nodePhaseDiscovered,
-		Message:            "Discovery complete; waiting for spec",
-		ObservedGeneration: fn.Generation,
-	})
-	return ctrl.Result{}, r.Status().Patch(ctx, fn, patch)
-}
-
-type talosDiscoveryClient interface {
-	Version(context.Context, ...grpc.CallOption) (*machineapi.VersionResponse, error)
-	Disks(context.Context, ...grpc.CallOption) (*storageapi.DisksResponse, error)
-}
-
-func (r *FrameNodeReconciler) populateDiscovery(ctx context.Context, fn *framev1beta1.FrameNode, c talosDiscoveryClient) {
-	log := logf.FromContext(ctx)
-
-	if vr, err := c.Version(ctx); err == nil && len(vr.Messages) > 0 && vr.Messages[0].Version != nil {
-		fn.Status.DiscoveredTalosVersion = vr.Messages[0].Version.Tag
-	} else if err != nil {
-		log.Info("Version call failed", "err", err)
-	}
-
-	dr, err := c.Disks(ctx)
-	if err != nil {
-		log.Info("Disk discovery unavailable in maintenance mode", "err", err)
-		return
-	}
-	for _, msg := range dr.Messages {
-		for _, d := range msg.Disks {
-			fn.Status.DiscoveredDisks = append(fn.Status.DiscoveredDisks, framev1beta1.DiskInfo{
-				Name: "/dev/" + d.DeviceName,
-				Size: humanizeBytes(d.Size),
-				Type: diskTypeStr(d.Type),
-			})
-		}
-	}
-}
-
-// reconcileProvision generates a Talos machineConfig and applies it via the maintenance API
-// (port 50000, unauthenticated). Whether the call succeeds or not, phase becomes Provisioning
-// so that reconcileOnline can start watching for the k8s Node to appear.
-func (r *FrameNodeReconciler) reconcileProvision(ctx context.Context, fn *framev1beta1.FrameNode) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
-	// 3s is enough for a LAN node and keeps envtest tests fast on unreachable hosts.
-	tctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	msg := "Config applied; waiting for node to join cluster"
-
-	c, err := buildTalosInsecureClient(tctx, fn.Spec.IP)
-	if err != nil {
-		r.Recorder.Event(fn, corev1.EventTypeWarning, "ClientBuildFailed", err.Error())
-		log.Info("Cannot reach node for provisioning", "ip", fn.Spec.IP, "err", err)
-		msg = "Waiting to apply config: " + err.Error()
-	} else {
-		defer c.Close() //nolint:errcheck // config apply already ran; a failed close of the maintenance-mode client isn't actionable
-		if _, aerr := c.ApplyConfiguration(tctx, &machineapi.ApplyConfigurationRequest{
-			Data: []byte(generateMachineConfig(fn)),
-			Mode: machineapi.ApplyConfigurationRequest_AUTO,
-		}); aerr != nil {
-			r.Recorder.Event(fn, corev1.EventTypeWarning, "ApplyFailed", aerr.Error())
-			log.Info("ApplyConfiguration failed", "err", aerr)
-			msg = "Waiting to apply config: " + aerr.Error()
-		} else {
-			r.Recorder.Event(fn, corev1.EventTypeNormal, "ConfigApplied", "MachineConfig applied; node is rebooting")
-		}
-	}
-
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setPhase(ctx, fn, "Provisioning", msg)
+// awaitNode records that the node this FrameNode classifies is not in the
+// cluster, and polls as a backstop to the Node watch.
+func (r *FrameNodeReconciler) awaitNode(ctx context.Context, fn *framev1beta1.FrameNode, nodeName string) (ctrl.Result, error) {
+	logf.FromContext(ctx).Info("Node not in the cluster", "nodeName", nodeName)
+	r.Recorder.Event(fn, corev1.EventTypeWarning, "NodeNotFound", "Waiting for node "+nodeName+" to join the cluster")
+	return ctrl.Result{RequeueAfter: 30 * time.Second},
+		r.setPhase(ctx, fn, nodePhaseAwaitingNode, "No Kubernetes Node named "+nodeName+"; waiting for it to join the cluster")
 }
 
 // The labels Frame projects from a FrameNode onto its corev1.Node. These are
@@ -312,9 +189,9 @@ func applyNodeLabel(labels map[string]string, key, value string) {
 // a FrameNode has anything to do with the node it claims.
 //
 // That was already true of reconcileOnline, but reaching it used to cost a
-// disk, a provisioning attempt and two reconciles. Projecting before any of
-// that -- which is the point of the change this guard ships with -- made a
-// latent escalation immediate: a principal bound to framenode-editor-role has
+// provisioning attempt and two reconciles. Projecting before any of that --
+// which is the point of the change this guard ships with -- made a latent
+// escalation immediate: a principal bound to framenode-editor-role has
 // no RBAC on Node objects at all, and could otherwise create a bare FrameNode
 // named after a classified node and have applyNodeLabel strip every Frame
 // label off it, service-class included, on the next reconcile.
@@ -371,9 +248,7 @@ func (r *FrameNodeReconciler) reconcileOnline(ctx context.Context, fn *framev1be
 	var node corev1.Node
 	if err := r.Get(ctx, types.NamespacedName{Name: nodeName}, &node); err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("Node not yet joined", "nodeName", nodeName)
-			r.Recorder.Event(fn, corev1.EventTypeWarning, "NodeNotFound", "Waiting for node "+nodeName+" to join the cluster")
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setPhase(ctx, fn, "Provisioning", "Waiting for node to join the cluster")
+			return r.awaitNode(ctx, fn, nodeName)
 		}
 		return ctrl.Result{}, err
 	}
@@ -478,97 +353,6 @@ func nodePhase(node *corev1.Node) string {
 		}
 	}
 	return "Offline"
-}
-
-// generateMachineConfig produces a minimal Talos machineConfig YAML for bootstrapping.
-func generateMachineConfig(fn *framev1beta1.FrameNode) string {
-	var b strings.Builder
-	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
-
-	w("version: v1alpha1")
-	w("machine:")
-	w("  type: %s", fn.Spec.Role)
-	if fn.Spec.Hostname != "" {
-		w("  hostname: %s", fn.Spec.Hostname)
-	}
-	w("  install:")
-	w("    disk: %s", fn.Spec.Disk)
-	w("  network:")
-	w("    interfaces:")
-	w("      - interface: eth0")
-	w("        addresses:")
-	w("          - %s", fn.Spec.Network.Address)
-	w("        routes:")
-	w("          - network: 0.0.0.0/0")
-	w("            gateway: %s", fn.Spec.Network.Gateway)
-	w("        mtu: 1500")
-
-	if fn.Spec.Network.VLAN != nil {
-		w("        vlans:")
-		w("          - vlanId: %d", *fn.Spec.Network.VLAN)
-		w("            addresses:")
-		w("              - %s", fn.Spec.Network.Address)
-		w("            routes:")
-		w("              - network: 0.0.0.0/0")
-		w("                gateway: %s", fn.Spec.Network.Gateway)
-	}
-	if fn.Spec.Network.Bond != nil {
-		w("        bond:")
-		w("          interfaces:")
-		w("            - %s", *fn.Spec.Network.Bond)
-	}
-
-	if len(fn.Spec.Network.DNS) > 0 {
-		w("    nameservers:")
-		for _, dns := range fn.Spec.Network.DNS {
-			w("      - %s", dns)
-		}
-	}
-	if fn.Spec.RDMAInterface != "" {
-		w("# RDMA interface: %s", fn.Spec.RDMAInterface)
-	}
-	w("cluster:")
-	w("  allowSchedulingOnControlPlanes: true")
-	w("  discovery:")
-	w("    enabled: true")
-	w("  network:")
-	w("    dnsDomain: cluster.local")
-	if fn.Spec.Network.Address != "" {
-		w("  etcd:")
-		w("    advertisedSubnets:")
-		w("      - %s", fn.Spec.Network.Address)
-	}
-
-	return b.String()
-}
-
-func humanizeBytes(n uint64) string {
-	const (
-		tb = uint64(1) << 40
-		gb = uint64(1) << 30
-		mb = uint64(1) << 20
-	)
-	switch {
-	case n >= tb:
-		return fmt.Sprintf("%.1fTB", float64(n)/float64(tb))
-	case n >= gb:
-		return fmt.Sprintf("%.1fGB", float64(n)/float64(gb))
-	default:
-		return fmt.Sprintf("%.1fMB", float64(n)/float64(mb))
-	}
-}
-
-func diskTypeStr(t storageapi.Disk_DiskType) string {
-	switch t {
-	case storageapi.Disk_NVME:
-		return "nvme"
-	case storageapi.Disk_SSD:
-		return "ssd"
-	case storageapi.Disk_HDD:
-		return "hdd"
-	default:
-		return "unknown"
-	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

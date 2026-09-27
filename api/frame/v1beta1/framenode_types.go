@@ -29,9 +29,8 @@ type NetworkSpec struct {
 	// tightening that applies isIP here would strand all three.
 	//
 	// The format is *documented and deliberately not validated*, and the
-	// MaxLength is deliberately the only bound. This field is the one node
-	// field written into a Talos machine config, so leaving it wholly
-	// unbounded was not acceptable past the freeze; but the field is named
+	// MaxLength is deliberately the only bound. Leaving it wholly unbounded
+	// was not acceptable past the freeze; but the field is named
 	// "address" while every value is a prefix, nothing in the code enforces
 	// either reading, and a pattern would freeze a decision nobody has taken.
 	// A bound cannot strand anything and can be raised later; a pattern could
@@ -68,32 +67,13 @@ type NetworkSpec struct {
 	Bond *string `json:"bond,omitempty"`
 }
 
-// DiskInfo describes a disk discovered on a node in maintenance mode.
-type DiskInfo struct {
-	Name string `json:"name"`
-	Size string `json:"size"`
-	Type string `json:"type"`
-}
-
-// NICInfo describes a network interface discovered on a node in maintenance mode.
-type NICInfo struct {
-	Name  string `json:"name"`
-	MAC   string `json:"mac"`
-	Speed string `json:"speed"`
-}
-
 // FrameNodeSpec defines the desired state of FrameNode.
 //
-// The spec-level rule below is inherited from v1alpha1 unchanged. It is one
-// of four object-level CEL rules the freeze makes permanent, and it
-// re-evaluates on every update to any part of spec — including one that only
-// changes serviceClass. Verified against the live cluster: none of the three
-// stored FrameNodes sets spec.disk, so the rule is vacuously true on all of
-// them and strands nothing.
-//
-// +kubebuilder:validation:XValidation:rule="!has(self.disk) || size(self.disk) == 0 || (has(self.network) && has(self.network.address) && size(self.network.address) > 0 && has(self.network.gateway) && size(self.network.gateway) > 0 && has(self.network.dns) && self.network.dns.size() > 0)",message="network.address, network.gateway, and at least one network.dns entry are required once disk is set"
+// It used to carry a spec-level CEL rule tying spec.disk to a complete
+// network block: the gate of the Talos provisioning path. That path is gone,
+// and spec.disk with it; none of the stored FrameNodes ever set it.
 type FrameNodeSpec struct {
-	// IP address of the node in maintenance mode.
+	// IP address of the node.
 	//
 	// Validated by CEL, not by Format. v1alpha1 carried a
 	// validation:Format=ip marker, which does nothing: `ip` is not a
@@ -117,18 +97,15 @@ type FrameNodeSpec struct {
 	// +kubebuilder:validation:XValidation:rule="isIP(self)",message="ip must be a valid IP address"
 	IP string `json:"ip"`
 
-	// Role of the node in the cluster. Empty during initial discovery.
+	// Role of the node in the cluster. Empty until classified.
 	// +kubebuilder:validation:Enum=controlplane;worker;""
 	// +optional
 	Role string `json:"role,omitempty"`
 
-	// Network configuration. Set after discovery to trigger provisioning.
+	// Network configuration, descriptive only: Frame installs machines through
+	// FrameInstall, not through FrameNode.
 	// +optional
 	Network NetworkSpec `json:"network,omitempty"`
-
-	// Disk device for Talos installation (e.g. /dev/nvme0n1). Set after discovery.
-	// +optional
-	Disk string `json:"disk,omitempty"`
 
 	// RDMAInterface names the RDMA device (e.g. ib0, mlx5_0). Its presence is
 	// projected onto the Kubernetes Node as frame.plume-labs.io/rdma=true.
@@ -148,10 +125,8 @@ type FrameNodeSpec struct {
 	// and rejected there, leaving the FrameNode permanently short of Online
 	// behind an error naming label validation rather than this field (T1).
 	//
-	// The bound is prophylactic, not a fix for an observed outage: the
-	// label-projection path has never run on this cluster — all three stored
-	// FrameNodes sit at the discovery stage with no spec.disk — and every one
-	// of them uses "rack-01", which passes. What the bound buys is that the
+	// The bound is prophylactic, not a fix for an observed outage: every
+	// stored FrameNode uses "rack-01", which passes. What the bound buys is that the
 	// failure can no longer be introduced, and after the freeze it could
 	// never be added.
 	// +optional
@@ -170,9 +145,8 @@ type FrameNodeSpec struct {
 	// the Kubernetes Node as frame.plume-labs.io/service-class and read by
 	// the inference provider's NodeSelector.
 	//
-	// Optional and deliberately undefaulted: a node is discovered before it
-	// is classified, and defaulting it would classify hardware nobody has
-	// looked at. v1alpha1's enum also admitted the empty string; that member
+	// Optional and deliberately undefaulted: defaulting it would classify
+	// hardware nobody has looked at. v1alpha1's enum also admitted the empty string; that member
 	// is gone, because absence already means unclassified. Dropping it is
 	// field-level, so ratcheting protects stored objects — and none of the
 	// three that exist uses it.
@@ -182,8 +156,9 @@ type FrameNodeSpec struct {
 
 // FrameNodeStatus defines the observed state of FrameNode.
 //
-// No status.phase (F2). The Ready condition's reason carries it: Discovered,
-// Provisioning, Online, Degraded or Offline.
+// No status.phase (F2). The Ready condition's reason carries it: Online,
+// Degraded or Offline once the node is in the cluster, or why it cannot be
+// classified yet.
 //
 // For FrameNode this is not a cosmetic removal. framenode_controller.go reads
 // Status.Phase as a state-machine *input*, not just as a report, which is why
@@ -195,22 +170,6 @@ type FrameNodeStatus struct {
 	// from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-
-	// DiscoveredHostname is the hostname reported by the node in maintenance mode.
-	// +optional
-	DiscoveredHostname string `json:"discoveredHostname,omitempty"`
-
-	// DiscoveredTalosVersion is the Talos version reported during maintenance mode discovery.
-	// +optional
-	DiscoveredTalosVersion string `json:"discoveredTalosVersion,omitempty"`
-
-	// DiscoveredDisks contains disk information from maintenance mode discovery.
-	// +optional
-	DiscoveredDisks []DiskInfo `json:"discoveredDisks,omitempty"`
-
-	// DiscoveredNICs contains network interface information from maintenance mode discovery.
-	// +optional
-	DiscoveredNICs []NICInfo `json:"discoveredNICs,omitempty"`
 
 	// Conditions represent the current state of the FrameNode resource.
 	// Ready's reason is the node's lifecycle state.
