@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { erroredLeaves, parseProxmoxHost, parseScrub, zfsFindings, zvolForVirtualOsd } from './zfs-source'
+import { erroredLeaves, parseProxmoxHost, parseScrub, zfsFindings, zfsSourceItems, zvolForVirtualOsd } from './zfs-source'
 import { pvePayload } from './testdata/proxmox-host'
 
 const NOW = Date.parse('2026-09-27T12:00:00Z')
@@ -89,5 +89,25 @@ describe('zvolForVirtualOsd', () => {
 
   it('ne devine pas sans UUID de nœud', () => {
     expect(zvolForVirtualOsd('drive-scsi2', undefined, hosts)).toBeNull()
+  })
+})
+
+describe('zfsSourceItems', () => {
+  it('remonte une erreur de la source ZFS dans le bandeau', () => {
+    expect(zfsSourceItems({ status: 'error', message: 'HTTP 502' }, NOW)).toEqual([
+      expect.objectContaining({ severity: 'warning', code: 'zfs-source-error' }),
+    ])
+  })
+
+  it('ne dit rien d-une source non configurée ni pendant le chargement', () => {
+    expect(zfsSourceItems({ status: 'unconfigured', reason: 'x' }, NOW)).toEqual([])
+    expect(zfsSourceItems(null, NOW)).toEqual([])
+  })
+
+  it('rend les constats de l-hôte quand la source répond', () => {
+    const p = pvePayload()
+    p.details[0].state = 'DEGRADED'
+    const items = zfsSourceItems({ status: 'ok', hosts: [parseProxmoxHost(p)], readAt: '' }, NOW)
+    expect(items.map((i) => i.code)).toContain('zfs-pool-health')
   })
 })

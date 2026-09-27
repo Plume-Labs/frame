@@ -159,17 +159,25 @@ func ObserveDisks(runner CommandRunner) ([]framev1beta1.ObservedDisk, error) {
 }
 
 // byIDPathFromWWN derives the /dev/disk/by-id link udev creates for a
-// disk with a World Wide Name ("wwn-" followed by the WWN lsblk reports,
-// e.g. wwn-0x5000c500deadbeef). It is computed, not read from the
-// filesystem: the agent never lists /dev/disk/by-id, so a udev rule set
-// that names the link differently makes this string point nowhere. An
-// empty WWN yields an empty path rather than a bare "wwn-" that would
-// look like a link.
+// disk's World Wide Name. It is computed, not read from the filesystem: the
+// agent never lists /dev/disk/by-id, so a udev rule set that names the link
+// differently makes this string point nowhere.
+//
+// The link's prefix depends on the transport, and the WWN's own shape says
+// which: SCSI/SATA disks report a NAA identifier ("0x5000c500…") and get
+// "wwn-0x…"; NVMe namespaces report an EUI-64/NGUID ("eui.…") or an NVMe
+// identifier ("nvme.…") and get "nvme-eui.…"/"nvme-nvme.…" — never "wwn-".
+// Any other shape yields an empty path rather than a guess, as does an empty
+// WWN (a bare "wwn-" would look like a link).
 func byIDPathFromWWN(wwn string) string {
-	if wwn == "" {
+	switch {
+	case strings.HasPrefix(wwn, "0x"):
+		return "/dev/disk/by-id/wwn-" + wwn
+	case strings.HasPrefix(wwn, "eui."), strings.HasPrefix(wwn, "nvme."):
+		return "/dev/disk/by-id/nvme-" + wwn
+	default:
 		return ""
 	}
-	return "/dev/disk/by-id/wwn-" + wwn
 }
 
 // walk calls fn on dev and every descendant, depth first, in lsblk order.

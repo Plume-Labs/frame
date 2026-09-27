@@ -10,6 +10,7 @@ import type { OsdRow } from './ceph-diagnostic'
 import { osdRange } from './ceph-diagnostic'
 import type { PoolRow, DaemonQuorum, ObjectHealth } from './ceph-pools'
 import type { DiskRow, MdArray } from './disk-inventory'
+import { duplicateSerials } from './disk-inventory'
 import type { Machine } from './machines'
 import { describeDivergence } from './storage'
 
@@ -67,6 +68,18 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
         text: `${o.name}: serial ${o.disk.serial} is listed by ${o.disk.machine}, which is not node ${o.host}`,
       })
     }
+  }
+
+  // An OSD the mgr says nothing about (pod seen, no up/in reading) is not a
+  // healthy OSD: with Prometheus up but these series missing, an empty
+  // banner would hide the absence of data.
+  const unknown = i.osds.filter((o) => o.state === 'unknown')
+  if (i.promAvailable && unknown.length > 0) {
+    out.push({
+      severity: 'warning',
+      code: 'osd-unknown',
+      text: `${unknown.length} OSD without any ceph-mgr reading: ${osdRange(unknown.map((o) => o.id))} — state unknown, not healthy`,
+    })
   }
 
   // An OSD that is up and in but holds no PG stores nothing: typically CRUSH
@@ -132,6 +145,24 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     }
   }
 
+  for (const m of i.machines) {
+    for (const d of m.inventory?.drives ?? []) {
+      if (d.serialNumber) continue
+      out.push({
+        severity: 'info',
+        code: 'disk-no-serial',
+        text: `${m.name}: disk in bay ${d.location || '?'} reported without a serial — cannot be joined to the OS or to Ceph`,
+      })
+    }
+  }
+  for (const [serial, names] of duplicateSerials(i.machines)) {
+    out.push({
+      severity: 'warning',
+      code: 'disk-serial-duplicate',
+      text: `Serial ${serial} listed by several machines: ${names.join(', ')} — joins on it are ambiguous`,
+    })
+  }
+
   if (i.frameStorageCount === 0) {
     out.push({
       severity: 'info',
@@ -156,4 +187,9 @@ export function undeclaredOsdDiskItems(machine: string, rows: DiskRow[]): Attent
       code: 'osd-disk-undeclared',
       text: `${r.osd!.name} on ${machine} ${r.bay ?? ''} (${r.serial}): ${r.byIdPath} is not in the CephCluster device list`,
     }))
+}
+
+/** The banner when the diagnostic read itself failed: never an empty list. */
+export function unreadableDiagnosticItems(message: string): AttentionItem[] {
+  return [{ severity: 'warning', code: 'diagnostic-unreadable', text: `Storage diagnostic unreadable: ${message} — state unknown` }]
 }

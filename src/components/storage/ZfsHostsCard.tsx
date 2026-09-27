@@ -36,13 +36,15 @@ export function ZfsHostsCard({ result }: { result: ZfsSourceResult | null }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 text-xs font-mono">
-        {!result || result.status === 'unconfigured' ? (
+        {!result ? (
+          <p className="text-muted-foreground">Reading the Proxmox source…</p>
+        ) : result.status === 'unconfigured' ? (
           <p className="text-muted-foreground">
-            Source not configured{result?.status === 'unconfigured' ? ` — ${result.reason}` : ''}. The pools under the VM
-            nodes’ OSDs are not shown until a read-only Proxmox API reader is deployed (Settings → pveReader).
+            Source not configured — {result.reason}. The pools under the VM nodes’ OSDs are not shown until the
+            read-only Proxmox API reader is deployed (deploy/storage/pve-reader.yaml, Settings → pveReader).
           </p>
         ) : result.status === 'error' ? (
-          <p className="text-destructive">Proxmox reader failed: {result.message}</p>
+          <p className="text-destructive">Proxmox reader failed: {result.message} — pool state unknown.</p>
         ) : (
           result.hosts.map((h) => (
             <div key={h.host} className="space-y-3">

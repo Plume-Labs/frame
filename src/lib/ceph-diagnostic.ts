@@ -70,6 +70,16 @@ export const CEPH_DIAG_QUERIES = {
 export type CephDiagQueryKey = keyof typeof CEPH_DIAG_QUERIES
 export type PromSnapshot = Partial<Record<CephDiagQueryKey, PromSample[]>>
 
+/**
+ * A snapshot in which not a single query answered is no snapshot: the SDK
+ * turns it into null, "Prometheus unreachable". One answered query (even an
+ * empty vector) is enough to say Prometheus is up; the missing keys then read
+ * as unknown in the builders.
+ */
+export function promAnswered<T extends object>(snapshot: T): T | null {
+  return Object.keys(snapshot).length === 0 ? null : snapshot
+}
+
 /** What the SDK reads off one rook-ceph-osd pod — enough to say "unstable". */
 export interface OsdPod {
   osdId: number
@@ -177,6 +187,8 @@ export type OsdDiskLink =
       osPath: string | null
       /** The machine found by serial is not the OSD's node: never silently accepted. */
       hostConflict: boolean
+      /** Every machine listing this serial, when more than one does (else empty). */
+      duplicateOn: string[]
     }
   | { kind: 'virtual'; serial: string; drive: string }
   | { kind: 'unknown'; reason: string }
@@ -275,21 +287,30 @@ export function linkOsdDisk(deviceIds: string[], host: string, machines: Machine
   }
   const serial = serialFromDeviceId(id, known)
 
-  for (const m of machines) {
-    const bmc = (m.inventory?.drives ?? []).find((d) => d.serialNumber === serial)
-    const os = (m.storage?.observed ?? []).find((d) => d.serialNumber === serial)
-    if (!bmc && !os) continue
-    return {
-      kind: 'physical',
-      serial,
-      machine: m.name,
-      bay: bmc?.location || null,
-      model: bmc?.model || null,
-      osPath: os?.path ?? null,
-      hostConflict: !!m.nodeRef && m.nodeRef !== host,
-    }
+  const holders = machines.filter(
+    (m) =>
+      (m.inventory?.drives ?? []).some((d) => d.serialNumber === serial) ||
+      (m.storage?.observed ?? []).some((d) => d.serialNumber === serial),
+  )
+  // Two machines claiming one serial is a data problem (a cloned inventory,
+  // a BMC reporting a placeholder): the OSD's own node wins if it is one of
+  // them, and the duplicate is named rather than silently resolved.
+  const m = holders.find((h) => h.nodeRef === host) ?? holders[0]
+  if (!m) {
+    return { kind: 'physical', serial, machine: null, bay: null, model: null, osPath: null, hostConflict: false, duplicateOn: [] }
   }
-  return { kind: 'physical', serial, machine: null, bay: null, model: null, osPath: null, hostConflict: false }
+  const bmc = (m.inventory?.drives ?? []).find((d) => d.serialNumber === serial)
+  const os = (m.storage?.observed ?? []).find((d) => d.serialNumber === serial)
+  return {
+    kind: 'physical',
+    serial,
+    machine: m.name,
+    bay: bmc?.location || null,
+    model: bmc?.model || null,
+    osPath: os?.path ?? null,
+    hostConflict: !!m.nodeRef && m.nodeRef !== host,
+    duplicateOn: holders.length > 1 ? holders.map((h) => h.name) : [],
+  }
 }
 
 /** An OSD restarted within this window still counts as unstable. */

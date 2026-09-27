@@ -105,6 +105,7 @@ export function OsdTable({
                             : ''}
                           {o.disk.model ? ` · ${o.disk.model}` : ''}
                           {o.disk.hostConflict ? ' · WARNING: that machine is not this OSD’s node' : ''}
+                          {o.disk.duplicateOn.length ? ` · DUPLICATE serial, listed by ${o.disk.duplicateOn.join(', ')}` : ''}
                         </div>
                       )}
                       <div className="text-muted-foreground">

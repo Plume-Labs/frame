@@ -6,6 +6,7 @@ import {
   osdRange,
   parseDeviceIds,
   podInstability,
+  promAnswered,
   serialFromDeviceId,
   toOsdPod,
 } from './ceph-diagnostic'
@@ -155,5 +156,31 @@ describe('osdRange', () => {
   it('compresse une suite contiguë et liste le reste', () => {
     expect(osdRange([6, 3, 4, 5])).toBe('osd.3-6')
     expect(osdRange([1, 4])).toBe('osd.1, osd.4')
+  })
+})
+
+describe('promAnswered', () => {
+  // WAL replay: the pod runs, every query fails. That is "unreachable", not
+  // an empty and therefore healthy-looking snapshot.
+  it('rend null quand aucune requête n-a répondu', () => {
+    expect(promAnswered({})).toBeNull()
+  })
+
+  it('garde un instantané dès qu-une requête a répondu, même vide', () => {
+    expect(promAnswered({ osdUp: [] })).toEqual({ osdUp: [] })
+  })
+})
+
+describe('doublon de série entre machines', () => {
+  it('préfère la machine du nœud de l-OSD et nomme le doublon', () => {
+    const other = hwMachine()
+    other.name = 'srv-clone'
+    other.nodeRef = 'node-other'
+    const link = linkOsdDisk(['HITACHI_X_SER-HDD3'], HW_NODE, [other, hwMachine()])
+    expect(link).toMatchObject({ kind: 'physical', machine: HW_MACHINE, hostConflict: false, duplicateOn: ['srv-clone', HW_MACHINE] })
+  })
+
+  it('ne signale aucun doublon quand une seule machine a la série', () => {
+    expect(linkOsdDisk(['HITACHI_X_SER-HDD3'], HW_NODE, [hwMachine()])).toMatchObject({ duplicateOn: [] })
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { attentionItems, undeclaredOsdDiskItems, type AttentionInputs } from './storage-attention'
+import { attentionItems, undeclaredOsdDiskItems, unreadableDiagnosticItems, type AttentionInputs } from './storage-attention'
 import type { DiskRow } from './disk-inventory'
 import { buildOsdRows } from './ceph-diagnostic'
 import { buildPoolRows, daemonQuorum, objectHealth, setFlags } from './ceph-pools'
@@ -132,5 +132,46 @@ describe('disque d-OSD absent de la liste du CephCluster', () => {
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({ code: 'osd-disk-undeclared', severity: 'warning' })
     expect(items[0].text).toContain('osd.4 on srv-hw 2I:6:7 (SER-HDD4)')
+  })
+})
+
+describe('absence de données', () => {
+  // Prometheus answers but the ceph-mgr series are gone (mgr restarting,
+  // scrape broken): the OSDs are only known from their pods.
+  it('signale les OSD sans aucune lecture du mgr au lieu d-un bandeau vide', () => {
+    const prom = healthyProm()
+    prom.osdMeta = []
+    prom.osdUp = []
+    prom.osdIn = []
+    const items = attentionItems(inputs(prom))
+    const item = items.find((a) => a.code === 'osd-unknown')
+    expect(item?.text).toContain('7 OSD without any ceph-mgr reading: osd.0-6')
+    expect(items.length).toBeGreaterThan(0)
+  })
+
+  it('ne double pas l-alerte Prometheus injoignable par une ligne par OSD inconnu', () => {
+    const prom = healthyProm()
+    prom.osdUp = []
+    const items = attentionItems(inputs(prom, healthyPods(), { promAvailable: false }))
+    expect(items.map((a) => a.code)).toContain('prometheus-unavailable')
+    expect(items.map((a) => a.code)).not.toContain('osd-unknown')
+  })
+
+  it('rend une ligne quand la lecture du diagnostic échoue', () => {
+    expect(unreadableDiagnosticItems('HTTP 503')).toEqual([
+      { severity: 'warning', code: 'diagnostic-unreadable', text: 'Storage diagnostic unreadable: HTTP 503 — state unknown' },
+    ])
+  })
+
+  it('nomme un disque sans série et un doublon de série', () => {
+    const m = hwMachine()
+    m.storage!.divergences = []
+    m.inventory!.drives.push({ ...m.inventory!.drives[0], serialNumber: '', location: '2I:6:9' })
+    const clone = hwMachine()
+    clone.name = 'srv-clone'
+    clone.storage!.divergences = []
+    const codes = attentionItems(inputs(healthyProm(), healthyPods(), { machines: [m, clone] })).map((a) => a.text)
+    expect(codes.some((t) => t.includes('bay 2I:6:9 reported without a serial'))).toBe(true)
+    expect(codes.some((t) => t.startsWith('Serial SER-HDD3 listed by several machines: srv-hw, srv-clone'))).toBe(true)
   })
 })

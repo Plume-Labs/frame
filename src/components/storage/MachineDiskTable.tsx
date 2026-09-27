@@ -6,6 +6,7 @@ import { NOT_COLLECTED } from '@/lib/storage'
 function osCell(d: DiskRow): string {
   if (d.presence === 'bmc-only') return 'ABSENT'
   if (d.presence === 'os-unreported') return 'no agent report'
+  if (d.presence === 'no-serial') return 'cannot be joined (no serial)'
   return `${d.osPath ?? '—'} ${d.occupancy ?? ''}`.trim()
 }
 
@@ -42,15 +43,19 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
         </thead>
         <tbody>
           {rows.map((d) => {
-            const diskClaims = claims.filter((c) => c.serial === d.serial)
+            const diskClaims = d.serial ? claims.filter((c) => c.serial === d.serial) : []
+            const key = `${d.bay ?? ''}/${d.serial}`
             return (
-              <Fragment key={d.serial}>
+              <Fragment key={key}>
                 <tr
-                  className={`border-t border-border cursor-pointer hover:bg-muted/50 ${d.presence === 'bmc-only' || d.presence === 'os-only' ? 'text-warning' : ''}`}
-                  onClick={() => setOpen(open === d.serial ? null : d.serial)}
+                  className={`border-t border-border cursor-pointer hover:bg-muted/50 ${d.presence !== 'both' && d.presence !== 'os-unreported' ? 'text-warning' : ''}`}
+                  onClick={() => setOpen(open === key ? null : key)}
                 >
                   <td className="py-1 pr-3">{d.bay ?? '—'}</td>
-                  <td className="pr-3">{d.serial}</td>
+                  <td className="pr-3">
+                    {d.serial || 'serial unknown'}
+                    {d.duplicateOn.length ? ` (also on ${d.duplicateOn.join(', ')})` : ''}
+                  </td>
                   <td className="pr-3">{d.model ?? '—'}</td>
                   <td className="pr-3 text-right">{d.sizeGB ? `${d.sizeGB} GB` : '—'}</td>
                   <td className="pr-3 font-bold">{d.role}</td>
@@ -65,7 +70,7 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                   <td className="pr-3 text-muted-foreground">{NOT_COLLECTED}</td>
                   <td>{io(d)}</td>
                 </tr>
-                {open === d.serial && (
+                {open === key && (
                   <tr className="bg-secondary/30">
                     <td colSpan={10} className="p-3 space-y-1">
                       <div>

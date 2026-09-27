@@ -56,8 +56,8 @@ export function MachineDisksPanel() {
   const selectedClaims = selected ? claims.filter((c) => c.machineName === selected.name) : []
   const diag = useStorageDiagnostic(null)
   const diskRows = useMemo(
-    () => (selected ? buildDiskRows(selected, diag.osds, diag.io, diag.cephDevices) : []),
-    [selected, diag.osds, diag.io, diag.cephDevices],
+    () => (selected ? buildDiskRows(selected, diag.osds, diag.io, diag.cephDevices, machines) : []),
+    [selected, diag.osds, diag.io, diag.cephDevices, machines],
   )
   const vmOsds = osdsWithoutMachine(diag.osds, machines)
   const now = Date.now()

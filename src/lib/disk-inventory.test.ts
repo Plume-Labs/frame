@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, diskRole, ioIndex, mdArrays, osdsWithoutMachine } from './disk-inventory'
+import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, declaredInCeph, diskRole, duplicateSerials, ioIndex, mdArrays, osdsWithoutMachine } from './disk-inventory'
 import { buildOsdRows } from './ceph-diagnostic'
 import { healthyPods, healthyProm, hwMachine, setSample, HW_NODE } from './testdata/ceph-cluster'
 
@@ -155,5 +155,39 @@ describe('lot 2 — identité et appartenance publiées par l-agent et le BMC', 
     m.inventory!.storageControllers = [{ location: 'Slot 0', model: 'P440ar', firmware: '7.00', health: 'OK' }]
     expect(controllerLines(m)).toEqual(['Slot 0 · P440ar · fw 7.00 · health OK · cache battery not reported'])
     expect(controllerLines(hwMachine())).toEqual([])
+  })
+})
+
+describe('disques non joignables', () => {
+  it('garde une ligne pour un disque BMC sans série', () => {
+    const m = hwMachine()
+    m.inventory!.drives.push({ ...m.inventory!.drives[0], serialNumber: '', location: '2I:6:9' })
+    const row = diskRows(m).find((d) => d.bay === '2I:6:9')
+    expect(row).toMatchObject({ serial: '', presence: 'no-serial', role: 'serial unknown — cannot be joined' })
+  })
+
+  it('nomme les autres machines qui portent la même série', () => {
+    const clone = hwMachine()
+    clone.name = 'srv-clone'
+    const osds = buildOsdRows({ prom: healthyProm(), pods: healthyPods(), machines: [hwMachine()], now: NOW })
+    const rows = buildDiskRows(hwMachine(), osds, new Map(), [], [hwMachine(), clone])
+    expect(rows.find((d) => d.serial === 'SER-HDD3')?.duplicateOn).toEqual(['srv-clone'])
+    expect(duplicateSerials([hwMachine()]).size).toBe(0)
+  })
+})
+
+describe('declaredInCeph', () => {
+  const p = '/dev/disk/by-id/wwn-0x5000c500deadbe04'
+  it('dit non seulement si toute la liste est en by-id WWN/NVMe', () => {
+    expect(declaredInCeph(p, ['/dev/disk/by-id/wwn-0x5000c500deadbe03', '/dev/disk/by-id/nvme-eui.01'])).toBe(false)
+  })
+
+  it('ne tranche pas quand la liste nomme un disque autrement (sdb, scsi-…)', () => {
+    expect(declaredInCeph(p, ['/dev/disk/by-id/wwn-0x5000c500deadbe03', 'sdb'])).toBeNull()
+    expect(declaredInCeph(p, ['/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2'])).toBeNull()
+  })
+
+  it('dit oui sur une égalité exacte', () => {
+    expect(declaredInCeph(p, ['sdb', p])).toBe(true)
   })
 })

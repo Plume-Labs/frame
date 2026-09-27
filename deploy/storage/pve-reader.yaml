@@ -1,6 +1,7 @@
 # Read-only Proxmox VE API reader — the source of the hypervisor's ZFS pools,
-# disks and zvols on the Storage screen (console integration `pveReader`,
-# selector app.kubernetes.io/name=frame-pve-reader, port 8080).
+# disks and zvols on the Storage screen (console integration `pveReader`:
+# namespace frame-pve-reader, selector app.kubernetes.io/name=frame-pve-reader,
+# port 8080).
 #
 # Why a pod: the console only talks to the Kubernetes apiserver, and the
 # apiserver's pod proxy cannot carry a Proxmox token. This nginx holds the
@@ -8,6 +9,20 @@
 # on the handful of paths the console reads — nothing else — so the token
 # never reaches a browser and no other Proxmox endpoint is reachable through
 # it. Nothing is installed on the hypervisor.
+#
+# Guards, each exercised by deploy/storage/test-pve-reader.sh (podman, this
+# very file):
+#   - raw request URI with an encoded dot/slash/backslash, a dot segment or an
+#     empty segment → 403, before any location is chosen;
+#   - only whitelisted paths match, and the upstream URI is rebuilt from the
+#     normalised `$uri` (query string dropped), never forwarded raw;
+#   - only GET (and HEAD) — anything else 403;
+#   - a VM's config comes back reduced to `smbios1` and its disk slots
+#     (scsiN/sataN/virtioN/ideN): network, cloud-init, args, hookscripts and
+#     the rest never leave the pod (njs, pve-reader.js below).
+#
+# It lives in its own namespace so the console's pod-proxy grant (Role below)
+# covers this pod and nothing else — frame-system is not widened.
 #
 # Prerequisites, created by hand (values are site-specific, never committed):
 #
@@ -18,52 +33,127 @@
 #     pveum acl modify / --tokens 'frame-reader@pve!console' --roles PVEAuditor
 #
 #   in the cluster:
-#     kubectl -n frame-system create secret generic frame-pve-reader \
+#     kubectl apply -f deploy/storage/pve-reader.yaml      # namespace first; the pod waits for the secret
+#     kubectl -n frame-pve-reader create secret generic frame-pve-reader \
 #       --from-literal=PVE_HOST=<host address> \
 #       --from-literal=PVE_TLS_NAME=<node name on the Proxmox certificate> \
 #       --from-literal=PVE_TOKEN='frame-reader@pve!console=<token secret>'
-#     kubectl -n frame-system create configmap frame-pve-ca \
+#     kubectl -n frame-pve-reader create configmap frame-pve-ca \
 #       --from-file=pve-root-ca.pem=<copy of /etc/pve/pve-root-ca.pem>
-#     kubectl apply -f deploy/storage/pve-reader.yaml
+#     PVE_HOST=<host address> deploy/storage/pve-reader-netpol.sh | kubectl apply -f -
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: frame-pve-reader
+  labels:
+    app.kubernetes.io/part-of: frame
+    pod-security.kubernetes.io/enforce: restricted
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: frame-pve-reader-nginx
-  namespace: frame-system
+  namespace: frame-pve-reader
   labels:
     app.kubernetes.io/name: frame-pve-reader
     app.kubernetes.io/part-of: frame
 data:
-  # Rendered by the image's envsubst step at start: only ${PVE_*} are
-  # substituted, nginx's own $variables are left alone.
+  nginx.conf: |
+    load_module modules/ngx_http_js_module.so;
+    worker_processes 1;
+    error_log /dev/stderr notice;
+    pid /tmp/nginx.pid;
+    events { worker_connections 256; }
+    http {
+      proxy_temp_path /tmp/proxy_temp;
+      client_body_temp_path /tmp/client_temp;
+      fastcgi_temp_path /tmp/fastcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      access_log /dev/stdout;
+      default_type application/json;
+      server_tokens off;
+      js_path /etc/nginx/njs;
+      js_import pve from pve-reader.js;
+      include /etc/nginx/conf.d/*.conf;
+    }
+  # The image's entrypoint renders this into /etc/nginx/conf.d/ with
+  # `envsubst` restricted by NGINX_ENVSUBST_FILTER=^PVE_ (set on the
+  # container): only ${PVE_HOST}, ${PVE_TLS_NAME} and ${PVE_TOKEN} are
+  # substituted; nginx's own $uri, $request_uri… are left as they are.
   default.conf.template: |
+    upstream pve {
+      server ${PVE_HOST}:8006;
+    }
     server {
       listen 8080;
-      server_tokens off;
+
+      # Refuse, on the raw URI, anything normalisation could turn into another
+      # path: encoded '.', '/', '\', a literal backslash (\x5c), dot segments
+      # ("/." — written [.] so no escape is left to nginx's string parser),
+      # empty segments.
+      if ($request_uri ~* "(%2e|%2f|%5c|\x5c|/[.]|//)") { return 403; }
+
+      proxy_set_header Authorization "PVEAPIToken=${PVE_TOKEN}";
+      proxy_set_header Cookie "";
+      proxy_set_header Host ${PVE_TLS_NAME};
+      proxy_ssl_verify on;
+      proxy_ssl_server_name on;
+      proxy_ssl_name ${PVE_TLS_NAME};
+      proxy_ssl_trusted_certificate /etc/pve-ca/pve-root-ca.pem;
+      subrequest_output_buffer_size 256k;
 
       location = /healthz { return 200 "ok\n"; }
 
-      # The only paths the console reads (src/lib/frame-sdk.ts pveReaderSource).
-      location ~ "^/api2/json/nodes(/[A-Za-z0-9.-]+/(disks/zfs(/[A-Za-z0-9._-]+)?|disks/list|qemu(/[0-9]+/config)?|storage(/[A-Za-z0-9._-]+/content)?))?$" {
+      # A VM's config, reduced to smbios1 and its disk slots (pve-reader.js).
+      location ~ "^/api2/json/nodes/[A-Za-z0-9.-]+/qemu/[0-9]+/config$" {
         limit_except GET { deny all; }
-        proxy_set_header Authorization "PVEAPIToken=${PVE_TOKEN}";
-        proxy_set_header Cookie "";
-        proxy_ssl_verify on;
-        proxy_ssl_server_name on;
-        proxy_ssl_name ${PVE_TLS_NAME};
-        proxy_ssl_trusted_certificate /etc/pve-ca/pve-root-ca.pem;
-        proxy_pass https://${PVE_HOST}:8006;
+        js_content pve.qemuConfig;
+      }
+
+      # The other paths the console reads (src/lib/frame-sdk.ts pveReaderSource).
+      location ~ "^/api2/json/nodes(/[A-Za-z0-9.-]+/(disks/zfs(/[A-Za-z0-9._-]+)?|disks/list|qemu|storage(/[A-Za-z0-9._-]+/content)?))?$" {
+        limit_except GET { deny all; }
+        proxy_pass https://pve$uri;
+      }
+
+      # Only reachable from pve-reader.js; the prefix is stripped, the rest
+      # was already matched by the whitelist above.
+      location /__pve/ {
+        internal;
+        rewrite ^/__pve(/.*)$ $1 break;
+        proxy_pass https://pve;
       }
 
       location / { return 403; }
     }
+  pve-reader.js: |
+    // Fetch a VM config and hand back only what the console joins on.
+    // Plain ES5 on purpose: the image's njs rejects for..of.
+    var DISK_SLOT = /^(scsi|sata|virtio|ide)[0-9]+$/;
+    function qemuConfig(r) {
+      r.subrequest('/__pve' + r.uri, { method: 'GET' }, function (res) {
+        if (res.status !== 200) { r.return(res.status); return; }
+        var cfg;
+        try { cfg = JSON.parse(res.responseText).data || {}; } catch (e) { r.return(502); return; }
+        var keys = Object.keys(cfg);
+        var out = {};
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          if (k === 'smbios1' || DISK_SLOT.test(k)) out[k] = cfg[k];
+        }
+        r.headersOut['Content-Type'] = 'application/json';
+        r.return(200, JSON.stringify({ data: out }));
+      });
+    }
+    export default { qemuConfig };
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frame-pve-reader
-  namespace: frame-system
+  namespace: frame-pve-reader
   labels:
     app.kubernetes.io/name: frame-pve-reader
     app.kubernetes.io/part-of: frame
@@ -85,10 +175,14 @@ spec:
           type: RuntimeDefault
       containers:
         - name: nginx
-          image: docker.io/nginxinc/nginx-unprivileged:1.27-alpine
+          # nginxinc/nginx-unprivileged:1.27-alpine (nginx 1.27.5, njs module included)
+          image: docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48
           ports:
             - containerPort: 8080
               name: http
+          env:
+            - name: NGINX_ENVSUBST_FILTER
+              value: "^PVE_"
           envFrom:
             - secretRef:
                 name: frame-pve-reader
@@ -104,19 +198,79 @@ spec:
               memory: 64Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           volumeMounts:
-            - name: template
-              mountPath: /etc/nginx/templates
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: config
+              mountPath: /etc/nginx/templates/default.conf.template
+              subPath: default.conf.template
+              readOnly: true
+            - name: config
+              mountPath: /etc/nginx/njs/pve-reader.js
+              subPath: pve-reader.js
               readOnly: true
             - name: ca
               mountPath: /etc/pve-ca
               readOnly: true
+            # The entrypoint writes the rendered template here; nginx writes
+            # its pid and temp files under /tmp. Everything else is read-only.
+            - name: rendered
+              mountPath: /etc/nginx/conf.d
+            - name: tmp
+              mountPath: /tmp
       volumes:
-        - name: template
+        - name: config
           configMap:
             name: frame-pve-reader-nginx
         - name: ca
           configMap:
             name: frame-pve-ca
+        - name: rendered
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+# The console reaches the reader through the apiserver's pod proxy, as the
+# impersonated user. Read-only, this namespace only — the same grant as the
+# six observability namespaces in
+# deploy/kubernetes/containment/rbac-integration-proxy.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: frame-pve-reader
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-control-pod-proxy-read
+  namespace: frame-pve-reader
+  labels:
+    app.kubernetes.io/part-of: cluster-control-containment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-control-pod-proxy-read
+subjects:
+  - kind: Group
+    name: "frame:viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:operators"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "frame:admins"
+    apiGroup: rbac.authorization.k8s.io

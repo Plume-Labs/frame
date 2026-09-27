@@ -423,3 +423,30 @@ Upgrading an existing install:
    kustomize `apply` never deletes what it no longer renders. Left behind,
    each still declares `conversion.strategy: Webhook` pointing at a
    `/convert` that no longer knows the kind.
+
+## 2026-09-27 — Storage diagnostic fields (FrameMachine)
+
+`status.storage.observed[]` gains `wwn`, `byIdPath`, `model`, `rotational`,
+`mountPoint`, `fsType` and `members`, and its `occupancy` enum gains
+`md-member` and `zfs-member`. `status.inventory.drives[]` gains `firmware`,
+`rotationSpeedRPM`, `linkSpeedMbps`, `temperatureCelsius`, `powerOnHours`
+and `ssdEnduranceUsedPercent`; `status.inventory.storageControllers[]` is
+new.
+
+**Order matters: the CRD first, then the node agent.** The new fields are
+additive and an old CRD would merely prune them, but the enum is not: a new
+agent that publishes `occupancy: md-member` against the old CRD has its
+whole `status.storage` write rejected (`Unsupported value`), so the
+machine's disk list stops updating and `observedAt` freezes — on every node
+with an md or ZFS member, which on a typical host is the system disk.
+
+1. Apply the new CRD (`helm upgrade` renders it from `templates/crds.yaml`;
+   with kustomize, `kubectl apply -f config/crd/bases/frame.plume-labs.io_framemachines.yaml`).
+   Check it took: `kubectl get crd framemachines.frame.plume-labs.io -o jsonpath='{..occupancy.enum}'`
+   lists `md-member` and `zfs-member`.
+2. Then roll out the manager and the node agent DaemonSet.
+3. Rolling back the agent alone is safe; rolling back the CRD while a new
+   agent still runs brings the rejection back — roll the agent back first.
+
+FrameDiskClaim refuses both new occupancies, as it refuses anything that is
+not `free`.

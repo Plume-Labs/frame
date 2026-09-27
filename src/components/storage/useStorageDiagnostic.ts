@@ -16,8 +16,8 @@ import {
   type PoolRow,
 } from '@/lib/ceph-pools'
 import { buildDiskRows, ioIndex, mdArrays, type DiskIo, type MdArray } from '@/lib/disk-inventory'
-import { attentionItems, undeclaredOsdDiskItems, type AttentionItem } from '@/lib/storage-attention'
-import { zfsFindings, type ZfsSourceResult } from '@/lib/zfs-source'
+import { attentionItems, undeclaredOsdDiskItems, unreadableDiagnosticItems, type AttentionItem } from '@/lib/storage-attention'
+import { zfsSourceItems, type ZfsSourceResult } from '@/lib/zfs-source'
 import { useLiveResource } from '@/hooks/useLiveResource'
 
 const frame = createFrameClient()
@@ -74,7 +74,7 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
     const cephDevices = raw?.cephDevices ?? []
     const extra = [
       ...machines.flatMap((m) => undeclaredOsdDiskItems(m.name, buildDiskRows(m, osds, io, cephDevices))),
-      ...(zfs?.status === 'ok' ? zfs.hosts.flatMap((h) => zfsFindings(h, now)) : []),
+      ...zfsSourceItems(zfs, now),
     ]
     return {
       loading: state.phase === 'loading',
@@ -107,7 +107,9 @@ export function useStorageDiagnostic(frameStorageCount: number | null): StorageD
             frameStorageCount,
             extra,
           })
-        : [],
+        : state.phase === 'error'
+          ? unreadableDiagnosticItems(state.message)
+          : [],
       reload,
     }
   }, [raw, machines, zfs, frameStorageCount, state, reload])

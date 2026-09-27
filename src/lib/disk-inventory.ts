@@ -15,7 +15,7 @@ import type { Machine, DriveInfo, ObservedDisk } from './machines'
 import type { OsdRow, PromSample } from './ceph-diagnostic'
 
 /** `os-unreported`: the BMC lists it and the node agent has never published — no verdict. */
-export type DiskPresence = 'both' | 'bmc-only' | 'os-only' | 'os-unreported'
+export type DiskPresence = 'both' | 'bmc-only' | 'os-only' | 'os-unreported' | 'no-serial'
 
 export interface DiskIo {
   utilPct: number | null
@@ -55,6 +55,8 @@ export interface DiskRow {
    * device and lets Rook pick).
    */
   declaredInCeph: boolean | null
+  /** Other machines whose inventory carries the same serial (empty normally). */
+  duplicateOn: string[]
 }
 
 /** What a disk is for, in the words an operator uses. */
@@ -66,6 +68,7 @@ export function diskRole(
 ): string {
   if (osd) return `${osd.name}${osd.deviceClass ? ` (${osd.deviceClass})` : ''}`
   if (presence === 'bmc-only') return 'not presented to the OS'
+  if (presence === 'no-serial') return 'serial unknown — cannot be joined'
   const members = (detail.members ?? []).join(', ')
   switch (occupancy) {
     case 'ceph-osd':
@@ -121,6 +124,7 @@ export function buildDiskRows(
   osds: OsdRow[],
   io: Map<string, DiskIo>,
   cephDevices: string[] = [],
+  allMachines: Machine[] = [],
 ): DiskRow[] {
   const bmc: DriveInfo[] = machine.inventory?.drives ?? []
   const os: ObservedDisk[] = machine.storage?.observed ?? []
@@ -159,11 +163,69 @@ export function buildDiskRows(
       linkSpeedMbps: b?.linkSpeedMbps || null,
       temperatureCelsius: b?.temperatureCelsius || null,
       powerOnHours: b?.powerOnHours || null,
-      declaredInCeph: o?.byIdPath && cephDevices.length > 0 ? cephDevices.includes(o.byIdPath) : null,
+      declaredInCeph: declaredInCeph(o?.byIdPath, cephDevices),
+      duplicateOn: allMachines
+        .filter((m) => m.name !== machine.name && machineSerials(m).includes(serial))
+        .map((m) => m.name),
     }
   })
+  // A BMC drive with no serial cannot be joined to anything: it still gets a
+  // row, so it cannot vanish from the screen.
+  bmc
+    .filter((d) => !d.serialNumber)
+    .forEach((d) =>
+      rows.push({
+        ...emptyRow(),
+        bay: d.location || null,
+        model: d.model || null,
+        sizeGB: d.sizeGB || null,
+        protocol: d.protocol || null,
+        mediaType: d.mediaType || null,
+        bmcHealth: d.health || 'unknown',
+        bmcReasons: (d.statusReasons ?? []).filter((r) => r && r !== 'None'),
+        presence: 'no-serial',
+        role: diskRole(null, null, 'no-serial'),
+      }),
+    )
   // Bay order is the order a human walks the chassis in; disks with no bay last.
   return rows.sort((a, b) => (a.bay ?? '~').localeCompare(b.bay ?? '~') || a.serial.localeCompare(b.serial))
+}
+
+function emptyRow(): DiskRow {
+  return {
+    serial: '', bay: null, model: null, sizeGB: null, protocol: null, mediaType: null, bmcHealth: null,
+    bmcReasons: [], osPath: null, occupancy: null, presence: 'no-serial', osd: null, role: '',
+    io: { utilPct: null, awaitMs: null }, wwn: null, byIdPath: null, mountPoint: null, members: [],
+    firmware: null, rotationSpeedRPM: null, linkSpeedMbps: null, temperatureCelsius: null, powerOnHours: null,
+    declaredInCeph: null, duplicateOn: [],
+  }
+}
+
+function machineSerials(m: Machine): string[] {
+  return [...(m.inventory?.drives ?? []), ...(m.storage?.observed ?? [])].map((d) => d.serialNumber).filter(Boolean)
+}
+
+/** Serials listed by more than one machine, with the machines that list them. */
+export function duplicateSerials(machines: Machine[]): Map<string, string[]> {
+  const by = new Map<string, string[]>()
+  for (const m of machines) {
+    for (const s of new Set(machineSerials(m))) by.set(s, [...(by.get(s) ?? []), m.name])
+  }
+  return new Map([...by].filter(([, ms]) => ms.length > 1))
+}
+
+const COMPARABLE_BY_ID = /^\/dev\/disk\/by-id\/(wwn|nvme)-/
+
+/**
+ * Whether a disk's WWN by-id path is declared in the CephCluster device list.
+ * A "no" is only said when it can be: every declared device is itself a
+ * WWN/NVMe by-id path. A list naming `sdb`, `/dev/sdb` or `scsi-…` could
+ * designate this very disk under another name, so it gives no verdict.
+ */
+export function declaredInCeph(byIdPath: string | undefined, cephDevices: string[]): boolean | null {
+  if (!byIdPath || cephDevices.length === 0) return null
+  if (cephDevices.includes(byIdPath)) return true
+  return cephDevices.every((d) => COMPARABLE_BY_ID.test(d)) ? false : null
 }
 
 /** The chassis-level disk temperature sensor, the only one this iLO reports. */

@@ -322,4 +322,15 @@ func TestByIDPathFromWWN(t *testing.T) {
 	if got := byIDPathFromWWN("0x5000c500deadbeef"); got != "/dev/disk/by-id/wwn-0x5000c500deadbeef" {
 		t.Errorf("got %q", got)
 	}
+	// NVMe: udev names the link nvme-<wwn>, never wwn-<wwn>.
+	if got := byIDPathFromWWN("eui.0000000000000001"); got != "/dev/disk/by-id/nvme-eui.0000000000000001" {
+		t.Errorf("NVMe EUI gave %q", got)
+	}
+	if got := byIDPathFromWWN("nvme.1234-5678"); got != "/dev/disk/by-id/nvme-nvme.1234-5678" {
+		t.Errorf("NVMe id gave %q", got)
+	}
+	// A shape this function does not know gives no path, not a guess.
+	if got := byIDPathFromWWN("naa.5000c500deadbeef"); got != "" {
+		t.Errorf("unknown WWN shape gave %q, want empty", got)
+	}
 }

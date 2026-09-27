@@ -36,7 +36,7 @@ import {
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
 import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
-import { CEPH_DIAG_QUERIES, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
+import { CEPH_DIAG_QUERIES, promAnswered, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
 import { parseProxmoxHost, type PveHostPayload, type ZfsSource, type ZfsSourceResult } from './zfs-source'
 import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
 
@@ -995,7 +995,7 @@ function proxyFetch(url: string, init: RequestInit = {}): Promise<Response> {
  * `ZfsSource` over the Proxmox API, reached through the pveReader
  * integration: a reader pod that holds a read-only (PVEAuditor) API token
  * and forwards GETs on the disk, qemu-config and storage-content paths only
- * (deploy/samples/pve-reader/). The token never reaches the browser.
+ * (deploy/storage/pve-reader.yaml). The token never reaches the browser.
  */
 export function pveReaderSource(): ZfsSource {
   return {
@@ -1734,7 +1734,9 @@ class ClusterClient {
 
   /**
    * Instant PromQL, several queries at once, by key. Null when Prometheus is
-   * not deployed — distinct from a query that returned nothing (an empty
+   * not deployed, or runs but answered none of the queries (WAL replay, a
+   * proxy error): an all-failed read is "Prometheus unreachable", never an
+   * empty snapshot that would read as "nothing wrong". Otherwise distinct from a query that returned nothing (an empty
    * list) or failed (the key is absent), so a caller can tell "no
    * monitoring" from "no such series" from "that one query broke".
    */
@@ -1762,7 +1764,7 @@ class ClusterClient {
         }
       }),
     )
-    return out
+    return promAnswered(out)
   }
 
   /**

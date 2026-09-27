@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -314,48 +315,80 @@ func applySnapshot(status *framev1beta1.FrameMachineStatus, snap *redfish.Snapsh
 	status.LastProbeAt = &now
 }
 
+// Inventory bounds, mirrored from the kubebuilder markers on
+// api/frame/v1beta1/framemachine_types.go. The apiserver rejects a status
+// update whole when one list is one item too long or one BMC string one
+// character too long — and a BMC controls both. mapInventory therefore caps
+// every list and clips every string to what the CRD accepts, so an odd
+// firmware string costs its own tail, not the machine's entire status.
+const (
+	maxProcessors         = 8
+	maxMemoryModules      = 48
+	maxDrives             = 32
+	maxStorageControllers = 8
+	maxNetworkAdapters    = 16
+	maxStatusReasons      = 16
+)
+
+// clip cuts s to at most n characters (Unicode code points, the unit of the
+// CRD's MaxLength), never splitting a character.
+func clip(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+// capped returns at most n leading items of xs.
+func capped[T any](xs []T, n int) []T {
+	if len(xs) > n {
+		return xs[:n]
+	}
+	return xs
+}
+
 func mapInventory(inv *redfish.Inventory) *framev1beta1.MachineInventory {
 	out := &framev1beta1.MachineInventory{
-		Manufacturer:   inv.Manufacturer,
-		Model:          inv.Model,
-		SerialNumber:   inv.SerialNumber,
-		BIOSVersion:    inv.BIOSVersion,
-		BMCFirmware:    inv.BMCFirmware,
+		Manufacturer:   clip(inv.Manufacturer, 256),
+		Model:          clip(inv.Model, 256),
+		SerialNumber:   clip(inv.SerialNumber, 128),
+		BIOSVersion:    clip(inv.BIOSVersion, 128),
+		BMCFirmware:    clip(inv.BMCFirmware, 128),
 		TotalMemoryGiB: inv.TotalMemoryGiB,
 	}
-	for _, p := range inv.Processors {
+	for _, p := range capped(inv.Processors, maxProcessors) {
 		out.Processors = append(out.Processors, framev1beta1.ProcessorInfo{
-			Socket:  p.Socket,
-			Model:   p.Model,
+			Socket:  clip(p.Socket, 64),
+			Model:   clip(p.Model, 256),
 			Cores:   p.Cores,
 			Threads: p.Threads,
 		})
 	}
-	for _, m := range inv.MemoryModules {
+	for _, m := range capped(inv.MemoryModules, maxMemoryModules) {
 		out.MemoryModules = append(out.MemoryModules, framev1beta1.MemoryModuleInfo{
-			Slot:         m.Slot,
+			Slot:         clip(m.Slot, 64),
 			SizeMiB:      m.SizeMiB,
-			Type:         m.Type,
-			Manufacturer: m.Manufacturer,
+			Type:         clip(m.Type, 64),
+			Manufacturer: clip(m.Manufacturer, 256),
 		})
 	}
 	// inv.Drives is legitimately empty on a machine whose BMC has no
 	// SmartStorage tree (internal/redfish tolerates a not-found there rather
 	// than failing the probe) — ranging over an empty slice is the normal
 	// case here, not an error to special-case around.
-	for _, d := range inv.Drives {
+	for _, d := range capped(inv.Drives, maxDrives) {
 		out.Drives = append(out.Drives, framev1beta1.DriveInfo{
-			Name:          d.Name,
-			Model:         d.Model,
+			Name:          clip(d.Name, 256),
+			Model:         clip(d.Model, 256),
 			SizeGB:        d.SizeGB,
-			Protocol:      d.Protocol,
-			Health:        d.Health,
-			SerialNumber:  d.SerialNumber,
-			Location:      d.Location,
-			MediaType:     d.MediaType,
-			StatusReasons: d.StatusReasons,
+			Protocol:      clip(d.Protocol, 64),
+			Health:        clip(d.Health, 64),
+			SerialNumber:  clip(d.SerialNumber, 128),
+			Location:      clip(d.Location, 64),
+			MediaType:     clip(d.MediaType, 32),
+			StatusReasons: capped(d.StatusReasons, maxStatusReasons),
 
-			Firmware:                d.Firmware,
+			Firmware:                clip(d.Firmware, 64),
 			RotationSpeedRPM:        d.RotationSpeedRPM,
 			LinkSpeedMbps:           d.LinkSpeedMbps,
 			TemperatureCelsius:      d.TemperatureCelsius,
@@ -363,21 +396,21 @@ func mapInventory(inv *redfish.Inventory) *framev1beta1.MachineInventory {
 			SSDEnduranceUsedPercent: d.SSDEnduranceUsedPercent,
 		})
 	}
-	for _, sc := range inv.StorageControllers {
+	for _, sc := range capped(inv.StorageControllers, maxStorageControllers) {
 		out.StorageControllers = append(out.StorageControllers, framev1beta1.StorageControllerInfo{
-			Location:          sc.Location,
-			Model:             sc.Model,
-			Firmware:          sc.Firmware,
-			Health:            sc.Health,
-			BackupPowerStatus: sc.BackupPowerStatus,
-			CacheStatus:       sc.CacheStatus,
+			Location:          clip(sc.Location, 128),
+			Model:             clip(sc.Model, 256),
+			Firmware:          clip(sc.Firmware, 64),
+			Health:            clip(sc.Health, 64),
+			BackupPowerStatus: clip(sc.BackupPowerStatus, 64),
+			CacheStatus:       clip(sc.CacheStatus, 64),
 		})
 	}
-	for _, n := range inv.NetworkAdapters {
+	for _, n := range capped(inv.NetworkAdapters, maxNetworkAdapters) {
 		out.NetworkAdapters = append(out.NetworkAdapters, framev1beta1.NetworkAdapterInfo{
-			Name:   n.Name,
-			MAC:    n.MAC,
-			Status: n.Status,
+			Name:   clip(n.Name, 256),
+			MAC:    clip(n.MAC, 64),
+			Status: clip(n.Status, 64),
 		})
 	}
 	return out

@@ -334,3 +334,17 @@ export function zvolForVirtualOsd(
   }
   return null
 }
+
+/**
+ * What the ZFS source contributes to the banner: its findings when it
+ * answered, a warning when it failed (a broken reader must not look like a
+ * healthy hypervisor), nothing when it is simply not configured — that state
+ * is stated on the ZFS card itself.
+ */
+export function zfsSourceItems(result: ZfsSourceResult | null, now: number): AttentionItem[] {
+  if (!result || result.status === 'unconfigured') return []
+  if (result.status === 'error') {
+    return [{ severity: 'warning', code: 'zfs-source-error', text: `Hypervisor ZFS source failed: ${result.message} — pool state unknown` }]
+  }
+  return result.hosts.flatMap((h) => zfsFindings(h, now))
+}

@@ -1468,3 +1468,39 @@ describe('MachineClient', () => {
     expect(headers['X-Frame-Action'].length).toBe(MAX_ACTION_LENGTH)
   })
 })
+
+describe('promInstant', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function stubPrometheus(queryStatus: (q: string) => number) {
+    vi.stubGlobal('window', {})
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/pods?labelSelector=')) {
+        return new Response(JSON.stringify({ items: [{ metadata: { name: 'prom-0' }, status: { phase: 'Running' } }] }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const q = decodeURIComponent(url.split('query=')[1] ?? '')
+      const status = queryStatus(q)
+      return new Response(JSON.stringify({ data: { result: [{ metric: { q }, value: [0, '1'] }] } }), {
+        status, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+  }
+
+  // Prometheus replaying its WAL: the pod is Running, every query 503s. The
+  // Storage screen must read that as "unreachable", not as an empty and
+  // therefore quiet snapshot.
+  it('rend null quand le pod tourne mais qu-aucune requête ne répond', async () => {
+    stubPrometheus(() => 503)
+    expect(await createFrameClient().cluster.promInstant({ a: 'up', b: 'ceph_osd_up' })).toBeNull()
+  })
+
+  it('garde les requêtes qui ont répondu quand une seule échoue', async () => {
+    stubPrometheus((q) => (q === 'up' ? 503 : 200))
+    const snap = await createFrameClient().cluster.promInstant({ a: 'up', b: 'ceph_osd_up' })
+    expect(snap).not.toBeNull()
+    expect(Object.keys(snap!)).toEqual(['b'])
+  })
+})
