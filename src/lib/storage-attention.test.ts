@@ -175,3 +175,14 @@ describe('absence de données', () => {
     expect(codes.some((t) => t.startsWith('Serial SER-HDD3 listed by several machines: srv-hw, srv-clone'))).toBe(true)
   })
 })
+
+describe('OSD redémarré récemment', () => {
+  it('dit depuis quand il est stable, en information, sans l-appeler instable', () => {
+    const pods = healthyPods()
+    pods[3] = osdPod(3, { restarts: 5, lastTerminationAt: '2026-09-27T11:33:00Z', startedAt: '2026-09-27T11:33:00Z' })
+    const items = attentionItems(inputs(healthyProm(), pods))
+    const item = items.find((a) => a.code === 'osd-settling')
+    expect(item).toMatchObject({ severity: 'info', text: 'osd.3 (node-hw) restarted recently: stable for 47 min, 5 restart(s) in total — watched until 1 h without a restart' })
+    expect(items.map((a) => a.code)).not.toContain('osd-unstable')
+  })
+})

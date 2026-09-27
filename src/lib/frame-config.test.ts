@@ -55,3 +55,19 @@ describe('taskNamespace', () => {
     expect(config().taskNamespace).toBe('frame-system')
   })
 })
+
+describe('storage.osdStableAfterMinutes', () => {
+  it('prend une valeur positive du ConfigMap, et le défaut sinon', async () => {
+    for (const [stored, want] of [
+      [{ osdStableAfterMinutes: 15 }, 15],
+      [{ osdStableAfterMinutes: 0 }, 60],
+      [{ osdStableAfterMinutes: -5 }, 60],
+      [{ osdStableAfterMinutes: 'soon' }, 60],
+      [undefined, 60],
+    ] as const) {
+      stubConfigMap({ 'config.json': JSON.stringify({ storage: stored }) })
+      await loadConfig()
+      expect(config().storage.osdStableAfterMinutes).toBe(want)
+    }
+  })
+})
