@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeDivergence, capacityLine, claimGapLine, cephWarningReasons, formatIec } from './storage'
+import { describeDivergence, capacityLine, claimGapLine, cephWarningReasons, formatIec, humanizeCapacity, humanizeQuantity } from './storage'
 
 describe('describeDivergence', () => {
   it('nomme la baie pour un disque que seul le BMC voit', () => {
@@ -147,5 +147,20 @@ describe('formatIec', () => {
     expect(formatIec(1_200_243_695_616)).toBe('1.09 TiB')
     expect(formatIec(512)).toBe('512 B')
     expect(formatIec(null)).toBe('—')
+  })
+})
+
+describe('humanizeQuantity', () => {
+  // What the controller writes for the production pool (raw / 4).
+  it('rend la capacité utilisable de prod lisible', () => {
+    expect(humanizeQuantity('2782725720Ki')).toBe('2.59 TiB')
+    expect(capacityLine(humanizeCapacity({ usable: '2782725720Ki', used: '43026138Ki', raw: '11130902880Ki' }))).toBe(
+      '41.0 GiB used of 2.59 TiB usable (raw 10.4 TiB)',
+    )
+  })
+
+  it('laisse intacte une chaîne qui n-est pas une quantité, et vide ce qui est vide', () => {
+    expect(humanizeQuantity('unknown')).toBe('unknown')
+    expect(humanizeQuantity('')).toBe('')
   })
 })

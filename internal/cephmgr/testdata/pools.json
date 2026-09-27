@@ -1,0 +1,104 @@
+[
+ {
+  "pool": 1,
+  "pool_name": ".mgr",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 2,
+  "pool_name": "replicapool",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 32,
+  "application_metadata": [
+   "rbd"
+  ]
+ },
+ {
+  "pool": 3,
+  "pool_name": "store.rgw.control",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 4,
+  "pool_name": "store.rgw.meta",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 5,
+  "pool_name": "store.rgw.buckets.non-ec",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 6,
+  "pool_name": "store.rgw.otp",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 7,
+  "pool_name": "store.rgw.buckets.index",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 8,
+  "pool_name": "store.rgw.log",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 9,
+  "pool_name": ".rgw.root",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 8,
+  "application_metadata": []
+ },
+ {
+  "pool": 10,
+  "pool_name": "store.rgw.buckets.data",
+  "type": "replicated",
+  "size": 4,
+  "min_size": 2,
+  "crush_rule": "hdd2_ssd2",
+  "pg_num": 32,
+  "application_metadata": []
+ }
+]

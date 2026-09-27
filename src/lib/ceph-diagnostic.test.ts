@@ -123,11 +123,11 @@ describe('pods OSD', () => {
     expect(currentOsdPods([live, old]).get(1)?.name).toBe('live')
   })
 
-  it('compte un redémarrage récent comme instabilité, pas un ancien', () => {
-    const recent = osdPod(0, { restarts: 1, lastTerminationAt: '2026-09-27T12:00:00Z' })
-    const old = osdPod(0, { restarts: 15, lastTerminationAt: '2026-09-23T12:00:00Z' })
-    expect(podInstability(recent, NOW)).toContain('1 restart')
-    expect(podInstability(old, NOW)).toBe('')
+  it('ne compte un redémarrage récent comme instabilité que si le pod ne tourne pas', () => {
+    const recentRunning = osdPod(0, { restarts: 1, lastTerminationAt: '2026-09-27T12:00:00Z' })
+    const recentDown = osdPod(0, { restarts: 1, lastTerminationAt: '2026-09-27T12:00:00Z', ready: false })
+    expect(podInstability(recentRunning, NOW)).toBe('')
+    expect(podInstability(recentDown, NOW)).toContain('1 restart(s), last 20 min ago')
   })
 
   it('lit un pod Kubernetes en init', () => {
@@ -144,7 +144,7 @@ describe('pods OSD', () => {
         containerStatuses: [{ name: 'osd', ready: false, state: { waiting: { reason: 'PodInitializing' } } }],
       },
     })
-    expect(p).toMatchObject({ osdId: 0, initDone: 1, initTotal: 3, waiting: 'init expand-bluefs', restarts: 1, ready: false })
+    expect(p).toMatchObject({ osdId: 0, initDone: 1, initTotal: 3, waiting: 'init expand-bluefs', restarts: 0, ready: false })
   })
 
   it('ignore un pod sans label ceph-osd-id', () => {
@@ -182,5 +182,52 @@ describe('doublon de série entre machines', () => {
 
   it('ne signale aucun doublon quand une seule machine a la série', () => {
     expect(linkOsdDisk(['HITACHI_X_SER-HDD3'], HW_NODE, [hwMachine()])).toMatchObject({ duplicateOn: [] })
+  })
+})
+
+// The prod case of 27/09: osd.3-6 up, in, running and ready, 5 restarts,
+// the last one at 19:36 (the hardware node rebooted).
+describe('fenêtre de stabilité après redémarrage', () => {
+  const last = Date.parse('2026-09-27T19:36:00Z')
+  const pod = () => osdPod(3, { restarts: 5, lastTerminationAt: '2026-09-27T19:36:00Z', startedAt: '2026-09-27T19:36:00Z' })
+  const row = (now: number, windowMs?: number) =>
+    buildOsdRows({ prom: healthyProm(), pods: [pod()], machines: [hwMachine()], now, stableAfterMs: windowMs }).find((o) => o.id === 3)!
+
+  it('dit depuis quand c-est stable pendant la fenêtre', () => {
+    const r = row(last + 47 * 60_000)
+    expect(r.state).toBe('settling')
+    expect(r.stateDetail).toBe('stable for 47 min, 5 restart(s) in total — watched until 1 h without a restart')
+  })
+
+  it('oublie le redémarrage au bord exact de la fenêtre, pas une milliseconde avant', () => {
+    expect(row(last + 60 * 60_000 - 1).state).toBe('settling')
+    const r = row(last + 60 * 60_000)
+    expect(r.state).toBe('up-in')
+    expect(r.stateDetail).toBe('stable for 1 h, 5 restart(s) in total')
+  })
+
+  it('suit une fenêtre configurée', () => {
+    expect(row(last + 20 * 60_000, 15 * 60_000).state).toBe('up-in')
+    expect(row(last + 20 * 60_000, 30 * 60_000).state).toBe('settling')
+  })
+
+  it('lit le dernier redémarrage dans containerStatuses.lastState.terminated.finishedAt', () => {
+    const p = toOsdPod({
+      metadata: { name: 'rook-ceph-osd-3-x', labels: { 'ceph-osd-id': '3' } },
+      status: {
+        phase: 'Running',
+        initContainerStatuses: [{ name: 'activate', restartCount: 9, lastState: { terminated: { finishedAt: '2026-09-27T20:10:00Z' } }, state: { terminated: { reason: 'Completed' } } }],
+        containerStatuses: [{ name: 'osd', ready: true, restartCount: 5, state: { running: { startedAt: '2026-09-27T19:36:05Z' } }, lastState: { terminated: { finishedAt: '2026-09-27T19:36:00Z' } } }],
+      },
+    })!
+    expect(p.lastTerminationAt).toBe('2026-09-27T19:36:00Z')
+    expect(p.restarts).toBe(5)
+  })
+
+  it('porte le poids CRUSH lu par le mgr, et null pour un OSD non couvert', () => {
+    const rows = buildOsdRows({ prom: healthyProm(), pods: healthyPods(), machines: [hwMachine()], now: NOW, crushWeights: new Map([[3, 1.09], [0, 0]]) })
+    expect(rows[3].crushWeight).toBe(1.09)
+    expect(rows[0].crushWeight).toBe(0)
+    expect(rows[1].crushWeight).toBeNull()
   })
 })

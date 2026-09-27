@@ -1,0 +1,14 @@
+[
+ {
+  "rule_id": 0,
+  "rule_name": "replicated_rule",
+  "type": 1,
+  "steps": []
+ },
+ {
+  "rule_id": 20,
+  "rule_name": "hdd2_ssd2",
+  "type": 1,
+  "steps": []
+ }
+]

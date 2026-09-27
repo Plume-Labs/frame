@@ -64,6 +64,10 @@ type FrameStorageReconciler struct {
 	// without rook's CRDs, and a cluster with no rook at all is a nil field
 	// rather than a permanent error.
 	CephCapacity func(ctx context.Context, storageClassName string) (rawBytes, usedBytes uint64, replication int32, err error)
+	// CephPlacement reads pools' min_size and CRUSH rule and OSDs' CRUSH
+	// weight from the ceph-mgr dashboard (internal/cephmgr). It never
+	// fails: an unreadable dashboard is a State. Nil leaves the field unset.
+	CephPlacement func(ctx context.Context) *framev1beta1.CephPlacement
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framestorages,verbs=get;list;watch;create;update;patch
@@ -98,6 +102,7 @@ func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	fs.Status.Claims = claims
 
 	r.reconcileCapacity(ctx, &fs)
+	r.reconcilePlacement(ctx, &fs)
 
 	fs.Status.Phase, err = r.reconcileHealth(ctx, &fs)
 	if err != nil {
@@ -240,6 +245,26 @@ func (r *FrameStorageReconciler) reconcileCapacity(ctx context.Context, fs *fram
 		capacity.Used = bytesToQuantityString(usedBytes / uint64(replication))
 	}
 	fs.Status.Capacity = capacity
+}
+
+// reconcilePlacement sets status.cephPlacement on ceph-* entries. A read
+// that did not collect (Error, or NotConfigured after a Secret was removed)
+// and carries no lists keeps the lists already in status — typically after
+// a manager restart, when the reader has no last good read in memory — so
+// an outage never blanks weights that were known, and the state and
+// message still say the read failed.
+func (r *FrameStorageReconciler) reconcilePlacement(ctx context.Context, fs *framev1beta1.FrameStorage) {
+	if !strings.HasPrefix(fs.Spec.Type, "ceph-") || r.CephPlacement == nil {
+		return
+	}
+	p := r.CephPlacement(ctx)
+	if p == nil {
+		return
+	}
+	if prev := fs.Status.CephPlacement; prev != nil && p.State == "Error" && len(p.Pools) == 0 && len(p.OSDs) == 0 {
+		p.Pools, p.OSDs, p.CollectedAt = prev.Pools, prev.OSDs, prev.CollectedAt
+	}
+	fs.Status.CephPlacement = p
 }
 
 // bytesToQuantityString renders a byte count as a Kubernetes quantity

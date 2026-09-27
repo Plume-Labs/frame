@@ -82,8 +82,8 @@ export function PoolsTable({ pools }: { pools: PoolRow[] }) {
           </table>
         )}
         <p className="mt-2 text-[10px] text-muted-foreground font-mono">
-          min_size and CRUSH rule: {NOT_COLLECTED} (not exported by the ceph-mgr; needs its REST API). Max avail is
-          what the pool can still take after replication.
+          min_size and CRUSH rule come from the ceph-mgr dashboard (read-only account), “{NOT_COLLECTED}” when it is
+          not read. Max avail is what the pool can still take after replication.
         </p>
       </CardContent>
     </Card>

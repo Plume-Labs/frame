@@ -36,6 +36,7 @@ import {
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
 import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
+import type { CephPlacement } from './ceph-placement'
 import { CEPH_DIAG_QUERIES, promAnswered, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
 import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
 
@@ -3577,6 +3578,7 @@ export interface FrameStorageCR {
     claims?: { total?: number; labelled?: number }
     adopted?: boolean
     conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>
+    cephPlacement?: CephPlacement
   }
 }
 
@@ -3601,6 +3603,8 @@ export interface StorageEntry {
   healthy: { status: string; reason: string; message: string } | null
   /** From the `Available` condition — message is `all nodes` or a comma-separated node list. */
   available: { status: string; message: string } | null
+  /** Pools' min_size and CRUSH rule, OSDs' CRUSH weight (ceph-mgr dashboard); null on a local-path entry. */
+  cephPlacement: CephPlacement | null
 }
 
 function findCondition(
@@ -3633,6 +3637,7 @@ function crToStorageEntry(cr: FrameStorageCR): StorageEntry {
     },
     healthy: healthy ? { status: healthy.status, reason: healthy.reason ?? '', message: healthy.message ?? '' } : null,
     available: available ? { status: available.status, message: available.message ?? '' } : null,
+    cephPlacement: status.cephPlacement ?? null,
   }
 }
 

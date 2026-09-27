@@ -51,6 +51,7 @@ import (
 	servicesv1alpha1 "github.com/gothshoot/frame/api/services/v1alpha1"
 	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
 	"github.com/gothshoot/frame/internal/alerting"
+	"github.com/gothshoot/frame/internal/cephmgr"
 	controller "github.com/gothshoot/frame/internal/controller/frame"
 	servicescontroller "github.com/gothshoot/frame/internal/controller/services"
 	"github.com/gothshoot/frame/internal/provision"
@@ -587,6 +588,13 @@ func main() {
 		Scheme:       mgr.GetScheme(),
 		CephHealth:   readCephHealth(mgr.GetClient()),
 		CephCapacity: readCephCapacity(mgr.GetClient()),
+		// Pools' min_size and CRUSH rule, OSDs' CRUSH weight: the ceph-mgr
+		// dashboard API, read-only, with the account in the
+		// frame-ceph-dashboard Secret of this namespace (NotConfigured until
+		// it exists). One read per 5 minutes, shared by every entry.
+		CephPlacement: (&cephmgr.Reader{
+			Load: cephmgr.SecretLoader(mgr.GetAPIReader(), os.Getenv("POD_NAMESPACE")),
+		}).Placement,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framestorage")
 		os.Exit(1)

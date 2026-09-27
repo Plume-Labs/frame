@@ -106,7 +106,15 @@ function byPoolId(samples: PromSample[] | undefined): Map<string, number> {
   return m
 }
 
-export function buildPoolRows(prom: PromSnapshot): PoolRow[] {
+/**
+ * `placement` (pool name → min_size, CRUSH rule) comes from the ceph-mgr
+ * dashboard through the FrameStorage status; a pool it does not cover keeps
+ * null for both.
+ */
+export function buildPoolRows(
+  prom: PromSnapshot,
+  placement: Map<string, { minSize: number | null; crushRule: string | null }> = new Map(),
+): PoolRow[] {
   const { byPool } = tallyPgs(prom.pgStates)
   const stored = byPoolId(prom.poolStored)
   const maxAvail = byPoolId(prom.poolMaxAvail)
@@ -124,8 +132,8 @@ export function buildPoolRows(prom: PromSnapshot): PoolRow[] {
         application: m.labels.application ?? '',
         type: m.labels.type ?? '',
         ...parseDescription(m.labels.description),
-        minSize: null,
-        crushRule: null,
+        minSize: placement.get(m.labels.name ?? '')?.minSize ?? null,
+        crushRule: placement.get(m.labels.name ?? '')?.crushRule ?? null,
         pgs,
         storedBytes: stored.get(id) ?? null,
         maxAvailBytes: maxAvail.get(id) ?? null,

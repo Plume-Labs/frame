@@ -70,6 +70,13 @@ export interface FrameConfig {
     /** Filesystem mountpoint reported as the scratch tier. */
     mount: string
   }
+  storage: {
+    /**
+     * Minutes an OSD must run without a restart before its restarts are
+     * forgotten; until then it is shown "settling" (Storage screen).
+     */
+    osdStableAfterMinutes: number
+  }
 }
 
 export const DEFAULT_CONFIG: FrameConfig = {
@@ -105,6 +112,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
   },
   network: { devices: ['eth0', 'flannel.1', 'cni0'] },
   burstBuffer: { mount: '/burst-buffer' },
+  storage: { osdStableAfterMinutes: 60 },
 }
 
 /** Where the stored config lives. Shipped by the kustomize base, so it always exists. */
@@ -154,6 +162,14 @@ function merge(stored: unknown): FrameConfig {
       devices: s.network?.devices?.length ? s.network.devices : DEFAULT_CONFIG.network.devices,
     },
     burstBuffer: { mount: s.burstBuffer?.mount || DEFAULT_CONFIG.burstBuffer.mount },
+    storage: {
+      // A positive number of minutes, or the default: 0 would forget every
+      // restart at once, a negative or non-numeric value is a typo.
+      osdStableAfterMinutes:
+        Number.isFinite(s.storage?.osdStableAfterMinutes) && (s.storage?.osdStableAfterMinutes ?? 0) > 0
+          ? (s.storage!.osdStableAfterMinutes as number)
+          : DEFAULT_CONFIG.storage.osdStableAfterMinutes,
+    },
   }
 }
 

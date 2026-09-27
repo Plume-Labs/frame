@@ -1,0 +1,23 @@
+# The FrameStorage entry for a Rook cluster's RBD pool, adopting the
+# StorageClass Rook already created (ceph-rbd → pool replicapool). Once it
+# exists, the controller publishes the pool's usable capacity (raw divided
+# by the pool's replication) and the Storage screen shows usable first,
+# instead of the raw figure; it also carries the ceph-mgr placement read
+# (min_size, CRUSH rules and weights) when the dashboard account is set
+# up — see docs/storage-mgr-account.md.
+#
+# Adoption owns nothing and deletes nothing: the StorageClass and every PVC
+# on it are left exactly as they are.
+#
+#   kubectl apply -f deploy/samples/framestorage-ceph-rbd.yaml
+#   kubectl get framestorage ceph-rbd      # Usable column filled within ~2 min
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameStorage
+metadata:
+  name: ceph-rbd
+spec:
+  type: ceph-rbd
+  storageClassName: ceph-rbd
+  adoptExisting: true
+  content:
+    - workload

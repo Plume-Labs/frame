@@ -61,6 +61,8 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     if (o.state === 'down') out.push({ severity: 'critical', code: 'osd-down', text: `${o.name}${where} down` })
     else if (o.state === 'unstable')
       out.push({ severity: 'warning', code: 'osd-unstable', text: `${o.name}${where} unstable — ${o.stateDetail}` })
+    else if (o.state === 'settling')
+      out.push({ severity: 'info', code: 'osd-settling', text: `${o.name}${where} restarted recently: ${o.stateDetail}` })
     else if (o.state === 'out') out.push({ severity: 'warning', code: 'osd-out', text: `${o.name}${where} out` })
     if (o.disk.kind === 'physical' && o.disk.hostConflict) {
       out.push({
@@ -90,10 +92,20 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     const classes = [...new Set(empty.map((o) => o.deviceClass).filter(Boolean))].join(', ')
     const hosts = [...new Set(empty.map((o) => o.host).filter(Boolean))].join(', ')
     const ctx = [classes, hosts].filter(Boolean).join(', ')
+    // With the CRUSH weights read (ceph-mgr dashboard), say which of the
+    // two causes it is; without them, say both are possible.
+    const weights = empty.map((o) => o.crushWeight)
+    const why = weights.every((w) => w === null)
+      ? 'CRUSH weight 0 or not selected by any rule? (weight not collected)'
+      : weights.every((w) => w === 0)
+        ? 'CRUSH weight 0: they take no data'
+        : weights.every((w) => w !== null && w > 0)
+          ? `CRUSH weight ${[...new Set(weights)].join(', ')} — not selected by any pool's CRUSH rule`
+          : `CRUSH weights ${weights.map((w) => w ?? '?').join(', ')}`
     out.push({
       severity: 'warning',
       code: 'osd-no-pg',
-      text: `${empty.length} OSD without any PG: ${osdRange(empty.map((o) => o.id))}${ctx ? ` (${ctx})` : ''} — CRUSH weight 0 or not selected by any rule? (weight not collected)`,
+      text: `${empty.length} OSD without any PG: ${osdRange(empty.map((o) => o.id))}${ctx ? ` (${ctx})` : ''} — ${why}`,
     })
   }
 

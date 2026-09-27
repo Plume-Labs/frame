@@ -10,6 +10,7 @@ const STATE_CLASS: Record<OsdRow['state'], string> = {
   down: 'text-destructive',
   out: 'text-warning',
   unstable: 'text-warning',
+  settling: 'text-primary',
   unknown: 'text-muted-foreground',
 }
 
@@ -46,7 +47,7 @@ export function OsdTable({ osds }: { osds: OsdRow[] }) {
               <th className="pr-3 text-right">%USE</th>
               <th className="pr-3 text-right">apply/commit ms</th>
               <th className="pr-3 text-right">slow</th>
-              <th className="pr-3 text-right" title="Not exported by Prometheus">CRUSH wt</th>
+              <th className="pr-3 text-right" title="From the ceph-mgr dashboard; — when not collected">CRUSH wt</th>
               <th className="pr-3">disk</th>
               <th>pod</th>
             </tr>
@@ -72,7 +73,11 @@ export function OsdTable({ osds }: { osds: OsdRow[] }) {
                     {o.slowOps ?? '—'}
                     {(o.bluestoreSlow ?? 0) > 0 ? ` (+${o.bluestoreSlow} BlueStore)` : ''}
                   </td>
-                  <td className="pr-3 text-right text-muted-foreground">{o.crushWeight ?? '—'}</td>
+                  <td
+                    className={`pr-3 text-right ${o.crushWeight === null ? 'text-muted-foreground' : o.crushWeight === 0 ? 'text-warning' : ''}`}
+                  >
+                    {o.crushWeight === null ? '—' : o.crushWeight.toFixed(2)}
+                  </td>
                   <td className="pr-3 truncate max-w-[22rem]">{osdDiskLabel(o)}</td>
                   <td className={o.state === 'unstable' ? 'text-warning' : ''}>{podCell(o)}</td>
                 </tr>
@@ -100,7 +105,8 @@ export function OsdTable({ osds }: { osds: OsdRow[] }) {
                         </div>
                       )}
                       <div className="text-muted-foreground">
-                        CRUSH weight: {NOT_COLLECTED} (mgr API) · SMART: {NOT_COLLECTED}
+                        CRUSH weight: {o.crushWeight === null ? `${NOT_COLLECTED} (mgr dashboard)` : o.crushWeight} · SMART:{' '}
+                        {NOT_COLLECTED}
                         {o.pod ? ` · pod ${o.pod.name}, started ${o.pod.startedAt ?? '—'}` : ''}
                       </div>
                     </td>

@@ -131,3 +131,26 @@ export function formatIec(bytes: number | null | undefined): string {
 
 /** The label every screen uses for a value no source collects yet. */
 export const NOT_COLLECTED = 'not collected'
+
+const QUANTITY_SUFFIX: Record<string, number> = {
+  '': 1, Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, Ti: 2 ** 40, Pi: 2 ** 50, Ei: 2 ** 60,
+  k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18,
+}
+
+/**
+ * A Kubernetes quantity ("2782725720Ki", "1.2Ti") in the IEC units the rest
+ * of the screen uses ("2.59 TiB"). The controller writes exact quantities,
+ * which for a byte count rarely land on a round unit; left as they are they
+ * read as a 10-digit number of kibibytes. An unparseable string is returned
+ * unchanged, an empty one stays empty.
+ */
+export function humanizeQuantity(q: string): string {
+  const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?\s*$/.exec(q)
+  if (!m) return q
+  return formatIec(Number(m[1]) * QUANTITY_SUFFIX[m[2] ?? ''])
+}
+
+/** A capacity with every figure humanized, for capacityLine. */
+export function humanizeCapacity(c: StorageCapacity): StorageCapacity {
+  return { usable: humanizeQuantity(c.usable), used: humanizeQuantity(c.used), raw: humanizeQuantity(c.raw) }
+}

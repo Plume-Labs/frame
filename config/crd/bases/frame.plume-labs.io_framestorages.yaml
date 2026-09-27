@@ -139,6 +139,78 @@ spec:
                     maxLength: 32
                     type: string
                 type: object
+              cephPlacement:
+                description: |-
+                  CephPlacement is what Prometheus does not export about the Ceph
+                  cluster behind a ceph-* entry: each pool's min_size and CRUSH rule,
+                  each OSD's CRUSH weight, read from the ceph-mgr dashboard API with a
+                  dedicated read-only account. Nil on a local-path entry.
+                properties:
+                  collectedAt:
+                    format: date-time
+                    type: string
+                  message:
+                    maxLength: 256
+                    type: string
+                  osds:
+                    items:
+                      description: |-
+                        CephOSDWeight is one OSD's CRUSH weight. A string, "%.4f", because CRDs
+                        carry no float type safely; 0 is a real weight here (an OSD that takes no
+                        data), never "unknown" — an OSD with no weight is simply absent.
+                      properties:
+                        crushWeight:
+                          maxLength: 16
+                          type: string
+                        deviceClass:
+                          maxLength: 32
+                          type: string
+                        id:
+                          format: int32
+                          type: integer
+                      required:
+                      - crushWeight
+                      - id
+                      type: object
+                    maxItems: 256
+                    type: array
+                  pools:
+                    items:
+                      description: CephPoolPlacement is one pool's replication and
+                        placement rule.
+                      properties:
+                        crushRule:
+                          description: CrushRule is "<id> <name>" (e.g. "0 replicated_rule").
+                          maxLength: 160
+                          type: string
+                        minSize:
+                          format: int32
+                          type: integer
+                        name:
+                          maxLength: 128
+                          type: string
+                        size:
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      type: object
+                    maxItems: 64
+                    type: array
+                  state:
+                    description: |-
+                      State is Collected, NotConfigured (no dashboard account Secret: the
+                      normal state until one is created) or Error (the last read failed;
+                      Message says why and the lists are the last good read, dated by
+                      CollectedAt — never zeroed, which would read as weight 0).
+                    enum:
+                    - Collected
+                    - NotConfigured
+                    - Error
+                    type: string
+                required:
+                - state
+                type: object
               claims:
                 description: |-
                   ClaimCounts is the gap between the policy and the cluster: how many PVCs

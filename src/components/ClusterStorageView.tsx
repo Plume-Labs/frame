@@ -7,12 +7,13 @@ import {
   coreListPath,
   crdListPath,
 } from '@/lib/frame-sdk'
-import { capacityLine, cephWarningReasons, formatIec } from '@/lib/storage'
+import { capacityLine, cephWarningReasons, formatIec, humanizeCapacity } from '@/lib/storage'
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { AttentionBanner } from '@/components/storage/AttentionBanner'
 import { OsdTable } from '@/components/storage/OsdTable'
 import { CapacityByClass, PoolsTable } from '@/components/storage/PoolsTable'
 import { pgLine } from '@/lib/storage-labels'
+import { cephCapacityEntry } from '@/lib/ceph-placement'
 import { config } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -144,10 +145,9 @@ export function ClusterStorageView() {
   const c = state.phase === 'ready' ? state.data : null
   const trend = trendState.phase === 'ready' ? trendState.data : null
   const entries = storageState.phase === 'ready' ? storageState.data : []
-  const cephEntry = entries.find((e) => e.type.startsWith('ceph-') && e.capacity.usable)
-    ?? entries.find((e) => e.type.startsWith('ceph-'))
+  const cephEntry = cephCapacityEntry(entries)
   const usedPct = c && c.bytesTotal ? (c.bytesUsed / c.bytesTotal) * 100 : 0
-  const diag = useStorageDiagnostic(storageState.phase === 'ready' ? entries.length : null)
+  const diag = useStorageDiagnostic(storageState.phase === 'ready' ? entries : null)
   const upCount = diag.osds.filter((o) => o.up === true).length
   const inCount = diag.osds.filter((o) => o.in === true).length
 
@@ -202,11 +202,9 @@ export function ClusterStorageView() {
               <Progress value={usedPct} className="h-3" />
               <div className="text-xs text-muted-foreground font-mono">
                 {capacityLine(
-                  cephEntry?.capacity ?? {
-                    usable: '',
-                    used: `${(c.bytesUsed / GiB).toFixed(1)}GiB`,
-                    raw: `${(c.bytesTotal / GiB).toFixed(0)}GiB`,
-                  },
+                  cephEntry
+                    ? humanizeCapacity(cephEntry.capacity)
+                    : { usable: '', used: formatIec(c.bytesUsed), raw: formatIec(c.bytesTotal) },
                 )}
               </div>
             </div>
@@ -268,6 +266,7 @@ export function ClusterStorageView() {
                     {diag.flags.length ? ` · flags: ${diag.flags.join(', ')}` : ''}
                   </div>
                   <CapacityByClass classes={diag.classes} />
+                  <div className="text-muted-foreground">{diag.placementLine}</div>
                 </>
               ) : (
                 <p className="text-muted-foreground">Prometheus unreachable: PG, OSD and pool detail unknown.</p>

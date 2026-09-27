@@ -109,10 +109,62 @@ type FrameStorageStatus struct {
 	// +optional
 	Adopted bool `json:"adopted,omitempty"`
 
+	// CephPlacement is what Prometheus does not export about the Ceph
+	// cluster behind a ceph-* entry: each pool's min_size and CRUSH rule,
+	// each OSD's CRUSH weight, read from the ceph-mgr dashboard API with a
+	// dedicated read-only account. Nil on a local-path entry.
+	// +optional
+	CephPlacement *CephPlacement `json:"cephPlacement,omitempty"`
+
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// CephPlacement is one read of the ceph-mgr dashboard API.
+type CephPlacement struct {
+	// State is Collected, NotConfigured (no dashboard account Secret: the
+	// normal state until one is created) or Error (the last read failed;
+	// Message says why and the lists are the last good read, dated by
+	// CollectedAt — never zeroed, which would read as weight 0).
+	// +kubebuilder:validation:Enum=Collected;NotConfigured;Error
+	State string `json:"state"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Message string `json:"message,omitempty"`
+	// +optional
+	CollectedAt *metav1.Time `json:"collectedAt,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	Pools []CephPoolPlacement `json:"pools,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxItems=256
+	OSDs []CephOSDWeight `json:"osds,omitempty"`
+}
+
+// CephPoolPlacement is one pool's replication and placement rule.
+type CephPoolPlacement struct {
+	// +kubebuilder:validation:MaxLength=128
+	Name    string `json:"name"`
+	Size    int32  `json:"size,omitempty"`
+	MinSize int32  `json:"minSize,omitempty"`
+	// CrushRule is "<id> <name>" (e.g. "0 replicated_rule").
+	// +optional
+	// +kubebuilder:validation:MaxLength=160
+	CrushRule string `json:"crushRule,omitempty"`
+}
+
+// CephOSDWeight is one OSD's CRUSH weight. A string, "%.4f", because CRDs
+// carry no float type safely; 0 is a real weight here (an OSD that takes no
+// data), never "unknown" — an OSD with no weight is simply absent.
+type CephOSDWeight struct {
+	ID int32 `json:"id"`
+	// +kubebuilder:validation:MaxLength=16
+	CrushWeight string `json:"crushWeight"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=32
+	DeviceClass string `json:"deviceClass,omitempty"`
 }
 
 // +kubebuilder:object:root=true

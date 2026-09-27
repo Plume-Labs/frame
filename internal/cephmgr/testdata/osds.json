@@ -1,0 +1,171 @@
+[
+ {
+  "osd": 0,
+  "id": 0,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-a"
+  },
+  "tree": {
+   "id": 0,
+   "name": "osd.0",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 2.0,
+   "depth": 2,
+   "device_class": "ssd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 1,
+  "id": 1,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-b"
+  },
+  "tree": {
+   "id": 1,
+   "name": "osd.1",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 2.0,
+   "depth": 2,
+   "device_class": "ssd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 2,
+  "id": 2,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-c"
+  },
+  "tree": {
+   "id": 2,
+   "name": "osd.2",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 2.0,
+   "depth": 2,
+   "device_class": "ssd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 3,
+  "id": 3,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-hw"
+  },
+  "tree": {
+   "id": 3,
+   "name": "osd.3",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 1.0900299072265625,
+   "depth": 2,
+   "device_class": "hdd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 4,
+  "id": 4,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-hw"
+  },
+  "tree": {
+   "id": 4,
+   "name": "osd.4",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 1.0900299072265625,
+   "depth": 2,
+   "device_class": "hdd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 5,
+  "id": 5,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-hw"
+  },
+  "tree": {
+   "id": 5,
+   "name": "osd.5",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 1.0900299072265625,
+   "depth": 2,
+   "device_class": "hdd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 6,
+  "id": 6,
+  "up": 1,
+  "in": 1,
+  "weight": 1.0,
+  "primary_affinity": 1.0,
+  "host": {
+   "name": "node-hw"
+  },
+  "tree": {
+   "id": 6,
+   "name": "osd.6",
+   "type": "osd",
+   "type_id": 0,
+   "crush_weight": 1.0900299072265625,
+   "depth": 2,
+   "device_class": "hdd",
+   "exists": 1,
+   "status": "up",
+   "reweight": 1.0
+  }
+ },
+ {
+  "osd": 7,
+  "id": 7,
+  "up": 0,
+  "in": 0,
+  "weight": 0.0,
+  "tree": {}
+ }
+]

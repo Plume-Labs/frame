@@ -125,11 +125,13 @@ export function toOsdPod(p: OsdPodCR): OsdPod | null {
   if (!Number.isInteger(id)) return null
   const inits = p.status?.initContainerStatuses ?? []
   const mains = p.status?.containerStatuses ?? []
-  const all = [...inits, ...mains]
   const initDone = inits.filter((c) => c.state?.terminated?.reason === 'Completed').length
   const pendingInit = inits.find((c) => !c.state?.terminated)
   const waitingMain = mains.find((c) => c.state?.waiting?.reason)
-  const lastTerminations = all
+  // The last restart is the last time a main container ended
+  // (containerStatuses[].lastState.terminated.finishedAt); init containers
+  // run once per pod start and say nothing a restart count does not.
+  const lastTerminations = mains
     .map((c) => c.lastState?.terminated?.finishedAt)
     .filter((t): t is string => !!t)
     .sort()
@@ -139,7 +141,7 @@ export function toOsdPod(p: OsdPodCR): OsdPod | null {
     node: p.spec?.nodeName ?? '',
     phase: p.status?.phase ?? 'Unknown',
     ready: mains.length > 0 && mains.every((c) => c.ready === true),
-    restarts: all.reduce((n, c) => n + (c.restartCount ?? 0), 0),
+    restarts: mains.reduce((n, c) => n + (c.restartCount ?? 0), 0),
     initDone,
     initTotal: inits.length,
     waiting: pendingInit
@@ -193,7 +195,12 @@ export type OsdDiskLink =
   | { kind: 'virtual'; serial: string; drive: string }
   | { kind: 'unknown'; reason: string }
 
-export type OsdState = 'up-in' | 'down' | 'out' | 'unstable' | 'unknown'
+/**
+ * `settling`: up, in, pod running and ready, but restarted less than the
+ * stability window ago — watched, not alarming. Past the window the restart
+ * is forgotten and the OSD is `up-in` again.
+ */
+export type OsdState = 'up-in' | 'down' | 'out' | 'unstable' | 'settling' | 'unknown'
 
 export interface OsdRow {
   id: number
@@ -313,25 +320,57 @@ export function linkOsdDisk(deviceIds: string[], host: string, machines: Machine
   }
 }
 
-/** An OSD restarted within this window still counts as unstable. */
+/**
+ * Default stability window: a restart older than this, with no restart
+ * since, is forgotten. Configurable (frame-config `storage.osdStableAfterMinutes`).
+ */
 export const FLAP_WINDOW_MS = 60 * 60 * 1000
+
+/** "47 min", "3 h 12 min" — how long something has lasted. */
+export function durationText(ms: number): string {
+  const min = Math.max(0, Math.floor(ms / 60000))
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  return min % 60 ? `${h} h ${min % 60} min` : `${h} h`
+}
+
+/**
+ * How a running, ready pod has fared since its last restart. null when it
+ * never restarted or the restart time is unknown.
+ */
+export function restartHistory(pod: OsdPod, now: number, windowMs: number): { settling: boolean; text: string } | null {
+  const last = pod.lastTerminationAt ? Date.parse(pod.lastTerminationAt) : NaN
+  if (pod.restarts === 0 || !Number.isFinite(last)) return null
+  const started = pod.startedAt ? Date.parse(pod.startedAt) : NaN
+  const since = Number.isFinite(started) && started >= last ? started : last
+  const settling = now - last < windowMs
+  const text = `stable for ${durationText(now - since)}, ${pod.restarts} restart(s) in total`
+  return { settling, text: settling ? `${text} — watched until ${durationText(windowMs)} without a restart` : text }
+}
 
 function judgeOsd(
   up: boolean | null,
   inn: boolean | null,
   pod: OsdPod | null,
   now: number,
+  windowMs: number,
 ): { state: OsdState; detail: string } {
   if (up === false) return { state: 'down', detail: 'down for Ceph' }
-  const podTrouble = pod ? podInstability(pod, now) : ''
+  const podTrouble = pod ? podInstability(pod, now, windowMs) : ''
   if (podTrouble) return { state: 'unstable', detail: podTrouble }
   if (inn === false) return { state: 'out', detail: 'out of the data placement' }
   if (up === null || inn === null) return { state: 'unknown', detail: 'no ceph-mgr reading' }
-  return { state: 'up-in', detail: '' }
+  const history = pod ? restartHistory(pod, now, windowMs) : null
+  if (history?.settling) return { state: 'settling', detail: history.text }
+  return { state: 'up-in', detail: history?.text ?? '' }
 }
 
-/** Empty when the pod looks settled; otherwise what is wrong with it, in words. */
-export function podInstability(pod: OsdPod, now: number): string {
+/**
+ * Empty when the pod is running and ready; otherwise what is wrong with it,
+ * in words. A recent restart of a pod that is now running and ready is not
+ * instability — see restartHistory and the `settling` state.
+ */
+export function podInstability(pod: OsdPod, now: number, windowMs = FLAP_WINDOW_MS): string {
   const parts: string[] = []
   if (pod.phase !== 'Running') {
     parts.push(
@@ -342,9 +381,10 @@ export function podInstability(pod: OsdPod, now: number): string {
   } else if (!pod.ready) {
     parts.push(`pod not ready${pod.waiting ? ` (${pod.waiting})` : ''}`)
   }
+  if (parts.length === 0) return ''
   const last = pod.lastTerminationAt ? Date.parse(pod.lastTerminationAt) : NaN
-  if (pod.restarts > 0 && Number.isFinite(last) && now - last < FLAP_WINDOW_MS) {
-    parts.push(`${pod.restarts} restart(s), last ${Math.round((now - last) / 60000)} min ago`)
+  if (pod.restarts > 0 && Number.isFinite(last) && now - last < windowMs) {
+    parts.push(`${pod.restarts} restart(s), last ${durationText(now - last)} ago`)
   }
   return parts.join(', ')
 }
@@ -354,9 +394,13 @@ export interface OsdInputs {
   pods: OsdPod[]
   machines: Machine[]
   now: number
+  /** Stability window after a restart (default FLAP_WINDOW_MS). */
+  stableAfterMs?: number
+  /** CRUSH weights from the ceph-mgr dashboard, by OSD id; an absent id stays null. */
+  crushWeights?: Map<number, number>
 }
 
-export function buildOsdRows({ prom, pods, machines, now }: OsdInputs): OsdRow[] {
+export function buildOsdRows({ prom, pods, machines, now, stableAfterMs = FLAP_WINDOW_MS, crushWeights }: OsdInputs): OsdRow[] {
   const meta = byDaemon(prom.osdMeta)
   const up = byDaemon(prom.osdUp)
   const inn = byDaemon(prom.osdIn)
@@ -386,7 +430,7 @@ export function buildOsdRows({ prom, pods, machines, now }: OsdInputs): OsdRow[]
       const upV = num(up, name)
       const inV = num(inn, name)
       const deviceIds = parseDeviceIds(disk.get(name)?.labels.device_ids)
-      const judged = judgeOsd(upV === null ? null : upV === 1, inV === null ? null : inV === 1, pod, now)
+      const judged = judgeOsd(upV === null ? null : upV === 1, inV === null ? null : inV === 1, pod, now, stableAfterMs)
       return {
         id,
         name,
@@ -402,7 +446,7 @@ export function buildOsdRows({ prom, pods, machines, now }: OsdInputs): OsdRow[]
         commitMs: num(commit, name),
         slowOps: num(slow, name),
         bluestoreSlow: num(blue, name),
-        crushWeight: null,
+        crushWeight: crushWeights?.get(id) ?? null,
         devices: (disk.get(name)?.labels.devices ?? '').split(',').filter(Boolean),
         deviceIds,
         pod,
