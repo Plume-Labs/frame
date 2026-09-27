@@ -417,4 +417,9 @@ Upgrading an existing install:
 3. Delete the two CRDs, which the new release no longer ships:
    `kubectl delete crd talosmachineconfigs.frame.plume-labs.io talosupgrades.frame.plume-labs.io`.
    Deleting a CRD deletes every object of that kind — step 1 is what makes
-   this safe.
+   this safe. Nothing does this for you: the chart stamps its CRDs with
+   `helm.sh/resource-policy: keep` (`templates/crds.yaml`), so a
+   `helm upgrade` leaves the two orphaned rather than removing them, and a
+   kustomize `apply` never deletes what it no longer renders. Left behind,
+   each still declares `conversion.strategy: Webhook` pointing at a
+   `/convert` that no longer knows the kind.
