@@ -48,8 +48,11 @@ func PartmanRecipe(l Layout) (string, error) {
 		b.WriteString("d-i partman-auto/expert_recipe string \\\n")
 		b.WriteString("      frameraid :: \\\n")
 		b.WriteString("              538 538 1075 free $iflabel{ gpt } $reusemethod{ } method{ efi } format{ } . \\\n")
-		b.WriteString("              1000 5000 -1 raid $lvmignore{ } method{ raid } . \\\n")
-		b.WriteString("      .\n")
+		// The "." closing this last stanza also ends the recipe. A second,
+		// lone "." after it would close an empty stanza, which partman turns
+		// into a partition with no mount point: d-i stopped at "Identical
+		// mount points" installing an ML350 Gen9 in QEMU.
+		b.WriteString("              1000 5000 -1 raid $lvmignore{ } method{ raid } .\n")
 		// The recipe is selected by the label used above (frameraid), not by a
 		// built-in name like atomic: choose_recipe has no other way to find an
 		// expert_recipe stanza.

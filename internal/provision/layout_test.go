@@ -68,6 +68,65 @@ func TestPartmanRecipeNamesEveryDiskItWasGiven(t *testing.T) {
 	}
 }
 
+// preseedValue returns the value of one `d-i <question> <type> <value>` line,
+// with its backslash continuations joined the way debconf-set-selections
+// joins them.
+func preseedValue(t *testing.T, preseed, question string) string {
+	t.Helper()
+	joined := strings.ReplaceAll(preseed, "\\\n", " ")
+	for line := range strings.SplitSeq(joined, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && f[0] == "d-i" && f[1] == question {
+			return strings.Join(f[3:], " ")
+		}
+	}
+	t.Fatalf("no %s line in:\n%s", question, preseed)
+	return ""
+}
+
+// partman-auto reads an expert recipe as `<name> ::` followed by partition
+// stanzas, each closed by a lone ".". A "." with nothing before it closes an
+// empty stanza, which partman turns into one more partition with no method
+// and no mount point. On the ML350 Gen9, installing in QEMU, that stopped d-i
+// at "Identical mount points". Every stanza must therefore carry something,
+// and the recipe must declare exactly the two partitions it means: the ESP
+// and the RAID member.
+func TestPartmanExpertRecipeHasNoEmptyStanza(t *testing.T) {
+	l := Layout{Kind: LayoutMirror, Disks: []Disk{
+		{ByID: "/dev/disk/by-id/scsi-aaa", SizeBytes: 300 << 30},
+		{ByID: "/dev/disk/by-id/scsi-bbb", SizeBytes: 300 << 30},
+	}}
+	got, err := PartmanRecipe(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe := preseedValue(t, got, "partman-auto/expert_recipe")
+	_, body, ok := strings.Cut(recipe, "::")
+	if !ok {
+		t.Fatalf("expert_recipe has no `::` header: %q", recipe)
+	}
+	fields := strings.Fields(body)
+	if len(fields) == 0 || fields[len(fields)-1] != "." {
+		t.Fatalf("expert_recipe must end by closing its last stanza with \".\": %q", recipe)
+	}
+	var stanzas [][]string
+	var cur []string
+	for _, f := range fields {
+		if f == "." {
+			if len(cur) == 0 {
+				t.Fatalf("expert_recipe closes an empty stanza (a \".\" with nothing before it): %q", recipe)
+			}
+			stanzas = append(stanzas, cur)
+			cur = nil
+			continue
+		}
+		cur = append(cur, f)
+	}
+	if len(stanzas) != 2 {
+		t.Fatalf("expert_recipe declares %d partitions, want 2 (ESP + RAID member): %q", len(stanzas), recipe)
+	}
+}
+
 // A mirror is only redundant if its two halves are different hardware. The
 // same disk named twice would render a "raid" recipe over one physical disk.
 func TestPartmanRecipeRejectsTheSameDiskTwice(t *testing.T) {
