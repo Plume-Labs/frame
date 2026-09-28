@@ -356,13 +356,19 @@ func TestExpiredTokenIsRenewedOnce(t *testing.T) {
 // otherCA is a self-signed certificate the fake dashboard was not issued by.
 func otherCA(t *testing.T) []byte {
 	t.Helper()
+	return certExpiring(t, time.Now().Add(time.Hour))
+}
+
+// certExpiring is a self-signed CA certificate, PEM, valid until notAfter.
+func certExpiring(t *testing.T, notAfter time.Time) []byte {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "other-ca"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: notAfter,
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
@@ -580,5 +586,20 @@ func TestTransportIsHTTP1Only(t *testing.T) {
 		if got := protoMajor.Load(); got != 1 {
 			t.Fatalf("ForceAttemptHTTP2=%v: login sent over HTTP/%d, want HTTP/1.1", force, got)
 		}
+	}
+}
+
+// Several certificates in ca.crt: the expiry reported is the nearest one,
+// whatever their order — the first to lapse is the one that breaks reads.
+func TestCertNotAfterKeepsTheNearestExpiry(t *testing.T) {
+	near := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	far := time.Date(2029, 3, 1, 0, 0, 0, 0, time.UTC)
+	mid := time.Date(2028, 3, 1, 0, 0, 0, 0, time.UTC)
+	pemData := append(append(certExpiring(t, far), certExpiring(t, near)...), certExpiring(t, mid)...)
+	if got := certNotAfter(pemData); got == nil || !got.Time.Equal(near) {
+		t.Fatalf("expiry %v, want the nearest %v", got, near)
+	}
+	if got := certNotAfter([]byte("not a certificate")); got != nil {
+		t.Fatalf("expiry %v from no certificate, want none", got)
 	}
 }

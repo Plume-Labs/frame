@@ -45,8 +45,9 @@ import (
 //     is not known (yet, or ever: a crash, a network error);
 //   - refused:  MACs of accounts the dashboard refused.
 //
-// MAC = HMAC-SHA256(hmac-key, url \x00 username \x00 password), hex, one per
-// line, at most MaxRefused per list (oldest dropped first).
+// MAC = HMAC-SHA256(hmac-key, username \x00 password), hex, one per line —
+// no URL: Ceph counts failed logins per user. At most MaxRefused per list:
+// refused drops its oldest first, a full pending forbids every login.
 //
 // A MAC in pending or refused forbids the login; the operator unblocks
 // (docs/storage-mgr-account.md). A state that cannot be read, is missing,

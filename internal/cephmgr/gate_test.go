@@ -511,3 +511,20 @@ func TestRefusalHoldsAcrossURLs(t *testing.T) {
 		t.Fatalf("%d logins for one refused account across URLs, want 1", f.logins)
 	}
 }
+
+// A NUL inside the username or password would blur the account MAC's
+// separator: the Secret is not used, the status says why, no login.
+func TestNULInCredentialsIsRefused(t *testing.T) {
+	f := newFake(t)
+	for _, field := range []string{"username", "password"} {
+		data := map[string][]byte{"url": []byte(f.srv.URL), "username": []byte("frame-storage-reader"), "password": []byte("s3cret"), "ca.crt": f.caPEM(), "serverName": []byte("example.com")}
+		data[field] = append(data[field], 0, 'x')
+		c := fake.NewClientBuilder().WithObjects(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: SecretName, Namespace: "frame-system"}, Data: data}).Build()
+		gate, _ := stateGate(t, true, interceptor.Funcs{})
+		r := &Reader{Load: SecretLoader(c, "frame-system"), Gate: gate, Now: func() time.Time { return t0 }}
+		p := place(r)
+		if p.State != "Error" || !strings.Contains(p.Message, "NUL") || f.logins != 0 {
+			t.Fatalf("NUL in %s: state %s %q, %d login(s)", field, p.State, p.Message, f.logins)
+		}
+	}
+}

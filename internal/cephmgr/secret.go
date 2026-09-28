@@ -46,10 +46,18 @@ func SecretLoader(r client.Reader, namespace string) func(context.Context) (Conf
 			}
 			return Config{}, fmt.Errorf("reading Secret %s/%s: %w", namespace, SecretName, err)
 		}
+		user := strings.TrimSpace(string(s.Data["username"]))
+		pass := strings.TrimRight(string(s.Data["password"]), "\r\n")
+		// NUL separates username from password in the account MAC
+		// (accountMAC): with one inside, two different accounts could
+		// share a MAC, and one's refusal would block, or free, the other.
+		if strings.ContainsRune(user, 0) || strings.ContainsRune(pass, 0) {
+			return Config{}, fmt.Errorf("Secret %s/%s: username or password contains a NUL byte; not used", namespace, SecretName)
+		}
 		return Config{
 			BaseURL:    strings.TrimSpace(string(s.Data["url"])),
-			Username:   strings.TrimSpace(string(s.Data["username"])),
-			Password:   strings.TrimRight(string(s.Data["password"]), "\r\n"),
+			Username:   user,
+			Password:   pass,
 			CAPEM:      s.Data["ca.crt"],
 			ServerName: strings.TrimSpace(string(s.Data["serverName"])),
 			Version:    s.ResourceVersion,

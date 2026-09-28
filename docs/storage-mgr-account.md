@@ -53,9 +53,9 @@ TOOLS="kubectl -n $NS exec deploy/rook-ceph-tools --"
 SVC=rook-ceph-mgr-dashboard.$NS.svc
 
 # 1. A certificate for the dashboard, naming its Service (Go verifies the
-#    subjectAltName, not the CN).
+#    subjectAltName, not the CN). RSA, not EC: see the note below.
 umask 077
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 825 \
+openssl req -x509 -newkey rsa:3072 -nodes -days 825 \
   -subj "/CN=$SVC" -addext "subjectAltName=DNS:$SVC,DNS:$SVC.cluster.local" \
   -keyout dashboard.key -out dashboard.crt
 kubectl -n $NS exec -i deploy/rook-ceph-tools -- sh -c 'umask 077; cat > /tmp/dashboard.crt' < dashboard.crt
@@ -63,6 +63,7 @@ kubectl -n $NS exec -i deploy/rook-ceph-tools -- sh -c 'umask 077; cat > /tmp/da
 $TOOLS ceph dashboard set-ssl-certificate -i /tmp/dashboard.crt
 $TOOLS ceph dashboard set-ssl-certificate-key -i /tmp/dashboard.key
 $TOOLS rm -f /tmp/dashboard.crt /tmp/dashboard.key
+$TOOLS ceph mgr services   # "dashboard": "https://…" — see the note below
 
 # 2. Serve the dashboard in TLS (Rook moves it to port 8443).
 kubectl -n $NS patch cephcluster rook-ceph --type merge -p '{"spec":{"dashboard":{"ssl":true}}}'
@@ -122,6 +123,17 @@ text to port 7000. The certificate left in the mgr configuration is
 unused while `ssl` is false (`ceph config-key rm
 mgr/dashboard/crt` and `mgr/dashboard/key` remove it).
 
+**Note on step 1: RSA key, then check `ceph mgr services`.** The
+dashboard checks the key/certificate pair itself when it loads them
+(pyOpenSSL `verify_tls`). Ceph 20.2.2 rejects an EC key there
+("TypeError: key type unsupported"), and the dashboard then stops
+serving: in production it stayed silent about 5 minutes, until the key
+was replaced by an RSA one. Hence `rsa:3072`. After setting the
+certificate and key (and after step 2), `ceph mgr services` must list
+the dashboard with an `https://` URL; if the dashboard is missing from
+it, look at the active mgr's log for the `verify_tls` error before going
+further.
+
 ### Certificate expiry and renewal
 
 The certificate of step 1 is valid 825 days. Its expiry date is in
@@ -132,8 +144,10 @@ read from `ca.crt` in the account Secret). The Storage screen's
 expired (critical): every read then fails on TLS. Write the date in the
 operations calendar when running step 1.
 
-To renew: run step 1 again (new key and certificate, same subjectAltName),
-then replace `ca.crt` in the account Secret with the new certificate:
+To renew: run step 1 again (a new RSA key — never EC, see the note on
+step 1 — and certificate, same subjectAltName), check that
+`$TOOLS ceph mgr services` lists the dashboard in `https://`, then
+replace `ca.crt` in the account Secret with the new certificate:
 
 ```sh
 kubectl -n frame-system create secret generic frame-ceph-dashboard \
@@ -148,7 +162,7 @@ kubectl -n frame-system create secret generic frame-ceph-dashboard \
 `frame-mgr.pass` was shredded in step 5: read the password back from the
 Secret first (`kubectl -n frame-system get secret frame-ceph-dashboard
 -o jsonpath='{.data.password}' | base64 -d > frame-mgr.pass`, `umask 077`),
-and shred it again afterwards. Restart the mgr if the dashboard keeps
+and shred it again afterwards, with `dashboard.key`. Restart the mgr if the dashboard keeps
 serving the old certificate (`$TOOLS ceph mgr fail`). Between the two
 steps, reads fail on TLS (the pinned certificate no longer matches): an
 `Error`, not a failed login, since the TLS handshake fails before any
