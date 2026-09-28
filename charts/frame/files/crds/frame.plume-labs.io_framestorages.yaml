@@ -146,6 +146,13 @@ spec:
                   each OSD's CRUSH weight, read from the ceph-mgr dashboard API with a
                   dedicated read-only account. Nil on a local-path entry.
                 properties:
+                  certificateNotAfter:
+                    description: |-
+                      CertificateNotAfter is when the certificate pinned in the account
+                      Secret (ca.crt) expires — the earliest, if it holds several. The
+                      Storage screen warns 30 days before.
+                    format: date-time
+                    type: string
                   collectedAt:
                     description: CollectedAt is when every list was last read in the
                       same pass.

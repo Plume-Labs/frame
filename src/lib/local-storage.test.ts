@@ -109,6 +109,8 @@ describe('bandeau', () => {
       mdArrays: mdArrays(prom.mdDisks, prom.mdRequired, prom.mdState),
       machines,
       frameStorageCount: 1,
+      certificateNotAfter: null,
+      now: 0,
     }
   }
 

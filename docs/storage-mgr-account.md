@@ -41,6 +41,12 @@ The dashboard is served in plain HTTP today (`spec.dashboard` has no `ssl`,
 port 7000). The password must not cross the network in clear text, so TLS
 comes first.
 
+Once step 2 is done the dashboard listens on 8443 in HTTPS only: any
+`kubectl port-forward` to port 7000, bookmark or ingress pointing at
+`http://…:7000` stops working. Forward 8443 instead
+(`kubectl -n rook-ceph port-forward svc/rook-ceph-mgr-dashboard 8443`,
+then `https://localhost:8443`; the browser will not know the certificate).
+
 ```sh
 NS=rook-ceph
 TOOLS="kubectl -n $NS exec deploy/rook-ceph-tools --"
@@ -88,8 +94,65 @@ Within 5 minutes, `kubectl get framestorage -o jsonpath='{.items[*].status.cephP
 says `Collected`.
 
 If a step fails, the screen shows why: `Error` with the message, and it
-keeps the last good read with its date. The manager needs no new RBAC:
-it already reads Secrets.
+keeps the last good read with its date.
+
+**RBAC.** The manager's ClusterRole already grants get, create, update and
+delete on every Secret (the FrameService controller needs them), so the
+account Secret is read with that. This lot adds one rule naming
+`frame-ceph-dashboard-state` (get, update): it states what FrameStorage
+uses, and it becomes the only one that applies if the broad rule is ever
+narrowed. It restricts nothing today. That the manager never creates the
+state Secret is a property of its code, not of its RBAC.
+
+### Undoing step 2 (back to plain HTTP)
+
+If TLS breaks the dashboard or something that depends on port 7000,
+undo it, in this order:
+
+```sh
+kubectl -n frame-system delete secret frame-ceph-dashboard   # the manager stops logging in: NotConfigured
+$TOOLS ceph dashboard ac-user-delete frame-storage-reader
+$TOOLS ceph dashboard ac-role-delete frame-storage-reader
+kubectl -n $NS patch cephcluster rook-ceph --type merge -p '{"spec":{"dashboard":{"ssl":false}}}'
+kubectl -n $NS get svc rook-ceph-mgr-dashboard   # port 7000 again
+```
+
+Deleting the account Secret first means no login is ever sent in clear
+text to port 7000. The certificate left in the mgr configuration is
+unused while `ssl` is false (`ceph config-key rm
+mgr/dashboard/crt` and `mgr/dashboard/key` remove it).
+
+### Certificate expiry and renewal
+
+The certificate of step 1 is valid 825 days. Its expiry date is in
+`dashboard.crt` (`openssl x509 -noout -enddate -in dashboard.crt`) and
+in the FrameStorage status (`status.cephPlacement.certificateNotAfter`,
+read from `ca.crt` in the account Secret). The Storage screen's
+"À traiter" banner warns from 30 days before (warning), then says it has
+expired (critical): every read then fails on TLS. Write the date in the
+operations calendar when running step 1.
+
+To renew: run step 1 again (new key and certificate, same subjectAltName),
+then replace `ca.crt` in the account Secret with the new certificate:
+
+```sh
+kubectl -n frame-system create secret generic frame-ceph-dashboard \
+  --from-literal=url=https://$SVC:8443 \
+  --from-literal=username=frame-storage-reader \
+  --from-file=password=frame-mgr.pass \
+  --from-file=ca.crt=dashboard.crt \
+  --from-literal=serverName=$SVC \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+`frame-mgr.pass` was shredded in step 5: read the password back from the
+Secret first (`kubectl -n frame-system get secret frame-ceph-dashboard
+-o jsonpath='{.data.password}' | base64 -d > frame-mgr.pass`, `umask 077`),
+and shred it again afterwards. Restart the mgr if the dashboard keeps
+serving the old certificate (`$TOOLS ceph mgr fail`). Between the two
+steps, reads fail on TLS (the pinned certificate no longer matches): an
+`Error`, not a failed login, since the TLS handshake fails before any
+password is sent.
 
 To remove access: `ceph dashboard ac-user-delete frame-storage-reader`, then
 `kubectl -n frame-system delete secret frame-ceph-dashboard`. The state goes
@@ -136,8 +199,10 @@ dedicated Secret, `frame-system/frame-ceph-dashboard-state`
      stays in `pending`, because the outcome is unknown.
 
 An account in `pending` or in `refused` is never tried again. An operator
-unblocks it (below). An account is identified by its content, url,
-username and password. An annotation or a label on the account Secret
+unblocks it (below). An account is identified by its username and
+password, not by the URL: Ceph counts failures per user whatever address
+the login came through (a trailing slash, another host name, an IP), so a
+refusal blocks the same credentials at every URL. An annotation or a label on the account Secret
 changes nothing. A new password is a different account. A pass
 also stops at its first failed login: no GET of that pass logs in again.
 
@@ -146,8 +211,13 @@ The state Secret holds:
 - `hmac-key`: exactly 32 random bytes. It is generated only when the
   Secret is entirely empty, in the same update as the first intention;
 - `key-fp`: the first 8 bytes of SHA-256(`hmac-key`), in hex;
-- `pending` and `refused`: one HMAC-SHA256(`hmac-key`, url, username,
+- `pending` and `refused`: one HMAC-SHA256(`hmac-key`, username NUL
   password) per line, in hex, at most 64 each (see Limits).
+
+Builds before this one put the URL in the MAC. Their entries no longer
+match anything: they would block nothing and still count against the
+limits. The state Secret has never been deployed with them; if one
+exists, clear `pending` and `refused` (see Unblocking) before deploying.
 
 The password is never stored, and without the key the values can't be
 checked against guesses. The FrameStorage status carries only
@@ -176,8 +246,9 @@ would unblock an account that may already have failed. Clear `pending`
 The deployment manifests create `frame-ceph-dashboard-state` empty
 (`config/manager/ceph_dashboard_state.yaml`,
 `charts/frame/templates/ceph-dashboard-state.yaml`, kept on uninstall).
-The manager's RBAC names it: get and update on that one Secret. There is
-no create verb, since `resourceNames` can't restrict a create.
+The manager's RBAC names it: get and update on that one Secret (no
+create verb, since `resourceNames` can't restrict a create). The broad
+Secret rule described under Steps still applies alongside it.
 
 ### A missing state Secret
 

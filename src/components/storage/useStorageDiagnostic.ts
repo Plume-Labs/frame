@@ -111,6 +111,8 @@ export function useStorageDiagnostic(storageEntries: StorageEntry[] | null): Sto
             mdArrays: md,
             machines,
             frameStorageCount: storageEntries ? storageEntries.length : null,
+            certificateNotAfter: placement?.certificateNotAfter ?? null,
+            now,
             extra,
           })
         : state.phase === 'error'

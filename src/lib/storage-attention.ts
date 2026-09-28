@@ -37,7 +37,30 @@ export interface AttentionInputs {
   mdArrays: MdArray[]
   machines: Machine[]
   frameStorageCount: number | null
+  /** status.cephPlacement.certificateNotAfter; required so the banner can't silently lose it. */
+  certificateNotAfter: string | null
+  now: number
   extra?: AttentionItem[]
+}
+
+const DAY_MS = 86_400_000
+/** How long before the pinned dashboard certificate expires the banner says so. */
+export const CERT_WARN_DAYS = 30
+
+/**
+ * "À traiter" line for the dashboard certificate pinned in the account
+ * Secret: from 30 days before it expires, and once it has (every read then
+ * fails on TLS). Renewal: docs/storage-mgr-account.md.
+ */
+export function certificateItems(notAfter: string | null | undefined, now: number): AttentionItem[] {
+  const at = notAfter ? Date.parse(notAfter) : NaN
+  if (!Number.isFinite(at)) return []
+  const days = Math.floor((at - now) / DAY_MS)
+  if (at <= now)
+    return [{ severity: 'critical', code: 'dashboard-cert-expired', text: `ceph-mgr dashboard certificate expired on ${notAfter}: renew it (docs/storage-mgr-account.md)` }]
+  if (days <= CERT_WARN_DAYS)
+    return [{ severity: 'warning', code: 'dashboard-cert-expiring', text: `ceph-mgr dashboard certificate expires in ${days} day(s) (${notAfter}): renew it (docs/storage-mgr-account.md)` }]
+  return []
 }
 
 const RANK: Record<AttentionSeverity, number> = { critical: 0, warning: 1, info: 2 }
@@ -46,7 +69,7 @@ const RANK: Record<AttentionSeverity, number> = { critical: 0, warning: 1, info:
 const HEALING_FLAGS = new Set(['noout', 'norebalance', 'nobackfill', 'norecover', 'nodown', 'noup', 'noin'])
 
 export function attentionItems(i: AttentionInputs): AttentionItem[] {
-  const out: AttentionItem[] = []
+  const out: AttentionItem[] = [...certificateItems(i.certificateNotAfter, i.now)]
 
   if (!i.promAvailable) {
     out.push({

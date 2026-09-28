@@ -397,6 +397,9 @@ func TestReaderStates(t *testing.T) {
 	loadErr = nil
 	now = now.Add(DefaultInterval)
 	p := place(r)
+	if want := f.srv.Certificate().NotAfter; p.CertificateNotAfter == nil || !p.CertificateNotAfter.Time.Equal(want) {
+		t.Fatalf("certificate expiry %v, want %v", p.CertificateNotAfter, want)
+	}
 	if p.State != "Collected" || len(p.Pools) != 10 || len(p.OSDs) != 11 || p.OSDs[3].CrushWeight != "1.0900" || p.Pools[0].Name != ".mgr" || p.Pools[1].CrushRule != "20 hdd2_ssd2" {
 		t.Fatalf("collected: %+v", p)
 	}

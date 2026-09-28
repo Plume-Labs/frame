@@ -159,6 +159,10 @@ func (in *CephPlacement) DeepCopyInto(out *CephPlacement) {
 		in, out := &in.RulesReadAt, &out.RulesReadAt
 		*out = (*in).DeepCopy()
 	}
+	if in.CertificateNotAfter != nil {
+		in, out := &in.CertificateNotAfter, &out.CertificateNotAfter
+		*out = (*in).DeepCopy()
+	}
 	if in.Pools != nil {
 		in, out := &in.Pools, &out.Pools
 		*out = make([]CephPoolPlacement, len(*in))

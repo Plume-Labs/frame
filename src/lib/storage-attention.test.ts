@@ -23,6 +23,8 @@ function inputs(prom = healthyProm(), pods = healthyPods(), over: Partial<Attent
     mdArrays: mdArrays(prom.mdDisks, prom.mdRequired, prom.mdState),
     machines: [machine],
     frameStorageCount: 1,
+    certificateNotAfter: null,
+    now: 0,
     ...over,
   }
 }
@@ -111,6 +113,12 @@ describe('bandeau À traiter', () => {
     setSample(prom, 'mdDisks', { device: 'md0', state: 'active' }, 1)
     setSample(prom, 'mdDisks', { device: 'md0', state: 'failed' }, 1)
     expect(codes(inputs(prom))).toContain('md-degraded')
+  })
+
+  it('dit que le certificat du dashboard expire à J-30', () => {
+    const now = Date.parse('2026-09-28T00:00:00Z')
+    expect(codes(inputs(healthyProm(), healthyPods(), { certificateNotAfter: '2026-10-20T00:00:00Z', now }))).toContain('dashboard-cert-expiring')
+    expect(codes(inputs(healthyProm(), healthyPods(), { certificateNotAfter: '2027-10-20T00:00:00Z', now }))).toEqual([])
   })
 
   it('dit qu-aucune FrameStorage n-est déclarée, mais pas quand la liste est inconnue', () => {

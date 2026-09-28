@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { cephCapacityEntry, crushWeights, placementOf, placementSourceLine, poolPlacement, type CephPlacement } from './ceph-placement'
 import { capacityLine } from './storage'
 import { buildPoolRows } from './ceph-pools'
-import { attentionItems } from './storage-attention'
+import { attentionItems, certificateItems } from './storage-attention'
 import { buildOsdRows } from './ceph-diagnostic'
 import { daemonQuorum, objectHealth, setFlags } from './ceph-pools'
 import { mdArrays } from './disk-inventory'
@@ -89,6 +89,8 @@ describe('bandeau et poids CRUSH', () => {
       mdArrays: mdArrays(prom.mdDisks, prom.mdRequired, prom.mdState),
       machines: [machine],
       frameStorageCount: 1,
+      certificateNotAfter: null,
+      now: 0,
     }).find((i) => i.code === 'osd-no-pg')!.text
   }
 
@@ -96,5 +98,23 @@ describe('bandeau et poids CRUSH', () => {
     expect(items()).toContain('CRUSH weight 0 or not selected by any rule? (weight not collected)')
     expect(items(new Map([[3, 0], [4, 0], [5, 0], [6, 0]]))).toContain('CRUSH weight 0: they take no data')
     expect(items(new Map([[3, 1.09], [4, 1.09], [5, 1.09], [6, 1.09]]))).toContain("CRUSH weight 1.09 — not selected by any pool's CRUSH rule")
+  })
+})
+
+describe('échéance du certificat du dashboard', () => {
+  const now = Date.parse('2026-09-28T00:00:00Z')
+  it('ne dit rien à plus de 30 jours, ni sans date', () => {
+    expect(certificateItems('2026-10-29T00:00:00Z', now)).toEqual([])
+    expect(certificateItems(undefined, now)).toEqual([])
+    expect(certificateItems(null, now)).toEqual([])
+  })
+  it('avertit à J-30 et en dessous, avec le nombre de jours', () => {
+    const items = certificateItems('2026-10-27T12:00:00Z', now)
+    expect(items.map((i) => [i.severity, i.code])).toEqual([['warning', 'dashboard-cert-expiring']])
+    expect(items[0].text).toContain('29 day(s)')
+    expect(certificateItems('2026-10-28T00:00:00Z', now).map((i) => i.code)).toEqual(['dashboard-cert-expiring'])
+  })
+  it('passe en critique une fois expiré', () => {
+    expect(certificateItems('2026-09-27T00:00:00Z', now).map((i) => i.code)).toEqual(['dashboard-cert-expired'])
   })
 })

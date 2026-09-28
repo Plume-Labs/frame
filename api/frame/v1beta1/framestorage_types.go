@@ -149,6 +149,11 @@ type CephPlacement struct {
 	OSDsReadAt *metav1.Time `json:"osdsReadAt,omitempty"`
 	// +optional
 	RulesReadAt *metav1.Time `json:"rulesReadAt,omitempty"`
+	// CertificateNotAfter is when the certificate pinned in the account
+	// Secret (ca.crt) expires — the earliest, if it holds several. The
+	// Storage screen warns 30 days before.
+	// +optional
+	CertificateNotAfter *metav1.Time `json:"certificateNotAfter,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
 	Pools []CephPoolPlacement `json:"pools,omitempty"`

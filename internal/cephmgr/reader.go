@@ -18,6 +18,8 @@ package cephmgr
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"sort"
@@ -179,7 +181,7 @@ func gateStatus(prev *framev1beta1.CephPlacement, err error) *framev1beta1.CephP
 	}
 }
 
-func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.CephPlacement) *framev1beta1.CephPlacement {
+func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.CephPlacement) (out *framev1beta1.CephPlacement) {
 	cfg, err := r.Load(ctx)
 	if errors.Is(err, ErrNotConfigured) {
 		return &framev1beta1.CephPlacement{State: "NotConfigured", Message: "no dashboard account Secret"}
@@ -187,6 +189,8 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 	if err != nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error(), 256)}, prev)
 	}
+	// Whatever the read gives, say when the pinned certificate expires.
+	defer func() { out.CertificateNotAfter = certNotAfter(cfg.CAPEM) }()
 	if r.Gate == nil {
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: "no login: no login gate (state Secret) configured"}, prev)
 	}
@@ -223,7 +227,7 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 		return withLast(&framev1beta1.CephPlacement{State: "Error", Message: clip(err.Error()+note, 256)}, prev)
 	}
 	at := metav1.NewTime(now)
-	out := toStatus(snap, &at)
+	out = toStatus(snap, &at)
 	// Pools and OSDs are dated with their lists in toStatus; the rules have
 	// no list of their own (they name each pool's rule), so their date is
 	// set here, only when they were read.
@@ -246,6 +250,27 @@ func (r *Reader) refresh(ctx context.Context, now time.Time, prev *framev1beta1.
 		out.Message = clip(strings.TrimPrefix(out.Message+note, " — "), 256)
 	}
 	return out
+}
+
+// certNotAfter is the earliest expiry of the PEM certificates, nil if none
+// parses.
+func certNotAfter(pemData []byte) *metav1.Time {
+	var min *metav1.Time
+	for {
+		var b *pem.Block
+		b, pemData = pem.Decode(pemData)
+		if b == nil {
+			return min
+		}
+		c, err := x509.ParseCertificate(b.Bytes)
+		if err != nil {
+			continue
+		}
+		if min == nil || c.NotAfter.Before(min.Time) {
+			t := metav1.NewTime(c.NotAfter)
+			min = &t
+		}
+	}
 }
 
 // CRD bounds (api/frame/v1beta1/framestorage_types.go).
