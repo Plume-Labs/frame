@@ -303,8 +303,15 @@ Trois conditions, à vérifier avant le lot 4 :
      seulement par une règle nommée.
    - **Consommateurs hors catalogue.** Tout client qui appelle la gateway sans
      lire le catalogue (URL et nom de modèle en configuration) prendra des 401
-     au lot 4 : les énumérer avant la migration et leur donner une clé
-     (l'annexe du site en tient la liste).
+     au lot 4 : les énumérer avant la migration (l'annexe du site en tient
+     la liste). **Ordre imposé**, parce que `ensureAPIKey` réutilise un Secret
+     `<nom>-inference-key` déjà rempli au lieu d'en générer un :
+     1. pré-créer le Secret de clé `<nom>-inference-key` ;
+     2. le copier dans le namespace de chaque consommateur ;
+     3. déployer les consommateurs avec `Authorization` sur tous leurs chemins
+        (sans effet tant que le proxy n'existe pas : llama.cpp ignore l'en-tête) ;
+     4. seulement ensuite, migrer côté Frame.
+     Critère de fermeture : zéro 401 dans les journaux du proxy à la migration.
    - `Bind()` publie l'adresse de la gateway (§4.3), ou celle du proxy pour un
      service sans gateway.
 
@@ -352,7 +359,8 @@ Trois conditions, à vérifier avant le lot 4 :
 unique est choisi **avant le lot 3**, parmi `spec.models[]`,
 `spec.models[].draft` et `draftModel`. **Recommandation : un `FrameService` =
 un serveur = un modèle cible + un brouillon optionnel (`parameters.draftModel`)** ;
-N modèles = N `FrameService`, dont l'admission somme les parts sur la carte.
+N modèles = N `FrameService`, dont l'admission somme les parts sur la carte
+(une fois la carte partageable, voir §7).
 Raisons : `parameters` est une table de chaînes, commune à tous les providers ;
 chaque modèle garde son cycle de vie (redémarrage, bascule) et son alias ; l'EPP
 choisit déjà entre services. L'estimateur additionne des parts par instance au
@@ -374,6 +382,9 @@ lieu de supposer une carte entière.
 - **Ressources par modèle.** Chaque instance reçoit sa part de VRAM et de RAM,
   calculée par l'estimateur (§2.3) et vérifiée par l'admission sur la somme des
   instances d'une carte ; `status.measured` calibre chaque part.
+- **Prérequis : une carte partageable.** Le provider demande
+  `nvidia.com/gpu: 1`, soit une carte exclusive : sommer des parts suppose le
+  time-slicing, MPS ou une ressource fractionnée exposée par le plugin GPU.
 - **Plusieurs instances ou modèles en parallèle** sur une ou plusieurs cartes,
   chacun derrière son alias, l'EPP choisissant entre elles. Le `Recreate`
   n'est plus imposé quand la VRAM libre permet de démarrer la nouvelle instance
