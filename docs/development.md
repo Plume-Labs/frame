@@ -10,7 +10,7 @@ Two independent development loops: the **Go operator** and the **React UI**.
 
 - Go 1.25+
 - Docker (for `docker-build` and the e2e Kind cluster)
-- `kubectl` 1.28+ with cluster access for `make install` / `make deploy`
+- `kubectl` 1.28+ with cluster access for `make install` / `make deploy DEPLOY_DEFAULT=1` (a dev cluster; a real one uses `make deploy-production`)
 
 The Makefile downloads pinned `controller-gen`, `kustomize`, `setup-envtest`, and `golangci-lint` into `bin/` on first use.
 

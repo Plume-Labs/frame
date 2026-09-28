@@ -315,14 +315,41 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \
 	if [ -n "$$out" ]; then echo "$$out" | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -; else echo "No CRDs to delete; skipping."; fi
 
+# `deploy` renders config/default, which grants the manager no Secret access
+# outside frame-system: on a cluster with FrameMachines or FrameServices in
+# other namespaces it silently cuts their credentials (BMC polling, power
+# control, API keys). So it refuses unless asked for explicitly with
+# DEPLOY_DEFAULT=1 — what the e2e suite (a kind cluster with none of those)
+# does. A real cluster deploys its overlay: `make deploy-production`.
+# Refusing costs one variable in two e2e call sites; warning instead would
+# be one line in a scroll of `kubectl apply` output.
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+deploy: manifests kustomize ## Deploy config/default (dev/e2e only: DEPLOY_DEFAULT=1). Real clusters: make deploy-production.
+	@[ "$(DEPLOY_DEFAULT)" = "1" ] || { echo "make deploy renders config/default, which binds the manager to no Secret outside frame-system (BMC credentials, FrameService keys would go Forbidden). For a real cluster: make deploy-production IMG=... ; for a throwaway dev/e2e cluster: make deploy DEPLOY_DEFAULT=1 IMG=..." >&2; exit 1; }
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh default "$(IMG)" | "$(KUBECTL)" apply -f -
 
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy: kustomize ## Undeploy config/default (dev/e2e). Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh default undeploy.invalid/frame:unused | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
+
+# The overlay this cluster runs (config/overlays/production): config/default
+# + the manager's per-namespace Secret access, without frame-provisiond.
+# IMG is required and never the placeholder: the overlay carries no image
+# (the registry address stays out of this public repository), and
+# hack/render-overlay.sh sets it in a mktemp copy.
+.PHONY: deploy-production
+deploy-production: manifests kustomize ## Deploy config/overlays/production. IMG=<registry>/frame-controller:<tag> required.
+	@case "$(IMG)" in ""|controller:latest|example.com/*|*:latest) echo "deploy-production: IMG=<registry>/frame-controller:<tag> required, not '$(IMG)'" >&2; exit 1;; esac
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production "$(IMG)" | "$(KUBECTL)" apply -f -
+
+.PHONY: diff-production
+diff-production: kustomize ## Show what deploy-production would change (kubectl diff: read only). IMG required.
+	@case "$(IMG)" in ""|controller:latest|example.com/*|*:latest) echo "diff-production: IMG=<registry>/frame-controller:<tag> required, not '$(IMG)'" >&2; exit 1;; esac
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production "$(IMG)" | "$(KUBECTL)" diff -f -
+
+.PHONY: undeploy-production
+undeploy-production: kustomize ## Remove config/overlays/production. Call with ignore-not-found=true to ignore missing resources.
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production undeploy.invalid/frame:unused | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Helm
 

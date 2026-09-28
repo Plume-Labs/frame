@@ -42,15 +42,26 @@ you as part of the install.
 ```bash
 # Full install: CRDs, RBAC, controller deployment, webhooks, cert-manager integration,
 # plus this site's Secret access (see "Manager access to Secrets")
-kubectl apply -k config/overlays/production
+make diff-production IMG=<registry>/frame-controller:<tag>     # read only: what would change
+make deploy-production IMG=<registry>/frame-controller:<tag>
 ```
 
 `config/overlays/production` is `config/default` plus one RoleBinding per
-namespace where the manager must use Secrets. **Deploy the overlay, not
-`config/default`**: `config/default` grants the manager nothing on Secrets
+namespace where the manager must use Secrets, minus `frame-provisiond`
+(not run on this cluster; see the overlay's comment). **Deploy it with
+`make deploy-production`, never `kubectl apply -k`**: the overlay carries
+no image — the registry address stays out of this public repository — so
+`hack/render-overlay.sh` sets `IMG` in a mktemp copy and renders that; a
+bare `apply -k` would put the controller on the placeholder
+`example.com/frame:v0.0.1`, which never pulls. The target refuses an empty,
+placeholder or `:latest` `IMG`.
+
+Not `config/default` either: it grants the manager nothing on Secrets
 outside `frame-system`, so every FrameMachine, FrameInstall or FrameService
-elsewhere would fail with Forbidden. On another cluster, edit the overlay's
-`secret-access.yaml` for that cluster's namespaces (or copy the overlay).
+elsewhere would fail with Forbidden. `make deploy` (config/default) now
+refuses unless `DEPLOY_DEFAULT=1` — for throwaway dev/e2e clusters only.
+On another cluster, edit the overlay's `secret-access.yaml` for that
+cluster's namespaces (or copy the overlay).
 
 This applies the `frame-system` namespace, all ten CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
@@ -1643,7 +1654,10 @@ secret-access RoleBindings (see "Manager access to Secrets").
 | `make docker-build-authd` / `make docker-push-authd` | Build/push the authd image (`IMG_AUTHD`) |
 | `make docker-build-agent` / `make docker-push-agent` | Build/push the node-tuning agent image (`IMG_AGENT`, default `frame-agent:latest` — it matches the name the DaemonSet declares, so `kustomize edit set image frame-agent=…` works) |
 | `make install` | Apply CRDs to the cluster |
-| `make deploy` | Apply the full operator (config/default) |
-| `make undeploy` | Remove the operator from the cluster |
+| `make deploy-production IMG=…` | Apply `config/overlays/production` (this cluster's install), image set in a mktemp copy |
+| `make diff-production IMG=…` | `kubectl diff` of the same render — read only |
+| `make undeploy-production` | Remove what `deploy-production` applied |
+| `make deploy DEPLOY_DEFAULT=1 IMG=…` | Apply `config/default` — dev/e2e clusters only; refuses without `DEPLOY_DEFAULT=1` |
+| `make undeploy` | Remove what `make deploy` applied |
 | `make setup-test-e2e` | Create a Kind cluster for e2e tests |
 | `make test-e2e` | Run e2e tests against the Kind cluster |

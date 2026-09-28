@@ -4,7 +4,10 @@
 # Secrets"); every namespace holding a FrameMachine, FrameInstall or
 # FrameService must be bound here, or its objects fail with Forbidden.
 #
-# Deploy:  kubectl apply -k config/overlays/production
+# Deploy:  make deploy-production IMG=<registry>/frame-controller:<tag>
+#          (renders a mktemp copy with the image set: never `kubectl apply -k`
+#          here directly — the controller image would be config/manager's
+#          placeholder, example.com/frame:v0.0.1, and never pull)
 # Adapt:   edit secret-access.yaml — one RoleBinding per namespace, to
 #          frame-manager-secret-reader (FrameMachine, FrameInstall) or
 #          frame-manager-secret-writer (FrameService and each projectTo
@@ -18,3 +21,31 @@ kind: Kustomization
 resources:
 - ../../default
 - secret-access.yaml
+# frame-provisiond is not deployed on this cluster: it assembles installer
+# images for FrameInstall and serves them to a BMC over a NodePort (30581),
+# and nothing here runs a FrameInstall. config/default includes it, so it is
+# deleted from this render rather than created unused with a port open on
+# every node. To run FrameInstalls, drop these three patches and set the
+# manager's --provisiond-media-url to an address the BMCs reach.
+patches:
+- target: {kind: Deployment, name: frame-provisiond}
+  patch: |
+    $patch: delete
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: frame-provisiond
+- target: {kind: Service, name: frame-provisiond}
+  patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: frame-provisiond
+- target: {kind: Service, name: frame-provisiond-media}
+  patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: frame-provisiond-media

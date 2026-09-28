@@ -83,7 +83,7 @@ var _ = Describe("NodeTuning", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 		By("deploying the controller-manager")
-		_, err = utils.Run(exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage)))
+		_, err = utils.Run(exec.Command("make", "deploy", "DEPLOY_DEFAULT=1", fmt.Sprintf("IMG=%s", managerImage)))
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
 		By("resolving the node to tune")

@@ -11,8 +11,12 @@
 package managerrbac
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +26,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -77,25 +83,97 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// render runs kustomize on dir (relative to the repository root) and
-// returns the path of the rendered YAML. `make test` builds bin/kustomize
-// first (crd-render); KUSTOMIZE overrides it.
+// testIMG stands in for the registry image deploy-production is given.
+const testIMG = "registry.invalid/frame-controller:test"
+
+// render renders dir (under config/) through hack/render-overlay.sh — the
+// code path `make deploy-production` uses — with testIMG, and returns the
+// path of the rendered YAML. `make test` builds bin/kustomize first
+// (crd-render); KUSTOMIZE overrides it.
+//
+// go test caches a passing result against the files the test opened;
+// kustomize reads config/ in another process, invisible to it. So every
+// file under config/ and the script are read here too: editing the overlay
+// then re-runs this test instead of answering "ok (cached)".
 func render(t *testing.T, dir string) string {
 	t.Helper()
 	root := manifests.Root(t)
-	bin := os.Getenv("KUSTOMIZE")
-	if bin == "" {
-		bin = filepath.Join(root, "bin", "kustomize")
+	inputs := []string{filepath.Join(root, "hack", "render-overlay.sh")}
+	_ = filepath.WalkDir(filepath.Join(root, "config"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			inputs = append(inputs, p)
+		}
+		return nil
+	})
+	for _, p := range inputs {
+		if _, err := os.ReadFile(p); err != nil {
+			t.Fatal(err)
+		}
 	}
-	out, err := exec.Command(bin, "build", filepath.Join(root, dir)).Output()
+	cmd := exec.Command(filepath.Join(root, "hack", "render-overlay.sh"), strings.TrimPrefix(dir, "config/"), testIMG)
+	if os.Getenv("KUSTOMIZE") == "" {
+		cmd.Env = append(os.Environ(), "KUSTOMIZE="+filepath.Join(root, "bin", "kustomize"))
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("kustomize build %s (%s): %v — run `make kustomize`", dir, bin, err)
+		t.Fatalf("rendering %s: %v: %s — run `make kustomize`", dir, err, stderr.String())
 	}
 	path := filepath.Join(t.TempDir(), "render.yaml")
 	if err := os.WriteFile(path, out, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// The overlay is applied as rendered (make deploy-production): it must
+// carry the image it was given — never config/manager's placeholder or a
+// :latest — and must not create frame-provisiond, which this cluster
+// doesn't run (a Deployment and two Services, one a NodePort).
+func TestProductionRenderImageAndNoProvisiond(t *testing.T) {
+	raw, err := os.ReadFile(render(t, overlay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var managerImage string
+	dec := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
+	for {
+		var u unstructured.Unstructured
+		if err := dec.Decode(&u.Object); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatal(err)
+		}
+		if u.Object == nil {
+			continue
+		}
+		if strings.Contains(u.GetName(), "provisiond") {
+			t.Errorf("%s: renders %s %s; frame-provisiond must not be deployed", overlay, u.GetKind(), u.GetName())
+		}
+		if u.GetKind() == "Deployment" && u.GetName() == "frame-controller-manager" {
+			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
+			for _, c := range cs {
+				if m, ok := c.(map[string]interface{}); ok && m["name"] == "manager" {
+					managerImage, _ = m["image"].(string)
+				}
+			}
+		}
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		l := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+		if !strings.HasPrefix(l, "image:") {
+			continue
+		}
+		img := strings.TrimSpace(strings.TrimPrefix(l, "image:"))
+		if strings.Contains(img, "example.com") || strings.HasSuffix(img, ":latest") {
+			t.Errorf("%s: renders image %q (placeholder or :latest)", overlay, img)
+		}
+	}
+	if managerImage != testIMG {
+		t.Errorf("%s: manager image %q, want the IMG given, %q", overlay, managerImage, testIMG)
+	}
 }
 
 // apply installs the RBAC of the rendered overlay, as `kubectl apply -k`

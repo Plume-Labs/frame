@@ -58,7 +58,7 @@ configurations, do the write, and reinstall them:
 kubectl delete validatingwebhookconfiguration frame-validating-webhook-configuration
 kubectl delete mutatingwebhookconfiguration frame-mutating-webhook-configuration
 # ... write the CR, unvalidated and undefaulted ...
-make deploy            # or: helm upgrade, which recreates both
+make deploy-production IMG=<registry>/frame-controller:<tag>   # or: helm upgrade, which recreates both
 ```
 
 Reach for this only when the alternative is worse. The defaulting webhook is
