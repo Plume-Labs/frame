@@ -86,7 +86,10 @@ requests ≠ limits ni l'absence de limite mémoire). **Acceptation : parité du
 Reconcile avec une **liste fermée d'écarts permis** (propriétaire, annotation
 de digest, `securityContext`, `automountServiceAccountToken: false`, `emptyDir`
 `/tmp` et son montage, `priorityClassName`, `nodeSelector`, `-m`, cache en
-lecture seule) ; tout autre écart échoue.
+lecture seule ; **le conteneur proxy du §4.1**, reconnu comme conteneur du
+provider et jamais compté dans `ForeignContainers`, avec le montage du Secret
+de clé ; l'hôte et le port de llama.cpp, `127.0.0.1:8081`) ; tout autre écart
+échoue.
 
 **Chemin de retour** (avant toute migration) : manifestes du Deployment **et**
 du Service, recalés sur le vivant, versionnés chez l'exploitant. Les trois
@@ -265,22 +268,49 @@ Trois conditions, à vérifier avant le lot 4 :
    un **proxy minimal** — un binaire Go du dépôt (`net/http` +
    `httputil.ReverseProxy`, aucune dépendance nouvelle) — qui vérifie la clé
    devant llama.cpp :
-   - llama.cpp tourne **sans `LLAMA_API_KEY`**, écoute sur `127.0.0.1` :
-     seul le proxy du même pod le joint (plus fort qu'une NetworkPolicy, qui
-     borne en plus le port du proxy aux sources attendues : gateway, EPP,
-     Prometheus, consommateurs déclarés) ;
-   - **lecture interne** : liste fermée de chemins exemptés de clé, `GET`
-     seulement — `/health`, `/metrics`, `/props` — pour la PodMonitor, l'EPP
-     et le pod-proxy de la console. `/slots` et tout le reste exigent la clé ;
-   - la clé vit dans le Secret du `FrameService` (`ensureAPIKey` inchangé),
-     montée en fichier dans le proxy, relue à chaud, comparée en temps
-     constant sur son empreinte ;
+   - **Ports.** Le proxy prend **8080, port nommé `http`** ; llama.cpp passe en
+     `--host 127.0.0.1 --port 8081`, **sans `LLAMA_API_KEY`**. Rien ne change
+     pour l'`InferencePool` (souvent rendu par un chart, `targetPorts: [8080]`),
+     le `Service`, la PodMonitor (port `http`), la `readinessProbe` ni la
+     console. Le proxy **relaie** `/health` à llama.cpp — sinon le pod serait
+     `Ready` avant le chargement du modèle.
+   - **127.0.0.1 borne le contournement.** `port-forward` et `exec`, qui
+     atteignent le loopback, sont réservés à des identités qui lisent déjà le
+     Secret : acceptable. `pods/proxy` (pod-proxy de la console) vise l'IP du
+     pod, donc le proxy, jamais 8081.
+   - **Lecture interne** : liste fermée `GET /health`, `/metrics`, `/props`,
+     exemptée de clé, pour la PodMonitor, l'EPP et la console. Correspondance
+     **exacte** sur le chemin nettoyé ; rejet de `..`, `//`, `%2e`, `%2f`
+     (sinon `GET /props/../slots` passerait) ; `HEAD` non exempté ; requête
+     exemptée avec corps refusée. `/slots`, le proxy CORS de llama.cpp et tout
+     le reste exigent la clé. `/props` expose `model_path`, `chat_template`,
+     `build_info`, `cors_proxy_enabled` : fuite faible, acceptée. La route de
+     la gateway (`PathPrefix /`) rend aussi `/metrics` et `/props` lisibles
+     sans clé par tout ce qui joint la gateway (ClusterIP, sans Ingress) :
+     accepté.
+   - **Clés.** Elles vivent dans le Secret du `FrameService` (`ensureAPIKey`),
+     montées en fichier, relues à chaud. Comparaison en temps constant **sur
+     les N clés sans sortie anticipée** ; `Authorization` retiré avant
+     llama.cpp ; jamais la clé ni son empreinte dans les journaux, seulement
+     l'id du consommateur ; rotation par chevauchement de 2 clés ;
+     `ReadHeaderTimeout` posé. Chaque Secret projeté par consommateur garde la
+     clé de donnée `apiKey`, contrat déjà lu par les consommateurs.
+   - **NetworkPolicy** (aucune aujourd'hui dans un namespace d'inférence
+     typique ; rattachée au **lot 4**) : port 8080 ouvert à la gateway, l'EPP,
+     Prometheus, l'apiserver (pod-proxy de la console) et les sondes du
+     kubelet. Un consommateur déclaré qui appelle le pod **en direct**
+     contourne la gateway, l'EPP et les priorités : à éviter, autorisé
+     seulement par une règle nommée.
+   - **Consommateurs hors catalogue.** Tout client qui appelle la gateway sans
+     lire le catalogue (URL et nom de modèle en configuration) prendra des 401
+     au lot 4 : les énumérer avant la migration et leur donner une clé
+     (l'annexe du site en tient la liste).
    - `Bind()` publie l'adresse de la gateway (§4.3), ou celle du proxy pour un
      service sans gateway.
 
    | Point | Options | Recommandation |
    |---|---|---|
-   | Forme | sidecar dans le pod du serveur ; composant partagé devant la gateway | **sidecar** : l'auth s'arrête au pod, avec ou sans gateway ; pas de point unique de panne ; le provider possède déjà le gabarit. Cible de l'`InferencePool` = port du proxy |
+   | Forme | sidecar dans le pod du serveur ; composant partagé devant la gateway | **sidecar** : l'auth s'arrête au pod, avec ou sans gateway ; pas de point unique de panne ; le provider possède déjà le gabarit. Le proxy prend le port que tout vise déjà (8080) |
    | `Authorization` via la gateway (§4.2) | la gateway transmet l'en-tête ; la gateway authentifie elle-même | **transmission**, à prouver sur un cluster de test ; si elle échoue, repli sur le composant partagé devant la gateway |
    | Streaming SSE, délai 900 s | — | `FlushInterval: -1` (vidage immédiat) ; pas de `WriteTimeout` serveur ; délai de requête ≥ celui de la route (900 s), c'est la gateway qui coupe ; déconnexion du client → annulation vers llama.cpp. Test : un flux de 20 min sans perte de jeton |
    | Clés | une clé unique ; une par consommateur | **une par consommateur** (`spec.binding.consumers[]`, un Secret projeté chacun) : révocation isolée, journal par consommateur. Le lot d'entrée n'en crée qu'une, mais le format du Secret porte N clés |
@@ -318,11 +348,15 @@ Trois conditions, à vérifier avant le lot 4 :
 | **5. Réglages depuis la console** | Contexte, déchargement, changement de modèle (admins), webhook par champ, purge du cache | moyen, borné par admission + retour auto | la demande, entière |
 | **6. Vision** | Vision en `FrameService` CPU ; TEI reste adopté | faible | — |
 
-**Exigence sur les lots 3 à 5 : ne rien fermer qui empêche le §7.** Le
-catalogue, l'estimateur et le schéma `FrameService` portent dès le départ N
-modèles et un brouillon (`spec.models[]`, `spec.models[].draft`, ou
-`spec.draftModel`), même si le lot 5 n'en gère qu'un ; l'estimateur additionne
-des parts par instance au lieu de supposer une carte entière.
+**Exigence sur les lots 3 à 5 : ne rien fermer qui empêche le §7.** Un schéma
+unique est choisi **avant le lot 3**, parmi `spec.models[]`,
+`spec.models[].draft` et `draftModel`. **Recommandation : un `FrameService` =
+un serveur = un modèle cible + un brouillon optionnel (`parameters.draftModel`)** ;
+N modèles = N `FrameService`, dont l'admission somme les parts sur la carte.
+Raisons : `parameters` est une table de chaînes, commune à tous les providers ;
+chaque modèle garde son cycle de vie (redémarrage, bascule) et son alias ; l'EPP
+choisit déjà entre services. L'estimateur additionne des parts par instance au
+lieu de supposer une carte entière.
 
 ## 6. Décisions de l'exploitant (2026-09-28)
 
@@ -345,7 +379,8 @@ des parts par instance au lieu de supposer une carte entière.
   n'est plus imposé quand la VRAM libre permet de démarrer la nouvelle instance
   avant d'arrêter l'ancienne : la bascule devient sans coupure.
 - **Speculative decoding.** Modèle brouillon chargé par le même serveur
-  (`-md`, même GPU, `--draft-max`/`--draft-min`) : sa part de VRAM (poids +
-  KV du brouillon) entre dans l'estimation. `FrameModel` décrit le couple
+  (`-md`, même GPU, `-ngld`, `--draft-max`/`--draft-min`). Estimation :
+  poids cible + poids brouillon (part sur GPU selon `-ngld`) + KV cible (`-c`)
+  + KV brouillon (`-cd`) × slots. `FrameModel` décrit le couple
   cible / brouillon compatible (même vocabulaire, vérifié dans les en-têtes
   GGUF) ; le `FrameService` choisit un brouillon parmi ceux déclarés.
