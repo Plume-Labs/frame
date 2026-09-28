@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import { DEFAULT_CONFIG, config, loadConfig, type Integration } from './frame-config'
 import { createFrameClient, FrameAPIError, type TaskRecord } from './frame-sdk'
+import { MAX_ACTION_LENGTH } from './manifest-diff'
 import {
   INFERENCE_SERVICES,
   actionsFor,
@@ -12,7 +13,10 @@ import {
   lastTaskFor,
   parseSelector,
   permissionFromError,
+  reasonMaxLength,
   replicasFor,
+  sanitizeReason,
+  templateDrift,
   resolveDeployment,
   serviceState,
   type DeploymentLike,
@@ -36,7 +40,7 @@ const chat = deploy('llamacpp', { app: 'llamacpp' }, {
   annotations: { 'kubectl.kubernetes.io/last-applied-configuration': JSON.stringify({ spec: { replicas: 1 } }) },
   managedFields: [
     { manager: 'kubectl-client-side-apply', operation: 'Update', fieldsV1: { 'f:spec': { 'f:replicas': {} } } },
-    { manager: 'k3s', operation: 'Update', subresource: 'status', fieldsV1: {} },
+    { manager: 'kube-controller-manager', operation: 'Update', subresource: 'status', fieldsV1: {} },
   ],
 })
 const vision = deploy('llamacpp-vision', { app: 'llamacpp-vision' })
@@ -428,5 +432,75 @@ describe('inference.list', () => {
     expect(seen.some((s) => s.url.includes(encodeURIComponent('app=llamacpp-vision')))).toBe(true)
     // Read-only: nothing but GETs.
     expect(seen.every((s) => s.method === 'GET')).toBe(true)
+  })
+})
+
+// ── Reason: what is typed is what is recorded ────────────────────────────────
+
+describe('reason', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const stop = confirmationFor('stop', chatDef, { namespace: NS, name: 'llamacpp' })
+
+  it('folds accents instead of dropping the letter', () => {
+    expect(sanitizeReason('arrêt  pour\tmaintenance')).toBe('arret pour maintenance')
+  })
+
+  it('refuses a reason that is nothing but emoji or symbols once filtered', () => {
+    expect(canConfirm(stop, 'llamacpp', '🔥🛑')).toBe(false)
+    expect(canConfirm(stop, 'llamacpp', '🔥 ok')).toBe(true)
+  })
+
+  it('bounds the reason so the whole label fits the FrameTask cap', () => {
+    const max = reasonMaxLength(NS, 'llamacpp', MAX_ACTION_LENGTH)
+    expect(`scale deployment inference/llamacpp to 0: ${'x'.repeat(max)}`.length).toBe(MAX_ACTION_LENGTH)
+  })
+
+  it('records the folded reason, whole, at the maximum length', async () => {
+    const seen = capture()
+    const max = reasonMaxLength(NS, 'llamacpp', MAX_ACTION_LENGTH)
+    await createFrameClient().workloads.scale('Deployment', NS, 'llamacpp', 0, 'arrêt ' + 'x'.repeat(max - 6))
+    const label = seen[0].headers['X-Frame-Action']
+    expect(label.length).toBe(MAX_ACTION_LENGTH)
+    expect(label.endsWith('arret ' + 'x'.repeat(max - 6))).toBe(true)
+  })
+})
+
+// ── Drift against last-applied ───────────────────────────────────────────────
+
+describe('templateDrift', () => {
+  function withTemplate(live: object, applied: object): DeploymentLike {
+    return {
+      ...vision,
+      metadata: {
+        ...vision.metadata,
+        annotations: {
+          'kubectl.kubernetes.io/last-applied-configuration': JSON.stringify({ spec: { template: { spec: { containers: [applied] } } } }),
+        },
+      },
+      spec: { ...vision.spec, template: { spec: { containers: [live as never] } } },
+    }
+  }
+
+  it('names each arg, image and env var that a kubectl apply would revert', () => {
+    const d = withTemplate(
+      { name: 'server', image: 'img:2', args: ['-a', '1', '-b', '9'], env: [{ name: 'X', value: '1' }, { name: 'Y', value: 'y' }] },
+      { name: 'server', image: 'img:1', args: ['-a', '2', '-b', '9'], env: [{ name: 'X', value: '2' }] },
+    )
+    expect(templateDrift(d)).toEqual([
+      'containers[server].image',
+      'containers[server].args[1]',
+      'containers[server].env[X]',
+      'containers[server].env[Y]',
+    ])
+    const w = applyWarning(serviceState(d, []))
+    expect(w).toContain('containers[server].args[1]')
+    expect(w).toContain('reverts those too')
+  })
+
+  it('finds nothing when live equals last-applied, or when there is no last-applied', () => {
+    const c = { name: 'server', image: 'img:1', args: ['-a'], env: [{ name: 'X', value: '1' }] }
+    expect(templateDrift(withTemplate(c, c))).toEqual([])
+    expect(templateDrift(tei)).toEqual([])
+    expect(applyWarning(serviceState(withTemplate(c, c), []))).not.toContain('differs')
   })
 })

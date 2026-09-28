@@ -27,12 +27,15 @@ import {
   formatDuration,
   lastTaskFor,
   permissionFromError,
+  reasonMaxLength,
   replicasFor,
+  sanitizeReason,
   type ActionKind,
   type Permission,
   type Permissions,
   type PodState,
 } from '@/lib/inference-services'
+import { MAX_ACTION_LENGTH } from '@/lib/manifest-diff'
 import { canOperateWorkloads } from '@/lib/workloads'
 
 const frame = createFrameClient()
@@ -276,14 +279,21 @@ function ServiceRow({
                 className="font-mono text-xs"
               />
             )}
-            {confirmation.requireReason && (
-              <Textarea
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Reason (recorded with the action)"
-                aria-label="Reason"
-                className="font-mono text-xs"
-              />
+            {confirmation.requireReason && deployment && (
+              <div className="space-y-1">
+                <Textarea
+                  value={reason}
+                  maxLength={reasonMaxLength(namespace, deployment, MAX_ACTION_LENGTH)}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Reason (recorded with the action)"
+                  aria-label="Reason"
+                  className="font-mono text-xs"
+                />
+                <p className="font-mono text-[10px] text-muted-foreground">
+                  {reason.length}/{reasonMaxLength(namespace, deployment, MAX_ACTION_LENGTH)} · recorded as:{' '}
+                  {sanitizeReason(reason) || '(empty — accents are folded, emoji and other symbols dropped)'}
+                </p>
+              </div>
             )}
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>

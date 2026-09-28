@@ -73,9 +73,17 @@ export interface DeploymentLike {
   spec?: {
     replicas?: number
     selector?: { matchLabels?: Record<string, string>; matchExpressions?: unknown[] }
-    template?: { metadata?: { annotations?: Record<string, string> } }
+    template?: { metadata?: { annotations?: Record<string, string> }; spec?: { containers?: ContainerLike[] } }
   }
   status?: { replicas?: number; readyReplicas?: number; updatedReplicas?: number }
+}
+
+export interface ContainerLike {
+  name: string
+  image?: string
+  command?: string[]
+  args?: string[]
+  env?: Array<{ name: string; value?: string; valueFrom?: unknown }>
 }
 
 export interface PodLike {
@@ -207,6 +215,8 @@ export interface ServiceState {
   replicasHeldByApply: boolean
   /** `spec.replicas` in the last applied manifest, when it records one. */
   lastAppliedReplicas?: number
+  /** Container fields that differ from the last-applied manifest ({@link templateDrift}). */
+  drift: string[]
 }
 
 function isReady(p: PodLike): boolean {
@@ -221,15 +231,64 @@ function podState(p: PodLike): PodState {
 
 const RANK: Record<PodState, number> = { ready: 4, loading: 3, starting: 2, stopping: 1, stopped: 0 }
 
-function lastApplied(d: DeploymentLike): number | undefined {
+function lastAppliedObject(d: DeploymentLike): DeploymentLike | undefined {
   const raw = d.metadata.annotations?.[LAST_APPLIED]
   if (!raw) return undefined
   try {
-    const r = (JSON.parse(raw) as { spec?: { replicas?: unknown } }).spec?.replicas
-    return typeof r === 'number' ? r : undefined
+    return JSON.parse(raw) as DeploymentLike
   } catch {
     return undefined
   }
+}
+
+function lastApplied(d: DeploymentLike): number | undefined {
+  const r = lastAppliedObject(d)?.spec?.replicas
+  return typeof r === 'number' ? r : undefined
+}
+
+function listDrift(path: string, live: string[] | undefined, applied: string[] | undefined): string[] {
+  const a = live ?? []
+  const b = applied ?? []
+  const out: string[] = []
+  for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) out.push(`${path}[${i}]`)
+  return out
+}
+
+/**
+ * The container fields where the live Deployment differs from its
+ * last-applied manifest — each one a change the next `kubectl apply` reverts
+ * (spec §3, "Dérive"). Read-only: the panel names them, it fixes nothing.
+ *
+ * Compared: image, command, args (by index) and env (by variable name), per
+ * container matched by name, plus containers present on one side only. Not
+ * the whole template: fields the apiserver defaults (`imagePullPolicy`,
+ * `terminationMessagePath`…) are absent from a hand-written manifest and would
+ * read as drift on every Deployment.
+ */
+export function templateDrift(d: DeploymentLike): string[] {
+  const applied = lastAppliedObject(d)
+  if (!applied) return []
+  const live = d.spec?.template?.spec?.containers ?? []
+  const want = applied.spec?.template?.spec?.containers ?? []
+  const out: string[] = []
+  for (const c of live) {
+    const w = want.find((x) => x.name === c.name)
+    const at = `containers[${c.name}]`
+    if (!w) {
+      out.push(at)
+      continue
+    }
+    if ((c.image ?? '') !== (w.image ?? '')) out.push(`${at}.image`)
+    out.push(...listDrift(`${at}.command`, c.command, w.command))
+    out.push(...listDrift(`${at}.args`, c.args, w.args))
+    const envLive = new Map((c.env ?? []).map((e) => [e.name, JSON.stringify([e.value ?? '', e.valueFrom ?? null])]))
+    const envWant = new Map((w.env ?? []).map((e) => [e.name, JSON.stringify([e.value ?? '', e.valueFrom ?? null])]))
+    for (const name of new Set([...envLive.keys(), ...envWant.keys()])) {
+      if (envLive.get(name) !== envWant.get(name)) out.push(`${at}.env[${name}]`)
+    }
+  }
+  for (const w of want) if (!live.some((c) => c.name === w.name)) out.push(`containers[${w.name}]`)
+  return out
 }
 
 export function serviceState(d: DeploymentLike, pods: PodLike[]): ServiceState {
@@ -272,6 +331,7 @@ export function serviceState(d: DeploymentLike, pods: PodLike[]): ServiceState {
     lastLoadSeconds,
     replicasHeldByApply,
     lastAppliedReplicas: lastApplied(d),
+    drift: templateDrift(d),
   }
 }
 
@@ -279,14 +339,19 @@ export function serviceState(d: DeploymentLike, pods: PodLike[]): ServiceState {
  * The warning the panel must always carry, and its sharper form when the
  * object itself shows the trap is armed (spec §2.1).
  */
-export function applyWarning(s: Pick<ServiceState, 'desired' | 'replicasHeldByApply' | 'lastAppliedReplicas'>): string {
+export function applyWarning(
+  s: Pick<ServiceState, 'desired' | 'replicasHeldByApply' | 'lastAppliedReplicas'> & { drift?: string[] },
+): string {
   const base =
     'Stop only lasts until the next `kubectl apply` of this manifest or of its install script: that write sets replicas back and starts the server again, silently.'
+  const drift = s.drift?.length
+    ? ` The live object also differs from its last-applied manifest on ${s.drift.join(', ')}: the same apply reverts those too.`
+    : ''
   if (s.desired === 0 && s.lastAppliedReplicas !== undefined && s.lastAppliedReplicas > 0) {
-    return `Stopped here, but the applied manifest says replicas: ${s.lastAppliedReplicas}. ${base}`
+    return `Stopped here, but the applied manifest says replicas: ${s.lastAppliedReplicas}. ${base}${drift}`
   }
-  if (s.replicasHeldByApply) return `replicas is held by kubectl-client-side-apply. ${base}`
-  return base
+  if (s.replicasHeldByApply) return `replicas is held by kubectl-client-side-apply. ${base}${drift}`
+  return base + drift
 }
 
 // ── Permissions ──────────────────────────────────────────────────────────────
@@ -437,10 +502,39 @@ export function confirmationFor(
   }
 }
 
+/**
+ * The reason as it will be recorded. `X-Frame-Action` is latin-1 and the SDK
+ * drops everything outside printable ASCII, so accents are folded first
+ * (« arrêt » → « arret ») rather than deleted, whitespace collapsed, and
+ * whatever is still not ASCII (emoji…) removed here — where the dialog can see
+ * it — instead of silently at the header.
+ */
+export function sanitizeReason(reason: string): string {
+  return reason
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[^\x20-\x7e]/g, '')
+    .trim()
+}
+
+/** The Stop label before its reason; the SDK builds the same string. */
+export function stopLabelPrefix(namespace: string, name: string): string {
+  return `scale deployment ${namespace}/${name} to 0: `
+}
+
+/**
+ * How many characters of reason fit before the FrameTask label hits its cap
+ * (`MAX_ACTION_LENGTH`, where `boundedActionLabel` would cut it silently).
+ */
+export function reasonMaxLength(namespace: string, name: string, cap: number): number {
+  return Math.max(0, cap - stopLabelPrefix(namespace, name).length)
+}
+
 /** Whether the typed name and the reason unlock the confirm button. */
 export function canConfirm(c: Confirmation, typed: string, reason: string): boolean {
   if (c.typeToConfirm !== undefined && typed.trim() !== c.typeToConfirm) return false
-  if (c.requireReason && reason.trim() === '') return false
+  if (c.requireReason && sanitizeReason(reason) === '') return false
   return true
 }
 

@@ -21,6 +21,7 @@ import { config, CONFIG_NAMESPACE, type Integration } from './frame-config'
 import {
   INFERENCE_SERVICES,
   resolveDeployment,
+  sanitizeReason,
   serviceState,
   type DeploymentLike,
   type InferenceServiceDef,
@@ -3385,7 +3386,7 @@ class WorkloadClient {
   ): Promise<void> {
     const label = `scale ${kind.toLowerCase()} ${namespace}/${name} to ${replicas}`
     await k8sFetch<undefined>(`${workloadPath(kind, namespace, name)}/scale`, {
-      action: boundedActionLabel(reason?.trim() ? `${label}: ${reason.trim()}` : label),
+      action: boundedActionLabel(reason && sanitizeReason(reason) ? `${label}: ${sanitizeReason(reason)}` : label),
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
       body: { spec: { replicas } },
