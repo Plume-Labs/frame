@@ -25,8 +25,9 @@ No Helm release exists there yet.
 Since 2026-09-28 that cluster runs `config/overlays/production` (`make
 deploy-production`), not `config/default`: taking it over with Helm needs
 the same per-namespace Secret access in values —
-`rbac.managerSecretAccess.read: [default]`, `.write: [inference]` — or its
-FrameMachine and FrameService lose their credentials. `make helm-parity`
+`rbac.managerSecretAccess.read: [default]` (no `.write`: no FrameService
+exists there since 2026-09-28) — or its FrameMachine loses its BMC
+credentials. `make helm-parity`
 compares the chart with `config/default` only, not with that overlay.
 
 The chart was deliberately built to make this migration possible: every

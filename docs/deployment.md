@@ -1004,10 +1004,12 @@ rbac:
 ```
 
 Kustomize: the deployed overlay, `config/overlays/production`, holds the
-bindings in `secret-access.yaml` — today `default` (reader: FrameMachine
-`ml350-g9`) and `inference` (writer: FrameService `llama-8b`, no
-`projectTo`); `frame-system` (alert tokens, ceph-mgr) is covered by the
-Role. To adapt it: list the namespaces holding each kind —
+bindings in `secret-access.yaml` — today one: `default` (reader:
+FrameMachine `ml350-g9`). Nothing is bound to the writer: no FrameService
+exists on this cluster (`inference/llama-8b`, a catalogue test fixture never
+provisioned, was deleted on 2026-09-28, with its binding). `frame-system`
+(alert tokens, ceph-mgr) is covered by the Role. To adapt it: list the
+namespaces holding each kind —
 
 ```bash
 kubectl get framemachines,frameinstalls -A        # → reader
@@ -1017,7 +1019,7 @@ kubectl get framealertsubscriptions -A            # must all be in frame-system
 ```
 
 — and add one RoleBinding per namespace to `secret-access.yaml`, same
-shape as the two there (subject `frame-system:frame-controller-manager`).
+shape as the one there (subject `frame-system:frame-controller-manager`).
 `test/managerrbac` renders the overlay and pins its bindings: update its
 expected list along with the file. By hand, the same binding is:
 
@@ -1026,6 +1028,21 @@ kubectl -n default create rolebinding frame-manager-secret-reader \
   --clusterrole=frame-manager-secret-reader \
   --serviceaccount=frame-system:frame-controller-manager
 ```
+
+**When a FrameService is declared**, bind the writer in its namespace and
+in each namespace of its `spec.binding.projectTo`, before or right after
+creating it (until then it stays degraded with `SecretAccessForbidden`,
+which names the namespace):
+
+```bash
+kubectl -n <namespace> create rolebinding frame-manager-secret-writer \
+  --clusterrole=frame-manager-secret-writer \
+  --serviceaccount=frame-system:frame-controller-manager
+```
+
+and add the same RoleBinding to `secret-access.yaml`, or the next
+`make deploy-production` won't carry it on a fresh install. When the last
+FrameService of a namespace goes, remove its binding the same way.
 
 A namespace left out fails closed and says so: a FrameMachine's BMC read
 returns Forbidden in its status (CredentialsUnavailable: no BMC polling,

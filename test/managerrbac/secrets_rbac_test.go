@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -44,7 +45,7 @@ const (
 	mgrNS   = "frame-system" // kustomize's namespace for everything under config/
 	mgrSA   = "frame-controller-manager"
 	readNS  = "default"   // overlay: frame-manager-secret-reader (FrameMachine default/ml350-g9)
-	writeNS = "inference" // overlay: frame-manager-secret-writer (FrameService inference/llama-8b)
+	writeNS = "apps"      // not bound by the overlay: a FrameService namespace, bound by the test as the doc says
 	otherNS = "elsewhere" // bound to nothing
 	overlay = "config/overlays/production"
 )
@@ -230,13 +231,14 @@ func managerBindings(t *testing.T, path string) map[string]string {
 // The rendered installs, not a fixture: config/default binds the manager
 // to no namespace outside its own (that is the point), and the deployed
 // overlay binds exactly the namespaces holding Frame objects that use
-// Secrets today — default (FrameMachine) and inference (FrameService).
+// Secrets today — default (FrameMachine), and nothing to the writer: no
+// FrameService exists on the cluster.
 func TestRenderedInstallsBindTheRightNamespaces(t *testing.T) {
 	if got := managerBindings(t, render(t, "config/default")); len(got) != 0 {
 		t.Errorf("config/default binds the manager to secret-access roles in %v; it must bind none (sites do it in an overlay)", got)
 	}
 	path := render(t, overlay)
-	want := map[string]string{readNS: "frame-manager-secret-reader", writeNS: "frame-manager-secret-writer"}
+	want := map[string]string{readNS: "frame-manager-secret-reader"}
 	got := managerBindings(t, path)
 	for ns, role := range want {
 		if got[ns] != role {
@@ -313,7 +315,18 @@ func TestManagerSecretAccessIsPerNamespace(t *testing.T) {
 	if _, err := framectrl.BuildRedfishClient(ctx, mgr, readNS, bmc); err != nil {
 		t.Errorf("BMC credentials in %s: %v", readNS, err)
 	}
-	// FrameService: create, update, delete, where the writer is bound.
+	// FrameService: nothing in its namespace until the writer is bound
+	// there — then create, update, delete. The binding is the one
+	// docs/deployment.md tells the operator to add when a FrameService is
+	// declared; the overlay binds none (TestRenderedInstallsBindTheRightNamespaces).
+	forbidden(t, "FrameService Secret before the writer is bound", mgr.Create(ctx, secret(writeNS, "early", nil)))
+	if err := admin.Create(ctx, &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "frame-manager-secret-writer", Namespace: writeNS},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "frame-manager-secret-writer"},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: mgrSA, Namespace: mgrNS}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	fs := secret(writeNS, "svc-binding", nil)
 	if _, err := controllerutil.CreateOrUpdate(ctx, mgr, fs, func() error { fs.Data = map[string][]byte{"k": []byte("v1")}; return nil }); err != nil {
 		t.Errorf("FrameService create: %v", err)
