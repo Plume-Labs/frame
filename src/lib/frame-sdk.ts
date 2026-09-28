@@ -18,6 +18,15 @@
  */
 
 import { config, CONFIG_NAMESPACE, type Integration } from './frame-config'
+import {
+  INFERENCE_SERVICES,
+  resolveDeployment,
+  serviceState,
+  type DeploymentLike,
+  type InferenceServiceDef,
+  type PodLike,
+  type ServiceState,
+} from './inference-services'
 import { currentSession } from './auth'
 import {
   buildWorkloadTree,
@@ -2999,6 +3008,88 @@ class ApplicationClient {
   }
 }
 
+// ── Inference services (lot 1: restart / stop / start) ───────────────────────
+
+/** One model server as the Inference panel shows it. */
+export interface InferenceServiceView {
+  def: InferenceServiceDef
+  namespace: string
+  /** Set when the panel may act on it; `unresolved` says why not otherwise. */
+  deployment?: string
+  unresolved?: string
+  state?: ServiceState
+  /** Served model, read from the server itself when it is up (`/props` alias, TEI `/info`). */
+  model?: string
+  contextSize?: number
+  slots?: number
+  /** A read that failed for this one service; the others still render. */
+  error?: string
+}
+
+/**
+ * Reads for the Inference panel. The writes are `workloads.restart()` and
+ * `workloads.scale()`, the same SDK calls the Workloads screen makes, so the
+ * grant and the FrameTask trail are the ones already reviewed there.
+ */
+class InferenceServiceClient {
+  async list(): Promise<InferenceServiceView[]> {
+    return Promise.all(INFERENCE_SERVICES.map((def) => this.one(def)))
+  }
+
+  private async one(def: InferenceServiceDef): Promise<InferenceServiceView> {
+    const i = config().integrations[def.key]
+    const view: InferenceServiceView = { def, namespace: i.namespace }
+    try {
+      const deployments = await k8sFetch<ListResponse<DeploymentLike>>(workloadPath('Deployment', i.namespace))
+      const r = resolveDeployment(i, deployments.items ?? [])
+      if (!r.ok) {
+        view.unresolved = r.reason
+        return view
+      }
+      view.deployment = r.deployment.metadata.name
+      // The Deployment's own selector, not the configured one: when
+      // `deployment` is set explicitly the two may differ, and the pods that
+      // matter are the ones this Deployment actually owns.
+      const sel = Object.entries(r.deployment.spec?.selector?.matchLabels ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(',')
+      const pods = sel
+        ? (
+            await k8sFetch<ListResponse<PodLike>>(
+              `/api/v1/namespaces/${i.namespace}/pods?labelSelector=${encodeURIComponent(sel)}`,
+            )
+          ).items ?? []
+        : []
+      view.state = serviceState(r.deployment, pods)
+      if (view.state.pod === 'ready' && view.state.podName && i.port) {
+        await this.readModel(def, i, view.state.podName, view)
+      }
+    } catch (e) {
+      view.error = e instanceof Error ? e.message : String(e)
+    }
+    return view
+  }
+
+  /** Best effort: a server that answers nothing here still gets its buttons. */
+  private async readModel(def: InferenceServiceDef, i: Integration, pod: string, view: InferenceServiceView) {
+    try {
+      if (def.engine === 'tei') {
+        const info = await (await proxyFetch(integrationProxy(i, pod, '/info'))).json()
+        view.model = typeof info.model_id === 'string' ? info.model_id : undefined
+        return
+      }
+      const p = await (await proxyFetch(integrationProxy(i, pod, '/props'))).json()
+      const alias = typeof p.model_alias === 'string' ? p.model_alias : ''
+      const path = typeof p.model_path === 'string' ? p.model_path.split('/').pop() : ''
+      view.model = alias || path || undefined
+      view.contextSize = p.default_generation_settings?.n_ctx ?? p.n_ctx ?? undefined
+      view.slots = p.total_slots ?? undefined
+    } catch {
+      /* props optional — a key-protected server answers 401 here */
+    }
+  }
+}
+
 /** The collection endpoint for each kind the Workloads screen shows. */
 const WORKLOAD_COLLECTIONS: Record<EditableKind, string> = {
   Pod: '/api/v1/pods',
@@ -3289,12 +3380,38 @@ class WorkloadClient {
     namespace: string,
     name: string,
     replicas: number,
+    /** Why, when the caller asked for one (the Inference panel's Stop); appended to the FrameTask label. */
+    reason?: string,
   ): Promise<void> {
+    const label = `scale ${kind.toLowerCase()} ${namespace}/${name} to ${replicas}`
     await k8sFetch<undefined>(`${workloadPath(kind, namespace, name)}/scale`, {
-      action: boundedActionLabel(`scale ${kind.toLowerCase()} ${namespace}/${name} to ${replicas}`),
+      action: boundedActionLabel(reason?.trim() ? `${label}: ${reason.trim()}` : label),
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
       body: { spec: { replicas } },
+    })
+  }
+
+  /**
+   * Whether the signed-in user may restart and scale this Deployment, asked
+   * of the apiserver rather than guessed.
+   *
+   * Each probe is the real write's verb and path with `?dryRun=All` and an
+   * empty patch: the apiserver authorizes it exactly as it would the write,
+   * stores nothing, and the uiproxy records no FrameTask for a dry run
+   * (`isDryRun` in internal/uiproxy/recorder.go). A SelfSubjectAccessReview
+   * would answer the same question but is a POST the recorder does log, so
+   * every panel refresh would leave rows in the Tasks trail.
+   *
+   * Rejects with the probe's own error — a 403 is the denial; the caller
+   * decides what anything else means (`permissionFromError`).
+   */
+  async probeWrite(namespace: string, name: string, what: 'patch' | 'scale'): Promise<void> {
+    const path = workloadPath('Deployment', namespace, name)
+    await k8sFetch<unknown>(what === 'scale' ? `${path}/scale?dryRun=All` : `${path}?dryRun=All`, {
+      method: 'PATCH',
+      contentType: what === 'scale' ? 'application/merge-patch+json' : 'application/strategic-merge-patch+json',
+      body: {},
     })
   }
 
@@ -3815,6 +3932,7 @@ export class FrameClient {
   public readonly installs: InstallClient
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
+  public readonly inference: InferenceServiceClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -3829,6 +3947,7 @@ export class FrameClient {
     this.installs  = new InstallClient(opts.namespace)
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
+    this.inference = new InferenceServiceClient()
   }
 
   async health(): Promise<HealthStatus> {

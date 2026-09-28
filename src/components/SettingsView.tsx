@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Gear, FloppyDisk, ArrowCounterClockwise, Warning } from '@phosphor-icons/react'
+import { INFERENCE_SERVICES } from '@/lib/inference-services'
 
 type IntegrationKey = keyof FrameConfig['integrations']
 
@@ -37,6 +38,7 @@ const FEEDS: Record<IntegrationKey, string> = {
   nodeExporter: 'Network · Burst Buffer · KSM · PTP',
   dcgm: 'GPU',
   llamacpp: 'KV-Cache · Inference',
+  llamacppVision: 'Inference (service panel)',
   tei: 'Inference',
   falcosidekick: 'Security (runtime)',
   tetragon: 'Security (network)',
@@ -44,6 +46,9 @@ const FEEDS: Record<IntegrationKey, string> = {
   alertmanager: 'Alerts',
   acmeSandbox: 'Jobs (Acme sandbox pods)',
 }
+
+/** The integrations the Inference panel operates, which alone take a Deployment name. */
+const DEPLOYMENT_KEYS: ReadonlySet<IntegrationKey> = new Set(INFERENCE_SERVICES.map((s) => s.key))
 
 const NAMESPACE_HELP: Record<keyof FrameConfig['namespaces'], string> = {
   ceph: 'CephCluster and CephBlockPool CRs',
@@ -195,6 +200,16 @@ export function SettingsView() {
                     </div>
                   )}
                 </div>
+                {DEPLOYMENT_KEYS.has(key) && (
+                  <Field
+                    id={`${key}-deploy`}
+                    label="Deployment (restart / stop / start)"
+                    hint="Empty: the one Deployment whose selector equals the label selector above"
+                    value={i.deployment ?? ''}
+                    placeholder="resolved from the selector"
+                    onChange={(v) => setIntegration(key, { deployment: v || undefined })}
+                  />
+                )}
               </div>
             )
           })}

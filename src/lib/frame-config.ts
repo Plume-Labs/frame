@@ -21,6 +21,16 @@ export interface Integration {
   selector: string
   /** Port to proxy to. Omitted for components read via their own API. */
   port?: number
+  /**
+   * The Deployment the Inference panel restarts, stops and starts, for the
+   * model-server integrations only (`llamacpp`, `llamacppVision`, `tei`).
+   *
+   * Restart and scale address a Deployment by name, while everything above
+   * finds pods by selector. Left empty, the panel uses the one Deployment in
+   * `namespace` whose `matchLabels` equal `selector`, and offers no button
+   * when there is none or more than one (src/lib/inference-services.ts).
+   */
+  deployment?: string
 }
 
 export interface FrameConfig {
@@ -46,6 +56,8 @@ export interface FrameConfig {
     nodeExporter: Integration
     dcgm: Integration
     llamacpp: Integration
+    /** The llama.cpp server behind image understanding, separate from chat. */
+    llamacppVision: Integration
     tei: Integration
     falcosidekick: Integration
     tetragon: Integration
@@ -89,6 +101,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
     nodeExporter: { namespace: 'monitoring', selector: 'app=node-exporter', port: 9100 },
     dcgm: { namespace: 'gpu-operator', selector: 'app=nvidia-dcgm-exporter', port: 9400 },
     llamacpp: { namespace: 'inference', selector: 'app=llamacpp', port: 8080 },
+    llamacppVision: { namespace: 'inference', selector: 'app=llamacpp-vision', port: 8080 },
     tei: { namespace: 'inference', selector: 'app=tei', port: 80 },
     falcosidekick: {
       namespace: 'falco',
@@ -137,6 +150,11 @@ export function configStatus(): { source: ConfigSource; error?: string } {
   return { source, error: loadError }
 }
 
+/** A Kubernetes object name (DNS-1123 subdomain): nothing that could leave its path segment. */
+function isObjectName(s: string): boolean {
+  return s.length > 0 && s.length <= 253 && /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(s)
+}
+
 /**
  * Merge a stored (possibly partial, possibly stale) config over the defaults.
  *
@@ -151,7 +169,16 @@ function merge(stored: unknown): FrameConfig {
     keyof FrameConfig['integrations']
   >) {
     const from = s.integrations?.[key]
-    if (from) integrations[key] = { ...DEFAULT_CONFIG.integrations[key], ...from }
+    if (from) {
+      const merged: Integration = { ...DEFAULT_CONFIG.integrations[key], ...from }
+      // A Deployment name is written into a request path by the Inference
+      // panel; anything but a valid object name is dropped back to "resolve
+      // from the selector" rather than sent.
+      const d = typeof merged.deployment === 'string' ? merged.deployment.trim() : ''
+      if (isObjectName(d)) merged.deployment = d
+      else delete merged.deployment
+      integrations[key] = merged
+    }
   }
   return {
     frameNamespace: s.frameNamespace || DEFAULT_CONFIG.frameNamespace,
