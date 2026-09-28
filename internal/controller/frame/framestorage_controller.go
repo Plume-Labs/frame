@@ -83,7 +83,7 @@ type FrameStorageReconciler struct {
 // The ceph-mgr account's refusal state (internal/cephmgr/refusal.go): get and
 // update on that one Secret, which the deployment manifests create empty —
 // no create verb, since resourceNames cannot restrict a create.
-// +kubebuilder:rbac:groups="",resources=secrets,resourceNames=frame-ceph-dashboard-state,verbs=get;update
+// +kubebuilder:rbac:groups="",namespace=frame-system,resources=secrets,resourceNames=frame-ceph-dashboard-state,verbs=get;update
 
 func (r *FrameStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var fs framev1beta1.FrameStorage

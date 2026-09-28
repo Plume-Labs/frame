@@ -13,3 +13,23 @@ subjects:
 - kind: ServiceAccount
   name: controller-manager
   namespace: system
+---
+# The manager's own namespace: alert tokens, the ceph-mgr account and its
+# state Secret, a FrameInstall's kubeconfig. Nothing on Secrets is bound
+# cluster-wide (see secret_access_roles.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: manager-rolebinding
+  namespace: system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manager-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: system

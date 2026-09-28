@@ -208,6 +208,8 @@ func (r *FrameServiceReconciler) claimNewCoordinates(
 			}
 		case apierrors.IsNotFound(err):
 			continue
+		case apierrors.IsForbidden(err):
+			return secretAccessForbidden(coord.Namespace)
 		default:
 			return fmt.Errorf("checking Secret %s/%s: %w", coord.Namespace, coord.Name, err)
 		}
@@ -307,6 +309,9 @@ func (r *FrameServiceReconciler) writeSecret(
 		}
 		return nil
 	})
+	if apierrors.IsForbidden(err) {
+		return secretAccessForbidden(coord.Namespace)
+	}
 	if err != nil {
 		return &bindingDegradation{
 			Reason: "SecretWriteFailed",
@@ -363,4 +368,16 @@ func coordsMissingFrom(
 		}
 	}
 	return missing
+}
+
+// secretAccessForbidden names the missing grant: the manager holds nothing
+// on Secrets cluster-wide, only per namespace through a RoleBinding to
+// frame-manager-secret-writer (docs/deployment.md, "Manager access to
+// Secrets"). A retry cannot fix it; an operator's binding can.
+func secretAccessForbidden(ns string) error {
+	return &bindingDegradation{
+		Reason: "SecretAccessForbidden",
+		Message: fmt.Sprintf(
+			"the manager may not write Secrets in namespace %q: bind ClusterRole frame-manager-secret-writer there (Helm: rbac.managerSecretAccess.write)", ns),
+	}
 }

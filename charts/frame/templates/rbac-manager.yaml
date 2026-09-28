@@ -73,50 +73,11 @@ rules:
   - patch
   - update
   - watch
-# frameservice_controller.go reaches every Secret it touches by name and
-# deliberately holds no list/watch (see its marker comment) — enumeration
-# would mean the right to read every Secret in the cluster, and it isn't
-# needed for a get-by-name. No patch either: every write there goes through
-# CreateOrUpdate or Delete, never Patch.
-#
-# The FrameMachine controller (lot 1, hardware/Redfish) also reads a
-# Secret — a machine's BMC credentials, by name — and holds only `get` on it
-# (framemachine_controller.go's own marker,
-# groups="",resources=secrets,verbs=get): it has no Watches/Owns on Secrets
-# in its SetupWithManager, and cmd/main.go's Cache.DisableFor(corev1.Secret{})
-# means the lookup is always an uncached, by-name GET, never an informer.
-# `list`/`watch` were granted here for a release before this comment was
-# corrected, on the belief that reacting to a credential change needed an
-# informer; it didn't, and the whole-branch review that caught it is why
-# they are gone — enumeration means the right to read every Secret in the
-# namespace, which no console tier is meant to have. controller-gen unions
-# every controller's marker into this one rule, so the verb set here is
-# every controller's needs combined, not any one's alone; today that union
-# is exactly frameservice_controller.go's, since every Secret-reading
-# controller besides it holds `get` alone.
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - create
-  - delete
-  - get
-  - update
-# The ceph-mgr account's refusal state (internal/cephmgr/refusal.go): get and
-# update on that one Secret by name, created empty by
-# templates/ceph-dashboard-state.yaml, so no create verb is needed for it.
-# (The rule above already grants more on every Secret, for FrameService;
-# this one states what the ceph-mgr reader needs on its own.)
-- apiGroups:
-  - ""
-  resourceNames:
-  - frame-ceph-dashboard-state
-  resources:
-  - secrets
-  verbs:
-  - get
-  - update
+# No rule on Secrets here: nothing on them is granted cluster-wide. The
+# manager's own namespace gets the Role below; any other namespace gets
+# frame-manager-secret-reader or -writer only where a RoleBinding (values
+# rbac.managerSecretAccess) puts it. See docs/deployment.md, "Manager access
+# to Secrets".
 - apiGroups:
   - apps
   resources:
@@ -351,3 +312,104 @@ subjects:
 - kind: ServiceAccount
   name: {{ include "frame.name" . }}-controller-manager
   namespace: {{ .Release.Namespace }}
+---
+# The manager's own namespace (config/rbac/role.yaml's Role, generated from
+# the namespace=frame-system markers): alert tokens and a FrameInstall's
+# kubeconfig (get, create), the ceph-mgr account (get) and its state Secret
+# (get, update by name).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "frame.name" . }}-manager-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+- apiGroups:
+  - ""
+  resourceNames:
+  - frame-ceph-dashboard-state
+  resources:
+  - secrets
+  verbs:
+  - get
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "frame.name" . }}-manager-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "frame.name" . }}-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "frame.name" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+---
+# Secrets outside the manager's namespace (config/rbac/secret_access_roles.yaml):
+# written once as ClusterRoles, granted only through the per-namespace
+# RoleBindings below. reader: FrameMachine / FrameInstall credentials (get).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "frame.name" . }}-manager-secret-reader
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+---
+# writer: FrameService Secrets (own namespace and projectTo targets), and a
+# FrameInstall's kubeconfig when the manager has no POD_NAMESPACE.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "frame.name" . }}-manager-secret-writer
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - update
+{{- range $access := list "reader" "writer" }}
+{{- range (index $.Values.rbac.managerSecretAccess (ternary "read" "write" (eq $access "reader"))) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "frame.name" $ }}-manager-secret-{{ $access }}
+  namespace: {{ . }}
+  labels:
+    {{- include "frame.chartLabels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "frame.name" $ }}-manager-secret-{{ $access }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "frame.name" $ }}-controller-manager
+  namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

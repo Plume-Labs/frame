@@ -285,7 +285,12 @@ type FrameInstallReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frametasks,verbs=create
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=frametasks/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
+// SSH key, join token and BMC credentials: get in the FrameInstall's
+// namespace (frame-manager-secret-reader, bound per namespace). The
+// kubeconfig Secret is created in the manager's own namespace (the Role
+// below) when POD_NAMESPACE is set, else in the FrameInstall's namespace,
+// which then needs frame-manager-secret-writer.
+// +kubebuilder:rbac:groups="",namespace=frame-system,resources=secrets,verbs=get;create
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 // Reconcile drives one FrameInstall.

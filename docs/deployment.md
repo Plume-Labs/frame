@@ -958,6 +958,55 @@ this one. That is cluster-admin power wearing a narrow name, and shipping a
 bindable `ClusterRole` for it would invite exactly the mistake this section
 is otherwise arguing against. Run the migration as a cluster administrator.
 
+### Manager access to Secrets
+
+The manager holds **nothing on Secrets cluster-wide**. It used to: one
+ClusterRole rule gave it get, create, update and delete on every Secret of
+the cluster, for FrameService's sake. Now:
+
+| Where | Granted by | Verbs | Used for |
+|---|---|---|---|
+| the manager's namespace (`frame-system`) | Role `frame-manager-role` (generated from the `namespace=frame-system` markers) | get, create | alert token Secrets (`FrameAlertSubscription.spec.tokenSecretRef`, alert namespace = the manager's), the ceph-mgr dashboard account `frame-ceph-dashboard`, a FrameInstall's `<name>-kubeconfig` (created there when `POD_NAMESPACE` is set, which both install paths do) |
+| same | same Role, `resourceNames: [frame-ceph-dashboard-state]` | get, update | the ceph-mgr login gate's state |
+| each namespace you list | RoleBinding to ClusterRole `frame-manager-secret-reader` | get | FrameMachine `spec.bmc.credentialsRef`; FrameInstall `sshKeyRef`, `cluster.joinTokenRef` and its machine's BMC credentials |
+| each namespace you list | RoleBinding to ClusterRole `frame-manager-secret-writer` | get, create, update, delete | FrameService: its API key Secret and binding Secret in its own namespace, and one copy in every `spec.binding.projectTo` namespace; a FrameInstall's kubeconfig if the manager has no `POD_NAMESPACE` |
+
+Never granted anywhere: list, watch, patch. Every access is a by-name GET
+(the manager's cache is disabled for Secrets, `cmd/main.go`) or a
+CreateOrUpdate/Delete.
+
+Grant a namespace — Helm:
+
+```yaml
+rbac:
+  managerSecretAccess:
+    read: [default]        # where FrameMachines / FrameInstalls live
+    write: [apps, team-a]  # FrameService namespaces and their projectTo targets
+```
+
+Kustomize, or by hand (same binding the chart renders):
+
+```bash
+kubectl -n default create rolebinding frame-manager-secret-reader \
+  --clusterrole=frame-manager-secret-reader \
+  --serviceaccount=frame-system:frame-controller-manager
+```
+
+A namespace left out fails closed and says so: a FrameMachine's BMC read
+returns Forbidden in its status; a FrameService binding degrades with
+reason `SecretAccessForbidden`, naming the namespace and the ClusterRole.
+
+**What stays broad, and why.** Inside a granted namespace, the grant covers
+every Secret of that namespace. RBAC can't do better here: the names come
+from user specs (`credentialsRef`, `sshKeyRef`, `joinTokenRef`,
+`spec.binding.secretName`), a `create` can't be limited by `resourceNames`,
+and RBAC has no label selector. So keep FrameMachine/FrameService objects
+out of namespaces holding unrelated secrets. The manager doesn't create
+these RoleBindings itself: to do so it would need `bind` on the ClusterRole
+and create on RoleBindings everywhere, which amounts to the cluster-wide
+grant this replaces. `test/managerrbac` checks all of this against a real
+apiserver, with the manager's identity and the shipped `config/rbac`.
+
 ---
 
 ## Registering a machine's BMC
@@ -1018,7 +1067,10 @@ below.**
    decision of its own — out of scope for a documentation task to smuggle
    in.
 
-Register the machine — the Secret first, the object second:
+Register the machine — the Secret first, the object second. The manager
+may read Secrets only in namespaces granted to it (see "Manager access to
+Secrets"): `default` must be in `rbac.managerSecretAccess.read`, or bound
+by hand.
 
 ```bash
 # The credentials never enter the repo and never enter the console.
@@ -1139,7 +1191,9 @@ already registered there.
 
 `FrameInstallSpec.sshKeyRef` names a Secret holding `id` (private) and
 `id.pub` (public) — only the public half ever reaches an installer image,
-baked into the preseed's `late_command` as an authorized key.
+baked into the preseed's `late_command` as an authorized key. The
+FrameInstall's namespace must be granted to the manager for reading (see
+"Manager access to Secrets").
 
 ```bash
 ssh-keygen -t ed25519 -f /tmp/frame-install-key -N "" -C "frame-install"
@@ -1483,6 +1537,7 @@ guide.
 | `certManager.enabled` | `true` | `false` means you provision `webhooks.certSecretName` and `webhooks.caBundle` yourself — see "Installing without cert-manager" in `charts/frame/README.md`. |
 | `metrics.serviceMonitor.enabled` | `false` | Turn on only if the Prometheus Operator CRDs are already installed. |
 | `networkPolicy.enabled` | `false` | Off by default, matching kustomize. If enabled, the webhook rule is intentionally open on port 9443 to any source — `charts/frame/README.md` explains why a source-restricted rule breaks admission on real clusters. |
+| `rbac.managerSecretAccess` | `read: []`, `write: []` | Namespaces where the manager may read (FrameMachine, FrameInstall) or write (FrameService) Secrets; nothing on Secrets is cluster-wide. Upgrading from a release that had the cluster-wide rule: list every namespace holding those objects, or they fail with Forbidden — see "Manager access to Secrets". |
 | `rbac.tierRoles.install` | `true` | The 27 viewer/editor/admin convenience `ClusterRole`s (three per CRD); not required by the manager itself, and bound to nobody by the chart — the group bindings that make them reachable are `deploy/kubernetes/base/rbac-tier-bindings.yaml`, part of the UI/authd kustomize path, not this chart — see "RBAC" above. |
 
 The full, commented list is in `charts/frame/values.yaml`; `charts/frame/README.md`

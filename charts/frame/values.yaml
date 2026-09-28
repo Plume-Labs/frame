@@ -224,6 +224,20 @@ networkPolicy:
   webhookSourceCIDRs: []
 
 rbac:
+  # Namespaces where the manager may use Secrets, beyond its own (which it
+  # always may, through a Role). Nothing on Secrets is granted cluster-wide.
+  # Each entry renders one RoleBinding to frame-manager-secret-reader (read)
+  # or frame-manager-secret-writer (write) in that namespace.
+  #   read:  where FrameMachines (BMC credentials) and FrameInstalls (SSH
+  #          key, join token) live;
+  #   write: where FrameServices live, and every namespace listed in their
+  #          spec.binding.projectTo.
+  # A namespace missing here fails with Forbidden (FrameMachine: BMC
+  # unreadable; FrameService: SecretAccessForbidden). See
+  # docs/deployment.md, "Manager access to Secrets".
+  managerSecretAccess:
+    read: []
+    write: []
   # The viewer/editor/admin ClusterRoles, three per CRD (framejob, framenode,
   # frameresourcequota, frameuser, schedulingpolicy, frameservice, and the
   # hardware kinds). Not used by the manager itself —

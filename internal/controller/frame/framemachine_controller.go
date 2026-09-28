@@ -61,7 +61,9 @@ type FrameMachineReconciler struct {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// BMC credentials: get, per namespace, through the frame-manager-secret-reader
+// ClusterRole bound where FrameMachines live (docs/deployment.md, "Manager
+// access to Secrets"); nothing on Secrets cluster-wide.
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // Reconcile polls the machine's BMC and records what it read.

@@ -97,13 +97,13 @@ says `Collected`.
 If a step fails, the screen shows why: `Error` with the message, and it
 keeps the last good read with its date.
 
-**RBAC.** The manager's ClusterRole already grants get, create, update and
-delete on every Secret (the FrameService controller needs them), so the
-account Secret is read with that. This lot adds one rule naming
-`frame-ceph-dashboard-state` (get, update): it states what FrameStorage
-uses, and it becomes the only one that applies if the broad rule is ever
-narrowed. It restricts nothing today. That the manager never creates the
-state Secret is a property of its code, not of its RBAC.
+**RBAC.** The manager holds nothing on Secrets cluster-wide. In its own
+namespace, a Role grants get and create on Secrets (the account Secret is
+read with that) and update only on `frame-ceph-dashboard-state`, by name.
+That the manager never creates the state Secret is a property of its code:
+the Role's create verb, needed for other Secrets of that namespace, can't
+be restricted by name. See docs/deployment.md, "Manager access to
+Secrets".
 
 ### Undoing step 2 (back to plain HTTP)
 
@@ -260,9 +260,9 @@ would unblock an account that may already have failed. Clear `pending`
 The deployment manifests create `frame-ceph-dashboard-state` empty
 (`config/manager/ceph_dashboard_state.yaml`,
 `charts/frame/templates/ceph-dashboard-state.yaml`, kept on uninstall).
-The manager's RBAC names it: get and update on that one Secret (no
-create verb, since `resourceNames` can't restrict a create). The broad
-Secret rule described under Steps still applies alongside it.
+The manager's Role names it: get and update on that one Secret (no create
+verb by name, since `resourceNames` can't restrict a create; see RBAC
+under Steps).
 
 ### A missing state Secret
 

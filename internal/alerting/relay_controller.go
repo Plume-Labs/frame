@@ -44,7 +44,9 @@ func (e *errUnlabelledToken) Error() string {
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framealerts/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framealertsubscriptions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framealertsubscriptions/status,verbs=get;patch;update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// Token Secrets: get, in the alert namespace only (the manager's own,
+// frame-system by default): the Role generated from frameinstall_controller.go's
+// namespaced marker covers it.
 
 // RelayReconciler delivers each FrameAlert's current state to the
 // subscriptions whose filter accepts it, then purges it once resolved,

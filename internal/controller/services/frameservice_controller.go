@@ -106,7 +106,13 @@ type FrameServiceReconciler struct {
 // through CreateOrUpdate or Delete, and nothing in the tree ever issues a
 // Patch against a Secret — granting it would be a gratuitous extra verb on
 // precisely the resource this whole grant exists to keep narrow.
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;delete
+//
+// None of these verbs is granted cluster-wide any more: they live in the
+// frame-manager-secret-writer ClusterRole (config/rbac/secret_access_roles.yaml),
+// bound per namespace by the operator — the FrameService's own namespace and
+// every spec.binding.projectTo target. Outside those, a write is Forbidden
+// and the binding degrades with SecretAccessForbidden. See docs/deployment.md,
+// "Manager access to Secrets".
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // The inference provider inspects pods to explain a stuck rollout (a pod
