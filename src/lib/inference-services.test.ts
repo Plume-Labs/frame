@@ -100,6 +100,8 @@ describe('resolveDeployment', () => {
     const wider = deploy('wider', { app: 'llamacpp', tier: 'x' })
     const r = resolveDeployment(integ('app=llamacpp'), [wider, vision])
     expect(r.ok).toBe(false)
+    // And the other way round: a narrower Deployment is not a match either.
+    expect(resolveDeployment(integ('app=llamacpp,tier=x'), [chat]).ok).toBe(false)
   })
 
   it('offers nothing when two Deployments share the selector, and says to pick one', () => {
