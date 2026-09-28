@@ -2,6 +2,7 @@ import { InferenceStatus, MetricSeries, createFrameClient } from '@/lib/frame-sd
 import { Badge } from '@/components/ui/badge'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { TuningDashboard } from '@/components/TuningDashboard'
+import { InferenceServicesPanel } from '@/components/InferenceServicesPanel'
 import { TrendRow } from '@/components/Sparkline'
 import { inverseScoreTone } from '@/lib/thresholds'
 import { Lightning, Database } from '@phosphor-icons/react'
@@ -37,6 +38,10 @@ export function InferenceView() {
   const trend = trendState.phase === 'ready' ? trendState.data : null
 
   return (
+    <div className="space-y-6">
+    {/* Outside the dashboard, which renders only an empty state when the chat
+        server is down — exactly when its Start button is needed. */}
+    <InferenceServicesPanel inFlight={inf?.requestsProcessing} />
     <TuningDashboard
       title="KV-Cache & Inference"
       icon={<Lightning className="text-primary" />}
@@ -113,5 +118,6 @@ export function InferenceView() {
         </div>
       )}
     />
+    </div>
   )
 }
