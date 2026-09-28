@@ -329,7 +329,15 @@ func (r *FrameServiceReconciler) writeSecret(
 func (r *FrameServiceReconciler) deleteSecrets(ctx context.Context, stale []servicesv1beta1.ProjectedSecretRef) error {
 	for _, coord := range stale {
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: coord.Name, Namespace: coord.Namespace}}
-		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+		err := r.Delete(ctx, secret)
+		if apierrors.IsForbidden(err) {
+			return &bindingDegradation{
+				Reason: provider.ReasonSecretAccessForbidden,
+				Message: fmt.Sprintf("cannot delete Secret %s/%s: %v", coord.Namespace, coord.Name,
+					&provider.SecretAccessForbidden{Namespace: coord.Namespace, Action: "delete"}),
+			}
+		}
+		if client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("deleting Secret %s/%s: %w", coord.Namespace, coord.Name, err)
 		}
 	}
@@ -376,8 +384,7 @@ func coordsMissingFrom(
 // Secrets"). A retry cannot fix it; an operator's binding can.
 func secretAccessForbidden(ns string) error {
 	return &bindingDegradation{
-		Reason: "SecretAccessForbidden",
-		Message: fmt.Sprintf(
-			"the manager may not write Secrets in namespace %q: bind ClusterRole frame-manager-secret-writer there (Helm: rbac.managerSecretAccess.write)", ns),
+		Reason:  provider.ReasonSecretAccessForbidden,
+		Message: (&provider.SecretAccessForbidden{Namespace: ns, Action: "write"}).Error(),
 	}
 }

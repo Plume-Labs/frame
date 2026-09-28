@@ -1,9 +1,11 @@
 // Package managerrbac proves, against a real apiserver, what the manager's
 // shipped RBAC lets it do with Secrets — and what it no longer can.
 //
-// The roles and bindings are read from config/rbac (what kustomize applies
-// and what `make helm-parity` holds the chart to), never written here: a
-// fixture that builds its own RBAC proves the code, not the manifest. Every
+// The roles and bindings are rendered by kustomize from
+// config/overlays/production — the overlay this cluster is deployed from —
+// never written here: a fixture that builds its own RBAC proves the code,
+// not the manifest (an earlier version of this test bound the namespaces
+// itself, and could not see that the deployed render bound none). Every
 // call is made as the manager's service account (impersonation), not as
 // the envtest admin.
 package managerrbac
@@ -12,11 +14,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -33,9 +36,11 @@ import (
 
 const (
 	mgrNS   = "frame-system" // kustomize's namespace for everything under config/
-	readNS  = "lab"          // bound to manager-secret-reader (FrameMachines)
-	writeNS = "apps"         // bound to manager-secret-writer (FrameServices)
-	otherNS = "elsewhere"    // bound to nothing
+	mgrSA   = "frame-controller-manager"
+	readNS  = "default"   // overlay: frame-manager-secret-reader (FrameMachine default/ml350-g9)
+	writeNS = "inference" // overlay: frame-manager-secret-writer (FrameService inference/llama-8b)
+	otherNS = "elsewhere" // bound to nothing
+	overlay = "config/overlays/production"
 )
 
 var (
@@ -61,7 +66,7 @@ func TestMain(m *testing.M) {
 			return 1
 		}
 		imp := rest.CopyConfig(cfg)
-		imp.Impersonate = rest.ImpersonationConfig{UserName: "system:serviceaccount:" + mgrNS + ":controller-manager"}
+		imp.Impersonate = rest.ImpersonationConfig{UserName: "system:serviceaccount:" + mgrNS + ":" + mgrSA}
 		if mgr, err = client.New(imp, client.Options{Scheme: scheme.Scheme}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -72,60 +77,104 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// apply installs config/rbac's manager roles and bindings as kustomize
-// would place them (namespace "system" → frame-system), plus the
-// per-namespace bindings an operator adds (docs/deployment.md).
+// render runs kustomize on dir (relative to the repository root) and
+// returns the path of the rendered YAML. `make test` builds bin/kustomize
+// first (crd-render); KUSTOMIZE overrides it.
+func render(t *testing.T, dir string) string {
+	t.Helper()
+	root := manifests.Root(t)
+	bin := os.Getenv("KUSTOMIZE")
+	if bin == "" {
+		bin = filepath.Join(root, "bin", "kustomize")
+	}
+	out, err := exec.Command(bin, "build", filepath.Join(root, dir)).Output()
+	if err != nil {
+		t.Fatalf("kustomize build %s (%s): %v — run `make kustomize`", dir, bin, err)
+	}
+	path := filepath.Join(t.TempDir(), "render.yaml")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// apply installs the RBAC of the rendered overlay, as `kubectl apply -k`
+// would: roles, cluster roles and every binding, namespaces first.
 func apply(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	root := manifests.Root(t)
 	must := func(o client.Object) {
 		t.Helper()
 		if err := admin.Create(ctx, o); err != nil && !apierrors.IsAlreadyExists(err) {
-			t.Fatalf("creating %T %s: %v", o, o.GetName(), err)
+			t.Fatalf("creating %T %s/%s: %v", o, o.GetNamespace(), o.GetName(), err)
 		}
 	}
-	for _, ns := range []string{mgrNS, readNS, writeNS, otherNS} {
+	for _, ns := range []string{mgrNS, writeNS, otherNS} {
 		must(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
 	}
-	rbacDir := filepath.Join(root, "config", "rbac")
-	files := []string{filepath.Join(rbacDir, "role.yaml"), filepath.Join(rbacDir, "role_binding.yaml"), filepath.Join(rbacDir, "secret_access_roles.yaml")}
-	subjects := func(s []rbacv1.Subject) []rbacv1.Subject {
-		for i := range s {
-			if s[i].Namespace == "system" {
-				s[i].Namespace = mgrNS
-			}
-		}
-		return s
-	}
-	for _, cr := range manifests.ClusterRoles(t, files...) {
+	path := render(t, overlay)
+	for _, cr := range manifests.ClusterRoles(t, path) {
 		cr := cr
-		cr.ResourceVersion = ""
 		must(&cr)
 	}
-	for _, r := range manifests.Roles(t, files...) {
+	for _, r := range manifests.Roles(t, path) {
 		r := r
-		r.Namespace = mgrNS
 		must(&r)
 	}
-	for _, b := range manifests.ClusterRoleBindings(t, files...) {
+	for _, b := range manifests.ClusterRoleBindings(t, path) {
 		b := b
-		b.Subjects = subjects(b.Subjects)
 		must(&b)
 	}
-	for _, b := range manifests.RoleBindings(t, files...) {
+	for _, b := range manifests.RoleBindings(t, path) {
 		b := b
-		b.Namespace = mgrNS
-		b.Subjects = subjects(b.Subjects)
 		must(&b)
 	}
-	sa := []rbacv1.Subject{{Kind: "ServiceAccount", Name: "controller-manager", Namespace: mgrNS}}
-	for ns, role := range map[string]string{readNS: "manager-secret-reader", writeNS: "manager-secret-writer"} {
-		must(&rbacv1.RoleBinding{
-			ObjectMeta: metav1.ObjectMeta{Name: role, Namespace: ns},
-			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role},
-			Subjects:   sa,
-		})
+}
+
+// managerBindings maps namespace → ClusterRole for the RoleBindings that
+// give the manager's service account a secret-access ClusterRole.
+func managerBindings(t *testing.T, path string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, b := range manifests.RoleBindings(t, path) {
+		if b.RoleRef.Kind != "ClusterRole" || !strings.HasPrefix(b.RoleRef.Name, "frame-manager-secret-") {
+			continue
+		}
+		for _, s := range b.Subjects {
+			if s.Kind == "ServiceAccount" && s.Namespace == mgrNS && s.Name == mgrSA {
+				out[b.Namespace] = b.RoleRef.Name
+			}
+		}
+	}
+	return out
+}
+
+// The rendered installs, not a fixture: config/default binds the manager
+// to no namespace outside its own (that is the point), and the deployed
+// overlay binds exactly the namespaces holding Frame objects that use
+// Secrets today — default (FrameMachine) and inference (FrameService).
+func TestRenderedInstallsBindTheRightNamespaces(t *testing.T) {
+	if got := managerBindings(t, render(t, "config/default")); len(got) != 0 {
+		t.Errorf("config/default binds the manager to secret-access roles in %v; it must bind none (sites do it in an overlay)", got)
+	}
+	path := render(t, overlay)
+	want := map[string]string{readNS: "frame-manager-secret-reader", writeNS: "frame-manager-secret-writer"}
+	got := managerBindings(t, path)
+	for ns, role := range want {
+		if got[ns] != role {
+			t.Errorf("%s: namespace %s bound to %q, want %q", overlay, ns, got[ns], role)
+		}
+	}
+	for ns, role := range got {
+		if want[ns] == "" {
+			t.Errorf("%s: unexpected binding %s → %s (add it to this test with the object that needs it)", overlay, ns, role)
+		}
+	}
+	roles := manifests.ClusterRoles(t, path)
+	for _, role := range want {
+		if _, ok := roles[role]; !ok {
+			t.Errorf("%s: ClusterRole %s is bound but not rendered", overlay, role)
+		}
 	}
 }
 

@@ -1,0 +1,20 @@
+# The install this cluster runs: config/default plus the namespaces where
+# the manager may use Secrets. config/default grants it nothing on Secrets
+# outside its own namespace (docs/deployment.md, "Manager access to
+# Secrets"); every namespace holding a FrameMachine, FrameInstall or
+# FrameService must be bound here, or its objects fail with Forbidden.
+#
+# Deploy:  kubectl apply -k config/overlays/production
+# Adapt:   edit secret-access.yaml — one RoleBinding per namespace, to
+#          frame-manager-secret-reader (FrameMachine, FrameInstall) or
+#          frame-manager-secret-writer (FrameService and each projectTo
+#          namespace). test/managerrbac renders this overlay and checks it.
+#
+# No `namespace:` or `namePrefix:` here: config/default's apply to its own
+# resources only, and these bindings name their namespaces and the
+# prefixed roles explicitly.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../default
+- secret-access.yaml

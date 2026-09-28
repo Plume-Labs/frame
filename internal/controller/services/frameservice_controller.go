@@ -187,6 +187,12 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	binding, err := prov.Bind(ctx, &svc)
+	var forbidden *provider.SecretAccessForbidden
+	if errors.As(err, &forbidden) {
+		return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, &svc,
+			metav1.ConditionFalse, provider.ReasonSecretAccessForbidden, forbidden.Error(),
+			&sizing, result.Provisioned)
+	}
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("binding %s: %w", svc.Name, err)
 	}
@@ -314,6 +320,15 @@ func (r *FrameServiceReconciler) setStatus(
 // nothing left tracking it.
 func (r *FrameServiceReconciler) reconcileDelete(ctx context.Context, svc *servicesv1beta1.FrameService) (ctrl.Result, error) {
 	if err := r.deleteAllProjections(ctx, svc); err != nil {
+		// A namespace no longer granted: say which binding to add, and keep
+		// the finalizer — removing it would leave the projected Secrets
+		// behind with nothing left that knows about them.
+		var degradation *bindingDegradation
+		if errors.As(err, &degradation) {
+			return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, svc,
+				metav1.ConditionFalse, degradation.Reason,
+				degradation.Message+"; deletion waits (finalizer kept) until then", nil, nil)
+		}
 		return ctrl.Result{}, fmt.Errorf("deleting projected Secrets for %s/%s: %w", svc.Namespace, svc.Name, err)
 	}
 

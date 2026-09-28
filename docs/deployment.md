@@ -40,9 +40,17 @@ you as part of the install.
 ## 2. Install the operator (CRDs + controller + webhooks)
 
 ```bash
-# Full install: CRDs, RBAC, controller deployment, webhooks, cert-manager integration
-kubectl apply -k config/default
+# Full install: CRDs, RBAC, controller deployment, webhooks, cert-manager integration,
+# plus this site's Secret access (see "Manager access to Secrets")
+kubectl apply -k config/overlays/production
 ```
+
+`config/overlays/production` is `config/default` plus one RoleBinding per
+namespace where the manager must use Secrets. **Deploy the overlay, not
+`config/default`**: `config/default` grants the manager nothing on Secrets
+outside `frame-system`, so every FrameMachine, FrameInstall or FrameService
+elsewhere would fail with Forbidden. On another cluster, edit the overlay's
+`secret-access.yaml` for that cluster's namespaces (or copy the overlay).
 
 This applies the `frame-system` namespace, all ten CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
@@ -984,7 +992,23 @@ rbac:
     write: [apps, team-a]  # FrameService namespaces and their projectTo targets
 ```
 
-Kustomize, or by hand (same binding the chart renders):
+Kustomize: the deployed overlay, `config/overlays/production`, holds the
+bindings in `secret-access.yaml` — today `default` (reader: FrameMachine
+`ml350-g9`) and `inference` (writer: FrameService `llama-8b`, no
+`projectTo`); `frame-system` (alert tokens, ceph-mgr) is covered by the
+Role. To adapt it: list the namespaces holding each kind —
+
+```bash
+kubectl get framemachines,frameinstalls -A        # → reader
+kubectl get frameservices.services.plume-labs.io -A \
+  -o custom-columns=NS:.metadata.namespace,PROJECT:.spec.binding.projectTo   # → writer, own ns + each projectTo
+kubectl get framealertsubscriptions -A            # must all be in frame-system
+```
+
+— and add one RoleBinding per namespace to `secret-access.yaml`, same
+shape as the two there (subject `frame-system:frame-controller-manager`).
+`test/managerrbac` renders the overlay and pins its bindings: update its
+expected list along with the file. By hand, the same binding is:
 
 ```bash
 kubectl -n default create rolebinding frame-manager-secret-reader \
@@ -993,8 +1017,14 @@ kubectl -n default create rolebinding frame-manager-secret-reader \
 ```
 
 A namespace left out fails closed and says so: a FrameMachine's BMC read
-returns Forbidden in its status; a FrameService binding degrades with
-reason `SecretAccessForbidden`, naming the namespace and the ClusterRole.
+returns Forbidden in its status (CredentialsUnavailable: no BMC polling,
+no power control); a FrameService degrades with reason
+`SecretAccessForbidden`, naming the namespace and the ClusterRole —
+whether it's the API key Secret, the binding Secret or a projection. A
+FrameService being deleted whose projection namespace is no longer
+granted keeps its finalizer, with the same reason and "deletion waits
+(finalizer kept)": removing the finalizer would orphan the projected
+Secrets.
 
 **What stays broad, and why.** Inside a granted namespace, the grant covers
 every Secret of that namespace. RBAC can't do better here: the names come
@@ -1005,7 +1035,8 @@ out of namespaces holding unrelated secrets. The manager doesn't create
 these RoleBindings itself: to do so it would need `bind` on the ClusterRole
 and create on RoleBindings everywhere, which amounts to the cluster-wide
 grant this replaces. `test/managerrbac` checks all of this against a real
-apiserver, with the manager's identity and the shipped `config/rbac`.
+apiserver, with the manager's identity and the RBAC rendered from the
+deployed overlay.
 
 ---
 
@@ -1595,6 +1626,10 @@ deploy/kubernetes/
     ├── development/      # 1 replica, debug logging
     └── production/       # production replica count, image tag
 ```
+
+That tree is the UI. The operator's own overlay is separate:
+`config/overlays/production/` = `config/default` + this site's
+secret-access RoleBindings (see "Manager access to Secrets").
 
 ---
 

@@ -432,6 +432,9 @@ func (p *Provider) readAPIKey(ctx context.Context, svc *servicesv1beta1.FrameSer
 	name := apiKeySecretName(svc.Name)
 	var secret corev1.Secret
 	if err := p.client.Get(ctx, types.NamespacedName{Name: name, Namespace: svc.Namespace}, &secret); err != nil {
+		if apierrors.IsForbidden(err) {
+			return "", &provider.SecretAccessForbidden{Namespace: svc.Namespace, Action: "read"}
+		}
 		return "", fmt.Errorf("reading API key Secret %s/%s: %w", svc.Namespace, name, err)
 	}
 	token := secret.Data[apiKeyDataKey]
@@ -523,6 +526,14 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 	// credentials Secret is written, would deadlock the instance forever.
 	apiKeySecret := apiKeySecretName(svc.Name)
 	apiKey, err := p.ensureAPIKey(ctx, svc)
+	if apierrors.IsForbidden(err) {
+		// Same degrade as the binding's: named, on the degraded requeue,
+		// not ProvisionFailed with backoff and a stale reason in status.
+		return provider.Result{
+			Reason:  provider.ReasonSecretAccessForbidden,
+			Message: (&provider.SecretAccessForbidden{Namespace: svc.Namespace, Action: "write"}).Error(),
+		}, nil
+	}
 	if err != nil {
 		return provider.Result{}, err
 	}
