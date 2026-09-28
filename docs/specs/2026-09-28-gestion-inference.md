@@ -74,13 +74,15 @@ le provider **reprend par nom** (paramètres `containerName` / `cacheVolumeName`
 défauts `llama-cpp` / `model-cache`) plutôt que d'élaguer, et refuse (condition
 `ForeignContainers`) tout conteneur étranger restant — aucune suppression
 implicite. Le Reconcile remplace **en bloc** labels, `nodeSelector`, `env`,
-`args`, `volumeMounts`, `resources` et `securityContext` : sont perdus
+`args`, `volumeMounts` et `securityContext`, et réécrit `resources` clé par
+clé (`setContainerResources`) : sont perdus
 `--metrics` (scraping, console), `--jinja` (appels d'outils), `-ngl`,
 `LLAMA_CACHE` ; le label `engine` n'a aucun consommateur (sans risque).
 `resources` : le provider pose `requests.cpu = limits.cpu` et une limite
 mémoire = `Size` — pour un MoE aux experts en mmap sur CPU, risque de thrash ou
-d'OOM ; au lot 4, `Size` reproduit requests et limits, ou le provider les
-préserve. **Acceptation : parité du gabarit de pod**, diff installé /
+d'OOM. Exigence du lot 4 : **le provider préserve les `resources`
+existantes** (alternative : étendre `Sizing`, qui ne sait exprimer ni
+requests ≠ limits ni l'absence de limite mémoire). **Acceptation : parité du gabarit de pod**, diff installé /
 Reconcile avec une **liste fermée d'écarts permis** (propriétaire, annotation
 de digest, `securityContext`, `automountServiceAccountToken: false`, `emptyDir`
 `/tmp` et son montage, `priorityClassName`, `nodeSelector`, `-m`, cache en
@@ -97,7 +99,9 @@ du Deployment et du Service, qui efface les `ownerReferences` restantes — pas
 `apply`, dont la fusion 3 voies garderait les ajouts de Frame (`LLAMA_API_KEY`
 → 401, uid 65532, lecture seule, `priorityClassName`, `nodeSelector`). Le
 Secret de clé reste orphelin : à supprimer sans clé, à garder si le
-consommateur la présente. Retour rejoué sur un cluster de test d'abord.
+consommateur la présente. Les copies projetées (`projectTo`) disparaissent ;
+si le delete bloque (finalizer retenu par un namespace non autorisé), ne pas
+lancer `replace` avant qu'il soit terminé. Retour rejoué sur un cluster de test d'abord.
 
 ### 2.2 Actions depuis la console
 
