@@ -42,6 +42,7 @@ type fakeRedfish struct {
 	resets   []string
 	clearLog int
 	ledCalls []bool
+	logouts  int
 }
 
 func (f *fakeRedfish) Probe(context.Context) (*redfish.Snapshot, error) {
@@ -60,6 +61,7 @@ func (f *fakeRedfish) Reset(_ context.Context, t string) error {
 	return nil
 }
 func (f *fakeRedfish) ClearLog(context.Context) error { f.clearLog++; return nil }
+func (f *fakeRedfish) Logout(context.Context) error   { f.logouts++; return nil }
 func (f *fakeRedfish) SetIndicatorLED(_ context.Context, on bool) error {
 	f.ledCalls = append(f.ledCalls, on)
 	return nil

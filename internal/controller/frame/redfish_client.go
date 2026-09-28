@@ -59,5 +59,9 @@ func BuildRedfishClient(ctx context.Context, kube client.Client, namespace strin
 		tlsCfg.RootCAs = pool
 	}
 
-	return redfish.New("https://"+bmc.Address, user, pass, tlsCfg), nil
+	// Session reuse: with Basic auth an iLO4 logs a login and a logout in
+	// its event log for every request of every probe (internal/redfish/
+	// session.go). The reconciler keeps this client, and its session, for
+	// as long as the machine's BMC, credentials and TLS trust are unchanged.
+	return redfish.New("https://"+bmc.Address, user, pass, tlsCfg, redfish.WithSessionReuse()), nil
 }

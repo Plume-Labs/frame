@@ -34,10 +34,8 @@ limitations under the License.
 package redfish
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,64 +69,73 @@ type Client interface {
 	Reset(ctx context.Context, resetType string) error
 	ClearLog(ctx context.Context) error
 	SetIndicatorLED(ctx context.Context, on bool) error
+	// Logout ends the Redfish session this client holds, if any. It is a
+	// no-op for a client built without WithSessionReuse, or one that has not
+	// logged in yet.
+	Logout(ctx context.Context) error
 }
 
 type client struct {
 	baseURL    string
 	username   string
 	password   string
+	tlsConfig  *tls.Config
 	httpClient *http.Client
+
+	// session is nil unless the client was built WithSessionReuse; see
+	// session.go.
+	session *sessionState
 }
+
+// Option configures a Client built by New.
+type Option func(*client)
 
 // New builds a Client. tlsConfig controls certificate verification for the
 // connection to the BMC; pass &tls.Config{InsecureSkipVerify: true} for a
 // self-signed BMC certificate, or a config with a configured RootCAs to trust
 // a specific CA. An iLO4 is slow to answer under load, so the client's
 // timeout is a generous 20 seconds rather than Go's default of none.
-func New(baseURL, username, password string, tlsConfig *tls.Config) Client {
-	return &client{
-		baseURL:  strings.TrimSuffix(baseURL, "/"),
-		username: username,
-		password: password,
+//
+// Without options every request carries Basic auth, which an iLO4 turns
+// into one implicit login and one logout per request, each written to its
+// event log (see session.go). WithSessionReuse is the option a long-lived
+// poller wants.
+func New(baseURL, username, password string, tlsConfig *tls.Config, opts ...Option) Client {
+	c := &client{
+		baseURL:   strings.TrimSuffix(baseURL, "/"),
+		username:  username,
+		password:  password,
+		tlsConfig: tlsConfig,
 		httpClient: &http.Client{
 			Timeout:   20 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsConfig},
 		},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
-// do issues one HTTP request against the BMC with Basic auth and maps
-// transport/HTTP failures onto this package's sentinel errors. body, when
-// non-nil, is marshalled as the JSON request body. out, when non-nil, is
-// filled by decoding a successful response body.
+// do issues one HTTP request against the BMC and maps transport/HTTP
+// failures onto this package's sentinel errors. The request is authenticated
+// by the session token when the client reuses a session (session.go), by
+// Basic auth otherwise. body, when non-nil, is marshalled as the JSON
+// request body. out, when non-nil, is filled by decoding a successful
+// response body.
 func (c *client) do(ctx context.Context, method, path string, body, out any) error {
-	var reader io.Reader
+	var payload []byte
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("redfish: encode request for %s: %w", path, err)
 		}
-		reader = bytes.NewReader(encoded)
+		payload = encoded
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+normalizePath(path), reader)
+	resp, err := c.send(ctx, method, path, payload)
 	if err != nil {
-		return fmt.Errorf("redfish: build request for %s: %w", path, err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth(c.username, c.password)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		var verifyErr *tls.CertificateVerificationError
-		var authorityErr x509.UnknownAuthorityError
-		if errors.As(err, &verifyErr) || errors.As(err, &authorityErr) {
-			return fmt.Errorf("%s: %w", path, ErrTLS)
-		}
-		return fmt.Errorf("redfish: request %s: %w", path, err)
+		return err
 	}
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 

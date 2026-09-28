@@ -336,6 +336,11 @@ func main() {
 		"The base URL a machine's BMC -- on the management network, not the pod network -- can reach "+
 			"frame-provisiond's media listener at (config/provisiond/service.yaml's NodePort Service). "+
 			"FrameInstall creation fails until this is set: there is no address a BMC could safely default to.")
+	var machineProbeInterval time.Duration
+	flag.DurationVar(&machineProbeInterval, "machine-probe-interval", controller.DefaultProbeInterval,
+		"Delay between two successful Redfish probes of a FrameMachine's BMC. Values under "+
+			controller.MinProbeInterval.String()+" are raised to it: every probe is a full walk of a slow BMC. "+
+			"A failed probe backs off from 5m, doubling up to 30m.")
 	var alertReceiverAddr, alertNamespace, alertTokenSecret string
 	var alertRetentionDays int
 	flag.StringVar(&alertReceiverAddr, "alert-receiver-bind-address", ":8445",
@@ -555,10 +560,11 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.FrameMachineReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("framemachine"), //nolint:staticcheck
-		NewClient: controller.BuildRedfishClient,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorderFor("framemachine"), //nolint:staticcheck
+		NewClient:     controller.BuildRedfishClient,
+		ProbeInterval: machineProbeInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framemachine")
 		os.Exit(1)

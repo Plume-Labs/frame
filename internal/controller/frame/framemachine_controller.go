@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -55,7 +56,16 @@ type FrameMachineReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 	// NewClient builds the Redfish client for a machine. Tests replace it.
+	// It is called on every pass; the client it returns replaces the one
+	// held for the machine only when it targets a different BMC, user,
+	// password or TLS trust (framemachine_sessions.go), so a reused Redfish
+	// session survives from one probe to the next.
 	NewClient func(ctx context.Context, kube client.Client, namespace string, bmc framev1beta1.BMCSpec) (redfish.Client, error)
+	// ProbeInterval is the delay between two successful probes. Zero means
+	// DefaultProbeInterval; anything under MinProbeInterval is raised to it.
+	ProbeInterval time.Duration
+
+	machines machineClients
 }
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framemachines,verbs=get;list;watch;update;patch
@@ -77,11 +87,17 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	var fm framev1beta1.FrameMachine
 	if err := r.Get(ctx, req.NamespacedName, &fm); err != nil {
+		if apierrors.IsNotFound(err) {
+			// The machine is gone: end its session rather than leave it open
+			// on the BMC until the idle timeout.
+			r.forget(ctx, req.NamespacedName)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	rc, err := r.NewClient(ctx, r.Client, fm.Namespace, fm.Spec.BMC)
+	fresh, err := r.NewClient(ctx, r.Client, fm.Namespace, fm.Spec.BMC)
 	if err != nil {
+		r.forget(ctx, req.NamespacedName)
 		patch := client.MergeFrom(fm.DeepCopy())
 		r.setCondition(&fm, metav1.ConditionFalse, "CredentialsUnavailable", err.Error())
 		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
@@ -90,6 +106,7 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		log.Info("Could not build a Redfish client for FrameMachine", "machine", req.NamespacedName, "error", err.Error())
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
+	rc := r.clientFor(ctx, req.NamespacedName, fresh)
 
 	// Captured before runPowerRequest, which mutates fm.Status.LastPowerAction
 	// / LastPowerActionAt directly on fm: a patch captured after that
@@ -126,8 +143,9 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
 			return ctrl.Result{}, perr
 		}
-		log.Info("Redfish probe failed", "machine", req.NamespacedName, "reason", reason, "error", err.Error())
-		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		retry := r.probeFailed(req.NamespacedName)
+		log.Info("Redfish probe failed", "machine", req.NamespacedName, "reason", reason, "error", err.Error(), "retryIn", retry.String())
+		return ctrl.Result{RequeueAfter: retry}, nil
 	}
 
 	applySnapshot(&fm.Status, snap)
@@ -151,7 +169,7 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			"machine", req.NamespacedName)
 	}
 	log.V(1).Info("Probed FrameMachine", "machine", req.NamespacedName)
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: r.probeSucceeded(req.NamespacedName)}, nil
 }
 
 // runPowerRequest executes spec.powerRequest at most once. The guard is the
@@ -504,8 +522,14 @@ func mapLogCounts(counts map[string]int) map[string]int32 {
 // another, with no pause. The agent's status.storage writes (internal/agent) woke it
 // too. A spec change (power request, nodeRef, BMC) bumps the generation and
 // still reconciles immediately; the cadence otherwise comes from RequeueAfter
-// alone.
+// alone: ProbeInterval after a success, a doubling backoff after a failure.
+//
+// The Redfish sessions the controller holds are ended when the manager
+// stops (sessionLogoutOnStop).
 func (r *FrameMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.Add(r.sessionLogoutOnStop()); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&framev1beta1.FrameMachine{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("framemachine").
