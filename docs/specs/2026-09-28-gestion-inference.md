@@ -33,7 +33,7 @@ Les détails propres à un site vont dans une annexe tenue par l'exploitant.
     GPU demandé) et empile les volumes.
   - `desiredReplicas = 1` constant : pas d'arrêt possible, et un `scale` direct
     serait défait au Reconcile suivant.
-  - Clé API imposée (`LLAMA_API_KEY`), voir §4.1.
+  - Clé API imposée dans llama.cpp (`LLAMA_API_KEY`), voir §4.1.
   - Le pod reçoit `priorityClassName: frame-<classe>` (`priority.go`) et un
     `nodeSelector` sur `frame.plume-labs.io/service-class` : ces PriorityClass
     n'existent que si un `SchedulingPolicy` les a créées, sinon l'admission
@@ -96,10 +96,10 @@ l'`ownerReference` du `FrameService`. **Deux protections obligatoires** :
 explicitement, même avec `orphan`) **et** `kubectl delete frameservice <nom>
 --cascade=orphan` (sinon le GC les supprime). Puis **`kubectl replace -f`**
 du Deployment et du Service, qui efface les `ownerReferences` restantes — pas
-`apply`, dont la fusion 3 voies garderait les ajouts de Frame (`LLAMA_API_KEY`
-→ 401, uid 65532, lecture seule, `priorityClassName`, `nodeSelector`). Le
-Secret de clé reste orphelin : à supprimer sans clé, à garder si le
-consommateur la présente. Les copies projetées (`projectTo`) disparaissent ;
+`apply`, dont la fusion 3 voies garderait les ajouts de Frame (conteneur
+proxy, uid 65532, lecture seule, `priorityClassName`, `nodeSelector`). Le
+Secret de clé reste orphelin : à garder tant qu'un consommateur la présente
+(sans le proxy, llama.cpp l'ignore), à supprimer ensuite. Les copies projetées (`projectTo`) disparaissent ;
 si le delete bloque (finalizer retenu par un namespace non autorisé), ne pas
 lancer `replace` avant qu'il soit terminé. Retour rejoué sur un cluster de test d'abord.
 
@@ -231,7 +231,8 @@ Trois conditions, à vérifier avant le lot 4 :
   service entre-temps et n'est tracé que par la `FrameTask`. À retirer le jour
   où tous les serveurs du namespace sont des `FrameService`.
 - Manager : `frame-manager-secret-writer` lié dans le namespace du
-  `FrameService` et chaque `projectTo` — seulement si la clé est gardée (§4.1).
+  `FrameService` et chaque `projectTo` : la clé vit toujours dans un Secret
+  (§4.1) — écriture en production, avec l'accord de l'exploitant.
 
 ### 2.6 Garde-fous : toute bascule coupe le LLM du consommateur
 
@@ -258,19 +259,35 @@ Trois conditions, à vérifier avant le lot 4 :
 
 ## 4. Exigences et décisions techniques du lot 4
 
-1. **Clé API — décision de l'exploitant.** Sur llama.cpp `master`
-   (`server-http.cpp`), sous clé seuls `/health`, `/v1/health` et les fichiers
-   de l'interface restent publics : `/metrics` et `/props` répondent 401, ce qui
-   casse le panneau console (pod-proxy) et le scraping de l'EPP. Deux voies :
-   - **garder la clé** : la console, l'EPP et la PodMonitor doivent la
-     présenter ; le writer de Secret doit être lié dans le namespace ; le
-     consommateur la lit ;
-   - **`auth: none`** pour un service joignable seulement via la gateway,
-     borné par une NetworkPolicy (gateway, EPP, uiproxy, Prometheus). Coûte
-     du code des deux côtés : `ensureAPIKey` est imposé par le provider (il
-     faut un paramètre `auth`, absent aujourd'hui), et un consommateur qui
-     ignore un service sans `secretRef` doit l'accepter.
-   Réserve : vérifié sur `master`, pas sur le build déployé.
+1. **Proxy d'authentification (tranché le 2026-09-28).** Ni clé dans
+   llama.cpp (sous clé, `/metrics` et `/props` répondent 401 sur `master` :
+   panneau console, PodMonitor et EPP cassés), ni `auth: none`. Frame fournit
+   un **proxy minimal** — un binaire Go du dépôt (`net/http` +
+   `httputil.ReverseProxy`, aucune dépendance nouvelle) — qui vérifie la clé
+   devant llama.cpp :
+   - llama.cpp tourne **sans `LLAMA_API_KEY`**, écoute sur `127.0.0.1` :
+     seul le proxy du même pod le joint (plus fort qu'une NetworkPolicy, qui
+     borne en plus le port du proxy aux sources attendues : gateway, EPP,
+     Prometheus, consommateurs déclarés) ;
+   - **lecture interne** : liste fermée de chemins exemptés de clé, `GET`
+     seulement — `/health`, `/metrics`, `/props` — pour la PodMonitor, l'EPP
+     et le pod-proxy de la console. `/slots` et tout le reste exigent la clé ;
+   - la clé vit dans le Secret du `FrameService` (`ensureAPIKey` inchangé),
+     montée en fichier dans le proxy, relue à chaud, comparée en temps
+     constant sur son empreinte ;
+   - `Bind()` publie l'adresse de la gateway (§4.3), ou celle du proxy pour un
+     service sans gateway.
+
+   | Point | Options | Recommandation |
+   |---|---|---|
+   | Forme | sidecar dans le pod du serveur ; composant partagé devant la gateway | **sidecar** : l'auth s'arrête au pod, avec ou sans gateway ; pas de point unique de panne ; le provider possède déjà le gabarit. Cible de l'`InferencePool` = port du proxy |
+   | `Authorization` via la gateway (§4.2) | la gateway transmet l'en-tête ; la gateway authentifie elle-même | **transmission**, à prouver sur un cluster de test ; si elle échoue, repli sur le composant partagé devant la gateway |
+   | Streaming SSE, délai 900 s | — | `FlushInterval: -1` (vidage immédiat) ; pas de `WriteTimeout` serveur ; délai de requête ≥ celui de la route (900 s), c'est la gateway qui coupe ; déconnexion du client → annulation vers llama.cpp. Test : un flux de 20 min sans perte de jeton |
+   | Clés | une clé unique ; une par consommateur | **une par consommateur** (`spec.binding.consumers[]`, un Secret projeté chacun) : révocation isolée, journal par consommateur. Le lot d'entrée n'en crée qu'une, mais le format du Secret porte N clés |
+   | Lot | dans le lot 4 ; lot dédié avant | **lot 4a dédié** : binaire, image, tests (clé, chemins exemptés, SSE, reprise à chaud) livrés et audités seuls ; le lot 4 le câble. Pas de sidecar posé sur un serveur adopté (ce serait réécrire son gabarit en B) |
+
+   Réserve : le comportement 401 est vérifié sur `master`, pas sur le build
+   déployé ; il ne change plus la décision.
 2. **À vérifier (sans l'exploitant, sur un cluster de test)** : la gateway
    transmet-elle `Authorization` jusqu'au pod ?
 3. **Endpoint publié = la gateway.** `Bind()` publie l'adresse directe du
@@ -296,17 +313,39 @@ Trois conditions, à vérifier avant le lot 4 :
 | **1. Piloter l'existant** | Panneau « Service » dans `InferenceView` : modèle servi (`/props`), contexte, slots, pod, depuis quand, VRAM (DCGM), dernière `FrameTask`. Redémarrer / Arrêter / Démarrer via `restart()`/`scale()` du SDK, qui veulent un nom de Deployment alors que `frame-config.ts` déclare un sélecteur : ajouter un champ `deployment` à chaque intégration (défaut : le Deployment unique dont le sélecteur égale celui déclaré ; bouton absent sinon). Ajouter la vision (seuls chat et TEI y sont). Gateway et EPP exclus. Avertissement « un `kubectl apply` défait l'arrêt ». Aucun changement Go, aucun droit nouveau. | faible | on n'ouvre plus `kubectl` pour relancer un serveur figé |
 | **2. Maintenance explicite** | Annotation + bandeau §2.6 avant chaque action du lot 1 ; « attendre la fin des requêtes » ; durée de chargement mesurée | faible | le consommateur peut se replier |
 | **3. Catalogue et estimation** | CRD `FrameModel`, lecture d'en-tête bornée, estimateur §2.3, calibrage DCGM ; « tient / ne tient pas » en lecture | nul (lecture) | on sait ce qu'un réglage coûtera |
-| **4. Provider capable** | Reprise par nom et parité du gabarit (§2.1), `deletionPolicy: Retain`, `-m` sur chemin résolu, `extraArgs` bornés (`--metrics`, `--jinja`, `-ngl`), `env`, labels et `resources` conservés, endpoint publié = gateway, paramètre `auth`, `cpuMoeLayers`, `threads`, `parallel`, `alias`, `runtimeClassName`, `suspend`, mode CPU, `Recreate`, `lastKnownGood`, pré-chargement ; prérequis §2.4 et §4 ; migration du serveur de chat en fenêtre, retour rejoué avant | moyen | une source de vérité |
+| **4a. Proxy d'authentification** | Binaire Go, image, tests §4.1 ; rien de câblé | faible | lève le blocage clé / métriques |
+| **4. Provider capable** | Reprise par nom et parité du gabarit (§2.1), `deletionPolicy: Retain`, `-m` sur chemin résolu, `extraArgs` bornés (`--metrics`, `--jinja`, `-ngl`), `env`, labels et `resources` conservés, endpoint publié = gateway, sidecar proxy du lot 4a, `cpuMoeLayers`, `threads`, `parallel`, `alias`, `runtimeClassName`, `suspend`, mode CPU, `Recreate`, `lastKnownGood`, pré-chargement ; prérequis §2.4 et §4 ; migration du serveur de chat en fenêtre, retour rejoué avant | moyen | une source de vérité |
 | **5. Réglages depuis la console** | Contexte, déchargement, changement de modèle (admins), webhook par champ, purge du cache | moyen, borné par admission + retour auto | la demande, entière |
 | **6. Vision** | Vision en `FrameService` CPU ; TEI reste adopté | faible | — |
 
-## 6. Questions pour l'exploitant
+**Exigence sur les lots 3 à 5 : ne rien fermer qui empêche le §7.** Le
+catalogue, l'estimateur et le schéma `FrameService` portent dès le départ N
+modèles et un brouillon (`spec.models[]`, `spec.models[].draft`, ou
+`spec.draftModel`), même si le lot 5 n'en gère qu'un ; l'estimateur additionne
+des parts par instance au lieu de supposer une carte entière.
 
-1. Cible C (FrameService source de vérité) validée, avec B comme étape ?
-2. Clé API (coût : lier le writer de Secret dans le namespace d'inférence en
-   production, clé portée par console, EPP, PodMonitor) ou `auth: none` +
-   NetworkPolicy (coût : du code côté provider et côté consommateur) (§4.1) ?
-3. Coupure d'un chargement acceptée à chaque migration et à chaque réglage ?
-4. Détails de site déjà présents dans ce dépôt : les laisser ou les déplacer ?
-5. `SchedulingPolicy` en production et classe du nœud GPU (§4.5) : cela
-   change priorités et placement de tout le cluster, pas seulement du LLM.
+## 6. Décisions de l'exploitant (2026-09-28)
+
+1. **Tranché : oui.** `FrameService` en cible, adoption transitoire (B).
+2. **Tranché : proxy authentifié par clé fourni par Frame** (§4.1).
+3. **Tranché : oui pour l'instant.** La coupure d'un chargement (plusieurs
+   minutes) est acceptée à la demande ; à terme, ressources par modèle et
+   plusieurs modèles (§7).
+4. **Tranché : chantier à part.**
+5. **Tranché : oui.** `SchedulingPolicy` et classe du nœud GPU au lot 4
+   (§4.5), écriture en production avec l'accord de l'exploitant.
+
+## 7. Au-delà (lots 7 et suivants)
+
+- **Ressources par modèle.** Chaque instance reçoit sa part de VRAM et de RAM,
+  calculée par l'estimateur (§2.3) et vérifiée par l'admission sur la somme des
+  instances d'une carte ; `status.measured` calibre chaque part.
+- **Plusieurs instances ou modèles en parallèle** sur une ou plusieurs cartes,
+  chacun derrière son alias, l'EPP choisissant entre elles. Le `Recreate`
+  n'est plus imposé quand la VRAM libre permet de démarrer la nouvelle instance
+  avant d'arrêter l'ancienne : la bascule devient sans coupure.
+- **Speculative decoding.** Modèle brouillon chargé par le même serveur
+  (`-md`, même GPU, `--draft-max`/`--draft-min`) : sa part de VRAM (poids +
+  KV du brouillon) entre dans l'estimation. `FrameModel` décrit le couple
+  cible / brouillon compatible (même vocabulaire, vérifié dans les en-têtes
+  GGUF) ; le `FrameService` choisit un brouillon parmi ceux déclarés.
