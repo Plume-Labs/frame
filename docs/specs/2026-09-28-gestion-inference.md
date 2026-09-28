@@ -73,25 +73,31 @@ le reprend via `SetControllerReference`. Pour éviter un pod à deux conteneurs,
 le provider **reprend par nom** (paramètres `containerName` / `cacheVolumeName`,
 défauts `llama-cpp` / `model-cache`) plutôt que d'élaguer, et refuse (condition
 `ForeignContainers`) tout conteneur étranger restant — aucune suppression
-implicite. Le Reconcile remplace **en bloc** labels du gabarit, `nodeSelector`, `env`, `args` et
-`securityContext` : tout ce que le serveur installé porte et que le provider
-ne sait pas produire est perdu (`--metrics` — scraping et panneau console —,
-`--jinja` — appels d'outils —, `-ngl`, `LLAMA_CACHE`, labels annexes). Ces
-paramètres entrent au lot 4. **Critère d'acceptation : parité du gabarit de
-pod** — diff entre le gabarit installé et celui que produit le Reconcile, avec
-une **liste fermée d'écarts permis** (propriétaire, annotation de digest,
-`securityContext`, `priorityClassName`, `nodeSelector`, chemin `-m`, montage en
-lecture seule). Tout autre écart fait échouer le test.
+implicite. Le Reconcile remplace **en bloc** labels, `nodeSelector`, `env`,
+`args`, `volumeMounts`, `resources` et `securityContext` : sont perdus
+`--metrics` (scraping, console), `--jinja` (appels d'outils), `-ngl`,
+`LLAMA_CACHE` ; le label `engine` n'a aucun consommateur (sans risque).
+`resources` : le provider pose `requests.cpu = limits.cpu` et une limite
+mémoire = `Size` — pour un MoE aux experts en mmap sur CPU, risque de thrash ou
+d'OOM ; au lot 4, `Size` reproduit requests et limits, ou le provider les
+préserve. **Acceptation : parité du gabarit de pod**, diff installé /
+Reconcile avec une **liste fermée d'écarts permis** (propriétaire, annotation
+de digest, `securityContext`, `automountServiceAccountToken: false`, `emptyDir`
+`/tmp` et son montage, `priorityClassName`, `nodeSelector`, `-m`, cache en
+lecture seule) ; tout autre écart échoue.
 
-**Chemin de retour** (obligatoire avant toute migration) : le manifeste
-d'avant, **d'abord recalé sur l'objet vivant**, reste versionné chez
-l'exploitant. Le `FrameService` porte `deletionPolicy: Retain` (sous `Delete`,
-`reconcileDelete` supprime Deployment et Service, orphelins ou non). Retour =
-suppression du `FrameService`, puis **`kubectl replace -f`** du manifeste — pas
-`apply` : la fusion 3 voies d'un apply client garderait ce que Frame a ajouté
-(`LLAMA_API_KEY` → 401, uid 65532, rootfs et `/models` en lecture seule,
-`priorityClassName`, `nodeSelector`), et `-hf` ne démarrerait pas. Le retour
-est rejoué sur un cluster de test avant toute migration en production.
+**Chemin de retour** (avant toute migration) : manifestes du Deployment **et**
+du Service, recalés sur le vivant, versionnés chez l'exploitant. Les trois
+objets provisionnés (Deployment, Service, Secret de clé) portent
+l'`ownerReference` du `FrameService`. **Deux protections obligatoires** :
+`deletionPolicy: Retain` (sous `Delete`, `reconcileDelete` les supprime
+explicitement, même avec `orphan`) **et** `kubectl delete frameservice <nom>
+--cascade=orphan` (sinon le GC les supprime). Puis **`kubectl replace -f`**
+du Deployment et du Service, qui efface les `ownerReferences` restantes — pas
+`apply`, dont la fusion 3 voies garderait les ajouts de Frame (`LLAMA_API_KEY`
+→ 401, uid 65532, lecture seule, `priorityClassName`, `nodeSelector`). Le
+Secret de clé reste orphelin : à supprimer sans clé, à garder si le
+consommateur la présente. Retour rejoué sur un cluster de test d'abord.
 
 ### 2.2 Actions depuis la console
 
@@ -263,9 +269,12 @@ Trois conditions, à vérifier avant le lot 4 :
    Réserve : vérifié sur `master`, pas sur le build déployé.
 2. **À vérifier (sans l'exploitant, sur un cluster de test)** : la gateway
    transmet-elle `Authorization` jusqu'au pod ?
-3. **`runtimeClassName` est requis** là où le runtime GPU l'exige : paramètre
+3. **Endpoint publié = la gateway.** `Bind()` publie l'adresse directe du
+   `Service` : suivre le catalogue contournerait gateway, EPP et priorités.
+   Le lot 4 publie la gateway (paramètre) avant toute migration.
+4. **`runtimeClassName` est requis** là où le runtime GPU l'exige : paramètre
    du provider, ou dérivé du `FrameNode`.
-4. **PriorityClass et classe de service.** Les `frame-*` n'existent que si un
+5. **PriorityClass et classe de service.** Les `frame-*` n'existent que si un
    `SchedulingPolicy` les a créées ; sinon l'admission refuse le pod. Le label
    `service-class` du nœud vient de son `FrameNode` (un étiquetage manuel
    serait défait) et la classe choisit à la fois le nœud et la priorité :
@@ -283,7 +292,7 @@ Trois conditions, à vérifier avant le lot 4 :
 | **1. Piloter l'existant** | Panneau « Service » dans `InferenceView` : modèle servi (`/props`), contexte, slots, pod, depuis quand, VRAM (DCGM), dernière `FrameTask`. Redémarrer / Arrêter / Démarrer via `restart()`/`scale()` du SDK, qui veulent un nom de Deployment alors que `frame-config.ts` déclare un sélecteur : ajouter un champ `deployment` à chaque intégration (défaut : le Deployment unique dont le sélecteur égale celui déclaré ; bouton absent sinon). Ajouter la vision (seuls chat et TEI y sont). Gateway et EPP exclus. Avertissement « un `kubectl apply` défait l'arrêt ». Aucun changement Go, aucun droit nouveau. | faible | on n'ouvre plus `kubectl` pour relancer un serveur figé |
 | **2. Maintenance explicite** | Annotation + bandeau §2.6 avant chaque action du lot 1 ; « attendre la fin des requêtes » ; durée de chargement mesurée | faible | le consommateur peut se replier |
 | **3. Catalogue et estimation** | CRD `FrameModel`, lecture d'en-tête bornée, estimateur §2.3, calibrage DCGM ; « tient / ne tient pas » en lecture | nul (lecture) | on sait ce qu'un réglage coûtera |
-| **4. Provider capable** | Reprise par nom et parité du gabarit (§2.1), `deletionPolicy: Retain`, `-m` sur chemin résolu, `extraArgs` bornés (`--metrics`, `--jinja`, `-ngl`), `env` et labels conservés, paramètre `auth`, `cpuMoeLayers`, `threads`, `parallel`, `alias`, `runtimeClassName`, `suspend`, mode CPU, `Recreate`, `lastKnownGood`, pré-chargement ; prérequis §2.4 et §4 ; migration du serveur de chat en fenêtre, retour rejoué avant | moyen | une source de vérité |
+| **4. Provider capable** | Reprise par nom et parité du gabarit (§2.1), `deletionPolicy: Retain`, `-m` sur chemin résolu, `extraArgs` bornés (`--metrics`, `--jinja`, `-ngl`), `env`, labels et `resources` conservés, endpoint publié = gateway, paramètre `auth`, `cpuMoeLayers`, `threads`, `parallel`, `alias`, `runtimeClassName`, `suspend`, mode CPU, `Recreate`, `lastKnownGood`, pré-chargement ; prérequis §2.4 et §4 ; migration du serveur de chat en fenêtre, retour rejoué avant | moyen | une source de vérité |
 | **5. Réglages depuis la console** | Contexte, déchargement, changement de modèle (admins), webhook par champ, purge du cache | moyen, borné par admission + retour auto | la demande, entière |
 | **6. Vision** | Vision en `FrameService` CPU ; TEI reste adopté | faible | — |
 
@@ -295,5 +304,5 @@ Trois conditions, à vérifier avant le lot 4 :
    NetworkPolicy (coût : du code côté provider et côté consommateur) (§4.1) ?
 3. Coupure d'un chargement acceptée à chaque migration et à chaque réglage ?
 4. Détails de site déjà présents dans ce dépôt : les laisser ou les déplacer ?
-5. `SchedulingPolicy` en production et classe du nœud GPU (§4.4) : cela
+5. `SchedulingPolicy` en production et classe du nœud GPU (§4.5) : cela
    change priorités et placement de tout le cluster, pas seulement du LLM.
