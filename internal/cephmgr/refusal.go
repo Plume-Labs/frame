@@ -107,10 +107,13 @@ type LoginGate interface {
 	Refused(ctx context.Context, c Config) error
 }
 
-// accountMAC identifies an account by content, under key.
+// accountMAC identifies an account by username and password, under key.
+// Not the URL: Ceph counts failed logins per user, whatever address the
+// login came through (a trailing slash, another host name, an IP, another
+// case), so a refusal must block the same credentials at every URL.
 func accountMAC(key []byte, c Config) string {
 	m := hmac.New(sha256.New, key)
-	m.Write([]byte(c.BaseURL + "\x00" + c.Username + "\x00" + c.Password))
+	m.Write([]byte(c.Username + "\x00" + c.Password))
 	return hex.EncodeToString(m.Sum(nil))
 }
 

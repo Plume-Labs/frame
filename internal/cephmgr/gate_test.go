@@ -487,3 +487,27 @@ func TestFullPendingMeansNoLogin(t *testing.T) {
 		t.Errorf("the oldest unresolved login was forgotten: %v", err)
 	}
 }
+
+// Ceph counts failed logins per user, whatever the URL: a refusal blocks
+// the same credentials through any other address of the dashboard.
+func TestRefusalHoldsAcrossURLs(t *testing.T) {
+	f := newFake(t)
+	gate, _ := stateGate(t, true, interceptor.Funcs{})
+	now := t0
+	cfg := f.cfg()
+	cfg.Password = "wrong"
+	if p := place(process(&cfg, gate, &now)); p.State != "AuthRefused" || p.CertificateNotAfter == nil {
+		t.Fatalf("first URL: %s %q, certificate expiry %v", p.State, p.Message, p.CertificateNotAfter)
+	}
+	for _, u := range []string{f.srv.URL + "/", strings.Replace(f.srv.URL, "127.0.0.1", "localhost", 1), strings.ToUpper(f.srv.URL)} {
+		other := cfg
+		other.BaseURL = u
+		now = now.Add(DefaultInterval)
+		if p := place(process(&other, gate, &now)); p.State != "AuthRefused" {
+			t.Fatalf("%s: %s %q", u, p.State, p.Message)
+		}
+	}
+	if f.logins != 1 {
+		t.Fatalf("%d logins for one refused account across URLs, want 1", f.logins)
+	}
+}
