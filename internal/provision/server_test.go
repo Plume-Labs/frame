@@ -301,6 +301,50 @@ func TestLocalImageStoreLeavesNothingBehindWhenTheImageFails(t *testing.T) {
 	}
 }
 
+// seedWillFail makes the next build's token tok, and plants a directory where
+// writeSeed writes vendor-data, so writeSeed fails after it has already
+// created the seed directory and, depending on map order, some of its files.
+func seedWillFail(t *testing.T, dir string) {
+	t.Helper()
+	orig := newToken
+	newToken = func() (string, error) { return tok, nil }
+	t.Cleanup(func() { newToken = orig })
+	if err := os.MkdirAll(filepath.Join(dir, tok, "vendor-data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A seed half written is still served on the LAN-facing listener, and the
+// caller, getting no token, will never DELETE it.
+func TestBuildHandlerLeavesNothingBehindWhenTheSeedFails(t *testing.T) {
+	dir := t.TempDir()
+	seedWillFail(t, dir)
+	reqBody, err := json.Marshal(goodSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, notAnISO(t), testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	if rr.Code != http.StatusInternalServerError || !strings.Contains(rr.Body.String(), "vendor-data") {
+		t.Fatalf("want the seed write to fail: code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if left := leftovers(t, dir); len(left) != 0 {
+		t.Errorf("a failed seed left %v behind", left)
+	}
+}
+
+func TestLocalImageStoreLeavesNothingBehindWhenTheSeedFails(t *testing.T) {
+	dir := t.TempDir()
+	seedWillFail(t, dir)
+	_, _, err := (&LocalImageStore{Dir: dir, Base: notAnISO(t), MediaURL: testMediaURL}).Build(context.Background(), goodSpec())
+	if err == nil || !strings.Contains(err.Error(), "vendor-data") {
+		t.Fatalf("want the seed write to fail, got %v", err)
+	}
+	if left := leftovers(t, dir); len(left) != 0 {
+		t.Errorf("a failed seed left %v behind", left)
+	}
+}
+
 // Remaster removes its output when the boot-record check refuses it, but not
 // when xorriso itself fails part way through writing: that partial image is
 // discardBuild's to remove, and the build paths above never produce one.

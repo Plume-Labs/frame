@@ -71,8 +71,8 @@ func removeSeed(dir, token string) error {
 	return nil
 }
 
-// discardBuild removes what a build that failed after writeSeed left under
-// dir: the seed and any partial image. Best effort -- the build's own error
+// discardBuild removes what a failed build left under dir: the seed, whole or
+// partial, and any partial image. Best effort -- the build's own error
 // is what the caller hears about.
 func discardBuild(dir, token string) {
 	_ = removeSeed(dir, token)
@@ -88,8 +88,9 @@ type buildResponse struct {
 }
 
 // newToken generates the per-image identifier: 16 random bytes, hex-encoded
-// to the 32 lowercase hex characters imageName requires.
-func newToken() (string, error) {
+// to the 32 lowercase hex characters imageName requires. A variable so a test
+// can name the token and plant what makes writeSeed fail under it.
+var newToken = func() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generating image token: %w", err)
@@ -270,6 +271,9 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 			beaconBase = ""
 		}
 		if err := writeSeed(dir, token, spec, beaconBase); err != nil {
+			// A seed half written is served like a whole one, and the
+			// caller gets no token to DELETE it by: same as a failed image.
+			discardBuild(dir, token)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -584,6 +588,8 @@ func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (imageURL, token
 
 	// No beacon base: nothing in the cold-start path reads a beacon.
 	if err := writeSeed(s.Dir, tok, spec, ""); err != nil {
+		// No token is returned for a half-written seed either.
+		discardBuild(s.Dir, tok)
 		return "", "", err
 	}
 
