@@ -1458,7 +1458,12 @@ the cluster that still exists. With `cluster.mode: join`,
 system:
 
 ```
-curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<k3sVersion> K3S_URL=<serverURL> K3S_TOKEN=<token> sh -s - agent --node-ip <network.address without /NN>
+# the token arrives on stdin, never on a command line
+sudo -n sh -c 'umask 077 && mkdir -p /etc/rancher/k3s && cat > /etc/rancher/k3s/frame-join-token'
+# downloaded first, so a failed download is a failed step, not an empty `sh`
+curl -sfL -o frame-k3s-install.sh https://get.k3s.io
+INSTALL_K3S_VERSION=<k3sVersion> K3S_URL=<serverURL> K3S_TOKEN_FILE=/etc/rancher/k3s/frame-join-token \
+  sh frame-k3s-install.sh agent --node-ip <network.address without /NN>
 ```
 
 So the machine comes back as a **k3s agent** (a worker), never as a server:
@@ -1467,7 +1472,12 @@ this path cannot restore a control-plane or etcd member. It passes no
 autoinstall wrote from `hostname`, so `hostname` must be the existing
 node's name exactly. No kubeconfig is produced; the Ready phase checks the
 `Node` named `hostname` through the existing cluster's kubeconfig, which the
-config names.
+config names — and does not take the old Node's status for the new one:
+Ready counts only once the Node's boot ID **and** machine ID both differ
+from the ones recorded before the wipe, and its Ready heartbeat is newer
+than the start of `Joining`. That heartbeat is stamped by the node's clock;
+a node running behind the laptop makes a real rejoin look stale, which ends
+in the `Ready` timeout, never in a false success.
 
 **Before** running it, against the existing cluster:
 
@@ -1481,11 +1491,14 @@ kubectl get node w3 --show-labels > w3-labels.before
 ```
 
 The token is the content of `/var/lib/rancher/k3s/server/node-token` on a
-server node. Every secret goes in a file of its own, mode 0600 — the
-command refuses a secret file or a kubeconfig readable by group or other,
-and refuses an inline `cluster.joinToken` outright (`bmc.password` in the
-clear is still accepted, for existing init configs, but not together with
-`bmc.passwordFile`):
+server node. Every secret goes in a file of its own: the command refuses a
+secret file or a kubeconfig that is a symbolic link, not owned by you, or
+looser than 0600, and refuses an inline `cluster.joinToken` outright.
+`bmc.password` in the clear is still accepted, for existing init configs —
+but then the config file itself must be 0600, and it cannot be combined
+with `bmc.passwordFile`. `serverURL` and the kubeconfig's `server:` must
+name the same host and port, as written (an IP in one and a name in the
+other is refused):
 
 ```yaml
 # bootstrap-w3.yaml — mode 0600; holds no secret, only paths to them
@@ -1525,10 +1538,16 @@ make bootstrap   # builds bin/frame-bootstrap
 bin/frame-bootstrap -config bootstrap-w3.yaml
 ```
 
-Everything above is checked before the BMC is dialled: a missing
-`serverURL`, `joinTokenFile` or `kubeconfig`, an `http://` server, a
-kubeconfig that does not parse, an `out` on a join or a `kubeconfig` on an
-init are each refused by name. Success ends with `node w3 rejoined the
+Everything above is checked before the BMC is dialled. Loading the config
+stays offline: a missing `serverURL`, `joinTokenFile` or `kubeconfig`, an
+`http://` server, a kubeconfig that does not parse or names another server,
+an `out` on a join or a `kubeconfig` on an init are each refused by name.
+Then a preflight reads the existing cluster — the one network step before
+the wipe — and refuses if the Node `hostname` does not exist, if its
+`InternalIP` is not `network.address`, if `kube-system/<hostname>.node-password.k3s`
+still exists (it prints the `kubectl` command), or if `k3sVersion` is newer
+than the server's (older is allowed, with a warning). It also records the
+Node's boot and machine IDs for the Ready check. Success ends with `node w3 rejoined the
 existing cluster and is Ready there`.
 
 **After**: compare `kubectl get node w3 --show-labels` with
@@ -1568,7 +1587,9 @@ existing cluster and is Ready there`.
 - [ ] **`frame bootstrap` with `cluster.mode: join` has never run.** The
       node-password secret deletion, the rejoin under the same name and
       the labels surviving it are documented from k3s's behaviour, not
-      observed on this cluster.
+      observed on this cluster. Nor is the install script's handling of
+      `K3S_TOKEN_FILE` with an explicit `agent` command: read from the
+      script, not run.
 - [ ] **Nothing exercises `cmd/bootstrap`'s `run()` end to end.** Its
       config loading, its listener start-up and its post-`Install`
       decision are each tested in isolation (`LoadConfig`,
