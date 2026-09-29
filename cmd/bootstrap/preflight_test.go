@@ -257,6 +257,12 @@ func fakeRejoin(f *fakeCluster, called *bool) installFunc {
 	return func(ctx context.Context, d provision.Deps, s provision.Spec, _ provision.Options) (provision.Result, error) {
 		*called = true
 		d.Report(provision.PhaseJoining)
+		// Before the new kubelet registers, the old Node is still served,
+		// still Ready. The checker execute built must not believe it.
+		if ok, _ := d.Nodes.NodeReady(ctx, nil, s.Hostname); ok {
+			return provision.Result{Phase: provision.PhaseReady, NodeName: s.Hostname},
+				errors.New("the checker took the old Node's Ready for the rejoined machine")
+		}
 		f.setNode(w3Node("boot-new", "machine-new", metav1.NewTime(time.Now().Add(2*time.Second))))
 		ok, err := d.Nodes.NodeReady(ctx, nil, s.Hostname)
 		if err != nil || !ok {
