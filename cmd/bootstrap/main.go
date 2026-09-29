@@ -199,7 +199,7 @@ func run() error {
 		BMC:    bmc,
 		Images: images,
 		SSH:    provision.NewSSHClient(),
-		Nodes:  kubeconfigNodeChecker{existing: cfg.existingKubeconfig},
+		Nodes:  nodeCheckerFor(cfg),
 		Report: func(p provision.Phase) { fmt.Fprintf(os.Stdout, "frame bootstrap: %s\n", p) },
 	}
 
@@ -373,6 +373,14 @@ func newInstallUID() (string, error) {
 // a join config names, read and parsed by LoadConfig.
 type kubeconfigNodeChecker struct {
 	existing []byte
+}
+
+// nodeCheckerFor builds the checker run() hands Install from a loaded
+// config. Its own function so the one wire that matters for a join -- the
+// existing cluster's kubeconfig, read by LoadConfig, reaching the Ready
+// check -- is tested from config to apiserver rather than only read.
+func nodeCheckerFor(cfg Config) kubeconfigNodeChecker {
+	return kubeconfigNodeChecker{existing: cfg.existingKubeconfig}
 }
 
 // NodeReady checks name against kubeconfig, or -- when Install passes nil,

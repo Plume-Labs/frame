@@ -153,7 +153,31 @@ func TestNodeReadyPrefersTheKubeconfigInstallPasses(t *testing.T) {
 // With neither, it refuses rather than reaching for a client that cannot
 // exist on a laptop.
 func TestNodeReadyRefusesWithNoKubeconfigAtAll(t *testing.T) {
-	if _, err := (kubeconfigNodeChecker{}).NodeReady(context.Background(), nil, "w3"); err == nil {
-		t.Fatal("NodeReady with no kubeconfig at all did not refuse")
+	_, err := (kubeconfigNodeChecker{}).NodeReady(context.Background(), nil, "w3")
+	// The message is asserted, not just the error: clientcmd refuses an
+	// empty kubeconfig on its own, so without this the guard could vanish
+	// and the test would still see an error -- a vaguer one.
+	if err == nil || !strings.Contains(err.Error(), "no cluster of its own") {
+		t.Fatalf("NodeReady with no kubeconfig at all was not refused by its own guard: %v", err)
+	}
+}
+
+// The wire run() depends on, from a join config on disk to the apiserver
+// the Ready phase asks: LoadConfig reads the existing cluster's
+// kubeconfig, nodeCheckerFor hands it to the checker, and a nil kubeconfig
+// from Install lands on that cluster.
+func TestAJoinConfigsKubeconfigReachesTheReadyCheck(t *testing.T) {
+	srv, hits := fakeAPIServer(t, "node-zero", corev1.ConditionTrue)
+	kc := writePrivate(t, t.TempDir(), "existing.kubeconfig", string(kubeconfigFor(srv.URL)), 0o600)
+	cfg, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) { c.Kubeconfig = kc })))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := nodeCheckerFor(cfg).NodeReady(context.Background(), nil, cfg.Hostname)
+	if err != nil || !ok {
+		t.Fatalf("NodeReady = %v, %v; want the existing cluster's Ready node", ok, err)
+	}
+	if hits.Load() == 0 {
+		t.Error("the existing cluster named in the config was never asked")
 	}
 }
