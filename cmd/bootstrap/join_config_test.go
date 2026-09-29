@@ -127,7 +127,14 @@ func TestLoadConfigRefusesAnIncompleteJoin(t *testing.T) {
 		}, "does not parse as a kubeconfig"},
 		{"a group-readable kubeconfig", func(t *testing.T, c *Config) {
 			c.Kubeconfig = writePrivate(t, t.TempDir(), "kc", existingKubeconfigYAML, 0o640)
-		}, "readable by group or other"},
+		}, "looser than 0600"},
+		{"a kubeconfig reached through a symbolic link", func(t *testing.T, c *Config) {
+			link := filepath.Join(t.TempDir(), "kc-link")
+			if err := os.Symlink(c.Kubeconfig, link); err != nil {
+				t.Fatal(err)
+			}
+			c.Kubeconfig = link
+		}, "symbolic link"},
 	}
 	for _, tc := range cases {
 		cfg := validJoinConfig(t, func(c *Config) { tc.mutate(t, c) })
@@ -184,8 +191,8 @@ func TestLoadConfigStillAcceptsAClearTextBMCPassword(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRefusesASecretFileReadableByGroupOrOther(t *testing.T) {
-	for _, mode := range []os.FileMode{0o640, 0o604, 0o644} {
+func TestLoadConfigRefusesASecretFileLooserThan0600(t *testing.T) {
+	for _, mode := range []os.FileMode{0o640, 0o604, 0o644, 0o700, 0o610} {
 		dir := t.TempDir()
 		pw := writePrivate(t, dir, "bmc-password", "pw\n", mode)
 		tok := writePrivate(t, dir, "node-token", testJoinToken+"\n", mode)
@@ -194,12 +201,12 @@ func TestLoadConfigRefusesASecretFileReadableByGroupOrOther(t *testing.T) {
 			c.BMC.Password = ""
 			c.BMC.PasswordFile = pw
 		})))
-		if err == nil || !strings.Contains(err.Error(), "readable by group or other") {
+		if err == nil || !strings.Contains(err.Error(), "looser than 0600") {
 			t.Errorf("bmc.passwordFile mode %s: not refused by the permission guard: %v", mode, err)
 		}
 
 		_, err = LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) { c.Cluster.JoinTokenFile = tok })))
-		if err == nil || !strings.Contains(err.Error(), "readable by group or other") {
+		if err == nil || !strings.Contains(err.Error(), "looser than 0600") {
 			t.Errorf("cluster.joinTokenFile mode %s: not refused by the permission guard: %v", mode, err)
 		}
 	}
@@ -349,5 +356,91 @@ mediaBaseURL: http://192.0.2.50:8081
 	}
 	if got.InstallTimeout != 90*time.Minute {
 		t.Errorf("installTimeout: got %s", got.InstallTimeout)
+	}
+}
+
+// A private symlink to a private file is still refused: what the path names
+// can change between the check and the read, and O_NOFOLLOW only protects
+// the read if the check refused links too.
+func TestLoadConfigRefusesASecretFileBehindASymbolicLink(t *testing.T) {
+	dir := t.TempDir()
+	tok := writePrivate(t, dir, "node-token", testJoinToken+"\n", 0o600)
+	link := filepath.Join(dir, "token-link")
+	if err := os.Symlink(tok, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) { c.Cluster.JoinTokenFile = link })))
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("a join token behind a symbolic link was not refused by its own guard: %v", err)
+	}
+}
+
+// A 0600 file owned by another account is private to them, not to the
+// operator. An unprivileged test cannot chown, so the account running the
+// test is what changes instead.
+func TestLoadConfigRefusesASecretFileOwnedBySomeoneElse(t *testing.T) {
+	cfg := validJoinConfig(t, nil)
+	p := writeConfig(t, cfg)
+	realUID := currentUID
+	currentUID = func() int { return realUID() + 1 }
+	defer func() { currentUID = realUID }()
+
+	_, err := LoadConfig(p)
+	if err == nil || !strings.Contains(err.Error(), "not by you") {
+		t.Fatalf("a secret file owned by another account was not refused by its own guard: %v", err)
+	}
+}
+
+// A config that holds bmc.password in the clear is a credential file and
+// needs 0600; the same config naming the password by path may be 0640.
+func TestLoadConfigHoldsAClearTextPasswordConfigTo0600(t *testing.T) {
+	p := writeConfig(t, validConfig(nil))
+	if err := os.Chmod(p, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfig(p)
+	if err == nil || !strings.Contains(err.Error(), "carries bmc.password in the clear") {
+		t.Fatalf("a 0640 config carrying a clear password was not refused by its own guard: %v", err)
+	}
+
+	pw := writePrivate(t, t.TempDir(), "bmc-password", "pw\n", 0o600)
+	p = writeConfig(t, validConfig(func(c *Config) { c.BMC.Password = ""; c.BMC.PasswordFile = pw }))
+	if err := os.Chmod(p, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("a 0640 config naming its password by path was refused: %v", err)
+	}
+}
+
+// yaml.v3 quotes the value it could not decode. In this file that value
+// can be the password, so the message is withheld and only the line kept.
+func TestLoadConfigNeverEchoesTheYAMLParserMessage(t *testing.T) {
+	const secret = "hunter2-in-the-wrong-place"
+	path := writePrivate(t, t.TempDir(), "config.yaml", "bmc:\n  insecureSkipVerify: "+secret+"\n", 0o600)
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("a config that does not parse was accepted")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the parser's message, value included, reached the error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("the error lost the line the parser named: %v", err)
+	}
+}
+
+// kubeconfigQuotingSecret is a kubeconfig the parser refuses with a message
+// that quotes the value: "cannot decode !!str `...` as a !!int".
+const kubeconfigQuotingSecret = "users:\n- name: a\n  user: {token: !!int kubeconfig-secret-value}\n"
+
+func TestLoadConfigNeverEchoesTheKubeconfigParserMessage(t *testing.T) {
+	kc := writePrivate(t, t.TempDir(), "kc", kubeconfigQuotingSecret, 0o600)
+	_, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) { c.Kubeconfig = kc })))
+	if err == nil {
+		t.Fatal("a kubeconfig that does not parse was accepted")
+	}
+	if strings.Contains(err.Error(), "kubeconfig-secret-value") {
+		t.Errorf("the kubeconfig parser's message, value included, reached the error: %v", err)
 	}
 }

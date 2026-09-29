@@ -195,3 +195,13 @@ func TestAJoinConfigsKubeconfigReachesTheReadyCheck(t *testing.T) {
 		t.Error("the existing cluster named in the config was never asked")
 	}
 }
+
+func TestNodeReadyNeverEchoesTheKubeconfigParserMessage(t *testing.T) {
+	_, err := (kubeconfigNodeChecker{}).NodeReady(context.Background(), []byte(kubeconfigQuotingSecret), "w3")
+	if err == nil {
+		t.Fatal("a kubeconfig that does not parse was accepted")
+	}
+	if strings.Contains(err.Error(), "kubeconfig-secret-value") {
+		t.Errorf("the kubeconfig parser's message, value included, reached the error: %v", err)
+	}
+}

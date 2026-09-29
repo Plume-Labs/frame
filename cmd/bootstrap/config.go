@@ -19,10 +19,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -118,13 +121,13 @@ type ClusterConfig struct {
 // laptop it sits on.
 const worldReadable = 0o004
 
-// groupOrOtherReadable is the stricter bit set refused on a file that holds
-// nothing BUT a secret (bmc.passwordFile, cluster.joinTokenFile) or an
-// admin credential (kubeconfig). The config file itself only refuses
-// "other", because it is a document an operator may reasonably share with
-// their own group; a file whose entire content is a password or a join
-// token has no such reader.
-const groupOrOtherReadable = 0o044
+// privateMode is the loosest mode accepted on a file that holds nothing
+// BUT a credential (bmc.passwordFile, cluster.joinTokenFile, kubeconfig),
+// and on the config file itself when it carries bmc.password in the clear.
+// A config that names its secrets by path only refuses "other", because it
+// is a document an operator may reasonably share with their own group; a
+// file holding a password has no such reader.
+const privateMode = 0o600
 
 // LoadConfig reads and validates path. Every check below runs before the
 // config is handed back, and in this order: the file's own permissions
@@ -165,7 +168,15 @@ func LoadConfig(path string) (Config, error) {
 
 	var cfg Config
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parsing config %s: %w", path, err)
+		return Config{}, parseError(path, err)
+	}
+
+	// A config carrying the BMC password in the clear is a credential file,
+	// and is held to the same mode as one.
+	if cfg.BMC.Password != "" && info.Mode().Perm()&^privateMode != 0 {
+		return Config{}, fmt.Errorf(
+			"config %s carries bmc.password in the clear and has mode %s, looser than 0600: chmod 600 it, "+
+				"or move the password to a file named by bmc.passwordFile", path, info.Mode().Perm())
 	}
 
 	if err := validateMediaBaseURL(cfg.MediaBaseURL); err != nil {
@@ -336,6 +347,24 @@ func checkOutWritable(path string) error {
 	return os.Remove(path)
 }
 
+// yamlLine finds the line numbers yaml.v3 puts in its errors.
+var yamlLine = regexp.MustCompile(`line ([0-9]+)`)
+
+// parseError reports that path does not parse, with the line when the
+// parser gave one, and without the parser's own message: yaml.v3 quotes the
+// offending value ("cannot unmarshal !!str `hunter2` into bool"), and in
+// this file that value may be the BMC password.
+func parseError(path string, err error) error {
+	if m := yamlLine.FindStringSubmatch(err.Error()); m != nil {
+		return fmt.Errorf(
+			"parsing config %s failed at line %s (the parser's message is withheld: it can quote a value, "+
+				"and this file may hold a password)", path, m[1])
+	}
+	return fmt.Errorf(
+		"parsing config %s failed (the parser's message is withheld: it can quote a value, and this file "+
+			"may hold a password)", path)
+}
+
 // resolveSecrets moves every secret the config names by path into the
 // field the rest of this command reads, so main.go stays unaware of where
 // a secret came from.
@@ -391,20 +420,57 @@ func readSecretFile(key, path string) (string, error) {
 	return v, nil
 }
 
-// readPrivateFile stats path before reading it and refuses it if it is
-// readable by group or other. The mode is checked on what the path resolves
-// to, so a private symlink to a world-readable file is refused too.
+// currentUID is os.Geteuid, a variable only so a test can stand in for a
+// file owned by another account -- which an unprivileged test cannot
+// create.
+var currentUID = os.Geteuid
+
+// readPrivateFile reads a file holding a credential, refusing it unless it
+// is a regular file, not a symbolic link, owned by the account running
+// this command, and mode 0600 or stricter.
+//
+// Every check runs on the open descriptor that is then read, not on the
+// path: stat-then-read on a path lets the file be swapped between the two,
+// and O_NOFOLLOW makes the open itself refuse a link that appeared after
+// the Lstat. The owner check is what the mode alone cannot say: a 0600
+// file owned by someone else is private to them, not to the operator, and
+// its content is theirs to change.
 func readPrivateFile(key, path string) ([]byte, error) {
-	info, err := os.Stat(path)
+	li, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", key, err)
 	}
-	if info.Mode().Perm()&groupOrOtherReadable != 0 {
+	if li.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s %s is a symbolic link: refusing, name the file itself", key, path)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s %s is not a regular file", key, path)
+	}
+	if info.Mode().Perm()&^privateMode != 0 {
 		return nil, fmt.Errorf(
-			"%s %s is readable by group or other (mode %s): refusing, it holds a credential -- chmod 600 it",
+			"%s %s has mode %s, looser than 0600: refusing, it holds a credential -- chmod 600 it",
 			key, path, info.Mode().Perm())
 	}
-	b, err := os.ReadFile(path)
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("%s %s: cannot tell who owns it, so cannot tell it is yours", key, path)
+	}
+	if int(st.Uid) != currentUID() {
+		return nil, fmt.Errorf(
+			"%s %s is owned by uid %d, not by you (uid %d): refusing, whoever owns it can change the credential",
+			key, path, st.Uid, currentUID())
+	}
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", key, err)
 	}
