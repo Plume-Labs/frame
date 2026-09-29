@@ -348,9 +348,12 @@ func TestExecuteRechecksTheNodePasswordBeforeMediaAttached(t *testing.T) {
 		cfg := joinConfigFor(t, srv)
 		var gateErr error
 		gated := false
-		install := func(ctx context.Context, d provision.Deps, s provision.Spec, _ provision.Options) (provision.Result, error) {
+		install := func(
+			ctx context.Context, d provision.Deps, s provision.Spec, _ provision.Options,
+		) (provision.Result, error) {
 			if d.BeforeMediaAttached == nil {
-				return provision.Result{Phase: provision.PhaseFailed}, errors.New("a join installed with no gate before MediaAttached")
+				return provision.Result{Phase: provision.PhaseFailed},
+					errors.New("a join installed with no gate before MediaAttached")
 			}
 			f.mu.Lock()
 			f.secretExists = tc.reappears
