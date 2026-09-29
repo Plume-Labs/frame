@@ -53,6 +53,12 @@ type Session interface {
 	// The second case is why stdout has to be separated rather than
 	// sanity-checked afterwards.
 	Output(ctx context.Context, cmd string) (string, error)
+	// RunWithInput is Run with stdin fed from input. It exists for the one
+	// value that must reach the machine without appearing on a command
+	// line: the k3s join token. A command line is visible in the remote
+	// process table and in anything that logs the commands run over this
+	// session; stdin is neither.
+	RunWithInput(ctx context.Context, cmd string, input []byte) (string, error)
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	Close() error
 }
@@ -125,7 +131,11 @@ func (s *sshSession) HostKey() string {
 }
 
 func (s *sshSession) Run(ctx context.Context, cmd string) (string, error) {
-	return s.exec(ctx, cmd, true)
+	return s.exec(ctx, cmd, true, nil)
+}
+
+func (s *sshSession) RunWithInput(ctx context.Context, cmd string, input []byte) (string, error) {
+	return s.exec(ctx, cmd, true, input)
 }
 
 // Output runs cmd and returns only what it wrote to stdout. stderr is
@@ -133,10 +143,10 @@ func (s *sshSession) Run(ctx context.Context, cmd string) (string, error) {
 // warning there and still exits 0 cannot corrupt the value read back. See
 // Session.Output's doc comment for the case that made this necessary.
 func (s *sshSession) Output(ctx context.Context, cmd string) (string, error) {
-	return s.exec(ctx, cmd, false)
+	return s.exec(ctx, cmd, false, nil)
 }
 
-func (s *sshSession) exec(ctx context.Context, cmd string, merge bool) (string, error) {
+func (s *sshSession) exec(ctx context.Context, cmd string, merge bool, input []byte) (string, error) {
 	sess, err := s.client.NewSession()
 	if err != nil {
 		return "", err
@@ -146,6 +156,13 @@ func (s *sshSession) exec(ctx context.Context, cmd string, merge bool) (string, 
 	type result struct {
 		out []byte
 		err error
+	}
+
+	// Stdin is left nil unless there is input: an ssh.Session with a
+	// non-nil Stdin copies it and then closes the remote's stdin, which is
+	// what lets `cat > file` on the other side see EOF and finish.
+	if input != nil {
+		sess.Stdin = bytes.NewReader(input)
 	}
 
 	var stderr bytes.Buffer

@@ -22,6 +22,20 @@ type recordingSession struct {
 	cmds       []string
 	files      map[string]string
 	sudoStderr string
+	// inputs records what RunWithInput fed each command on stdin, by
+	// command.
+	inputs map[string]string
+	// failOn, when set, makes every command containing it fail -- the way
+	// curl -f fails on an HTTP error or sudo on a missing drop-in.
+	failOn string
+}
+
+func (r *recordingSession) RunWithInput(ctx context.Context, cmd string, input []byte) (string, error) {
+	if r.inputs == nil {
+		r.inputs = map[string]string{}
+	}
+	r.inputs[cmd] = string(input)
+	return r.Run(ctx, cmd)
 }
 
 // needsRoot is the one file-permission fact about the installed machine
@@ -60,6 +74,9 @@ func (r *recordingSession) Output(_ context.Context, cmd string) (string, error)
 }
 
 func (r *recordingSession) exec(cmd string) (string, error) {
+	if r.failOn != "" && strings.Contains(cmd, r.failOn) {
+		return "", errors.New("exit status 22")
+	}
 	if path, ok := strings.CutPrefix(cmd, "sudo -n cat "); ok {
 		if b, ok := r.files[path]; ok {
 			return b, nil
@@ -595,6 +612,104 @@ func TestValidateClusterTargetNeverPrintsASecret(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), secret) {
 			t.Errorf("%s: the error carries the secret: %v", name, err)
+		}
+	}
+}
+
+// --- the installer is downloaded, then run; the token travels on stdin ---
+
+func goodTargets() map[string]ClusterTarget {
+	return map[string]ClusterTarget{
+		"init": {Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"},
+		"join": goodJoinTarget(),
+	}
+}
+
+// `curl ... | sh` had no pipefail: a failed download fed sh nothing, sh
+// exited 0, and Join reported success with no k3s on the machine. The
+// download is now its own command, before the one that runs the script.
+func TestJoinDownloadsTheInstallerBeforeRunningIt(t *testing.T) {
+	for mode, target := range goodTargets() {
+		s := &recordingSession{files: map[string]string{k3sKubeconfigPath: k3sKubeconfig}}
+		if _, err := Join(context.Background(), s, target, "192.0.2.210"); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		download, run := -1, -1
+		for i, c := range s.cmds {
+			if strings.Contains(c, "| sh") {
+				t.Errorf("%s: the installer is still piped into sh: %s", mode, c)
+			}
+			if c == "curl -sfL -o "+k3sInstallerPath+" "+k3sInstallerURL {
+				download = i
+			}
+			if strings.Contains(c, " sh "+k3sInstallerPath+" ") {
+				run = i
+			}
+		}
+		if download < 0 || run < 0 || download > run {
+			t.Errorf("%s: want a download then a run of %s, got:\n%s", mode, k3sInstallerPath, strings.Join(s.cmds, "\n"))
+		}
+	}
+}
+
+func TestJoinFailsWhenTheInstallerDownloadFails(t *testing.T) {
+	for mode, target := range goodTargets() {
+		s := &recordingSession{files: map[string]string{k3sKubeconfigPath: k3sKubeconfig}, failOn: "curl -sfL -o"}
+		_, err := Join(context.Background(), s, target, "192.0.2.210")
+		if err == nil {
+			t.Errorf("%s: a failed installer download was reported as success", mode)
+			continue
+		}
+		if !strings.Contains(err.Error(), "downloading the k3s installer") {
+			t.Errorf("%s: the error does not name the download: %v", mode, err)
+		}
+		for _, c := range s.cmds {
+			if strings.Contains(c, " sh "+k3sInstallerPath) {
+				t.Errorf("%s: the installer was run after its download failed: %s", mode, c)
+			}
+		}
+	}
+}
+
+// The token is on no command line -- not the one that writes it, not the
+// one that installs the agent -- and reaches the node on stdin, before the
+// agent that reads it is installed.
+func TestJoinNeverPutsTheTokenOnACommandLine(t *testing.T) {
+	target := goodJoinTarget()
+	s := &recordingSession{files: map[string]string{}}
+	if _, err := Join(context.Background(), s, target, "192.0.2.210"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range s.cmds {
+		if strings.Contains(c, target.JoinToken) || strings.Contains(c, "K3S_TOKEN=") {
+			t.Errorf("the join token is on a command line: %s", c)
+		}
+	}
+	if s.inputs[writeJoinTokenCmd] != target.JoinToken {
+		t.Errorf("the token was not written through stdin: inputs = %d commands", len(s.inputs))
+	}
+	write, install := -1, -1
+	for i, c := range s.cmds {
+		if c == writeJoinTokenCmd {
+			write = i
+		}
+		if strings.Contains(c, "K3S_TOKEN_FILE='"+k3sJoinTokenPath+"'") {
+			install = i
+		}
+	}
+	if write < 0 || install < 0 || write > install {
+		t.Errorf("want the token written, then the agent installed with K3S_TOKEN_FILE; got:\n%s", strings.Join(s.cmds, "\n"))
+	}
+}
+
+func TestJoinFailsWhenTheTokenCannotBeWritten(t *testing.T) {
+	s := &recordingSession{files: map[string]string{}, failOn: "umask 077"}
+	if _, err := Join(context.Background(), s, goodJoinTarget(), "192.0.2.210"); err == nil {
+		t.Fatal("a join whose token never reached the node was reported as success")
+	}
+	for _, c := range s.cmds {
+		if strings.Contains(c, "curl") {
+			t.Errorf("k3s was installed after the token write failed: %s", c)
 		}
 	}
 }

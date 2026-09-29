@@ -17,6 +17,44 @@ import (
 // and this install deliberately does not say otherwise.
 const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 
+// k3sInstallerURL is the k3s install script, fetched at install time -- an
+// internet dependency, stated in the design (§7) rather than hidden.
+const k3sInstallerURL = "https://get.k3s.io"
+
+// k3sInstallerPath is where the script is downloaded before it is run:
+// relative, so it lands in the SSH user's own home directory, which only
+// that user can write -- not /tmp, where another account could plant a
+// symlink at a predictable name first.
+const k3sInstallerPath = "frame-k3s-install.sh"
+
+// k3sJoinTokenPath is where a join writes the token, root-owned 0600,
+// before k3s is installed. The agent reads it through K3S_TOKEN_FILE, which
+// the install script records in the service's environment file, so it has
+// to stay there for the agent's lifetime.
+const k3sJoinTokenPath = "/etc/rancher/k3s/frame-join-token"
+
+// writeJoinTokenCmd reads the token from stdin into k3sJoinTokenPath. umask
+// 077 inside the root shell, rather than a chmod afterwards, so the file is
+// never readable by anyone else, not even for the instant between the two.
+const writeJoinTokenCmd = "sudo -n sh -c 'umask 077 && mkdir -p /etc/rancher/k3s && cat > " + k3sJoinTokenPath + "'"
+
+// installK3s downloads the install script to a file and runs it, as two
+// separate commands. It used to be `curl ... | sh`: without pipefail a
+// failed download pipes nothing into sh, sh exits 0 on empty input, and
+// the step "succeeds" with no k3s installed -- surfacing only as a Ready
+// timeout, far from its cause. Two commands make a failed download a
+// failed command.
+func installK3s(ctx context.Context, sess Session, env, args string) error {
+	if _, err := sess.Run(ctx, "curl -sfL -o "+k3sInstallerPath+" "+k3sInstallerURL); err != nil {
+		return fmt.Errorf("downloading the k3s installer from %s: %w", k3sInstallerURL, err)
+	}
+	// The script is removed whatever it returned, and its own exit status
+	// is what the command reports.
+	cmd := env + " sh " + k3sInstallerPath + " " + args + "; rc=$?; rm -f " + k3sInstallerPath + "; exit $rc"
+	_, err := sess.Run(ctx, cmd)
+	return err
+}
+
 // Join installs k3s and either starts a cluster or joins one.
 //
 // Starting a cluster is the simpler of the two, which is the opposite of what
@@ -28,7 +66,7 @@ const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 //
 // The k3s installer is fetched from https://get.k3s.io at a pinned
 // INSTALL_K3S_VERSION -- an internet dependency, stated in the design (§7)
-// rather than hidden.
+// rather than hidden -- downloaded to a file and run from it (installK3s).
 //
 // K3sVersion, ServerURL, JoinToken and nodeAddress are not passed through
 // checkShellValue. That function exists for a different hazard: a value
@@ -49,9 +87,13 @@ const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 // true and each of the four is validated in this function.
 //
 // Validation is the first line of defence and shellQuote (below) is the
-// second: every value is quoted into the command line regardless of having
-// already passed its shape check, so a future change that loosens a pattern
-// does not by itself reopen shell injection.
+// second: every value that goes on a command line is quoted regardless of
+// having already passed its shape check, so a future change that loosens a
+// pattern does not by itself reopen shell injection. The join token is the
+// exception, because it never goes on a command line at all: it is written
+// to the node through stdin (writeJoinTokenCmd) and read by the agent from
+// that file. It is still shape-checked -- a token k3s would refuse is
+// better refused here than as an agent that never registers.
 func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string) ([]byte, error) {
 	if err := validateK3sVersion(t.K3sVersion); err != nil {
 		return nil, fmt.Errorf("cluster: %w; an unpinned or malformed install makes two machines built a week apart different machines", err)
@@ -62,10 +104,9 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 
 	switch t.Mode {
 	case ClusterInit:
-		cmd := fmt.Sprintf(
-			"curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s sh -s - server --cluster-init --node-ip %s",
-			shellQuote(t.K3sVersion), shellQuote(nodeAddress))
-		if _, err := sess.Run(ctx, cmd); err != nil {
+		if err := installK3s(ctx, sess,
+			"INSTALL_K3S_VERSION="+shellQuote(t.K3sVersion),
+			"server --cluster-init --node-ip "+shellQuote(nodeAddress)); err != nil {
 			return nil, fmt.Errorf("k3s server --cluster-init: %w", err)
 		}
 		// sudo, not Session.ReadFile. ReadFile is `cat` as the frame user,
@@ -119,10 +160,17 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 		if err := validateServerURL(t.ServerURL); err != nil {
 			return nil, fmt.Errorf("cluster join: %w", err)
 		}
-		cmd := fmt.Sprintf(
-			"curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s K3S_URL=%s K3S_TOKEN=%s sh -s - agent --node-ip %s",
-			shellQuote(t.K3sVersion), shellQuote(t.ServerURL), shellQuote(t.JoinToken), shellQuote(nodeAddress))
-		if _, err := sess.Run(ctx, cmd); err != nil {
+		// The token travels on stdin, never on a command line: a command
+		// line is in the node's process table while it runs and in every
+		// log of the commands this session sent.
+		if _, err := sess.RunWithInput(ctx, writeJoinTokenCmd, []byte(t.JoinToken)); err != nil {
+			return nil, fmt.Errorf("writing the join token to %s on the node: %w", k3sJoinTokenPath, err)
+		}
+		if err := installK3s(ctx, sess,
+			"INSTALL_K3S_VERSION="+shellQuote(t.K3sVersion)+
+				" K3S_URL="+shellQuote(t.ServerURL)+
+				" K3S_TOKEN_FILE="+shellQuote(k3sJoinTokenPath),
+			"agent --node-ip "+shellQuote(nodeAddress)); err != nil {
 			return nil, fmt.Errorf("k3s agent: %w", err)
 		}
 		return nil, nil

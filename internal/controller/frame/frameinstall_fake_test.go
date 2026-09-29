@@ -283,6 +283,12 @@ func (s *fakeInstallSession) Run(ctx context.Context, cmd string) (string, error
 	return out, nil
 }
 
+// RunWithInput records cmd like Run and discards the input: the join token
+// it carries is not something these tests assert on.
+func (s *fakeInstallSession) RunWithInput(ctx context.Context, cmd string, _ []byte) (string, error) {
+	return s.Run(ctx, cmd)
+}
+
 func (s *fakeInstallSession) Output(_ context.Context, cmd string) (string, error) {
 	s.mu.Lock()
 	s.cmds = append(s.cmds, cmd)
