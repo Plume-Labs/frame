@@ -334,3 +334,45 @@ func TestExecuteStopsBeforeInstallWhenThePreflightRefuses(t *testing.T) {
 		t.Error("Install ran after the preflight refused")
 	}
 }
+
+// The node-password Secret is checked again at the last point before the
+// BMC is driven: between the preflight and the insert, the old agent -- if
+// it still runs -- re-creates it, and the reinstalled agent would then be
+// refused after the wipe.
+func TestExecuteRechecksTheNodePasswordBeforeMediaAttached(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		reappears bool
+	}{{"still absent", false}, {"re-created after the preflight", true}} {
+		f, srv := newFakeCluster(t)
+		cfg := joinConfigFor(t, srv)
+		var gateErr error
+		gated := false
+		install := func(ctx context.Context, d provision.Deps, s provision.Spec, _ provision.Options) (provision.Result, error) {
+			if d.BeforeMediaAttached == nil {
+				return provision.Result{Phase: provision.PhaseFailed}, errors.New("a join installed with no gate before MediaAttached")
+			}
+			f.mu.Lock()
+			f.secretExists = tc.reappears
+			f.mu.Unlock()
+			gated = true
+			gateErr = d.BeforeMediaAttached(ctx)
+			if gateErr != nil {
+				return provision.Result{Phase: provision.PhaseFailed, FailedPhase: provision.PhasePreparing}, gateErr
+			}
+			return provision.Result{Phase: provision.PhaseReady, NodeName: s.Hostname}, nil
+		}
+		err := execute(context.Background(), io.Discard, cfg, provision.Deps{}, provision.Spec{Hostname: "w3"},
+			provision.Options{}, install)
+		if !gated {
+			t.Fatalf("%s: install never reached the gate: %v", tc.name, err)
+		}
+		if tc.reappears {
+			if gateErr == nil || !strings.Contains(gateErr.Error(), "delete secret w3.node-password.k3s") {
+				t.Errorf("%s: the gate did not refuse by its own guard: %v", tc.name, gateErr)
+			}
+		} else if gateErr != nil {
+			t.Errorf("%s: the gate refused: %v", tc.name, gateErr)
+		}
+	}
+}

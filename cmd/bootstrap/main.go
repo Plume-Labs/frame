@@ -253,6 +253,7 @@ func execute(
 			return fmt.Errorf("join preflight, before anything was touched: %w", err)
 		}
 		checker.before = &before
+		deps.BeforeMediaAttached = recheckNodePassword(cfg)
 	}
 	deps.Nodes = checker
 	deps.Report = func(p provision.Phase) {

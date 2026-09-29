@@ -1483,6 +1483,9 @@ in the `Ready` timeout, never in a false success.
 
 ```bash
 kubectl drain w3 --ignore-daemonsets --delete-emptydir-data
+# Stop the old agent first -- or power the machine off. A k3s-agent still
+# running re-creates the Secret below within seconds of its deletion.
+ssh root@w3 systemctl stop k3s-agent
 # k3s refuses an agent that registers under an existing name with a new
 # node password (the reinstall generated one): delete the stored one.
 kubectl -n kube-system delete secret w3.node-password.k3s
@@ -1547,7 +1550,11 @@ the wipe — and refuses if the Node `hostname` does not exist, if its
 `InternalIP` is not `network.address`, if `kube-system/<hostname>.node-password.k3s`
 still exists (it prints the `kubectl` command), or if `k3sVersion` is newer
 than the server's (older is allowed, with a warning). It also records the
-Node's boot and machine IDs for the Ready check. Success ends with `node w3 rejoined the
+Node's boot and machine IDs for the Ready check. The node-password Secret is
+checked a second time just before `MediaAttached` — after the image is
+built, the last point before the BMC inserts media and resets the machine —
+because an old `k3s-agent` left running re-creates it: that is why the agent
+is stopped before the Secret is deleted. Success ends with `node w3 rejoined the
 existing cluster and is Ready there`.
 
 **After**: compare `kubectl get node w3 --show-labels` with

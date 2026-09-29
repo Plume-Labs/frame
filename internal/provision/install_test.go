@@ -708,3 +708,46 @@ func TestInstallAnnouncesNoTokenWhenTheBuildFails(t *testing.T) {
 		t.Errorf("ReportToken called %d times after a failed build, want 0", called)
 	}
 }
+
+// BeforeMediaAttached is the caller's last word before the BMC is asked to
+// insert, boot and reset: it runs once, after the image is built and before
+// the insert, and an error from it stops Install with nothing attached and
+// the machine never reset.
+func TestInstallAsksBeforeMediaAttachedLastBeforeTheInsert(t *testing.T) {
+	d, b, i := happyDeps()
+	calls := 0
+	d.BeforeMediaAttached = func(context.Context) error {
+		calls++
+		if i.built != 1 {
+			t.Errorf("asked before the image was built (built = %d)", i.built)
+		}
+		b.calls = append(b.calls, "gate")
+		return nil
+	}
+	if _, err := Install(context.Background(), d, goodSpec(), opts()); err != nil {
+		t.Fatalf("a gate that agreed failed the install: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("gate asked %d times, want once", calls)
+	}
+	if len(b.calls) == 0 || b.calls[0] != "gate" {
+		t.Errorf("the gate was not the first BMC-visible step: %v", b.calls)
+	}
+}
+
+func TestInstallStopsWhenBeforeMediaAttachedRefuses(t *testing.T) {
+	d, b, _ := happyDeps()
+	d.BeforeMediaAttached = func(context.Context) error { return errors.New("the node password is back") }
+	res, err := Install(context.Background(), d, goodSpec(), opts())
+	if err == nil || !strings.Contains(err.Error(), "the node password is back") {
+		t.Fatalf("a refusing gate did not stop the install with its own reason: %v", err)
+	}
+	if res.FailedPhase != PhasePreparing {
+		t.Errorf("failed in %s, want Preparing (MediaAttached was never entered)", res.FailedPhase)
+	}
+	for _, c := range b.calls {
+		if strings.HasPrefix(c, "insert:") || strings.HasPrefix(c, "boot:") || strings.HasPrefix(c, "reset:") {
+			t.Errorf("the BMC was driven after the gate refused: %s", c)
+		}
+	}
+}

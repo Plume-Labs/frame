@@ -192,6 +192,14 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 		}
 	}()
 
+	// The caller's last word before the BMC is driven. Its own deadline is
+	// Preparing's: it belongs to getting ready, not to attaching.
+	if d.BeforeMediaAttached != nil {
+		if err := d.BeforeMediaAttached(prepCtx); err != nil {
+			return fail(PhasePreparing, phaseErr(prepCtx, fmt.Errorf("the last check before media is attached refused: %w", err)))
+		}
+	}
+
 	// MediaAttached: insert, then re-read. InsertVirtualMedia returning 200
 	// is not the same as media being attached, and booting with none wastes
 	// twenty minutes to reach a timeout that explains nothing.

@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // nodeIdentity is what the existing Node reported before the reinstall.
@@ -50,7 +51,8 @@ type nodeIdentity struct {
 //     machine an address other than the one the cluster knows it by;
 //   - the node-password Secret still exists: k3s refuses an agent that
 //     registers under a known name with a new password, which a reinstall
-//     always has, and the node never comes back;
+//     always has, and the node never comes back (checked again just before
+//     MediaAttached, see checkNoNodePassword);
 //   - k3sVersion newer than the server: an agent newer than its server is
 //     outside k3s's supported skew.
 func preflightJoin(ctx context.Context, stdout io.Writer, cfg Config) (nodeIdentity, error) {
@@ -78,16 +80,8 @@ func preflightJoin(ctx context.Context, stdout io.Writer, cfg Config) (nodeIdent
 				"another address", name, got, want)
 	}
 
-	secret := name + ".node-password.k3s"
-	_, err = cs.CoreV1().Secrets("kube-system").Get(ctx, secret, metav1.GetOptions{})
-	switch {
-	case err == nil:
-		return nodeIdentity{}, fmt.Errorf(
-			"kube-system/%s still exists: k3s refuses an agent that re-registers as %s with a new node password, "+
-				"which a reinstalled machine always has. Delete it first: kubectl -n kube-system delete secret %s",
-			secret, name, secret)
-	case !apierrors.IsNotFound(err):
-		return nodeIdentity{}, fmt.Errorf("checking kube-system/%s: %w", secret, err)
+	if err := checkNoNodePassword(ctx, cs, name); err != nil {
+		return nodeIdentity{}, err
 	}
 
 	sv, err := cs.Discovery().ServerVersion()
@@ -119,6 +113,41 @@ func preflightJoin(ctx context.Context, stdout io.Writer, cfg Config) (nodeIdent
 			"its boot ID and machine ID must both change before Ready counts\n",
 		name, id.UID, want, sv.GitVersion)
 	return id, nil
+}
+
+// checkNoNodePassword refuses while kube-system/<name>.node-password.k3s
+// exists. It runs twice on a join: in the preflight, and again just before
+// MediaAttached (execute wires it into Deps.BeforeMediaAttached) -- the
+// last point before the BMC is driven. In between, the machine's old
+// k3s-agent, if it still runs, re-creates the Secret the operator deleted;
+// the reinstalled agent would then be refused only after the wipe. Stop
+// the old agent (systemctl stop k3s-agent) or the machine before deleting.
+func checkNoNodePassword(ctx context.Context, cs kubernetes.Interface, name string) error {
+	secret := name + ".node-password.k3s"
+	_, err := cs.CoreV1().Secrets("kube-system").Get(ctx, secret, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		return fmt.Errorf(
+			"kube-system/%s still exists: k3s refuses an agent that re-registers as %s with a new node password, "+
+				"which a reinstalled machine always has. Stop the old agent (systemctl stop k3s-agent) or the "+
+				"machine, then delete it: kubectl -n kube-system delete secret %s",
+			secret, name, secret)
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("checking kube-system/%s: %w", secret, err)
+	}
+	return nil
+}
+
+// recheckNodePassword is checkNoNodePassword against the cluster a join
+// config names, for Deps.BeforeMediaAttached.
+func recheckNodePassword(cfg Config) func(context.Context) error {
+	return func(ctx context.Context) error {
+		cs, err := clientsetFor(cfg.existingKubeconfig)
+		if err != nil {
+			return err
+		}
+		return checkNoNodePassword(ctx, cs, cfg.Hostname)
+	}
 }
 
 func internalIP(node *corev1.Node) string {
