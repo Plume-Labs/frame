@@ -303,3 +303,65 @@ func TestSetBootOnceRefusesWhenTheModeCannotBeRead(t *testing.T) {
 		})
 	}
 }
+
+// TestSetBootOnceOnILO4BootsTheVirtualCDNotAnOverride: on the iLO 4 the
+// one-shot boot is asked of the virtual CD itself
+// (Oem.Hp.BootOnNextServerReset), and no Cd override is set on the system:
+// the machine's UEFI boot list also holds a physical SATA DVD (CD.Emb.9.1),
+// and nothing shows that "Cd" would pick the virtual drive over it.
+func TestSetBootOnceOnILO4BootsTheVirtualCDNotAnOverride(t *testing.T) {
+	f := newILO4Fake(t)
+	b := f.serve(t)
+	if err := b.SetBootOnce(context.Background(), "Cd", "UEFI"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.patchesTo(fakeSystemPath)); n != 0 {
+		t.Errorf("got %d PATCHes on the system, want no Cd override on an iLO 4", n)
+	}
+	vm := f.patchesTo(fakeVMPath)
+	if len(vm) != 1 {
+		t.Fatalf("got %d PATCHes on the virtual CD, want 1", len(vm))
+	}
+	got, _ := json.Marshal(vm[0].body)
+	if string(got) != `{"Oem":{"Hp":{"BootOnNextServerReset":true}}}` {
+		t.Errorf("virtual CD PATCH = %s, want only Oem.Hp.BootOnNextServerReset: true", got)
+	}
+	hp := f.docs[fakeVMPath]["Oem"].(map[string]any)["Hp"].(map[string]any)
+	if hp["BootOnNextServerReset"] != true {
+		t.Errorf("the fake's virtual CD holds BootOnNextServerReset = %v, want true", hp["BootOnNextServerReset"])
+	}
+}
+
+// TestSetBootOnceOnILO4RefusesAWrongModeBeforeWriting: the virtual media
+// path sets no mode either, so it is confirmed against the BIOS first.
+func TestSetBootOnceOnILO4RefusesAWrongModeBeforeWriting(t *testing.T) {
+	f := newILO4Fake(t)
+	b := f.serve(t)
+	err := b.SetBootOnce(context.Background(), "Cd", "Legacy")
+	if err == nil {
+		t.Fatal("want a refusal: the BIOS boots Uefi and Legacy was asked")
+	}
+	if !strings.Contains(err.Error(), "Uefi") {
+		t.Errorf("error %q does not name the mode the machine is in", err)
+	}
+	if n := f.allPatches(); n != 0 {
+		t.Errorf("got %d PATCHes, want none", n)
+	}
+}
+
+// TestSetBootOnceOnILO4FailsWhenTheFlagDoesNotStick: a 200 on the PATCH is
+// not taken as the flag being set; it is read back, and a BMC that
+// answered yes and kept nothing fails MediaAttached here rather than
+// letting the reset boot whatever comes first.
+func TestSetBootOnceOnILO4FailsWhenTheFlagDoesNotStick(t *testing.T) {
+	f := newILO4Fake(t)
+	f.dropVMPatch = true
+	b := f.serve(t)
+	err := b.SetBootOnce(context.Background(), "Cd", "UEFI")
+	if err == nil {
+		t.Fatal("want an error when BootOnNextServerReset reads back false")
+	}
+	if !strings.Contains(err.Error(), "BootOnNextServerReset") {
+		t.Errorf("error %q does not name the flag that did not stick", err)
+	}
+}

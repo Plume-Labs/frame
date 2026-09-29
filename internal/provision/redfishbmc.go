@@ -157,10 +157,34 @@ const systemPath = "/redfish/v1/Systems/1/"
 // is refused before anything is written if the machine boots in another
 // mode, or if that mode cannot be read at all: going ahead would be
 // inheriting the machine's mode, which Options.BootMode exists to prevent.
+//
+// On an iLO 4 -- recognised by an Oem.Hp object on the virtual CD resource,
+// not by a firmware version string -- a "Cd" boot is not asked of the
+// system at all. The virtual CD's own Oem.Hp.BootOnNextServerReset is set
+// instead, and read back. The reason is the machine's UEFI boot list: it
+// holds a physical SATA DVD (CD.Emb.9.1 in systems_1.json), and nothing
+// shows that a "Cd" override would boot the virtual drive rather than that
+// empty tray. BootOnNextServerReset names the virtual drive itself. No
+// override is set beside it, so there is no second instruction that could
+// win at the reset and point at the wrong drive. ClearBootOverride still
+// disables the system override on the way out, which is harmless when none
+// was set; EjectMedia removes the medium the flag points at.
 func (b *RedfishBMC) SetBootOnce(ctx context.Context, target, mode string) error {
 	sys, err := b.readSystem(ctx)
 	if err != nil {
 		return err
+	}
+	if target == "Cd" {
+		hp, err := b.virtualMediaIsILO4(ctx)
+		if err != nil {
+			return err
+		}
+		if hp {
+			if err := b.checkBootMode(ctx, sys, mode); err != nil {
+				return err
+			}
+			return b.bootVirtualCDOnce(ctx)
+		}
 	}
 	if sys.Boot == nil {
 		return fmt.Errorf("redfish: %s exposes no Boot object to set an override on", systemPath)
@@ -199,6 +223,46 @@ func (b *RedfishBMC) readSystem(ctx context.Context) (systemDoc, error) {
 	var sys systemDoc
 	err := b.do(ctx, http.MethodGet, systemPath, nil, &sys)
 	return sys, err
+}
+
+// virtualMediaIsILO4 reports whether the virtual CD carries an Oem.Hp
+// object, which is where an iLO 4 keeps BootOnNextServerReset.
+func (b *RedfishBMC) virtualMediaIsILO4(ctx context.Context) (bool, error) {
+	var vm struct {
+		Oem struct {
+			Hp json.RawMessage `json:"Hp"`
+		} `json:"Oem"`
+	}
+	if err := b.do(ctx, http.MethodGet, virtualMediaPath, nil, &vm); err != nil {
+		return false, err
+	}
+	hp := bytes.TrimSpace(vm.Oem.Hp)
+	return len(hp) > 0 && !bytes.Equal(hp, []byte("null")), nil
+}
+
+// bootVirtualCDOnce sets the iLO 4's Oem.Hp.BootOnNextServerReset on the
+// virtual CD and reads it back: a 200 on the PATCH is not taken as the
+// flag being set, the same way InsertMedia's 200 is not taken as media
+// being attached.
+func (b *RedfishBMC) bootVirtualCDOnce(ctx context.Context) error {
+	body := map[string]any{"Oem": map[string]any{"Hp": map[string]any{"BootOnNextServerReset": true}}}
+	if err := b.do(ctx, http.MethodPatch, virtualMediaPath, body, nil); err != nil {
+		return err
+	}
+	var vm struct {
+		Oem struct {
+			Hp struct {
+				BootOnNextServerReset bool `json:"BootOnNextServerReset"`
+			} `json:"Hp"`
+		} `json:"Oem"`
+	}
+	if err := b.do(ctx, http.MethodGet, virtualMediaPath, nil, &vm); err != nil {
+		return fmt.Errorf("redfish: reading back BootOnNextServerReset: %w", err)
+	}
+	if !vm.Oem.Hp.BootOnNextServerReset {
+		return fmt.Errorf("redfish: the BMC accepted Oem.Hp.BootOnNextServerReset on %s but reads it back false", virtualMediaPath)
+	}
+	return nil
 }
 
 // biosBootModes maps Options.BootMode to the HP BIOS schema's BootMode
