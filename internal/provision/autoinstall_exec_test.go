@@ -212,6 +212,12 @@ func TestNetplanPinWritesOnePortByMACWhenRun(t *testing.T) {
 	}
 
 	target, sys, bin := pinTarget(t), t.TempDir(), t.TempDir()
+	// A name neither subiquity version is known to write: netplan merges
+	// every *.yaml under /etc/netplan, so whatever its origin, an en*
+	// stanza in it would put the address back on every port.
+	if err := os.WriteFile(filepath.Join(target, "etc/netplan/01-other.yaml"), []byte("network: {version: 2, ethernets: {x: {match: {name: 'en*'}, dhcp4: true}}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(sys, "enp3s0f1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +268,7 @@ echo "`+s.Network.Gateway+` dev enp3s0f1 src 192.0.2.210 uid 0 \    cache "`)
 			t.Errorf("stanza does not carry the spec's network:\n%s", b)
 		}
 	}
-	for _, gone := range []string{"etc/netplan/00-installer-config.yaml", "etc/netplan/50-cloud-init.yaml", "etc/cloud/cloud.cfg.d/90-installer-network.cfg"} {
+	for _, gone := range []string{"etc/netplan/00-installer-config.yaml", "etc/netplan/50-cloud-init.yaml", "etc/netplan/01-other.yaml", "etc/cloud/cloud.cfg.d/90-installer-network.cfg"} {
 		if _, err := os.Stat(filepath.Join(target, gone)); !os.IsNotExist(err) {
 			t.Errorf("%s survived; its en* stanza would put the address back on every port", gone)
 		}

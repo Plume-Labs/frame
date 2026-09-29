@@ -371,13 +371,14 @@ type pinnedEthernet struct {
 // either cannot be read -- an installed system with no address is worse than
 // an install that says why it stopped.
 //
-// Then it removes what would bring the en* stanza back: the netplan file
-// subiquity wrote (00-installer-config.yaml when it owns /etc/netplan,
-// 50-cloud-init.yaml when cloud-init does, which is 24.04's case) and
-// 90-installer-network.cfg, the cloud-init config 50-cloud-init.yaml is
-// rendered from on first boot. And it disables cloud-init's network
-// rendering, or cloud-init, finding no config at all, would fall back to DHCP
-// on the first port it sees.
+// Before writing its own file it removes what would bring the en* stanza
+// back: every *.yaml in /etc/netplan, not a list of names -- netplan merges
+// them all, and subiquity has used at least two (00-installer-config.yaml when
+// it owns /etc/netplan, 50-cloud-init.yaml when cloud-init does, which is
+// 24.04's case) -- and 90-installer-network.cfg, the cloud-init config
+// 50-cloud-init.yaml is rendered from on first boot. And it disables
+// cloud-init's network rendering, or cloud-init, finding no config at all,
+// would fall back to DHCP on the first port it sees.
 //
 // target and sysClassNet are parameters so the tests can run this against
 // temporary directories; RenderAutoinstall passes /target and /sys/class/net.
@@ -413,10 +414,11 @@ func netplanPin(v validated, s Spec, target, sysClassNet string) string {
 		// matching it pins nothing a reboot will find.
 		"case \"$mac\" in 00:00:00:00:00:00) " + refuse("the gateway port has no hardware address") + ";; " +
 			strings.Repeat("[0-9a-f][0-9a-f]:", 5) + "[0-9a-f][0-9a-f]) ;; *) " + refuse("no MAC address for the gateway port") + ";; esac",
-		fmt.Sprintf("echo '%s' | base64 -d | sed \"s/%s/$mac/; s/%s/$dev/\" > '%s' && chmod 600 '%s' && rm -f '%s' '%s' '%s' && %s",
+		// The glob stays outside the quotes so the shell expands it; with no
+		// match it stays literal, and rm -f ignores a name that is not there.
+		fmt.Sprintf("rm -f '%s/etc/netplan/'*.yaml '%s' && echo '%s' | base64 -d | sed \"s/%s/$mac/; s/%s/$dev/\" > '%s' && chmod 600 '%s' && %s",
+			target, target+"/etc/cloud/cloud.cfg.d/90-installer-network.cfg",
 			base64.StdEncoding.EncodeToString(b), macPlaceholder, devPlaceholder, pinned, pinned,
-			target+"/etc/netplan/00-installer-config.yaml", target+"/etc/netplan/50-cloud-init.yaml",
-			target+"/etc/cloud/cloud.cfg.d/90-installer-network.cfg",
 			writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg", "network: {config: disabled}\n", "644")),
 	}, "; ")
 }
