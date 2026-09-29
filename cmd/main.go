@@ -361,7 +361,7 @@ func main() {
 
 	// Checked here, in the first second, rather than left to surface only
 	// once a FrameInstall is created and a built image asks the BMC to
-	// fetch a preseed from a URL that turns out to be malformed -- the same
+	// fetch its autoinstall seed from a URL that turns out to be malformed -- the same
 	// reasoning cmd/provisiond's validateMediaURL is built on, and the same
 	// check, because a relative "/iso/<token>.iso" handed to an HTTPImageStore
 	// with no MediaURL configured would otherwise be built into an image's

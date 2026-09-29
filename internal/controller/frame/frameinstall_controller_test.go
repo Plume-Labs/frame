@@ -1091,7 +1091,7 @@ func TestFrameInstallKubeconfigWriteFailureGoesFailedNotReady(t *testing.T) {
 // would have to present a UID that existed nowhere but inside this
 // installation. It used to be string(fi.UID) -- the object's own
 // metadata.uid, readable by any viewer-tier account -- and it is now served
-// over plaintext HTTP inside the rendered preseed rather than baked into an
+// over plaintext HTTP inside the rendered autoinstall seed rather than baked into an
 // image, so "nowhere but inside the image" stopped being true twice over.
 //
 // What is asserted is the UID that actually reached the Spec the image was

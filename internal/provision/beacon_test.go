@@ -16,6 +16,9 @@ func TestValidCheckpointAcceptsExactlyTheThreeNames(t *testing.T) {
 	}
 	// Anything else reaches provisiond's memory if this is wrong, so the
 	// refusals are asserted by name rather than by a single negative case.
+	// netcfg, netcfg-done and partman were checkpoints of the Debian
+	// installer this package no longer drives; they are refused like any
+	// other unknown name.
 	for _, bad := range []string{"", "Early", "early ", "netcfg", "partman", "netcfg-done", "netcfg/../..", "late;rm", strings.Repeat("a", 64)} {
 		if ValidCheckpoint(bad) {
 			t.Errorf("ValidCheckpoint(%q) = true; the set is closed", bad)

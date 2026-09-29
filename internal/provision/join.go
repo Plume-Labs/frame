@@ -31,11 +31,11 @@ const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 //
 // K3sVersion, ServerURL, JoinToken and nodeAddress are not passed through
 // checkShellValue. That function exists for a different hazard: a value
-// that lands, unescaped, in a preseed directive (where a newline starts a new
-// directive that runs as root) and in a naively-interpolated shell word
-// inside early_command/late_command, so it refuses quotes and backslashes
-// outright because nothing downstream of it re-escapes them. Neither
-// condition holds here -- this command never touches a preseed file -- and a
+// that lands in a single-quoted shell word inside an autoinstall early- or
+// late-command, run as root in the installer, so it refuses quotes and
+// backslashes outright because nothing downstream of it re-escapes them.
+// That condition does not hold here -- this command never touches the
+// autoinstall document -- and a
 // generic refusal would also be looser than what these four values actually
 // are: a k3s version, an https URL, a k3s token and an IP address each have a
 // known shape, and a shape check (validateK3sVersion, validateServerURL,
@@ -78,7 +78,8 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 		// machine: --write-kubeconfig-mode 0644 would leave the cluster's
 		// admin credential readable by anything that ever gets a shell on
 		// that node, permanently, to serve one read that happens once. The
-		// preseed already grants frame NOPASSWD:ALL (preseed.go).
+		// autoinstall late-commands already grant frame NOPASSWD:ALL
+		// (autoinstall.go).
 		//
 		// -n so a machine where that sudoers drop-in did not land fails
 		// immediately with sudo's own message instead of blocking on a

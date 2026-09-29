@@ -120,7 +120,7 @@ one.
    layouts, ISO remastering, an SSH-based join, the `FrameInstall` CRD and its
    controller, `frame-provisiond` (which builds and serves the images and
    their preseeds), and `frame bootstrap` for node zero when no cluster
-   exists yet. See [deployment.md](deployment.md#provisioning-a-machine-with-debian)
+   exists yet. See [deployment.md](deployment.md#provisioning-a-machine-with-ubuntu)
    for the runbook and the claims this lot has not yet proven against real
    hardware.
 

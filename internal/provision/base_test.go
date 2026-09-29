@@ -25,7 +25,7 @@ func sum(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// A netinst that does not match its published checksum is the supply-chain
+// A base image that does not match its published checksum is the supply-chain
 // case this pin exists for. It must be deleted, not merely reported: a file
 // left on disk is a file a later run treats as cached.
 func TestFetchBaseDeletesAFileThatFailsItsChecksum(t *testing.T) {
@@ -44,7 +44,7 @@ func TestFetchBaseDeletesAFileThatFailsItsChecksum(t *testing.T) {
 }
 
 func TestFetchBaseReusesAMatchingCachedFileWithoutDownloading(t *testing.T) {
-	body := []byte("pretend netinst")
+	body := []byte("pretend base image")
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++

@@ -39,10 +39,10 @@ func TestValidateProvisiondMediaURLRefusesAWrongScheme(t *testing.T) {
 	}
 }
 
-// url.Parse accepts this without error -- "http:///preseed" has scheme
+// url.Parse accepts this without error -- "http:///autoinstall" has scheme
 // "http" and an empty Host, everything after the third slash lands in Path.
 func TestValidateProvisiondMediaURLRefusesAnHTTPURLWithNoHost(t *testing.T) {
-	if err := validateProvisiondMediaURL("http:///preseed"); err == nil {
+	if err := validateProvisiondMediaURL("http:///autoinstall"); err == nil {
 		t.Fatal("want an error for a URL with no host, got nil")
 	}
 }

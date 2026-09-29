@@ -56,8 +56,8 @@ type config struct {
 	// MediaURL is the address the BMC, on the management network, reaches
 	// the media listener at -- not MediaAddr, which is where this process
 	// binds. It has no default: every image BuildHandler builds bakes this
-	// address into its own boot arguments as where to fetch its preseed
-	// from, so a wrong or missing value is not a degraded start, it is
+	// address into its own boot arguments as where to fetch its
+	// autoinstall seed from, so a wrong or missing value is not a degraded start, it is
 	// every subsequent install hanging with nothing to read.
 	MediaURL string
 }
@@ -85,13 +85,13 @@ func or(v, def string) string {
 // or a bare hostname with no scheme at all, which url.Parse accepts
 // without error and puts entirely into Path, leaving both Scheme and Host
 // empty. Every one of those still starts provisiond today and fails only
-// once a built image asks the BMC to fetch a preseed from it and finds
+// once a built image asks for its autoinstall seed from it and finds
 // nothing there -- exactly the failure mode this whole task exists to
 // close for the boot arguments; this closes the same class of mistake for
 // the address they're built from.
 func validateMediaURL(raw string) error {
 	if raw == "" {
-		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their preseed from nowhere")
+		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their autoinstall seed from nowhere")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {

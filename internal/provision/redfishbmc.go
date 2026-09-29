@@ -91,8 +91,8 @@ func (b *RedfishBMC) Reset(ctx context.Context, resetType string) error {
 }
 
 // virtualMediaPath is VM2, the CD/DVD device. VM1 is Floppy/USBStick, and an
-// installer ISO belongs on the CD device -- the preseed's boot arguments
-// (internal/provision/preseed.go, Task 1) assume it was mounted there.
+// installer ISO belongs on the CD device -- the remastered image
+// (internal/provision/iso.go) is a CD image and boots from there.
 const virtualMediaPath = "/redfish/v1/Managers/1/VirtualMedia/2/"
 
 // InsertMedia mounts url as this machine's virtual CD. An iLO4 exposes

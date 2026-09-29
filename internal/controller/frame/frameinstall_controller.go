@@ -1070,7 +1070,7 @@ func addressWithoutCIDR(s string) string {
 // readSSHKey reads the Secret SSHKeyRef names. Its shape is fixed by
 // FrameInstallSpec.SSHKeyRef's own doc comment: "id" (private) and "id.pub"
 // (public). Only the public half ever reaches an installer image --
-// provision.RenderPreseed enforces that on Spec.SSHPublicKey -- so nothing
+// provision.RenderAutoinstall enforces that on Spec.SSHPublicKey -- so nothing
 // here needs to re-check that "id.pub" doesn't also carry the private half;
 // that is autoinstall.go's checkPublicKeyOnly's job, downstream in
 // provision.Install.

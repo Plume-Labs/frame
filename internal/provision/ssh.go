@@ -205,7 +205,7 @@ var _ io.Closer = (*sshSession)(nil)
 // bytes from crypto/rand, generated per run, held in the caller's memory.
 // Two things it is not:
 //
-//   - It is NOT baked into the image. It travels in the preseed, served
+//   - It is NOT baked into the image. It travels in the autoinstall seed, served
 //     over plaintext HTTP on the management network, so anything that can
 //     watch that network or guess the 32-hex path can learn it.
 //   - It is NOT unreadable afterwards. On the mismatch path the error

@@ -135,7 +135,7 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 			}, "disks must be named by /dev/disk/by-id, never by kernel name"),
 
 		// The raw layout kind was removed (see InstallLayout's own comment):
-		// its CEL did not require disks while PartmanRecipe did, so the
+		// its CEL did not require disks while the Debian-era partitioning recipe did, so the
 		// apiserver accepted a shape the code refused one phase later. What
 		// is asserted now is that the enum no longer admits it at all --
 		// which is a stronger statement than the rule this replaces, and
@@ -157,9 +157,10 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 				fi.Spec.Cluster.JoinTokenRef = "k3s-join-token"
 			}, "joining an existing cluster needs both serverURL and joinTokenRef"),
 
-		// A machine installed with no resolver halts at critical priority
-		// asking for a mirror it cannot look up -- after partman has
-		// already wiped every named disk. The apiserver refuses it, rather
+		// A machine installed with no resolver cannot reach the archive
+		// `updates: security` fetches from, and would fail there -- after
+		// curtin has already wiped every named disk (reasoned, not
+		// observed). The apiserver refuses it, rather
 		// than leaving the controller to refuse one phase later a shape
 		// this schema had accepted (the mistake the removed raw layout
 		// made).

@@ -157,7 +157,7 @@ func LoadConfig(path string) (Config, error) {
 func validateMediaBaseURL(raw string) error {
 	if raw == "" {
 		return fmt.Errorf(
-			"mediaBaseURL is not set: every built image bakes this address into its own boot arguments, so frame bootstrap refuses to start rather than build an image that fetches its preseed from nowhere")
+			"mediaBaseURL is not set: every built image bakes this address into its own boot arguments, so frame bootstrap refuses to start rather than build an image that fetches its autoinstall seed from nowhere")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -187,7 +187,7 @@ func validateMediaBaseURL(raw string) error {
 	}
 	if u.Port() != listenPort {
 		return fmt.Errorf(
-			"mediaBaseURL %q names port %q, but frame bootstrap serves the installer image and preseed on "+
+			"mediaBaseURL %q names port %q, but frame bootstrap serves the installer image and seed on "+
 				"port %s; the BMC would fetch from somewhere nothing is listening",
 			raw, u.Port(), listenPort)
 	}

@@ -30,12 +30,12 @@ func TestValidateMediaURLRefusesAWrongScheme(t *testing.T) {
 	}
 }
 
-// url.Parse accepts this without error -- "http:///preseed" has scheme
+// url.Parse accepts this without error -- "http:///autoinstall" has scheme
 // "http" and an empty Host, everything after the third slash lands in
 // Path. A value shaped like this would build images whose boot arguments
 // carry a URL with no address to fetch from at all.
 func TestValidateMediaURLRefusesAnHTTPURLWithNoHost(t *testing.T) {
-	err := validateMediaURL("http:///preseed")
+	err := validateMediaURL("http:///autoinstall")
 	if err == nil {
 		t.Fatal("want an error for a URL with no host, got nil")
 	}

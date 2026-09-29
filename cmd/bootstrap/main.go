@@ -65,12 +65,13 @@ import (
 	"github.com/gothshoot/frame/internal/provision"
 )
 
-// bootstrapSSHUser is the account the preseed creates on every installed
-// machine (internal/provision/preseed.go), the same one the FrameInstall
+// bootstrapSSHUser is the account the autoinstall identity section creates
+// on every installed machine (internal/provision/autoinstall.go), the same
+// one the FrameInstall
 // controller authenticates as (frameInstallSSHUser there).
 const bootstrapSSHUser = "frame"
 
-// mediaAddr is where this process serves the installer image and preseed
+// mediaAddr is where this process serves the installer image and seed
 // to the BMC. Fixed, not a flag: Config.MediaBaseURL is the address the BMC
 // reaches this same listener at.
 //
@@ -284,7 +285,7 @@ func startMediaListener(addr string, handler http.Handler) (*http.Server, error)
 // way the FrameInstall controller's own addressWithoutCIDR does
 // (internal/controller/frame/frameinstall_controller.go): Options.
 // NodeAddress is a bare address the installer dials, not the CIDR notation
-// Network.Address carries for the preseed's netcfg directives.
+// Network.Address carries for the autoinstall network section.
 func addressWithoutCIDR(s string) string {
 	if i := strings.IndexByte(s, '/'); i >= 0 {
 		return s[:i]
