@@ -110,13 +110,18 @@ func TestLoadConfigRefusesAnIncompleteJoin(t *testing.T) {
 		mutate func(t *testing.T, c *Config)
 		want   string
 	}{
-		{"no server URL", func(_ *testing.T, c *Config) { c.Cluster.ServerURL = "" }, "cluster.serverURL is empty"},
-		{"an http server URL", func(_ *testing.T, c *Config) { c.Cluster.ServerURL = "http://192.0.2.201:6443" }, "scheme must be https"},
-		{"a server URL with a path", func(_ *testing.T, c *Config) { c.Cluster.ServerURL = "https://192.0.2.201:6443/x" }, "scheme and host only"},
-		{"no join token file", func(_ *testing.T, c *Config) { c.Cluster.JoinTokenFile = "" }, "cluster.joinTokenFile is not set"},
+		{"no server URL", func(_ *testing.T, c *Config) { c.Cluster.ServerURL = "" },
+			"cluster.serverURL is empty"},
+		{"an http server URL", func(_ *testing.T, c *Config) { c.Cluster.ServerURL = "http://192.0.2.201:6443" },
+			"scheme must be https"},
+		{"a server URL with a path", func(_ *testing.T, c *Config) { c.Cluster.ServerURL = "https://192.0.2.201:6443/x" },
+			"scheme and host only"},
+		{"no join token file", func(_ *testing.T, c *Config) { c.Cluster.JoinTokenFile = "" },
+			"cluster.joinTokenFile is not set"},
 		{"no k3s version", func(_ *testing.T, c *Config) { c.Cluster.K3sVersion = "" }, "does not look like a k3s version"},
 		{"no kubeconfig", func(_ *testing.T, c *Config) { c.Kubeconfig = "" }, "kubeconfig is not set"},
-		{"out set", func(t *testing.T, c *Config) { c.Out = filepath.Join(t.TempDir(), "kubeconfig") }, "a join produces no kubeconfig"},
+		{"out set", func(t *testing.T, c *Config) { c.Out = filepath.Join(t.TempDir(), "kubeconfig") },
+			"a join produces no kubeconfig"},
 		{"a kubeconfig that does not parse", func(t *testing.T, c *Config) {
 			c.Kubeconfig = writePrivate(t, t.TempDir(), "bad", "clusters: [", 0o600)
 		}, "does not parse as a kubeconfig"},
@@ -271,7 +276,8 @@ func TestPhaseTimeoutsKeepsTheDefaultsUnlessInstallingIsSet(t *testing.T) {
 		}
 	}
 	if defaultPhaseTimeouts[provision.PhaseInstalling] != 45*time.Minute {
-		t.Errorf("the override leaked into defaultPhaseTimeouts: Installing = %s", defaultPhaseTimeouts[provision.PhaseInstalling])
+		t.Errorf("the override leaked into defaultPhaseTimeouts: Installing = %s",
+			defaultPhaseTimeouts[provision.PhaseInstalling])
 	}
 }
 

@@ -57,6 +57,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -114,9 +115,7 @@ const defaultPoll = 5 * time.Second
 // too, including a test's.
 func phaseTimeouts(installTimeout time.Duration) map[provision.Phase]time.Duration {
 	out := make(map[provision.Phase]time.Duration, len(defaultPhaseTimeouts))
-	for p, d := range defaultPhaseTimeouts {
-		out[p] = d
-	}
+	maps.Copy(out, defaultPhaseTimeouts)
 	if installTimeout > 0 {
 		out[provision.PhaseInstalling] = installTimeout
 	}
@@ -295,10 +294,12 @@ func finishJoin(stdout io.Writer, res provision.Result, installErr error) error 
 		return installErr
 	}
 	if res.Phase != provision.PhaseReady {
-		return fmt.Errorf("install returned in phase %s, not Ready; node %s is not known to have rejoined", res.Phase, res.NodeName)
+		return fmt.Errorf("install returned in phase %s, not Ready; node %s is not known to have "+
+			"rejoined", res.Phase, res.NodeName)
 	}
 	_, _ = fmt.Fprintf(stdout,
-		"frame bootstrap: node %s rejoined the existing cluster and is Ready there; no kubeconfig was produced -- keep using the existing cluster's own\n",
+		"frame bootstrap: node %s rejoined the existing cluster and is Ready there; no kubeconfig was "+
+			"produced -- keep using the existing cluster's own\n",
 		res.NodeName)
 	return nil
 }
@@ -399,7 +400,8 @@ func (c kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte,
 	}
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
-		return false, errors.New("parsing the target cluster's kubeconfig failed (the parser's message is withheld: it can quote the file, and the file holds credentials)")
+		return false, errors.New("parsing the target cluster's kubeconfig failed (the parser's message is " +
+			"withheld: it can quote the file, and the file holds credentials)")
 	}
 	cs, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {

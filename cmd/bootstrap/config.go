@@ -190,11 +190,13 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Cluster.Mode == provision.ClusterJoin {
 		if strings.TrimSpace(cfg.Cluster.ServerURL) == "" {
 			return Config{}, errors.New(
-				"cluster.mode is join but cluster.serverURL is empty: it is the existing cluster's API address, e.g. https://192.0.2.201:6443")
+				"cluster.mode is join but cluster.serverURL is empty: it is the existing cluster's API " +
+					"address, e.g. https://192.0.2.201:6443")
 		}
 		if cfg.Cluster.JoinToken == "" {
 			return Config{}, errors.New(
-				"cluster.mode is join but cluster.joinTokenFile is not set: it names a file holding the token from /var/lib/rancher/k3s/server/node-token on a server node")
+				"cluster.mode is join but cluster.joinTokenFile is not set: it names a file holding the " +
+					"token from /var/lib/rancher/k3s/server/node-token on a server node")
 		}
 	}
 	if err := provision.ValidateClusterTarget(cfg.Cluster.ClusterTarget); err != nil {
@@ -208,7 +210,8 @@ func LoadConfig(path string) (Config, error) {
 		// let an operator believe their join config was a join.
 		if cfg.Kubeconfig != "" {
 			return Config{}, errors.New(
-				"kubeconfig is set but cluster.mode is init: kubeconfig names an existing cluster to rejoin, and init creates a new one; remove one or the other")
+				"kubeconfig is set but cluster.mode is init: kubeconfig names an existing cluster to rejoin, " +
+					"and init creates a new one; remove one or the other")
 		}
 		// `out` is checked here, with the other four, on the same principle:
 		// a bad value refused late is refused after the disk is wiped. It is
@@ -222,7 +225,8 @@ func LoadConfig(path string) (Config, error) {
 	case provision.ClusterJoin:
 		if cfg.Out != "" {
 			return Config{}, fmt.Errorf(
-				"out %s is set but cluster.mode is join: a join produces no kubeconfig, the existing cluster's own stays the one to use; remove out", cfg.Out)
+				"out %s is set but cluster.mode is join: a join produces no kubeconfig, the existing "+
+					"cluster's own stays the one to use; remove out", cfg.Out)
 		}
 		kc, err := loadExistingKubeconfig(cfg.Kubeconfig)
 		if err != nil {
@@ -342,7 +346,8 @@ func resolveSecrets(cfg *Config) error {
 	if cfg.BMC.PasswordFile != "" {
 		if cfg.BMC.Password != "" {
 			return errors.New(
-				"bmc.password and bmc.passwordFile are both set: keep one -- a password in two places is how the stale one ends up used")
+				"bmc.password and bmc.passwordFile are both set: keep one -- a password in two places is how " +
+					"the stale one ends up used")
 		}
 		pw, err := readSecretFile("bmc.passwordFile", cfg.BMC.PasswordFile)
 		if err != nil {
@@ -353,11 +358,13 @@ func resolveSecrets(cfg *Config) error {
 
 	if cfg.Cluster.JoinToken != "" {
 		return errors.New(
-			"cluster.joinToken is set in the config file: refusing -- put the token in a file of its own, mode 0600, and name it with cluster.joinTokenFile")
+			"cluster.joinToken is set in the config file: refusing -- put the token in a file of its own, " +
+				"mode 0600, and name it with cluster.joinTokenFile")
 	}
 	if cfg.Cluster.JoinTokenFile != "" {
 		if cfg.Cluster.Mode != provision.ClusterJoin {
-			return fmt.Errorf("cluster.joinTokenFile is set but cluster.mode is %q: a join token is only read for join", cfg.Cluster.Mode)
+			return fmt.Errorf("cluster.joinTokenFile is set but cluster.mode is %q: a join token is only "+
+				"read for join", cfg.Cluster.Mode)
 		}
 		tok, err := readSecretFile("cluster.joinTokenFile", cfg.Cluster.JoinTokenFile)
 		if err != nil {
@@ -413,7 +420,9 @@ func readPrivateFile(key, path string) ([]byte, error) {
 func loadExistingKubeconfig(path string) ([]byte, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New(
-			"cluster.mode is join but kubeconfig is not set: it names the existing cluster's kubeconfig, which is what the Ready phase checks the rejoined node against -- frame bootstrap has no cluster of its own to ask")
+			"cluster.mode is join but kubeconfig is not set: it names the existing cluster's kubeconfig, " +
+				"which is what the Ready phase checks the rejoined node against -- frame bootstrap has no " +
+				"cluster of its own to ask")
 	}
 	b, err := readPrivateFile("kubeconfig", path)
 	if err != nil {
@@ -423,7 +432,8 @@ func loadExistingKubeconfig(path string) ([]byte, error) {
 	// it choked on, and in a kubeconfig that line may be a client key.
 	if _, err := clientcmd.RESTConfigFromKubeConfig(b); err != nil {
 		return nil, fmt.Errorf(
-			"kubeconfig %s does not parse as a kubeconfig (the parser's message is withheld: it can quote the file, and the file holds credentials)", path)
+			"kubeconfig %s does not parse as a kubeconfig (the parser's message is withheld: it can quote "+
+				"the file, and the file holds credentials)", path)
 	}
 	return b, nil
 }

@@ -135,6 +135,20 @@ func TestNodeReadyChecksTheExistingClusterWhenInstallPassesNil(t *testing.T) {
 	}
 }
 
+// The negative control for the test above: the existing cluster answering
+// NotReady is reported as not Ready, so a checker that said "Ready" to
+// anything that answered would fail here.
+func TestNodeReadyReportsANotReadyNodeInTheExistingCluster(t *testing.T) {
+	srv, _ := fakeAPIServer(t, "w3", corev1.ConditionFalse)
+	ok, err := kubeconfigNodeChecker{existing: kubeconfigFor(srv.URL)}.NodeReady(context.Background(), nil, "w3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("a NotReady node in the existing cluster was reported Ready")
+	}
+}
+
 // An init's own kubeconfig still wins over existing: the new cluster is
 // the one its node joined, and the two must never be confused.
 func TestNodeReadyPrefersTheKubeconfigInstallPasses(t *testing.T) {
