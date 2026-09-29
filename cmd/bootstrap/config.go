@@ -239,8 +239,14 @@ func LoadConfig(path string) (Config, error) {
 				"out %s is set but cluster.mode is join: a join produces no kubeconfig, the existing "+
 					"cluster's own stays the one to use; remove out", cfg.Out)
 		}
-		kc, err := loadExistingKubeconfig(cfg.Kubeconfig)
+		kc, host, err := loadExistingKubeconfig(cfg.Kubeconfig)
 		if err != nil {
+			return Config{}, err
+		}
+		// The agent registers with serverURL; the preflight and the Ready
+		// check read the cluster through the kubeconfig. Two different
+		// servers would mean checking one cluster and joining another.
+		if err := sameServer(cfg.Cluster.ServerURL, host); err != nil {
 			return Config{}, err
 		}
 		cfg.existingKubeconfig = kc
@@ -481,25 +487,61 @@ func readPrivateFile(key, path string) ([]byte, error) {
 // kubeconfig. Parsed here, not just read: a file that is not a kubeconfig
 // would otherwise be discovered at the Ready phase, with the machine
 // already wiped and reinstalled and nothing able to say whether it rejoined.
-// Only parsed -- the cluster is not contacted, since nothing at load time
-// is allowed to reach off this laptop.
-func loadExistingKubeconfig(path string) ([]byte, error) {
+// Only parsed -- the cluster is not contacted: loading a config stays
+// offline, and contacting the cluster is preflightJoin's job, a distinct
+// step run after loading and before the machine is touched. It returns the
+// file and the server it names.
+func loadExistingKubeconfig(path string) ([]byte, string, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New(
+		return nil, "", errors.New(
 			"cluster.mode is join but kubeconfig is not set: it names the existing cluster's kubeconfig, " +
 				"which is what the Ready phase checks the rejoined node against -- frame bootstrap has no " +
 				"cluster of its own to ask")
 	}
 	b, err := readPrivateFile("kubeconfig", path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// The parser's own error is not wrapped: a YAML error quotes the line
 	// it choked on, and in a kubeconfig that line may be a client key.
-	if _, err := clientcmd.RESTConfigFromKubeConfig(b); err != nil {
-		return nil, fmt.Errorf(
+	restCfg, err := clientcmd.RESTConfigFromKubeConfig(b)
+	if err != nil {
+		return nil, "", fmt.Errorf(
 			"kubeconfig %s does not parse as a kubeconfig (the parser's message is withheld: it can quote "+
 				"the file, and the file holds credentials)", path)
 	}
-	return b, nil
+	return b, restCfg.Host, nil
+}
+
+// sameServer refuses a serverURL and a kubeconfig server that are not the
+// same host and port. Compared as written, not resolved: an IP in one and a
+// name in the other is refused too, since nothing here can prove they are
+// the same machine without reaching the network.
+func sameServer(serverURL, kubeconfigHost string) error {
+	a, err := url.Parse(serverURL)
+	if err != nil {
+		return errors.New("cluster.serverURL does not parse as a URL")
+	}
+	b, err := url.Parse(kubeconfigHost)
+	if err != nil || b.Host == "" {
+		return errors.New("the kubeconfig's server does not parse as a URL")
+	}
+	if hostPort(a) != hostPort(b) {
+		return fmt.Errorf(
+			"cluster.serverURL names %s but the kubeconfig's server is %s: the node would join one and be "+
+				"checked against the other", hostPort(a), hostPort(b))
+	}
+	return nil
+}
+
+// hostPort is u's host and port, with the scheme's default port filled in.
+func hostPort(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = "443"
+		if u.Scheme == "http" {
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }

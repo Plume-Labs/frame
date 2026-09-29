@@ -194,12 +194,12 @@ func run() error {
 		MediaURL: cfg.MediaBaseURL,
 	}
 
+	// Nodes and Report are left to execute, which ties them together: for
+	// a join, the Ready check needs to know when Joining began.
 	deps := provision.Deps{
 		BMC:    bmc,
 		Images: images,
 		SSH:    provision.NewSSHClient(),
-		Nodes:  nodeCheckerFor(cfg),
-		Report: func(p provision.Phase) { fmt.Fprintf(os.Stdout, "frame bootstrap: %s\n", p) },
 	}
 
 	spec := provision.Spec{
@@ -224,8 +224,46 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	res, installErr := provision.Install(ctx, deps, spec, opts)
-	return finish(os.Stdout, cfg.Cluster.Mode, cfg.Out, res, installErr)
+	return execute(ctx, os.Stdout, cfg, deps, spec, opts, provision.Install)
+}
+
+// installFunc is provision.Install's signature, so a test can drive
+// execute without a BMC.
+type installFunc func(context.Context, provision.Deps, provision.Spec, provision.Options) (provision.Result, error)
+
+// execute is everything run() does once the config is loaded and the
+// collaborators exist: the join preflight, the Ready checker, Install, and
+// finish. Split out so the wiring a join depends on -- preflight before
+// Install, the existing cluster reaching the Ready check, the config's
+// mode reaching finish -- is tested end to end rather than only read.
+//
+// The preflight runs here, before install is called, and so before the
+// BMC is touched at all: Install's first BMC access is in its Pending
+// phase, after this has returned. It is the one step of frame bootstrap
+// that contacts anything but the BMC before the disk is wiped, and it
+// contacts only the cluster the config says the machine will rejoin.
+func execute(
+	ctx context.Context, stdout io.Writer, cfg Config,
+	deps provision.Deps, spec provision.Spec, opts provision.Options, install installFunc,
+) error {
+	checker := nodeCheckerFor(cfg)
+	if cfg.Cluster.Mode == provision.ClusterJoin {
+		before, err := preflightJoin(ctx, stdout, cfg)
+		if err != nil {
+			return fmt.Errorf("join preflight, before anything was touched: %w", err)
+		}
+		checker.before = &before
+	}
+	deps.Nodes = checker
+	deps.Report = func(p provision.Phase) {
+		if p == provision.PhaseJoining {
+			checker.joiningSince = time.Now()
+		}
+		_, _ = fmt.Fprintf(stdout, "frame bootstrap: %s\n", p)
+	}
+
+	res, installErr := install(ctx, deps, spec, opts)
+	return finish(stdout, cfg.Cluster.Mode, cfg.Out, res, installErr)
 }
 
 // finish decides what happens after provision.Install returns, and is a
@@ -374,14 +412,30 @@ func newInstallUID() (string, error) {
 // a join config names, read and parsed by LoadConfig.
 type kubeconfigNodeChecker struct {
 	existing []byte
+
+	// before is the existing Node's identity, read by preflightJoin before
+	// the machine was touched; nil for an init, where no Node existed.
+	//
+	// It is what stops the Ready check from believing the OLD node. A
+	// rejoin reuses the Node's name, and the object -- kept on purpose, see
+	// docs/deployment.md -- still carries the last status the old kubelet
+	// posted. Ready=True from the machine as it was before the wipe, read
+	// in the seconds before the node controller marks it Unknown, would
+	// end the install as a success with nothing having rejoined.
+	before *nodeIdentity
+	// joiningSince is when Install entered Joining, recorded through
+	// Deps.Report. A Ready condition whose heartbeat predates it was
+	// posted by a kubelet that existed before k3s was installed, which on a
+	// freshly wiped machine means not this one.
+	joiningSince time.Time
 }
 
 // nodeCheckerFor builds the checker run() hands Install from a loaded
 // config. Its own function so the one wire that matters for a join -- the
 // existing cluster's kubeconfig, read by LoadConfig, reaching the Ready
 // check -- is tested from config to apiserver rather than only read.
-func nodeCheckerFor(cfg Config) kubeconfigNodeChecker {
-	return kubeconfigNodeChecker{existing: cfg.existingKubeconfig}
+func nodeCheckerFor(cfg Config) *kubeconfigNodeChecker {
+	return &kubeconfigNodeChecker{existing: cfg.existingKubeconfig}
 }
 
 // NodeReady checks name against kubeconfig, or -- when Install passes nil,
@@ -390,7 +444,12 @@ func nodeCheckerFor(cfg Config) kubeconfigNodeChecker {
 // client that cannot exist here; LoadConfig refuses a join config with no
 // kubeconfig, so that branch is a belt against a caller that builds this
 // type some other way.
-func (c kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error) {
+//
+// For a rejoin (before set), Ready alone is not enough: see rejoined.
+// Every "not yet" there is returned as an error rather than a bare false,
+// because Install keeps polling on either and reports the last error when
+// its budget runs out -- which is then the reason, not just "never Ready".
+func (c *kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error) {
 	if kubeconfig == nil {
 		kubeconfig = c.existing
 	}
@@ -398,27 +457,83 @@ func (c kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte,
 		return false, fmt.Errorf(
 			"no kubeconfig to check node %q against: frame bootstrap has no cluster of its own to fall back to", name)
 	}
-	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	cs, err := clientsetFor(kubeconfig)
 	if err != nil {
-		return false, errors.New("parsing the target cluster's kubeconfig failed (the parser's message is " +
-			"withheld: it can quote the file, and the file holds credentials)")
-	}
-	cs, err := kubernetes.NewForConfig(restCfg)
-	if err != nil {
-		return false, fmt.Errorf("building a client for the target cluster: %w", err)
+		return false, err
 	}
 	node, err := cs.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return false, err
 	}
-	return nodeIsReady(node), nil
+	if !nodeIsReady(node) {
+		return false, nil
+	}
+	if c.before != nil {
+		if err := c.rejoined(node); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// rejoined says whether a Ready node is the reinstalled machine rather than
+// the old one under the same name. Both boot ID and machine ID must have
+// changed -- a reboot alone changes the first, and a freshly installed
+// system gets a new /etc/machine-id -- and the Ready heartbeat must be
+// newer than the start of Joining.
+//
+// The heartbeat is stamped by the node's clock and compared with this
+// laptop's. A node running behind the laptop makes a real rejoin look
+// stale, which fails the install on its Ready timeout -- the safe
+// direction. joiningSince is truncated to the second because the heartbeat
+// travels as RFC 3339 with whole seconds.
+func (c *kubeconfigNodeChecker) rejoined(node *corev1.Node) error {
+	info := node.Status.NodeInfo
+	if info.BootID == c.before.BootID {
+		return fmt.Errorf("node %s still reports the boot ID it had before the reinstall: it is the old node's status, "+
+			"not the reinstalled machine", node.Name)
+	}
+	if info.MachineID == c.before.MachineID {
+		return fmt.Errorf("node %s still reports the machine ID it had before the reinstall: this is not a freshly "+
+			"installed system", node.Name)
+	}
+	if c.joiningSince.IsZero() {
+		return fmt.Errorf("node %s: no record of when Joining began, so a Ready heartbeat cannot be dated", node.Name)
+	}
+	ready := readyCondition(node)
+	since := c.joiningSince.Truncate(time.Second)
+	if ready == nil || ready.LastHeartbeatTime.Time.Before(since) {
+		return fmt.Errorf("node %s: its Ready heartbeat predates the start of Joining (%s)",
+			node.Name, since.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+// clientsetFor builds a client from a kubeconfig. The parser's own error is
+// not wrapped: it can quote the file, and the file holds credentials.
+func clientsetFor(kubeconfig []byte) (kubernetes.Interface, error) {
+	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, errors.New("parsing the target cluster's kubeconfig failed (the parser's message is " +
+			"withheld: it can quote the file, and the file holds credentials)")
+	}
+	cs, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("building a client for the target cluster: %w", err)
+	}
+	return cs, nil
+}
+
+func readyCondition(node *corev1.Node) *corev1.NodeCondition {
+	for i := range node.Status.Conditions {
+		if node.Status.Conditions[i].Type == corev1.NodeReady {
+			return &node.Status.Conditions[i]
+		}
+	}
+	return nil
 }
 
 func nodeIsReady(node *corev1.Node) bool {
-	for _, c := range node.Status.Conditions {
-		if c.Type == corev1.NodeReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
+	c := readyCondition(node)
+	return c != nil && c.Status == corev1.ConditionTrue
 }

@@ -121,7 +121,7 @@ users:
 // not by inspecting which field was read.
 func TestNodeReadyChecksTheExistingClusterWhenInstallPassesNil(t *testing.T) {
 	srv, hits := fakeAPIServer(t, "w3", corev1.ConditionTrue)
-	c := kubeconfigNodeChecker{existing: kubeconfigFor(srv.URL)}
+	c := &kubeconfigNodeChecker{existing: kubeconfigFor(srv.URL)}
 
 	ok, err := c.NodeReady(context.Background(), nil, "w3")
 	if err != nil {
@@ -140,7 +140,7 @@ func TestNodeReadyChecksTheExistingClusterWhenInstallPassesNil(t *testing.T) {
 // anything that answered would fail here.
 func TestNodeReadyReportsANotReadyNodeInTheExistingCluster(t *testing.T) {
 	srv, _ := fakeAPIServer(t, "w3", corev1.ConditionFalse)
-	ok, err := kubeconfigNodeChecker{existing: kubeconfigFor(srv.URL)}.NodeReady(context.Background(), nil, "w3")
+	ok, err := (&kubeconfigNodeChecker{existing: kubeconfigFor(srv.URL)}).NodeReady(context.Background(), nil, "w3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestNodeReadyReportsANotReadyNodeInTheExistingCluster(t *testing.T) {
 func TestNodeReadyPrefersTheKubeconfigInstallPasses(t *testing.T) {
 	newCluster, newHits := fakeAPIServer(t, "node-zero", corev1.ConditionTrue)
 	existing, existingHits := fakeAPIServer(t, "node-zero", corev1.ConditionTrue)
-	c := kubeconfigNodeChecker{existing: kubeconfigFor(existing.URL)}
+	c := &kubeconfigNodeChecker{existing: kubeconfigFor(existing.URL)}
 
 	if _, err := c.NodeReady(context.Background(), kubeconfigFor(newCluster.URL), "node-zero"); err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestNodeReadyPrefersTheKubeconfigInstallPasses(t *testing.T) {
 // With neither, it refuses rather than reaching for a client that cannot
 // exist on a laptop.
 func TestNodeReadyRefusesWithNoKubeconfigAtAll(t *testing.T) {
-	_, err := (kubeconfigNodeChecker{}).NodeReady(context.Background(), nil, "w3")
+	_, err := (&kubeconfigNodeChecker{}).NodeReady(context.Background(), nil, "w3")
 	// The message is asserted, not just the error: clientcmd refuses an
 	// empty kubeconfig on its own, so without this the guard could vanish
 	// and the test would still see an error -- a vaguer one.
@@ -183,7 +183,10 @@ func TestNodeReadyRefusesWithNoKubeconfigAtAll(t *testing.T) {
 func TestAJoinConfigsKubeconfigReachesTheReadyCheck(t *testing.T) {
 	srv, hits := fakeAPIServer(t, "node-zero", corev1.ConditionTrue)
 	kc := writePrivate(t, t.TempDir(), "existing.kubeconfig", string(kubeconfigFor(srv.URL)), 0o600)
-	cfg, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) { c.Kubeconfig = kc })))
+	cfg, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) {
+		c.Kubeconfig = kc
+		c.Cluster.ServerURL = "https://" + strings.TrimPrefix(srv.URL, "http://")
+	})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +200,7 @@ func TestAJoinConfigsKubeconfigReachesTheReadyCheck(t *testing.T) {
 }
 
 func TestNodeReadyNeverEchoesTheKubeconfigParserMessage(t *testing.T) {
-	_, err := (kubeconfigNodeChecker{}).NodeReady(context.Background(), []byte(kubeconfigQuotingSecret), "w3")
+	_, err := (&kubeconfigNodeChecker{}).NodeReady(context.Background(), []byte(kubeconfigQuotingSecret), "w3")
 	if err == nil {
 		t.Fatal("a kubeconfig that does not parse was accepted")
 	}
