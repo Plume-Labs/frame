@@ -301,6 +301,23 @@ func TestLocalImageStoreLeavesNothingBehindWhenTheImageFails(t *testing.T) {
 	}
 }
 
+// Remaster removes its output when the boot-record check refuses it, but not
+// when xorriso itself fails part way through writing: that partial image is
+// discardBuild's to remove, and the build paths above never produce one.
+func TestDiscardBuildRemovesAPartialImageWithTheSeed(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeSeed(dir, tok, goodSpec(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, tok+".iso"), []byte("half an image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	discardBuild(dir, tok)
+	if left := leftovers(t, dir); len(left) != 0 {
+		t.Errorf("discardBuild left %v behind", left)
+	}
+}
+
 // A seed whose image is already gone is still removed, and still a success:
 // it is what a failed build or an interrupted cleanup leaves. Only a token
 // with neither is a 404.
