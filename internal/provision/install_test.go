@@ -736,7 +736,7 @@ func TestInstallAsksBeforeMediaAttachedLastBeforeTheInsert(t *testing.T) {
 }
 
 func TestInstallStopsWhenBeforeMediaAttachedRefuses(t *testing.T) {
-	d, b, _ := happyDeps()
+	d, b, i := happyDeps()
 	d.BeforeMediaAttached = func(context.Context) error { return errors.New("the node password is back") }
 	res, err := Install(context.Background(), d, goodSpec(), opts())
 	if err == nil || !strings.Contains(err.Error(), "the node password is back") {
@@ -749,5 +749,10 @@ func TestInstallStopsWhenBeforeMediaAttachedRefuses(t *testing.T) {
 		if strings.HasPrefix(c, "insert:") || strings.HasPrefix(c, "boot:") || strings.HasPrefix(c, "reset:") {
 			t.Errorf("the BMC was driven after the gate refused: %s", c)
 		}
+	}
+	// The gate runs after Build: a refusal must still take the image and its
+	// seed down, or the seed stays served with nothing left to remove it.
+	if i.removed != 1 {
+		t.Errorf("the built image was not removed after the gate refused (removed=%d)", i.removed)
 	}
 }
