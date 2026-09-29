@@ -24,6 +24,14 @@ limitations under the License.
 // recovery path: on a single-node cluster, the day that cluster dies is a
 // day that exists, and there is nothing left running inside it to fix it.
 //
+// With cluster.mode: join it reinstalls a machine and has it rejoin a
+// cluster that still exists, as a k3s agent. That is the controller's job
+// whenever the controller can do it; this path is for when it cannot -- the
+// machine being reinstalled is the one the controller runs on, or the
+// cluster is too degraded to host it. The Ready phase then checks the node
+// through the existing cluster's kubeconfig, named in the config, and no
+// kubeconfig is produced.
+//
 // It consumes internal/provision exactly the way the FrameInstall
 // controller does (internal/controller/frame/frameinstall_controller.go):
 // the same Spec, the same Deps, the same Install call. The only things it
@@ -98,6 +106,22 @@ var defaultPhaseTimeouts = map[provision.Phase]time.Duration{
 }
 
 const defaultPoll = 5 * time.Second
+
+// phaseTimeouts returns the budgets this run uses: defaultPhaseTimeouts,
+// with Installing replaced by installTimeout when that is set. A fresh map
+// every call, never defaultPhaseTimeouts itself -- writing the override
+// into the package-level map would make it every later caller's default
+// too, including a test's.
+func phaseTimeouts(installTimeout time.Duration) map[provision.Phase]time.Duration {
+	out := make(map[provision.Phase]time.Duration, len(defaultPhaseTimeouts))
+	for p, d := range defaultPhaseTimeouts {
+		out[p] = d
+	}
+	if installTimeout > 0 {
+		out[provision.PhaseInstalling] = installTimeout
+	}
+	return out
+}
 
 // mediaStartGrace is how long this command waits after starting the media
 // listener before trusting it came up. A port already in use, or any other
@@ -175,7 +199,7 @@ func run() error {
 		BMC:    bmc,
 		Images: images,
 		SSH:    provision.NewSSHClient(),
-		Nodes:  kubeconfigNodeChecker{},
+		Nodes:  kubeconfigNodeChecker{existing: cfg.existingKubeconfig},
 		Report: func(p provision.Phase) { fmt.Fprintf(os.Stdout, "frame bootstrap: %s\n", p) },
 	}
 
@@ -185,7 +209,7 @@ func run() error {
 		Network:      cfg.Network,
 		Layout:       cfg.Layout,
 		SSHPublicKey: strings.TrimSpace(string(sshPub)),
-		Cluster:      cfg.Cluster,
+		Cluster:      cfg.Cluster.ClusterTarget,
 	}
 
 	opts := provision.Options{
@@ -194,7 +218,7 @@ func run() error {
 		SSHKey:        sshKey,
 		NodeAddress:   addressWithoutCIDR(cfg.Network.Address),
 		ConfirmSerial: cfg.ConfirmSerial,
-		PhaseTimeout:  defaultPhaseTimeouts,
+		PhaseTimeout:  phaseTimeouts(cfg.InstallTimeout),
 		Poll:          defaultPoll,
 	}
 
@@ -202,7 +226,7 @@ func run() error {
 	defer stop()
 
 	res, installErr := provision.Install(ctx, deps, spec, opts)
-	return finish(os.Stdout, cfg.Out, res, installErr)
+	return finish(os.Stdout, cfg.Cluster.Mode, cfg.Out, res, installErr)
 }
 
 // finish decides what happens after provision.Install returns, and is a
@@ -218,7 +242,16 @@ func run() error {
 // the cluster exists, it has a node, and nobody can ever talk to it. A
 // failed install whose kubeconfig is on disk can be looked at by hand; one
 // whose kubeconfig is gone cannot be.
-func finish(stdout io.Writer, out string, res provision.Result, installErr error) error {
+//
+// A join is the other shape: provision.Join installs a k3s agent and
+// produces no kubeconfig at all, so none is written or expected, and
+// success is Install having reached Ready -- the node Ready in the
+// existing cluster, checked through the kubeconfig the config named.
+func finish(stdout io.Writer, mode provision.ClusterMode, out string, res provision.Result, installErr error) error {
+	if mode == provision.ClusterJoin {
+		return finishJoin(stdout, res, installErr)
+	}
+
 	var writeErr error
 	if len(res.Kubeconfig) > 0 {
 		if err := os.WriteFile(out, res.Kubeconfig, 0o600); err != nil {
@@ -245,6 +278,28 @@ func finish(stdout io.Writer, out string, res provision.Result, installErr error
 	}
 
 	_, _ = fmt.Fprintf(stdout, "frame bootstrap: node %s is Ready\n", res.NodeName)
+	return nil
+}
+
+// finishJoin is finish for cluster.mode: join. Nothing is written: the
+// existing cluster's kubeconfig is the one the operator already has, and
+// Install's Ready phase already proved the node through it. The phase is
+// checked as well as the error -- Install returns a nil error only on
+// reaching Ready today, and a future path that returned early without one
+// must not be reported as a node that rejoined.
+func finishJoin(stdout io.Writer, res provision.Result, installErr error) error {
+	if installErr != nil {
+		if res.FailedPhase != "" {
+			return fmt.Errorf("install failed in phase %s: %w", res.FailedPhase, installErr)
+		}
+		return installErr
+	}
+	if res.Phase != provision.PhaseReady {
+		return fmt.Errorf("install returned in phase %s, not Ready; node %s is not known to have rejoined", res.Phase, res.NodeName)
+	}
+	_, _ = fmt.Fprintf(stdout,
+		"frame bootstrap: node %s rejoined the existing cluster and is Ready there; no kubeconfig was produced -- keep using the existing cluster's own\n",
+		res.NodeName)
 	return nil
 }
 
@@ -312,34 +367,35 @@ func newInstallUID() (string, error) {
 // own ClusterNodeChecker (internal/controller/frame/
 // frameinstall_controller.go): that type falls back to Frame's own
 // in-cluster client when kubeconfig is nil, because a controller always has
-// one. frame bootstrap does not -- there is no cluster Frame runs in, which
-// is the entire reason this command exists -- so the nil-kubeconfig branch
-// of provision.NodeChecker's documented contract has nothing to fall back
-// to and is refused outright rather than reaching for a client that cannot
-// exist yet.
-type kubeconfigNodeChecker struct{}
+// one. frame bootstrap does not -- it runs on a laptop, in no cluster -- so
+// the nil-kubeconfig branch of provision.NodeChecker's contract ("check the
+// cluster the node joined") falls back to existing instead: the kubeconfig
+// a join config names, read and parsed by LoadConfig.
+type kubeconfigNodeChecker struct {
+	existing []byte
+}
 
-// NodeReady's nil-kubeconfig branch is unreachable through this binary
-// today: kubeconfig is nil only when Spec.Cluster.Mode is ClusterJoin
-// (provision.Join's documented contract), and LoadConfig now refuses any
-// config.go's cluster.mode other than ClusterInit before Install is ever
-// called. It stays -- a belt against a future caller that builds a Spec
-// some other way and reaches this type directly, not a path this command's
-// own flow can take today. Said here rather than left implicit: an
-// unreachable branch that reads as a live guard is exactly the shape this
-// lot has been fooled by before.
-func (kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error) {
+// NodeReady checks name against kubeconfig, or -- when Install passes nil,
+// which it does exactly for cluster.mode: join -- against the existing
+// cluster's kubeconfig. With neither, it refuses rather than reaching for a
+// client that cannot exist here; LoadConfig refuses a join config with no
+// kubeconfig, so that branch is a belt against a caller that builds this
+// type some other way.
+func (c kubeconfigNodeChecker) NodeReady(ctx context.Context, kubeconfig []byte, name string) (bool, error) {
+	if kubeconfig == nil {
+		kubeconfig = c.existing
+	}
 	if kubeconfig == nil {
 		return false, fmt.Errorf(
 			"no kubeconfig to check node %q against: frame bootstrap has no cluster of its own to fall back to", name)
 	}
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
-		return false, fmt.Errorf("parsing the new cluster's kubeconfig: %w", err)
+		return false, errors.New("parsing the target cluster's kubeconfig failed (the parser's message is withheld: it can quote the file, and the file holds credentials)")
 	}
 	cs, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
-		return false, fmt.Errorf("building a client for the new cluster: %w", err)
+		return false, fmt.Errorf("building a client for the target cluster: %w", err)
 	}
 	node, err := cs.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {

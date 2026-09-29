@@ -62,22 +62,19 @@ func TestLoadConfigRequiresTheConfirmedSerial(t *testing.T) {
 	}
 }
 
-// join is not merely unvalidated for this command, it is meaningless: frame
-// bootstrap exists for node zero, when no cluster exists yet, so there is
-// nothing to join. Letting it through would run image build, media attach
-// and a machine reset before failing at the Ready phase with no cluster to
-// check the joined node against -- a wiped disk on the way to a config
-// error.
-func TestLoadConfigRequiresClusterInit(t *testing.T) {
-	p := writeConfig(t, validConfig(func(c *Config) { c.Cluster.Mode = provision.ClusterJoin }))
+// join used to be refused outright; it is accepted now, but only complete.
+// A join config with the mode alone -- no server, no token, no existing
+// cluster to check the node against -- is the one that would wipe a disk
+// on the way to a config error, so it is refused at load.
+func TestLoadConfigRefusesAJoinWithOnlyTheMode(t *testing.T) {
+	p := writeConfig(t, validConfig(func(c *Config) { c.Cluster.Mode = provision.ClusterJoin; c.Out = "" }))
 	if _, err := LoadConfig(p); err == nil {
-		t.Fatal("cluster.mode: join was accepted; frame bootstrap has no cluster to join")
+		t.Fatal("cluster.mode: join with no server, token or kubeconfig was accepted")
 	}
 }
 
 // init is the positive control for the test above: without it, a check that
-// refused every mode -- including the only one this command can ever act
-// on -- would pass that test for the wrong reason.
+// refused every mode would pass that test for the wrong reason.
 func TestLoadConfigAcceptsClusterInit(t *testing.T) {
 	p := writeConfig(t, validConfig(func(c *Config) { c.Cluster.Mode = provision.ClusterInit }))
 	if _, err := LoadConfig(p); err != nil {
@@ -269,7 +266,7 @@ func validConfig(mutate func(*Config)) Config {
 		Kind:  provision.LayoutSingleDisk,
 		Disks: []provision.Disk{{ByID: "/dev/disk/by-id/test-disk", SizeBytes: 500_000_000_000}},
 	}
-	cfg.Cluster = provision.ClusterTarget{
+	cfg.Cluster.ClusterTarget = provision.ClusterTarget{
 		Mode:       provision.ClusterInit,
 		K3sVersion: "v1.33.4+k3s1",
 	}

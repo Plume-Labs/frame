@@ -17,13 +17,16 @@ limitations under the License.
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/gothshoot/frame/internal/provision"
 )
@@ -32,23 +35,78 @@ import (
 // apiserver to hold one. frame bootstrap reads it once, from a laptop, to
 // install node zero -- the one machine no operator running inside a cluster
 // could ever have installed, because the cluster it would run in does not
-// exist yet.
+// exist yet -- or to reinstall a machine and have it rejoin a cluster that
+// still exists (cluster.mode: join), when the controller that would
+// normally do that is not an option: the machine being reinstalled is the
+// one it runs on, or the cluster is too degraded to host it.
 type Config struct {
 	BMC struct {
-		Address            string `yaml:"address"`
-		Username           string `yaml:"username"`
-		Password           string `yaml:"password"`
+		Address  string `yaml:"address"`
+		Username string `yaml:"username"`
+		// Password is still accepted in the clear, for compatibility: every
+		// init config written before PasswordFile existed carries it here,
+		// and refusing it would break the one command meant for the day a
+		// cluster is gone -- the worst day to discover a config format
+		// changed. The file holding it is permission-checked either way.
+		// Setting both is refused rather than resolved by precedence: the
+		// operator meant one of them, and guessing which is how a stale
+		// password gets used.
+		Password string `yaml:"password"`
+		// PasswordFile names a file holding only the password (a trailing
+		// newline is dropped). Preferred: the config itself then carries no
+		// secret and can be kept, copied and diffed like any other file.
+		PasswordFile       string `yaml:"passwordFile"`
 		InsecureSkipVerify bool   `yaml:"insecureSkipVerify"`
 	} `yaml:"bmc"`
-	ConfirmSerial string                  `yaml:"confirmSerial"`
-	Hostname      string                  `yaml:"hostname"`
-	Network       provision.Network       `yaml:"network"`
-	Layout        provision.Layout        `yaml:"layout"`
-	Cluster       provision.ClusterTarget `yaml:"cluster"`
-	BootMode      string                  `yaml:"bootMode"`
-	SSHKeyPath    string                  `yaml:"sshKeyPath"` // the private key; its .pub is what enters the image
-	MediaBaseURL  string                  `yaml:"mediaBaseURL"`
-	Out           string                  `yaml:"out"`
+	ConfirmSerial string            `yaml:"confirmSerial"`
+	Hostname      string            `yaml:"hostname"`
+	Network       provision.Network `yaml:"network"`
+	Layout        provision.Layout  `yaml:"layout"`
+	Cluster       ClusterConfig     `yaml:"cluster"`
+	BootMode      string            `yaml:"bootMode"`
+	SSHKeyPath    string            `yaml:"sshKeyPath"` // the private key; its .pub is what enters the image
+	MediaBaseURL  string            `yaml:"mediaBaseURL"`
+	// Out is where an init writes the new cluster's kubeconfig. init only:
+	// a join produces none, and a join config naming one is refused rather
+	// than left to suggest a file will appear there.
+	Out string `yaml:"out"`
+	// Kubeconfig names the EXISTING cluster's kubeconfig. join only, and
+	// required there: it is what the Ready phase checks the rejoined node
+	// against. frame bootstrap has no cluster of its own to fall back to,
+	// so without it a join could wipe the disk, install k3s, and only then
+	// discover it has no way to tell whether the node ever came back.
+	Kubeconfig string `yaml:"kubeconfig"`
+	// InstallTimeout overrides the Installing phase's budget (45 minutes by
+	// default, see defaultPhaseTimeouts). A Go duration: "90m", "1h30m".
+	// Zero or absent keeps the default. It is the one budget worth tuning
+	// per machine: it covers the virtual-media read and `updates: security`,
+	// both of which depend on the BMC and the archive mirror, not on Frame.
+	InstallTimeout time.Duration `yaml:"installTimeout"`
+
+	// existingKubeconfig is the content of Kubeconfig, read once at load
+	// time so an unreadable or unparsable file is refused before the BMC is
+	// touched, not at Ready, after the disk is wiped. Unexported, so it
+	// never round-trips through YAML.
+	existingKubeconfig []byte
+}
+
+// ClusterConfig is provision.ClusterTarget plus the one field a file on a
+// laptop needs that a FrameInstall does not: where to read the join token
+// from. The controller reads it from a Secret (joinTokenRef); this command
+// has no Secret to read, so it reads a file.
+type ClusterConfig struct {
+	provision.ClusterTarget `yaml:",inline"`
+	// JoinTokenFile names a file holding only the k3s join token (a
+	// trailing newline is dropped) -- the content of
+	// /var/lib/rancher/k3s/server/node-token on a server node. join only.
+	//
+	// The inline joinToken key is refused outright, unlike bmc.password:
+	// there is no compatibility to keep, because no config carrying it was
+	// ever accepted -- this command refused cluster.mode: join until the
+	// same change that introduced this field. A cluster-wide join token is
+	// also a heavier secret than one machine's BMC password: anyone who
+	// holds it can add a node to the cluster.
+	JoinTokenFile string `yaml:"joinTokenFile"`
 }
 
 // worldReadable is the bit LoadConfig refuses: "other" read permission.
@@ -60,6 +118,14 @@ type Config struct {
 // laptop it sits on.
 const worldReadable = 0o004
 
+// groupOrOtherReadable is the stricter bit set refused on a file that holds
+// nothing BUT a secret (bmc.passwordFile, cluster.joinTokenFile) or an
+// admin credential (kubeconfig). The config file itself only refuses
+// "other", because it is a document an operator may reasonably share with
+// their own group; a file whose entire content is a password or a join
+// token has no such reader.
+const groupOrOtherReadable = 0o044
+
 // LoadConfig reads and validates path. Every check below runs before the
 // config is handed back, and in this order: the file's own permissions
 // first (nothing about its content matters if any account on this machine
@@ -68,9 +134,13 @@ const worldReadable = 0o004
 // wasting real time -- an unreachable MediaBaseURL as a twenty-minute
 // silence (see validateMediaBaseURL), an unconfirmed serial as a wiped
 // disk on the wrong machine (provision.Install's own Pending phase, which
-// this only pre-empts) -- and finally that the public half of the named SSH
-// key is actually there to read, since only that half is ever meant to
-// leave this laptop.
+// this only pre-empts) -- then the secrets named by path (resolveSecrets),
+// the cluster target and what its mode requires (out for init; the
+// existing cluster's kubeconfig for join), and finally that the public
+// half of the named SSH key is actually there to read, since only that
+// half is ever meant to leave this laptop. All of it before any BMC is
+// dialled: run() calls nothing that reaches off this laptop until
+// LoadConfig has returned.
 //
 // No error path here ever formats cfg or any of its fields wholesale (no
 // %v/%+v of the Config or BMC struct, and the raw file bytes are never
@@ -107,31 +177,62 @@ func LoadConfig(path string) (Config, error) {
 			"confirmSerial is empty: refusing, because an empty confirmation proves nothing about which machine this is and the cost of being wrong is a wiped disk on the wrong one")
 	}
 
-	// cluster.mode: join is not merely unvalidated for this command, it is
-	// meaningless. frame bootstrap exists for node zero, when no cluster
-	// exists yet -- there is nothing to join. Checked here, before the
-	// machine is ever touched, for the same reason Task 5's validation
-	// runs before Join does: a malformed value refused only deep into
-	// Joining is refused after the disk is already wiped. This is a
-	// stronger case than that one -- "asked for something this binary
-	// cannot do" isn't a bad value, it is the wrong command, and letting
-	// Install run image build, media attach and a machine reset before
-	// saying so wipes a disk on the way to telling the operator to have
-	// used `FrameInstall` instead.
-	if cfg.Cluster.Mode != provision.ClusterInit {
-		return Config{}, fmt.Errorf(
-			"cluster.mode %q: frame bootstrap creates a cluster, from no cluster at all -- it does not join an existing one; joining a node to a cluster that already exists is the controller's job, via a FrameInstall, not this command's",
-			cfg.Cluster.Mode)
+	if err := resolveSecrets(&cfg); err != nil {
+		return Config{}, err
 	}
 
-	// `out` is checked here, with the other four, on the same principle:
-	// a bad value refused late is refused after the disk is wiped. It is
-	// also the only output of this command that cannot be regenerated --
-	// the cluster's admin credential exists in exactly one place and this
-	// path is where it lands. An unwritable `out` discovered after Install
-	// returns means the cluster is up and unreachable, forever.
-	if err := checkOutWritable(cfg.Out); err != nil {
+	// The cluster target is checked here, with the rest, for the reason
+	// every check in this function exists: provision.Install would refuse
+	// the same values at its own Pending phase, but a hand-written file is
+	// best corrected while the operator is still at the keyboard. Join's
+	// two required fields get their own message first, naming the config
+	// keys to set, since ValidateClusterTarget can only name the values.
+	if cfg.Cluster.Mode == provision.ClusterJoin {
+		if strings.TrimSpace(cfg.Cluster.ServerURL) == "" {
+			return Config{}, errors.New(
+				"cluster.mode is join but cluster.serverURL is empty: it is the existing cluster's API address, e.g. https://192.0.2.201:6443")
+		}
+		if cfg.Cluster.JoinToken == "" {
+			return Config{}, errors.New(
+				"cluster.mode is join but cluster.joinTokenFile is not set: it names a file holding the token from /var/lib/rancher/k3s/server/node-token on a server node")
+		}
+	}
+	if err := provision.ValidateClusterTarget(cfg.Cluster.ClusterTarget); err != nil {
 		return Config{}, err
+	}
+
+	switch cfg.Cluster.Mode {
+	case provision.ClusterInit:
+		// kubeconfig is meaningless here -- there is no existing cluster
+		// for an init to check against -- and silently ignoring it would
+		// let an operator believe their join config was a join.
+		if cfg.Kubeconfig != "" {
+			return Config{}, errors.New(
+				"kubeconfig is set but cluster.mode is init: kubeconfig names an existing cluster to rejoin, and init creates a new one; remove one or the other")
+		}
+		// `out` is checked here, with the other four, on the same principle:
+		// a bad value refused late is refused after the disk is wiped. It is
+		// also the only output of this command that cannot be regenerated --
+		// the cluster's admin credential exists in exactly one place and this
+		// path is where it lands. An unwritable `out` discovered after Install
+		// returns means the cluster is up and unreachable, forever.
+		if err := checkOutWritable(cfg.Out); err != nil {
+			return Config{}, err
+		}
+	case provision.ClusterJoin:
+		if cfg.Out != "" {
+			return Config{}, fmt.Errorf(
+				"out %s is set but cluster.mode is join: a join produces no kubeconfig, the existing cluster's own stays the one to use; remove out", cfg.Out)
+		}
+		kc, err := loadExistingKubeconfig(cfg.Kubeconfig)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.existingKubeconfig = kc
+	}
+
+	if cfg.InstallTimeout < 0 {
+		return Config{}, fmt.Errorf("installTimeout %s is negative", cfg.InstallTimeout)
 	}
 
 	if strings.TrimSpace(cfg.SSHKeyPath) == "" {
@@ -229,4 +330,100 @@ func checkOutWritable(path string) error {
 		return err
 	}
 	return os.Remove(path)
+}
+
+// resolveSecrets moves every secret the config names by path into the
+// field the rest of this command reads, so main.go stays unaware of where
+// a secret came from.
+//
+// No error here ever carries a secret's content -- only the key and the
+// path. The content is not even logged when it is refused for being empty.
+func resolveSecrets(cfg *Config) error {
+	if cfg.BMC.PasswordFile != "" {
+		if cfg.BMC.Password != "" {
+			return errors.New(
+				"bmc.password and bmc.passwordFile are both set: keep one -- a password in two places is how the stale one ends up used")
+		}
+		pw, err := readSecretFile("bmc.passwordFile", cfg.BMC.PasswordFile)
+		if err != nil {
+			return err
+		}
+		cfg.BMC.Password = pw
+	}
+
+	if cfg.Cluster.JoinToken != "" {
+		return errors.New(
+			"cluster.joinToken is set in the config file: refusing -- put the token in a file of its own, mode 0600, and name it with cluster.joinTokenFile")
+	}
+	if cfg.Cluster.JoinTokenFile != "" {
+		if cfg.Cluster.Mode != provision.ClusterJoin {
+			return fmt.Errorf("cluster.joinTokenFile is set but cluster.mode is %q: a join token is only read for join", cfg.Cluster.Mode)
+		}
+		tok, err := readSecretFile("cluster.joinTokenFile", cfg.Cluster.JoinTokenFile)
+		if err != nil {
+			return err
+		}
+		cfg.Cluster.JoinToken = tok
+	}
+	return nil
+}
+
+// readSecretFile reads a file holding exactly one secret. It refuses a file
+// any group member or other account can read, and drops exactly one
+// trailing newline -- the one `echo` and every editor add -- and nothing
+// else: a password may legitimately begin or end with a space.
+func readSecretFile(key, path string) (string, error) {
+	b, err := readPrivateFile(key, path)
+	if err != nil {
+		return "", err
+	}
+	v := strings.TrimSuffix(string(b), "\n")
+	if v == "" {
+		return "", fmt.Errorf("%s %s is empty", key, path)
+	}
+	return v, nil
+}
+
+// readPrivateFile stats path before reading it and refuses it if it is
+// readable by group or other. The mode is checked on what the path resolves
+// to, so a private symlink to a world-readable file is refused too.
+func readPrivateFile(key, path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	if info.Mode().Perm()&groupOrOtherReadable != 0 {
+		return nil, fmt.Errorf(
+			"%s %s is readable by group or other (mode %s): refusing, it holds a credential -- chmod 600 it",
+			key, path, info.Mode().Perm())
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	return b, nil
+}
+
+// loadExistingKubeconfig reads and parses the existing cluster's
+// kubeconfig. Parsed here, not just read: a file that is not a kubeconfig
+// would otherwise be discovered at the Ready phase, with the machine
+// already wiped and reinstalled and nothing able to say whether it rejoined.
+// Only parsed -- the cluster is not contacted, since nothing at load time
+// is allowed to reach off this laptop.
+func loadExistingKubeconfig(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New(
+			"cluster.mode is join but kubeconfig is not set: it names the existing cluster's kubeconfig, which is what the Ready phase checks the rejoined node against -- frame bootstrap has no cluster of its own to ask")
+	}
+	b, err := readPrivateFile("kubeconfig", path)
+	if err != nil {
+		return nil, err
+	}
+	// The parser's own error is not wrapped: a YAML error quotes the line
+	// it choked on, and in a kubeconfig that line may be a client key.
+	if _, err := clientcmd.RESTConfigFromKubeConfig(b); err != nil {
+		return nil, fmt.Errorf(
+			"kubeconfig %s does not parse as a kubeconfig (the parser's message is withheld: it can quote the file, and the file holds credentials)", path)
+	}
+	return b, nil
 }
