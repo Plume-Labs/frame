@@ -627,7 +627,7 @@ func TestBuildHandlerServesBeaconStateBack(t *testing.T) {
 		t.Fatalf("decoding response: %v", err)
 	}
 	if got.LastCheckpoint != CheckpointEarly || !got.LastSeen.Equal(seen) || got.Count != 1 {
-		t.Errorf("beacon state = %+v, want partman at %v with count 1", got, seen)
+		t.Errorf("beacon state = %+v, want early at %v with count 1", got, seen)
 	}
 }
 
@@ -758,7 +758,25 @@ func TestHTTPImageStoreProgressReadsTheBuildListener(t *testing.T) {
 		t.Fatal("known = false for an install that has reported")
 	}
 	if got.LastCheckpoint != CheckpointEarly || !got.LastSeen.Equal(seen) {
-		t.Errorf("progress = %+v, want partman at %v", got, seen)
+		t.Errorf("progress = %+v, want early at %v", got, seen)
+	}
+}
+
+// FailedAt crosses the wire: the controller dates InstallerFailed by it.
+func TestHTTPImageStoreProgressCarriesWhenTheInstallFailed(t *testing.T) {
+	failed := time.Unix(1_700_000_000, 0).UTC()
+	store := NewBeaconStore(8)
+	store.Record(testBeaconToken, CheckpointFailed, failed)
+	store.Record(testBeaconToken, CheckpointEarly, failed.Add(time.Minute))
+	srv := httptest.NewServer(BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store))
+	defer srv.Close()
+
+	got, _, err := (&HTTPImageStore{BuildURL: srv.URL, MediaURL: testMediaURL}).Progress(context.Background(), testBeaconToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.FailedAt.Equal(failed) {
+		t.Errorf("FailedAt = %v, want %v", got.FailedAt, failed)
 	}
 }
 

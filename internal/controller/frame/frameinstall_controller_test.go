@@ -1330,6 +1330,17 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 			wantInMsg:  "failed",
 		},
 		{
+			// The heartbeat keeps LastSeen fresh long after the failure;
+			// the age an operator reads must be the failure's, not the
+			// last heartbeat's.
+			name:       "the failure is dated by when it happened, not by the last heartbeat",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointFailed, LastSeen: now.Add(-fresh), FailedAt: now.Add(-7 * time.Minute), Count: 30},
+			known:      true,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "InstallerFailed",
+			wantInMsg:  "7m0s ago",
+		},
+		{
 			name:       "the installer reported failure and went quiet",
 			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointFailed, LastSeen: now.Add(-lost), Count: 30},
 			known:      true,

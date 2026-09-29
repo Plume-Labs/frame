@@ -142,10 +142,19 @@ func installerRespondingCondition(st provision.BeaconState, known, everKnown boo
 		// the heartbeat started at early keeps arriving until the installer
 		// environment dies, and must not make a failed install read as a
 		// running one. What failed is on the machine's console, not here.
+		//
+		// Dated by FailedAt, not LastSeen: that same heartbeat keeps
+		// LastSeen a few seconds old however long ago the failure was. A
+		// zero FailedAt is a provisiond that predates the field, and gets
+		// no age rather than a wrong one.
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = "InstallerFailed"
-		cond.Message = fmt.Sprintf("the installer reported that the install failed, %s ago; the cause is on the machine's console",
-			now.Sub(st.LastSeen).Round(time.Second))
+		if st.FailedAt.IsZero() {
+			cond.Message = "the installer reported that the install failed; the cause is on the machine's console"
+		} else {
+			cond.Message = fmt.Sprintf("the installer reported that the install failed at %s, %s ago; the cause is on the machine's console",
+				st.FailedAt.UTC().Format(time.RFC3339), now.Sub(st.FailedAt).Round(time.Second))
+		}
 	case now.Sub(st.LastSeen) > beaconLostAfter && st.LastCheckpoint == provision.CheckpointLate:
 		// late is the last thing the installer sends before subiquity
 		// reboots the machine, so the heartbeat stops within seconds of it

@@ -12,12 +12,17 @@ import (
 const defaultBeaconCapacity = 64
 
 // BeaconState is everything provisiond keeps about one installation. It is
-// deliberately three fields: a diagnostic that is not allowed to decide
-// anything does not need more, and every field here is one an unauthenticated
-// caller can influence.
+// deliberately small: a diagnostic that is not allowed to decide anything
+// does not need more, and every field here is one an unauthenticated caller
+// can influence.
+//
+// FailedAt is when `failed` first arrived, zero until it does. LastSeen
+// cannot date a failure: the `early` heartbeat keeps arriving after
+// error-commands ran, for as long as the installer environment lives.
 type BeaconState struct {
 	LastCheckpoint string    `json:"lastCheckpoint"`
 	LastSeen       time.Time `json:"lastSeen"`
+	FailedAt       time.Time `json:"failedAt,omitzero"`
 	Count          int       `json:"count"`
 }
 
@@ -84,9 +89,17 @@ func (s *BeaconStore) Record(token, checkpoint string, now time.Time) bool {
 		lastCheckpoint = prev.LastCheckpoint
 	}
 
+	// Set once, by the first `failed`, and never moved after: a second
+	// `failed` or a heartbeat is not a new failure.
+	failedAt := prev.FailedAt
+	if checkpoint == CheckpointFailed && failedAt.IsZero() {
+		failedAt = now
+	}
+
 	s.entries[token] = BeaconState{
 		LastCheckpoint: lastCheckpoint,
 		LastSeen:       now,
+		FailedAt:       failedAt,
 		Count:          prev.Count + 1,
 	}
 	return true

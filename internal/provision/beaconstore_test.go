@@ -148,3 +148,28 @@ func TestBeaconStoreKeepsFailedAcrossAHeartbeat(t *testing.T) {
 		t.Errorf("LastCheckpoint = %q, want %q", got.LastCheckpoint, CheckpointFailed)
 	}
 }
+
+// LastSeen moves with every heartbeat, including the ones after a failure, so
+// it cannot say when the failure happened. FailedAt is set by the first
+// `failed` and never moved: not by a heartbeat, not by a second `failed`.
+func TestBeaconStoreRecordsWhenTheInstallFirstFailed(t *testing.T) {
+	s := NewBeaconStore(8)
+	t0 := time.Unix(1_700_000_000, 0)
+	s.Record(testBeaconToken, CheckpointEarly, t0)
+	if got, _ := s.Get(testBeaconToken); !got.FailedAt.IsZero() {
+		t.Fatalf("FailedAt = %v before any failure", got.FailedAt)
+	}
+	failedAt := t0.Add(time.Minute)
+	s.Record(testBeaconToken, CheckpointFailed, failedAt)
+	s.Record(testBeaconToken, CheckpointEarly, t0.Add(2*time.Minute))
+	s.Record(testBeaconToken, CheckpointFailed, t0.Add(3*time.Minute))
+	s.Record(testBeaconToken, CheckpointEarly, t0.Add(4*time.Minute))
+
+	got, _ := s.Get(testBeaconToken)
+	if !got.FailedAt.Equal(failedAt) {
+		t.Errorf("FailedAt = %v, want the first failure at %v", got.FailedAt, failedAt)
+	}
+	if !got.LastSeen.Equal(t0.Add(4 * time.Minute)) {
+		t.Errorf("LastSeen = %v; it still tracks liveness", got.LastSeen)
+	}
+}
