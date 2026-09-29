@@ -19,6 +19,13 @@ spec:
   repository: nvcr.io/nvidia
   image: driver
   version: "580.178.04"
+  # Proprietary modules, never open: the open GPU kernel modules require
+  # Turing or newer, and the Tesla P4 is Pascal. "auto" (the CRD default)
+  # is meant to pick the same, but that choice is left to the operator's
+  # detection; this states it. Field checked against the NVIDIADriver CRD of
+  # gpu-operator v26.3.3 (config/crd/bases/nvidia.com_nvidiadrivers.yaml:
+  # enum auto, open, proprietary; useOpenKernelModules is deprecated there).
+  kernelModuleType: proprietary
   usePrecompiled: false
   imagePullPolicy: IfNotPresent
   nodeSelector:
