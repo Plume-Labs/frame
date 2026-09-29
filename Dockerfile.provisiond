@@ -1,5 +1,5 @@
 # Dockerfile for frame-provisiond, the component that assembles per-machine
-# Debian installer images and serves them to a machine's BMC over HTTP. Kept
+# Ubuntu installer images and serves them to a machine's BMC over HTTP. Kept
 # separate from Dockerfile.controller for the same reason authd and uiproxy
 # are: each binary gets its own minimal image rather than a shared one that
 # overgrants what a compromised container could reach.
@@ -8,7 +8,7 @@
 # (Dockerfile.controller:20): the whole point of this component existing is
 # that xorriso cannot live in the manager image, so it has to live somewhere,
 # and here is that somewhere. debian:13-slim carries apt, so xorriso and
-# ca-certificates (FetchBase talks HTTPS to cdimage.debian.org, and TLS
+# ca-certificates (FetchBase talks HTTPS to releases.ubuntu.com, and TLS
 # verification needs a root store) are installed rather than absent by
 # construction the way they are everywhere else in this tree.
 FROM golang:1.26 AS builder
@@ -34,7 +34,7 @@ RUN apt-get update && \
 
 # The same UID/GID the distroless/static:nonroot images in this tree run as
 # (Dockerfile.controller, Dockerfile.authd, Dockerfile.uiproxy), so the
-# deployment's securityContext and the emptyDir it writes 700 MB images into
+# deployment's securityContext and the emptyDir it writes ~4 GB images into
 # agree on one identity across every image in the fleet.
 RUN groupadd -g 65532 -r frame && \
     useradd -u 65532 -r -g frame -M -s /usr/sbin/nologin frame

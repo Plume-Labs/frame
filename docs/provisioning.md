@@ -1,5 +1,12 @@
 # How a machine becomes a node
 
+> **Update, 2026-09-29: the base is Ubuntu 24.04 LTS, not Debian.** The NVIDIA
+> GPU Operator publishes driver images for Ubuntu 24.04 and none for Debian,
+> so a Debian GPU node needed a hand-installed driver outside anything Frame
+> declares. The installer is now subiquity autoinstall; see
+> [the design](superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
+> What follows is the 2026-09-10 record and stays as written.
+
 **Decision, 2026-09-10: Talos is out.** The estate moves to a custom
 Debian-based image. This document records what that invalidates, what it
 turns out never worked in the first place, and what has to be rebuilt.

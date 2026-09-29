@@ -14,7 +14,7 @@ The gate is narrow on purpose: the freeze waits for S1's *model* to settle, prov
 Running both tracks with a single operator means alternating between them, not advancing both at once. Whichever gets attention, the other waits.
 
 > **The OS decision moved on 2026-09-10: Talos is out, a custom Debian-based
-> image is in.** The Talos-shaped items — `TalosMachineConfig`,
+> image is in (Ubuntu 24.04 LTS since 2026-09-29).** The Talos-shaped items — `TalosMachineConfig`,
 > `TalosUpgrade`, and the provisioning half of `FrameNode` — were removed
 > from the code on 2026-09-27; the auto-update track lost the mechanism it
 > assumed. What survived, what died, and the order it was rebuilt in are in
@@ -102,7 +102,7 @@ The bar for each phase is its **Exit criteria** — a phase is not done until th
 - ✅ UI (13 tabbed screens behind an Overview landing, plus a Tasks view) and SDK reach the Kubernetes API through the in-pod `frame-uiproxy` sidecar, which impersonates the signed-in `FrameUser` — the direct-ServiceAccount-token path this bullet used to describe as "Prod" is gone; see [deployment.md](deployment.md)'s RBAC section. (Local development against a developer's own kubeconfig via `kubectl proxy` is a separate workflow, outside the deployed pod, but it is **not** unaffected, as this sentence claimed until 2026-09-08: the console now calls `currentSession()` before it renders anything, and `kubectl proxy` serves no `/auth`. `npm run dev` needs authd reachable too — a port-forward, or `AUTH_PROXY_TARGET`. See [development.md](development.md).)
 - ✅ `deploy/` IaC: Ceph (RGW), Cilium/RDMA, Argo, monitoring, GitOps
 - ✅ **authd is consumed.** Argon2id passwords, ES256 OIDC issuer with JWKS, usernameless WebAuthn, FrameUser store with a last-admin webhook guard — all merged and running in `cluster-control` since Stage 1. Stages 2 and 3 are done, by a different route than either was originally planned: Stage 2 was to configure the apiserver's `--oidc-issuer-url` to trust authd directly (native OIDC); instead, the `frame-uiproxy` sidecar (replacing the `kubectl proxy` sidecar) validates authd's ES256 token itself and forwards the request to the apiserver as an impersonated user, which needs no apiserver flag. Stage 3 (switching the UI over) landed the same way: the UI now requires a session, and every request carries the impersonated identity through to RBAC. Native `--oidc-issuer-url` configuration remains a real follow-up — it belongs in the G9 cluster's `/etc/rancher/k3s/config.yaml`, not as an unfinished stage of this work, since it changes apiserver flags on a running control plane rather than anything this repository deploys. The login screen offers **both** password and usernameless passkey sign-in (`src/components/LoginView.tsx`), and enrolment is in the sidebar footer (`src/components/PasskeysDialog.tsx`) — the rollout in [deployment.md](deployment.md) depends on that dialog, because the bootstrapped first admin has `passwordAuth: disabled` and a passkey is the only credential it can ever acquire.
-- ✅ Bare-metal provisioning on Debian (`FrameMachine` + `FrameInstall`, `internal/provision`). The Talos/Omni path (`deploy/talos`, `deploy/omni`, `deploy/pxe`, the two Talos CRDs, FrameNode's discovery half) was never executed and was removed on 2026-09-27; see [provisioning.md](provisioning.md) and [upgrading.md](upgrading.md).
+- ✅ Bare-metal provisioning on Ubuntu 24.04 LTS, Debian until 2026-09-29 (`FrameMachine` + `FrameInstall`, `internal/provision`). The Talos/Omni path (`deploy/talos`, `deploy/omni`, `deploy/pxe`, the two Talos CRDs, FrameNode's discovery half) was never executed and was removed on 2026-09-27; see [provisioning.md](provisioning.md) and [upgrading.md](upgrading.md).
 
 ---
 
@@ -223,11 +223,11 @@ The design spec posed three hypotheses under "Where this may force the core API 
 
 Frame itself — **and now the node OS too, which this section used to inherit rather than own.**
 
-`TalosUpgrade` covered the node OS while the estate ran Talos. It does not any more: since 2026-09-10 a node is a Debian machine installed by `FrameInstall`, and **nothing upgrades it**. The `TalosUpgrade` CRD and its controller were removed on 2026-09-27 (work item 3 of [provisioning.md](provisioning.md)).
+`TalosUpgrade` covered the node OS while the estate ran Talos. It does not any more: since 2026-09-10 a node is a machine installed by `FrameInstall` (Ubuntu 24.04 LTS since 2026-09-29), and **nothing upgrades it**. The `TalosUpgrade` CRD and its controller were removed on 2026-09-27 (work item 3 of [provisioning.md](provisioning.md)).
 
 So S3 has three pieces, not two, and the third is the one that needs a design before anything else:
 
-- **node OS updates — unscoped.** Whatever replaces `TalosUpgrade` has to answer what an update *is* on a Debian node: unattended-upgrades in place, a rebuild through `FrameInstall`, or an image-based scheme. Each implies a different reboot story, a different rollback story and a different relationship with `FrameNode`'s drain. This is a design question, not a backlog item, and the two specs below do not touch it.
+- **node OS updates — unscoped.** Whatever replaces `TalosUpgrade` has to answer what an update *is* on an Ubuntu node: unattended-upgrades in place, a rebuild through `FrameInstall`, or an image-based scheme. Each implies a different reboot story, a different rollback story and a different relationship with `FrameNode`'s drain. This is a design question, not a backlog item, and the two specs below do not touch it.
 
 - a release chain (`docs/superpowers/specs/2026-08-09-frame-release-chain-design.md`) publishing the three images to GHCR from a git tag — a prerequisite, and the place where CI's own defect gets fixed: `build.yml` builds the root Dockerfile, which is the UI, and publishes it under the bare repository name as though it were the project, while the operator and authd are built by CI nowhere
 - an update screen (`docs/superpowers/specs/2026-08-09-frame-update-screen-design.md`) showing what runs, what is available, and what an update would disturb right now

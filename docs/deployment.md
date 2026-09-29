@@ -1228,18 +1228,18 @@ switched by a click.
 
 ---
 
-## Provisioning a machine with Debian
+## Provisioning a machine with Ubuntu
 
-The 2026-09-11 provisioning-Debian lot replaced Talos maintenance-mode
-discovery (dead, see [provisioning.md](provisioning.md), and removed from the
-code on 2026-09-27) with a Debian
-preseed built and served per machine: `internal/provision` renders the
-preseed and the partman layout, remasters a netinst ISO, drives the install
-over SSH and a k3s join, and the `FrameInstall` CRD plus its controller
-sequence all of that against a real BMC. `frame-provisiond` builds the
-images and serves them — and their preseeds — to the machine's BMC. Full
-design in
-[`docs/superpowers/specs/2026-09-11-provisioning-debian-design.md`](superpowers/specs/2026-09-11-provisioning-debian-design.md).
+Frame installs Ubuntu 24.04 LTS (decision of 2026-09-29, replacing the Debian
+base of 2026-09-11: the NVIDIA GPU Operator publishes driver images for
+Ubuntu 24.04 and none for Debian). `internal/provision` renders a subiquity
+autoinstall document per machine and serves it over cloud-init's NoCloud
+datasource, remasters the Ubuntu server ISO so it boots straight into that
+install, drives the install over the BMC, checks the result over SSH and
+joins k3s; the `FrameInstall` CRD plus its controller sequence all of that
+against a real BMC. `frame-provisiond` builds the images and serves them —
+and their seeds — to the machine's BMC. Full design in
+[`docs/superpowers/specs/2026-09-29-provisioning-ubuntu-design.md`](superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
 
 This assumes the machine is already a registered, reachable `FrameMachine`
 (the "Registering a machine's BMC" section above) — `FrameInstall` drives
@@ -1250,7 +1250,7 @@ already registered there.
 
 `FrameInstallSpec.sshKeyRef` names a Secret holding `id` (private) and
 `id.pub` (public) — only the public half ever reaches an installer image,
-baked into the preseed's `late_command` as an authorized key. The
+written into the autoinstall document's `ssh.authorized-keys`. The
 FrameInstall's namespace must be granted to the manager for reading (see
 "Manager access to Secrets").
 
@@ -1335,24 +1335,17 @@ curl -sf http://192.0.2.10:30581/healthz && echo "media listener reachable"
 
 ### 3. Facts about this machine, worth knowing before you point this at it
 
-- **The preseed is fetched over HTTP, never read from the image.** Real
-  hardware refused a local one: booting `file=/cdrom/preseed.cfg` read 79 MB
-  off the virtual CD and stopped before the network came up; `url=` against
-  the media listener above read 139–148 MB and got through, in three trials
-  each way. The mechanism is unknown — nobody watched the console during
-  either boot — and this is recorded as a correlation, not an explanation.
-  It is also why the two values in step 2 are load-bearing rather than
-  cosmetic: a wrong `MEDIA_URL` does not degrade the install, it stops it
-  exactly where the local read used to stop.
-- **`interface=auto` is fixed into every built image.** What was measured on
-  the ML350 Gen9 (four NICs, one cabled) is narrower than the explanation
-  this bullet used to give: **without `interface=auto` the boot did not
-  reach the preseed; with it, it did.** Nobody watched the console, so "d-i
-  is asking which interface to use" is a plausible reading of that symptom
-  and not a confirmed mechanism — the same standing this document gives the
-  `url=` result above, and the same wording `internal/provision/iso.go`'s
-  own comment carries. Either way the failure looks like a hung boot rather
-  than like a question nobody answered.
+- **The install network must offer DHCP.** The autoinstall seed is fetched
+  over HTTP before its own `network:` section applies, so the live
+  environment takes an address with `ip=dhcp` first. The installed system
+  then comes up on the static address from the `FrameInstall`. The Debian
+  path needed `interface=auto` on this four-NIC, one-cable machine; whether
+  `ip=dhcp` finds the cabled port unaided is **not yet observed** (see
+  "Not yet executed").
+- **The address lands on whichever `en*` port has carrier.** The rendered
+  netplan has one stanza matching every `en*` interface, `optional: true`;
+  networkd configures only a link with carrier. Two cabled ports (bonding)
+  are not supported by this and need a MAC field first.
 - **A restart mid-install is a failed install, never a resumed one.** If the
   manager restarts while a `FrameInstall` is between `Preparing` and
   `Ready`, the controller marks it `Failed` on the next reconcile rather
@@ -1367,9 +1360,9 @@ curl -sf http://192.0.2.10:30581/healthz && echo "media listener reachable"
   under HPE's OEM SmartStorage tree, which nothing in this codebase walks),
   and even populated, a Redfish drive name and a `/dev/disk/by-id` path are
   different namespaces a BMC has no way to reconcile. The disk-level check
-  that actually runs where the disks are is the preseed's own on-machine
-  size assertion (it powers the machine off rather than partition a disk
-  that doesn't match) — a controller-side equivalent is on this lot's list
+  that actually runs where the disks are is the installer's own on-machine
+  size assertion (the first early-command; it aborts the install before
+  anything is probed or wiped) — a controller-side equivalent is on this lot's list
   of gaps to close (see "Not yet executed" below), not something silently
   covered today.
 - **IML entry `1832`** warns that residual logical-volume metadata can hide
@@ -1377,7 +1370,7 @@ curl -sf http://192.0.2.10:30581/healthz && echo "media listener reachable"
   NAME,SIZE,MODEL` on the first booted system: it must list **8** disks.
   Fewer means the metadata must be cleared before trusting any `by-id` name,
   and Redfish's SmartStorage tree exposes no action that can do it. On the
-  ML350 Gen9 this lot was built against, Debian sees **7 of the 8** — the
+  ML350 Gen9 this lot was built against, Debian saw **7 of the 8** — the
   absent one is confirmed to be the 1000 GB backup disk, not either of the
   300 GB SAS disks the mirror layout below names, so the mirror is
   unaffected. IML `1832` was telling the truth about this chassis, and the
@@ -1403,12 +1396,9 @@ spec:
   network:
     address: 192.0.2.213/24
     gateway: 192.0.2.1
-    # At least one resolver is required and the apiserver enforces it. The
-    # installer resolves deb.debian.org with these, and partman runs before
-    # the base system is fetched -- so with none, the install halts asking
-    # for a mirror it cannot look up, after both disks are already gone.
-    # This example omitted dns until 2026-09-12 and would have produced
-    # exactly that.
+    # At least one resolver is required and the apiserver enforces it: the
+    # installer fetches security updates from the Ubuntu archive by name,
+    # and the installed node needs a resolver too.
     dns:
       - 192.0.2.1
   layout:
@@ -1433,13 +1423,15 @@ typo refuses the create rather than installing on the wrong machine. The two
 inventory — see the disk-guard note above for why the console's own install
 dialog asks for them as free text rather than offering a picker.
 
-`dns` is not optional. `deb.debian.org` is a name, partman runs before the
-base system is fetched, and an installer that cannot resolve its mirror
-stops at a critical-priority prompt on a machine nobody is standing in front
-of — with both disks already erased and nothing visible to Frame but the
-sixty-minute `Installing` timeout. The apiserver refuses a `FrameInstall`
-without one, `provision.ValidateSpec` refuses it again before the BMC is
-read, and the console's dialog now asks for it.
+`dns` is not optional: the installer reaches the Ubuntu archive by name
+(`updates: security`), and the node needs a resolver afterwards. The
+apiserver refuses a `FrameInstall` without one, `provision.ValidateSpec`
+refuses it again before the BMC is read, and the console's dialog asks for
+it.
+
+`bootMode` decides the disk layout the image carries: an EFI System
+Partition on each disk for `UEFI`, a `bios_grub` partition on each disk for
+`Legacy`. It is never inherited from the machine.
 
 ### 5. Read the new cluster's kubeconfig
 
@@ -1459,47 +1451,30 @@ KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
 ### Not yet executed
 
 - [ ] The remastered image boots the ML350 Gen9 unattended, in the boot mode
-      Frame set, without a keypress.
-- [ ] partman partitions the two named 300 GB disks as a mirror, and refuses
-      when a named disk is absent.
+      Frame set, without a keypress, and `ip=dhcp` finds the one cabled
+      port among four.
+- [ ] The static address lands on the cabled port (netplan `en*` stanza,
+      carrier only).
+- [ ] The two named 300 GB disks are resolved by the early-command,
+      partitioned as a mirror with an ESP on each, and a named disk that is
+      absent or the wrong size aborts the install before anything is wiped.
 - [ ] `k3s server --cluster-init` produces a cluster whose kubeconfig, as
       rewritten by Frame, reaches it from another machine.
-- [ ] **The `preseed/run` script re-runs `netcfg` and the static address
-      takes.** A preseed fetched over the network cannot preseed the network
-      — Debian says so outright, and it is why `url=` works where a local
-      file did not: `netcfg` has to bring the machine online *before* the
-      preconfiguration file can be fetched at all. Frame ships Debian's
-      documented workaround (a `preseed/run` script carrying
-      `kill-all-dhcp; netcfg`), and what is proven here is only that the
-      rendered preseed carries the directive and that the script is served at
-      the address the preseed itself names. **Whether the re-run actually
-      takes the static address has never been observed on a machine.** If it
-      does not, the node comes up on a DHCP address and Frame waits at an
-      address nobody is on — after wiping every named disk. Watch the first
-      install's console, or check the node's address before believing the
-      phase timeout.
-- [ ] **The installed node's own kernel command line is clean.** Arguments
-      after `---` on a d-i kernel line are copied onto the installed
-      system's command line; Frame now inserts its arguments before the
-      separator, but nobody has read `/proc/cmdline` on an installed node to
-      confirm it. Check it once: `url=` must not be there.
-- [ ] The node's hostname is what the `FrameInstall` asked for, not
-      `debian`. `netcfg/hostname` is set and `late_command` writes
-      `/etc/hostname` directly as a belt; neither has been seen to work.
-      The `/etc/hosts` line that belt also writes is what keeps `sudo` from
-      printing `sudo: unable to resolve host …` on every invocation — check
-      it landed, because the kubeconfig read below runs through `sudo`.
-- [ ] **The whole `Installing` gate has never run on hardware.** Three
-      things have to be true at once for that phase to end, and all three
-      are proven only against fakes: that the installed machine answers SSH
-      with Frame's key, that the `sudoers.d/frame` drop-in landed with the
-      right mode so `sudo -n` works without a password, and that
-      `/etc/frame-install-uid` exists, is readable by the `frame` user, and
-      holds the UID this run generated. Any one of them failing looks
-      identical from Frame: a twenty-minute silence ending in the
-      `Installing` timeout. On the first real install, get a console or
-      another way in and check all three by hand before believing the
-      timeout.
+- [ ] **The installed node's own kernel command line is clean.** Frame
+      inserts its arguments before `---`; read `/proc/cmdline` once on an
+      installed node: `ds=nocloud` must not be there.
+- [ ] Hostname and `/etc/hosts`: `sudo -n true` prints nothing on stderr.
+- [ ] **The whole `Installing` gate has never run on hardware.** The
+      installed machine answers SSH with Frame's key, the
+      `sudoers.d/frame` drop-in landed with mode 440, and
+      `/etc/frame-install-uid` holds the UID this run generated. Any one
+      failing looks identical from Frame: a silence ending in the
+      `Installing` timeout.
+- [ ] Rebooting with the medium still attached does not stop on a prompt
+      (`noprompt`).
+- [ ] **Phase budgets are provisional** (Preparing 30 min, Installing
+      45 min): time the base download, the remaster, the virtual-media read
+      and `updates: security` on the first install, and set them from that.
 - [ ] **Nothing exercises `cmd/bootstrap`'s `run()` end to end.** Its
       config loading, its listener start-up and its post-`Install`
       decision are each tested in isolation (`LoadConfig`,

@@ -59,8 +59,16 @@ step1_gpu_operator() {
     --set migManager.enabled=true \
     --set migManager.config.name=mig-parted-config \
     --set dcgmExporter.enabled=false \
+    --set driver.enabled=true \
+    --set driver.nvidiaDriverCRD.enabled=true \
+    --set driver.nvidiaDriverCRD.deployDefaultCR=false \
     --timeout "$DEPLOY_TIMEOUT" \
     --wait || warn "GPU Operator install failed — continuing (may not have GPU nodes)"
+
+  # The driver itself: one NVIDIADriver, pinned, Ubuntu 24.04 GPU nodes only
+  # (see the manifest's comment). deployDefaultCR=false above is what makes
+  # it the only one.
+  kubectl apply -f "$DEPLOY_DIR/kubernetes/base/nvidiadriver-580.yaml" || warn "NVIDIADriver not applied"
 
   ok "GPU Operator deployed"
 }
