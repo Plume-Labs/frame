@@ -192,6 +192,34 @@ func TestPreflightJoinWarnsWhenK3sVersionIsOlderThanTheServer(t *testing.T) {
 	}
 }
 
+// Version components compare as numbers, not text: 2 is older than 10.
+// Compared as strings, "10" < "2" and each verdict would flip.
+func TestPreflightJoinComparesTwoDigitVersionComponentsAsNumbers(t *testing.T) {
+	t.Run("agent v1.36.2 behind server v1.36.10: allowed, warned", func(t *testing.T) {
+		f, srv := newFakeCluster(t)
+		f.version = "v1.36.10+k3s1"
+		cfg := joinConfigFor(t, srv)
+		cfg.Cluster.K3sVersion = "v1.36.2+k3s1"
+		var out bytes.Buffer
+		if _, err := preflightJoin(context.Background(), &out, cfg); err != nil {
+			t.Fatalf("an agent older than its server was refused: %v", err)
+		}
+		if !strings.Contains(out.String(), "older than the server's") {
+			t.Errorf("no older-than warning:\n%s", out.String())
+		}
+	})
+	t.Run("agent v1.36.10 ahead of server v1.36.2: refused", func(t *testing.T) {
+		f, srv := newFakeCluster(t)
+		f.version = "v1.36.2+k3s1"
+		cfg := joinConfigFor(t, srv)
+		cfg.Cluster.K3sVersion = "v1.36.10+k3s1"
+		_, err := preflightJoin(context.Background(), io.Discard, cfg)
+		if err == nil || !strings.Contains(err.Error(), "newer than the server's") {
+			t.Fatalf("an agent newer than its server was not refused by its own guard: %v", err)
+		}
+	})
+}
+
 // Offline, at load: the node would register with serverURL while the
 // preflight and the Ready check read another cluster.
 func TestLoadConfigRefusesAServerURLThatIsNotTheKubeconfigsServer(t *testing.T) {
