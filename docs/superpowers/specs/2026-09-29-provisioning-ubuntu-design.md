@@ -181,6 +181,20 @@ autoinstall:
   filled from the Redfish inventory (EthernetInterfaces with LinkUp) — a CRD
   change, deliberately not made before the measurement says it is needed. Known
   limit: two cabled ports (bonding) need that field anyway.
+- **That stanza is the live system's only.** Copied as is to the installed
+  system, it would put the same address on every `en*` port that gains a carrier
+  later. A late-command pins `/target`: it reads the port that carries the route
+  to the gateway (`ip -o route get <gateway>`) and its MAC
+  (`/sys/class/net/<dev>/address`), shape-checks both, writes
+  `/target/etc/netplan/60-frame.yaml` (one stanza, `match: {macaddress: …}`,
+  `set-name: <dev>`, mode 600), removes the installer's netplan
+  (`00-installer-config.yaml` or `50-cloud-init.yaml`) and
+  `90-installer-network.cfg` (what cloud-init renders `50-cloud-init.yaml` from
+  on 24.04), and disables cloud-init's network rendering
+  (`99-zz-frame-network.cfg`), which would otherwise fall back to DHCP on the
+  first port. It refuses (exit 1) when no port or no MAC can be read. The
+  document is marshalled and travels base64-encoded; only the validated gateway
+  address enters the shell as text.
 - **Hostname and `/etc/hosts` are written by Frame, not left to subiquity.**
   `join.go` depends on `sudo` not printing "unable to resolve host"; the Debian
   preseed wrote both files for that reason, and so does this.

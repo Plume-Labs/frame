@@ -220,6 +220,7 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		// machine's own name every sudo prints "unable to resolve host".
 		fmt.Sprintf("echo '%[1]s' > /target/etc/hostname && (grep -qx '127.0.1.1 %[1]s' /target/etc/hosts || echo '127.0.1.1 %[1]s' >> /target/etc/hosts)", s.Hostname),
 		"curtin in-target --target=/target -- passwd -l frame",
+		netplanPin(v, s, targetRoot, "/sys/class/net"),
 		relockCommand(targetRoot),
 	}
 	errs := []string{}
@@ -243,10 +244,16 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		Locale:   "en_US.UTF-8",
 		Keyboard: map[string]string{"layout": "us"},
 		Network: netplan{Version: 2, Ethernets: map[string]ethernet{
-			// One stanza over every en* port: networkd only configures a link
-			// with carrier, so on a machine with four ports and one cable the
-			// address lands on the cabled one without Frame knowing its name
-			// or MAC. UNPROVEN ON HARDWARE -- recette step 1.
+			// The LIVE system's network only: one stanza over every en* port.
+			// networkd only configures a link with carrier, so on a machine
+			// with four ports and one cable the address lands on the cabled
+			// one without Frame knowing its name or MAC. UNPROVEN ON
+			// HARDWARE -- recette step 1.
+			//
+			// Not the installed system's: subiquity would copy this stanza to
+			// /target, where every en* port that later gains a carrier takes
+			// the same address. netplanPin replaces it there with one stanza
+			// matched by MAC.
 			"frame0": {
 				Match:       map[string]string{"name": "en*"},
 				Optional:    true,
@@ -308,6 +315,90 @@ func relockCommand(target string) string {
 		panic(err) // a constant map; cannot fail
 	}
 	return writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-lock.cfg", string(b), "644")
+}
+
+// quoted marshals as a double-quoted YAML scalar. The MAC placeholder needs
+// it: a MAC written plain (52:54:00:…) is a base-60 integer to a YAML 1.1
+// reader.
+type quoted string
+
+func (q quoted) MarshalYAML() (any, error) {
+	return &yaml.Node{Kind: yaml.ScalarNode, Style: yaml.DoubleQuotedStyle, Value: string(q)}, nil
+}
+
+// The two placeholders netplanPin's shell substitutes. Neither can occur in
+// any other part of the document: everything else in it is an IP address or
+// a fixed key.
+const (
+	macPlaceholder = "FRAME_PIN_MAC"
+	devPlaceholder = "FRAME_PIN_DEV"
+)
+
+type pinnedEthernet struct {
+	Match       map[string]quoted   `yaml:"match"`
+	SetName     quoted              `yaml:"set-name"`
+	DHCP4       bool                `yaml:"dhcp4"`
+	Addresses   []string            `yaml:"addresses"`
+	Routes      []map[string]string `yaml:"routes"`
+	Nameservers map[string][]string `yaml:"nameservers"`
+}
+
+// netplanPin is the late-command that replaces the installed system's netplan
+// with one stanza for one port: the port the live system reaches the gateway
+// through, matched by its MAC. Without it the installed system keeps the live
+// system's `en*` stanza, and every port that gains a carrier later -- a second
+// cable, a port that comes up after the first boot -- gets the same address
+// and a second default route.
+//
+// The port is read from the kernel (`ip route get <gateway>`), its MAC from
+// sysClassNet, and both are shape-checked in the shell before use: nothing
+// read on the machine reaches the file unchecked, and nothing from the spec
+// reaches the shell except the gateway (validated as an IP address) and the
+// base64 of a marshalled document. Refuses (exit 1, install aborted) when
+// either cannot be read -- an installed system with no address is worse than
+// an install that says why it stopped.
+//
+// Then it removes what would bring the en* stanza back: the netplan file
+// subiquity wrote (00-installer-config.yaml when it owns /etc/netplan,
+// 50-cloud-init.yaml when cloud-init does, which is 24.04's case) and
+// 90-installer-network.cfg, the cloud-init config 50-cloud-init.yaml is
+// rendered from on first boot. And it disables cloud-init's network
+// rendering, or cloud-init, finding no config at all, would fall back to DHCP
+// on the first port it sees.
+//
+// target and sysClassNet are parameters so the tests can run this against
+// temporary directories; RenderAutoinstall passes /target and /sys/class/net.
+func netplanPin(v validated, s Spec, target, sysClassNet string) string {
+	doc := map[string]any{"network": map[string]any{
+		"version": 2,
+		"ethernets": map[string]pinnedEthernet{"frame0": {
+			Match:       map[string]quoted{"macaddress": macPlaceholder},
+			SetName:     devPlaceholder,
+			DHCP4:       false,
+			Addresses:   []string{v.cidr},
+			Routes:      []map[string]string{{"to": "default", "via": s.Network.Gateway}},
+			Nameservers: map[string][]string{"addresses": s.Network.DNS},
+		}},
+	}}
+	b, err := yaml.Marshal(doc)
+	if err != nil {
+		panic(err) // plain maps, strings and bools; cannot fail
+	}
+	pinned := target + "/etc/netplan/60-frame.yaml"
+	refuse := func(why string) string {
+		return fmt.Sprintf("echo 'FRAME: %s, refusing' > /dev/console; exit 1", why)
+	}
+	return strings.Join([]string{
+		fmt.Sprintf("dev=$(ip -o route get '%s' 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p')", s.Network.Gateway),
+		fmt.Sprintf("case \"$dev\" in ''|.*|*[!A-Za-z0-9_.-]*) %s;; esac", refuse("no port carries the route to "+s.Network.Gateway)),
+		fmt.Sprintf("mac=$(cat '%s'/\"$dev\"/address 2>/dev/null)", sysClassNet),
+		"case \"$mac\" in " + strings.Repeat("[0-9a-f][0-9a-f]:", 5) + "[0-9a-f][0-9a-f]) ;; *) " + refuse("no MAC address for the gateway port") + ";; esac",
+		fmt.Sprintf("echo '%s' | base64 -d | sed \"s/%s/$mac/; s/%s/$dev/\" > '%s' && chmod 600 '%s' && rm -f '%s' '%s' '%s' && %s",
+			base64.StdEncoding.EncodeToString(b), macPlaceholder, devPlaceholder, pinned, pinned,
+			target+"/etc/netplan/00-installer-config.yaml", target+"/etc/netplan/50-cloud-init.yaml",
+			target+"/etc/cloud/cloud.cfg.d/90-installer-network.cfg",
+			writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg", "network: {config: disabled}\n", "644")),
+	}, "; ")
 }
 
 // diskResolution rewrites each placeholder in /autoinstall.yaml with the

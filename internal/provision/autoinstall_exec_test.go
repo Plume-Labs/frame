@@ -180,3 +180,145 @@ func TestFirstBootRelocksTheAccountWhenRun(t *testing.T) {
 		t.Errorf("runcmd = %v, want %v\n%s", cfg.RunCmd, want, b)
 	}
 }
+
+// pinTarget is a fake /target holding the files subiquity leaves behind: both
+// netplan names it has used, and the cloud-init network config 24.04 writes
+// instead when cloud-init owns /etc/netplan.
+func pinTarget(t *testing.T) string {
+	t.Helper()
+	target := t.TempDir()
+	for _, f := range []string{"etc/netplan/00-installer-config.yaml", "etc/netplan/50-cloud-init.yaml", "etc/cloud/cloud.cfg.d/90-installer-network.cfg"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(target, f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(target, f), []byte("network: {version: 2, ethernets: {frame0: {match: {name: 'en*'}}}}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return target
+}
+
+// The installed system gets the address on one port -- the one the live
+// system reached the gateway through -- named by MAC, not on every en* port.
+func TestNetplanPinWritesOnePortByMACWhenRun(t *testing.T) {
+	s := goodSpec()
+	late := strings.Join(commands(t, parsed(t, s, ""), "late-commands"), "\n")
+	v, err := validate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(late, netplanPin(v, s, targetRoot, "/sys/class/net")) {
+		t.Fatalf("no late-command pins the installed netplan:\n%s", late)
+	}
+
+	target, sys, bin := pinTarget(t), t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sys, "enp3s0f1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sys, "enp3s0f1", "address"), []byte("52:54:00:00:00:02\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	fakeTool(t, bin, "ip", `[ "$1 $2 $3 $4" = "-o route get `+s.Network.Gateway+`" ] || exit 2
+echo "`+s.Network.Gateway+` dev enp3s0f1 src 192.0.2.210 uid 0 \    cache "`)
+	if code, out := runSh(t, netplanPin(v, s, target, sys), bin); code != 0 {
+		t.Fatalf("pin exited %d:\n%s", code, out)
+	}
+
+	path := filepath.Join(target, "etc/netplan/60-frame.yaml")
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("%s mode %v; netplan warns on, and later refuses, a world-readable file", path, fi.Mode().Perm())
+	}
+	b, _ := os.ReadFile(path)
+	var np struct {
+		Network struct {
+			Version   int `yaml:"version"`
+			Ethernets map[string]struct {
+				Match       map[string]string   `yaml:"match"`
+				SetName     string              `yaml:"set-name"`
+				DHCP4       *bool               `yaml:"dhcp4"`
+				Addresses   []string            `yaml:"addresses"`
+				Routes      []map[string]string `yaml:"routes"`
+				Nameservers map[string][]string `yaml:"nameservers"`
+			} `yaml:"ethernets"`
+		} `yaml:"network"`
+	}
+	if err := yaml.Unmarshal(b, &np); err != nil {
+		t.Fatalf("%s is not YAML: %v\n%s", path, err, b)
+	}
+	if len(np.Network.Ethernets) != 1 {
+		t.Fatalf("want exactly one stanza:\n%s", b)
+	}
+	for _, e := range np.Network.Ethernets {
+		if !reflect.DeepEqual(e.Match, map[string]string{"macaddress": "52:54:00:00:00:02"}) || e.SetName != "enp3s0f1" {
+			t.Errorf("stanza matches %v, set-name %q; want the gateway port's MAC only:\n%s", e.Match, e.SetName, b)
+		}
+		if e.DHCP4 == nil || *e.DHCP4 || !reflect.DeepEqual(e.Addresses, []string{"192.0.2.210/24"}) ||
+			!reflect.DeepEqual(e.Routes, []map[string]string{{"to": "default", "via": s.Network.Gateway}}) ||
+			!reflect.DeepEqual(e.Nameservers["addresses"], s.Network.DNS) {
+			t.Errorf("stanza does not carry the spec's network:\n%s", b)
+		}
+	}
+	for _, gone := range []string{"etc/netplan/00-installer-config.yaml", "etc/netplan/50-cloud-init.yaml", "etc/cloud/cloud.cfg.d/90-installer-network.cfg"} {
+		if _, err := os.Stat(filepath.Join(target, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s survived; its en* stanza would put the address back on every port", gone)
+		}
+	}
+	// Without this, cloud-init's first boot finds no network config and
+	// falls back to DHCP on the first port it sees, writing 50-cloud-init.yaml.
+	cb, err := os.ReadFile(filepath.Join(target, "etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cc struct {
+		Network map[string]string `yaml:"network"`
+	}
+	if err := yaml.Unmarshal(cb, &cc); err != nil || cc.Network["config"] != "disabled" {
+		t.Errorf("cloud-init network not disabled (%v):\n%s", err, cb)
+	}
+}
+
+func TestNetplanPinRefusesWhenItCannotNameThePortWhenRun(t *testing.T) {
+	s := goodSpec()
+	v, err := validate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, route, mac string
+	}{
+		{"no route to the gateway", "", "52:54:00:00:00:02"},
+		{"no MAC for the port", "dev enp3s0f1 src 192.0.2.210", ""},
+		{"not a MAC", "dev enp3s0f1 src 192.0.2.210", "52:54:00:00:00:02/x"},
+		{"a port name that is not a name", "dev ../x src 192.0.2.210", "52:54:00:00:00:02"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			target, sys, bin := pinTarget(t), t.TempDir(), t.TempDir()
+			if c.mac != "" {
+				if err := os.MkdirAll(filepath.Join(sys, "enp3s0f1"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sys, "enp3s0f1", "address"), []byte(c.mac+"\n"), 0o444); err != nil {
+					t.Fatal(err)
+				}
+			}
+			route := ""
+			if c.route != "" {
+				route = `echo "` + s.Network.Gateway + ` ` + c.route + `"`
+			}
+			fakeTool(t, bin, "ip", route)
+			if code, out := runSh(t, netplanPin(v, s, target, sys), bin); code != 1 {
+				t.Errorf("pin exited %d, want 1:\n%s", code, out)
+			}
+			if _, err := os.Stat(filepath.Join(target, "etc/netplan/60-frame.yaml")); !os.IsNotExist(err) {
+				t.Error("refused, but wrote a netplan anyway")
+			}
+			if _, err := os.Stat(filepath.Join(target, "etc/netplan/50-cloud-init.yaml")); err != nil {
+				t.Error("refused, but removed the installer's netplan anyway")
+			}
+		})
+	}
+}
