@@ -288,20 +288,32 @@ func TestNetplanPinRefusesWhenItCannotNameThePortWhenRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		name, route, mac string
+		name, route, port, mac string
 	}{
-		{"no route to the gateway", "", "52:54:00:00:00:02"},
-		{"no MAC for the port", "dev enp3s0f1 src 192.0.2.210", ""},
-		{"not a MAC", "dev enp3s0f1 src 192.0.2.210", "52:54:00:00:00:02/x"},
-		{"a port name that is not a name", "dev ../x src 192.0.2.210", "52:54:00:00:00:02"},
+		{"no route to the gateway", "", "enp3s0f1", "52:54:00:00:00:02"},
+		{"no MAC for the port", "dev enp3s0f1 src 192.0.2.210", "enp3s0f1", ""},
+		{"not a MAC", "dev enp3s0f1 src 192.0.2.210", "enp3s0f1", "52:54:00:00:00:02/x"},
+		{"a port name that is not a name", "dev ../x src 192.0.2.210", "enp3s0f1", "52:54:00:00:00:02"},
+		// Made of allowed characters only, so the character class lets them
+		// through and only the leading-dot rule stands in the way. The MAC
+		// file is planted where "$sys/./address" and "$sys/../address"
+		// resolve, so a guard that let them pass would find a valid MAC.
+		{"the port is .", "dev . src 192.0.2.210", ".", "52:54:00:00:00:02"},
+		{"the port is ..", "dev .. src 192.0.2.210", "..", "52:54:00:00:00:02"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			target, sys, bin := pinTarget(t), t.TempDir(), t.TempDir()
+			target, bin := pinTarget(t), t.TempDir()
+			// One level down, so ".." still lands inside this test's own
+			// temporary directory.
+			sys := filepath.Join(t.TempDir(), "net")
+			if err := os.MkdirAll(sys, 0o755); err != nil {
+				t.Fatal(err)
+			}
 			if c.mac != "" {
-				if err := os.MkdirAll(filepath.Join(sys, "enp3s0f1"), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Join(sys, c.port), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(sys, "enp3s0f1", "address"), []byte(c.mac+"\n"), 0o444); err != nil {
+				if err := os.WriteFile(filepath.Join(sys, c.port, "address"), []byte(c.mac+"\n"), 0o444); err != nil {
 					t.Fatal(err)
 				}
 			}
