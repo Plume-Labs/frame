@@ -107,8 +107,9 @@ spec:
                 - ALL
           volumeMounts:
             # Sized for the base server ISO (~3.8 GiB, cached once) plus
-            # four per-machine images (~3.8 GiB each) not yet removed; 20Gi leaves headroom rather than
-            # tracking the exact figure. A full emptyDir fails the write
+            # four per-machine images (~3.8 GiB each) not yet removed and
+            # one more being written: ~23 GiB, which 20Gi did not hold.
+            # 32Gi leaves headroom rather than tracking the exact figure. A full emptyDir fails the write
             # that filled it, not a neighboring pod -- it is this
             # Deployment's own volume, not a shared one.
             - name: images
@@ -121,6 +122,6 @@ spec:
       volumes:
         - name: images
           emptyDir:
-            sizeLimit: 20Gi
+            sizeLimit: 32Gi
         - name: tmp
           emptyDir: {}

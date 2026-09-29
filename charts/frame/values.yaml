@@ -148,8 +148,10 @@ provisiond:
   images:
     # emptyDir size for /var/lib/frame/images, mounted where both the
     # build API writes ~4 GB images and the media listener reads them
-    # back out of. Matches config/provisiond/deployment.yaml.
-    storage: 20Gi
+    # back out of. Matches config/provisiond/deployment.yaml, whose comment
+    # carries the sizing (base ISO + four images + one in flight, with
+    # headroom).
+    storage: 32Gi
   media:
     # A fixed NodePort, not a Service-allocated one, because the BMC's boot
     # media configuration has to name a concrete address — it cannot be
