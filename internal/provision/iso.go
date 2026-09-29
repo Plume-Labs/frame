@@ -138,6 +138,17 @@ func checkBootRecords(ctx context.Context, iso string) error {
 // encoding, no query, no IPv6 brackets: nothing Frame builds needs them.
 var seedURLShape = regexp.MustCompile(`^[A-Za-z0-9:/._-]+$`)
 
+// ValidateSeedBase refuses a media URL whose seed addresses Remaster would
+// refuse. It checks the address seedURL builds, not mediaURL alone, so the
+// start-up check and the build check cannot disagree about what is allowed:
+// a process started on a media URL that fails here would refuse every build.
+func ValidateSeedBase(mediaURL string) error {
+	if u := seedURL(mediaURL, strings.Repeat("0", 32)); !seedURLShape.MatchString(u) {
+		return fmt.Errorf("%q: only letters, digits and : / . _ - are allowed; every image writes it onto a GRUB kernel line", mediaURL)
+	}
+	return nil
+}
+
 var kernelLine = regexp.MustCompile(`(?m)^(\s*linux\s+.*)$`)
 
 // menuTimeout is the menu wait on the stock image (`set timeout=30`): cut to

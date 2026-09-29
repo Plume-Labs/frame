@@ -103,6 +103,12 @@ func validateMediaURL(raw string) error {
 	if u.Host == "" {
 		return fmt.Errorf("MEDIA_URL %q: has no host", raw)
 	}
+	// A URL can be well formed and still carry what a GRUB kernel line
+	// expands or splits on ($, {, ?, %, brackets…). Remaster refuses those,
+	// so a provisiond started on one would run and refuse every build.
+	if err := provision.ValidateSeedBase(raw); err != nil {
+		return fmt.Errorf("MEDIA_URL %w", err)
+	}
 	return nil
 }
 

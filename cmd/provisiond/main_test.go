@@ -61,3 +61,33 @@ func TestValidateMediaURLRefusesAValueURLParseItselfRejects(t *testing.T) {
 		t.Fatal("want an error for a value url.Parse itself rejects, got nil")
 	}
 }
+
+// Every image bakes MEDIA_URL + /autoinstall/<token>/ onto a GRUB kernel line,
+// and Remaster refuses one holding anything but letters, digits and : / . _ -.
+// Each of these parses as an http URL with a host, so without the same shape
+// at start-up provisiond would run and refuse every build it is asked for.
+func TestValidateMediaURLRefusesWhatTheSeedURLShapeRefuses(t *testing.T) {
+	for _, raw := range []string{
+		"http://192.0.2.50:8081/$root",
+		"http://192.0.2.50:8081/${root}",
+		"http://192.0.2.50:8081/?x=1",
+		"http://192.0.2.50:8081/%41",
+		"http://[fd00::1]:8081",
+		"http://user@192.0.2.50:8081",
+		"http://192.0.2.50:8081/#top",
+	} {
+		if err := validateMediaURL(raw); err == nil {
+			t.Errorf("%s: want an error, got nil", raw)
+		}
+	}
+}
+
+// The placeholder both shipped manifests carry must keep starting provisiond,
+// as it does the manager: the refusal of .invalid belongs to a build.
+func TestValidateMediaURLAcceptsTheShippedPlaceholderAndAPath(t *testing.T) {
+	for _, raw := range []string{"http://ci-placeholder.invalid:30581", "http://frame-provisiond.frame-system.svc:8081/media/"} {
+		if err := validateMediaURL(raw); err != nil {
+			t.Errorf("%s: want no error, got %v", raw, err)
+		}
+	}
+}
