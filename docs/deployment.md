@@ -1591,6 +1591,21 @@ existing cluster and is Ready there`.
       `Installing` timeout.
 - [ ] Rebooting with the medium still attached does not stop on a prompt
       (`noprompt`).
+- [ ] **The one-time boot on the iLO 4 virtual CD has never been
+      observed.** On an iLO 4, `SetBootOnce` sets
+      `Oem.Hp.BootOnNextServerReset` on `VirtualMedia/2` and reads it back,
+      and sets no `Cd` override on the system: the G9's UEFI boot list also
+      holds an empty physical SATA DVD (`CD.Emb.9.1`), and nothing shows a
+      `Cd` override would pick the virtual drive. Tested against captured
+      GETs and a fake that refuses what the captured schema refuses; never
+      written to the real iLO. To see on the first install: the PATCH is
+      accepted with media inserted, the flag reads back `true`, the
+      `ForceRestart` boots the ISO rather than the tray or the disks, and the
+      flag is back to `false` after that boot and after `EjectMedia`. The
+      boot mode is not set on this firmware (its `Boot` object has no
+      `BootSourceOverrideMode`); it is read from the BIOS resource
+      (`BootMode: Uefi`) and the install is refused if it differs. A BIOS
+      change pending for the next reset is not read.
 - [ ] **Phase budgets are provisional** (Preparing 30 min, Installing
       45 min): time the base download, the remaster, the virtual-media read
       and `updates: security` on the first install, and set them from that.
