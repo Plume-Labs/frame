@@ -101,8 +101,20 @@ func validate(s Spec) (validated, error) {
 	if addr.To4() == nil {
 		return validated{}, fmt.Errorf("network address %q: must be IPv4", s.Network.Address)
 	}
-	if net.ParseIP(s.Network.Gateway) == nil {
+	gw := net.ParseIP(s.Network.Gateway)
+	if gw == nil {
 		return validated{}, fmt.Errorf("network gateway %q is not an IP address", s.Network.Gateway)
+	}
+	// The kernel routes to its own address over lo: netplanPin would read
+	// `dev lo` and pin the installed system's only stanza to loopback.
+	if gw.Equal(addr) {
+		return validated{}, fmt.Errorf("network gateway %q is the machine's own address", s.Network.Gateway)
+	}
+	// Off the subnet, the default route has no on-link next hop: the installed
+	// system comes up with an address and no way off its segment. Contains is
+	// false for an IPv6 gateway too, which the IPv4-only address rules out.
+	if !ipnet.Contains(gw) {
+		return validated{}, fmt.Errorf("network gateway %q is outside %s, the subnet of the machine's address", s.Network.Gateway, ipnet)
 	}
 	// Refused, not defaulted: with no resolver the installer cannot reach the
 	// archive `updates: security` fetches from, and a guessed resolver (the
@@ -392,8 +404,15 @@ func netplanPin(v validated, s Spec, target, sysClassNet string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("dev=$(ip -o route get '%s' 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p')", s.Network.Gateway),
 		fmt.Sprintf("case \"$dev\" in ''|.*|*[!A-Za-z0-9_.-]*) %s;; esac", refuse("no port carries the route to "+s.Network.Gateway)),
+		// validate refuses a gateway equal to the host's address, which is
+		// what routes over lo; checked here too, since the kernel is what
+		// answers and a pin to lo leaves the installed system unreachable.
+		fmt.Sprintf("[ \"$dev\" != lo ] || { %s; }", refuse("the route to "+s.Network.Gateway+" goes over loopback")),
 		fmt.Sprintf("mac=$(cat '%s'/\"$dev\"/address 2>/dev/null)", sysClassNet),
-		"case \"$mac\" in " + strings.Repeat("[0-9a-f][0-9a-f]:", 5) + "[0-9a-f][0-9a-f]) ;; *) " + refuse("no MAC address for the gateway port") + ";; esac",
+		// All zeroes is lo's MAC and a hardware-less port's: well-shaped, and
+		// matching it pins nothing a reboot will find.
+		"case \"$mac\" in 00:00:00:00:00:00) " + refuse("the gateway port has no hardware address") + ";; " +
+			strings.Repeat("[0-9a-f][0-9a-f]:", 5) + "[0-9a-f][0-9a-f]) ;; *) " + refuse("no MAC address for the gateway port") + ";; esac",
 		fmt.Sprintf("echo '%s' | base64 -d | sed \"s/%s/$mac/; s/%s/$dev/\" > '%s' && chmod 600 '%s' && rm -f '%s' '%s' '%s' && %s",
 			base64.StdEncoding.EncodeToString(b), macPlaceholder, devPlaceholder, pinned, pinned,
 			target+"/etc/netplan/00-installer-config.yaml", target+"/etc/netplan/50-cloud-init.yaml",

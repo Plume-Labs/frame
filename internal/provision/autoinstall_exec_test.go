@@ -300,6 +300,11 @@ func TestNetplanPinRefusesWhenItCannotNameThePortWhenRun(t *testing.T) {
 		// resolve, so a guard that let them pass would find a valid MAC.
 		{"the port is .", "dev . src 192.0.2.210", ".", "52:54:00:00:00:02"},
 		{"the port is ..", "dev .. src 192.0.2.210", "..", "52:54:00:00:00:02"},
+		// A gateway equal to the machine's own address routes over lo:
+		// pinning lo would leave the installed system with no network.
+		{"the route goes over loopback", "dev lo src 192.0.2.210", "lo", "52:54:00:00:00:02"},
+		// lo's MAC, and what a virtual port with no hardware address reads.
+		{"the MAC is all zeroes", "dev enp3s0f1 src 192.0.2.210", "enp3s0f1", "00:00:00:00:00:00"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			target, bin := pinTarget(t), t.TempDir()
