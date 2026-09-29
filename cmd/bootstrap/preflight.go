@@ -108,11 +108,38 @@ func preflightJoin(ctx context.Context, stdout io.Writer, cfg Config) (nodeIdent
 		BootID:    node.Status.NodeInfo.BootID,
 		MachineID: node.Status.NodeInfo.MachineID,
 	}
+	// Warn, not refuse. An empty recorded ID makes that comparison in
+	// rejoined pass for any reinstalled machine that reports one, so the
+	// guard against the old Node's status rests on the other ID and on the
+	// Ready heartbeat being newer than the start of Joining. The heartbeat
+	// alone still holds: by Joining the old system's disk is wiped and the
+	// machine has been reset, so no kubelet of the old system is left to
+	// post a fresh heartbeat. Refusing would leave a Node that never
+	// reported its IDs no way to be reinstalled by this path at all, for
+	// a guard whose remaining part is sufficient; saying so is what the
+	// operator needs.
+	if id.BootID == "" || id.MachineID == "" {
+		_, _ = fmt.Fprintf(stdout,
+			"frame bootstrap: warning: Node %s reports no %s; the Ready check cannot compare it, and telling the "+
+				"reinstalled machine from the old Node rests on the Ready heartbeat being newer than the start of "+
+				"Joining\n", name, missingIdentity(id))
+	}
 	_, _ = fmt.Fprintf(stdout,
 		"frame bootstrap: preflight: Node %s (uid %s) exists at %s, no stale node password, server %s; "+
 			"its boot ID and machine ID must both change before Ready counts\n",
 		name, id.UID, want, sv.GitVersion)
 	return id, nil
+}
+
+func missingIdentity(id nodeIdentity) string {
+	switch {
+	case id.BootID == "" && id.MachineID == "":
+		return "boot ID and no machine ID"
+	case id.BootID == "":
+		return "boot ID"
+	default:
+		return "machine ID"
+	}
 }
 
 // checkNoNodePassword refuses while kube-system/<name>.node-password.k3s

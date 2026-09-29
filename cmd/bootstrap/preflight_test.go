@@ -376,3 +376,31 @@ func TestExecuteRechecksTheNodePasswordBeforeMediaAttached(t *testing.T) {
 		}
 	}
 }
+
+// An old Node that reported no boot ID or no machine ID leaves the Ready
+// check with one identity comparison fewer; the preflight says so.
+func TestPreflightJoinWarnsWhenTheOldNodeLacksAnIdentity(t *testing.T) {
+	for name, node := range map[string]*corev1.Node{
+		"no boot ID":    w3Node("", "machine-old", longAgo),
+		"no machine ID": w3Node("boot-old", "", longAgo),
+	} {
+		f, srv := newFakeCluster(t)
+		f.node = node
+		var out bytes.Buffer
+		if _, err := preflightJoin(context.Background(), &out, joinConfigFor(t, srv)); err != nil {
+			t.Errorf("%s: refused: %v", name, err)
+			continue
+		}
+		if !strings.Contains(out.String(), "warning") || !strings.Contains(out.String(), "heartbeat") {
+			t.Errorf("%s: no warning that the guard rests on the heartbeat:\n%s", name, out.String())
+		}
+	}
+	_, srv := newFakeCluster(t)
+	var out bytes.Buffer
+	if _, err := preflightJoin(context.Background(), &out, joinConfigFor(t, srv)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "warning") {
+		t.Errorf("a Node with both IDs drew a warning:\n%s", out.String())
+	}
+}

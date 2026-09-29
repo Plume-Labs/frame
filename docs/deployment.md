@@ -1550,7 +1550,9 @@ the wipe — and refuses if the Node `hostname` does not exist, if its
 `InternalIP` is not `network.address`, if `kube-system/<hostname>.node-password.k3s`
 still exists (it prints the `kubectl` command), or if `k3sVersion` is newer
 than the server's (older is allowed, with a warning). It also records the
-Node's boot and machine IDs for the Ready check. The node-password Secret is
+Node's boot and machine IDs for the Ready check; if the Node reports either
+one empty, it warns that telling the reinstalled machine from the old Node
+then rests on the Ready heartbeat, and goes on. The node-password Secret is
 checked a second time just before `MediaAttached` — after the image is
 built, the last point before the BMC inserts media and resets the machine —
 because an old `k3s-agent` left running re-creates it: that is why the agent
