@@ -20,7 +20,7 @@ var requiredPhaseTimeouts = []Phase{
 // touched: a boot mode that isn't exactly what SetBootOnce accepts, or a
 // phase with no configured timeout (see requiredPhaseTimeouts).
 func validateOptions(o Options) error {
-	if o.BootMode != "UEFI" && o.BootMode != "Legacy" {
+	if o.BootMode != bootUEFI && o.BootMode != bootLegacy {
 		return fmt.Errorf("boot mode %q: must be exactly \"UEFI\" or \"Legacy\", never inherited from the machine", o.BootMode)
 	}
 	for _, p := range requiredPhaseTimeouts {
@@ -36,7 +36,7 @@ func validateOptions(o Options) error {
 // wiped. None of them need the machine, so all of them run here instead,
 // before it is ever touched.
 func validatePendingSpec(s Spec, nodeAddress string) error {
-	// Every refusal RenderPreseed makes, run here instead of at Preparing,
+	// Every refusal RenderAutoinstall makes, run here instead of at Preparing,
 	// where Images.Build would reach it: none of them need the machine
 	// either, and Pending is the one phase that has not yet read anything
 	// off the BMC. A spec this package will not render is refused before
@@ -87,6 +87,12 @@ func phaseErr(phaseCtx context.Context, underlying error) error {
 // fault; a retry is a new installation, created deliberately.
 func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err error) {
 	res = Result{Phase: PhasePending}
+	// The boot mode is an Install option (never inherited from the machine),
+	// and the disk layout the image carries depends on it: an ESP for UEFI,
+	// a bios_grub partition for Legacy. Copied onto the Spec here, the one
+	// place both callers -- the controller and `frame bootstrap` -- pass
+	// through, so no caller can build an image for the other mode.
+	s.BootMode = o.BootMode
 	report := func(p Phase) {
 		res.Phase = p
 		if d.Report != nil {

@@ -12,14 +12,15 @@ import (
 	"strings"
 )
 
-// maxBaseImageBytes bounds the download: generous for a netinst image (the
-// pinned one is ~792 MB), and finite. Without it an unbounded io.Copy runs to
+// maxBaseImageBytes bounds the download: generous for the server ISO (the
+// pinned one is 4,080,486,400 bytes, 95 % of the previous 4 GiB cap -- the
+// next point release would have been refused), and finite. Without it an unbounded io.Copy runs to
 // completion, or to disk exhaustion, before the checksum it's all in aid of
 // is ever checked.
 //
 // A var, not a const, solely so a test can shrink it and prove the cap
 // actually truncates a download, without needing a multi-gigabyte fixture.
-var maxBaseImageBytes int64 = 4 << 30 // 4 GiB
+var maxBaseImageBytes int64 = 6 << 30 // 6 GiB
 
 type BaseSource struct {
 	URL    string
@@ -27,12 +28,13 @@ type BaseSource struct {
 }
 
 // DefaultBase is the image this lot is built against. The checksum is the
-// integrity control, verified against Debian's published SHA256SUMS on
-// 2026-09-11; changing either field is a deliberate act.
+// integrity control, verified against Ubuntu's published SHA256SUMS
+// (https://releases.ubuntu.com/24.04/SHA256SUMS) on 2026-09-29; changing
+// either field is a deliberate act.
 func DefaultBase() BaseSource {
 	return BaseSource{
-		URL:    "https://cdimage.debian.org/cdimage/release/13.6.0/amd64/iso-cd/debian-13.6.0-amd64-netinst.iso",
-		SHA256: "65273beed27b2df543b68b65630ba525cfbad8df2b12035732b2dff87d6664e7",
+		URL:    "https://releases.ubuntu.com/24.04/ubuntu-24.04.5-live-server-amd64.iso",
+		SHA256: "97f3d7ffb032c3eb3b23d2c8be9cc76e60c2c1f2c0146ba5ba9fe01cafae0fd8",
 	}
 }
 

@@ -30,7 +30,7 @@ const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 // rather than hidden.
 //
 // K3sVersion, ServerURL, JoinToken and nodeAddress are not passed through
-// checkPreseedValue. That function exists for a different hazard: a value
+// checkShellValue. That function exists for a different hazard: a value
 // that lands, unescaped, in a preseed directive (where a newline starts a new
 // directive that runs as root) and in a naively-interpolated shell word
 // inside early_command/late_command, so it refuses quotes and backslashes

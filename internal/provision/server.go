@@ -25,20 +25,51 @@ import (
 // server becomes a way to read /etc/shadow.
 var imageName = regexp.MustCompile(`^[a-f0-9]{32}\.iso$`)
 
-// preseedName is imageName's counterpart for the preseed route: the same
-// 32-hex token, ".cfg" instead of ".iso". Matched before a caller-supplied
-// name ever touches the filesystem, for the same reason imageName is.
-var preseedName = regexp.MustCompile(`^[a-f0-9]{32}\.cfg$`)
+// seedFiles is the closed list of names served under /autoinstall/{token}/.
+// cloud-init's NoCloud datasource fetches user-data and meta-data, and asks
+// for vendor-data too; the last two are empty (NoCloud supplies a default
+// instance-id). Any other name is a 404, before the filesystem is touched.
+var seedFiles = map[string]bool{"user-data": true, "meta-data": true, "vendor-data": true}
 
-// runScriptName is the third name this package produces: the same 32-hex
-// token, ".sh". It is the preseed/run script (RenderRunScript) the
-// rendered preseed points d-i at, and it is served from the SAME route as
-// the preseed, deliberately -- d-i resolves a relative preseed/run value
-// against the directory the preconfiguration file came from, and Frame
-// writes an absolute URL. Putting the two files on one route means both
-// readings land on the same file, so which one d-i actually does is not a
-// question this has to get right.
-var runScriptName = regexp.MustCompile(`^[a-f0-9]{32}\.sh$`)
+// seedURL is the one place the NoCloud seed address is built, so the address
+// baked into an image's boot arguments and the route MediaHandler serves
+// cannot drift apart. The trailing slash is required: cloud-init appends the
+// file names to it.
+func seedURL(mediaURL, token string) string {
+	return strings.TrimSuffix(mediaURL, "/") + "/autoinstall/" + token + "/"
+}
+
+// writeSeed renders the autoinstall document for spec and writes the three
+// seed files under dir/<token>/. Shared by BuildHandler and LocalImageStore so
+// the two stores cannot write different layouts.
+func writeSeed(dir, token string, spec Spec, beaconBase string) error {
+	doc, err := RenderAutoinstall(spec, beaconBase, token)
+	if err != nil {
+		return err
+	}
+	seedDir := filepath.Join(dir, token)
+	if err := os.MkdirAll(seedDir, 0o755); err != nil {
+		return fmt.Errorf("preparing seed directory: %w", err)
+	}
+	for name, content := range map[string]string{"user-data": doc, "meta-data": "", "vendor-data": ""} {
+		if err := os.WriteFile(filepath.Join(seedDir, name), []byte(content), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// removeSeed deletes a token's seed directory. Best effort on absence: a
+// prior cleanup that got this far must not turn a later one into an error.
+func removeSeed(dir, token string) error {
+	if !beaconToken.MatchString(token) {
+		return fmt.Errorf("token %q is not a valid image token", token)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, token)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
 
 // buildResponse is what the build API answers with. Only the token matters
 // to a caller: HTTPImageStore derives the URL the BMC will use itself, from
@@ -68,8 +99,9 @@ func newToken() (string, error) {
 // checkpoint outside its closed shapes before either reaches memory, and
 // the route itself returns nothing but a status code.
 //
-// GET /iso/{name} and GET /preseed/{name} are both single-segment
-// wildcards, and GET /beacon/{token}/{checkpoint} is a two-segment one:
+// GET /iso/{name} is a single-segment wildcard, and GET
+// /autoinstall/{token}/{file} and GET /beacon/{token}/{checkpoint} are
+// two-segment ones:
 // none matches a path with an extra segment (e.g. "/iso/sub/dir.iso"),
 // and any other method on any of the three gets 405 from http.ServeMux
 // itself, not from any check written here. A trailing-slash pattern is
@@ -78,15 +110,15 @@ func newToken() (string, error) {
 // match that absorbs every deeper path, which is exactly how a
 // predecessor lot's 404 tolerance went untested.
 //
-// /preseed/{name} is exposed on the same read-only, unauthenticated
-// listener as /iso/{name}: the preseed carries no secret by construction --
-// RenderPreseed refuses private key material and anything shell-unsafe
-// before an image is ever built -- so serving it to the machine network is
-// the same risk as serving the image it came from.
+// /autoinstall/{token}/{file} is exposed on the same read-only,
+// unauthenticated listener as /iso/{name}: the seed carries no secret by
+// construction -- RenderAutoinstall refuses private key material and
+// anything shell-unsafe before an image is ever built -- so serving it to the
+// machine network is the same risk as serving the image it came from.
 //
 // One thing in it is not nothing, and is named rather than glossed: the
 // install UID. It is the marker WaitForOurSystem checks, and moving the
-// preseed off the image put it on the wire in plaintext. It is 16 random
+// configuration off the image put it on the wire in plaintext. It is 16 random
 // bytes behind an unguessable 32-hex path, valid for one installation and
 // meaningless after it -- so what it protects against is an unrelated
 // machine happening to answer at the target address, not an attacker who
@@ -105,17 +137,16 @@ func MediaHandler(dir string, beacons *BeaconStore) http.Handler {
 		}
 		http.ServeFile(w, r, filepath.Join(dir, name))
 	})
-	mux.HandleFunc("GET /preseed/{name}", func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("name")
-		// Two guards, not one pattern with an alternation: each refuses on
-		// its own, so a mutation to either is visible as exactly one test
-		// going red rather than as a combined pattern that still matches
-		// half of what it used to.
-		if !preseedName.MatchString(name) && !runScriptName.MatchString(name) {
+	mux.HandleFunc("GET /autoinstall/{token}/{file}", func(w http.ResponseWriter, r *http.Request) {
+		token, file := r.PathValue("token"), r.PathValue("file")
+		// Two guards, each refusing on its own, before the filesystem is
+		// touched: a token of the one shape newToken produces, and a file
+		// from the closed list.
+		if !beaconToken.MatchString(token) || !seedFiles[file] {
 			http.NotFound(w, r)
 			return
 		}
-		http.ServeFile(w, r, filepath.Join(dir, name))
+		http.ServeFile(w, r, filepath.Join(dir, token, file))
 	})
 
 	// The write half of the beacon mechanism, and the only half that lives
@@ -170,18 +201,17 @@ func MediaHandler(dir string, beacons *BeaconStore) http.Handler {
 }
 
 // BuildHandler serves the build API. It must never be exposed outside the
-// cluster: it accepts a Spec and writes a 700 MB file, and doing either of
+// cluster: it accepts a Spec and writes a ~4 GB file, and doing either of
 // those on the LAN-facing listener is the mistake the two-listener design
 // exists to make impossible.
 //
-// It decodes a Spec, calls RenderPreseed first -- so a bad spec is a 400
+// It decodes a Spec, calls ValidateSpec first -- so a bad spec is a 400
 // before anything is fetched or built -- then fetches the base image,
-// writes the rendered preseed to dir/<token>.cfg, and remasters the image
-// into dir/<token>.iso with boot arguments that fetch that same file from
-// mediaURL, the base address of the read-only listener MediaHandler serves
-// (the one the BMC reaches, not this one). token is 32 hex characters from
-// crypto/rand. DELETE /iso/{name} removes a previously built image and its
-// preseed together, guarded by the same imageName check as the read-only
+// writes the NoCloud seed to dir/<token>/, and remasters the image into
+// dir/<token>.iso with boot arguments that fetch that seed from mediaURL, the
+// base address of the read-only listener MediaHandler serves (the one the BMC
+// reaches, not this one). token is 32 hex characters from crypto/rand.
+// DELETE /iso/{name} removes a previously built image and its seed together, guarded by the same imageName check as the read-only
 // listener, and -- when beacons is non-nil -- forgets that token's beacon
 // state too. GET /beacon/{token} is the read half of the beacon mechanism;
 // see its registration below for why it lives on this listener and not the
@@ -198,12 +228,9 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 		}
 
 		// Validated before anything is fetched or built: a spec this package
-		// would refuse to turn into a preseed is refused here too, before a
-		// single byte of a ~700 MB download happens. The render itself has
-		// to wait for the token, because the preseed now names the
-		// preseed/run script by its token-derived URL -- so the refusals
-		// are split out into ValidateSpec rather than duplicated, and there
-		// is still exactly one render, whose output is what lands on disk.
+		// would refuse to render is refused here too, before a single byte of
+		// a ~4 GB download happens. The render itself waits for the token,
+		// which the beacon commands carry.
 		if err := ValidateSpec(spec); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -225,45 +252,22 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 			return
 		}
 
-		// The URL baked into the image's boot arguments and the one
-		// MediaHandler's /preseed/{name} route actually serves must be the
-		// same address by construction, not by coincidence -- all three are
-		// built from mediaURL and token here, in one place.
-		preseedURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".cfg"
-		runURL := strings.TrimSuffix(mediaURL, "/") + "/preseed/" + token + ".sh"
-
-		// Built from mediaURL like the two above, and for the same reason:
+		// Built from mediaURL like the seed address, and for the same reason:
 		// the address baked into the image and the address this deployment
 		// actually serves must be one construction, not two that happen to
-		// agree. Empty when no store exists, which renders a preseed with
-		// no beacons rather than one pointing at a route that is not there.
+		// agree. Empty when no store exists, which renders no beacons rather
+		// than commands pointing at a route that is not there.
 		beaconBase := mediaURL
 		if beacons == nil {
 			beaconBase = ""
 		}
-
-		preseed, err := RenderPreseed(spec, runURL, beaconBase, token)
-		if err != nil {
+		if err := writeSeed(dir, token, spec, beaconBase); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		cfgPath := filepath.Join(dir, token+".cfg")
-		if err := os.WriteFile(cfgPath, []byte(preseed), 0o644); err != nil {
-			http.Error(w, fmt.Sprintf("writing preseed: %v", err), http.StatusInternalServerError)
-			return
-		}
-		// Written beside the preseed, on the same route, read-only. Without
-		// it the preseed's preseed/run directive names a 404 and netcfg
-		// never re-runs -- which is indistinguishable, from here, from the
-		// install simply taking a long time.
-		if err := os.WriteFile(filepath.Join(dir, token+".sh"), []byte(RenderRunScript(beaconBase, token)), 0o644); err != nil {
-			http.Error(w, fmt.Sprintf("writing preseed/run script: %v", err), http.StatusInternalServerError)
-			return
-		}
-
 		out := filepath.Join(dir, token+".iso")
-		if err := Remaster(r.Context(), baseISO, spec, preseedURL, out); err != nil {
+		if err := Remaster(r.Context(), baseISO, spec, seedURL(mediaURL, token), out); err != nil {
 			http.Error(w, fmt.Sprintf("building image: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -287,15 +291,13 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 			return
 		}
 		// Best effort: the .iso removal above is the one a caller's retry
-		// depends on, and a missing .cfg or .sh (say, a prior cleanup that
-		// got this far and no further) must not turn a successful image
-		// removal into a 500.
+		// depends on, and a missing seed (say, a prior cleanup that got this
+		// far and no further) must not turn a successful image removal into
+		// a 500.
 		token := strings.TrimSuffix(name, ".iso")
-		for _, side := range []string{token + ".cfg", token + ".sh"} {
-			if err := os.Remove(filepath.Join(dir, side)); err != nil && !os.IsNotExist(err) {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+		if err := removeSeed(dir, token); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		// Beacon state is dropped with the image it belongs to, so its
 		// lifetime cannot outlive the installation it describes.
@@ -355,7 +357,7 @@ func (s *HTTPImageStore) client() *http.Client {
 func (s *HTTPImageStore) Build(ctx context.Context, spec Spec) (imageURL, token string, err error) {
 	// The k3s join token never leaves this process. It was being POSTed in
 	// cleartext to an unauthenticated in-cluster build API that has no use
-	// for it: RenderPreseed does not read Spec.Cluster at all, so nothing
+	// for it: RenderAutoinstall does not read Spec.Cluster at all, so nothing
 	// downstream of this request ever looks at it. Decision 3 of the design
 	// rejected serving a cluster-membership token from an in-cluster HTTP
 	// endpoint on the grounds that every notebook and every sandbox on the
@@ -490,7 +492,7 @@ func (s *HTTPImageStore) Progress(ctx context.Context, token string) (BeaconStat
 // call this setting.
 func ValidateMediaURLSyntax(raw string) error {
 	if strings.TrimSpace(raw) == "" {
-		return fmt.Errorf("is not set: every built image bakes this address into its own boot arguments, so an image built against it would fetch its preseed from nowhere")
+		return fmt.Errorf("is not set: every built image bakes this address into its own boot arguments, so an image built against it would fetch its autoinstall seed from nowhere")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -546,9 +548,7 @@ type LocalImageStore struct {
 
 func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (imageURL, token string, err error) {
 	// Same order as BuildHandler, for the same reason: refuse before
-	// fetching or building anything. The render itself waits for the token,
-	// because the preseed names its preseed/run script by a token-derived
-	// URL -- so the refusals run here and the single render runs below.
+	// fetching or building anything.
 	if err := ValidateSpec(spec); err != nil {
 		return "", "", err
 	}
@@ -566,26 +566,13 @@ func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (imageURL, token
 		return "", "", fmt.Errorf("preparing image directory: %w", err)
 	}
 
-	// Built from the same MediaURL the returned image URL below is, so the
-	// address baked into the image's boot arguments is the one this store
-	// actually serves -- see BuildHandler's identical construction.
-	preseedURL := strings.TrimSuffix(s.MediaURL, "/") + "/preseed/" + tok + ".cfg"
-	runURL := strings.TrimSuffix(s.MediaURL, "/") + "/preseed/" + tok + ".sh"
-
-	preseed, err := RenderPreseed(spec, runURL, "", tok)
-	if err != nil {
+	// No beacon base: nothing in the cold-start path reads a beacon.
+	if err := writeSeed(s.Dir, tok, spec, ""); err != nil {
 		return "", "", err
-	}
-	if err := os.WriteFile(filepath.Join(s.Dir, tok+".cfg"), []byte(preseed), 0o644); err != nil {
-		return "", "", fmt.Errorf("writing preseed: %w", err)
-	}
-	// Beside the preseed, on the same read-only route -- see BuildHandler.
-	if err := os.WriteFile(filepath.Join(s.Dir, tok+".sh"), []byte(RenderRunScript("", tok)), 0o644); err != nil {
-		return "", "", fmt.Errorf("writing preseed/run script: %w", err)
 	}
 
 	out := filepath.Join(s.Dir, tok+".iso")
-	if err := Remaster(ctx, baseISO, spec, preseedURL, out); err != nil {
+	if err := Remaster(ctx, baseISO, spec, seedURL(s.MediaURL, tok), out); err != nil {
 		return "", "", fmt.Errorf("building image: %w", err)
 	}
 
@@ -599,10 +586,5 @@ func (s *LocalImageStore) Remove(_ context.Context, token string) error {
 	if err := os.Remove(filepath.Join(s.Dir, token+".iso")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	for _, side := range []string{token + ".cfg", token + ".sh"} {
-		if err := os.Remove(filepath.Join(s.Dir, side)); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
+	return removeSeed(s.Dir, token)
 }

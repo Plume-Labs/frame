@@ -28,7 +28,7 @@ type recordingSession struct {
 // that this package got wrong. k3s writes its kubeconfig root-owned 0600
 // and Join sets no --write-kubeconfig-mode, so the frame user cannot `cat`
 // it. Everything else Frame reads over SSH -- the install marker -- the
-// preseed chmods 444 on purpose.
+// installer chmods 444 on purpose.
 //
 // A fake that served every file to a bare `cat` is what let `cluster: init`
 // ship unable to read the kubeconfig it had just created: every test was

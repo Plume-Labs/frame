@@ -16,6 +16,9 @@ type Spec struct {
 	Layout       Layout
 	SSHPublicKey string // an authorized_keys line; never a private key
 	Cluster      ClusterTarget
+	// BootMode is "UEFI" or "Legacy". Set by Install from Options.BootMode,
+	// not by callers: the image's disk layout depends on it.
+	BootMode string
 }
 
 // Network, Layout, Disk and ClusterTarget carry yaml tags even though this

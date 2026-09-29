@@ -651,7 +651,7 @@ func TestInstallJoiningHonorsItsOwnPhaseTimeout(t *testing.T) {
 
 // The refusal has to land in Pending -- the one phase that has not yet read
 // anything off the BMC -- not at Preparing where Images.Build would reach
-// RenderPreseed. Asserted through what was NOT called: zero BMC calls and
+// RenderAutoinstall. Asserted through what was NOT called: zero BMC calls and
 // zero images built.
 func TestInstallRefusesASpecWithNoResolverBeforeTouchingTheBMC(t *testing.T) {
 	d, bmc, images := happyDeps()

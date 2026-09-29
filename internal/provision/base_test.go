@@ -114,14 +114,23 @@ func TestFetchBaseCapsTheDownloadSize(t *testing.T) {
 	}
 }
 
-// The value in Global Constraints, verified against the published SHA256SUMS
-// on 2026-09-11. If this ever changes, the change is deliberate.
-func TestDefaultBaseIsThePinnedDebianImage(t *testing.T) {
+// The value in the spec, verified against the published SHA256SUMS on
+// 2026-09-29. If this ever changes, the change is deliberate.
+func TestDefaultBaseIsThePinnedUbuntuImage(t *testing.T) {
 	b := DefaultBase()
-	if b.SHA256 != "65273beed27b2df543b68b65630ba525cfbad8df2b12035732b2dff87d6664e7" {
+	if b.SHA256 != "97f3d7ffb032c3eb3b23d2c8be9cc76e60c2c1f2c0146ba5ba9fe01cafae0fd8" {
 		t.Errorf("SHA256 = %s", b.SHA256)
 	}
-	if got := "debian-13.6.0-amd64-netinst.iso"; filepath.Base(b.URL) != got {
+	if got := "ubuntu-24.04.5-live-server-amd64.iso"; filepath.Base(b.URL) != got {
 		t.Errorf("URL base = %s, want %s", filepath.Base(b.URL), got)
+	}
+}
+
+// The pinned image must fit under the download cap with room for a point
+// release: at the old 4 GiB cap it sat at 95 %.
+func TestTheDownloadCapLeavesRoomAboveThePinnedImage(t *testing.T) {
+	const pinnedBytes = 4_080_486_400
+	if maxBaseImageBytes < pinnedBytes*5/4 {
+		t.Errorf("cap %d leaves less than 25%% above the pinned %d-byte image", maxBaseImageBytes, pinnedBytes)
 	}
 }

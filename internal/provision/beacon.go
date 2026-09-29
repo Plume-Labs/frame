@@ -6,29 +6,21 @@ import (
 	"strings"
 )
 
-// The five checkpoints an installation reports, and the only strings
+// The three checkpoints an installation reports, and the only strings
 // provisiond will ever store. The set is closed on purpose: the write route
 // is unauthenticated and reachable from the management network, so a
 // checkpoint that is not one of these must never reach memory.
 //
-// They are ordered by when they happen, and the order is what makes a
-// failure legible. `netcfg` is emitted at the TOP of the run script,
-// before kill-all-dhcp -- so on its own it means only "the preseed/run
-// script started", which covers every outcome between there and the disk
-// guard, above all a netcfg re-run that never takes the static address
-// (preseed.go's own comment marks that UNPROVEN ON HARDWARE). `netcfg-done`
-// is what actually discriminates: it is emitted after netcfg returns, so
-// its absence -- `netcfg` with nothing past it -- is a machine that never
-// got onto the static address, and its presence with nothing past it is a
-// machine that reached preseed/early_command and was refused there
-// (`early` is emitted immediately after the size assertion and would
-// otherwise be here too).
+// Each is emitted from exactly one autoinstall hook. `early` is sent from
+// early-commands immediately AFTER the disk-size assertion, so a machine that
+// was refused there never reports it: its record stays empty (NeverSeen)
+// rather than looking like progress. `late` is the last late-command, just
+// before subiquity reboots into the installed system. `failed` comes from
+// error-commands, which subiquity runs only when the install has failed.
 const (
-	CheckpointNetcfg     = "netcfg"      // the preseed/run script started
-	CheckpointNetcfgDone = "netcfg-done" // netcfg returned; the machine is on its static address
-	CheckpointEarly      = "early"       // the disk-size assertion passed
-	CheckpointPartman    = "partman"     // about to partition
-	CheckpointLate       = "late"        // base system installed, about to reboot
+	CheckpointEarly  = "early"  // the disk-size assertion passed; the installer is running
+	CheckpointLate   = "late"   // target written, about to reboot
+	CheckpointFailed = "failed" // subiquity reported the install failed
 )
 
 // beaconToken is the shape of a token this package produces -- the same 32
@@ -36,37 +28,31 @@ const (
 // caller-supplied token is used as a map key or a path element.
 var beaconToken = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
-// ValidCheckpoint reports whether s is one of the five. Written as an
-// explicit switch rather than a map so that adding a sixth checkpoint is a
+// ValidCheckpoint reports whether s is one of the three. Written as an
+// explicit switch rather than a map so that adding a fourth checkpoint is a
 // change a reviewer sees in the same diff as the code that emits it.
 func ValidCheckpoint(s string) bool {
 	switch s {
-	case CheckpointNetcfg, CheckpointNetcfgDone, CheckpointEarly, CheckpointPartman, CheckpointLate:
+	case CheckpointEarly, CheckpointLate, CheckpointFailed:
 		return true
 	}
 	return false
 }
 
-// checkpointRank gives the five checkpoints above a machine-readable form of
-// the same order their own doc comment already states. BeaconStore.Record
-// uses it to keep the furthest-progressed checkpoint rather than the most
-// recently reported one: BeaconHeartbeat is a background loop that keeps
-// resending the checkpoint it was started at (checkpoint, not `late`, is
-// fixed for the life of that loop), so a later arrival is not always a
-// later checkpoint, and without this a heartbeat sent under `early` -- the
-// checkpoint every heartbeat happens to be rendered with -- would overwrite
-// `partman` or `late` within 15 seconds of either firing, on every install.
+// checkpointRank orders the checkpoints so BeaconStore.Record keeps the
+// furthest-progressed one rather than the most recent: BeaconHeartbeat keeps
+// resending `early` for the life of the installer, so without this a heartbeat
+// would overwrite `late` or `failed` within 15 seconds. `failed` ranks last:
+// it is terminal, and a heartbeat arriving after it must not hide it.
 var checkpointRank = map[string]int{
-	CheckpointNetcfg:     0,
-	CheckpointNetcfgDone: 1,
-	CheckpointEarly:      2,
-	CheckpointPartman:    3,
-	CheckpointLate:       4,
+	CheckpointEarly:  0,
+	CheckpointLate:   1,
+	CheckpointFailed: 2,
 }
 
-// ValidateBeaconBase refuses a base URL that would break out of the two
-// contexts it is interpolated into -- a preseed directive line and a shell
-// word -- using the same guard every other interpolated value gets.
+// ValidateBeaconBase refuses a base URL that would break out of the shell word
+// it is interpolated into, using the same guard every other interpolated
+// value gets.
 //
 // An empty base is accepted and means "emit no beacons at all". That is how
 // LocalImageStore (`frame bootstrap`) opts out: there is no controller in
@@ -76,7 +62,7 @@ func ValidateBeaconBase(base string) error {
 	if strings.TrimSpace(base) == "" {
 		return nil
 	}
-	return checkPreseedValue("beacon base URL", base)
+	return checkShellValue("beacon base URL", base)
 }
 
 // BeaconURL is the one place the beacon path is built, so the URL the
@@ -85,16 +71,15 @@ func BeaconURL(base, token, checkpoint string) string {
 	return strings.TrimSuffix(base, "/") + "/beacon/" + token + "/" + checkpoint
 }
 
-// BeaconSend is one checkpoint report, as a shell command for d-i's busybox
-// environment. `curl` is not there until pkgsel installs it (preseed.go's
-// pkgsel/include), so this is wget.
+// BeaconSend is one checkpoint report, as a shell command for the subiquity
+// live environment, where wget is present (read off the 24.04.5 ISO).
 //
 // It ends in `|| true` because the alternative is an installation aborted by
-// its own diagnostics: these run inside preseed commands, whose exit status
-// d-i can act on, and a beacon is never worth a wiped disk.
+// its own diagnostics: a failing early- or late-command aborts the install,
+// and a beacon is never worth that.
 //
 // The URL is wrapped in single quotes to prevent shell metacharacters in the
-// base from escaping the command. checkPreseedValue already forbids ' and \,
+// base from escaping the command. checkShellValue already forbids ' and \,
 // so nothing that passes ValidateBeaconBase can close the quote.
 func BeaconSend(base, token, checkpoint string) string {
 	if strings.TrimSpace(base) == "" {
@@ -112,16 +97,11 @@ func BeaconSend(base, token, checkpoint string) string {
 // sends may be missed before anything is said.
 //
 // The loop's stdin, stdout and stderr are all redirected, not left to
-// inherit early_command's own. This loop is backgrounded inside the shell
-// preseed/early_command runs, and it keeps running for the rest of the
-// install -- long after that shell itself has exited. d-i runs preseed
-// hooks under log-output, which reads the hook's output; if its reader
-// waits for EOF on the hook's stdout/stderr pipes rather than only for the
-// hook process's own exit, this loop holding an open copy of those pipes
-// would block that reader for the rest of the install. Which behaviour
-// log-output actually has on this d-i version cannot be proven without
-// hardware, so the mitigation does not wait to find out: it costs nothing,
-// and it is why this line does not get simplified back to `&` later.
+// inherit the early-command's own. The loop outlives the shell that started
+// it, and subiquity reads each command's output: a reader waiting for EOF on
+// pipes this loop still holds would hang the install at early-commands. Not
+// proven either way on hardware, and the redirection costs nothing -- which
+// is why this line does not get simplified back to `&` later.
 func BeaconHeartbeat(base, token, checkpoint string) string {
 	if strings.TrimSpace(base) == "" {
 		return ""

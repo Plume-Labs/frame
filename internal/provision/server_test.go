@@ -18,8 +18,8 @@ import (
 const tok = "0123456789abcdef0123456789abcdef"
 
 // testMediaURL stands in for the address the BMC, on the management
-// network, would reach the media listener at. Only TestBuildHandlerWrites-
-// ThePreseedTheImageAsksFor actually fetches anything served by it; the
+// network, would reach the media listener at. Only the seed tests actually
+// fetch anything served by it; the
 // other BuildHandler tests only need a non-empty value.
 const testMediaURL = "http://192.0.2.50:8081"
 
@@ -98,126 +98,84 @@ func TestMediaHandlerRefusesAWellFormedRouteNameThatIsNotAnImageName(t *testing.
 	}
 }
 
-// The listener the BMC reaches must be able to read a preseed the same way
-// it reads an image, and be just as unable to write one.
-func TestMediaHandlerServesAPreseedAndRefusesToWriteOne(t *testing.T) {
+// The listener the BMC reaches must be able to read a seed the same way it
+// reads an image, and be just as unable to write one.
+func TestMediaHandlerServesTheSeedAndRefusesToWriteIt(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, tok+".cfg"), []byte("PRESEED"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, tok), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	for _, f := range []string{"user-data", "meta-data", "vendor-data"} {
+		if err := os.WriteFile(filepath.Join(dir, tok, f), []byte("SEED-"+f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	h := MediaHandler(dir, nil)
-
-	for _, tc := range []struct {
-		method, path string
-		want         int
-	}{
-		{http.MethodGet, "/preseed/" + tok + ".cfg", http.StatusOK},
-		{http.MethodPost, "/preseed/" + tok + ".cfg", http.StatusMethodNotAllowed},
-		{http.MethodDelete, "/preseed/" + tok + ".cfg", http.StatusMethodNotAllowed},
-	} {
+	for _, f := range []string{"user-data", "meta-data", "vendor-data"} {
 		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, httptest.NewRequest(tc.method, tc.path, nil))
-		if rr.Code != tc.want {
-			t.Errorf("%s %s = %d, want %d", tc.method, tc.path, rr.Code, tc.want)
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/autoinstall/"+tok+"/"+f, nil))
+		if rr.Code != http.StatusOK || rr.Body.String() != "SEED-"+f {
+			t.Errorf("GET %s = %d %q", f, rr.Code, rr.Body.String())
+		}
+		for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest(m, "/autoinstall/"+tok+"/"+f, nil))
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s = %d, want 405", m, f, rr.Code)
+			}
 		}
 	}
 }
 
-// /iso/'s traversal coverage (TestMediaHandlerRefusesPathsThatClimbOut)
-// never sends a single request at /preseed/; this is that same coverage for
-// the new route.
-func TestMediaHandlerRefusesPreseedPathsThatClimbOut(t *testing.T) {
+// The closed list and the token shape each refuse on their own. Files exist
+// under every refused name, so the guard -- not a missing file -- is what
+// answers 404. Mutation-proved by replacing either guard with "true".
+func TestMediaHandlerRefusesSeedNamesOutsideTheClosedList(t *testing.T) {
 	dir := t.TempDir()
+	for _, p := range []string{tok + "/network-config", tok + "/user-data.bak", "not-a-token/user-data"} {
+		full := filepath.Join(dir, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	h := MediaHandler(dir, nil)
-	for _, p := range []string{"/preseed/../../etc/passwd", "/preseed/..%2f..%2fetc%2fpasswd", "/preseed/sub/dir.cfg"} {
+	for _, p := range []string{
+		"/autoinstall/" + tok + "/network-config",
+		"/autoinstall/" + tok + "/user-data.bak",
+		"/autoinstall/not-a-token/user-data",
+		"/autoinstall/" + tok + "/../" + tok + ".iso",
+		"/autoinstall/" + tok + "/sub/user-data",
+		"/autoinstall/" + tok + "/",
+	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, p, nil))
 		if rr.Code == http.StatusOK {
-			t.Errorf("%s was served", p)
+			t.Errorf("GET %s = 200; it must be refused", p)
 		}
 	}
 }
 
-// This does NOT prove preseedName refuses anything -- it only separates "a
-// well-formed name reached the filesystem and 404'd there" from "the route
-// never matched at all". Keeping the comment honest about that after
-// getting it wrong once already: an earlier version of this file paired
-// this test with TestMediaHandlerServesAPreseedAndRefusesToWriteOne and
-// called that the positive control for preseedName. It is not -- both of
-// those tests stay fully green with preseedName's check deleted outright
-// (measured; see the mutation proof in TestMediaHandlerRefusesAWellFormed-
-// PreseedRouteNameThatIsNotAPreseedName's comment below, which is the
-// actual proof).
-func TestMediaHandlerServesTheFilesystemsAnswerForAWellFormedPreseedNameThatIsAbsent(t *testing.T) {
-	dir := t.TempDir()
-	h := MediaHandler(dir, nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".cfg", nil))
-	if rr.Code != http.StatusNotFound {
-		t.Errorf("code = %d, want 404 (a well-formed but absent preseed name should reach the filesystem and fail there, not be turned away earlier)", rr.Code)
-	}
-}
-
-// The actual proof preseedName refuses anything: a name that is a single
-// path segment (so the route matches it) and that DOES exist on disk under
-// that exact name, but does not match preseedName. A missing file would
-// also 404 here, and a multi-segment path
-// (TestMediaHandlerRefusesPreseedPathsThatClimbOut's "/preseed/sub/dir.cfg"
-// case) never reaches the name check at all -- only this shape, a
-// well-formed route match against a real file the pattern still rejects,
-// tells "the guard refused it" apart from "there was nothing there".
-// Mutation-proved: replacing preseedName with regexp.MustCompile(`.*`)
-// turns exactly this test red and none of the others in this file.
-func TestMediaHandlerRefusesAWellFormedPreseedRouteNameThatIsNotAPreseedName(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "not-a-preseed-name"), []byte("PRESEED"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	h := MediaHandler(dir, nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/not-a-preseed-name", nil))
-	if rr.Code != http.StatusNotFound {
-		t.Errorf("code = %d, want 404 (the name check should have refused this before the filesystem was touched, even though a file exists under this exact name)", rr.Code)
-	}
-}
-
-func TestBuildHandlerRejectsASpecItWouldRefuseToRender(t *testing.T) {
-	h := BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, nil)
-	body := `{"uid":"","hostname":"g9"}`
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", strings.NewReader(body)))
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", rr.Code)
-	}
-}
-
-// The point of the whole HTTP-preseed change: what BuildHandler writes to
-// dir/<token>.cfg must be exactly what RenderPreseed(spec) produces, and
-// the URL baked into the built image's own boot arguments must be the one
-// MediaHandler's /preseed/{name} route actually serves. A preseed served at
-// an address the image does not ask for is an installation that hangs with
-// nothing to read.
-func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
+// buildOnce runs a real BuildHandler against a base served over HTTP and
+// returns the directory it wrote into and the token it answered.
+func buildOnce(t *testing.T, spec Spec, beacons *BeaconStore) (dir, token string) {
+	t.Helper()
 	requireXorriso(t)
-
-	baseISOPath := realBaseISO(t)
-	baseBytes, err := os.ReadFile(baseISOPath)
+	baseBytes, err := os.ReadFile(realBaseISO(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := serveBytes(t, baseBytes)
 	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
-
-	dir := t.TempDir()
-	h := BuildHandler(dir, base, testMediaURL, nil)
-
-	spec := goodSpec()
+	dir = t.TempDir()
 	reqBody, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	BuildHandler(dir, base, testMediaURL, beacons).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
 	}
@@ -225,184 +183,66 @@ func TestBuildHandlerWritesThePreseedTheImageAsksFor(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-
-	want, err := RenderPreseed(spec, testMediaURL+"/preseed/"+resp.Token+".sh", "", resp.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(filepath.Join(dir, resp.Token+".cfg"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != want {
-		t.Errorf("dir/%s.cfg does not match RenderPreseed(spec) byte-for-byte", resp.Token)
-	}
-
-	wantURL := testMediaURL + "/preseed/" + resp.Token + ".cfg"
-	built := isoContains(t, filepath.Join(dir, resp.Token+".iso"), "/isolinux/txt.cfg")
-	if !strings.Contains(built, "url="+wantURL) {
-		t.Errorf("built image's boot args do not carry url=%s:\n%s", wantURL, built)
-	}
+	return dir, resp.Token
 }
 
-// C1's serving half. The preseed's preseed/run directive names a URL; if
-// nothing answers it, netcfg never re-runs and the static network
-// configuration is inert -- a failure indistinguishable, from the outside,
-// from an install that is merely slow.
-func TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, tok+".sh"), []byte(RenderRunScript("", tok)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	h := MediaHandler(dir, nil)
+// What BuildHandler writes must be exactly what RenderAutoinstall(spec)
+// produces, and the seed address baked into the built image must be the one
+// MediaHandler serves: a seed served at an address the image does not ask
+// for is an installation that boots and waits with nothing to read.
+func TestBuildHandlerWritesTheSeedTheImageAsksFor(t *testing.T) {
+	spec := goodSpec()
+	dir, token := buildOnce(t, spec, nil)
 
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+tok+".sh", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("GET /preseed/%s.sh = %d, want 200", tok, rr.Code)
-	}
-	if rr.Body.String() != RenderRunScript("", tok) {
-		t.Errorf("served body is not the run script:\n%s", rr.Body.String())
-	}
-
-	// Read-only, exactly like the preseed and the image beside it.
-	for _, m := range []string{http.MethodPost, http.MethodDelete} {
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, httptest.NewRequest(m, "/preseed/"+tok+".sh", nil))
-		if rr.Code != http.StatusMethodNotAllowed {
-			t.Errorf("%s /preseed/%s.sh = %d, want 405", m, tok, rr.Code)
-		}
-	}
-}
-
-// The run script's own name guard, proved the same way preseedName's is: a
-// single-segment name that DOES exist on disk under that exact name and
-// still must not be served. A missing file would 404 too, so only a real
-// file the pattern rejects separates "the guard refused it" from "there was
-// nothing there".
-//
-// Mutation-proved: replacing runScriptName with regexp.MustCompile(`.*`)
-// turns this red. Deleting the runScriptName clause from the route turns
-// TestMediaHandlerServesTheNetcfgRerunScriptBesideThePreseed red instead --
-// two different mutations, two different tests, neither able to stand in
-// for the other.
-func TestMediaHandlerRefusesARunScriptNameThatIsNotARunScriptName(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"not-a-run-script.sh", tok + ".sh.txt", tok + ".bash"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(RenderRunScript("", tok)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	h := MediaHandler(dir, nil)
-	for _, name := range []string{"not-a-run-script.sh", tok + ".sh.txt", tok + ".bash"} {
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/preseed/"+name, nil))
-		if rr.Code != http.StatusNotFound {
-			t.Errorf("GET /preseed/%s = %d, want 404 (a file exists under this exact name; the guard has to be what refuses it)", name, rr.Code)
-		}
-	}
-}
-
-// The end-to-end version of C1 that this repo can actually run: build
-// through the real BuildHandler, read the preseed it wrote, take the URL
-// out of its own preseed/run directive, and fetch that URL through the
-// media listener over the same directory. Nothing here is told what the
-// address should be -- it is read back out of the artifact.
-func TestBuildHandlerServesTheRunScriptAtTheAddressThePreseedNames(t *testing.T) {
-	requireXorriso(t)
-
-	baseISOPath := realBaseISO(t)
-	baseBytes, err := os.ReadFile(baseISOPath)
+	want, err := RenderAutoinstall(spec, "", token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := serveBytes(t, baseBytes)
-	base := BaseSource{URL: srv.URL + "/base.iso", SHA256: sum(baseBytes)}
-
-	dir := t.TempDir()
-	reqBody, err := json.Marshal(goodSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	BuildHandler(dir, base, testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("build: code = %d, body = %s", rr.Code, rr.Body.String())
-	}
-	var resp buildResponse
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
-	}
-
-	preseed, err := os.ReadFile(filepath.Join(dir, resp.Token+".cfg"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runURL := runURLFromPreseed(t, string(preseed))
-	if !strings.HasPrefix(runURL, testMediaURL+"/") {
-		t.Fatalf("preseed/run URL %q is not on the media listener the BMC reaches", runURL)
-	}
-
-	path := strings.TrimPrefix(runURL, testMediaURL)
 	got := httptest.NewRecorder()
-	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, path, nil))
-	if got.Code != http.StatusOK {
-		t.Fatalf("GET %s (the address the preseed itself names) = %d, want 200", path, got.Code)
+	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/autoinstall/"+token+"/user-data", nil))
+	if got.Code != http.StatusOK || got.Body.String() != want {
+		t.Errorf("served user-data (%d) does not match RenderAutoinstall(spec) byte-for-byte", got.Code)
 	}
-	if got.Body.String() != RenderRunScript("", tok) {
-		t.Errorf("what is served at the preseed's own preseed/run address is not the run script:\n%s", got.Body.String())
+
+	built := isoContains(t, filepath.Join(dir, token+".iso"), "/boot/grub/grub.cfg")
+	wantURL := testMediaURL + "/autoinstall/" + token + "/"
+	if !strings.Contains(built, `ds=nocloud\;s=`+wantURL) {
+		t.Errorf("built image's boot args do not name %s:\n%s", wantURL, built)
 	}
 }
 
-// runURLFromPreseed reads the value out of the rendered preseed's own
-// preseed/run directive. Parsed rather than reconstructed on purpose: a
-// test that rebuilds the URL from the token cannot tell the directive
-// naming the right address from the directive being absent entirely.
-func runURLFromPreseed(t *testing.T, preseed string) string {
-	t.Helper()
-	const prefix = "d-i preseed/run string "
-	for _, line := range strings.Split(preseed, "\n") {
-		if v, ok := strings.CutPrefix(line, prefix); ok {
-			return strings.TrimSpace(v)
-		}
-	}
-	t.Fatalf("the rendered preseed carries no preseed/run directive at all:\n%s", preseed)
-	return ""
-}
-
-// A built image's sidecars are removed with it. A .sh left behind is a live
-// unauthenticated route pointing at nothing anyone owns.
-func TestBuildHandlerDeleteRemovesThePreseedAndTheRunScriptWithTheImage(t *testing.T) {
+func TestBuildHandlerDeleteRemovesTheSeedWithTheImage(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, tok+".iso"), []byte("ISO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSeed(dir, tok, goodSpec(), ""); err != nil {
+		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
 	BuildHandler(dir, DefaultBase(), testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+tok+".iso", nil))
 	if rr.Code != http.StatusNoContent {
-		t.Fatalf("DELETE = %d, want 204: %s", rr.Code, rr.Body.String())
+		t.Fatalf("DELETE = %d", rr.Code)
 	}
-	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
+	for _, name := range []string{tok + ".iso", tok} {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
-			t.Errorf("%s survived the delete", name)
+			t.Errorf("%s survived DELETE", name)
 		}
 	}
 }
 
-func TestLocalImageStoreRemoveTakesThePreseedAndTheRunScriptToo(t *testing.T) {
+func TestLocalImageStoreRemoveTakesTheSeedToo(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := &LocalImageStore{Dir: dir, MediaURL: testMediaURL}
-	if err := s.Remove(context.Background(), tok); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, tok+".iso"), []byte("ISO"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{tok + ".iso", tok + ".cfg", tok + ".sh"} {
+	if err := writeSeed(dir, tok, goodSpec(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&LocalImageStore{Dir: dir}).Remove(context.Background(), tok); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{tok + ".iso", tok} {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Errorf("%s survived Remove", name)
 		}
@@ -412,7 +252,7 @@ func TestLocalImageStoreRemoveTakesThePreseedAndTheRunScriptToo(t *testing.T) {
 // I2. The build API is unauthenticated and in-cluster, which on this
 // platform means reachable by every notebook and every coding sandbox --
 // the recorded defect decision 3 of the design was written against. It has
-// no use for the join token: RenderPreseed never reads Spec.Cluster. So the
+// no use for the join token: RenderAutoinstall never reads Spec.Cluster. So the
 // token must not be in the request at all.
 //
 // The assertion is on the raw request body, not on a decoded struct: a
@@ -457,11 +297,11 @@ func TestHTTPImageStoreNeverSendsTheJoinTokenToTheBuildAPI(t *testing.T) {
 }
 
 // I10. The search for secret material belongs where the spec-derived
-// content is, and since 2026-09-11 that is the served preseed, not the
-// image. This reads the file BuildHandler actually wrote and serves --
-// dir/<token>.cfg -- rather than RenderPreseed's return value, because the
+// content is, and that is the served seed, not the image. This reads the
+// file BuildHandler actually wrote and serves -- dir/<token>/user-data --
+// rather than RenderAutoinstall's return value, because the
 // question is what is published on the unauthenticated media listener.
-func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
+func TestBuildHandlerServesASeedWithNoSecretMaterial(t *testing.T) {
 	requireXorriso(t)
 
 	baseISOPath := realBaseISO(t)
@@ -491,7 +331,7 @@ func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
 	BuildHandler(dir, base, testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
 
 	// The secret-laden key must be refused outright -- that is the primary
-	// guard, and it is what keeps the preseed clean. If it ever is not, the
+	// guard, and it is what keeps the seed clean. If it ever is not, the
 	// rest of this test is what catches the consequence.
 	if rr.Code == http.StatusBadRequest {
 		return
@@ -507,9 +347,9 @@ func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
 	// Fetched through the media listener, not read off disk: that is the
 	// surface the question is about.
 	got := httptest.NewRecorder()
-	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
+	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/autoinstall/"+resp.Token+"/user-data", nil))
 	if got.Code != http.StatusOK {
-		t.Fatalf("GET the served preseed = %d", got.Code)
+		t.Fatalf("GET the served seed = %d", got.Code)
 	}
 	served := got.Body.String()
 	for what, v := range map[string]string{
@@ -518,7 +358,7 @@ func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
 		"the k3s join token":  joinToken,
 	} {
 		if strings.Contains(served, v) {
-			t.Errorf("the preseed served on the unauthenticated media listener carries %s (%q)", what, v)
+			t.Errorf("the seed served on the unauthenticated media listener carries %s (%q)", what, v)
 		}
 	}
 }
@@ -530,11 +370,11 @@ func TestBuildHandlerServesAPreseedWithNoSecretMaterial(t *testing.T) {
 const secretLadenPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILsytToxkJ2CiWuiv8BZ3hYpu7tFXn7Rwz+kc2gjbPSy frame-test-fixture\n" +
 	"-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n"
 
-// And the ordinary spec's served preseed does carry the public key, which
+// And the ordinary spec's served seed does carry the public key, which
 // is the positive control for the search above: a served body that was
 // empty, or a route answering with the wrong file, would satisfy every
 // "does not contain" there.
-func TestBuildHandlerServesAPreseedThatDoesCarryThePublicKey(t *testing.T) {
+func TestBuildHandlerServesASeedThatDoesCarryThePublicKey(t *testing.T) {
 	requireXorriso(t)
 
 	baseISOPath := realBaseISO(t)
@@ -561,12 +401,12 @@ func TestBuildHandlerServesAPreseedThatDoesCarryThePublicKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := httptest.NewRecorder()
-	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/preseed/"+resp.Token+".cfg", nil))
+	MediaHandler(dir, nil).ServeHTTP(got, httptest.NewRequest(http.MethodGet, "/autoinstall/"+resp.Token+"/user-data", nil))
 	if got.Code != http.StatusOK {
-		t.Fatalf("GET the served preseed = %d", got.Code)
+		t.Fatalf("GET the served seed = %d", got.Code)
 	}
 	if !strings.Contains(got.Body.String(), spec.SSHPublicKey) {
-		t.Errorf("the served preseed does not carry the public key at all:\n%s", got.Body.String())
+		t.Errorf("the served seed does not carry the public key at all:\n%s", got.Body.String())
 	}
 }
 
@@ -773,7 +613,7 @@ func TestMediaHandlerWithoutAStoreHasNoBeaconRoute(t *testing.T) {
 func TestBuildHandlerServesBeaconStateBack(t *testing.T) {
 	store := NewBeaconStore(8)
 	seen := time.Unix(1_700_000_000, 0).UTC()
-	store.Record(testBeaconToken, CheckpointPartman, seen)
+	store.Record(testBeaconToken, CheckpointEarly, seen)
 
 	rr := httptest.NewRecorder()
 	BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store).
@@ -786,7 +626,7 @@ func TestBuildHandlerServesBeaconStateBack(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
-	if got.LastCheckpoint != CheckpointPartman || !got.LastSeen.Equal(seen) || got.Count != 1 {
+	if got.LastCheckpoint != CheckpointEarly || !got.LastSeen.Equal(seen) || got.Count != 1 {
 		t.Errorf("beacon state = %+v, want partman at %v with count 1", got, seen)
 	}
 }
@@ -851,7 +691,7 @@ func TestBuildHandlerDoesNotAcceptBeacons(t *testing.T) {
 
 // The URL a machine will call and the route that will answer it are both
 // built from mediaURL here. This asserts they are the same address by
-// construction -- the same property the preseed/run URL already has.
+// construction -- the same property the seed URL already has.
 func TestBuildHandlerBakesTheBeaconURLTheMediaListenerServes(t *testing.T) {
 	requireXorriso(t)
 
@@ -881,21 +721,14 @@ func TestBuildHandlerBakesTheBeaconURLTheMediaListenerServes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := os.ReadFile(filepath.Join(dir, resp.Token+".cfg"))
+	seed, err := os.ReadFile(filepath.Join(dir, resp.Token, "user-data"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := BeaconURL(testMediaURL, resp.Token, CheckpointEarly)
-	if !strings.Contains(string(cfg), want) {
-		t.Errorf("the written preseed does not carry %q", want)
-	}
-
-	sh, err := os.ReadFile(filepath.Join(dir, resp.Token+".sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(sh), BeaconURL(testMediaURL, resp.Token, CheckpointNetcfg)) {
-		t.Errorf("the written preseed/run script does not report the netcfg checkpoint:\n%s", sh)
+	for _, c := range []string{CheckpointEarly, CheckpointLate, CheckpointFailed} {
+		if want := BeaconURL(testMediaURL, resp.Token, c); !strings.Contains(string(seed), want) {
+			t.Errorf("the written seed does not carry %q", want)
+		}
 	}
 
 	// And the route that URL names actually records, on a media listener
@@ -912,7 +745,7 @@ func TestBuildHandlerBakesTheBeaconURLTheMediaListenerServes(t *testing.T) {
 func TestHTTPImageStoreProgressReadsTheBuildListener(t *testing.T) {
 	seen := time.Unix(1_700_000_000, 0).UTC()
 	store := NewBeaconStore(8)
-	store.Record(testBeaconToken, CheckpointPartman, seen)
+	store.Record(testBeaconToken, CheckpointEarly, seen)
 	srv := httptest.NewServer(BuildHandler(t.TempDir(), DefaultBase(), testMediaURL, store))
 	defer srv.Close()
 
@@ -924,7 +757,7 @@ func TestHTTPImageStoreProgressReadsTheBuildListener(t *testing.T) {
 	if !known {
 		t.Fatal("known = false for an install that has reported")
 	}
-	if got.LastCheckpoint != CheckpointPartman || !got.LastSeen.Equal(seen) {
+	if got.LastCheckpoint != CheckpointEarly || !got.LastSeen.Equal(seen) {
 		t.Errorf("progress = %+v, want partman at %v", got, seen)
 	}
 }

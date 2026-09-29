@@ -3,7 +3,6 @@ package provision
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,57 +10,57 @@ import (
 	"strings"
 )
 
-// bootArgs is what makes the installer unattended. Virtual media offers no way
-// to pass kernel arguments, so they have to be written into the image's own
-// boot configuration.
+// bootArgsFixed is what makes the installer unattended. Virtual media offers
+// no way to pass kernel arguments, so they are written into the image's own
+// GRUB configuration.
 //
-// The preseed is fetched over HTTP rather than read from the image.
-// Measured on an ML350 Gen9 on 2026-09-11: an image saying
-// file=/cdrom/preseed.cfg read 79 MB from the virtual CD and stopped before
-// reaching the network, while url= read 139-148 MB and got through — three
-// trials each way, constant. The mechanism is not understood and the screen
-// was never seen, so this is a correlation acted on, not an explanation.
-//
-// interface=auto is not optional on that machine: it has four NICs and one
-// cabled. Observed, not explained, same as url= above and by the same
-// session, where nobody saw the screen either: without interface=auto the
-// boot does not reach the preseed; with it, DHCP proceeds and the
-// installer takes its address. "d-i is asking which interface to use" is a
-// plausible reading of that symptom, not a confirmed mechanism -- do not
-// trust it further than that.
-//
-// frame=1 is our own marker. It is what addBootArgs checks to avoid
-// rewriting a line twice. It cannot be auto=true, which Debian itself ships
-// on five entries of the real grub.cfg.
-const bootArgsFixed = "auto=true priority=critical interface=auto frame=1"
+//   - autoinstall: without it on the kernel command line subiquity finds the
+//     seed and then stops to ask whether to proceed.
+//   - ip=dhcp: the seed is fetched over the network BEFORE its own `network:`
+//     section applies, so the live environment needs an address first. The
+//     install network must offer DHCP. That the initramfs finds the one cabled
+//     port among four is UNPROVEN ON HARDWARE (recette step 1).
+//   - noprompt: the medium is still attached at reboot (ejected only at
+//     cleanup); without it casper can stop on "remove the installation medium,
+//     then press ENTER".
+//   - frame=1 is our own marker. It is what addBootArgs checks to avoid
+//     rewriting a line twice.
+const bootArgsFixed = "frame=1 autoinstall ip=dhcp noprompt"
 
 const alreadyRewritten = "frame=1"
 
-func bootArgs(preseedURL string) string {
-	return bootArgsFixed + " url=" + preseedURL
+// bootArgs adds the NoCloud datasource. The `;` is escaped: unescaped, GRUB
+// ends the `linux` command there and the seed URL never reaches the kernel.
+func bootArgs(seedURL string) string {
+	return bootArgsFixed + ` ds=nocloud\;s=` + seedURL
 }
 
+// grubConfigs are the two files on the Ubuntu server ISO that carry kernel
+// lines (read off ubuntu-24.04.5-live-server-amd64.iso, see
+// testdata/ubuntu-24.04.5-boot/PROVENANCE.md). grub.cfg is required;
+// loopback.cfg is rewritten when present.
+var grubConfigs = []string{"/boot/grub/grub.cfg", "/boot/grub/loopback.cfg"}
+
 // Remaster writes a per-machine installer image whose boot arguments fetch
-// its preseed from preseedURL.
+// its autoinstall seed from seedURL.
 //
-// The image is built per machine rather than generic because no secret enters
-// it, which removes any reason to fetch a configuration at install time and
-// with it an entire MAC-based identification protocol. The image is the
-// installation intent, readable in full.
-//
-// The preseed itself is no longer written onto the image -- see bootArgs's
-// doc comment for why. preseedURL is required and refused empty, before
-// baseISO is ever touched, the same as a bad Spec is.
-func Remaster(ctx context.Context, baseISO string, s Spec, preseedURL, out string) error {
-	// ValidateSpec, not RenderPreseed: Remaster has no preseed/run URL to
-	// render against (the store that calls it builds both URLs from the
-	// token it owns), and inventing one here to throw the output away would
-	// make this refuse or accept on a value no image ever carries.
+// Only the GRUB files are replaced; the rest of the image, its volume label
+// and both of its boot records are carried over by xorriso's native
+// `-boot_image any replay`, without extracting the ~4 GB tree. The output is
+// then read back and refused unless it still carries a BIOS and a UEFI El
+// Torito entry: an image that lost one boots in one firmware mode and hangs in
+// the other, on a machine reachable only by its BMC.
+func Remaster(ctx context.Context, baseISO string, s Spec, seedURL, out string) error {
 	if err := ValidateSpec(s); err != nil {
 		return err
 	}
-	if strings.TrimSpace(preseedURL) == "" {
-		return fmt.Errorf("preseedURL is empty: the image has nothing to fetch its preseed from")
+	if strings.TrimSpace(seedURL) == "" {
+		return fmt.Errorf("seedURL is empty: the image has nothing to fetch its autoinstall seed from")
+	}
+	// The URL lands on a GRUB command line: whitespace splits it, a quote or
+	// backslash changes GRUB's parsing, and an unescaped ; ends the command.
+	if strings.ContainsAny(seedURL, " \t\n\r'\"\\;") {
+		return fmt.Errorf("seedURL %q: must not contain whitespace, quotes, backslashes or semicolons; it is written onto a GRUB kernel line", seedURL)
 	}
 
 	work, err := os.MkdirTemp("", "frame-remaster-")
@@ -70,117 +69,79 @@ func Remaster(ctx context.Context, baseISO string, s Spec, preseedURL, out strin
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	tree := filepath.Join(work, "tree")
-	if err := run(ctx, "xorriso", "-osirrox", "on", "-indev", baseISO, "-extract", "/", tree); err != nil {
-		return fmt.Errorf("unpack %s: %w", baseISO, err)
-	}
-	// xorriso extracts read-only; the tree has to be writable to rewrite it.
-	if err := run(ctx, "chmod", "-R", "u+w", tree); err != nil {
-		return err
-	}
-
-	if err := rewriteBootConfigs(tree, preseedURL); err != nil {
-		return err
-	}
-
-	args := []string{"-as", "mkisofs", "-o", out, "-V", "FRAME_INSTALL", "-r", "-J"}
-	// A real netinst carries both boot records. The test fixture carries
-	// neither, and an image with no boot record is still worth building and
-	// reading back -- what those tests assert is the content, not the boot.
-	if _, err := os.Stat(filepath.Join(tree, "isolinux", "isohdpfx.bin")); err == nil {
-		args = append(args,
-			"-isohybrid-mbr", filepath.Join(tree, "isolinux", "isohdpfx.bin"),
-			"-c", "isolinux/boot.cat", "-b", "isolinux/isolinux.bin",
-			"-no-emul-boot", "-boot-load-size", "4", "-boot-info-table")
-	}
-	if _, err := os.Stat(filepath.Join(tree, "boot", "grub", "efi.img")); err == nil {
-		args = append(args, "-eltorito-alt-boot", "-e", "boot/grub/efi.img",
-			"-no-emul-boot", "-isohybrid-gpt-basdat")
-	}
-	args = append(args, tree)
-	return run(ctx, "xorriso", args...)
-}
-
-var kernelLine = regexp.MustCompile(`(?m)^(\s*(?:append|linux)\s+.*)$`)
-
-// rewriteBootConfigs makes every kernel line in the tree unattended.
-//
-// It walks isolinux/*.cfg and every *.cfg under boot/grub/, rather than
-// opening a fixed two-file list: a real netinst's BIOS boot graph branches
-// into many included files (accessible/dark-contrast variants, rescue mode,
-// speech synthesis, advanced submenus -- see
-// testdata/debian-13.6.0-boot/PROVENANCE.md for the definitive, captured
-// listing), and which one the firmware actually boots -- gtk.cfg's graphical
-// installer, on a stock BIOS boot, not txt.cfg -- is a menu-selection
-// question Remaster has no way to answer and no need to: rewriting every
-// kernel line it finds means whichever entry the menu graph selects is
-// unattended. An entry nobody boots also carrying the arguments is harmless.
-func rewriteBootConfigs(tree, preseedURL string) error {
-	var files []string
-
-	isolinuxCfgs, err := filepath.Glob(filepath.Join(tree, "isolinux", "*.cfg"))
-	if err != nil {
-		return err
-	}
-	files = append(files, isolinuxCfgs...)
-
-	grubRoot := filepath.Join(tree, "boot", "grub")
-	if _, err := os.Stat(grubRoot); err == nil {
-		walkErr := filepath.WalkDir(grubRoot, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+	args := []string{"-indev", baseISO, "-outdev", out}
+	for i, isoPath := range grubConfigs {
+		local := filepath.Join(work, fmt.Sprintf("%d-%s", i, filepath.Base(isoPath)))
+		if err := run(ctx, "xorriso", "-osirrox", "on", "-indev", baseISO, "-extract", isoPath, local); err != nil {
+			if i == 0 {
+				return fmt.Errorf("extracting %s from %s: %w", isoPath, baseISO, err)
 			}
-			if !d.IsDir() && strings.HasSuffix(path, ".cfg") {
-				files = append(files, path)
-			}
-			return nil
-		})
-		if walkErr != nil {
-			return walkErr
+			continue // loopback.cfg is optional
 		}
-	}
-
-	var anyKernelLine bool
-	for _, f := range files {
-		found, _, err := addBootArgs(f, preseedURL)
+		if err := os.Chmod(local, 0o644); err != nil { // xorriso extracts read-only
+			return err
+		}
+		found, _, err := addBootArgs(local, seedURL)
 		if err != nil {
 			return err
 		}
-		if found {
-			anyKernelLine = true
+		// grub.cfg is the file the firmware boots; if it has no kernel line
+		// the image boots to a menu and waits for a keypress nobody gives.
+		if i == 0 && !found {
+			return fmt.Errorf("no kernel line found to make unattended in %s", isoPath)
 		}
+		args = append(args, "-map", local, isoPath)
 	}
-	// The error fires once for the whole tree, not per file: most files in a
-	// real isolinux tree are menu styling or submenu plumbing with no kernel
-	// line at all, so "this one file has none" is not itself a problem. "none
-	// of them do" is -- that is an image that boots to a menu and waits for a
-	// keypress that will never come, on a machine reachable only by its BMC.
-	//
-	// This checks whether any kernel line was ever found, not whether any
-	// line was changed: Remaster always works on a freshly extracted tree
-	// today, so every kernel line found is unmarked and every found line is
-	// also a changed line. But if that ever stops being true -- an idempotent
-	// re-run against an already-remastered tree, say -- "0 changed" would
-	// otherwise be reported as "no kernel line to rewrite", which is false:
-	// every kernel line was found and correctly left alone because it
-	// already carried the marker. Those are different failure states and
-	// only one of them is actually a failure.
-	if !anyKernelLine {
-		return fmt.Errorf("no kernel line found to make unattended in %d boot config file(s) under %s", len(files), tree)
+	args = append(args, "-boot_image", "any", "replay")
+
+	_ = os.Remove(out) // -outdev refuses to overwrite a non-empty file it did not load
+	if err := run(ctx, "xorriso", args...); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+	if err := checkBootRecords(ctx, out); err != nil {
+		_ = os.Remove(out)
+		return err
 	}
 	return nil
 }
 
-// addBootArgs appends the unattended arguments to every kernel line it finds
-// in path that doesn't already carry them, and reports separately whether it
-// found a kernel line at all (found) and whether it changed the file
-// (changed). A file with no kernel line is not itself a problem -- most files
-// in a real isolinux tree are menu styling or submenu plumbing --
-// rewriteBootConfigs decides whether the walk as a whole found nothing to
-// rewrite. found and changed diverge exactly when every kernel line in the
-// file already carries the marker: that is a legitimate idempotent no-op, not
-// the same thing as a file with nothing to rewrite in the first place.
-func addBootArgs(path, preseedURL string) (found bool, changed bool, err error) {
+// checkBootRecords refuses an image that does not carry both a BIOS and a
+// UEFI El Torito entry.
+func checkBootRecords(ctx context.Context, iso string) error {
+	cmd := exec.CommandContext(ctx, "xorriso", "-indev", iso, "-report_el_torito", "plain")
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reading boot records of %s: %w\n%s", iso, err, b)
+	}
+	var bios, uefi bool
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if !strings.HasPrefix(line, "El Torito boot img") {
+			continue
+		}
+		f := strings.Fields(strings.SplitN(line, ":", 2)[1])
+		if len(f) >= 2 {
+			bios = bios || f[1] == "BIOS"
+			uefi = uefi || f[1] == "UEFI"
+		}
+	}
+	if !bios || !uefi {
+		return fmt.Errorf("built image %s lacks a boot record (BIOS %v, UEFI %v); refusing to serve an image that boots in only one firmware mode", iso, bios, uefi)
+	}
+	return nil
+}
+
+var kernelLine = regexp.MustCompile(`(?m)^(\s*linux\s+.*)$`)
+
+// menuTimeout is the menu wait on the stock image (`set timeout=30`): cut to
+// one second, since nobody is at the console to choose.
+var menuTimeout = regexp.MustCompile(`(?m)^set timeout=\d+$`)
+
+// addBootArgs puts the unattended arguments on every kernel line in path that
+// doesn't already carry them, and reports separately whether it found a kernel
+// line at all (found) and whether it changed the file (changed). found and
+// changed diverge exactly when every kernel line already carries the marker:
+// a legitimate idempotent no-op, not a file with nothing to rewrite.
+func addBootArgs(path, seedURL string) (found bool, changed bool, err error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false, false, err
@@ -192,8 +153,9 @@ func addBootArgs(path, preseedURL string) (found bool, changed bool, err error) 
 		if strings.Contains(line, alreadyRewritten) {
 			return line
 		}
-		return withBootArgs(line, preseedURL)
+		return withBootArgs(line, seedURL)
 	})
+	out = menuTimeout.ReplaceAllString(out, "set timeout=1")
 	if out == string(b) {
 		return true, false, nil
 	}
@@ -203,25 +165,15 @@ func addBootArgs(path, preseedURL string) (found bool, changed bool, err error) 
 	return true, true, nil
 }
 
-// tripleDash matches d-i's own argument separator as a standalone token.
-// Every kernel line on the real netinst carries one: "append vga=788
-// initrd=/install.amd/initrd.gz --- quiet".
+// tripleDash matches the kernel-argument separator as a standalone token.
+// Every kernel line on the server ISO carries one: "linux /casper/vmlinuz  ---".
 var tripleDash = regexp.MustCompile(`(?:^|\s)---(?:\s|$)`)
 
-// withBootArgs puts the unattended arguments BEFORE the "---" separator.
-//
-// Anything after "---" is not for the installer: d-i copies it onto the
-// kernel command line of the system it installs. Appending at the end of
-// the line therefore put url=, auto=true, priority=critical, interface=auto
-// and frame=1 into the installed node's own GRUB configuration, where they
-// mean nothing, persist across every future boot, and publish the preseed
-// URL to anyone who reads /proc/cmdline on that machine.
-//
-// Not proven on hardware -- the installed node's GRUB line has never been
-// read -- so "likely leaks" is the honest claim. Putting them where d-i
-// documents installer arguments to go costs nothing either way.
-func withBootArgs(line, preseedURL string) string {
-	args := bootArgs(preseedURL)
+// withBootArgs puts the unattended arguments BEFORE "---". What follows "---"
+// is copied onto the installed system's own kernel command line, where the
+// seed URL would persist across every boot and be readable in /proc/cmdline.
+func withBootArgs(line, seedURL string) string {
+	args := bootArgs(seedURL)
 	if m := tripleDash.FindStringIndex(line); m != nil {
 		return line[:m[0]] + " " + args + line[m[0]:]
 	}

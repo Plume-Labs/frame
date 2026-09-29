@@ -29,7 +29,7 @@ func (f *fakeSession) Output(context.Context, string) (string, error) { return "
 func (f *fakeSession) Close() error                                   { f.closed = true; return nil }
 func (f *fakeSession) ReadFile(_ context.Context, path string) ([]byte, error) {
 	// An empty marker means the file is not there, which is what a system
-	// that never ran our preseed actually presents: `cat` fails. Modelling it
+	// that never ran our installer actually presents: `cat` fails. Modelling it
 	// as an existing-but-blank file made the no-marker test land on the
 	// mismatch branch and left the read guard uncovered.
 	if path != markerPath || f.marker == "" {
@@ -104,7 +104,7 @@ func TestWaitForOurSystemRefusesAMachineThatIsNotOurs(t *testing.T) {
 // machine at the address, not a failed write of our own marker.
 //
 // The dedicated readErr branch earns its place by what it says, so that is
-// what this asserts (same shape as preseed.go's PRIVATE KEY branch test).
+// what this asserts (same shape as autoinstall.go's PRIVATE KEY branch test).
 // Remove the branch and the system is still refused -- by the UID
 // comparison, now that an empty uid can no longer sneak an empty-vs-empty
 // match past it -- but the message stops naming the problem.

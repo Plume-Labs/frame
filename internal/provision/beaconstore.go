@@ -51,7 +51,7 @@ func NewBeaconStore(capacity int) *BeaconStore {
 // LastCheckpoint keeps the furthest-progressed checkpoint seen, not the most
 // recently reported one: BeaconHeartbeat resends the checkpoint it was
 // started at every 15 seconds for as long as the installer environment
-// lives, so an install that has since moved on to `partman` or `late` keeps
+// lives, so an install that has since moved on to `late` or `failed` keeps
 // receiving beacons still naming `early`. Regressing LastCheckpoint on one
 // of those would erase the only thing that makes a stalled install legible
 // -- where it got to -- within 15 seconds of it happening, on every install,
