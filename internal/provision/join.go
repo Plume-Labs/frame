@@ -2,6 +2,7 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -131,6 +132,37 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 	}
 }
 
+// ValidateClusterTarget runs every shape check Join makes on t, without a
+// machine. It is exported for the one caller that must refuse a bad target
+// even earlier than Install's own Pending phase does: `frame bootstrap`,
+// which reads its target from a hand-written file and should say so while
+// the operator is still at the keyboard, before a BMC is ever dialled.
+// Install runs it too (validatePendingSpec), so the controller path and the
+// bootstrap path refuse exactly the same targets.
+//
+// None of its errors carry the join token: validateJoinToken reports only
+// its length and character class, and validateServerURL redacts any
+// password embedded in the URL it names.
+func ValidateClusterTarget(t ClusterTarget) error {
+	if err := validateK3sVersion(t.K3sVersion); err != nil {
+		return fmt.Errorf("cluster target: %w", err)
+	}
+	switch t.Mode {
+	case ClusterInit:
+		return nil
+	case ClusterJoin:
+		if err := validateJoinToken(t.JoinToken); err != nil {
+			return fmt.Errorf("cluster target: %w", err)
+		}
+		if err := validateServerURL(t.ServerURL); err != nil {
+			return fmt.Errorf("cluster target: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("cluster target: unknown mode %q (want %q or %q)", t.Mode, ClusterInit, ClusterJoin)
+	}
+}
+
 // sudoPreamble reports whether the first non-empty line of out is one of
 // sudo's own messages, and returns it. sudo prefixes everything it says
 // with "sudo: ", which is what makes this exact rather than a guess about
@@ -204,19 +236,26 @@ func validateJoinToken(v string) error {
 func validateServerURL(v string) error {
 	u, err := url.Parse(v)
 	if err != nil {
-		return fmt.Errorf("server URL %q does not parse: %w", v, err)
+		// Neither v nor err is repeated here: url.Parse's error quotes the
+		// input whole, and an input that fails to parse may still carry a
+		// user:pass@ that the Redacted() below never got the chance to hide.
+		return errors.New("server URL does not parse as a URL")
 	}
+	// Named by u.Redacted(), never v: a URL carrying user:pass@ is exactly
+	// the one whose refusal would otherwise print the password it is being
+	// refused for, whichever check below happens to refuse it first.
+	name := u.Redacted()
 	if u.Scheme != "https" {
-		return fmt.Errorf("server URL %q: scheme must be https, got %q", v, u.Scheme)
+		return fmt.Errorf("server URL %q: scheme must be https, got %q", name, u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("server URL %q: no host", v)
+		return fmt.Errorf("server URL %q: no host", name)
 	}
 	if u.User != nil {
-		return fmt.Errorf("server URL %q: must not carry embedded credentials", v)
+		return fmt.Errorf("server URL %q: must not carry embedded credentials", name)
 	}
 	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("server URL %q: must be scheme and host only, no path, query or fragment", v)
+		return fmt.Errorf("server URL %q: must be scheme and host only, no path, query or fragment", name)
 	}
 	return nil
 }

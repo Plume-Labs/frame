@@ -529,3 +529,72 @@ func TestSudoPreambleOnlyLooksAtTheFirstNonEmptyLine(t *testing.T) {
 		}
 	}
 }
+
+// --- ValidateClusterTarget ---
+//
+// The one entry point `frame bootstrap` calls at load time, so a join
+// config missing its token or its server is refused while the operator is
+// still at the keyboard. Each case below differs from goodJoinTarget() in
+// exactly one field, so each one isolates one refusal.
+func goodJoinTarget() ClusterTarget {
+	return ClusterTarget{
+		Mode:       ClusterJoin,
+		ServerURL:  "https://192.0.2.201:6443",
+		JoinToken:  "K10abcdef123::server:mypassword",
+		K3sVersion: "v1.33.4+k3s1",
+	}
+}
+
+func TestValidateClusterTargetRefusesAnIncompleteJoin(t *testing.T) {
+	for name, mutate := range map[string]func(*ClusterTarget){
+		"no join token":         func(c *ClusterTarget) { c.JoinToken = "" },
+		"no server URL":         func(c *ClusterTarget) { c.ServerURL = "" },
+		"an http server URL":    func(c *ClusterTarget) { c.ServerURL = "http://192.0.2.201:6443" },
+		"no k3s version":        func(c *ClusterTarget) { c.K3sVersion = "" },
+		"an unknown mode":       func(c *ClusterTarget) { c.Mode = "rejoin" },
+		"a malformed token":     func(c *ClusterTarget) { c.JoinToken = "K10 abc" },
+		"a server URL with a /": func(c *ClusterTarget) { c.ServerURL = "https://192.0.2.201:6443/" },
+	} {
+		target := goodJoinTarget()
+		mutate(&target)
+		if err := ValidateClusterTarget(target); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// The positive controls: without them, a ValidateClusterTarget that refused
+// everything would pass the test above for the wrong reason.
+func TestValidateClusterTargetAcceptsACompleteJoinAndAnInit(t *testing.T) {
+	if err := ValidateClusterTarget(goodJoinTarget()); err != nil {
+		t.Errorf("a complete join target was refused: %v", err)
+	}
+	if err := ValidateClusterTarget(ClusterTarget{Mode: ClusterInit, K3sVersion: "v1.33.4+k3s1"}); err != nil {
+		t.Errorf("an init target with no token or server was refused: %v", err)
+	}
+}
+
+// A refusal must not become the leak. The token is refused for its
+// characters, and the URL for its embedded credentials and, separately, for
+// its scheme -- the scheme case is the one that used to print v whole,
+// password included, because it ran before the credentials check.
+func TestValidateClusterTargetNeverPrintsASecret(t *testing.T) {
+	const secret = "s3cr3tpassw0rd"
+	for name, mutate := range map[string]func(*ClusterTarget){
+		"a token with a space":             func(c *ClusterTarget) { c.JoinToken = "K10::server:" + secret + " x" },
+		"credentials in an https URL":      func(c *ClusterTarget) { c.ServerURL = "https://admin:" + secret + "@192.0.2.201:6443" },
+		"credentials in an http URL":       func(c *ClusterTarget) { c.ServerURL = "http://admin:" + secret + "@192.0.2.201:6443" },
+		"credentials in an unparsable URL": func(c *ClusterTarget) { c.ServerURL = "https://admin:" + secret + "@[::1" },
+	} {
+		target := goodJoinTarget()
+		mutate(&target)
+		err := ValidateClusterTarget(target)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: the error carries the secret: %v", name, err)
+		}
+	}
+}

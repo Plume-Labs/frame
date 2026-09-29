@@ -44,19 +44,11 @@ func validatePendingSpec(s Spec, nodeAddress string) error {
 	if err := ValidateSpec(s); err != nil {
 		return err
 	}
-	if err := validateK3sVersion(s.Cluster.K3sVersion); err != nil {
-		return fmt.Errorf("cluster target: %w", err)
+	if err := ValidateClusterTarget(s.Cluster); err != nil {
+		return err
 	}
 	if err := validateNodeAddress(nodeAddress); err != nil {
 		return fmt.Errorf("cluster target: %w", err)
-	}
-	if s.Cluster.Mode == ClusterJoin {
-		if err := validateJoinToken(s.Cluster.JoinToken); err != nil {
-			return fmt.Errorf("cluster target: %w", err)
-		}
-		if err := validateServerURL(s.Cluster.ServerURL); err != nil {
-			return fmt.Errorf("cluster target: %w", err)
-		}
 	}
 	return nil
 }
