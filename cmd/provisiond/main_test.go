@@ -85,7 +85,10 @@ func TestValidateMediaURLRefusesWhatTheSeedURLShapeRefuses(t *testing.T) {
 // The placeholder both shipped manifests carry must keep starting provisiond,
 // as it does the manager: the refusal of .invalid belongs to a build.
 func TestValidateMediaURLAcceptsTheShippedPlaceholderAndAPath(t *testing.T) {
-	for _, raw := range []string{"http://ci-placeholder.invalid:30581", "http://frame-provisiond.frame-system.svc:8081/media/"} {
+	for _, raw := range []string{
+		"http://ci-placeholder.invalid:30581",
+		"http://frame-provisiond.frame-system.svc:8081/media/",
+	} {
 		if err := validateMediaURL(raw); err != nil {
 			t.Errorf("%s: want no error, got %v", raw, err)
 		}
