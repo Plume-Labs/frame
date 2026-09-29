@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -308,11 +309,11 @@ func TestRenderAutoinstallStorage(t *testing.T) {
 func TestDiskResolutionRewritesEveryPlaceholderAndRefusesAMissingDisk(t *testing.T) {
 	got := diskResolution(goodSpec().Layout)
 	for i, d := range goodSpec().Layout.Disks {
-		if !strings.Contains(got, "readlink -f '"+d.ByID+"'") || !strings.Contains(got, "s#"+diskPlaceholders[i]+"#$p#g") {
+		if !strings.Contains(got, "readlink -f '"+d.ByID+"'") || !strings.Contains(got, fmt.Sprintf("s#%s#$p%d#g", diskPlaceholders[i], i)) {
 			t.Errorf("disk %s not resolved onto %s:\n%s", d.ByID, diskPlaceholders[i], got)
 		}
 	}
-	if strings.Count(got, "exit 1") != 2 {
+	if strings.Count(got, "is not a block device, refusing") != 2 {
 		t.Errorf("each disk must refuse on its own:\n%s", got)
 	}
 }

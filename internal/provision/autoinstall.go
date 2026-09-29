@@ -270,14 +270,28 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 }
 
 // diskResolution rewrites each placeholder in /autoinstall.yaml with the
-// kernel path its by-id link resolves to, and refuses (exit 1, install
-// aborted, nothing wiped) if a link resolves to no block device.
+// kernel path its by-id link resolves to. It refuses (exit 1, install aborted,
+// nothing wiped) if a link resolves to no block device, or if two links
+// resolve to the same one: validateDisks compares names, and two different
+// names can still be one disk -- a mirror of a disk with itself installs,
+// boots, and has no redundancy at all.
+//
+// Every disk is resolved and compared before the first rewrite, so a refusal
+// leaves /autoinstall.yaml as it was rather than half-rewritten.
 func diskResolution(l Layout) string {
-	parts := make([]string, 0, len(l.Disks))
+	parts := make([]string, 0, 2*len(l.Disks)+1)
 	for i, d := range l.Disks {
 		parts = append(parts, fmt.Sprintf(
-			"p=$(readlink -f '%s') && [ -b \"$p\" ] || { echo 'FRAME: %s is not a block device, refusing' > /dev/console; exit 1; }; sed -i \"s#%s#$p#g\" /autoinstall.yaml",
-			d.ByID, d.ByID, diskPlaceholders[i]))
+			"p%[1]d=$(readlink -f '%[2]s') && [ -b \"$p%[1]d\" ] || { echo 'FRAME: %[2]s is not a block device, refusing' > /dev/console; exit 1; }",
+			i, d.ByID))
+	}
+	for i := 1; i < len(l.Disks); i++ {
+		parts = append(parts, fmt.Sprintf(
+			"[ \"$p0\" != \"$p%[1]d\" ] || { echo 'FRAME: %[2]s and %[3]s are the same disk, refusing' > /dev/console; exit 1; }",
+			i, l.Disks[0].ByID, l.Disks[i].ByID))
+	}
+	for i := range l.Disks {
+		parts = append(parts, fmt.Sprintf("sed -i \"s#%s#$p%d#g\" /autoinstall.yaml", diskPlaceholders[i], i))
 	}
 	return strings.Join(parts, "; ")
 }

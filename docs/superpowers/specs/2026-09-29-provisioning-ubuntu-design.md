@@ -205,7 +205,12 @@ known yet. So the storage section does not match on serial.
   wiped.
 - Early-command 2 resolves each by-id path (`readlink -f`) and rewrites the
   placeholders in `/autoinstall.yaml`, which subiquity re-reads after
-  early-commands.
+  early-commands. It refuses (exit 1) if two by-id names resolve to the same
+  kernel device — a mirror of one disk with itself — and resolves every disk
+  before the first rewrite, so a refusal leaves the document untouched.
+- Both guards are tested by running the rendered command under `sh` with a fake
+  `blockdev` / `readlink` on `PATH`, not by reading its text: an `=` turned into
+  `!=` passed every text assertion.
 - `single-disk`: GPT; ESP (UEFI) or bios_grub (Legacy); `/` ext4.
 - `mirror`: both disks `wipe: superblock-recursive` (the live system
   auto-assembles leftover md arrays, including Debian's); identical partitions;
