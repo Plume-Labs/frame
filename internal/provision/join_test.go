@@ -3,6 +3,7 @@ package provision
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -625,6 +626,12 @@ func goodTargets() map[string]ClusterTarget {
 	}
 }
 
+// installerRunForm is the start of the command that runs the downloaded
+// installer: its INSTALL_K3S_VERSION (and, on a join, K3S_URL and
+// K3S_TOKEN_FILE), then sh on the file.
+var installerRunForm = regexp.MustCompile(
+	`^INSTALL_K3S_VERSION='[^']*'( K3S_URL='[^']*' K3S_TOKEN_FILE='[^']*')? sh ` + regexp.QuoteMeta(k3sInstallerPath) + ` `)
+
 // `curl ... | sh` had no pipefail: a failed download fed sh nothing, sh
 // exited 0, and Join reported success with no k3s on the machine. The
 // download is now its own command, before the one that runs the script.
@@ -636,15 +643,21 @@ func TestJoinDownloadsTheInstallerBeforeRunningIt(t *testing.T) {
 		}
 		download, run := -1, -1
 		for i, c := range s.cmds {
-			if strings.Contains(c, "| sh") {
-				t.Errorf("%s: the installer is still piped into sh: %s", mode, c)
-			}
 			if c == "curl -sfL -o "+k3sInstallerPath+" "+k3sInstallerURL {
 				download = i
+				continue
 			}
-			if strings.Contains(c, " sh "+k3sInstallerPath+" ") {
-				run = i
+			if !strings.Contains(c, k3sInstallerPath) {
+				continue
 			}
+			// Any other command naming the script is the run: it must be
+			// the environment, then sh on the downloaded file -- nothing in
+			// front of it, and no pipe anywhere in it. Matching "| sh" let
+			// `curl ... | VAR=... sh` through.
+			if !installerRunForm.MatchString(c) || strings.Contains(c, "|") {
+				t.Errorf("%s: the installer is not run from its downloaded file alone: %s", mode, c)
+			}
+			run = i
 		}
 		if download < 0 || run < 0 || download > run {
 			t.Errorf("%s: want a download then a run of %s, got:\n%s", mode, k3sInstallerPath, strings.Join(s.cmds, "\n"))
