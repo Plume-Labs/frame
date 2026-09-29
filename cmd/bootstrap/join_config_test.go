@@ -134,7 +134,7 @@ func TestLoadConfigRefusesAnIncompleteJoin(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.Kubeconfig = link
-		}, "symbolic link"},
+		}, "is a symbolic link"},
 	}
 	for _, tc := range cases {
 		cfg := validJoinConfig(t, func(c *Config) { tc.mutate(t, c) })
@@ -370,7 +370,7 @@ func TestLoadConfigRefusesASecretFileBehindASymbolicLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) { c.Cluster.JoinTokenFile = link })))
-	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+	if err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
 		t.Fatalf("a join token behind a symbolic link was not refused by its own guard: %v", err)
 	}
 }
@@ -416,7 +416,10 @@ func TestLoadConfigHoldsAClearTextPasswordConfigTo0600(t *testing.T) {
 // yaml.v3 quotes the value it could not decode. In this file that value
 // can be the password, so the message is withheld and only the line kept.
 func TestLoadConfigNeverEchoesTheYAMLParserMessage(t *testing.T) {
-	const secret = "hunter2-in-the-wrong-place"
+	// Short on purpose: yaml.v3 abbreviates a long value to its first few
+	// characters plus "...", which a Contains on the whole value would miss
+	// while the prefix still leaks.
+	const secret = "s3cr3tpw"
 	path := writePrivate(t, t.TempDir(), "config.yaml", "bmc:\n  insecureSkipVerify: "+secret+"\n", 0o600)
 	_, err := LoadConfig(path)
 	if err == nil {
