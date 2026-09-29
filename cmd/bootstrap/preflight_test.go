@@ -115,7 +115,7 @@ func newFakeCluster(t *testing.T) (*fakeCluster, *httptest.Server) {
 
 // joinConfigFor is a loaded join config for w3 at 192.0.2.213 whose
 // kubeconfig and serverURL both name srv.
-func joinConfigFor(t *testing.T, srv *httptest.Server, mutate func(*Config)) Config {
+func joinConfigFor(t *testing.T, srv *httptest.Server) Config {
 	t.Helper()
 	kc := writePrivate(t, t.TempDir(), "existing.kubeconfig", string(kubeconfigFor(srv.URL)), 0o600)
 	cfg, err := LoadConfig(writeConfig(t, validJoinConfig(t, func(c *Config) {
@@ -123,9 +123,6 @@ func joinConfigFor(t *testing.T, srv *httptest.Server, mutate func(*Config)) Con
 		c.Network.Address = "192.0.2.213/24"
 		c.Kubeconfig = kc
 		c.Cluster.ServerURL = "https://" + strings.TrimPrefix(srv.URL, "http://")
-		if mutate != nil {
-			mutate(c)
-		}
 	})))
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +136,7 @@ func joinConfigFor(t *testing.T, srv *httptest.Server, mutate func(*Config)) Con
 // check depends on: the old Node's boot and machine IDs.
 func TestPreflightJoinRecordsTheExistingNodesIdentity(t *testing.T) {
 	_, srv := newFakeCluster(t)
-	id, err := preflightJoin(context.Background(), io.Discard, joinConfigFor(t, srv, nil))
+	id, err := preflightJoin(context.Background(), io.Discard, joinConfigFor(t, srv))
 	if err != nil {
 		t.Fatalf("a cluster ready for w3 to rejoin was refused: %v", err)
 	}
@@ -168,7 +165,7 @@ func TestPreflightJoinRefusesAClusterNotReadyForTheRejoin(t *testing.T) {
 	}
 	for _, tc := range cases {
 		f, srv := newFakeCluster(t)
-		cfg := joinConfigFor(t, srv, nil)
+		cfg := joinConfigFor(t, srv)
 		tc.prepare(f)
 		_, err := preflightJoin(context.Background(), io.Discard, cfg)
 		if err == nil {
@@ -187,7 +184,7 @@ func TestPreflightJoinWarnsWhenK3sVersionIsOlderThanTheServer(t *testing.T) {
 	f, srv := newFakeCluster(t)
 	f.version = "v1.34.1+k3s1"
 	var out bytes.Buffer
-	if _, err := preflightJoin(context.Background(), &out, joinConfigFor(t, srv, nil)); err != nil {
+	if _, err := preflightJoin(context.Background(), &out, joinConfigFor(t, srv)); err != nil {
 		t.Fatalf("an agent older than its server was refused: %v", err)
 	}
 	if !strings.Contains(out.String(), "warning") {
@@ -275,7 +272,7 @@ func fakeRejoin(f *fakeCluster, called *bool) installFunc {
 
 func TestExecuteRunsAJoinFromPreflightToFinish(t *testing.T) {
 	f, srv := newFakeCluster(t)
-	cfg := joinConfigFor(t, srv, nil)
+	cfg := joinConfigFor(t, srv)
 	var called bool
 	var out bytes.Buffer
 	err := execute(context.Background(), &out, cfg, provision.Deps{}, provision.Spec{Hostname: "w3"},
@@ -297,7 +294,7 @@ func TestExecuteRunsAJoinFromPreflightToFinish(t *testing.T) {
 // never reached.
 func TestExecuteStopsBeforeInstallWhenThePreflightRefuses(t *testing.T) {
 	f, srv := newFakeCluster(t)
-	cfg := joinConfigFor(t, srv, nil)
+	cfg := joinConfigFor(t, srv)
 	f.secretExists = true
 	var called bool
 	err := execute(context.Background(), io.Discard, cfg, provision.Deps{}, provision.Spec{Hostname: "w3"},

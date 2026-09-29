@@ -74,7 +74,7 @@ func preflightJoin(ctx context.Context, stdout io.Writer, cfg Config) (nodeIdent
 	got := internalIP(node)
 	if got != want {
 		return nodeIdentity{}, fmt.Errorf(
-			"Node %s's InternalIP is %q but network.address gives the machine %s: the cluster knows this node by "+
+			"node %s's InternalIP is %q but network.address gives the machine %s: the cluster knows this node by "+
 				"another address", name, got, want)
 	}
 
