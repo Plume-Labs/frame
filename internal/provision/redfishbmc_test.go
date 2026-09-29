@@ -125,77 +125,8 @@ func TestRedfishBMCEjectMediaPostsTheMatchingHPOEMAction(t *testing.T) {
 	}
 }
 
-// TestRedfishBMCSetBootOnceSendsTheStandardBootOverrideProperties pins the
-// design's other explicit claim (§5): boot mode is set through the
-// standard Redfish BootSourceOverrideMode property, PATCHed on the system
-// resource -- not an OEM action, unlike the two above. The full decoded
-// body is asserted, not a substring match, so an implementation that also
-// (wrongly) sent BootSourceOverrideEnabled: "Continuous" or omitted the
-// mode entirely would be caught.
-func TestRedfishBMCSetBootOnceSendsTheStandardBootOverrideProperties(t *testing.T) {
-	var gotMethod, gotPath string
-	var gotBody []byte
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		gotBody, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-	})
-
-	if err := b.SetBootOnce(context.Background(), "Cd", "UEFI"); err != nil {
-		t.Fatal(err)
-	}
-	if gotMethod != http.MethodPatch {
-		t.Errorf("method = %s, want PATCH", gotMethod)
-	}
-	if gotPath != "/redfish/v1/Systems/1/" {
-		t.Errorf("path = %s, want the system resource itself", gotPath)
-	}
-
-	var decoded struct {
-		Boot struct {
-			BootSourceOverrideEnabled string
-			BootSourceOverrideTarget  string
-			BootSourceOverrideMode    string
-		}
-	}
-	if err := json.Unmarshal(gotBody, &decoded); err != nil {
-		t.Fatalf("body %s did not decode: %v", gotBody, err)
-	}
-	if decoded.Boot.BootSourceOverrideEnabled != "Once" {
-		t.Errorf("BootSourceOverrideEnabled = %q, want %q", decoded.Boot.BootSourceOverrideEnabled, "Once")
-	}
-	if decoded.Boot.BootSourceOverrideTarget != "Cd" {
-		t.Errorf("BootSourceOverrideTarget = %q, want %q", decoded.Boot.BootSourceOverrideTarget, "Cd")
-	}
-	if decoded.Boot.BootSourceOverrideMode != "UEFI" {
-		t.Errorf("BootSourceOverrideMode = %q, want %q", decoded.Boot.BootSourceOverrideMode, "UEFI")
-	}
-}
-
-// TestRedfishBMCSetBootOncePassesModeThrough is SetBootOnce's own positive
-// control on the mode argument specifically: both values install.go can
-// pass (Options.BootMode is "UEFI" or "Legacy", never a third value) are
-// driven through, so a version that hardcoded "UEFI" regardless of the
-// argument fails on the second case.
-func TestRedfishBMCSetBootOncePassesModeThrough(t *testing.T) {
-	for _, mode := range []string{"UEFI", "Legacy"} {
-		mode := mode
-		t.Run(mode, func(t *testing.T) {
-			var gotBody []byte
-			b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-				gotBody, _ = io.ReadAll(r.Body)
-				w.WriteHeader(http.StatusOK)
-			})
-			if err := b.SetBootOnce(context.Background(), "Cd", mode); err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(gotBody), `"BootSourceOverrideMode":"`+mode+`"`) {
-				t.Errorf("body %s does not carry mode %q", gotBody, mode)
-			}
-		})
-	}
-}
+// SetBootOnce is tested in redfishbmc_boot_test.go, against a fake that
+// refuses what the served Boot schema does not carry.
 
 // TestRedfishBMCClearBootOverrideDisablesWithoutSettingTargetOrMode proves
 // ClearBootOverride's body is narrower than SetBootOnce's: only
