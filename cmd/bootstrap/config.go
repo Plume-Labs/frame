@@ -178,6 +178,21 @@ func LoadConfig(path string) (Config, error) {
 			"config %s carries bmc.password in the clear and has mode %s, looser than 0600: chmod 600 it, "+
 				"or move the password to a file named by bmc.passwordFile", path, info.Mode().Perm())
 	}
+	// And read like one: not through a symbolic link, and only when it is
+	// yours -- readPrivateFile's guards, the ones bmc.passwordFile gets. The
+	// config is parsed again from that read, so the password used is the
+	// one in the file those guards passed, not in whatever the first read
+	// found at this path.
+	if cfg.BMC.Password != "" {
+		pb, err := readPrivateFile("config (it carries bmc.password in the clear)", path)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg = Config{}
+		if err := yaml.Unmarshal(pb, &cfg); err != nil {
+			return Config{}, parseError(path, err)
+		}
+	}
 
 	if err := validateMediaBaseURL(cfg.MediaBaseURL); err != nil {
 		return Config{}, err

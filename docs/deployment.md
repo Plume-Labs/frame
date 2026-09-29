@@ -1498,7 +1498,8 @@ server node. Every secret goes in a file of its own: the command refuses a
 secret file or a kubeconfig that is a symbolic link, not owned by you, or
 looser than 0600, and refuses an inline `cluster.joinToken` outright.
 `bmc.password` in the clear is still accepted, for existing init configs —
-but then the config file itself must be 0600, and it cannot be combined
+but then the config file itself is held to the same rules as a secret file
+(0600, yours, not a symbolic link), and it cannot be combined
 with `bmc.passwordFile`. `serverURL` and the kubeconfig's `server:` must
 name the same host and port, as written (an IP in one and a name in the
 other is refused):

@@ -447,3 +447,41 @@ func TestLoadConfigNeverEchoesTheKubeconfigParserMessage(t *testing.T) {
 		t.Errorf("the kubeconfig parser's message, value included, reached the error: %v", err)
 	}
 }
+
+// A config carrying bmc.password in the clear is read like any other
+// credential file: not through a symbolic link, and only when it is yours.
+// A config naming its secrets by path is not held to that.
+func TestLoadConfigReadsAClearTextPasswordConfigAsACredentialFile(t *testing.T) {
+	p := writeConfig(t, validConfig(nil))
+	link := filepath.Join(t.TempDir(), "config-link.yaml")
+	if err := os.Symlink(p, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(link); err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
+		t.Errorf("a clear-text password config behind a symbolic link was not refused by its own guard: %v", err)
+	}
+
+	realUID := currentUID
+	currentUID = func() int { return realUID() + 1 }
+	_, err := LoadConfig(p)
+	currentUID = realUID
+	if err == nil || !strings.Contains(err.Error(), "not by you") {
+		t.Errorf("a clear-text password config owned by another account was not refused by its own guard: %v", err)
+	}
+
+	if _, err := LoadConfig(p); err != nil {
+		t.Fatalf("the same config, read directly as its owner, was refused: %v", err)
+	}
+	pwFile := writePrivate(t, t.TempDir(), "bmc-password", "hunter2\n", 0o600)
+	byPath := writeConfig(t, validJoinConfig(t, func(c *Config) {
+		c.BMC.Password = ""
+		c.BMC.PasswordFile = pwFile
+	}))
+	byPathLink := filepath.Join(t.TempDir(), "by-path-link.yaml")
+	if err := os.Symlink(byPath, byPathLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(byPathLink); err != nil {
+		t.Errorf("a config naming its secrets by path was refused behind a symbolic link: %v", err)
+	}
+}
