@@ -207,7 +207,8 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 	early := []string{
 		// First, before anything is probed or wiped: a failing early-command
 		// aborts the install, which is what makes this a guard. The early
-		// beacon comes after it, so a refused machine never reports `early`.
+		// beacon comes after it, so a refused machine never reports `early`;
+		// subiquity runs error-commands on the abort, so it reports `failed`.
 		fmt.Sprintf("if ! ( %s ); then echo 'FRAME: named disk is not the expected size, refusing' > /dev/console; exit 1; fi",
 			diskSizeAssertion(s.Layout)),
 		diskResolution(s.Layout),

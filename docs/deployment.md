@@ -1454,10 +1454,13 @@ KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
       Frame set, without a keypress, and `ip=dhcp` finds the one cabled
       port among four.
 - [ ] The static address lands on the cabled port (netplan `en*` stanza,
-      carrier only).
+      carrier only), and the installed system's netplan names that port alone
+      by MAC (`/etc/netplan/60-frame.yaml`); cabling a second port afterwards
+      gives it no address. Rehearsed in QEMU, not on the G9.
 - [ ] The two named 300 GB disks are resolved by the early-command,
       partitioned as a mirror with an ESP on each, and a named disk that is
-      absent or the wrong size aborts the install before anything is wiped.
+      absent or the wrong size aborts the install before anything is wiped
+      and reports `InstallerFailed`.
 - [ ] `k3s server --cluster-init` produces a cluster whose kubeconfig, as
       rewritten by Frame, reaches it from another machine.
 - [ ] **The installed node's own kernel command line is clean.** Frame

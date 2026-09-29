@@ -13,10 +13,13 @@ import (
 //
 // Each is emitted from exactly one autoinstall hook. `early` is sent from
 // early-commands immediately AFTER the disk-size assertion, so a machine that
-// was refused there never reports it: its record stays empty (NeverSeen)
-// rather than looking like progress. `late` is the last late-command, just
-// before subiquity reboots into the installed system. `failed` comes from
-// error-commands, which subiquity runs only when the install has failed.
+// was refused there never reports it -- the refusal does not read as
+// progress. It does not stay silent either: a failing early-command is an
+// install failure to subiquity, which then runs error-commands, so a size or
+// disk-resolution refusal reports `failed` (InstallerFailed, not NeverSeen) as
+// long as the live system has a network. `late` is the last late-command,
+// just before subiquity reboots into the installed system. `failed` comes
+// from error-commands, which subiquity runs only when the install has failed.
 const (
 	CheckpointEarly  = "early"  // the disk-size assertion passed; the installer is running
 	CheckpointLate   = "late"   // target written, about to reboot

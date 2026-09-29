@@ -246,6 +246,14 @@ The protocol changes, and the code says so:
 - Checkpoints are reduced to what is emitted: `early` (after the size assertion,
   as today), `late`, and a new `failed` from `error-commands`. `checkpointRank`
   follows. netcfg, netcfg-done and partman go.
+- A refused disk is not silent. subiquity treats a failing early-command as an
+  install failure and runs `error-commands`, so a size or resolution refusal
+  sends `failed` (condition `InstallerFailed`), not nothing (`NeverSeen`) — the
+  live system already has its network (`ip=dhcp`) at that point. It never sends
+  `early`, which comes after the guard.
+- provisiond records when `failed` first arrived (`failedAt`, never overwritten):
+  `lastSeen` keeps moving with the `early` heartbeat after a failure, so it
+  cannot date one.
 - The heartbeat keeps the controller's 60-second "installer lost" rule true: it
   is started from the early-commands, backgrounded with
   `</dev/null >/dev/null 2>&1 &` — subiquity reads command output, and a
