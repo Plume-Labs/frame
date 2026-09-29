@@ -141,7 +141,7 @@ build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
 .PHONY: bootstrap
-bootstrap: fmt vet ## Build frame-bootstrap: installs node zero, from a laptop, when no cluster exists yet.
+bootstrap: fmt vet ## Build frame-bootstrap: installs node zero, or reinstalls a node that rejoins a cluster, from a laptop.
 	go build -o bin/frame-bootstrap ./cmd/bootstrap
 
 .PHONY: run

@@ -1448,6 +1448,93 @@ kubectl get secret ml350-g9-install-kubeconfig -n default \
 KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
 ```
 
+### 6. Reinstall a node of an existing cluster from a laptop (`frame bootstrap`, join)
+
+When a `FrameInstall` cannot do it — the machine being reinstalled is the
+one the controller runs on, or the cluster is too degraded to host it —
+`frame bootstrap` reinstalls the machine from a laptop and has it rejoin
+the cluster that still exists. With `cluster.mode: join`,
+`internal/provision/join.go` runs, over SSH on the freshly installed
+system:
+
+```
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<k3sVersion> K3S_URL=<serverURL> K3S_TOKEN=<token> sh -s - agent --node-ip <network.address without /NN>
+```
+
+So the machine comes back as a **k3s agent** (a worker), never as a server:
+this path cannot restore a control-plane or etcd member. It passes no
+`--node-name`: k3s names the node after the system hostname, which the
+autoinstall wrote from `hostname`, so `hostname` must be the existing
+node's name exactly. No kubeconfig is produced; the Ready phase checks the
+`Node` named `hostname` through the existing cluster's kubeconfig, which the
+config names.
+
+**Before** running it, against the existing cluster:
+
+```bash
+kubectl drain w3 --ignore-daemonsets --delete-emptydir-data
+# k3s refuses an agent that registers under an existing name with a new
+# node password (the reinstall generated one): delete the stored one.
+kubectl -n kube-system delete secret w3.node-password.k3s
+# Keep the Node object itself: do NOT `kubectl delete node w3`.
+kubectl get node w3 --show-labels > w3-labels.before
+```
+
+The token is the content of `/var/lib/rancher/k3s/server/node-token` on a
+server node. Every secret goes in a file of its own, mode 0600 — the
+command refuses a secret file or a kubeconfig readable by group or other,
+and refuses an inline `cluster.joinToken` outright (`bmc.password` in the
+clear is still accepted, for existing init configs, but not together with
+`bmc.passwordFile`):
+
+```yaml
+# bootstrap-w3.yaml — mode 0600; holds no secret, only paths to them
+bmc:
+  address: 192.0.2.200
+  username: admin
+  passwordFile: /home/me/frame-secrets/w3-bmc-password
+  insecureSkipVerify: true
+confirmSerial: "<the machine's Redfish serial>"
+hostname: w3                     # the existing Node's name, exactly
+network:
+  address: 192.0.2.213/24
+  gateway: 192.0.2.1
+  dns: [192.0.2.1]
+layout:
+  kind: mirror
+  disks:
+    - byID: /dev/disk/by-id/scsi-<first disk>
+      sizeBytes: 300000000000
+    - byID: /dev/disk/by-id/scsi-<second disk>
+      sizeBytes: 300000000000
+cluster:
+  mode: join
+  serverURL: https://192.0.2.201:6443
+  joinTokenFile: /home/me/frame-secrets/node-token
+  k3sVersion: v1.33.4+k3s1       # the version the cluster runs
+kubeconfig: /home/me/.kube/config   # the EXISTING cluster's; required for join
+installTimeout: 60m              # optional; default 45m
+bootMode: UEFI
+sshKeyPath: /home/me/.ssh/frame_install
+mediaBaseURL: http://192.0.2.50:8081
+# no `out`: a join produces no kubeconfig, and setting one is refused
+```
+
+```bash
+make bootstrap   # builds bin/frame-bootstrap
+bin/frame-bootstrap -config bootstrap-w3.yaml
+```
+
+Everything above is checked before the BMC is dialled: a missing
+`serverURL`, `joinTokenFile` or `kubeconfig`, an `http://` server, a
+kubeconfig that does not parse, an `out` on a join or a `kubeconfig` on an
+init are each refused by name. Success ends with `node w3 rejoined the
+existing cluster and is Ready there`.
+
+**After**: compare `kubectl get node w3 --show-labels` with
+`w3-labels.before` and re-apply whatever is missing
+(`kubectl label node w3 <key>=<value>`), then `kubectl uncordon w3`.
+
 ### Not yet executed
 
 - [ ] The remastered image boots the ML350 Gen9 unattended, in the boot mode
@@ -1478,6 +1565,10 @@ KUBECONFIG=./ml350-g9.kubeconfig kubectl get nodes
 - [ ] **Phase budgets are provisional** (Preparing 30 min, Installing
       45 min): time the base download, the remaster, the virtual-media read
       and `updates: security` on the first install, and set them from that.
+- [ ] **`frame bootstrap` with `cluster.mode: join` has never run.** The
+      node-password secret deletion, the rejoin under the same name and
+      the labels surviving it are documented from k3s's behaviour, not
+      observed on this cluster.
 - [ ] **Nothing exercises `cmd/bootstrap`'s `run()` end to end.** Its
       config loading, its listener start-up and its post-`Install`
       decision are each tested in isolation (`LoadConfig`,
