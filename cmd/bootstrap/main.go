@@ -89,9 +89,9 @@ const mediaAddr = ":8081"
 // run under a different contract than every node after it.
 var defaultPhaseTimeouts = map[provision.Phase]time.Duration{
 	provision.PhasePending:       30 * time.Second,
-	provision.PhasePreparing:     10 * time.Minute,
+	provision.PhasePreparing:     30 * time.Minute,
 	provision.PhaseMediaAttached: 2 * time.Minute,
-	provision.PhaseInstalling:    20 * time.Minute,
+	provision.PhaseInstalling:    45 * time.Minute,
 	provision.PhaseJoining:       5 * time.Minute,
 	provision.PhaseReady:         5 * time.Minute,
 }

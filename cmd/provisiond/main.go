@@ -14,15 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command provisiond assembles per-machine Debian installer images and
+// Command provisiond assembles per-machine Ubuntu installer images and
 // serves them. It exists because the manager image is
 // gcr.io/distroless/static:nonroot, which cannot hold xorriso, and it solves
-// two more problems on the way: where a ~700 MB artifact is stored, and how
+// two more problems on the way: where a ~4 GB artifact is stored, and how
 // a BMC on the management network -- which cannot reach the pod network --
 // fetches it.
 //
 // It listens on two ports, deliberately. The build API (BuildAddr) accepts
-// a Spec and writes a 700 MB file; it belongs on a ClusterIP Service, which
+// a Spec and writes a ~4 GB file; it belongs on a ClusterIP Service, which
 // keeps it off the LAN but is reachable by every pod in the cluster -- so
 // it is treated as unauthenticated, and the manager zeroes the cluster
 // target before POSTing to it (internal/provision/server.go). The media
