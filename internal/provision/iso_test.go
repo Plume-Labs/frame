@@ -241,6 +241,15 @@ func TestRemasterRefusesBeforeTouchingTheBaseImage(t *testing.T) {
 		"semicolon":      {goodSpec(), "http://x/;reboot"},
 		"space":          {goodSpec(), "http://x/ a"},
 		"quote":          {goodSpec(), "http://x/'"},
+		// GRUB expands $name and ${name} on the kernel line, and { } group:
+		// none of them is refused by a list of forbidden characters that
+		// did not think of them, which is why the check is a list of
+		// allowed ones.
+		"dollar":      {goodSpec(), "http://x/$root"},
+		"braces":      {goodSpec(), "http://x/${root}"},
+		"open brace":  {goodSpec(), "http://x/{"},
+		"close brace": {goodSpec(), "http://x/}"},
+		"percent":     {goodSpec(), "http://x/%24root"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := Remaster(context.Background(), "/nonexistent/base.iso", c.spec, c.url, filepath.Join(t.TempDir(), "o.iso"))
@@ -248,6 +257,17 @@ func TestRemasterRefusesBeforeTouchingTheBaseImage(t *testing.T) {
 				t.Errorf("want a refusal before the base image is read, got %v", err)
 			}
 		})
+	}
+}
+
+// What every real seed URL looks like passes: scheme, host or address, port,
+// path of hex and slashes.
+func TestRemasterAcceptsAnOrdinarySeedURL(t *testing.T) {
+	for _, u := range []string{testSeedURL, "http://10.0.2.2:18081/autoinstall/0123456789abcdef0123456789abcdef/", "http://frame-provisiond.frame-system.svc:8081/autoinstall/x_y-z/"} {
+		err := Remaster(context.Background(), "/nonexistent/base.iso", goodSpec(), u, filepath.Join(t.TempDir(), "o.iso"))
+		if err == nil || !strings.Contains(err.Error(), "/nonexistent") {
+			t.Errorf("%s: want it to reach the base image, got %v", u, err)
+		}
 	}
 }
 

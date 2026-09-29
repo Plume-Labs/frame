@@ -57,10 +57,13 @@ func Remaster(ctx context.Context, baseISO string, s Spec, seedURL, out string) 
 	if strings.TrimSpace(seedURL) == "" {
 		return fmt.Errorf("seedURL is empty: the image has nothing to fetch its autoinstall seed from")
 	}
-	// The URL lands on a GRUB command line: whitespace splits it, a quote or
-	// backslash changes GRUB's parsing, and an unescaped ; ends the command.
-	if strings.ContainsAny(seedURL, " \t\n\r'\"\\;") {
-		return fmt.Errorf("seedURL %q: must not contain whitespace, quotes, backslashes or semicolons; it is written onto a GRUB kernel line", seedURL)
+	// The URL lands on a GRUB command line, where whitespace splits it, a
+	// quote or backslash changes the parsing, ; ends the command, and $name
+	// or ${name} is expanded. A list of what is allowed, not of what is
+	// forbidden: the list of forbidden characters this replaced had missed
+	// $, { and }.
+	if !seedURLShape.MatchString(seedURL) {
+		return fmt.Errorf("seedURL %q: only letters, digits and : / . _ - are allowed; it is written onto a GRUB kernel line", seedURL)
 	}
 
 	work, err := os.MkdirTemp("", "frame-remaster-")
@@ -129,6 +132,11 @@ func checkBootRecords(ctx context.Context, iso string) error {
 	}
 	return nil
 }
+
+// seedURLShape is every character a seed URL may hold: enough for a scheme,
+// a host name or IPv4 address, a port and a path of tokens. No percent
+// encoding, no query, no IPv6 brackets: nothing Frame builds needs them.
+var seedURLShape = regexp.MustCompile(`^[A-Za-z0-9:/._-]+$`)
 
 var kernelLine = regexp.MustCompile(`(?m)^(\s*linux\s+.*)$`)
 
