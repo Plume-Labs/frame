@@ -71,6 +71,14 @@ func removeSeed(dir, token string) error {
 	return nil
 }
 
+// discardBuild removes what a build that failed after writeSeed left under
+// dir: the seed and any partial image. Best effort -- the build's own error
+// is what the caller hears about.
+func discardBuild(dir, token string) {
+	_ = removeSeed(dir, token)
+	_ = os.Remove(filepath.Join(dir, token+".iso"))
+}
+
 // buildResponse is what the build API answers with. Only the token matters
 // to a caller: HTTPImageStore derives the URL the BMC will use itself, from
 // MediaURL, rather than trusting a URL the build API might hand back for its
@@ -268,6 +276,11 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 
 		out := filepath.Join(dir, token+".iso")
 		if err := Remaster(r.Context(), baseISO, spec, seedURL(mediaURL, token), out); err != nil {
+			// The caller gets no token, so nothing will ever DELETE what
+			// this build left: the seed would stay served on the LAN-facing
+			// listener for the life of the pod. Removed here, with any
+			// partial image, or not at all.
+			discardBuild(dir, token)
 			http.Error(w, fmt.Sprintf("building image: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -282,21 +295,24 @@ func BuildHandler(dir string, base BaseSource, mediaURL string, beacons *BeaconS
 			http.NotFound(w, r)
 			return
 		}
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			if os.IsNotExist(err) {
-				http.NotFound(w, r)
-				return
-			}
+		// The seed goes whether or not the image is still there: a failed
+		// build or an interrupted cleanup can leave a seed with no image,
+		// and the seed is the part the LAN-facing listener serves. 404 only
+		// when there was neither, so a retry of a cleanup that already
+		// succeeded still reads as "nothing here".
+		token := strings.TrimSuffix(name, ".iso")
+		_, seedErr := os.Stat(filepath.Join(dir, token))
+		isoErr := os.Remove(filepath.Join(dir, name))
+		if isoErr != nil && !os.IsNotExist(isoErr) {
+			http.Error(w, isoErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := removeSeed(dir, token); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Best effort: the .iso removal above is the one a caller's retry
-		// depends on, and a missing seed (say, a prior cleanup that got this
-		// far and no further) must not turn a successful image removal into
-		// a 500.
-		token := strings.TrimSuffix(name, ".iso")
-		if err := removeSeed(dir, token); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if os.IsNotExist(isoErr) && os.IsNotExist(seedErr) {
+			http.NotFound(w, r)
 			return
 		}
 		// Beacon state is dropped with the image it belongs to, so its
@@ -573,6 +589,8 @@ func (s *LocalImageStore) Build(ctx context.Context, spec Spec) (imageURL, token
 
 	out := filepath.Join(s.Dir, tok+".iso")
 	if err := Remaster(ctx, baseISO, spec, seedURL(s.MediaURL, tok), out); err != nil {
+		// No token is returned, so no Remove will ever come for it.
+		discardBuild(s.Dir, tok)
 		return "", "", fmt.Errorf("building image: %w", err)
 	}
 

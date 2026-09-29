@@ -249,6 +249,82 @@ func TestLocalImageStoreRemoveTakesTheSeedToo(t *testing.T) {
 	}
 }
 
+// leftovers lists what a build left in dir other than the cached base image.
+func leftovers(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.Name() != "base" {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// A base that is not an ISO makes Remaster fail after the seed is written.
+// The seed is served on the LAN-facing listener; one left behind for an
+// image that was never built is served for as long as the pod lives, and
+// nothing will ever DELETE it -- the caller got no token to delete by.
+func notAnISO(t *testing.T) BaseSource {
+	t.Helper()
+	body := []byte("not an iso image")
+	return BaseSource{URL: serveBytes(t, body).URL + "/base.iso", SHA256: sum(body)}
+}
+
+func TestBuildHandlerLeavesNothingBehindWhenTheImageFails(t *testing.T) {
+	dir := t.TempDir()
+	reqBody, err := json.Marshal(goodSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	BuildHandler(dir, notAnISO(t), testMediaURL, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/build", bytes.NewReader(reqBody)))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("build of a non-ISO base: code = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if left := leftovers(t, dir); len(left) != 0 {
+		t.Errorf("a failed build left %v behind", left)
+	}
+}
+
+func TestLocalImageStoreLeavesNothingBehindWhenTheImageFails(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := (&LocalImageStore{Dir: dir, Base: notAnISO(t), MediaURL: testMediaURL}).Build(context.Background(), goodSpec()); err == nil {
+		t.Fatal("build of a non-ISO base succeeded")
+	}
+	if left := leftovers(t, dir); len(left) != 0 {
+		t.Errorf("a failed build left %v behind", left)
+	}
+}
+
+// A seed whose image is already gone is still removed, and still a success:
+// it is what a failed build or an interrupted cleanup leaves. Only a token
+// with neither is a 404.
+func TestBuildHandlerDeleteRemovesAnOrphanSeed(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeSeed(dir, tok, goodSpec(), ""); err != nil {
+		t.Fatal(err)
+	}
+	h := BuildHandler(dir, DefaultBase(), testMediaURL, nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+tok+".iso", nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE of an orphan seed = %d, want 204", rr.Code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, tok)); !os.IsNotExist(err) {
+		t.Error("the orphan seed survived DELETE")
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/iso/"+tok+".iso", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("DELETE with neither image nor seed = %d, want 404", rr.Code)
+	}
+}
+
 // I2. The build API is unauthenticated and in-cluster, which on this
 // platform means reachable by every notebook and every coding sandbox --
 // the recorded defect decision 3 of the design was written against. It has
