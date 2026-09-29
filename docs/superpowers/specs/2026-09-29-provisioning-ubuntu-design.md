@@ -185,7 +185,13 @@ autoinstall:
   `join.go` depends on `sudo` not printing "unable to resolve host"; the Debian
   preseed wrote both files for that reason, and so does this.
 - `password`: a locked hash accepted by `passwd` (the value is fixed in the
-  golden test and checked in the recette); `allow-pw: false` either way.
+  golden test and checked in the recette); `allow-pw: false` either way. The
+  install-time `passwd -l` does not survive first boot: subiquity writes the
+  user into `/etc/cloud/cloud.cfg.d/99-installer.cfg` with `lock_passwd: false`
+  and cloud-init's users_groups runs `passwd -u frame` (QEMU rehearsal:
+  `passwd -S frame` → P). A late-command therefore also writes
+  `99-zz-frame-lock.cfg` with `runcmd: [[passwd, -l, frame]]`; runcmd runs after
+  users_groups.
 - Every list is always rendered as a list, possibly empty (`frame bootstrap`
   renders no beacon commands): a bare comment or `- ` would be `null`, which the
   schema rejects.

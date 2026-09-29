@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"regexp"
@@ -18,8 +19,17 @@ const markerPath = "/etc/frame-install-uid"
 // lockedPasswordHash is the `frame` user's password as subiquity's identity
 // section requires one: a crypt(3) hash "conforming to what passwd requires".
 // It is the SHA-512 hash of 48 random bytes that were discarded the moment it
-// was computed, so no password opens it -- and late-commands lock the account
-// anyway (`passwd -l`). Frame logs in with its key only; `ssh.allow-pw` is off.
+// was computed, so no password opens it. Frame logs in with its key only;
+// `ssh.allow-pw` is off.
+//
+// The hash is what keeps the account shut, not the lock -- or not the
+// install-time lock alone. The late-command `passwd -l` does lock it in
+// /target, but subiquity also writes the user into
+// /etc/cloud/cloud.cfg.d/99-installer.cfg with `lock_passwd: false`, and
+// cloud-init's users_groups module runs `passwd -u frame` on first boot (seen
+// in the QEMU rehearsal: `passwd -S frame` read P after the first boot). So a
+// second late-command (relockCommand) leaves a runcmd that locks it again;
+// runcmd runs after users_groups, in the same first boot.
 //
 // identity rather than cloud-init user-data because identity creates the user
 // DURING the install, where late-commands can see it; user-data users only
@@ -210,6 +220,7 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		// machine's own name every sudo prints "unable to resolve host".
 		fmt.Sprintf("echo '%[1]s' > /target/etc/hostname && (grep -qx '127.0.1.1 %[1]s' /target/etc/hosts || echo '127.0.1.1 %[1]s' >> /target/etc/hosts)", s.Hostname),
 		"curtin in-target --target=/target -- passwd -l frame",
+		relockCommand(targetRoot),
 	}
 	errs := []string{}
 	if strings.TrimSpace(beaconBase) != "" {
@@ -267,6 +278,36 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		return "", err
 	}
 	return "#cloud-config\n" + string(b), nil
+}
+
+// targetRoot is where subiquity mounts the installed system while
+// late-commands run. A parameter of the command builders below rather than a
+// literal inside them, so the tests can run those commands against a
+// temporary directory.
+const targetRoot = "/target"
+
+// writeFileCommand writes content to path and sets its mode. The content
+// travels base64-encoded: the alphabet has no quote, no backslash, no $ and
+// no newline, so whatever the content holds it cannot leave the single-quoted
+// shell word it sits in. base64 is coreutils, present in the live system.
+func writeFileCommand(path, content, mode string) string {
+	return fmt.Sprintf("echo '%s' | base64 -d > '%s' && chmod %s '%s'",
+		base64.StdEncoding.EncodeToString([]byte(content)), path, mode, path)
+}
+
+// relockCommand leaves a cloud-init config on the target whose runcmd locks
+// `frame` again on first boot, after users_groups has unlocked it (see
+// lockedPasswordHash). 99-zz sorts after subiquity's 99-installer.cfg.
+//
+// Not proven: that 99-installer.cfg carries no runcmd of its own. cloud.cfg.d
+// files merge top-level keys by replacement, so if it ever did, this file
+// would silently replace it. The rehearsal's 99-installer.cfg had none.
+func relockCommand(target string) string {
+	b, err := yaml.Marshal(map[string][][]string{"runcmd": {{"passwd", "-l", "frame"}}})
+	if err != nil {
+		panic(err) // a constant map; cannot fail
+	}
+	return writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-lock.cfg", string(b), "644")
 }
 
 // diskResolution rewrites each placeholder in /autoinstall.yaml with the

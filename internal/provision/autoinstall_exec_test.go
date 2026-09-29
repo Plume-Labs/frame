@@ -4,8 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The tests in this file run rendered commands under sh instead of reading
@@ -138,5 +141,42 @@ esac`)
 				}
 			}
 		})
+	}
+}
+
+// subiquity writes `lock_passwd: false` for the identity user into
+// 99-installer.cfg, and cloud-init's users_groups runs `passwd -u frame` on
+// first boot -- undoing the late-command's lock (seen in the QEMU rehearsal:
+// `passwd -S frame` read P). runcmd runs after users_groups, so a runcmd
+// that locks again is the last word.
+func TestFirstBootRelocksTheAccountWhenRun(t *testing.T) {
+	late := commands(t, parsed(t, goodSpec(), ""), "late-commands")
+	if !strings.Contains(strings.Join(late, "\n"), relockCommand(targetRoot)) {
+		t.Fatalf("no late-command writes the first-boot relock:\n%s", strings.Join(late, "\n"))
+	}
+	if !strings.Contains(strings.Join(late, "\n"), "curtin in-target --target=/target -- passwd -l frame") {
+		t.Error("the install-time lock is gone; the relock is in addition to it, not instead")
+	}
+
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(target, "etc/cloud/cloud.cfg.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := runSh(t, relockCommand(target), t.TempDir()); code != 0 {
+		t.Fatalf("relock command exited %d:\n%s", code, out)
+	}
+	path := filepath.Join(target, "etc/cloud/cloud.cfg.d/99-zz-frame-lock.cfg")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		RunCmd [][]string `yaml:"runcmd"`
+	}
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		t.Fatalf("%s is not YAML: %v\n%s", path, err, b)
+	}
+	if want := [][]string{{"passwd", "-l", "frame"}}; !reflect.DeepEqual(cfg.RunCmd, want) {
+		t.Errorf("runcmd = %v, want %v\n%s", cfg.RunCmd, want, b)
 	}
 }
