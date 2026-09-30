@@ -189,3 +189,43 @@ func TestClearBootOverrideSurfacesAFailedRead(t *testing.T) {
 		t.Fatalf("err = %v, want the 503 from reading the system", err)
 	}
 }
+
+// TestEjectMediaStillEjectsWhenTheFirstReadFails: a failed read of the
+// virtual CD does not stop the cleanup from trying the eject.
+func TestEjectMediaStillEjectsWhenTheFirstReadFails(t *testing.T) {
+	var posts int
+	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.Error(w, "iLO is busy", http.StatusServiceUnavailable)
+			return
+		}
+		posts++
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := b.EjectMedia(context.Background()); err != nil {
+		t.Fatalf("EjectMedia: %v", err)
+	}
+	if posts != 1 {
+		t.Errorf("got %d eject POSTs, want 1 despite the failed read", posts)
+	}
+}
+
+// TestClearBootOverrideWritesNothingWithoutAnOverrideProperty: a Boot
+// object with no BootSourceOverrideEnabled has no override to clear.
+func TestClearBootOverrideWritesNothingWithoutAnOverrideProperty(t *testing.T) {
+	var writes int
+	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"Boot": {"BootSourceOverrideTarget": "None"}}`))
+			return
+		}
+		writes++
+		http.Error(w, "unexpected write", http.StatusBadRequest)
+	})
+	if err := b.ClearBootOverride(context.Background()); err != nil {
+		t.Fatalf("ClearBootOverride: %v", err)
+	}
+	if writes != 0 {
+		t.Errorf("got %d writes, want none", writes)
+	}
+}

@@ -25,6 +25,7 @@ type connRequestsKey struct{}
 // sees the FIN first and discards the connection; closing when the next
 // request lands is the deterministic form of the same iLO behaviour.
 func TestRedfishBMCSurvivesABMCThatDropsKeptAliveConnections(t *testing.T) {
+	var patches int32
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := r.Context().Value(connRequestsKey{}).(*int32)
 		if atomic.AddInt32(n, 1) > 1 {
@@ -37,7 +38,16 @@ func TestRedfishBMCSurvivesABMCThatDropsKeptAliveConnections(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch {
+			atomic.AddInt32(&patches, 1)
+		}
 		if r.Method == http.MethodGet {
+			if r.URL.Path == "/redfish/v1/Systems/1/" {
+				// An active override, so ClearBootOverride goes on to PATCH:
+				// the write is what net/http does not retry.
+				_, _ = w.Write([]byte(`{"Boot": {"BootSourceOverrideEnabled": "Once", "BootSourceOverrideTarget": "Cd"}}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"Inserted": true}`))
 			return
 		}
@@ -61,5 +71,8 @@ func TestRedfishBMCSurvivesABMCThatDropsKeptAliveConnections(t *testing.T) {
 	}
 	if err := b.ClearBootOverride(ctx); err != nil {
 		t.Fatalf("PATCH after GET: %v", err)
+	}
+	if n := atomic.LoadInt32(&patches); n != 1 {
+		t.Fatalf("got %d PATCHes, want 1: without a write this test proves nothing", n)
 	}
 }
