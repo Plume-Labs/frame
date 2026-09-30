@@ -104,74 +104,31 @@ func TestRedfishBMCMediaInsertedDecodesBothOutcomes(t *testing.T) {
 }
 
 // TestRedfishBMCEjectMediaPostsTheMatchingHPOEMAction pins EjectMedia's
-// request shape the same way InsertMedia's own test does.
+// request shape the same way InsertMedia's own test does, for media that
+// is inserted (the no-op on ejected media is in redfishbmc_cleanup_test.go).
 func TestRedfishBMCEjectMediaPostsTheMatchingHPOEMAction(t *testing.T) {
-	var gotMethod, gotPath string
+	var posts []string
 	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"Inserted": true}`))
+			return
+		}
+		posts = append(posts, r.Method+" "+r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 	})
 
 	if err := b.EjectMedia(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if gotMethod != http.MethodPost {
-		t.Errorf("method = %s, want POST", gotMethod)
-	}
-	const want = "/redfish/v1/Managers/1/VirtualMedia/2/Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/"
-	if gotPath != want {
-		t.Errorf("path = %s, want %s", gotPath, want)
+	const want = "POST /redfish/v1/Managers/1/VirtualMedia/2/Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/"
+	if len(posts) != 1 || posts[0] != want {
+		t.Errorf("writes = %v, want exactly [%s]", posts, want)
 	}
 }
 
 // SetBootOnce is tested in redfishbmc_boot_test.go, against a fake that
-// refuses what the served Boot schema does not carry.
-
-// TestRedfishBMCClearBootOverrideDisablesWithoutSettingTargetOrMode proves
-// ClearBootOverride's body is narrower than SetBootOnce's: only
-// BootSourceOverrideEnabled: "Disabled". Asserting the target/mode keys are
-// entirely absent (not merely unequal to some value) is what would catch an
-// implementation that copy-pasted SetBootOnce's body and only patched the
-// Enabled field, leaving a stale Target/Mode on the wire.
-func TestRedfishBMCClearBootOverrideDisablesWithoutSettingTargetOrMode(t *testing.T) {
-	var gotMethod, gotPath string
-	var gotBody []byte
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		gotBody, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-	})
-
-	if err := b.ClearBootOverride(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if gotMethod != http.MethodPatch {
-		t.Errorf("method = %s, want PATCH", gotMethod)
-	}
-	if gotPath != "/redfish/v1/Systems/1/" {
-		t.Errorf("path = %s, want the system resource itself", gotPath)
-	}
-
-	var decoded map[string]any
-	if err := json.Unmarshal(gotBody, &decoded); err != nil {
-		t.Fatalf("body %s did not decode: %v", gotBody, err)
-	}
-	boot, ok := decoded["Boot"].(map[string]any)
-	if !ok {
-		t.Fatalf("body %s has no Boot object", gotBody)
-	}
-	if boot["BootSourceOverrideEnabled"] != "Disabled" {
-		t.Errorf("BootSourceOverrideEnabled = %v, want Disabled", boot["BootSourceOverrideEnabled"])
-	}
-	if _, present := boot["BootSourceOverrideTarget"]; present {
-		t.Errorf("body %s sets BootSourceOverrideTarget, which ClearBootOverride must leave alone", gotBody)
-	}
-	if _, present := boot["BootSourceOverrideMode"]; present {
-		t.Errorf("body %s sets BootSourceOverrideMode, which ClearBootOverride must leave alone", gotBody)
-	}
-}
+// refuses what the served Boot schema does not carry. ClearBootOverride is
+// tested in redfishbmc_cleanup_test.go, against the iLO 4's own refusal.
 
 // TestRedfishBMCDoSurfacesANonSuccessStatus is do()'s own error-branch test:
 // every write method above routes through it, and every one of them

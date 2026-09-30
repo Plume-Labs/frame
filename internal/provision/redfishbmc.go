@@ -137,12 +137,30 @@ func (b *RedfishBMC) MediaInserted(ctx context.Context) (bool, error) {
 // install.go's cleanup runs this on every exit once the machine has been
 // touched, successful or not: a machine left with media attached reboots
 // into the installer on its next power cycle (design §10).
+//
+// What the caller needs is the media gone, not the action answered, so
+// Inserted is read on both sides of it. Media already out means there is
+// nothing to eject and no POST is sent: the iLO 4 of an ML350 Gen9 answers
+// EjectVirtualMedia with 500 when nothing is inserted. A failed POST is
+// followed by a second read, and the failure is dropped only if that read
+// says the media is out. A first read that fails does not stop the eject:
+// a cleanup that gives up before trying leaves the media attached.
 func (b *RedfishBMC) EjectMedia(ctx context.Context) error {
+	if inserted, err := b.MediaInserted(ctx); err == nil && !inserted {
+		return nil
+	}
 	// The action takes no parameters; an empty JSON object, not a nil body,
 	// so Content-Type is still set the same way every other write here sets
 	// it -- an OEM action answering differently to a request with no body at
 	// all is not a risk worth taking with no hardware to check it against.
-	return b.do(ctx, http.MethodPost, virtualMediaPath+"Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/", struct{}{}, nil)
+	postErr := b.do(ctx, http.MethodPost, virtualMediaPath+"Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/", struct{}{}, nil)
+	if postErr == nil {
+		return nil
+	}
+	if inserted, err := b.MediaInserted(ctx); err == nil && !inserted {
+		return nil
+	}
+	return postErr
 }
 
 // systemPath is the one system this package drives; iLO 4 answers 308 on
@@ -312,13 +330,34 @@ func (b *RedfishBMC) checkBootMode(ctx context.Context, sys systemDoc, mode stri
 // Failed, so a machine that failed mid-install does not boot back into the
 // installer on its own next restart. SetBootOnce already made the override
 // one-shot; this is the second belt, not the only one (design §10).
+//
+// The system is read first, and nothing is written when no override is
+// active (BootSourceOverrideEnabled absent or already "Disabled") -- the
+// usual case on an iLO 4, where SetBootOnce never sets one. When one is
+// active, the PATCH names the target None beside Enabled Disabled: the
+// iLO 4 refuses Enabled alone with 400 "BootSourceOverrideEnabled cannot
+// be set before BootSourceOverrideTarget is set". The mode is left alone;
+// SetBootOnce's comment says why it cannot always be written.
 func (b *RedfishBMC) ClearBootOverride(ctx context.Context) error {
-	var body struct {
-		Boot struct {
-			BootSourceOverrideEnabled string `json:"BootSourceOverrideEnabled"`
-		} `json:"Boot"`
+	sys, err := b.readSystem(ctx)
+	if err != nil {
+		return fmt.Errorf("redfish: reading the boot override before clearing it: %w", err)
 	}
-	body.Boot.BootSourceOverrideEnabled = "Disabled"
+	raw, ok := sys.Boot["BootSourceOverrideEnabled"]
+	if !ok {
+		return nil
+	}
+	var enabled string
+	if err := json.Unmarshal(raw, &enabled); err != nil {
+		return fmt.Errorf("redfish: decode Boot.BootSourceOverrideEnabled on %s: %w", systemPath, err)
+	}
+	if enabled == "Disabled" {
+		return nil
+	}
+	body := map[string]any{"Boot": map[string]string{
+		"BootSourceOverrideTarget":  "None",
+		"BootSourceOverrideEnabled": "Disabled",
+	}}
 	return b.do(ctx, http.MethodPatch, systemPath, body, nil)
 }
 
