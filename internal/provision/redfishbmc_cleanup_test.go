@@ -177,16 +177,26 @@ func TestClearBootOverrideWritesNothingWhenAlreadyDisabled(t *testing.T) {
 	}
 }
 
-// TestClearBootOverrideSurfacesAFailedRead: without the current state the
-// call cannot tell whether an override is active; it says so rather than
-// reporting a clean machine.
-func TestClearBootOverrideSurfacesAFailedRead(t *testing.T) {
+// TestClearBootOverrideStillClearsWhenTheReadFails: without the current
+// state the clear is sent anyway, as EjectMedia does, rather than leaving
+// a possibly active override behind a transient read error.
+func TestClearBootOverrideStillClearsWhenTheReadFails(t *testing.T) {
+	var patches []string
 	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "iLO is busy", http.StatusServiceUnavailable)
+		if r.Method == http.MethodGet {
+			http.Error(w, "iLO is busy", http.StatusServiceUnavailable)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		patches = append(patches, string(raw))
+		w.WriteHeader(http.StatusOK)
 	})
-	err := b.ClearBootOverride(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "503") {
-		t.Fatalf("err = %v, want the 503 from reading the system", err)
+	if err := b.ClearBootOverride(context.Background()); err != nil {
+		t.Fatalf("ClearBootOverride: %v", err)
+	}
+	const want = `{"Boot":{"BootSourceOverrideEnabled":"Disabled","BootSourceOverrideTarget":"None"}}`
+	if len(patches) != 1 || patches[0] != want {
+		t.Errorf("PATCHes = %v, want exactly [%s]", patches, want)
 	}
 }
 

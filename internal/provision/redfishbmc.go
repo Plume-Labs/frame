@@ -337,22 +337,19 @@ func (b *RedfishBMC) checkBootMode(ctx context.Context, sys systemDoc, mode stri
 // active, the PATCH names the target None beside Enabled Disabled: the
 // iLO 4 refuses Enabled alone with 400 "BootSourceOverrideEnabled cannot
 // be set before BootSourceOverrideTarget is set". The mode is left alone;
-// SetBootOnce's comment says why it cannot always be written.
+// SetBootOnce's comment says why it cannot always be written. A failed
+// read does not stop the clear, as in EjectMedia: the PATCH is sent
+// anyway, and its answer is the one returned.
 func (b *RedfishBMC) ClearBootOverride(ctx context.Context) error {
-	sys, err := b.readSystem(ctx)
-	if err != nil {
-		return fmt.Errorf("redfish: reading the boot override before clearing it: %w", err)
-	}
-	raw, ok := sys.Boot["BootSourceOverrideEnabled"]
-	if !ok {
-		return nil
-	}
-	var enabled string
-	if err := json.Unmarshal(raw, &enabled); err != nil {
-		return fmt.Errorf("redfish: decode Boot.BootSourceOverrideEnabled on %s: %w", systemPath, err)
-	}
-	if enabled == "Disabled" {
-		return nil
+	if sys, err := b.readSystem(ctx); err == nil {
+		raw, ok := sys.Boot["BootSourceOverrideEnabled"]
+		if !ok {
+			return nil
+		}
+		var enabled string
+		if json.Unmarshal(raw, &enabled) == nil && enabled == "Disabled" {
+			return nil
+		}
 	}
 	body := map[string]any{"Boot": map[string]string{
 		"BootSourceOverrideTarget":  "None",
