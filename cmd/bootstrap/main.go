@@ -59,9 +59,11 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -129,6 +131,42 @@ func phaseTimeouts(installTimeout time.Duration) map[provision.Phase]time.Durati
 // serving anything to fetch in the first place.
 const mediaStartGrace = 200 * time.Millisecond
 
+// baseISOURLEnv names the variable that swaps where the base ISO is
+// downloaded from -- a closer mirror when releases.ubuntu.com is slow --
+// and nothing else. It is read here, not in internal/provision, because
+// that package also serves the controller, whose image source must not
+// depend on the environment of whichever pod happens to run it.
+const baseISOURLEnv = "FRAME_BASE_ISO_URL"
+
+// baseSource returns provision.DefaultBase() with its URL replaced by
+// override when override is non-empty. The SHA256 is never replaced: it
+// stays the integrity control, so a mirror can only be faster, not
+// different.
+//
+// The file name must match the default's because FetchBase caches under
+// filepath.Base(URL): a different name would sidestep a cached, verified
+// copy, and would say nothing about whether the mirror serves the same
+// release. https is required so a mirror is at least who it claims to be
+// while the multi-gigabyte download runs; the checksum still decides.
+func baseSource(override string) (provision.BaseSource, error) {
+	src := provision.DefaultBase()
+	if override == "" {
+		return src, nil
+	}
+	u, err := url.Parse(override)
+	if err != nil {
+		return provision.BaseSource{}, fmt.Errorf("%s %q: %w", baseISOURLEnv, override, err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return provision.BaseSource{}, fmt.Errorf("%s %q: must be an https:// URL", baseISOURLEnv, override)
+	}
+	if got, want := filepath.Base(override), filepath.Base(src.URL); got != want {
+		return provision.BaseSource{}, fmt.Errorf("%s %q: file name %q, want %q (the checksum is pinned to that image)", baseISOURLEnv, override, got, want)
+	}
+	src.URL = override
+	return src, nil
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "frame bootstrap:", err)
@@ -150,6 +188,18 @@ func run() error {
 	if strings.TrimSpace(*configPath) == "" {
 		return errors.New("-config is required")
 	}
+
+	// Validated before anything else starts, like xorriso above: a bad
+	// mirror URL must not surface as a failed download half an hour in.
+	baseOverride := os.Getenv(baseISOURLEnv)
+	base, err := baseSource(baseOverride)
+	if err != nil {
+		return err
+	}
+	if baseOverride != "" {
+		fmt.Fprintf(os.Stderr, "base ISO from %s: %s\n", baseISOURLEnv, base.URL)
+	}
+
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
 		return err
@@ -190,7 +240,7 @@ func run() error {
 
 	images := &provision.LocalImageStore{
 		Dir:      imagesDir,
-		Base:     provision.DefaultBase(),
+		Base:     base,
 		MediaURL: cfg.MediaBaseURL,
 	}
 
