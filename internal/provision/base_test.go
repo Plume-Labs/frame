@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -152,7 +153,31 @@ func TestFetchBaseRefusesARedirectFromHTTPSToHTTP(t *testing.T) {
 	baseHTTPClient = &c
 
 	_, err := FetchBase(context.Background(), t.TempDir(), BaseSource{URL: tlsSrv.URL + "/x.iso", SHA256: sum(body)})
-	if err == nil {
-		t.Fatal("want the https -> http redirect refused, got a download")
+	if err == nil || !strings.Contains(err.Error(), "refusing a redirect from https to http") {
+		t.Fatalf("err = %v, want the https -> http redirect refused", err)
+	}
+}
+
+// The positive control: an https -> https redirect, the ordinary mirror
+// case, is still followed and the image downloaded.
+func TestFetchBaseFollowsARedirectFromHTTPSToHTTPS(t *testing.T) {
+	body := []byte("the image")
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved/x.iso" {
+			_, _ = w.Write(body)
+			return
+		}
+		http.Redirect(w, r, "/moved/x.iso", http.StatusFound)
+	}))
+	t.Cleanup(tlsSrv.Close)
+
+	saved := baseHTTPClient
+	t.Cleanup(func() { baseHTTPClient = saved })
+	c := *saved
+	c.Transport = tlsSrv.Client().Transport
+	baseHTTPClient = &c
+
+	if _, err := FetchBase(context.Background(), t.TempDir(), BaseSource{URL: tlsSrv.URL + "/x.iso", SHA256: sum(body)}); err != nil {
+		t.Fatalf("an https -> https redirect was not followed: %v", err)
 	}
 }
