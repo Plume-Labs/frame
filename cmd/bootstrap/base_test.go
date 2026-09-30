@@ -53,6 +53,11 @@ func TestBaseSourceOverrideOnlyMovesTheURL(t *testing.T) {
 		"https://mirror.example.net/24.04/" + name + "?x=1",
 		"https://user:secret@mirror.example.net/24.04/" + name,
 		"https://user@mirror.example.net/24.04/" + name,
+		"http://user:secret@mirror.example.net/24.04/" + name,
+		"https://user:sec ret@mirror.example.net/24.04/" + name,
+		"https://mirror.example.net/24.04/" + name + "?token=secret",
+		"https://mirror.example.net/24.04/" + name + "#secret",
+		"https://mirror.example.net/24.04/%zzsecret/" + name,
 	} {
 		if _, err := baseSource(bad); err == nil || !strings.Contains(err.Error(), baseISOURLEnv) {
 			t.Errorf("baseSource(%q) error = %v; want a refusal naming %s", bad, err, baseISOURLEnv)

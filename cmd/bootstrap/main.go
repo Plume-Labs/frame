@@ -154,20 +154,28 @@ func baseSource(override string) (provision.BaseSource, error) {
 	if override == "" {
 		return src, nil
 	}
+	// The value is never echoed as given: it may carry user info or a
+	// query token, and the refusal goes to stderr. Messages show it
+	// redacted and without query or fragment, or not at all.
 	u, err := url.Parse(override)
 	if err != nil {
-		return provision.BaseSource{}, fmt.Errorf("%s %q: %w", baseISOURLEnv, override, err)
+		return provision.BaseSource{}, fmt.Errorf("%s: not a valid URL", baseISOURLEnv)
+	}
+	shown := *u
+	shown.RawQuery, shown.Fragment, shown.RawFragment = "", "", ""
+	if u.User != nil {
+		// Credentials would also be printed below and in every FetchBase
+		// error. A mirror needing them is not one this variable is for.
+		return provision.BaseSource{}, fmt.Errorf("%s %q: must not carry credentials", baseISOURLEnv, shown.Redacted())
 	}
 	if u.Scheme != "https" || u.Host == "" {
-		return provision.BaseSource{}, fmt.Errorf("%s %q: must be an https:// URL", baseISOURLEnv, override)
+		return provision.BaseSource{}, fmt.Errorf("%s %q: must be an https:// URL", baseISOURLEnv, shown.Redacted())
 	}
-	// Credentials in the URL would be printed below and in every FetchBase
-	// error. A mirror needing them is not one this variable is for.
-	if u.User != nil {
-		return provision.BaseSource{}, fmt.Errorf("%s %q: must not carry credentials", baseISOURLEnv, u.Redacted())
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		return provision.BaseSource{}, fmt.Errorf("%s %q: must not carry a query or fragment", baseISOURLEnv, shown.Redacted())
 	}
 	if got, want := filepath.Base(override), filepath.Base(src.URL); got != want {
-		return provision.BaseSource{}, fmt.Errorf("%s %q: file name %q, want %q (the checksum is pinned to that image)", baseISOURLEnv, override, got, want)
+		return provision.BaseSource{}, fmt.Errorf("%s %q: file name %q, want %q (the checksum is pinned to that image)", baseISOURLEnv, shown.Redacted(), got, want)
 	}
 	src.URL = override
 	return src, nil
