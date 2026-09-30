@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,6 +39,24 @@ func DefaultBase() BaseSource {
 	}
 }
 
+// baseHTTPClient is http.DefaultClient's behaviour plus one refusal: a
+// download that starts on https is not followed onto http. The checksum
+// would still catch different bytes, but the https a caller asked for
+// (cmd/bootstrap's FRAME_BASE_ISO_URL requires it) should hold for the
+// whole transfer, not only its first request. A var so a test can give it
+// a transport that trusts an httptest TLS server.
+var baseHTTPClient = &http.Client{CheckRedirect: refuseHTTPSDowngrade}
+
+func refuseHTTPSDowngrade(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing a redirect from https to %s://%s", req.URL.Scheme, req.URL.Host)
+	}
+	return nil
+}
+
 // FetchBase returns the path to a verified copy of src inside dir.
 //
 // A file that fails its checksum is removed rather than left in place: on the
@@ -61,7 +80,7 @@ func FetchBase(ctx context.Context, dir string, src BaseSource) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := baseHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}

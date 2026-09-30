@@ -134,3 +134,25 @@ func TestTheDownloadCapLeavesRoomAboveThePinnedImage(t *testing.T) {
 		t.Errorf("cap %d leaves less than 25%% above the pinned %d-byte image", maxBaseImageBytes, pinnedBytes)
 	}
 }
+
+// A download that starts on https is not followed onto plain http, even
+// though the bytes served there would pass the checksum.
+func TestFetchBaseRefusesARedirectFromHTTPSToHTTP(t *testing.T) {
+	body := []byte("the image")
+	plain := serveBytes(t, body)
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/x.iso", http.StatusFound)
+	}))
+	t.Cleanup(tlsSrv.Close)
+
+	saved := baseHTTPClient
+	t.Cleanup(func() { baseHTTPClient = saved })
+	c := *saved
+	c.Transport = tlsSrv.Client().Transport
+	baseHTTPClient = &c
+
+	_, err := FetchBase(context.Background(), t.TempDir(), BaseSource{URL: tlsSrv.URL + "/x.iso", SHA256: sum(body)})
+	if err == nil {
+		t.Fatal("want the https -> http redirect refused, got a download")
+	}
+}

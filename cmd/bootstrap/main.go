@@ -147,7 +147,8 @@ const baseISOURLEnv = "FRAME_BASE_ISO_URL"
 // filepath.Base(URL): a different name would sidestep a cached, verified
 // copy, and would say nothing about whether the mirror serves the same
 // release. https is required so a mirror is at least who it claims to be
-// while the multi-gigabyte download runs; the checksum still decides.
+// while the multi-gigabyte download runs (FetchBase also refuses a redirect
+// from https to anything else); the checksum still decides.
 func baseSource(override string) (provision.BaseSource, error) {
 	src := provision.DefaultBase()
 	if override == "" {
@@ -159,6 +160,11 @@ func baseSource(override string) (provision.BaseSource, error) {
 	}
 	if u.Scheme != "https" || u.Host == "" {
 		return provision.BaseSource{}, fmt.Errorf("%s %q: must be an https:// URL", baseISOURLEnv, override)
+	}
+	// Credentials in the URL would be printed below and in every FetchBase
+	// error. A mirror needing them is not one this variable is for.
+	if u.User != nil {
+		return provision.BaseSource{}, fmt.Errorf("%s %q: must not carry credentials", baseISOURLEnv, u.Redacted())
 	}
 	if got, want := filepath.Base(override), filepath.Base(src.URL); got != want {
 		return provision.BaseSource{}, fmt.Errorf("%s %q: file name %q, want %q (the checksum is pinned to that image)", baseISOURLEnv, override, got, want)
