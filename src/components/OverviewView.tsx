@@ -11,6 +11,7 @@ import {
   crdListPath,
 } from '@/lib/frame-sdk'
 import { config } from '@/lib/frame-config'
+import { formatRate } from '@/lib/inference-rates'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useLiveResource } from '@/hooks/useLiveResource'
@@ -227,7 +228,7 @@ function ServingCard({ state }: { state: ReturnType<typeof useLiveResource<Infer
       <CardContent>
         {inf ? (
           <StatGrid count={4}>
-            <Stat label="Decode" value={`${inf.predictedTokensPerSec.toFixed(1)}`} tone="accent" size="md" />
+            <Stat label="Decode" value={formatRate(inf.predictedTokensPerSec)} tone="accent" size="md" />
             <Stat label="KV used" value={`${inf.kvUsePct.toFixed(0)}%`} size="md" />
             <Stat label="Processing" value={`${inf.requestsProcessing}`} size="md" />
             <Stat

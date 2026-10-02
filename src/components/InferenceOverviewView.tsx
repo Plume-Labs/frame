@@ -1,4 +1,5 @@
 import { GpuInfo, InferenceStatus, MetricSeries, TeiStatus, createFrameClient } from '@/lib/frame-sdk'
+import { DECODE_RATE_QUERY, formatRate } from '@/lib/inference-rates'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,7 +20,7 @@ const WINDOW_HOURS = 3
  */
 const TREND_QUERIES = [
   { metric: 'GPU utilisation', q: 'avg(DCGM_FI_DEV_GPU_UTIL)', unit: '%' },
-  { metric: 'Decode rate', q: 'llamacpp:predicted_tokens_seconds', unit: ' tok/s' },
+  { metric: 'Decode rate', q: DECODE_RATE_QUERY, unit: ' tok/s' },
   { metric: 'Requests processing', q: 'llamacpp:requests_processing' },
 ]
 
@@ -148,8 +149,8 @@ function LlamaCppCard({ state }: { state: ReturnType<typeof useLiveResource<Infe
             </div>
             <Meter label="KV cache" pct={inf.kvUsePct} detail={`${inf.kvTokens} / ${inf.nCtx}`} />
             <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <Stat icon={<Gauge size={12} />} label="Prompt tok/s" value={inf.promptTokensPerSec.toFixed(1)} />
-              <Stat icon={<Gauge size={12} />} label="Decode tok/s" value={inf.predictedTokensPerSec.toFixed(1)} />
+              <Stat icon={<Gauge size={12} />} label="Prompt tok/s" value={formatRate(inf.promptTokensPerSec)} />
+              <Stat icon={<Gauge size={12} />} label="Decode tok/s" value={formatRate(inf.predictedTokensPerSec)} />
               <Stat label="Processing" value={`${inf.requestsProcessing}`} />
               <Stat label="Deferred" value={`${inf.requestsDeferred}`} />
             </div>

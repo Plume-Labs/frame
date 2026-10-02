@@ -1504,3 +1504,72 @@ describe('promInstant', () => {
     expect(Object.keys(snap!)).toEqual(['b'])
   })
 })
+
+// llama.cpp resets its `*_tokens_seconds` gauges on every /metrics scrape, so
+// recent builds report 0 whenever no request finished between two scrapes. The
+// speeds are derived from the monotonic counters through Prometheus instead.
+describe('ClusterClient.inference() speeds', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  const METRICS = [
+    'llamacpp:prompt_tokens_total 5000',
+    'llamacpp:prompt_seconds_total 20',
+    'llamacpp:tokens_predicted_total 4000',
+    'llamacpp:tokens_predicted_seconds_total 200',
+    'llamacpp:prompt_tokens_seconds 0',
+    'llamacpp:predicted_tokens_seconds 0',
+    'llamacpp:requests_processing 1',
+    'llamacpp:requests_deferred 0',
+    'llamacpp:n_tokens_max 1200',
+    '',
+  ].join('\n')
+
+  function stub(promValue: (q: string) => string | null) {
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (url.includes('/pods?labelSelector')) {
+        return json({ items: [{ metadata: { name: 'p-0' }, spec: { nodeName: 'n' }, status: { phase: 'Running' } }] })
+      }
+      if (url.includes('/api/v1/query')) {
+        const v = promValue(decodeURIComponent(url.split('query=')[1]))
+        return json({ data: { result: v === null ? [] : [{ metric: {}, value: [0, v] }] } })
+      }
+      if (url.includes('/props')) return json({ total_slots: 1, default_generation_settings: { n_ctx: 4096 } })
+      return new Response(METRICS, { status: 200 })
+    }))
+    ;(globalThis as Record<string, unknown>).__FRAME_TOKEN__ = 'tok'
+  }
+
+  it('reports counter-derived speeds while the gauges read 0', async () => {
+    stub((q) => (q.includes('predicted') ? '19.9' : '259.5'))
+    const inf = await createFrameClient().cluster.inference()
+    expect(inf!.predictedTokensPerSec).toBe(19.9)
+    expect(inf!.promptTokensPerSec).toBe(259.5)
+  })
+
+  it('reads the rate of the counters, never the reset gauges', async () => {
+    const asked: string[] = []
+    stub((q) => { asked.push(q); return '1' })
+    await createFrameClient().cluster.inference()
+    expect(asked.length).toBe(2)
+    for (const q of asked) {
+      expect(q).toMatch(/rate\(llamacpp:\w+_total\[5m\]\)/)
+      expect(q).not.toMatch(/tokens_seconds\b(?!_total)/)
+    }
+  })
+
+  it('says "no value" (null), not 0 or NaN, when nothing was served', async () => {
+    stub(() => 'NaN')
+    const nan = await createFrameClient().cluster.inference()
+    expect(nan!.predictedTokensPerSec).toBeNull()
+    expect(nan!.promptTokensPerSec).toBeNull()
+    stub(() => null)
+    const empty = await createFrameClient().cluster.inference()
+    expect(empty!.predictedTokensPerSec).toBeNull()
+  })
+})

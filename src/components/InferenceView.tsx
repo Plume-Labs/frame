@@ -1,4 +1,5 @@
 import { InferenceStatus, MetricSeries, createFrameClient } from '@/lib/frame-sdk'
+import { DECODE_RATE_QUERY, formatRate } from '@/lib/inference-rates'
 import { Badge } from '@/components/ui/badge'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { TuningDashboard } from '@/components/TuningDashboard'
@@ -19,7 +20,7 @@ const WINDOW_HOURS = 3
  */
 const TREND_QUERIES = [
   { metric: 'KV depth', q: 'llamacpp:n_tokens_max', unit: ' tok' },
-  { metric: 'Decode rate', q: 'llamacpp:predicted_tokens_seconds', unit: ' tok/s' },
+  { metric: 'Decode rate', q: DECODE_RATE_QUERY, unit: ' tok/s' },
   { metric: 'Requests processing', q: 'llamacpp:requests_processing' },
 ]
 
@@ -51,8 +52,8 @@ export function InferenceView() {
       stats={
         inf
           ? [
-              { label: 'Decode tok/s', value: inf.predictedTokensPerSec.toFixed(1), tone: 'accent' },
-              { label: 'Prompt tok/s', value: inf.promptTokensPerSec.toFixed(1) },
+              { label: 'Decode tok/s', value: formatRate(inf.predictedTokensPerSec), tone: 'accent' },
+              { label: 'Prompt tok/s', value: formatRate(inf.promptTokensPerSec) },
               { label: 'Processing', value: `${inf.requestsProcessing}` },
               {
                 label: 'Deferred',

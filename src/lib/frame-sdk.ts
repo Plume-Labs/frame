@@ -47,6 +47,7 @@ import {
 } from './installs'
 import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
 import type { CephPlacement } from './ceph-placement'
+import { DECODE_RATE_QUERY, PROMPT_RATE_QUERY, rateFromSamples } from './inference-rates'
 import { CEPH_DIAG_QUERIES, promAnswered, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
 import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
 
@@ -551,8 +552,9 @@ export interface InferenceStatus {
   kvUsePct: number
   requestsProcessing: number
   requestsDeferred: number
-  promptTokensPerSec: number
-  predictedTokensPerSec: number
+  /** Token/s over the last 5 min from the counters; null when unknown (no Prometheus, no traffic). */
+  promptTokensPerSec: number | null
+  predictedTokensPerSec: number | null
   promptTokensTotal: number
   tokensPredictedTotal: number
   busySlotsPerDecode: number
@@ -2335,6 +2337,10 @@ class ClusterClient {
       /* props optional */
     }
 
+    // Speeds come from Prometheus rates over the counters: the server's own
+    // speed gauges are reset by every scrape (see inference-rates.ts).
+    const speeds = await this.promInstant({ decode: DECODE_RATE_QUERY, prompt: PROMPT_RATE_QUERY }).catch(() => null)
+
     const kvTokens = num('llamacpp:n_tokens_max')
     return {
       model: model || 'llama.cpp',
@@ -2345,8 +2351,8 @@ class ClusterClient {
       kvUsePct: nCtx ? (kvTokens / nCtx) * 100 : 0,
       requestsProcessing: num('llamacpp:requests_processing'),
       requestsDeferred: num('llamacpp:requests_deferred'),
-      promptTokensPerSec: num('llamacpp:prompt_tokens_seconds'),
-      predictedTokensPerSec: num('llamacpp:predicted_tokens_seconds'),
+      promptTokensPerSec: rateFromSamples(speeds?.prompt),
+      predictedTokensPerSec: rateFromSamples(speeds?.decode),
       promptTokensTotal: num('llamacpp:prompt_tokens_total'),
       tokensPredictedTotal: num('llamacpp:tokens_predicted_total'),
       busySlotsPerDecode: num('llamacpp:n_busy_slots_per_decode'),
