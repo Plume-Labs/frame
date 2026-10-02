@@ -112,14 +112,21 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 128Mi
+            # 128Mi left no headroom for the FrameAlert informer: alerts are
+            # kept until resolved, delivered and past --alert-retention-days,
+            # so a noisy alert source grows the namespace by thousands of
+            # objects a day. At ~5,000 FrameAlerts (~25 MB of JSON) the manager
+            # was OOMKilled about a minute after acquiring the lease, every
+            # restart. The cache holds every FrameAlert, and the relay and
+            # subscription-status controllers List them all again on top.
+            memory: 512Mi
           requests:
             # 10m left the manager with almost no CPU weight under contention,
             # which is how it kept missing its leader-election renew deadline on
             # a saturated control-plane node. This is the share it needs to stay
             # responsive, not a ceiling — the limit above is unchanged.
             cpu: 100m
-            memory: 64Mi
+            memory: 128Mi
         volumeMounts: []
       volumes: []
       serviceAccountName: controller-manager
