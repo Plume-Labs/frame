@@ -9,6 +9,9 @@
 # Requirements:
 #   - NVIDIA driver >= 450, CUDA >= 11.0
 #   - nvidia-container-toolkit installed on every GPU node
+#
+# With Falco installed, apply deploy/samples/test-cluster/falco-gpu-exceptions-values.yaml
+# too: the MPS control loop otherwise raises a Critical alert every 30 seconds.
 
 apiVersion: apps/v1
 kind: DaemonSet

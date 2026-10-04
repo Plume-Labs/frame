@@ -77,6 +77,10 @@ exit criteria, and "Known limitations" below for what V1 does not do.
 - Five images scanned by Trivy in CI with a gate on fixed CRITICAL/HIGH
   findings; SBOM and provenance attached to the pushed image.
 - Private vulnerability reporting channel in [SECURITY.md](SECURITY.md).
+- Falco exception for the GPU stack Frame deploys (nvidia-mps, GPU operator
+  driver build) in
+  `deploy/samples/test-cluster/falco-gpu-exceptions-values.yaml`, matched on
+  `k8smeta.ns.name` because `k8s.ns.name` stays empty on GPU nodes.
 
 ### Per-user identity
 
