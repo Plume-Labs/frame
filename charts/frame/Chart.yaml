@@ -6,8 +6,8 @@ description: |
   service provisioning, driven by CRDs with validating/defaulting webhooks. Packages the operator only — the React
   control-plane UI and authd are out of scope for this chart.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 1.0.0
+appVersion: "1.0.0"
 kubeVersion: ">=1.29.0-0"
 home: https://github.com/Plume-Labs/frame
 sources:

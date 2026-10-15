@@ -1,0 +1,23 @@
+# Falco (syscall source) — narrow exception for the GPU stack Frame deploys.
+# nvidia-mps (deploy/kubernetes/base/nvidia-mps.yaml) runs nvidia-cuda-mps-control
+# from a writable layer every 30 s, and the GPU operator compiles and loads its
+# driver in-pod: "Drop and execute new binary in container" fires Critical on
+# both, about 120 alerts/hour on a single GPU node, drowning real detections.
+#
+# Match the namespace on k8smeta.ns.name as well as k8s.ns.name: on GPU nodes
+# the container plugin leaves k8s.ns.name at <NA> for these containers, and an
+# exception keyed on k8s.ns.name alone never matches (seen 2026-10-04, 2,527
+# alerts in 21 h with that version loaded).
+#   helm upgrade falco falcosecurity/falco -n falco --reuse-values -f falco-gpu-exceptions-values.yaml
+# Proof it works: on the GPU node, the rule count for nvidia-cuda-mps-control
+# drops to 0 within five minutes.
+customRules:
+  gpu-operator-exceptions.yaml: |-
+    - macro: known_drop_and_execute_activities
+      condition: >
+        ((k8s.ns.name = kube-system or k8smeta.ns.name = kube-system) and proc.exepath = /usr/bin/nvidia-cuda-mps-control)
+        or ((k8s.ns.name = gpu-operator or k8smeta.ns.name = gpu-operator)
+            and (proc.exepath startswith /usr/src/linux-headers-
+                 or proc.exepath in (/usr/bin/nvidia-smi, /run/nvidia/driver/usr/bin/nvidia-smi)))
+      override:
+        condition: replace
