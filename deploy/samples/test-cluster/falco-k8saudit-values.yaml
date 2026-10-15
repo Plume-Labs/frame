@@ -55,6 +55,10 @@ customRules:
       condition: and not ka.user.name startswith "system:node:"
       override:
         condition: append
+    - rule: Service Account Created in Kube Namespace
+      condition: and not ka.user.name startswith "system:node:"
+      override:
+        condition: append
     # k3s's embedded cloud controller patches node status.
     - list: allowed_k8s_users
       items: [k3s-cloud-controller-manager]
