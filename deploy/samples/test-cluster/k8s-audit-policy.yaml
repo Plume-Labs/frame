@@ -7,6 +7,14 @@ apiVersion: audit.k8s.io/v1
 kind: Policy
 omitStages: ["RequestReceived"]
 rules:
+  # exec/attach/port-forward first: kubectl >= 1.31 opens them over WebSocket,
+  # which the apiserver audits as verb "get" — the read-only drop below would
+  # otherwise hide every interactive exec (seen 2026-10-15: SPDY exec logged,
+  # WebSocket exec silent).
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward"]
   - level: None
     verbs: ["get", "list", "watch"]
   - level: None
