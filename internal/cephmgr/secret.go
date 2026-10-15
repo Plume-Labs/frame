@@ -52,7 +52,7 @@ func SecretLoader(r client.Reader, namespace string) func(context.Context) (Conf
 		// (accountMAC): with one inside, two different accounts could
 		// share a MAC, and one's refusal would block, or free, the other.
 		if strings.ContainsRune(user, 0) || strings.ContainsRune(pass, 0) {
-			return Config{}, fmt.Errorf("Secret %s/%s: username or password contains a NUL byte; not used", namespace, SecretName)
+			return Config{}, fmt.Errorf("secret %s/%s: username or password contains a NUL byte; not used", namespace, SecretName)
 		}
 		return Config{
 			BaseURL:    strings.TrimSpace(string(s.Data["url"])),

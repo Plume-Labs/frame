@@ -345,11 +345,11 @@ func TestByIDPathFromWWN(t *testing.T) {
 // write and freezes the machine's disk list.
 func TestObserveDisksStaysWithinCRDBounds(t *testing.T) {
 	long := strings.Repeat("é", 600)
-	var devs []string
+	devs := make([]string, 0, 72)
 	devs = append(devs, fmt.Sprintf(`{"name":"sda","path":"/dev/sda","serial":"SER-LONG","size":1,"type":"disk","model":%q,"wwn":%q,"fstype":%q,"mountpoint":%q}`,
 		long, "0x"+strings.Repeat("a", 80), long, "/"+long))
 	devs = append(devs, fmt.Sprintf(`{"name":"sdb","path":"/dev/sdb","serial":%q,"size":1,"type":"disk"}`, strings.Repeat("S", 129)))
-	for i := 0; i < 70; i++ {
+	for i := range 70 {
 		devs = append(devs, fmt.Sprintf(`{"name":"sd%d","path":"/dev/sd%d","serial":"SER%04d","size":1,"type":"disk"}`, i, i, i))
 	}
 	r := &fakeRunner{out: `{"blockdevices":[` + strings.Join(devs, ",") + `]}`}

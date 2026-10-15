@@ -109,12 +109,12 @@ func TestJoinReportsAnEmptyOSListAsTotalDivergence(t *testing.T) {
 // admits 64. The list must fit, and what it keeps must be the disks the node
 // cannot see.
 func TestJoinStaysWithinMaxItemsKeepingBMCOnlyFirst(t *testing.T) {
-	var bmc []framev1beta1.DriveInfo
-	var observed []framev1beta1.ObservedDisk
-	for i := 0; i < 32; i++ {
+	bmc := make([]framev1beta1.DriveInfo, 0, 32)
+	observed := make([]framev1beta1.ObservedDisk, 0, 64)
+	for i := range 32 {
 		bmc = append(bmc, framev1beta1.DriveInfo{SerialNumber: fmt.Sprintf("Z-BMC%02d", i), Location: fmt.Sprintf("1I:1:%d", i)})
 	}
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		observed = append(observed, framev1beta1.ObservedDisk{SerialNumber: fmt.Sprintf("A-OS%02d", i), Path: fmt.Sprintf("/dev/sd%d", i)})
 	}
 	got := Join(bmc, observed)

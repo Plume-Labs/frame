@@ -293,7 +293,7 @@ func validateServerURL(v string) error {
 	// the one whose refusal would otherwise print the password it is being
 	// refused for, whichever check below happens to refuse it first.
 	name := u.Redacted()
-	if u.Scheme != "https" {
+	if u.Scheme != schemeHTTPS {
 		return fmt.Errorf("server URL %q: scheme must be https, got %q", name, u.Scheme)
 	}
 	if u.Host == "" {

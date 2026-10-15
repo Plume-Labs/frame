@@ -156,7 +156,10 @@ func run() error {
 // collection.
 const localStorageWait = 5 * time.Second
 
-func tick(ctx context.Context, kc client.Client, nodeName, root string, runner agent.CommandRunner, localStorage *agent.LocalCollector) {
+func tick(
+	ctx context.Context, kc client.Client, nodeName, root string,
+	runner agent.CommandRunner, localStorage *agent.LocalCollector,
+) {
 	var node corev1.Node
 	if err := kc.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
 		// Nothing below is meaningful without the node: the selectors are

@@ -288,7 +288,7 @@ func TestObserveZFS(t *testing.T) {
 		depth int32
 		state string
 	}
-	var rows []row
+	rows := make([]row, 0, len(data.Vdevs))
 	for _, v := range data.Vdevs {
 		rows = append(rows, row{v.Name, v.Depth, v.State})
 	}
@@ -365,7 +365,7 @@ func TestObserveLVM(t *testing.T) {
 // Past the CRD bounds, lists are cut and the cut is counted.
 func TestLocalStorageListsAreCappedAndCounted(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < 70; i++ {
+	for i := range 70 {
 		b.WriteString("data/ds")
 		b.WriteString(strings.Repeat("x", i))
 		b.WriteString("\t1\t2\t3\t-\tfilesystem\n")
@@ -456,7 +456,7 @@ func TestZpoolStatusEdgeCases(t *testing.T) {
 func TestMDMembersPastTheCapAreCounted(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("md0 : active raid10")
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		b.WriteString(" sd" + strconv.Itoa(i) + "[" + strconv.Itoa(i) + "]")
 	}
 	b.WriteString("\n      100 blocks super 1.2 [40/40] [" + strings.Repeat("U", 40) + "]\n")

@@ -97,7 +97,7 @@ var _ = Describe("FrameMachine Redfish sessions", func() {
 		req := createMachine("fm-session-reuse", bmc)
 		r := newReconciler()
 
-		for i := 0; i < probes; i++ {
+		for range probes {
 			res, err := r.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.RequeueAfter).To(Equal(DefaultProbeInterval))
@@ -119,7 +119,7 @@ var _ = Describe("FrameMachine Redfish sessions", func() {
 		oldBMC, newBMC := redfishtest.NewFakeBMC(GinkgoT()), redfishtest.NewFakeBMC(GinkgoT())
 		req := createMachine("fm-session-move", oldBMC)
 		r := newReconciler()
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			_, err := r.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 		}
@@ -186,8 +186,8 @@ var _ = Describe("FrameMachine Redfish sessions", func() {
 		Expect(next()).To(Equal(90*time.Second), "over the floor: as configured")
 
 		fake.probeErr = redfish.ErrTLS
-		var backoff []time.Duration
-		for i := 0; i < 5; i++ {
+		backoff := make([]time.Duration, 0, 5)
+		for range 5 {
 			backoff = append(backoff, next())
 		}
 		Expect(backoff).To(Equal([]time.Duration{

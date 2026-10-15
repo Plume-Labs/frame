@@ -28,6 +28,9 @@ type BaseSource struct {
 	SHA256 string
 }
 
+// schemeHTTPS is the URL scheme of a TLS-protected download.
+const schemeHTTPS = "https"
+
 // DefaultBase is the image this lot is built against. The checksum is the
 // integrity control, verified against Ubuntu's published SHA256SUMS
 // (https://releases.ubuntu.com/24.04/SHA256SUMS) on 2026-09-29; changing
@@ -51,7 +54,7 @@ func refuseHTTPSDowngrade(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
-	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+	if via[0].URL.Scheme == schemeHTTPS && req.URL.Scheme != schemeHTTPS {
 		return fmt.Errorf("refusing a redirect from https to %s://%s", req.URL.Scheme, req.URL.Host)
 	}
 	return nil

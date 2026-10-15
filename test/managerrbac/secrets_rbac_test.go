@@ -156,13 +156,13 @@ func TestProductionRenderImageAndNoProvisiond(t *testing.T) {
 		if u.GetKind() == "Deployment" && u.GetName() == "frame-controller-manager" {
 			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
 			for _, c := range cs {
-				if m, ok := c.(map[string]interface{}); ok && m["name"] == "manager" {
+				if m, ok := c.(map[string]any); ok && m["name"] == "manager" {
 					managerImage, _ = m["image"].(string)
 				}
 			}
 		}
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		l := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
 		if !strings.HasPrefix(l, "image:") {
 			continue
@@ -193,19 +193,15 @@ func apply(t *testing.T) {
 	}
 	path := render(t, overlay)
 	for _, cr := range manifests.ClusterRoles(t, path) {
-		cr := cr
 		must(&cr)
 	}
 	for _, r := range manifests.Roles(t, path) {
-		r := r
 		must(&r)
 	}
 	for _, b := range manifests.ClusterRoleBindings(t, path) {
-		b := b
 		must(&b)
 	}
 	for _, b := range manifests.RoleBindings(t, path) {
-		b := b
 		must(&b)
 	}
 }
@@ -235,7 +231,8 @@ func managerBindings(t *testing.T, path string) map[string]string {
 // FrameService exists on the cluster.
 func TestRenderedInstallsBindTheRightNamespaces(t *testing.T) {
 	if got := managerBindings(t, render(t, "config/default")); len(got) != 0 {
-		t.Errorf("config/default binds the manager to secret-access roles in %v; it must bind none (sites do it in an overlay)", got)
+		t.Errorf("config/default binds the manager to secret-access roles in %v; "+
+			"it must bind none (sites do it in an overlay)", got)
 	}
 	path := render(t, overlay)
 	want := map[string]string{readNS: "frame-manager-secret-reader"}
@@ -278,7 +275,9 @@ func TestManagerSecretAccessIsPerNamespace(t *testing.T) {
 	ctx := context.Background()
 	for _, s := range []*corev1.Secret{
 		secret(mgrNS, cephmgr.StateSecretName, nil),
-		secret(mgrNS, cephmgr.SecretName, map[string]string{"url": "https://dashboard:8443", "username": "u", "password": "p"}),
+		secret(mgrNS, cephmgr.SecretName, map[string]string{
+			"url": "https://dashboard:8443", "username": "u", "password": "p",
+		}),
 		secret(mgrNS, "alert-token", map[string]string{"token": "t"}),
 		secret(readNS, "bmc", map[string]string{"username": "u", "password": "p"}),
 		secret(otherNS, "bmc", map[string]string{"username": "u", "password": "p"}),
@@ -327,14 +326,20 @@ func TestManagerSecretAccessIsPerNamespace(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fs := secret(writeNS, "svc-binding", nil)
-	if _, err := controllerutil.CreateOrUpdate(ctx, mgr, fs, func() error { fs.Data = map[string][]byte{"k": []byte("v1")}; return nil }); err != nil {
+	svcSecret := secret(writeNS, "svc-binding", nil)
+	if _, err := controllerutil.CreateOrUpdate(ctx, mgr, svcSecret, func() error {
+		svcSecret.Data = map[string][]byte{"k": []byte("v1")}
+		return nil
+	}); err != nil {
 		t.Errorf("FrameService create: %v", err)
 	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, mgr, fs, func() error { fs.Data = map[string][]byte{"k": []byte("v2")}; return nil }); err != nil {
+	if _, err := controllerutil.CreateOrUpdate(ctx, mgr, svcSecret, func() error {
+		svcSecret.Data = map[string][]byte{"k": []byte("v2")}
+		return nil
+	}); err != nil {
 		t.Errorf("FrameService update: %v", err)
 	}
-	if err := mgr.Delete(ctx, fs); err != nil {
+	if err := mgr.Delete(ctx, svcSecret); err != nil {
 		t.Errorf("FrameService delete: %v", err)
 	}
 
@@ -342,7 +347,8 @@ func TestManagerSecretAccessIsPerNamespace(t *testing.T) {
 
 	_, err = framectrl.BuildRedfishClient(ctx, mgr, otherNS, bmc)
 	forbidden(t, "BMC credentials in an unbound namespace", err)
-	forbidden(t, "get in kube-system", mgr.Get(ctx, client.ObjectKey{Namespace: "kube-system", Name: "anything"}, &corev1.Secret{}))
+	forbidden(t, "get in kube-system",
+		mgr.Get(ctx, client.ObjectKey{Namespace: "kube-system", Name: "anything"}, &corev1.Secret{}))
 	forbidden(t, "create where only the reader is bound", mgr.Create(ctx, secret(readNS, "x", nil)))
 	forbidden(t, "create in an unbound namespace", mgr.Create(ctx, secret(otherNS, "x", nil)))
 	forbidden(t, "list Secrets cluster-wide", mgr.List(ctx, &corev1.SecretList{}))

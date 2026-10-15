@@ -518,7 +518,7 @@ func ValidateMediaURLSyntax(raw string) error {
 	if err != nil {
 		return fmt.Errorf("%q: %w", raw, err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
+	if u.Scheme != "http" && u.Scheme != schemeHTTPS {
 		return fmt.Errorf("%q: scheme must be http or https, got %q", raw, u.Scheme)
 	}
 	if u.Host == "" {

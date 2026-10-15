@@ -82,7 +82,7 @@ func TestRefusedAccountIsNeverTriedAgain(t *testing.T) {
 	cfg.Password = "wrong"
 	gate, c := stateGate(t, true, interceptor.Funcs{})
 	now := t0
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		now = now.Add(DefaultInterval)
 		if p := place(process(&cfg, gate, &now)); p.State != "AuthRefused" {
 			t.Fatalf("process %d: state %q (%s)", i, p.State, p.Message)
@@ -158,7 +158,7 @@ func TestCrashBetweenLoginAndOutcome(t *testing.T) {
 	})
 	now := t0
 	place(process(&cfg, gate, &now))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		now = now.Add(DefaultInterval)
 		place(process(&cfg, gate, &now))
 	}
@@ -188,7 +188,7 @@ func TestConflictingWriteIsRetriedThenRestart(t *testing.T) {
 	if p := place(process(&cfg, gate, &now)); p.State != "AuthRefused" || f.logins != 1 {
 		t.Fatalf("first process: state %q (%s), %d logins", p.State, p.Message, f.logins)
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		now = now.Add(DefaultInterval)
 		place(process(&cfg, gate, &now))
 	}
@@ -246,7 +246,6 @@ func TestAThenBThenA(t *testing.T) {
 	gate, _ := stateGate(t, true, interceptor.Funcs{})
 	now := t0
 	for _, cfg := range []Config{a, b, a} {
-		cfg := cfg
 		now = now.Add(DefaultInterval)
 		place(process(&cfg, gate, &now))
 	}
@@ -261,7 +260,7 @@ func TestMissingStateSecretMeansNoLogin(t *testing.T) {
 	cfg := f.cfg()
 	gate, _ := stateGate(t, false, interceptor.Funcs{})
 	now := t0
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		now = now.Add(DefaultInterval)
 		p := place(process(&cfg, gate, &now))
 		if p.State != "Error" || !strings.Contains(p.Message, "state Secret missing: frame-system/frame-ceph-dashboard-state") {
@@ -294,7 +293,7 @@ func TestNetworkErrorLeavesTheIntentionPending(t *testing.T) {
 func TestKeyGenerationAndBoundedLists(t *testing.T) {
 	gate, c := stateGate(t, true, interceptor.Funcs{})
 	ctx := context.Background()
-	for i := 0; i < MaxRefused+2; i++ {
+	for i := range MaxRefused + 2 {
 		cfg := Config{BaseURL: "https://d", Username: "u", Password: fmt.Sprint(i)}
 		if err := gate.Begin(ctx, cfg); err != nil {
 			t.Fatal(err)
@@ -364,7 +363,7 @@ func TestSecretEmptiedDuringTheLogin(t *testing.T) {
 		t.Fatalf("state %q (%s)", p.State, p.Message)
 	}
 	f.onLogin = nil
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		now = now.Add(DefaultInterval)
 		place(process(&cfg, gate, &now))
 	}
@@ -443,7 +442,7 @@ func TestLoginSentThenDroppedStaysBlocking(t *testing.T) {
 // Two leaders at once (a lease handover), same wrong account: at most one
 // failed login between them.
 func TestTwoConcurrentLeaders(t *testing.T) {
-	for round := 0; round < 10; round++ {
+	for round := range 10 {
 		f := newFake(t)
 		cfg := f.cfg()
 		cfg.Password = "wrong"
@@ -467,7 +466,7 @@ func TestTwoConcurrentLeaders(t *testing.T) {
 func TestFullPendingMeansNoLogin(t *testing.T) {
 	gate, c := stateGate(t, true, interceptor.Funcs{})
 	ctx := context.Background()
-	for i := 0; i < MaxRefused; i++ {
+	for i := range MaxRefused {
 		if err := gate.Begin(ctx, Config{BaseURL: "https://d", Username: "u", Password: fmt.Sprint(i)}); err != nil {
 			t.Fatal(err)
 		}

@@ -301,7 +301,7 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 		return fmt.Errorf("refusing GET %q: not on the dashboard read list", path)
 	}
 	ep := readEndpoints[i]
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		c.mu.Lock()
 		tok := c.token
 		c.mu.Unlock()

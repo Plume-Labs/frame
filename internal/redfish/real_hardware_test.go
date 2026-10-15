@@ -594,6 +594,7 @@ func TestSmartStorageReadsTheSATADriveVerbatim(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatalf("no drive with serial HDDTST05 among %d drives", len(snap.Inventory.Drives))
+		return
 	}
 	if got.Location != "2I:6:8" {
 		t.Errorf("Location = %q, want 2I:6:8", got.Location)

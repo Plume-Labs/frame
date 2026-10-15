@@ -471,12 +471,14 @@ func TestFrameInstallRecordsFrameTaskOnCreateAndTerminal(t *testing.T) {
 	}
 	if creating == nil {
 		t.Fatal("no FrameTask recorded for creating the install")
+		return
 	}
 	if !strings.Contains(creating.Spec.Action, fi.Spec.MachineRef) {
 		t.Errorf("create action %q does not name the machine", creating.Spec.Action)
 	}
 	if terminal == nil {
 		t.Fatal("no FrameTask recorded for reaching a terminal phase")
+		return
 	}
 	if !strings.Contains(terminal.Spec.Action, fi.Spec.MachineRef) {
 		t.Errorf("terminal action %q does not name the machine", terminal.Spec.Action)
@@ -1473,6 +1475,7 @@ func TestBeaconStateNeverEndsOrFailsAnInstall(t *testing.T) {
 			cond := meta.FindStatusCondition(got.Status.Conditions, "InstallerResponding")
 			if cond == nil {
 				t.Fatal("no InstallerResponding condition was written")
+				return
 			}
 			if cond.Reason != tc.wantReason {
 				t.Errorf("reason = %q, want %q", cond.Reason, tc.wantReason)
@@ -1530,6 +1533,7 @@ func TestReportInstallerLivenessNeverUnknowsAPreviouslySeenInstallation(t *testi
 	second := meta.FindStatusCondition(fiGet(t, c, key).Status.Conditions, "InstallerResponding")
 	if second == nil {
 		t.Fatal("no InstallerResponding condition after the second poll")
+		return
 	}
 	if second.Status != metav1.ConditionUnknown || second.Reason != "Unavailable" {
 		t.Errorf("second poll: status=%q reason=%q, want Unknown/Unavailable -- a previously-known installation going silent is provisiond losing state, not the machine going silent",

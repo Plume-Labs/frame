@@ -29,10 +29,10 @@ import (
 func TestMapInventoryStaysWithinCRDBounds(t *testing.T) {
 	long := strings.Repeat("é", 300)
 	inv := &redfish.Inventory{Manufacturer: long, BMCFirmware: long}
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		inv.Drives = append(inv.Drives, redfish.Drive{Firmware: long, SerialNumber: long, Location: long, MediaType: long})
 	}
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		inv.StorageControllers = append(inv.StorageControllers, redfish.StorageController{Model: long, CacheStatus: long})
 	}
 	out := mapInventory(inv)

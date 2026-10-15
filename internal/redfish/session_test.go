@@ -34,7 +34,7 @@ const probesPerTest = 5
 func TestSessionReuseCreatesOneSessionForManyProbes(t *testing.T) {
 	bmc := redfishtest.NewFakeBMC(t)
 	c := New(bmc.URL(), redfishtest.Username, redfishtest.Password, &tls.Config{InsecureSkipVerify: true}, WithSessionReuse())
-	for i := 0; i < probesPerTest; i++ {
+	for i := range probesPerTest {
 		if _, err := c.Probe(context.Background()); err != nil {
 			t.Fatalf("probe %d: %v", i, err)
 		}
@@ -116,7 +116,7 @@ func TestNoSessionServiceFallsBackToBasicAuthOnce(t *testing.T) {
 	bmc := redfishtest.NewFakeBMC(t)
 	bmc.DisableSessionService()
 	c := New(bmc.URL(), redfishtest.Username, redfishtest.Password, &tls.Config{InsecureSkipVerify: true}, WithSessionReuse())
-	for i := 0; i < probesPerTest; i++ {
+	for i := range probesPerTest {
 		if _, err := c.Probe(context.Background()); err != nil {
 			t.Fatalf("probe %d: %v", i, err)
 		}

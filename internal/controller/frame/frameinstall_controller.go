@@ -118,6 +118,10 @@ const beaconLostAfter = 60 * time.Second
 // lost), never about the machine.
 const reasonInstallerUnavailable = "Unavailable"
 
+// clusterModeJoin is the FrameInstall cluster mode that joins an existing
+// cluster instead of creating one.
+const clusterModeJoin = "join"
+
 func installerRespondingCondition(st provision.BeaconState, known, everKnown bool, err error, now time.Time) metav1.Condition {
 	cond := metav1.Condition{Type: "InstallerResponding"}
 	switch {
@@ -414,7 +418,7 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	var joinToken string
-	if fi.Spec.Cluster.Mode == "join" {
+	if fi.Spec.Cluster.Mode == clusterModeJoin {
 		joinToken, err = r.readJoinToken(ctx, fi.Namespace, fi.Spec.Cluster.JoinTokenRef)
 		if err != nil {
 			return r.failPending(ctx, &fi, fmt.Sprintf("reading join token %s: %v", fi.Spec.Cluster.JoinTokenRef, err))

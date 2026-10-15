@@ -54,7 +54,7 @@ func optPercent(s string) *int32 {
 // parseZpoolList reads name,size,alloc,free,frag,cap,health, tab-separated.
 func parseZpoolList(out string) []framev1beta1.ZPool {
 	var pools []framev1beta1.ZPool
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
 		if len(f) < 7 || f[0] == "" {
 			continue
@@ -121,7 +121,7 @@ func parseZpoolStatus(out string) []zpoolStatus {
 	section := ""
 	rootSeen := false
 	inGroup := false
-	for _, raw := range strings.Split(out, "\n") {
+	for raw := range strings.SplitSeq(out, "\n") {
 		line := strings.TrimRight(raw, "\r")
 		if m := zpoolKey.FindStringSubmatch(line); m != nil {
 			key, val := m[1], strings.TrimSpace(m[2])
@@ -168,20 +168,7 @@ func parseZpoolStatus(out string) []zpoolStatus {
 			// state is the rightmost state word followed by three counters
 			// (a name may itself contain "ONLINE"); a row without counters
 			// (a spare, AVAIL) ends with its state.
-			si := -1
-			for k := len(f) - 4; k >= 1 && si < 0; k-- {
-				if zpoolStates[f[k]] {
-					_, ok1 := zpoolCounter(f[k+1])
-					_, ok2 := zpoolCounter(f[k+2])
-					_, ok3 := zpoolCounter(f[k+3])
-					if ok1 && ok2 && ok3 {
-						si = k
-					}
-				}
-			}
-			if si < 0 && len(f) > 1 && zpoolStates[f[len(f)-1]] {
-				si = len(f) - 1
-			}
+			si := zpoolStateIndex(f)
 			name := strings.Join(f, " ")
 			var rest []string
 			if si > 0 {
@@ -205,27 +192,54 @@ func parseZpoolStatus(out string) []zpoolStatus {
 			if !inGroup {
 				depth--
 			}
-			v := framev1beta1.ZVdev{Name: clipRunes(name, 512), Depth: int32(max(depth, 0))}
-			if len(rest) >= 1 {
-				v.State = clipRunes(rest[0], 32)
-			}
-			n := 1
-			if len(rest) >= 4 {
-				r1, ok1 := zpoolCounter(rest[1])
-				r2, ok2 := zpoolCounter(rest[2])
-				r3, ok3 := zpoolCounter(rest[3])
-				if ok1 && ok2 && ok3 {
-					v.ReadErrors, v.WriteErrors, v.ChecksumErrors = r1, r2, r3
-					n = 4
-				}
-			}
-			if len(rest) > n {
-				v.Note = clipRunes(strings.Join(rest[n:], " "), 256)
-			}
-			cur.vdevs = append(cur.vdevs, v)
+			cur.vdevs = append(cur.vdevs, zpoolVdev(name, depth, rest))
 		}
 	}
 	return all
+}
+
+// zpoolStateIndex returns the index of the state word in the fields of a
+// zpool status config row, or -1. The state is the rightmost state word
+// followed by three counters (a name may itself contain "ONLINE"); a row
+// without counters (a spare, AVAIL) ends with its state.
+func zpoolStateIndex(f []string) int {
+	for k := len(f) - 4; k >= 1; k-- {
+		if zpoolStates[f[k]] {
+			_, ok1 := zpoolCounter(f[k+1])
+			_, ok2 := zpoolCounter(f[k+2])
+			_, ok3 := zpoolCounter(f[k+3])
+			if ok1 && ok2 && ok3 {
+				return k
+			}
+		}
+	}
+	if len(f) > 1 && zpoolStates[f[len(f)-1]] {
+		return len(f) - 1
+	}
+	return -1
+}
+
+// zpoolVdev builds one vdev row from its name, depth and the fields from
+// its state word on (state, then three counters when present, then a note).
+func zpoolVdev(name string, depth int, rest []string) framev1beta1.ZVdev {
+	v := framev1beta1.ZVdev{Name: clipRunes(name, 512), Depth: int32(max(depth, 0))}
+	if len(rest) >= 1 {
+		v.State = clipRunes(rest[0], 32)
+	}
+	n := 1
+	if len(rest) >= 4 {
+		r1, ok1 := zpoolCounter(rest[1])
+		r2, ok2 := zpoolCounter(rest[2])
+		r3, ok3 := zpoolCounter(rest[3])
+		if ok1 && ok2 && ok3 {
+			v.ReadErrors, v.WriteErrors, v.ChecksumErrors = r1, r2, r3
+			n = 4
+		}
+	}
+	if len(rest) > n {
+		v.Note = clipRunes(strings.Join(rest[n:], " "), 256)
+	}
+	return v
 }
 
 var scrubDone = regexp.MustCompile(`scrub repaired .* with (\d+) errors on (.+?)(;|$)`)
@@ -261,7 +275,7 @@ func mergeZpoolStatus(pools []framev1beta1.ZPool, st []zpoolStatus) {
 
 func parseZfsList(out string) []framev1beta1.ZFSDataset {
 	var ds []framev1beta1.ZFSDataset
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
 		if len(f) < 6 || f[0] == "" {
 			continue
@@ -298,7 +312,7 @@ var (
 func parseMdstat(data string) []framev1beta1.MDArray {
 	var arrays []framev1beta1.MDArray
 	var cur *framev1beta1.MDArray
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		if m := mdHeader.FindStringSubmatch(line); m != nil {
 			arrays = append(arrays, parseMdHeader(m[1], m[2]))
 			cur = &arrays[len(arrays)-1]

@@ -274,7 +274,7 @@ func (r *FrameStorageReconciler) reconcilePlacement(ctx context.Context, fs *fra
 	if p == nil {
 		return
 	}
-	failed := p.State == "Error" || p.State == "AuthRefused"
+	failed := p.State == podStateError || p.State == "AuthRefused"
 	if prev := fs.Status.CephPlacement; prev != nil && failed && len(p.Pools) == 0 && len(p.OSDs) == 0 {
 		p.Pools, p.OSDs, p.CollectedAt = prev.Pools, prev.OSDs, prev.CollectedAt
 	}

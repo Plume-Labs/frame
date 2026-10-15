@@ -172,10 +172,12 @@ func baseSource(override string) (provision.BaseSource, error) {
 		return provision.BaseSource{}, fmt.Errorf("%s %q: must be an https:// URL", baseISOURLEnv, shown.Redacted())
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return provision.BaseSource{}, fmt.Errorf("%s %q: must not carry a query or fragment", baseISOURLEnv, shown.Redacted())
+		return provision.BaseSource{}, fmt.Errorf("%s %q: must not carry a query or fragment",
+			baseISOURLEnv, shown.Redacted())
 	}
 	if got, want := filepath.Base(override), filepath.Base(src.URL); got != want {
-		return provision.BaseSource{}, fmt.Errorf("%s %q: file name %q, want %q (the checksum is pinned to that image)", baseISOURLEnv, shown.Redacted(), got, want)
+		return provision.BaseSource{}, fmt.Errorf("%s %q: file name %q, want %q (the checksum is pinned to that image)",
+			baseISOURLEnv, shown.Redacted(), got, want)
 	}
 	src.URL = override
 	return src, nil

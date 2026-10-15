@@ -141,7 +141,7 @@ type state struct {
 
 func parseList(raw []byte) ([]string, error) {
 	var out []string
-	for _, l := range strings.Split(string(raw), "\n") {
+	for l := range strings.SplitSeq(string(raw), "\n") {
 		l = strings.TrimSpace(l)
 		if l == "" {
 			continue
@@ -222,7 +222,7 @@ func (g *SecretLoginGate) get(ctx context.Context) (*corev1.Secret, error) {
 // that stops everything (no write).
 func (g *SecretLoginGate) update(ctx context.Context, generateKey bool, change func(st *state) error) error {
 	var last error
-	for i := 0; i < writeAttempts; i++ {
+	for range writeAttempts {
 		sec, err := g.get(ctx)
 		if err != nil {
 			return err

@@ -172,11 +172,11 @@ func ObserveDisksIndexed(runner CommandRunner) ([]framev1beta1.ObservedDisk, map
 	index := make(map[string]string)
 	for _, dev := range payload.BlockDevices {
 		serial := str(dev.Serial)
-		if dev.Type != "disk" || serial == "" {
+		if dev.Type != lsblkTypeDisk || serial == "" {
 			continue
 		}
 		walk(dev, func(d lsblkDevice) {
-			if d.Type == "disk" || d.Type == "part" {
+			if d.Type == lsblkTypeDisk || d.Type == "part" {
 				index[d.Name] = serial
 			}
 		})
@@ -184,7 +184,7 @@ func ObserveDisksIndexed(runner CommandRunner) ([]framev1beta1.ObservedDisk, map
 
 	disks := make([]framev1beta1.ObservedDisk, 0, len(payload.BlockDevices))
 	for _, dev := range payload.BlockDevices {
-		if dev.Type != "disk" {
+		if dev.Type != lsblkTypeDisk {
 			continue
 		}
 		serial := ""
@@ -314,6 +314,10 @@ func membersOf(dev lsblkDevice) []string {
 // occupancyMounted is the occupancy of a disk that it or one of its
 // partitions is mounted.
 const occupancyMounted = "mounted"
+
+// lsblkTypeDisk is the lsblk TYPE of a whole disk, as opposed to a
+// partition.
+const lsblkTypeDisk = "disk"
 
 // occupancyOf says what is using the disk, and errs towards "occupied".
 // FrameDiskClaim's third guard fails closed on anything that is not "free",

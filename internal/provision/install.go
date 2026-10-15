@@ -192,21 +192,8 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 	report(PhaseMediaAttached)
 	mediaCtx, cancelMedia := context.WithTimeout(ctx, o.PhaseTimeout[PhaseMediaAttached])
 	defer cancelMedia()
-	if err := d.BMC.InsertMedia(mediaCtx, url); err != nil {
-		return fail(PhaseMediaAttached, phaseErr(mediaCtx, fmt.Errorf("inserting installer media: %w", err)))
-	}
-	ok, mediaErr := d.BMC.MediaInserted(mediaCtx)
-	if mediaErr != nil {
-		return fail(PhaseMediaAttached, phaseErr(mediaCtx, fmt.Errorf("reading media-inserted status: %w", mediaErr)))
-	}
-	if !ok {
-		return fail(PhaseMediaAttached, fmt.Errorf("the BMC accepted the insert but reports no media attached"))
-	}
-	if err := d.BMC.SetBootOnce(mediaCtx, "Cd", o.BootMode); err != nil {
-		return fail(PhaseMediaAttached, phaseErr(mediaCtx, fmt.Errorf("setting the one-time boot override: %w", err)))
-	}
-	if err := d.BMC.Reset(mediaCtx, "ForceRestart"); err != nil {
-		return fail(PhaseMediaAttached, phaseErr(mediaCtx, fmt.Errorf("power-cycling the machine: %w", err)))
+	if err := attachMediaAndBoot(mediaCtx, d.BMC, url, o.BootMode); err != nil {
+		return fail(PhaseMediaAttached, err)
 	}
 
 	// Installing: long and nearly blind. Between boot and the first SSH
@@ -275,6 +262,30 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 		case <-time.After(o.Poll):
 		}
 	}
+}
+
+// attachMediaAndBoot is Install's MediaAttached phase: insert the installer
+// media, read it back, set the one-time boot override and power-cycle. Every
+// error but the read-back mismatch carries ctx's deadline-or-cancellation
+// state, as phaseErr puts it.
+func attachMediaAndBoot(ctx context.Context, bmc BMC, url, bootMode string) error {
+	if err := bmc.InsertMedia(ctx, url); err != nil {
+		return phaseErr(ctx, fmt.Errorf("inserting installer media: %w", err))
+	}
+	ok, err := bmc.MediaInserted(ctx)
+	if err != nil {
+		return phaseErr(ctx, fmt.Errorf("reading media-inserted status: %w", err))
+	}
+	if !ok {
+		return fmt.Errorf("the BMC accepted the insert but reports no media attached")
+	}
+	if err := bmc.SetBootOnce(ctx, "Cd", bootMode); err != nil {
+		return phaseErr(ctx, fmt.Errorf("setting the one-time boot override: %w", err))
+	}
+	if err := bmc.Reset(ctx, "ForceRestart"); err != nil {
+		return phaseErr(ctx, fmt.Errorf("power-cycling the machine: %w", err))
+	}
+	return nil
 }
 
 // checkConfirmedSerial is Install's Pending guard: serial is what the machine

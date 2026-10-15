@@ -33,13 +33,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
 )
@@ -387,6 +388,7 @@ func place(r *Reader) *framev1beta1.CephPlacement {
 	return r.Placement(context.Background())
 }
 
+// nolint:gocyclo // one scenario walked through every reader state in order
 func TestReaderStates(t *testing.T) {
 	f := newFake(t)
 	now := time.Date(2026, 9, 27, 21, 0, 0, 0, time.UTC)

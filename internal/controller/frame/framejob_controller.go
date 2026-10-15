@@ -57,6 +57,10 @@ const (
 	jobPhaseFailed    = "Failed"
 )
 
+// podStateError is the "Error" state a container runtime or a Ceph pool
+// reports for something that failed.
+const podStateError = "Error"
+
 // setJobReady writes the one condition a FrameJob carries. Ready is True only
 // on Completed: a job that failed an hour ago must not read as healthy, which
 // is precisely what the old write-once Submitted=True condition did (F3).
@@ -307,7 +311,7 @@ func workflowPhase(wf *unstructured.Unstructured, suspended bool) string {
 	switch phase {
 	case "Succeeded":
 		return jobPhaseCompleted
-	case jobPhaseFailed, "Error":
+	case jobPhaseFailed, podStateError:
 		return jobPhaseFailed
 	case jobPhaseRunning:
 		return jobPhaseRunning
