@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -26,10 +27,13 @@ type fakeSession struct {
 func (f *fakeSession) HostKey() string                                { return f.hostKey + "\n" }
 func (f *fakeSession) Run(context.Context, string) (string, error)    { return "", nil }
 func (f *fakeSession) Output(context.Context, string) (string, error) { return "", nil }
-func (f *fakeSession) Close() error                                   { f.closed = true; return nil }
+func (f *fakeSession) RunWithInput(context.Context, string, []byte) (string, error) {
+	return "", nil
+}
+func (f *fakeSession) Close() error { f.closed = true; return nil }
 func (f *fakeSession) ReadFile(_ context.Context, path string) ([]byte, error) {
 	// An empty marker means the file is not there, which is what a system
-	// that never ran our preseed actually presents: `cat` fails. Modelling it
+	// that never ran our installer actually presents: `cat` fails. Modelling it
 	// as an existing-but-blank file made the no-marker test land on the
 	// mismatch branch and left the read guard uncovered.
 	if path != markerPath || f.marker == "" {
@@ -104,7 +108,7 @@ func TestWaitForOurSystemRefusesAMachineThatIsNotOurs(t *testing.T) {
 // machine at the address, not a failed write of our own marker.
 //
 // The dedicated readErr branch earns its place by what it says, so that is
-// what this asserts (same shape as preseed.go's PRIVATE KEY branch test).
+// what this asserts (same shape as autoinstall.go's PRIVATE KEY branch test).
 // Remove the branch and the system is still refused -- by the UID
 // comparison, now that an empty uid can no longer sneak an empty-vs-empty
 // match past it -- but the message stops naming the problem.
@@ -279,4 +283,76 @@ func TestDialAcceptsAHostKeyThatMatchesExpected(t *testing.T) {
 		t.Fatalf("a server presenting exactly the expected host key was refused: %v", err)
 	}
 	defer func() { _ = sess.Close() }()
+}
+
+// newEchoSSHServer is newTestSSHServer with one session allowed: it runs no
+// command, it writes back the command it was asked to exec, a newline, and
+// everything it read on stdin until the client closed it -- which is the
+// property RunWithInput depends on and a fake cannot prove.
+func newEchoSSHServer(t *testing.T, hostSigner ssh.Signer) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	cfg := &ssh.ServerConfig{
+		PublicKeyCallback: func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+			return &ssh.Permissions{}, nil
+		},
+	}
+	cfg.AddHostKey(hostSigner)
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		sc, chans, reqs, err := ssh.NewServerConn(c, cfg)
+		if err != nil {
+			return
+		}
+		defer func() { _ = sc.Close() }()
+		go ssh.DiscardRequests(reqs)
+		for nc := range chans {
+			ch, chReqs, err := nc.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				for req := range chReqs {
+					if req.Type != "exec" {
+						_ = req.Reply(false, nil)
+						continue
+					}
+					var payload struct{ Command string }
+					_ = ssh.Unmarshal(req.Payload, &payload)
+					_ = req.Reply(true, nil)
+					in, _ := io.ReadAll(ch)
+					_, _ = ch.Write([]byte(payload.Command + "\n" + string(in)))
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+					_ = ch.Close()
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func TestSSHSessionRunWithInputDeliversItOnStdin(t *testing.T) {
+	addr := newEchoSSHServer(t, newTestED25519Signer(t))
+	sess, err := NewSSHClient().Dial(context.Background(), addr, "frame", newTestClientKeyPEM(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	out, err := sess.RunWithInput(context.Background(), "cat > /somewhere", []byte("the-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "cat > /somewhere\nthe-token" {
+		t.Errorf("the server saw %q; want the command, then the input on stdin", out)
+	}
 }

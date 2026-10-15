@@ -51,7 +51,7 @@ import (
 // left in the cluster that knows to eject it (design §10).
 const frameInstallFinalizer = "frame.plume-labs.io/frameinstall"
 
-// frameInstallSSHUser is the account the preseed creates on every installed
+// frameInstallSSHUser is the account the installer creates on every installed
 // machine (design §7), with the public half of SSHKeyRef and sudo, no
 // password login at all.
 const frameInstallSSHUser = "frame"
@@ -71,10 +71,15 @@ const frameInstallControllerUser = "system:controller:frameinstall"
 // in provision.requiredPhaseTimeouts needs an entry, or Install refuses the
 // spec before it ever reaches the machine (install.go's validateOptions).
 var defaultPhaseTimeouts = map[provision.Phase]time.Duration{
-	provision.PhasePending:       30 * time.Second,
-	provision.PhasePreparing:     10 * time.Minute,
+	provision.PhasePending: 30 * time.Second,
+	// Preparing and Installing are PROVISIONAL, set for the Ubuntu server
+	// ISO before any install has been timed on hardware: Preparing includes
+	// the first ~4 GB base download, Installing the virtual-media read of the
+	// squashfs and `updates: security`. Revised from the recette's
+	// measurements (docs/superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
+	provision.PhasePreparing:     30 * time.Minute,
 	provision.PhaseMediaAttached: 2 * time.Minute,
-	provision.PhaseInstalling:    20 * time.Minute,
+	provision.PhaseInstalling:    45 * time.Minute,
 	provision.PhaseJoining:       5 * time.Minute,
 	provision.PhaseReady:         5 * time.Minute,
 }
@@ -132,8 +137,26 @@ func installerRespondingCondition(st provision.BeaconState, known, everKnown boo
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = "NeverSeen"
 		cond.Message = "nothing has been heard from the installer: it may not have booted the media, or the network may never have come up"
+	case st.LastCheckpoint == provision.CheckpointFailed:
+		// subiquity ran error-commands. Checked before any freshness case:
+		// the heartbeat started at early keeps arriving until the installer
+		// environment dies, and must not make a failed install read as a
+		// running one. What failed is on the machine's console, not here.
+		//
+		// Dated by FailedAt, not LastSeen: that same heartbeat keeps
+		// LastSeen a few seconds old however long ago the failure was. A
+		// zero FailedAt is a provisiond that predates the field, and gets
+		// no age rather than a wrong one.
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "InstallerFailed"
+		if st.FailedAt.IsZero() {
+			cond.Message = "the installer reported that the install failed; the cause is on the machine's console"
+		} else {
+			cond.Message = fmt.Sprintf("the installer reported that the install failed at %s, %s ago; the cause is on the machine's console",
+				st.FailedAt.UTC().Format(time.RFC3339), now.Sub(st.FailedAt).Round(time.Second))
+		}
 	case now.Sub(st.LastSeen) > beaconLostAfter && st.LastCheckpoint == provision.CheckpointLate:
-		// late is the last thing the installer sends before finish-install
+		// late is the last thing the installer sends before subiquity
 		// reboots the machine, so the heartbeat stops within seconds of it
 		// on every successful install -- and WaitForOurSystem then waits
 		// out a full POST and boot, minutes past beaconLostAfter. Status
@@ -247,7 +270,7 @@ type FrameInstallReconciler struct {
 	// running -- which is exactly when it is needed.
 	//
 	// Deliberately NOT written to status: the token is the unguessable
-	// handle protecting both the beacon route and the preseed (which carries
+	// handle protecting both the beacon route and the autoinstall seed (which carries
 	// the install UID) on an unauthenticated LAN listener. Putting it on an
 	// object widens who can read it to everyone with get on frameinstalls.
 	//
@@ -1028,7 +1051,7 @@ func (r *FrameInstallReconciler) checkHostnameNotTaken(ctx context.Context, fi *
 // name predicts what the installed kernel will call it under
 // /dev/disk/by-id. The guard this task's brief specified could only ever
 // pass against a fixture built to agree with itself. The disk-level check
-// that actually runs where the disks are is the preseed's on-machine size
+// that actually runs where the disks are is the installer's on-machine size
 // assertion (design §8, layer 4); a controller-side equivalent is on the
 // lot's list of gaps to close, not a check kept here in a shape that never
 // worked.
@@ -1047,9 +1070,9 @@ func addressWithoutCIDR(s string) string {
 // readSSHKey reads the Secret SSHKeyRef names. Its shape is fixed by
 // FrameInstallSpec.SSHKeyRef's own doc comment: "id" (private) and "id.pub"
 // (public). Only the public half ever reaches an installer image --
-// provision.RenderPreseed enforces that on Spec.SSHPublicKey -- so nothing
+// provision.RenderAutoinstall enforces that on Spec.SSHPublicKey -- so nothing
 // here needs to re-check that "id.pub" doesn't also carry the private half;
-// that is preseed.go's checkPublicKeyOnly's job, downstream in
+// that is autoinstall.go's checkPublicKeyOnly's job, downstream in
 // provision.Install.
 func (r *FrameInstallReconciler) readSSHKey(ctx context.Context, namespace, name string) (pub string, priv []byte, err error) {
 	var sec corev1.Secret

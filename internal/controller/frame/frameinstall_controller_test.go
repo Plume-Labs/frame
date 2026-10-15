@@ -1091,7 +1091,7 @@ func TestFrameInstallKubeconfigWriteFailureGoesFailedNotReady(t *testing.T) {
 // would have to present a UID that existed nowhere but inside this
 // installation. It used to be string(fi.UID) -- the object's own
 // metadata.uid, readable by any viewer-tier account -- and it is now served
-// over plaintext HTTP inside the rendered preseed rather than baked into an
+// over plaintext HTTP inside the rendered autoinstall seed rather than baked into an
 // image, so "nowhere but inside the image" stopped being true twice over.
 //
 // What is asserted is the UID that actually reached the Spec the image was
@@ -1304,30 +1304,49 @@ func TestInstallerRespondingReportsEachStateDistinctly(t *testing.T) {
 	}{
 		{
 			name:       "a heartbeat is arriving",
-			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointPartman, LastSeen: now.Add(-fresh), Count: 12},
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointEarly, LastSeen: now.Add(-fresh), Count: 12},
 			known:      true,
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "Heartbeat",
-			wantInMsg:  provision.CheckpointPartman,
+			wantInMsg:  provision.CheckpointEarly,
 		},
 		{
 			name:       "the heartbeat stopped mid-install",
-			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointPartman, LastSeen: now.Add(-lost), Count: 12},
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointEarly, LastSeen: now.Add(-lost), Count: 12},
 			known:      true,
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "HeartbeatLost",
-			wantInMsg:  provision.CheckpointPartman,
+			wantInMsg:  provision.CheckpointEarly,
 		},
 		{
-			// The size guard powered the machine off: netcfg reported, the
-			// heartbeat never started. The checkpoint in the message is what
-			// tells this apart from a panic during partitioning.
-			name:       "the disk-size guard refused",
-			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: now.Add(-lost), Count: 1},
+			// subiquity ran error-commands. The heartbeat started at early
+			// may still be arriving, and must not make a failed install
+			// read as a live one -- fresh or lost, failed wins.
+			name:       "the installer reported failure, heartbeat still fresh",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointFailed, LastSeen: now.Add(-fresh), Count: 30},
 			known:      true,
 			wantStatus: metav1.ConditionFalse,
-			wantReason: "HeartbeatLost",
-			wantInMsg:  provision.CheckpointNetcfg,
+			wantReason: "InstallerFailed",
+			wantInMsg:  "failed",
+		},
+		{
+			// The heartbeat keeps LastSeen fresh long after the failure;
+			// the age an operator reads must be the failure's, not the
+			// last heartbeat's.
+			name:       "the failure is dated by when it happened, not by the last heartbeat",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointFailed, LastSeen: now.Add(-fresh), FailedAt: now.Add(-7 * time.Minute), Count: 30},
+			known:      true,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "InstallerFailed",
+			wantInMsg:  "7m0s ago",
+		},
+		{
+			name:       "the installer reported failure and went quiet",
+			state:      provision.BeaconState{LastCheckpoint: provision.CheckpointFailed, LastSeen: now.Add(-lost), Count: 30},
+			known:      true,
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "InstallerFailed",
+			wantInMsg:  "failed",
 		},
 		{
 			// late is the last checkpoint the installer sends before
@@ -1402,7 +1421,7 @@ func TestBeaconStateNeverEndsOrFailsAnInstall(t *testing.T) {
 	}{
 		{
 			name:       "heartbeat lost",
-			progress:   &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: time.Unix(0, 0)}},
+			progress:   &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointEarly, LastSeen: time.Unix(0, 0)}},
 			wantReason: "HeartbeatLost",
 		},
 		{
@@ -1492,7 +1511,7 @@ func TestReportInstallerLivenessNeverUnknowsAPreviouslySeenInstallation(t *testi
 	defer r.finishInstall(fi.Spec.MachineRef, fi.UID)
 
 	// First poll: the installation has reported.
-	r.Progress = &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointPartman, LastSeen: time.Now()}}
+	r.Progress = &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointEarly, LastSeen: time.Now()}}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
@@ -1535,7 +1554,7 @@ func TestFinishStatusRemovesAStaleInstallerRespondingCondition(t *testing.T) {
 	fi.Status.Phase = string(provision.PhaseInstalling)
 	c := fiTestClient(t, fi)
 	r := fiTestReconciler(c, &fakeInstallBMC{}, &fakeInstallImages{}, &fakeInstallSSH{}, &fakeInstallNodes{})
-	r.Progress = &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointNetcfg, LastSeen: time.Unix(0, 0)}}
+	r.Progress = &fakeProgress{known: true, state: provision.BeaconState{LastCheckpoint: provision.CheckpointEarly, LastSeen: time.Unix(0, 0)}}
 	key := fiKey(fi)
 
 	if !r.startInstall(fi.Spec.MachineRef, fi.UID) {

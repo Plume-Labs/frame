@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,7 +26,7 @@ func sum(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// A netinst that does not match its published checksum is the supply-chain
+// A base image that does not match its published checksum is the supply-chain
 // case this pin exists for. It must be deleted, not merely reported: a file
 // left on disk is a file a later run treats as cached.
 func TestFetchBaseDeletesAFileThatFailsItsChecksum(t *testing.T) {
@@ -44,7 +45,7 @@ func TestFetchBaseDeletesAFileThatFailsItsChecksum(t *testing.T) {
 }
 
 func TestFetchBaseReusesAMatchingCachedFileWithoutDownloading(t *testing.T) {
-	body := []byte("pretend netinst")
+	body := []byte("pretend base image")
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -114,14 +115,69 @@ func TestFetchBaseCapsTheDownloadSize(t *testing.T) {
 	}
 }
 
-// The value in Global Constraints, verified against the published SHA256SUMS
-// on 2026-09-11. If this ever changes, the change is deliberate.
-func TestDefaultBaseIsThePinnedDebianImage(t *testing.T) {
+// The value in the spec, verified against the published SHA256SUMS on
+// 2026-09-29. If this ever changes, the change is deliberate.
+func TestDefaultBaseIsThePinnedUbuntuImage(t *testing.T) {
 	b := DefaultBase()
-	if b.SHA256 != "65273beed27b2df543b68b65630ba525cfbad8df2b12035732b2dff87d6664e7" {
+	if b.SHA256 != "97f3d7ffb032c3eb3b23d2c8be9cc76e60c2c1f2c0146ba5ba9fe01cafae0fd8" {
 		t.Errorf("SHA256 = %s", b.SHA256)
 	}
-	if got := "debian-13.6.0-amd64-netinst.iso"; filepath.Base(b.URL) != got {
+	if got := "ubuntu-24.04.5-live-server-amd64.iso"; filepath.Base(b.URL) != got {
 		t.Errorf("URL base = %s, want %s", filepath.Base(b.URL), got)
+	}
+}
+
+// The pinned image must fit under the download cap with room for a point
+// release: at the old 4 GiB cap it sat at 95 %.
+func TestTheDownloadCapLeavesRoomAboveThePinnedImage(t *testing.T) {
+	const pinnedBytes = 4_080_486_400
+	if maxBaseImageBytes < pinnedBytes*5/4 {
+		t.Errorf("cap %d leaves less than 25%% above the pinned %d-byte image", maxBaseImageBytes, pinnedBytes)
+	}
+}
+
+// A download that starts on https is not followed onto plain http, even
+// though the bytes served there would pass the checksum.
+func TestFetchBaseRefusesARedirectFromHTTPSToHTTP(t *testing.T) {
+	body := []byte("the image")
+	plain := serveBytes(t, body)
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/x.iso", http.StatusFound)
+	}))
+	t.Cleanup(tlsSrv.Close)
+
+	saved := baseHTTPClient
+	t.Cleanup(func() { baseHTTPClient = saved })
+	c := *saved
+	c.Transport = tlsSrv.Client().Transport
+	baseHTTPClient = &c
+
+	_, err := FetchBase(context.Background(), t.TempDir(), BaseSource{URL: tlsSrv.URL + "/x.iso", SHA256: sum(body)})
+	if err == nil || !strings.Contains(err.Error(), "refusing a redirect from https to http") {
+		t.Fatalf("err = %v, want the https -> http redirect refused", err)
+	}
+}
+
+// The positive control: an https -> https redirect, the ordinary mirror
+// case, is still followed and the image downloaded.
+func TestFetchBaseFollowsARedirectFromHTTPSToHTTPS(t *testing.T) {
+	body := []byte("the image")
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved/x.iso" {
+			_, _ = w.Write(body)
+			return
+		}
+		http.Redirect(w, r, "/moved/x.iso", http.StatusFound)
+	}))
+	t.Cleanup(tlsSrv.Close)
+
+	saved := baseHTTPClient
+	t.Cleanup(func() { baseHTTPClient = saved })
+	c := *saved
+	c.Transport = tlsSrv.Client().Transport
+	baseHTTPClient = &c
+
+	if _, err := FetchBase(context.Background(), t.TempDir(), BaseSource{URL: tlsSrv.URL + "/x.iso", SHA256: sum(body)}); err != nil {
+		t.Fatalf("an https -> https redirect was not followed: %v", err)
 	}
 }

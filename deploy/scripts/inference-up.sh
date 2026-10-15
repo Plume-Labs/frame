@@ -22,6 +22,7 @@
 #   INFER_CACHE_SIZE  node-local weight cache limit   (default: 30Gi)
 #   LLAMACPP_NGL      layers to put on the GPU        (default: 99 = all)
 #   LLAMACPP_OFFLOAD  tensor-offload args             (default: -ot exps=CPU)
+#   LLAMACPP_REASONING_BUDGET  thinking tokens per reply (default: 1024; -1 = unbounded, 0 = off)
 #   VLLM_IMAGE        vLLM image                      (default: vllm/vllm-openai:latest)
 #   VLLM_EXTRA_ARGS   extra vLLM flags                (default: --gpu-memory-utilization 0.9)
 #
@@ -86,13 +87,19 @@ case "$ENGINE" in
     # the VRAM that AgentWorld's much smaller KV cache frees up. Lower it if
     # nvidia-smi shows headroom after load.
     OFFLOAD="${LLAMACPP_OFFLOAD:--ncmoe 36}"
+    # Qwen's thinking ran unbounded and ate the whole output budget before any
+    # answer text. 1024 caps it: past the budget llama.cpp forces the end-of-
+    # thinking tag and the model answers. Needs a build that accepts N>0
+    # (checked on b11277); -1 restores the unbounded default, 0 disables it.
+    REASONING_BUDGET="${LLAMACPP_REASONING_BUDGET:-1024}"
     IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
     CACHE_ENV="LLAMA_CACHE"
     # $OFFLOAD is intentionally unquoted: it must word-split into separate args.
     # shellcheck disable=SC2086
     ARGS=$(args_yaml -hf "$MODEL" --host 0.0.0.0 --port 8080 \
       -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX" \
-      --threads "$THREADS" --parallel "$PARALLEL")
+      --threads "$THREADS" --parallel "$PARALLEL" \
+      --reasoning-budget "$REASONING_BUDGET")
     ;;
   vllm)
     MODEL="${INFER_MODEL:-Qwen/Qwen3-30B-A3B-Instruct-2507}"

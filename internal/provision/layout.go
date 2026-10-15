@@ -12,77 +12,13 @@ import (
 // different device entirely.
 var byIDName = regexp.MustCompile(`^/dev/disk/by-id/[A-Za-z0-9_.:+-]+$`)
 
-// PartmanRecipe turns a Layout into partman-auto stanzas.
-//
-// Disks are named by /dev/disk/by-id. A kernel name like /dev/sda reorders
-// between boots and between controllers, so naming one means installing on
-// whatever happens to be first that day. On the ML350 Gen9 this is not
-// hypothetical: IML entry 1832 warns that residual logical-volume metadata can
-// hide disks from the host, which changes the ordering.
-func PartmanRecipe(l Layout) (string, error) {
-	want := map[LayoutKind]int{LayoutSingleDisk: 1, LayoutMirror: 2}[l.Kind]
-	if want == 0 {
-		return "", fmt.Errorf("layout %q: unknown kind", l.Kind)
-	}
-	if len(l.Disks) != want {
-		return "", fmt.Errorf("layout %s: needs exactly %d disks, got %d", l.Kind, want, len(l.Disks))
-	}
-	if err := validateDisks(l.Disks); err != nil {
-		return "", err
-	}
-
-	names := make([]string, len(l.Disks))
-	for i, d := range l.Disks {
-		names[i] = d.ByID
-	}
-
-	var b strings.Builder
-	if l.Kind == LayoutSingleDisk {
-		fmt.Fprintf(&b, "d-i partman-auto/disk string %s\n", names[0])
-		b.WriteString("d-i partman-auto/method string regular\n")
-		b.WriteString("d-i partman-auto/choose_recipe select atomic\n")
-	} else {
-		a, bb := names[0], names[1]
-		b.WriteString("d-i partman-auto/method string raid\n")
-		fmt.Fprintf(&b, "d-i partman-auto/disk string %s %s\n", a, bb)
-		b.WriteString("d-i partman-auto/expert_recipe string \\\n")
-		b.WriteString("      frameraid :: \\\n")
-		b.WriteString("              538 538 1075 free $iflabel{ gpt } $reusemethod{ } method{ efi } format{ } . \\\n")
-		// The "." closing this last stanza also ends the recipe. A second,
-		// lone "." after it would close an empty stanza, which partman turns
-		// into a partition with no mount point: d-i stopped at "Identical
-		// mount points" installing an ML350 Gen9 in QEMU.
-		b.WriteString("              1000 5000 -1 raid $lvmignore{ } method{ raid } .\n")
-		// The recipe is selected by the label used above (frameraid), not by a
-		// built-in name like atomic: choose_recipe has no other way to find an
-		// expert_recipe stanza.
-		b.WriteString("d-i partman-auto/choose_recipe select frameraid\n")
-		fmt.Fprintf(&b, "d-i partman-auto-raid/recipe string \\\n      1 2 0 ext4 / %s-part2#%s-part2 \\\n      .\n", a, bb)
-		b.WriteString("d-i partman-md/device_remove_md boolean true\n")
-		b.WriteString("d-i partman-md/confirm boolean true\n")
-		b.WriteString("d-i partman-md/confirm_nooverwrite boolean true\n")
-		b.WriteString("d-i partman-basicfilesystems/no_swap boolean false\n")
-		// The ESP is not mirrored: d-i will not place an EFI System Partition on
-		// software RAID. If the first disk is lost, the machine needs a manual
-		// boot repair to point at the ESP on the surviving disk. That is a
-		// limitation of d-i, not an oversight -- written down rather than
-		// hidden.
-		fmt.Fprintf(&b, "d-i grub-installer/bootdev string %s %s\n", a, bb)
-	}
-	b.WriteString("d-i partman/confirm_write_new_label boolean true\n")
-	b.WriteString("d-i partman/choose_partition select finish\n")
-	b.WriteString("d-i partman/confirm boolean true\n")
-	b.WriteString("d-i partman/confirm_nooverwrite boolean true\n")
-	return b.String(), nil
-}
-
 // validateDisks checks each disk's name and size, and refuses the same disk
 // named twice -- a mirror is only redundant if its two halves are different
 // hardware.
 func validateDisks(disks []Disk) error {
 	seen := make(map[string]bool, len(disks))
 	for _, d := range disks {
-		if err := checkPreseedValue("disk by-id", d.ByID); err != nil {
+		if err := checkShellValue("disk by-id", d.ByID); err != nil {
 			return err
 		}
 		if !byIDName.MatchString(d.ByID) {
@@ -100,7 +36,7 @@ func validateDisks(disks []Disk) error {
 }
 
 // diskSizeAssertion is the last-ditch check, run on the machine itself before
-// partman touches anything. Frame checked the serial remotely; this checks the
+// the installer probes or wipes anything. Frame checked the serial remotely; this checks the
 // disks locally. Both can be wrong, but not in the same way.
 func diskSizeAssertion(l Layout) string {
 	if len(l.Disks) == 0 {

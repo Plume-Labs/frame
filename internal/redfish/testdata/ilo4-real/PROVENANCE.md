@@ -212,3 +212,30 @@ Quelques capteurs bougent bien entre les états — `22-Storage Batt` passe de
 **Ce qu'il faudrait pour conclure : une charge.** Un installateur arrêté à un
 menu n'en produit aucune. La démonstration demande un système installé sur
 lequel on peut lancer un calcul, et elle reste donc à faire.
+
+## Média virtuel et mode d'amorçage — relevés le 2026-09-29 à 16:33
+
+Même machine (ML350 Gen9, iLO 4 v2.77), `PowerState: On`,
+`PostState: FinishedPost`. Trois `GET` seulement, aucune écriture.
+
+- `managers_1_virtualmedia_2.json` — `/redfish/v1/Managers/1/VirtualMedia/2/`
+  (le CD/DVD virtuel, vide). `VirtualMedia.1.0.0`. Les actions d'insertion
+  et d'éjection sont **OEM** (`Oem.Hp.Actions#HpiLOVirtualMedia.*`), et
+  `Oem.Hp.BootOnNextServerReset` vaut `false` : c'est le mécanisme natif de
+  l'iLO 4 pour démarrer une fois sur ce média, indépendant de l'ordre
+  d'amorçage UEFI.
+- `systems_1_bios.json` — `/redfish/v1/systems/1/bios/` (minuscules, le lien
+  est `Systems/1` → `Oem.Hp.links.BIOS.href`). `HpBios.1.2.0`,
+  **`BootMode: Uefi`** (l'autre valeur du schéma HP est `LegacyBios`).
+
+Ce qu'ils servent à tester (`internal/provision/redfishbmc_test.go`) : le
+`Boot` de `systems_1.json` n'a **pas** de `BootSourceOverrideMode`
+(`ComputerSystem.1.0.1`, `additionalProperties: false`), donc le mode ne
+peut être ni posé ni lu là ; il se lit ici, dans le BIOS. Et
+`UefiTargetBootSourceOverrideSupported` liste `CD.Emb.9.1`, un DVD SATA
+physique : rien ne prouve qu'un override `Cd` vise le média virtuel plutôt
+que ce lecteur.
+
+Ce qu'ils ne prouvent pas : qu'un `PATCH` de `BootOnNextServerReset` soit
+accepté, relu à `true` une fois le média inséré, ni qu'un redémarrage
+démarre bien l'ISO. Aucune écriture n'a été faite pour ces relevés.

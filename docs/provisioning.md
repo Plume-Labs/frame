@@ -1,5 +1,12 @@
 # How a machine becomes a node
 
+> **Update, 2026-09-29: the base is Ubuntu 24.04 LTS, not Debian.** The NVIDIA
+> GPU Operator publishes driver images for Ubuntu 24.04 and none for Debian,
+> so a Debian GPU node needed a hand-installed driver outside anything Frame
+> declares. The installer is now subiquity autoinstall; see
+> [the design](superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
+> What follows is the 2026-09-10 record and stays as written.
+
 **Decision, 2026-09-10: Talos is out.** The estate moves to a custom
 Debian-based image. This document records what that invalidates, what it
 turns out never worked in the first place, and what has to be rebuilt.
@@ -113,7 +120,7 @@ one.
    layouts, ISO remastering, an SSH-based join, the `FrameInstall` CRD and its
    controller, `frame-provisiond` (which builds and serves the images and
    their preseeds), and `frame bootstrap` for node zero when no cluster
-   exists yet. See [deployment.md](deployment.md#provisioning-a-machine-with-debian)
+   exists yet. See [deployment.md](deployment.md#provisioning-a-machine-with-ubuntu)
    for the runbook and the claims this lot has not yet proven against real
    hardware.
 
@@ -152,12 +159,10 @@ answers on SSH carrying this installation's UID. While it runs, the
 
 | condition | last checkpoint in the message | what it means |
 |---|---|---|
-| `True` / `Heartbeat` | not advancing between reads | the installer is alive and waiting on a debconf question — go look at the console |
-| `False` / `Rebooting` | `late`, lost recently | **the normal tail of a successful install**: `late` is the last thing the installer sends before `finish-install` reboots the machine, and `WaitForOurSystem` then waits out a full POST and boot — past `beaconLostAfter` on every install. Not a fault. |
-| `False` / `HeartbeatLost` | `partman` | it died during partitioning or `pkgsel` |
-| `False` / `HeartbeatLost` | `early` | it died between the disk-size guard and partitioning |
-| `False` / `HeartbeatLost` | `netcfg-done` | **the machine refused**: a named disk was not the size the `FrameInstall` declared, and `preseed/early_command` powered it off. Check `spec.layout.disks[].sizeBytes` against the machine. |
-| `False` / `HeartbeatLost` | `netcfg` (no `netcfg-done`) | the `preseed/run` script started but the netcfg re-run never brought the interface up on its static address, so nothing past this ever ran |
+| `True` / `Heartbeat` | `early`, fresh | the installer is alive and past the disk guards; subiquity is partitioning, installing or running `updates: security` |
+| `False` / `Rebooting` | `late`, lost recently | **the normal tail of a successful install**: `late` is the last thing the installer sends before subiquity reboots the machine, and `WaitForOurSystem` then waits out a full POST and boot — past `beaconLostAfter` on every install. Not a fault. |
+| `False` / `InstallerFailed` | `failed`, with the time it first arrived | subiquity ran `error-commands`. **This includes a refused disk**: a failing early-command is an install failure, so a disk that was not the declared size (`FRAME: named disk is not the expected size, refusing`), not a block device, or the same disk under two names reports here, not as silence. The line starting `FRAME:` on the console says which; otherwise the cause is in the installer's log on the console. |
+| `False` / `HeartbeatLost` | `early` | it died after the disk guards without reporting a failure: power, kernel, or the network went away |
 | `False` / `NeverSeen` | none | it never booted the media, or the network never came up |
 | `Unknown` / `Unavailable` | — | Frame could not ask `frame-provisiond`; `frame-provisiond` restarted and lost its beacon history for an installation it had already reported on; or two `FrameInstall` objects name the same `machineRef` and this one lost the race for it. **Not** a manager restart mid-install -- that case fails closed (`Failed`, via `failRestarted`) before this condition is ever written again. Says nothing about the machine. |
 

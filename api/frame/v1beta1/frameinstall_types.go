@@ -67,18 +67,16 @@ type InstallNetwork struct {
 	Gateway string `json:"gateway"`
 	// DNS resolvers, as IP addresses. At least one is required, and the
 	// apiserver says so rather than leaving it to the controller one phase
-	// later: with none, the preseed renders an empty
-	// netcfg/get_nameservers against a mirror named deb.debian.org, and
-	// partman runs before the base system is fetched -- so the install
-	// halts asking a question nobody can answer, after both disks are
-	// already gone. The console's own happy path produced exactly that.
+	// later: with none, the installed system has no resolver and the
+	// installer cannot reach the archive it fetches security updates
+	// from. The console's own happy path once produced exactly that.
 	//
 	// There is no vlan or bond here on
 	// purpose: both were declared, validated by the apiserver, and then
 	// dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
 	// tagged VLAN installed untagged, silently. Task 1 removed them from
 	// provision.Network for exactly that reason and they survived one layer
-	// up, where the operator types. d-i bonding is not something to
+	// up, where the operator types. Bonding is not something to
 	// implement blind; add them back when a machine needs one.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=3
@@ -88,10 +86,10 @@ type InstallNetwork struct {
 // InstallLayout is the disk layout recipe.
 //
 // There is no raw escape hatch. It existed, and it could not do its job: a
-// review round required it to be a single line (so the preseed's on-machine
-// disk-size assertion could still be written), and a real partman recipe is
+// review round required it to be a single line (so the installer's on-machine
+// disk-size assertion could still be written), and a real disk recipe is
 // multi-line. It was also the one kind whose CEL did not require disks,
-// while PartmanRecipe refused it without them -- so the apiserver accepted a
+// while the renderer refused it without them -- so the apiserver accepted a
 // shape the code rejected one phase later, after the object existed and the
 // operator believed it was valid. An unusual layout is added here as a named
 // kind, reviewed, with tests.

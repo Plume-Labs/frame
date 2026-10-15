@@ -1,0 +1,34 @@
+# The NVIDIA driver on GPU nodes, owned by the GPU Operator rather than
+# installed by hand on each host. Requires the operator installed with
+# driver.nvidiaDriverCRD.enabled=true and deployDefaultCR=false
+# (deploy/scripts/acme-bootstrap.sh), so this is the only driver CR.
+#
+# 580 is the last driver branch that supports Pascal (Tesla P4); the image
+# nvcr.io/nvidia/driver:580.178.04-ubuntu24.04 exists, and there is none for
+# Debian or Ubuntu 26.04. Hence the OS selector: a GPU node on another release
+# is left alone instead of being handed an image that does not exist. A node
+# whose driver is already installed on the host is detected by the operator
+# and labelled nvidia.com/gpu.deploy.driver=pre-installed, so a mixed cluster
+# during migration is safe.
+apiVersion: nvidia.com/v1alpha1
+kind: NVIDIADriver
+metadata:
+  name: gpu-580
+spec:
+  driverType: gpu
+  repository: nvcr.io/nvidia
+  image: driver
+  version: "580.178.04"
+  # Proprietary modules, never open: the open GPU kernel modules require
+  # Turing or newer, and the Tesla P4 is Pascal. "auto" (the CRD default)
+  # is meant to pick the same, but that choice is left to the operator's
+  # detection; this states it. Field checked against the NVIDIADriver CRD of
+  # gpu-operator v26.3.3 (config/crd/bases/nvidia.com_nvidiadrivers.yaml:
+  # enum auto, open, proprietary; useOpenKernelModules is deprecated there).
+  kernelModuleType: proprietary
+  usePrecompiled: false
+  imagePullPolicy: IfNotPresent
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+    feature.node.kubernetes.io/system-os_release.ID: ubuntu
+    feature.node.kubernetes.io/system-os_release.VERSION_ID: "24.04"

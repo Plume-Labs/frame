@@ -1,5 +1,5 @@
 {{- if .Values.provisiond.enabled }}
-# frame-provisiond assembles per-machine Debian installer images and serves
+# frame-provisiond assembles per-machine Ubuntu installer images and serves
 # them to a machine's BMC — see internal/provision/server.go and
 # config/provisiond/deployment.yaml, which this mirrors field-for-field
 # (hack/helm-parity.sh's body diff compares them exactly; there is no
@@ -51,7 +51,7 @@ spec:
           imagePullPolicy: {{ .Values.provisiond.image.pullPolicy }}
           env:
             # Matches the volume mount below: the directory both the build
-            # API writes 700 MB images into and the media listener reads
+            # API writes ~4 GB images into and the media listener reads
             # them back out of.
             - name: IMAGES_DIR
               value: /var/lib/frame/images
@@ -96,17 +96,15 @@ spec:
               drop:
                 - ALL
           volumeMounts:
-            # Sized for one in-flight remaster at a time: the base netinst
-            # (~800 MB, cached once) plus the per-machine image it produces
-            # (~700 MB) comfortably fit; .Values.provisiond.images.storage
+            # Sized for the base server ISO (~3.8 GiB, cached once) plus
+            # four per-machine images (~3.8 GiB each) not yet removed; .Values.provisiond.images.storage
             # leaves headroom rather than tracking the exact figure. A full
             # emptyDir fails the write that filled it, not a neighboring
             # pod -- it is this Deployment's own volume, not a shared one.
             - name: images
               mountPath: /var/lib/frame/images
-            # xorriso -osirrox extracts a full netinst tree under
-            # os.MkdirTemp's default directory (os.TempDir(), /tmp) before
-            # Remaster ever touches the images volume above; with
+            # Remaster extracts only the two GRUB files (a few KB) under
+            # os.MkdirTemp's default directory (os.TempDir(), /tmp); with
             # readOnlyRootFilesystem set, that write needs its own volume.
             - name: tmp
               mountPath: /tmp

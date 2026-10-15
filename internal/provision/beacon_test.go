@@ -8,15 +8,18 @@ import (
 const testBeaconBase = "http://192.0.2.10:30581"
 const testBeaconToken = "0123456789abcdef0123456789abcdef"
 
-func TestValidCheckpointAcceptsExactlyTheFiveNames(t *testing.T) {
-	for _, ok := range []string{CheckpointNetcfg, CheckpointNetcfgDone, CheckpointEarly, CheckpointPartman, CheckpointLate} {
+func TestValidCheckpointAcceptsExactlyTheThreeNames(t *testing.T) {
+	for _, ok := range []string{CheckpointEarly, CheckpointLate, CheckpointFailed} {
 		if !ValidCheckpoint(ok) {
-			t.Errorf("ValidCheckpoint(%q) = false; it is one of the five", ok)
+			t.Errorf("ValidCheckpoint(%q) = false; it is one of the three", ok)
 		}
 	}
 	// Anything else reaches provisiond's memory if this is wrong, so the
 	// refusals are asserted by name rather than by a single negative case.
-	for _, bad := range []string{"", "Early", "early ", "netcfg/../..", "late;rm", strings.Repeat("a", 64)} {
+	// netcfg, netcfg-done and partman were checkpoints of the Debian
+	// installer this package no longer drives; they are refused like any
+	// other unknown name.
+	for _, bad := range []string{"", "Early", "early ", "netcfg", "partman", "netcfg-done", "netcfg/../..", "late;rm", strings.Repeat("a", 64)} {
 		if ValidCheckpoint(bad) {
 			t.Errorf("ValidCheckpoint(%q) = true; the set is closed", bad)
 		}
@@ -54,7 +57,7 @@ func TestBeaconHeartbeatRunsInTheBackgroundAndKeepsGoing(t *testing.T) {
 
 // TestBeaconHeartbeatDoesNotInheritStdio is finding 4: the loop is
 // backgrounded inside early_command's shell and keeps running for the rest
-// of the install. d-i runs preseed hooks under log-output, which reads the
+// of the install. subiquity reads each command's output, the way d-i's log-output read the
 // hook's output; if its reader waits for EOF on the hook's stdout/stderr
 // pipes rather than only for the hook process's own exit, an open copy of
 // those fds held by this loop -- which never exits on its own -- would
@@ -70,10 +73,10 @@ func TestBeaconHeartbeatDoesNotInheritStdio(t *testing.T) {
 	}
 }
 
-// The beacon base is interpolated into a preseed directive and into a
+// The beacon base is interpolated into a
 // single-quoted shell word, exactly like the run URL. It gets the same
 // guard, and this asserts the refusal rather than the rendering.
-func TestValidateBeaconBaseRefusesWhatWouldBreakOutOfThePreseed(t *testing.T) {
+func TestValidateBeaconBaseRefusesWhatWouldBreakOutOfTheShellWord(t *testing.T) {
 	for _, bad := range []string{
 		"http://x\nd-i foo/bar string baz",
 		"http://x'; poweroff -f; '",
@@ -105,7 +108,7 @@ func TestValidateBeaconBaseAcceptsEmptyAsMeaningNoBeacons(t *testing.T) {
 // Shell metacharacters in a validated base must be contained within the
 // single-quoted word, not allowed to escape and create a second command.
 // A base containing ; or $(...) or backticks should produce them inside
-// quotes, so they cannot splice additional commands into preseed/early_command.
+// quotes, so they cannot splice additional commands into an early-command.
 func TestBeaconSendContainsShellMetacharactersInQuotes(t *testing.T) {
 	// This base would normally splice a second command: the semicolon closes
 	// the wget and runs 'touch'. But it passes ValidateBeaconBase (which

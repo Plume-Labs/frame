@@ -107,8 +107,14 @@ func New(baseURL, username, password string, tlsConfig *tls.Config, opts ...Opti
 		password:  password,
 		tlsConfig: tlsConfig,
 		httpClient: &http.Client{
-			Timeout:   20 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				// An iLO 4 drops kept-alive connections without Connection: close;
+				// a PATCH/POST written on such a reused connection fails with EOF
+				// and net/http does not retry it. One connection per request.
+				DisableKeepAlives: true,
+				TLSClientConfig:   tlsConfig,
+			},
 		},
 	}
 	for _, opt := range opts {

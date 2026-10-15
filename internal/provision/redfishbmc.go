@@ -58,8 +58,14 @@ func NewRedfishBMC(baseURL, username, password string, tlsConfig *tls.Config) *R
 		username: username,
 		password: password,
 		http: &http.Client{
-			Timeout:   20 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				// An iLO 4 drops kept-alive connections without Connection: close;
+				// a PATCH/POST written on such a reused connection fails with EOF
+				// and net/http does not retry it. One connection per request.
+				DisableKeepAlives: true,
+				TLSClientConfig:   tlsConfig,
+			},
 		},
 	}
 }
@@ -91,8 +97,8 @@ func (b *RedfishBMC) Reset(ctx context.Context, resetType string) error {
 }
 
 // virtualMediaPath is VM2, the CD/DVD device. VM1 is Floppy/USBStick, and an
-// installer ISO belongs on the CD device -- the preseed's boot arguments
-// (internal/provision/preseed.go, Task 1) assume it was mounted there.
+// installer ISO belongs on the CD device -- the remastered image
+// (internal/provision/iso.go) is a CD image and boots from there.
 const virtualMediaPath = "/redfish/v1/Managers/1/VirtualMedia/2/"
 
 // InsertMedia mounts url as this machine's virtual CD. An iLO4 exposes
@@ -131,32 +137,192 @@ func (b *RedfishBMC) MediaInserted(ctx context.Context) (bool, error) {
 // install.go's cleanup runs this on every exit once the machine has been
 // touched, successful or not: a machine left with media attached reboots
 // into the installer on its next power cycle (design §10).
+//
+// What the caller needs is the media gone, not the action answered, so
+// Inserted is read on both sides of it. Media already out means there is
+// nothing to eject and no POST is sent: the iLO 4 of an ML350 Gen9 answers
+// EjectVirtualMedia with 500 when nothing is inserted. A failed POST is
+// followed by a second read, and the failure is dropped only if that read
+// says the media is out. A first read that fails does not stop the eject:
+// a cleanup that gives up before trying leaves the media attached.
 func (b *RedfishBMC) EjectMedia(ctx context.Context) error {
+	if inserted, err := b.MediaInserted(ctx); err == nil && !inserted {
+		return nil
+	}
 	// The action takes no parameters; an empty JSON object, not a nil body,
 	// so Content-Type is still set the same way every other write here sets
 	// it -- an OEM action answering differently to a request with no body at
 	// all is not a risk worth taking with no hardware to check it against.
-	return b.do(ctx, http.MethodPost, virtualMediaPath+"Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/", struct{}{}, nil)
+	postErr := b.do(ctx, http.MethodPost, virtualMediaPath+"Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/", struct{}{}, nil)
+	if postErr == nil {
+		return nil
+	}
+	if inserted, err := b.MediaInserted(ctx); err == nil && !inserted {
+		return nil
+	}
+	return postErr
 }
 
+// systemPath is the one system this package drives; iLO 4 answers 308 on
+// the same path without its trailing slash.
+const systemPath = "/redfish/v1/Systems/1/"
+
 // SetBootOnce sets a one-shot boot override to target ("Cd") in mode
-// ("UEFI" or "Legacy", passed through unchanged -- see Options.BootMode's
-// comment in types.go: never inherited from the machine). This is a
-// standard Redfish property PATCH on the system resource, not an OEM
-// action: BootSourceOverrideMode is the exact field the design names (§5)
-// for why boot mode is set explicitly.
+// ("UEFI" or "Legacy" -- see Options.BootMode's comment in types.go: never
+// inherited from the machine).
+//
+// The mode is sent as BootSourceOverrideMode only when the system's own
+// Boot object carries that property. The iLO 4 of the ML350 Gen9 serves
+// ComputerSystem.1.0.1, whose Boot schema has no such property and forbids
+// additional ones (internal/redfish/testdata/ilo4-real/systems_1.json):
+// sending it there makes the whole PATCH fail. Where the mode cannot be
+// set, it is checked instead -- read from the HP BIOS resource
+// (Oem.Hp.links.BIOS, BootMode "Uefi" or "LegacyBios") -- and the request
+// is refused before anything is written if the machine boots in another
+// mode, or if that mode cannot be read at all: going ahead would be
+// inheriting the machine's mode, which Options.BootMode exists to prevent.
+//
+// On an iLO 4 -- recognised by an Oem.Hp object on the virtual CD resource,
+// not by a firmware version string -- a "Cd" boot is not asked of the
+// system at all. The virtual CD's own Oem.Hp.BootOnNextServerReset is set
+// instead, and read back. The reason is the machine's UEFI boot list: it
+// holds a physical SATA DVD (CD.Emb.9.1 in systems_1.json), and nothing
+// shows that a "Cd" override would boot the virtual drive rather than that
+// empty tray. BootOnNextServerReset names the virtual drive itself. No
+// override is set beside it, so there is no second instruction that could
+// win at the reset and point at the wrong drive. ClearBootOverride still
+// disables the system override on the way out, which is harmless when none
+// was set; EjectMedia removes the medium the flag points at.
 func (b *RedfishBMC) SetBootOnce(ctx context.Context, target, mode string) error {
-	var body struct {
-		Boot struct {
-			BootSourceOverrideEnabled string `json:"BootSourceOverrideEnabled"`
-			BootSourceOverrideTarget  string `json:"BootSourceOverrideTarget"`
-			BootSourceOverrideMode    string `json:"BootSourceOverrideMode"`
-		} `json:"Boot"`
+	sys, err := b.readSystem(ctx)
+	if err != nil {
+		return err
 	}
-	body.Boot.BootSourceOverrideEnabled = "Once"
-	body.Boot.BootSourceOverrideTarget = target
-	body.Boot.BootSourceOverrideMode = mode
-	return b.do(ctx, http.MethodPatch, "/redfish/v1/Systems/1/", body, nil)
+	if target == "Cd" {
+		hp, err := b.virtualMediaIsILO4(ctx)
+		if err != nil {
+			return err
+		}
+		if hp {
+			if err := b.checkBootMode(ctx, sys, mode); err != nil {
+				return err
+			}
+			return b.bootVirtualCDOnce(ctx)
+		}
+	}
+	if sys.Boot == nil {
+		return fmt.Errorf("redfish: %s exposes no Boot object to set an override on", systemPath)
+	}
+	_, modeSettable := sys.Boot["BootSourceOverrideMode"]
+
+	boot := map[string]string{
+		"BootSourceOverrideEnabled": "Once",
+		"BootSourceOverrideTarget":  target,
+	}
+	if modeSettable {
+		boot["BootSourceOverrideMode"] = mode
+	} else if err := b.checkBootMode(ctx, sys, mode); err != nil {
+		return err
+	}
+	return b.do(ctx, http.MethodPatch, systemPath, map[string]any{"Boot": boot}, nil)
+}
+
+// systemDoc is the part of the system resource SetBootOnce reads: the Boot
+// object's keys (their presence is what matters, not only their values)
+// and the HP link to the BIOS settings.
+type systemDoc struct {
+	Boot map[string]json.RawMessage `json:"Boot"`
+	Oem  struct {
+		Hp struct {
+			Links struct {
+				BIOS struct {
+					Href string `json:"href"`
+				} `json:"BIOS"`
+			} `json:"links"`
+		} `json:"Hp"`
+	} `json:"Oem"`
+}
+
+func (b *RedfishBMC) readSystem(ctx context.Context) (systemDoc, error) {
+	var sys systemDoc
+	err := b.do(ctx, http.MethodGet, systemPath, nil, &sys)
+	return sys, err
+}
+
+// virtualMediaIsILO4 reports whether the virtual CD carries an Oem.Hp
+// object, which is where an iLO 4 keeps BootOnNextServerReset.
+func (b *RedfishBMC) virtualMediaIsILO4(ctx context.Context) (bool, error) {
+	var vm struct {
+		Oem struct {
+			Hp json.RawMessage `json:"Hp"`
+		} `json:"Oem"`
+	}
+	if err := b.do(ctx, http.MethodGet, virtualMediaPath, nil, &vm); err != nil {
+		return false, err
+	}
+	hp := bytes.TrimSpace(vm.Oem.Hp)
+	return len(hp) > 0 && !bytes.Equal(hp, []byte("null")), nil
+}
+
+// bootVirtualCDOnce sets the iLO 4's Oem.Hp.BootOnNextServerReset on the
+// virtual CD and reads it back: a 200 on the PATCH is not taken as the
+// flag being set, the same way InsertMedia's 200 is not taken as media
+// being attached.
+func (b *RedfishBMC) bootVirtualCDOnce(ctx context.Context) error {
+	body := map[string]any{"Oem": map[string]any{"Hp": map[string]any{"BootOnNextServerReset": true}}}
+	if err := b.do(ctx, http.MethodPatch, virtualMediaPath, body, nil); err != nil {
+		return err
+	}
+	var vm struct {
+		Oem struct {
+			Hp struct {
+				BootOnNextServerReset bool `json:"BootOnNextServerReset"`
+			} `json:"Hp"`
+		} `json:"Oem"`
+	}
+	if err := b.do(ctx, http.MethodGet, virtualMediaPath, nil, &vm); err != nil {
+		return fmt.Errorf("redfish: reading back BootOnNextServerReset: %w", err)
+	}
+	if !vm.Oem.Hp.BootOnNextServerReset {
+		return fmt.Errorf("redfish: the BMC accepted Oem.Hp.BootOnNextServerReset on %s but reads it back false", virtualMediaPath)
+	}
+	return nil
+}
+
+// biosBootModes maps Options.BootMode to the HP BIOS schema's BootMode
+// values (HpBios.1.2.0, captured as systems_1_bios.json).
+var biosBootModes = map[string]string{
+	bootUEFI:   "Uefi",
+	bootLegacy: "LegacyBios",
+}
+
+// checkBootMode confirms the machine already boots in mode, for a BMC that
+// offers no way to set it with the override. What it verifies is the BIOS
+// setting the next boot will use; it cannot verify pending BIOS changes
+// that would apply at that same reset (the HP BIOS keeps those in a
+// separate Settings resource, not read here).
+func (b *RedfishBMC) checkBootMode(ctx context.Context, sys systemDoc, mode string) error {
+	want, ok := biosBootModes[mode]
+	if !ok {
+		return fmt.Errorf("redfish: boot mode %q: must be %q or %q", mode, bootUEFI, bootLegacy)
+	}
+	href := sys.Oem.Hp.Links.BIOS.Href
+	if href == "" {
+		return fmt.Errorf("redfish: this BMC cannot set the boot mode with the override (no BootSourceOverrideMode) and offers no BIOS resource to confirm it is %s; refusing rather than inheriting the machine's mode", mode)
+	}
+	var bios struct {
+		BootMode string `json:"BootMode"`
+	}
+	if err := b.do(ctx, http.MethodGet, href, nil, &bios); err != nil {
+		return fmt.Errorf("redfish: reading the boot mode to confirm it is %s: %w", mode, err)
+	}
+	if bios.BootMode == "" {
+		return fmt.Errorf("redfish: %s carries no BootMode; cannot confirm the machine boots %s, refusing rather than inheriting its mode", href, mode)
+	}
+	if !strings.EqualFold(bios.BootMode, want) {
+		return fmt.Errorf("redfish: the machine boots %s but %s was asked, and this BMC cannot change the mode through a boot override; change it in the BIOS first", bios.BootMode, mode)
+	}
+	return nil
 }
 
 // ClearBootOverride disables the boot override this installation set.
@@ -164,14 +330,32 @@ func (b *RedfishBMC) SetBootOnce(ctx context.Context, target, mode string) error
 // Failed, so a machine that failed mid-install does not boot back into the
 // installer on its own next restart. SetBootOnce already made the override
 // one-shot; this is the second belt, not the only one (design §10).
+//
+// The system is read first, and nothing is written when no override is
+// active (BootSourceOverrideEnabled absent or already "Disabled") -- the
+// usual case on an iLO 4, where SetBootOnce never sets one. When one is
+// active, the PATCH names the target None beside Enabled Disabled: the
+// iLO 4 refuses Enabled alone with 400 "BootSourceOverrideEnabled cannot
+// be set before BootSourceOverrideTarget is set". The mode is left alone;
+// SetBootOnce's comment says why it cannot always be written. A failed
+// read does not stop the clear, as in EjectMedia: the PATCH is sent
+// anyway, and its answer is the one returned.
 func (b *RedfishBMC) ClearBootOverride(ctx context.Context) error {
-	var body struct {
-		Boot struct {
-			BootSourceOverrideEnabled string `json:"BootSourceOverrideEnabled"`
-		} `json:"Boot"`
+	if sys, err := b.readSystem(ctx); err == nil {
+		raw, ok := sys.Boot["BootSourceOverrideEnabled"]
+		if !ok {
+			return nil
+		}
+		var enabled string
+		if json.Unmarshal(raw, &enabled) == nil && enabled == "Disabled" {
+			return nil
+		}
 	}
-	body.Boot.BootSourceOverrideEnabled = "Disabled"
-	return b.do(ctx, http.MethodPatch, "/redfish/v1/Systems/1/", body, nil)
+	body := map[string]any{"Boot": map[string]string{
+		"BootSourceOverrideTarget":  "None",
+		"BootSourceOverrideEnabled": "Disabled",
+	}}
+	return b.do(ctx, http.MethodPatch, systemPath, body, nil)
 }
 
 // do issues one authenticated HTTP request against the BMC. It deliberately

@@ -110,7 +110,7 @@ certManager:
   enabled: true
 
 provisiond:
-  # frame-provisiond assembles per-machine Debian installer images and
+  # frame-provisiond assembles per-machine Ubuntu installer images and
   # serves them to a machine's BMC (2026-09-11, provisioning/Debian lot,
   # task 8). Defaults to true because config/default's kustomization wires
   # config/provisiond in unconditionally, with no toggle on that side at
@@ -137,7 +137,7 @@ provisiond:
     pullPolicy: IfNotPresent
   resources:
     # Matches config/provisiond/deployment.yaml's hardcoded values exactly
-    # — see that file's comment for the sizing rationale (one base netinst
+    # — see that file's comment for the sizing rationale (one base server-ISO
     # download plus one in-flight remaster).
     requests:
       memory: "256Mi"
@@ -147,9 +147,11 @@ provisiond:
       cpu: "1"
   images:
     # emptyDir size for /var/lib/frame/images, mounted where both the
-    # build API writes 700 MB images and the media listener reads them
-    # back out of. Matches config/provisiond/deployment.yaml.
-    storage: 8Gi
+    # build API writes ~4 GB images and the media listener reads them
+    # back out of. Matches config/provisiond/deployment.yaml, whose comment
+    # carries the sizing (base ISO + four images + one in flight, with
+    # headroom).
+    storage: 32Gi
   media:
     # A fixed NodePort, not a Service-allocated one, because the BMC's boot
     # media configuration has to name a concrete address — it cannot be

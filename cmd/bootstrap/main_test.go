@@ -172,7 +172,7 @@ func TestFinishWritesTheKubeconfigEvenWhenTheInstallFailed(t *testing.T) {
 		},
 	} {
 		out := filepath.Join(t.TempDir(), "kubeconfig")
-		err := finish(io.Discard, out, res, errors.New("the BMC refused the eject"))
+		err := finish(io.Discard, provision.ClusterInit, out, res, errors.New("the BMC refused the eject"))
 		if err == nil {
 			t.Errorf("%s: finish returned nil; a failed install must still fail", name)
 		}
@@ -193,7 +193,7 @@ func TestFinishWritesTheKubeconfigOnSuccess(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "kubeconfig")
 	var buf bytes.Buffer
 	res := provision.Result{Phase: provision.PhaseReady, Kubeconfig: []byte("apiVersion: v1\n"), NodeName: "node-zero"}
-	if err := finish(&buf, out, res, nil); err != nil {
+	if err := finish(&buf, provision.ClusterInit, out, res, nil); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(out)
@@ -209,7 +209,7 @@ func TestFinishWritesTheKubeconfigOnSuccess(t *testing.T) {
 // at all has nothing to write, and saying "written to ..." would be a lie.
 func TestFinishRefusesASuccessThatProducedNoKubeconfig(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "kubeconfig")
-	err := finish(io.Discard, out, provision.Result{Phase: provision.PhaseReady}, nil)
+	err := finish(io.Discard, provision.ClusterInit, out, provision.Result{Phase: provision.PhaseReady}, nil)
 	if err == nil {
 		t.Fatal("a Ready install with no kubeconfig was reported as success")
 	}
@@ -224,7 +224,7 @@ func TestFinishRefusesASuccessThatProducedNoKubeconfig(t *testing.T) {
 func TestFinishFailsWhenTheKubeconfigCannotBeWritten(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "no-such-dir", "kubeconfig")
 	res := provision.Result{Phase: provision.PhaseReady, Kubeconfig: []byte("apiVersion: v1\n")}
-	if err := finish(io.Discard, out, res, nil); err == nil {
+	if err := finish(io.Discard, provision.ClusterInit, out, res, nil); err == nil {
 		t.Fatal("an unwritable out was reported as success")
 	}
 }

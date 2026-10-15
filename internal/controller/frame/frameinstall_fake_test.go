@@ -35,7 +35,8 @@ import (
 
 // fakeMarkerPath mirrors install.go's unexported markerPath
 // ("/etc/frame-install-uid", confirmed by
-// internal/provision/preseed_test.go's TestRenderPreseedWritesTheUIDMarker).
+// internal/provision/autoinstall.go's markerPath and the late-command
+// TestRenderAutoinstallWritesWhatFrameChecksAfterReboot asserts).
 // It cannot be imported -- this is a different package -- so it is
 // reproduced here by literal, the same way any fixture in this file stands
 // in for a piece of internal/provision it cannot reach directly.
@@ -181,7 +182,7 @@ type fakeInstallImages struct {
 	removed   int
 	failBuild error
 	// builtUID is the Spec.UID of the last image built. On a real machine
-	// the install marker is whatever the preseed inside the booted image
+	// the install marker is whatever the autoinstall seed of the booted image
 	// wrote, so a fake machine has to answer with the UID of the image it
 	// was built from -- not with a value the test chose independently. The
 	// controller generates that UID per run and never writes it anywhere
@@ -234,13 +235,13 @@ func (i *fakeInstallImages) buildCount() int {
 // --write-kubeconfig-mode. This fake used to serve it to Session.ReadFile,
 // which is a bare `cat` as the frame user -- so every cluster-init test was
 // green against a machine that does not exist. The install marker is chmod
-// 444 by the preseed and is served to either.
+// 444 by an autoinstall late-command and is served to either.
 type fakeInstallSession struct {
 	mu      sync.Mutex
 	hostKey string
 	// images, when set, makes this fake machine answer with the UID of the
 	// image it was built from -- which is what a real machine does, since
-	// the marker is written by the preseed inside that image. marker below
+	// the marker is written by that image's autoinstall seed. marker below
 	// overrides it, for the tests that need a machine carrying somebody
 	// else's UID.
 	images *fakeInstallImages
@@ -280,6 +281,12 @@ func (s *fakeInstallSession) Run(ctx context.Context, cmd string) (string, error
 		return warn + "\n" + out, nil
 	}
 	return out, nil
+}
+
+// RunWithInput records cmd like Run and discards the input: the join token
+// it carries is not something these tests assert on.
+func (s *fakeInstallSession) RunWithInput(ctx context.Context, cmd string, _ []byte) (string, error) {
+	return s.Run(ctx, cmd)
 }
 
 func (s *fakeInstallSession) Output(_ context.Context, cmd string) (string, error) {

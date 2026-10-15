@@ -10,7 +10,7 @@ func TestBeaconStoreRecordsTheLatestCheckpointAndCountsSends(t *testing.T) {
 	s := NewBeaconStore(8)
 	t0 := time.Unix(1_700_000_000, 0)
 
-	if ok := s.Record(testBeaconToken, CheckpointNetcfg, t0); !ok {
+	if ok := s.Record(testBeaconToken, CheckpointEarly, t0); !ok {
 		t.Fatal("Record of a good beacon returned false")
 	}
 	s.Record(testBeaconToken, CheckpointEarly, t0.Add(30*time.Second))
@@ -64,19 +64,18 @@ func TestBeaconStoreForgetsAnImageThatIsGone(t *testing.T) {
 
 // TestBeaconStoreKeepsTheFurthestCheckpointAcrossAHeartbeat is the assertion
 // the feature's value rests on. BeaconHeartbeat resends the checkpoint it
-// was started at -- CheckpointEarly, per preseed.go's own RenderPreseed
-// call -- every 15 seconds for the life of the installer environment. If a
-// heartbeat sent under CheckpointEarly regressed LastCheckpoint after the
-// install had already reported CheckpointPartman, every install's progress
+// was started at -- CheckpointEarly, per RenderAutoinstall -- every 15
+// seconds for the life of the installer environment. If a heartbeat sent
+// under CheckpointEarly regressed LastCheckpoint after the install had
+// already reported CheckpointLate or CheckpointFailed, every install's progress
 // signal would collapse to "early" within 15 seconds of leaving it,
 // regardless of where the machine actually stopped.
 func TestBeaconStoreKeepsTheFurthestCheckpointAcrossAHeartbeat(t *testing.T) {
 	s := NewBeaconStore(8)
 	t0 := time.Unix(1_700_000_000, 0)
 
-	s.Record(testBeaconToken, CheckpointNetcfg, t0)
 	s.Record(testBeaconToken, CheckpointEarly, t0.Add(1*time.Second))
-	s.Record(testBeaconToken, CheckpointPartman, t0.Add(2*time.Second))
+	s.Record(testBeaconToken, CheckpointLate, t0.Add(2*time.Second))
 
 	// The heartbeat loop started back at CheckpointEarly is still firing --
 	// this is exactly what it sends.
@@ -87,14 +86,14 @@ func TestBeaconStoreKeepsTheFurthestCheckpointAcrossAHeartbeat(t *testing.T) {
 	if !ok {
 		t.Fatal("Get after Record found nothing")
 	}
-	if got.LastCheckpoint != CheckpointPartman {
-		t.Errorf("LastCheckpoint = %q, want %q -- a heartbeat must not regress the furthest checkpoint reached", got.LastCheckpoint, CheckpointPartman)
+	if got.LastCheckpoint != CheckpointLate {
+		t.Errorf("LastCheckpoint = %q, want %q -- a heartbeat must not regress the furthest checkpoint reached", got.LastCheckpoint, CheckpointLate)
 	}
 	if !got.LastSeen.Equal(heartbeatAt) {
 		t.Errorf("LastSeen = %v, want %v -- liveness must still move on a heartbeat that does not advance the checkpoint", got.LastSeen, heartbeatAt)
 	}
-	if got.Count != 4 {
-		t.Errorf("Count = %d, want 4 -- every accepted beacon counts, whether or not it advances the checkpoint", got.Count)
+	if got.Count != 3 {
+		t.Errorf("Count = %d, want 3 -- every accepted beacon counts, whether or not it advances the checkpoint", got.Count)
 	}
 }
 
@@ -132,4 +131,45 @@ func TestBeaconStoreIsSafeUnderConcurrentUse(t *testing.T) {
 		go func() { defer wg.Done(); _, _ = s.Get(testBeaconToken) }()
 	}
 	wg.Wait()
+}
+
+// failed is terminal: error-commands send it once, while the heartbeat keeps
+// sending early. If a later heartbeat hid it, a failed install would read as
+// one still running until the heartbeat stopped, and then as HeartbeatLost.
+func TestBeaconStoreKeepsFailedAcrossAHeartbeat(t *testing.T) {
+	s := NewBeaconStore(8)
+	t0 := time.Unix(1_700_000_000, 0)
+	s.Record(testBeaconToken, CheckpointEarly, t0)
+	s.Record(testBeaconToken, CheckpointFailed, t0.Add(time.Second))
+	s.Record(testBeaconToken, CheckpointEarly, t0.Add(15*time.Second))
+
+	got, _ := s.Get(testBeaconToken)
+	if got.LastCheckpoint != CheckpointFailed {
+		t.Errorf("LastCheckpoint = %q, want %q", got.LastCheckpoint, CheckpointFailed)
+	}
+}
+
+// LastSeen moves with every heartbeat, including the ones after a failure, so
+// it cannot say when the failure happened. FailedAt is set by the first
+// `failed` and never moved: not by a heartbeat, not by a second `failed`.
+func TestBeaconStoreRecordsWhenTheInstallFirstFailed(t *testing.T) {
+	s := NewBeaconStore(8)
+	t0 := time.Unix(1_700_000_000, 0)
+	s.Record(testBeaconToken, CheckpointEarly, t0)
+	if got, _ := s.Get(testBeaconToken); !got.FailedAt.IsZero() {
+		t.Fatalf("FailedAt = %v before any failure", got.FailedAt)
+	}
+	failedAt := t0.Add(time.Minute)
+	s.Record(testBeaconToken, CheckpointFailed, failedAt)
+	s.Record(testBeaconToken, CheckpointEarly, t0.Add(2*time.Minute))
+	s.Record(testBeaconToken, CheckpointFailed, t0.Add(3*time.Minute))
+	s.Record(testBeaconToken, CheckpointEarly, t0.Add(4*time.Minute))
+
+	got, _ := s.Get(testBeaconToken)
+	if !got.FailedAt.Equal(failedAt) {
+		t.Errorf("FailedAt = %v, want the first failure at %v", got.FailedAt, failedAt)
+	}
+	if !got.LastSeen.Equal(t0.Add(4 * time.Minute)) {
+		t.Errorf("LastSeen = %v; it still tracks liveness", got.LastSeen)
+	}
 }

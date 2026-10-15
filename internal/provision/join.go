@@ -2,6 +2,7 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -16,6 +17,44 @@ import (
 // and this install deliberately does not say otherwise.
 const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 
+// k3sInstallerURL is the k3s install script, fetched at install time -- an
+// internet dependency, stated in the design (§7) rather than hidden.
+const k3sInstallerURL = "https://get.k3s.io"
+
+// k3sInstallerPath is where the script is downloaded before it is run:
+// relative, so it lands in the SSH user's own home directory, which only
+// that user can write -- not /tmp, where another account could plant a
+// symlink at a predictable name first.
+const k3sInstallerPath = "frame-k3s-install.sh"
+
+// k3sJoinTokenPath is where a join writes the token, root-owned 0600,
+// before k3s is installed. The agent reads it through K3S_TOKEN_FILE, which
+// the install script records in the service's environment file, so it has
+// to stay there for the agent's lifetime.
+const k3sJoinTokenPath = "/etc/rancher/k3s/frame-join-token"
+
+// writeJoinTokenCmd reads the token from stdin into k3sJoinTokenPath. umask
+// 077 inside the root shell, rather than a chmod afterwards, so the file is
+// never readable by anyone else, not even for the instant between the two.
+const writeJoinTokenCmd = "sudo -n sh -c 'umask 077 && mkdir -p /etc/rancher/k3s && cat > " + k3sJoinTokenPath + "'"
+
+// installK3s downloads the install script to a file and runs it, as two
+// separate commands. It used to be `curl ... | sh`: without pipefail a
+// failed download pipes nothing into sh, sh exits 0 on empty input, and
+// the step "succeeds" with no k3s installed -- surfacing only as a Ready
+// timeout, far from its cause. Two commands make a failed download a
+// failed command.
+func installK3s(ctx context.Context, sess Session, env, args string) error {
+	if _, err := sess.Run(ctx, "curl -sfL -o "+k3sInstallerPath+" "+k3sInstallerURL); err != nil {
+		return fmt.Errorf("downloading the k3s installer from %s: %w", k3sInstallerURL, err)
+	}
+	// The script is removed whatever it returned, and its own exit status
+	// is what the command reports.
+	cmd := env + " sh " + k3sInstallerPath + " " + args + "; rc=$?; rm -f " + k3sInstallerPath + "; exit $rc"
+	_, err := sess.Run(ctx, cmd)
+	return err
+}
+
 // Join installs k3s and either starts a cluster or joins one.
 //
 // Starting a cluster is the simpler of the two, which is the opposite of what
@@ -27,15 +66,15 @@ const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 //
 // The k3s installer is fetched from https://get.k3s.io at a pinned
 // INSTALL_K3S_VERSION -- an internet dependency, stated in the design (§7)
-// rather than hidden.
+// rather than hidden -- downloaded to a file and run from it (installK3s).
 //
 // K3sVersion, ServerURL, JoinToken and nodeAddress are not passed through
-// checkPreseedValue. That function exists for a different hazard: a value
-// that lands, unescaped, in a preseed directive (where a newline starts a new
-// directive that runs as root) and in a naively-interpolated shell word
-// inside early_command/late_command, so it refuses quotes and backslashes
-// outright because nothing downstream of it re-escapes them. Neither
-// condition holds here -- this command never touches a preseed file -- and a
+// checkShellValue. That function exists for a different hazard: a value
+// that lands in a single-quoted shell word inside an autoinstall early- or
+// late-command, run as root in the installer, so it refuses quotes and
+// backslashes outright because nothing downstream of it re-escapes them.
+// That condition does not hold here -- this command never touches the
+// autoinstall document -- and a
 // generic refusal would also be looser than what these four values actually
 // are: a k3s version, an https URL, a k3s token and an IP address each have a
 // known shape, and a shape check (validateK3sVersion, validateServerURL,
@@ -48,9 +87,13 @@ const k3sKubeconfigPath = "/etc/rancher/k3s/k3s.yaml"
 // true and each of the four is validated in this function.
 //
 // Validation is the first line of defence and shellQuote (below) is the
-// second: every value is quoted into the command line regardless of having
-// already passed its shape check, so a future change that loosens a pattern
-// does not by itself reopen shell injection.
+// second: every value that goes on a command line is quoted regardless of
+// having already passed its shape check, so a future change that loosens a
+// pattern does not by itself reopen shell injection. The join token is the
+// exception, because it never goes on a command line at all: it is written
+// to the node through stdin (writeJoinTokenCmd) and read by the agent from
+// that file. It is still shape-checked -- a token k3s would refuse is
+// better refused here than as an agent that never registers.
 func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string) ([]byte, error) {
 	if err := validateK3sVersion(t.K3sVersion); err != nil {
 		return nil, fmt.Errorf("cluster: %w; an unpinned or malformed install makes two machines built a week apart different machines", err)
@@ -61,10 +104,9 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 
 	switch t.Mode {
 	case ClusterInit:
-		cmd := fmt.Sprintf(
-			"curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s sh -s - server --cluster-init --node-ip %s",
-			shellQuote(t.K3sVersion), shellQuote(nodeAddress))
-		if _, err := sess.Run(ctx, cmd); err != nil {
+		if err := installK3s(ctx, sess,
+			"INSTALL_K3S_VERSION="+shellQuote(t.K3sVersion),
+			"server --cluster-init --node-ip "+shellQuote(nodeAddress)); err != nil {
 			return nil, fmt.Errorf("k3s server --cluster-init: %w", err)
 		}
 		// sudo, not Session.ReadFile. ReadFile is `cat` as the frame user,
@@ -78,7 +120,8 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 		// machine: --write-kubeconfig-mode 0644 would leave the cluster's
 		// admin credential readable by anything that ever gets a shell on
 		// that node, permanently, to serve one read that happens once. The
-		// preseed already grants frame NOPASSWD:ALL (preseed.go).
+		// autoinstall late-commands already grant frame NOPASSWD:ALL
+		// (autoinstall.go).
 		//
 		// -n so a machine where that sudoers drop-in did not land fails
 		// immediately with sudo's own message instead of blocking on a
@@ -117,16 +160,54 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 		if err := validateServerURL(t.ServerURL); err != nil {
 			return nil, fmt.Errorf("cluster join: %w", err)
 		}
-		cmd := fmt.Sprintf(
-			"curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s K3S_URL=%s K3S_TOKEN=%s sh -s - agent --node-ip %s",
-			shellQuote(t.K3sVersion), shellQuote(t.ServerURL), shellQuote(t.JoinToken), shellQuote(nodeAddress))
-		if _, err := sess.Run(ctx, cmd); err != nil {
+		// The token travels on stdin, never on a command line: a command
+		// line is in the node's process table while it runs and in every
+		// log of the commands this session sent.
+		if _, err := sess.RunWithInput(ctx, writeJoinTokenCmd, []byte(t.JoinToken)); err != nil {
+			return nil, fmt.Errorf("writing the join token to %s on the node: %w", k3sJoinTokenPath, err)
+		}
+		if err := installK3s(ctx, sess,
+			"INSTALL_K3S_VERSION="+shellQuote(t.K3sVersion)+
+				" K3S_URL="+shellQuote(t.ServerURL)+
+				" K3S_TOKEN_FILE="+shellQuote(k3sJoinTokenPath),
+			"agent --node-ip "+shellQuote(nodeAddress)); err != nil {
 			return nil, fmt.Errorf("k3s agent: %w", err)
 		}
 		return nil, nil
 
 	default:
 		return nil, fmt.Errorf("cluster: unknown mode %q", t.Mode)
+	}
+}
+
+// ValidateClusterTarget runs every shape check Join makes on t, without a
+// machine. It is exported for the one caller that must refuse a bad target
+// even earlier than Install's own Pending phase does: `frame bootstrap`,
+// which reads its target from a hand-written file and should say so while
+// the operator is still at the keyboard, before a BMC is ever dialled.
+// Install runs it too (validatePendingSpec), so the controller path and the
+// bootstrap path refuse exactly the same targets.
+//
+// None of its errors carry the join token: validateJoinToken reports only
+// its length and character class, and validateServerURL redacts any
+// password embedded in the URL it names.
+func ValidateClusterTarget(t ClusterTarget) error {
+	if err := validateK3sVersion(t.K3sVersion); err != nil {
+		return fmt.Errorf("cluster target: %w", err)
+	}
+	switch t.Mode {
+	case ClusterInit:
+		return nil
+	case ClusterJoin:
+		if err := validateJoinToken(t.JoinToken); err != nil {
+			return fmt.Errorf("cluster target: %w", err)
+		}
+		if err := validateServerURL(t.ServerURL); err != nil {
+			return fmt.Errorf("cluster target: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("cluster target: unknown mode %q (want %q or %q)", t.Mode, ClusterInit, ClusterJoin)
 	}
 }
 
@@ -203,19 +284,26 @@ func validateJoinToken(v string) error {
 func validateServerURL(v string) error {
 	u, err := url.Parse(v)
 	if err != nil {
-		return fmt.Errorf("server URL %q does not parse: %w", v, err)
+		// Neither v nor err is repeated here: url.Parse's error quotes the
+		// input whole, and an input that fails to parse may still carry a
+		// user:pass@ that the Redacted() below never got the chance to hide.
+		return errors.New("server URL does not parse as a URL")
 	}
+	// Named by u.Redacted(), never v: a URL carrying user:pass@ is exactly
+	// the one whose refusal would otherwise print the password it is being
+	// refused for, whichever check below happens to refuse it first.
+	name := u.Redacted()
 	if u.Scheme != "https" {
-		return fmt.Errorf("server URL %q: scheme must be https, got %q", v, u.Scheme)
+		return fmt.Errorf("server URL %q: scheme must be https, got %q", name, u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("server URL %q: no host", v)
+		return fmt.Errorf("server URL %q: no host", name)
 	}
 	if u.User != nil {
-		return fmt.Errorf("server URL %q: must not carry embedded credentials", v)
+		return fmt.Errorf("server URL %q: must not carry embedded credentials", name)
 	}
 	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("server URL %q: must be scheme and host only, no path, query or fragment", v)
+		return fmt.Errorf("server URL %q: must be scheme and host only, no path, query or fragment", name)
 	}
 	return nil
 }

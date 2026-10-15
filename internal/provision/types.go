@@ -16,6 +16,9 @@ type Spec struct {
 	Layout       Layout
 	SSHPublicKey string // an authorized_keys line; never a private key
 	Cluster      ClusterTarget
+	// BootMode is "UEFI" or "Legacy". Set by Install from Options.BootMode,
+	// not by callers: the image's disk layout depends on it.
+	BootMode string
 }
 
 // Network, Layout, Disk and ClusterTarget carry yaml tags even though this
@@ -136,6 +139,14 @@ type Deps struct {
 	//
 	// May be nil.
 	ReportToken func(token string)
+	// BeforeMediaAttached is asked once, after the image is built and
+	// before MediaAttached -- the last point at which the machine is still
+	// as it was: nothing inserted, no boot override, no reset. An error
+	// stops Install there, failed in Preparing. It is how a caller re-checks
+	// a precondition that may have changed since it first checked it (a
+	// join's node-password Secret, re-created by an old agent still
+	// running). May be nil.
+	BeforeMediaAttached func(ctx context.Context) error
 }
 
 // Options configures one Install call.

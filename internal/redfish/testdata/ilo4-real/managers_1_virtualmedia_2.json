@@ -1,0 +1,76 @@
+{
+    "@odata.context": "/redfish/v1/$metadata#Managers/Members/1/VirtualMedia/Members/$entity",
+    "@odata.id": "/redfish/v1/Managers/1/VirtualMedia/2/",
+    "@odata.type": "#VirtualMedia.1.0.0.VirtualMedia",
+    "ConnectedVia": "NotConnected",
+    "Description": "Virtual Removable Media",
+    "Id": "2",
+    "Image": "",
+    "Inserted": false,
+    "MediaTypes": [
+        "CD",
+        "DVD"
+    ],
+    "Name": "VirtualMedia",
+    "Oem": {
+        "Hp": {
+            "@odata.type": "#HpiLOVirtualMedia.1.1.0.HpiLOVirtualMedia",
+            "Actions": {
+                "#HpiLOVirtualMedia.EjectVirtualMedia": {
+                    "target": "/redfish/v1/Managers/1/VirtualMedia/2/Actions/Oem/Hp/HpiLOVirtualMedia.EjectVirtualMedia/"
+                },
+                "#HpiLOVirtualMedia.InsertVirtualMedia": {
+                    "target": "/redfish/v1/Managers/1/VirtualMedia/2/Actions/Oem/Hp/HpiLOVirtualMedia.InsertVirtualMedia/"
+                }
+            },
+            "AvailableActions": [
+                {
+                    "Action": "EjectVirtualMedia",
+                    "Capabilities": [
+                        {
+                            "PropertyName": "Intent"
+                        },
+                        {
+                            "PropertyName": "Signature"
+                        },
+                        {
+                            "AllowableValues": [
+                                "/Oem/Hp"
+                            ],
+                            "PropertyName": "Target"
+                        }
+                    ]
+                },
+                {
+                    "Action": "InsertVirtualMedia",
+                    "Capabilities": [
+                        {
+                            "PropertyName": "Image"
+                        },
+                        {
+                            "PropertyName": "Intent"
+                        },
+                        {
+                            "PropertyName": "Signature"
+                        },
+                        {
+                            "AllowableValues": [
+                                "/Oem/Hp"
+                            ],
+                            "PropertyName": "Target"
+                        }
+                    ]
+                }
+            ],
+            "BootOnNextServerReset": false,
+            "Type": "HpiLOVirtualMedia.1.1.0"
+        }
+    },
+    "Type": "VirtualMedia.1.0.0",
+    "WriteProtected": true,
+    "links": {
+        "self": {
+            "href": "/redfish/v1/Managers/1/VirtualMedia/2/"
+        }
+    }
+}

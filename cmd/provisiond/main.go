@@ -14,15 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command provisiond assembles per-machine Debian installer images and
+// Command provisiond assembles per-machine Ubuntu installer images and
 // serves them. It exists because the manager image is
 // gcr.io/distroless/static:nonroot, which cannot hold xorriso, and it solves
-// two more problems on the way: where a ~700 MB artifact is stored, and how
+// two more problems on the way: where a ~4 GB artifact is stored, and how
 // a BMC on the management network -- which cannot reach the pod network --
 // fetches it.
 //
 // It listens on two ports, deliberately. The build API (BuildAddr) accepts
-// a Spec and writes a 700 MB file; it belongs on a ClusterIP Service, which
+// a Spec and writes a ~4 GB file; it belongs on a ClusterIP Service, which
 // keeps it off the LAN but is reachable by every pod in the cluster -- so
 // it is treated as unauthenticated, and the manager zeroes the cluster
 // target before POSTing to it (internal/provision/server.go). The media
@@ -56,8 +56,8 @@ type config struct {
 	// MediaURL is the address the BMC, on the management network, reaches
 	// the media listener at -- not MediaAddr, which is where this process
 	// binds. It has no default: every image BuildHandler builds bakes this
-	// address into its own boot arguments as where to fetch its preseed
-	// from, so a wrong or missing value is not a degraded start, it is
+	// address into its own boot arguments as where to fetch its
+	// autoinstall seed from, so a wrong or missing value is not a degraded start, it is
 	// every subsequent install hanging with nothing to read.
 	MediaURL string
 }
@@ -85,13 +85,13 @@ func or(v, def string) string {
 // or a bare hostname with no scheme at all, which url.Parse accepts
 // without error and puts entirely into Path, leaving both Scheme and Host
 // empty. Every one of those still starts provisiond today and fails only
-// once a built image asks the BMC to fetch a preseed from it and finds
+// once a built image asks for its autoinstall seed from it and finds
 // nothing there -- exactly the failure mode this whole task exists to
 // close for the boot arguments; this closes the same class of mistake for
 // the address they're built from.
 func validateMediaURL(raw string) error {
 	if raw == "" {
-		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their preseed from nowhere")
+		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their autoinstall seed from nowhere")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -102,6 +102,12 @@ func validateMediaURL(raw string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("MEDIA_URL %q: has no host", raw)
+	}
+	// A URL can be well formed and still carry what a GRUB kernel line
+	// expands or splits on ($, {, ?, %, brackets…). Remaster refuses those,
+	// so a provisiond started on one would run and refuse every build.
+	if err := provision.ValidateSeedBase(raw); err != nil {
+		return fmt.Errorf("MEDIA_URL %w", err)
 	}
 	return nil
 }
