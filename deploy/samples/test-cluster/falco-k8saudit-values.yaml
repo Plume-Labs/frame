@@ -19,6 +19,7 @@ falcoctl:
 falco:
   rules_files:
     - /etc/falco/k8s_audit_rules.yaml
+    - /etc/falco/rules.d
   plugins:
     - name: k8saudit
       library_path: libk8saudit.so
@@ -40,3 +41,22 @@ services:
       - port: 9765
         nodePort: 32765
         protocol: TCP
+# Local overrides of the upstream k8saudit rules (validated with falco -V, 2026-10-15).
+customRules:
+  k8saudit-overrides.yaml: |-
+    # WebSocket exec/attach (kubectl >= 1.31) is audited as verb "get", not "create".
+    - rule: Attach/Exec Pod
+      condition: kevt_started and pod_subresource and (kcreate or ka.verb=get) and ka.target.subresource in (exec,attach) and not user_known_exec_pod_activities
+      override:
+        condition: replace
+    # Kubelets request projected ServiceAccount tokens all day (~3,500/day here),
+    # which this rule reports as ServiceAccount creations.
+    - rule: K8s Serviceaccount Created
+      condition: and not ka.user.name startswith "system:node:"
+      override:
+        condition: append
+    # k3s's embedded cloud controller patches node status.
+    - list: allowed_k8s_users
+      items: [k3s-cloud-controller-manager]
+      override:
+        items: append
