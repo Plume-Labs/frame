@@ -110,6 +110,9 @@ func isMutating(method string) bool {
 	return false
 }
 
+// subresourceExec is the pod subresource the console opens a shell through.
+const subresourceExec = "exec"
+
 // isExecUpgrade reports whether this is the console opening a shell.
 //
 // Narrow on purpose. Reads are not recorded, and this is the one exception:
@@ -125,7 +128,7 @@ func isExecUpgrade(r *http.Request) bool {
 		return false
 	}
 	ref, ok := parsePath(r.URL.Path)
-	return ok && ref.Subresource == "exec"
+	return ok && ref.Subresource == subresourceExec
 }
 
 // statusRecorder remembers the code so the task can be closed with it.

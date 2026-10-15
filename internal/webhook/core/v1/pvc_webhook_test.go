@@ -28,11 +28,13 @@ func validatorWith(entries ...*framev1beta1.FrameStorage) *PVCCustomValidator {
 	return &PVCCustomValidator{Client: b.Build()}
 }
 
-func storageEntry(name, class string, content ...string) *framev1beta1.FrameStorage {
+// storageEntry is the "models" FrameStorage entry, backed by the ceph-rbd
+// class, that the validator resolves a PVC's class against.
+func storageEntry(content ...string) *framev1beta1.FrameStorage {
 	return &framev1beta1.FrameStorage{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		ObjectMeta: metav1.ObjectMeta{Name: "models"},
 		Spec: framev1beta1.FrameStorageSpec{
-			Type: "ceph-rbd", Content: content, StorageClassName: class,
+			Type: "ceph-rbd", Content: content, StorageClassName: "ceph-rbd",
 		},
 	}
 }
@@ -45,7 +47,7 @@ func pvc(class string, labels map[string]string) *corev1.PersistentVolumeClaim {
 }
 
 func TestRefusesAContentTypeTheEntryDoesNotDeclare(t *testing.T) {
-	v := validatorWith(storageEntry("models", "ceph-rbd", "model", "artifact"))
+	v := validatorWith(storageEntry("model", "artifact"))
 	_, err := v.ValidateCreate(context.Background(), pvc("ceph-rbd", map[string]string{framev1beta1.UsageLabel: "backup"}))
 	if err == nil {
 		t.Fatal("want a refusal: the entry does not declare backup")
@@ -61,7 +63,7 @@ func TestRefusesAContentTypeTheEntryDoesNotDeclare(t *testing.T) {
 }
 
 func TestAcceptsADeclaredContentType(t *testing.T) {
-	v := validatorWith(storageEntry("models", "ceph-rbd", "model", "artifact"))
+	v := validatorWith(storageEntry("model", "artifact"))
 	if _, err := v.ValidateCreate(context.Background(), pvc("ceph-rbd", map[string]string{framev1beta1.UsageLabel: "model"})); err != nil {
 		t.Fatalf("want acceptance: %v", err)
 	}
@@ -73,7 +75,7 @@ func TestAcceptsADeclaredContentType(t *testing.T) {
 // that would refuse them if it ever saw them is one selector edit away
 // from a cluster that cannot create volumes.
 func TestAcceptsAnUnlabelledClaim(t *testing.T) {
-	v := validatorWith(storageEntry("models", "ceph-rbd", "model"))
+	v := validatorWith(storageEntry("model"))
 	if _, err := v.ValidateCreate(context.Background(), pvc("ceph-rbd", nil)); err != nil {
 		t.Fatalf("an unlabelled PVC must pass: %v", err)
 	}
@@ -83,14 +85,14 @@ func TestAcceptsAnUnlabelledClaim(t *testing.T) {
 // not Frame's to police. local-path is the cluster's default class and
 // three PVCs use it today.
 func TestAcceptsAClassNoEntryDescribes(t *testing.T) {
-	v := validatorWith(storageEntry("models", "ceph-rbd", "model"))
+	v := validatorWith(storageEntry("model"))
 	if _, err := v.ValidateCreate(context.Background(), pvc("local-path", map[string]string{framev1beta1.UsageLabel: "scratch"})); err != nil {
 		t.Fatalf("a class with no FrameStorage entry must pass: %v", err)
 	}
 }
 
 func TestAcceptsAClaimWithNoStorageClass(t *testing.T) {
-	v := validatorWith(storageEntry("models", "ceph-rbd", "model"))
+	v := validatorWith(storageEntry("model"))
 	p := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "v", Namespace: "default",
 			Labels: map[string]string{framev1beta1.UsageLabel: "model"}},
@@ -115,7 +117,7 @@ func TestAcceptsWhenTheEntryListCannotBeRead(t *testing.T) {
 	_ = framev1beta1.AddToScheme(s)
 	c := fake.NewClientBuilder().
 		WithScheme(s).
-		WithObjects(storageEntry("models", "ceph-rbd", "model")).
+		WithObjects(storageEntry("model")).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
 				return errors.New("the cache has not synced")

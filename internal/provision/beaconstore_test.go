@@ -125,7 +125,7 @@ func TestBeaconStoreEvictsTheOldestWhenFull(t *testing.T) {
 func TestBeaconStoreIsSafeUnderConcurrentUse(t *testing.T) {
 	s := NewBeaconStore(64)
 	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		wg.Add(2)
 		go func() { defer wg.Done(); s.Record(testBeaconToken, CheckpointEarly, time.Now()) }()
 		go func() { defer wg.Done(); _, _ = s.Get(testBeaconToken) }()

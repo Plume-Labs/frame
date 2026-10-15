@@ -254,7 +254,7 @@ var _ = Describe("FrameMachine controller", func() {
 		// asserting which IDs survive is what makes this discriminating.
 		entries := make([]redfish.LogEntry, 0, 40)
 		now := time.Now()
-		for i := 0; i < 40; i++ {
+		for i := range 40 {
 			entries = append(entries, redfish.LogEntry{
 				ID:       strconv.Itoa(i),
 				Severity: "OK",
@@ -299,7 +299,7 @@ var _ = Describe("FrameMachine controller", func() {
 		var got framev1beta1.FrameMachine
 		Expect(k8sClient.Get(ctx, req.NamespacedName, &got)).To(Succeed())
 		Expect(got.Status.EventLog).To(HaveLen(1))
-		Expect(len(got.Status.EventLog[0].Message)).To(Equal(512))
+		Expect(got.Status.EventLog[0].Message).To(HaveLen(512))
 	})
 
 	It("reports a timeout distinctly from other probe failures", func() {
@@ -491,8 +491,7 @@ var _ = Describe("FrameMachine controller", func() {
 			RequestedAt: metav1.Now(),
 		}
 
-		acted, err := r.runPowerRequest(ctx, fm, fake)
-		Expect(err).NotTo(HaveOccurred())
+		acted := r.runPowerRequest(ctx, fm, fake)
 		Expect(acted).To(BeTrue())
 		Expect(fm.Status.LastPowerActionError).To(ContainSubstring("Frobnicate"))
 		Expect(fake.resets).To(BeEmpty())

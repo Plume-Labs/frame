@@ -541,6 +541,25 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 			}).Should(Succeed())
 
+			// The previous spec leaves a ResourceQuota counting FrameJobs in
+			// this namespace. Until the quota controller has counted them
+			// (status.used carries the resource) the apiserver refuses every
+			// create the quota covers: "status unknown for quota:
+			// frame-high". status.hard alone is not enough, it is copied from
+			// the spec before anything is counted. If the quota was first
+			// synced before the controller's discovery had picked up the
+			// framejobs CRD, nothing recounts it until the full resync
+			// (kube-controller-manager --resource-quota-sync-period, 5m by
+			// default) -- which is why the wait is 6 minutes, and why this
+			// spec passed or failed on fresh kind clusters depending on timing.
+			By("waiting for the frame-high ResourceQuota to count FrameJobs")
+			Eventually(func(g Gomega) {
+				used, err := kubectlGet(g, "resourcequota", "frame-high", crNamespace,
+					`{.status.used.count/framejobs\.frame\.plume-labs\.io}`)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(used).NotTo(BeEmpty())
+			}, 6*time.Minute, 5*time.Second).Should(Succeed())
+
 			applyCR(fmt.Sprintf(`
 apiVersion: frame.plume-labs.io/v1alpha1
 kind: FrameJob
@@ -737,23 +756,23 @@ metadata:
 spec:
   email: two@example.test
   role: admin
-`, crNamespace, crNamespace))
+`, crNamespace, crNamespace), breakGlass...)
 
 			By("allowing one admin to go while another remains")
-			_, err := utils.Run(exec.Command("kubectl", "delete", "frameuser",
-				"e2e-admin-two", "-n", crNamespace))
+			_, err := utils.Run(exec.Command("kubectl", append([]string{"delete", "frameuser",
+				"e2e-admin-two", "-n", crNamespace}, breakGlass...)...))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("refusing the deletion of the last one")
-			out, err := utils.Run(exec.Command("kubectl", "delete", "frameuser",
-				"e2e-admin-one", "-n", crNamespace))
+			out, err := utils.Run(exec.Command("kubectl", append([]string{"delete", "frameuser",
+				"e2e-admin-one", "-n", crNamespace}, breakGlass...)...))
 			Expect(err).To(HaveOccurred(), "The last admin must not be deletable")
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
 
 			By("refusing the demotion of the last one just as firmly")
-			out, err = utils.Run(exec.Command("kubectl", "patch", "frameuser",
+			out, err = utils.Run(exec.Command("kubectl", append([]string{"patch", "frameuser",
 				"e2e-admin-one", "-n", crNamespace, "--type=merge",
-				"-p", `{"spec":{"role":"viewer"}}`))
+				"-p", `{"spec":{"role":"viewer"}}`}, breakGlass...)...))
 			Expect(err).To(HaveOccurred(), "The last admin must not be demotable")
 			Expect(out).To(ContainSubstring("refusing to remove the last admin"))
 		})
@@ -871,11 +890,15 @@ spec:
 			Expect(err).To(HaveOccurred(), "an editor must not be able to mint an account with a known password")
 			Expect(out).To(ContainSubstring("status.passwordHash"))
 
-			By("still letting the editor edit everything else at v1alpha1")
+			// spec.passwordAuth, not spec.email: since ee8f69e the webhook
+			// gates spec.email behind an admin, like spec.role and
+			// spec.state, so an editor renaming the account is refused for
+			// a reason that has nothing to do with the hash.
+			By("still letting the editor edit the fields no admin guard covers at v1alpha1")
 			_, err = utils.Run(exec.Command("kubectl", "patch",
 				"frameusers.v1alpha1.frame.plume-labs.io", "e2e-hash-victim",
 				"-n", crNamespace, "--type=merge", "--as="+editor,
-				"-p", `{"spec":{"email":"renamed@example.test"}}`))
+				"-p", `{"spec":{"passwordAuth":"disabled"}}`))
 			Expect(err).NotTo(HaveOccurred(), "the guard must be narrow, or it breaks the deprecation window")
 			Expect(storedHash()).To(Equal("argon2id$LEGIT"))
 
@@ -1126,11 +1149,24 @@ func storageVersionPatch(crd, version string) (names []string, patch string, err
 	return names, "[" + strings.Join(ops, ",") + "]", nil
 }
 
-// applyCR pipes a manifest through kubectl apply. Manifests are written inline
+// breakGlass impersonates the identity the FrameUser admission webhook
+// accepts as a cluster admin: a member of system:masters (clusterAdminGroup in
+// internal/webhook/frame/v1beta1/frameuser_webhook.go). The suite's own
+// kubeconfig is not one. kind builds its cluster with kubeadm, and since
+// Kubernetes 1.29 kubeadm's admin.conf user, kubernetes-admin, holds
+// cluster-admin through the kubeadm:cluster-admins group instead of
+// system:masters -- so every admin-affecting FrameUser write made as the
+// suite itself is refused as "not an admin". Talos and k3s, the clusters
+// Frame targets, still issue system:masters admin credentials. cluster-admin
+// may impersonate, so this needs no extra grant.
+var breakGlass = []string{"--as=e2e-break-glass", "--as-group=system:masters"}
+
+// applyCR pipes a manifest through kubectl apply, with any extra kubectl
+// arguments (breakGlass, for instance). Manifests are written inline
 // so each spec reads as one thing: the input, and what the cluster does with it.
-func applyCR(manifest string) {
+func applyCR(manifest string, kubectlArgs ...string) {
 	GinkgoHelper()
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd := exec.Command("kubectl", append([]string{"apply", "-f", "-"}, kubectlArgs...)...)
 	cmd.Stdin = strings.NewReader(manifest)
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to apply manifest:\n%s", manifest)

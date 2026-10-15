@@ -59,7 +59,11 @@ func TestNodeIsReady(t *testing.T) {
 		{"Ready=False", []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}, false},
 		{"Ready=Unknown", []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionUnknown}}, false},
 		{"no conditions at all", nil, false},
-		{"only an unrelated condition", []corev1.NodeCondition{{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionFalse}}, false},
+		{
+			"only an unrelated condition",
+			[]corev1.NodeCondition{{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionFalse}},
+			false,
+		},
 		{"Ready alongside an unrelated condition", []corev1.NodeCondition{
 			{Type: corev1.NodeDiskPressure, Status: corev1.ConditionTrue},
 			{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
@@ -126,7 +130,8 @@ func TestStartMediaListenerReportsAnAlreadyBoundPort(t *testing.T) {
 	// one at or past that window would mean the fast path degenerated into
 	// the same wait a real bind failure exists to avoid.
 	if elapsed >= mediaStartGrace {
-		t.Errorf("bind failure took %s to report, at or past the %s grace window meant for a listener that came up", elapsed, mediaStartGrace)
+		t.Errorf("bind failure took %s to report, at or past the %s grace window meant for a listener that came up",
+			elapsed, mediaStartGrace)
 	}
 }
 

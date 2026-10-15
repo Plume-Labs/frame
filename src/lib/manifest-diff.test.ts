@@ -10,6 +10,23 @@ const base = {
   status: { readyReplicas: 2 },
 }
 
+// The shape the tests below mutate `base` into: the fields they add, and
+// `replicas` made optional so one of them can delete it.
+type Edited = Omit<typeof base, 'metadata' | 'spec'> & {
+  metadata: typeof base.metadata & {
+    managedFields?: { manager: string }[]
+    labels?: Record<string, string>
+  }
+  spec: Omit<typeof base.spec, 'replicas' | 'template'> & {
+    replicas?: number
+    template: {
+      spec: typeof base.spec.template.spec & {
+        tolerations?: { key: string; operator: string; effect: string }[]
+      }
+    }
+  }
+}
+
 describe('changedFieldPaths', () => {
   it('reports nothing for an identical object', () => {
     expect(changedFieldPaths(base, structuredClone(base))).toEqual([])
@@ -36,7 +53,7 @@ describe('changedFieldPaths', () => {
   // the whole budget — and the change the person actually made is pushed into
   // the "+N more" counter. The label would be technically true and useless.
   it('ignores the fields the server owns', () => {
-    const after = structuredClone(base) as Record<string, any>
+    const after = structuredClone(base) as Edited
     after.metadata.resourceVersion = '2'
     after.metadata.generation = 4
     after.metadata.managedFields = [{ manager: 'frame-uiproxy' }]
@@ -48,7 +65,7 @@ describe('changedFieldPaths', () => {
   // spend the three-path budget listing the leaves of a block the person
   // pasted in as a unit.
   it('names an added subtree once, not every leaf inside it', () => {
-    const after = structuredClone(base) as Record<string, any>
+    const after = structuredClone(base) as Edited
     after.spec.template.spec.tolerations = [
       { key: 'nvidia.com/gpu', operator: 'Exists', effect: 'NoSchedule' },
     ]
@@ -56,13 +73,13 @@ describe('changedFieldPaths', () => {
   })
 
   it('names a removed field', () => {
-    const after = structuredClone(base) as Record<string, any>
+    const after = structuredClone(base) as Edited
     delete after.spec.replicas
     expect(changedFieldPaths(base, after)).toEqual(['spec.replicas'])
   })
 
   it('sorts, so the same edit always produces the same label', () => {
-    const after = structuredClone(base) as Record<string, any>
+    const after = structuredClone(base) as Edited
     after.spec.replicas = 9
     after.metadata.labels = { tier: 'api' }
     expect(changedFieldPaths(base, after)).toEqual(['metadata.labels', 'spec.replicas'])

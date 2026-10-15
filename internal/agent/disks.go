@@ -311,6 +311,10 @@ func membersOf(dev lsblkDevice) []string {
 	return out
 }
 
+// occupancyMounted is the occupancy of a disk that it or one of its
+// partitions is mounted.
+const occupancyMounted = "mounted"
+
 // occupancyOf says what is using the disk, and errs towards "occupied".
 // FrameDiskClaim's third guard fails closed on anything that is not "free",
 // so a signature this function does not recognise must never fall through
@@ -322,7 +326,7 @@ func membersOf(dev lsblkDevice) []string {
 // disk with no signature, no children and no mount is "free".
 func occupancyOf(dev lsblkDevice) string {
 	if firstMountPoint(dev) != "" {
-		return "mounted"
+		return occupancyMounted
 	}
 	if anyFSType(dev, "linux_raid_member") {
 		return "md-member"

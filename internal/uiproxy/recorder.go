@@ -54,7 +54,7 @@ func verbForMethod(method string) string {
 // pods/exec`. The record says `create` so it can be read against the RBAC rule
 // that allowed it.
 func verbForRequest(r *http.Request, ref framev1beta1.ObjectRef) string {
-	if ref.Subresource == "exec" && isExecUpgrade(r) {
+	if ref.Subresource == subresourceExec && isExecUpgrade(r) {
 		return framev1beta1.TaskVerbCreate
 	}
 	return verbForMethod(r.Method)
@@ -165,7 +165,7 @@ func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) 
 		return ""
 	}
 	action := boundAction(r.Header.Get("X-Frame-Action"))
-	if action == "" && ref.Subresource == "exec" && isExecUpgrade(r) {
+	if action == "" && ref.Subresource == subresourceExec && isExecUpgrade(r) {
 		action = execAction(ref, q)
 	}
 	task := &framev1beta1.FrameTask{
@@ -184,7 +184,7 @@ func (t *TaskRecorder) Start(ctx context.Context, id Identity, r *http.Request) 
 	}
 	task.Status = framev1beta1.FrameTaskStatus{
 		Phase:     framev1beta1.TaskPhaseRunning,
-		StartedAt: ptr(metav1.Now()),
+		StartedAt: new(metav1.Now()),
 	}
 	if err := t.c.Status().Update(ctx, task); err != nil {
 		t.log.Error("could not set task status", "err", err, "task", task.Name)
@@ -210,7 +210,7 @@ func (t *TaskRecorder) Finish(ctx context.Context, name string, httpCode int) {
 	}
 	task.Status.Phase = phase
 	task.Status.HTTPCode = int32(httpCode)
-	task.Status.FinishedAt = ptr(metav1.Now())
+	task.Status.FinishedAt = new(metav1.Now())
 	if err := t.c.Status().Update(ctx, &task); err != nil {
 		t.log.Error("could not close task", "err", err, "task", name)
 	}
@@ -226,7 +226,7 @@ func (t *TaskRecorder) Purge(ctx context.Context, olderThan time.Duration) error
 	cutoff := time.Now().Add(-olderThan)
 	for i := range list.Items {
 		f := list.Items[i].Status.FinishedAt
-		if f == nil || f.Time.After(cutoff) {
+		if f == nil || f.After(cutoff) {
 			continue
 		}
 		if err := t.c.Delete(ctx, &list.Items[i]); err != nil {
@@ -235,5 +235,3 @@ func (t *TaskRecorder) Purge(ctx context.Context, olderThan time.Duration) error
 	}
 	return nil
 }
-
-func ptr[T any](v T) *T { return &v }

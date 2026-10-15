@@ -305,7 +305,10 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 	machine := &framev1beta1.FrameMachine{
 		ObjectMeta: metav1.ObjectMeta{Name: "m1", Namespace: "default"},
 		Spec: framev1beta1.FrameMachineSpec{
-			BMC:     framev1beta1.BMCSpec{Address: "192.0.2.60", CredentialsRef: "m1-creds", TLS: framev1beta1.BMCTLSSpec{InsecureSkipVerify: true}},
+			BMC: framev1beta1.BMCSpec{
+				Address: "192.0.2.60", CredentialsRef: "m1-creds",
+				TLS: framev1beta1.BMCTLSSpec{InsecureSkipVerify: true},
+			},
 			NodeRef: "node-1",
 		},
 	}
@@ -316,7 +319,8 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 		Build()
 
 	runner := &fakeRunner{out: `{"blockdevices":[` +
-		`{"name":"sdc","path":"/dev/sdc","serial":"HDDTST01","size":1200000000000,"type":"disk","fstype":null,"mountpoint":null}` +
+		`{"name":"sdc","path":"/dev/sdc","serial":"HDDTST01","size":1200000000000,"type":"disk",` +
+		`"fstype":null,"mountpoint":null}` +
 		`]}`}
 
 	tick(context.Background(), kc, "node-1", root, runner, nil)

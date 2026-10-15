@@ -214,7 +214,7 @@ func TestFinishRunsAndReportsFailureWhenTheProxiedCallPanics(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer good")
 
 	func() {
-		defer func() { recover() }()
+		defer func() { _ = recover() }()
 		p.ServeHTTP(httptest.NewRecorder(), req)
 	}()
 

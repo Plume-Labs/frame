@@ -163,7 +163,9 @@ func TestNamespacedRolesAreBoundToTheFrameGroups(t *testing.T) {
 	}
 }
 
-var writeVerbs = map[string]bool{"create": true, "update": true, "patch": true, "delete": true, "deletecollection": true}
+var writeVerbs = map[string]bool{
+	"create": true, "update": true, "patch": true, "delete": true, "deletecollection": true,
+}
 
 // Writes through those namespaced Roles must stop at the editor tier, the
 // same way cluster-scoped writes do. Silencing an alert is an action, not a

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -295,10 +296,10 @@ func batchJobPhase(job *unstructured.Unstructured, suspended bool) string {
 		if condStatus != "True" {
 			continue
 		}
-		switch condType {
-		case "Complete":
+		switch batchv1.JobConditionType(condType) {
+		case batchv1.JobComplete:
 			return jobPhaseCompleted
-		case "Failed":
+		case batchv1.JobFailed:
 			return jobPhaseFailed
 		}
 	}

@@ -283,13 +283,13 @@ func TestAnInvitationTokenIsNotASession(t *testing.T) {
 	}
 }
 
-// inviteFor drives a real /auth/invite as an admin and returns the token from
-// the link. Going through the route rather than sealing a token by hand is
+// inviteBob drives a real /auth/invite of bob@example.com as a viewer, as an
+// admin, and returns the token from the link. Going through the route rather than sealing a token by hand is
 // what makes the tests below cover the pair rather than one half of it.
-func inviteFor(t *testing.T, srv *Server, admin *framev1beta1.FrameUser, email, role string) string {
+func inviteBob(t *testing.T, srv *Server, admin *framev1beta1.FrameUser) string {
 	t.Helper()
 	rec := doWithCookie(t, srv, "/auth/invite",
-		`{"email":"`+email+`","role":"`+role+`"}`, sessionFor(t, srv, admin))
+		`{"email":"bob@example.com","role":"viewer"}`, sessionFor(t, srv, admin))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("invite = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -305,7 +305,7 @@ func inviteFor(t *testing.T, srv *Server, admin *framev1beta1.FrameUser, email, 
 func TestInviteAcceptGrantsAShortSessionThatCanEnrol(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, _ := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
 	if rec.Code != http.StatusNoContent {
@@ -333,7 +333,7 @@ func TestInviteAcceptGrantsAShortSessionThatCanEnrol(t *testing.T) {
 func TestSecondInviteAcceptIsRefusedOnceAKeyIsEnrolled(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, c := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	if rec := do(t, srv, http.MethodPost, "/auth/invite/accept",
 		`{"token":"`+token+`"}`); rec.Code != http.StatusNoContent {
@@ -366,7 +366,7 @@ func TestSecondInviteAcceptIsRefusedOnceAKeyIsEnrolled(t *testing.T) {
 func TestInviteAcceptIsRefusedOnceAPasswordExists(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, c := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	var bob framev1beta1.FrameUser
 	// Derive the name rather than spelling it: frameUserNameForEmail appends a
@@ -399,7 +399,7 @@ func TestInviteAcceptIsRefusedOnceAPasswordExists(t *testing.T) {
 func TestInviteAcceptPathRefusesADisabledAccount(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, c := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	var bob framev1beta1.FrameUser
 	// Derive the name rather than spelling it: frameUserNameForEmail appends a
@@ -476,7 +476,7 @@ func TestInviteAcceptRefusesForgedExpiredAndUnknown(t *testing.T) {
 func TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, _ := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	first := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
 	if first.Code != http.StatusNoContent {
@@ -505,7 +505,7 @@ func TestAcceptingAnUnspentLinkTwiceIsNotItselfSpending(t *testing.T) {
 func TestAnAcceptedInvitationCannotMintATokenOrInvite(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, c := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	rec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
 	if rec.Code != http.StatusNoContent {
@@ -586,7 +586,7 @@ func TestOrdinarySessionStillWorksOnRegisterRoutes(t *testing.T) {
 func TestEnrolCookieCanReachRegisterFinish(t *testing.T) {
 	admin := fixture("root", "root@example.com", framev1beta1.RoleAdmin)
 	srv, _ := bootstrapServer(t, false, admin)
-	token := inviteFor(t, srv, admin, "bob@example.com", "viewer")
+	token := inviteBob(t, srv, admin)
 
 	acceptRec := do(t, srv, http.MethodPost, "/auth/invite/accept", `{"token":"`+token+`"}`)
 	if acceptRec.Code != http.StatusNoContent {

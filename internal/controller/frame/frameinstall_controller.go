@@ -113,6 +113,11 @@ const beaconLostAfter = 60 * time.Second
 //
 // It returns a condition and nothing else. It cannot fail an install, end a
 // phase, or shorten a timeout, and the test beside it asserts exactly that.
+// reasonInstallerUnavailable is the InstallerResponding reason for a fact
+// about this process (progress could not be read, or beacon history was
+// lost), never about the machine.
+const reasonInstallerUnavailable = "Unavailable"
+
 func installerRespondingCondition(st provision.BeaconState, known, everKnown bool, err error, now time.Time) metav1.Condition {
 	cond := metav1.Condition{Type: "InstallerResponding"}
 	switch {
@@ -120,7 +125,7 @@ func installerRespondingCondition(st provision.BeaconState, known, everKnown boo
 		// Frame could not ask. Never conflated with "the machine is silent":
 		// one is a fact about the machine, the other about this process.
 		cond.Status = metav1.ConditionUnknown
-		cond.Reason = "Unavailable"
+		cond.Reason = reasonInstallerUnavailable
 		cond.Message = fmt.Sprintf("could not read installer progress: %v", err)
 	case !known && everKnown:
 		// This installation was known before and is not now: provisiond
@@ -131,7 +136,7 @@ func installerRespondingCondition(st provision.BeaconState, known, everKnown boo
 		// this process rather than the machine, and design §7 already
 		// reserves that reason for exactly this case.
 		cond.Status = metav1.ConditionUnknown
-		cond.Reason = "Unavailable"
+		cond.Reason = reasonInstallerUnavailable
 		cond.Message = "beacon history was lost (frame-provisiond likely restarted); this says nothing about whether the installer is still running"
 	case !known:
 		cond.Status = metav1.ConditionFalse
@@ -1061,8 +1066,8 @@ func (r *FrameInstallReconciler) checkHostnameNotTaken(ctx context.Context, fi *
 // CIDR, per its CEL rule -- can be compared against a corev1.NodeAddress,
 // which never carries one.
 func addressWithoutCIDR(s string) string {
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, "/"); ok {
+		return before
 	}
 	return s
 }
@@ -1166,7 +1171,7 @@ func newInstallUID() (string, error) {
 }
 
 func toProvisionSpec(fi *framev1beta1.FrameInstall, installUID, sshPublicKey, joinToken string) provision.Spec {
-	var disks []provision.Disk
+	disks := make([]provision.Disk, 0, len(fi.Spec.Layout.Disks))
 	for _, d := range fi.Spec.Layout.Disks {
 		disks = append(disks, provision.Disk{ByID: d.ByID, SizeBytes: d.SizeBytes})
 	}

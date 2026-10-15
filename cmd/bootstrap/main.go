@@ -249,7 +249,11 @@ func run() error {
 		_ = mediaSrv.Shutdown(sctx)
 	}()
 
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.BMC.InsecureSkipVerify} //nolint:gosec // operator-configured, matches the controller's identical construction
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		// operator-configured, matches the controller's identical construction
+		InsecureSkipVerify: cfg.BMC.InsecureSkipVerify, //nolint:gosec
+	}
 	bmc := provision.NewRedfishBMC("https://"+cfg.BMC.Address, cfg.BMC.Username, cfg.BMC.Password, tlsCfg)
 
 	images := &provision.LocalImageStore{
@@ -446,8 +450,8 @@ func startMediaListener(addr string, handler http.Handler) (*http.Server, error)
 // NodeAddress is a bare address the installer dials, not the CIDR notation
 // Network.Address carries for the autoinstall network section.
 func addressWithoutCIDR(s string) string {
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		return s[:i]
+	if before, _, ok := strings.Cut(s, "/"); ok {
+		return before
 	}
 	return s
 }

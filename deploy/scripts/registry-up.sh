@@ -15,7 +15,7 @@
 set -euo pipefail
 
 say() { echo -e "\n\033[1;34m==>\033[0m $*"; }
-NODE_IP="${REGISTRY_NODE_IP:?set REGISTRY_NODE_IP to the node the registry's NodePort should be reached at (e.g. the cp node)}"
+NODE_IP="${REGISTRY_NODE_IP:?set REGISTRY_NODE_IP to the node the registry NodePort should be reached at (e.g. the cp node)}"
 NODE_PORT="${REGISTRY_NODE_PORT:-30500}"
 
 say "registry:2 (namespace registry, ceph-rbd PVC, NodePort $NODE_PORT)"

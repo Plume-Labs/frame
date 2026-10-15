@@ -89,44 +89,8 @@ func (r *SubscriptionStatusReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if err := r.Client.List(ctx, &alerts, client.InNamespace(r.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}
-	var pending int32
-	var lastSuccess, lastErrorAt *metav1.Time
-	lastError := ""
-	for i := range alerts.Items {
-		a := &alerts.Items[i]
-		if a.Status.State == "" {
-			continue
-		}
-		var d *framev1beta1.AlertDelivery
-		for j := range a.Status.Deliveries {
-			if a.Status.Deliveries[j].Subscription == sub.Name {
-				d = &a.Status.Deliveries[j]
-			}
-		}
-		// A subscription whose filter no longer matches can still have a
-		// resolution due: relay_controller.go's resolution-only path keeps
-		// driving an entry that was delivered Firing (and not yet
-		// Excluded) until the alert's Resolved state is actually sent —
-		// paused, a permanent failure, or backoff can all stall that. That
-		// must keep showing here as pending, not silently as done.
-		stillOpenForResolution := d != nil && d.DeliveredState == framev1beta1.AlertStateFiring && !d.Excluded &&
-			a.Status.State == framev1beta1.AlertStateResolved
-		if !Matches(sub.Spec.Filter, a) && !stillOpenForResolution {
-			continue
-		}
-		if d == nil || d.DeliveredState != a.Status.State {
-			pending++
-		}
-		if d == nil {
-			continue
-		}
-		if d.LastDeliveredAt != nil && (lastSuccess == nil || d.LastDeliveredAt.After(lastSuccess.Time)) {
-			lastSuccess = d.LastDeliveredAt
-		}
-		if d.LastError != "" && d.LastAttemptAt != nil && (lastErrorAt == nil || d.LastAttemptAt.After(lastErrorAt.Time)) {
-			lastErrorAt, lastError = d.LastAttemptAt, d.LastError
-		}
-	}
+	t := tallyDeliveries(&sub, alerts.Items)
+	pending, lastSuccess, lastError := t.pending, t.lastSuccess, t.lastError
 	pendingDeliveries.WithLabelValues(sub.Name).Set(float64(pending))
 
 	// Preserve lastSuccessAt: never regress to an older value
@@ -157,6 +121,56 @@ func (r *SubscriptionStatusReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: statusRecomputeEvery}, nil
+}
+
+// deliveryTally is what a subscription's status summarises across the
+// alerts: how many are still due to it, and its latest success and error.
+type deliveryTally struct {
+	pending     int32
+	lastSuccess *metav1.Time
+	lastErrorAt *metav1.Time
+	lastError   string
+}
+
+// tallyDeliveries walks alerts for sub's deliveries.
+func tallyDeliveries(sub *framev1beta1.FrameAlertSubscription, alerts []framev1beta1.FrameAlert) deliveryTally {
+	var t deliveryTally
+	for i := range alerts {
+		a := &alerts[i]
+		if a.Status.State == "" {
+			continue
+		}
+		var d *framev1beta1.AlertDelivery
+		for j := range a.Status.Deliveries {
+			if a.Status.Deliveries[j].Subscription == sub.Name {
+				d = &a.Status.Deliveries[j]
+			}
+		}
+		// A subscription whose filter no longer matches can still have a
+		// resolution due: relay_controller.go's resolution-only path keeps
+		// driving an entry that was delivered Firing (and not yet
+		// Excluded) until the alert's Resolved state is actually sent —
+		// paused, a permanent failure, or backoff can all stall that. That
+		// must keep showing here as pending, not silently as done.
+		stillOpenForResolution := d != nil && d.DeliveredState == framev1beta1.AlertStateFiring && !d.Excluded &&
+			a.Status.State == framev1beta1.AlertStateResolved
+		if !Matches(sub.Spec.Filter, a) && !stillOpenForResolution {
+			continue
+		}
+		if d == nil || d.DeliveredState != a.Status.State {
+			t.pending++
+		}
+		if d == nil {
+			continue
+		}
+		if d.LastDeliveredAt != nil && (t.lastSuccess == nil || d.LastDeliveredAt.After(t.lastSuccess.Time)) {
+			t.lastSuccess = d.LastDeliveredAt
+		}
+		if d.LastError != "" && d.LastAttemptAt != nil && (t.lastErrorAt == nil || d.LastAttemptAt.After(t.lastErrorAt.Time)) {
+			t.lastErrorAt, t.lastError = d.LastAttemptAt, d.LastError
+		}
+	}
+	return t
 }
 
 func equalTimes(a, b *metav1.Time) bool {

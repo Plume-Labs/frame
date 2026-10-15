@@ -89,7 +89,7 @@ var _ = Describe("FrameMachine v1beta1 schema", func() {
 		fm := newMachine("fm-log", "192.0.2.53")
 		Expect(k8sClient.Create(context.Background(), fm)).To(Succeed())
 		entries := make([]framev1beta1.EventLogEntry, 0, 26)
-		for i := 0; i < 26; i++ {
+		for range 26 {
 			entries = append(entries, framev1beta1.EventLogEntry{ID: "e", Severity: "OK", Message: "m"})
 		}
 		fm.Status.EventLog = entries

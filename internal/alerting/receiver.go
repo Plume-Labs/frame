@@ -128,7 +128,7 @@ func (r *Receiver) record(ctx context.Context, a Alert) error {
 	now := metav1.NewTime(r.Now())
 	state := framev1beta1.AlertStateFiring
 	var endsAt *metav1.Time
-	if a.Status == "resolved" {
+	if a.Status == statusResolved {
 		state = framev1beta1.AlertStateResolved
 		t := metav1.NewTime(a.EndsAt.Truncate(time.Second))
 		endsAt = &t

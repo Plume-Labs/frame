@@ -686,7 +686,7 @@ func TestMediaHandlerRefusesEnoughFakeBeaconsToEvictALiveInstall(t *testing.T) {
 		t.Fatalf("the real install's own beacon was refused: status = %d", rr.Code)
 	}
 
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		fake := fmt.Sprintf("%032x", i+1)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/beacon/"+fake+"/"+CheckpointEarly, nil))

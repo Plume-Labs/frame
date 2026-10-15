@@ -17,11 +17,11 @@ import (
 // ever matters to an https connection -- these tests exist to pin the
 // request shape (method, path, body, auth), not TLS handling, which
 // internal/redfish's own client already owns and tests.
-func newRedfishBMCTestServer(t *testing.T, handler http.HandlerFunc) (*RedfishBMC, *httptest.Server) {
+func newRedfishBMCTestServer(t *testing.T, handler http.HandlerFunc) *RedfishBMC {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return NewRedfishBMC(srv.URL, "admin", "s3cret", nil), srv
+	return NewRedfishBMC(srv.URL, "admin", "s3cret", nil)
 }
 
 // TestRedfishBMCInsertMediaPostsTheHPOEMAction pins InsertMedia's request
@@ -33,7 +33,7 @@ func TestRedfishBMCInsertMediaPostsTheHPOEMAction(t *testing.T) {
 	var gotBody []byte
 	authOK := false
 
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		gotUser, gotPass, authOK = r.BasicAuth()
@@ -76,10 +76,9 @@ func TestRedfishBMCInsertMediaPostsTheHPOEMAction(t *testing.T) {
 // "return true, nil".
 func TestRedfishBMCMediaInsertedDecodesBothOutcomes(t *testing.T) {
 	for _, want := range []bool{true, false} {
-		want := want
 		t.Run(fmt.Sprintf("inserted=%v", want), func(t *testing.T) {
 			var gotMethod, gotPath string
-			b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 				gotMethod = r.Method
 				gotPath = r.URL.Path
 				w.Header().Set("Content-Type", "application/json")
@@ -108,7 +107,7 @@ func TestRedfishBMCMediaInsertedDecodesBothOutcomes(t *testing.T) {
 // is inserted (the no-op on ejected media is in redfishbmc_cleanup_test.go).
 func TestRedfishBMCEjectMediaPostsTheMatchingHPOEMAction(t *testing.T) {
 	var posts []string
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"Inserted": true}`))
 			return
@@ -138,7 +137,7 @@ func TestRedfishBMCEjectMediaPostsTheMatchingHPOEMAction(t *testing.T) {
 // EjectMedia/InsertMedia/SetBootOnce needs the BMC's own diagnostic text,
 // not just "it failed".
 func TestRedfishBMCDoSurfacesANonSuccessStatus(t *testing.T) {
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "iLO is busy processing another request", http.StatusServiceUnavailable)
 	})
 
@@ -159,7 +158,7 @@ func TestRedfishBMCDoSurfacesANonSuccessStatus(t *testing.T) {
 // MediaInserted() == false, which would be indistinguishable from the BMC
 // truthfully reporting no media attached.
 func TestRedfishBMCMediaInsertedSurfacesADecodeError(t *testing.T) {
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("not json"))
 	})

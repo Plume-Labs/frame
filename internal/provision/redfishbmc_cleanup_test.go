@@ -182,7 +182,7 @@ func TestClearBootOverrideWritesNothingWhenAlreadyDisabled(t *testing.T) {
 // a possibly active override behind a transient read error.
 func TestClearBootOverrideStillClearsWhenTheReadFails(t *testing.T) {
 	var patches []string
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			http.Error(w, "iLO is busy", http.StatusServiceUnavailable)
 			return
@@ -204,7 +204,7 @@ func TestClearBootOverrideStillClearsWhenTheReadFails(t *testing.T) {
 // virtual CD does not stop the cleanup from trying the eject.
 func TestEjectMediaStillEjectsWhenTheFirstReadFails(t *testing.T) {
 	var posts int
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			http.Error(w, "iLO is busy", http.StatusServiceUnavailable)
 			return
@@ -224,7 +224,7 @@ func TestEjectMediaStillEjectsWhenTheFirstReadFails(t *testing.T) {
 // object with no BootSourceOverrideEnabled has no override to clear.
 func TestClearBootOverrideWritesNothingWithoutAnOverrideProperty(t *testing.T) {
 	var writes int
-	b, _ := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	b := newRedfishBMCTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"Boot": {"BootSourceOverrideTarget": "None"}}`))
 			return

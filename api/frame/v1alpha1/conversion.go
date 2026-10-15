@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
@@ -249,9 +250,7 @@ func stashFrameJobContainer(dst *FrameJob, src *v1beta1.FrameJob) error {
 		return fmt.Errorf("stashing spec.container/spec.type for v1alpha1: %w", err)
 	}
 	annotations := make(map[string]string, len(dst.Annotations)+1)
-	for k, v := range dst.Annotations {
-		annotations[k] = v
-	}
+	maps.Copy(annotations, dst.Annotations)
 	annotations[framejobContainerAnnotation] = string(raw)
 	dst.Annotations = annotations
 	return nil
@@ -487,20 +486,20 @@ func (src *SchedulingPolicy) ConvertTo(dstRaw conversion.Hub) error {
 		return fmt.Errorf("ConvertTo: expected *v1beta1.SchedulingPolicy, got %T", dstRaw)
 	}
 
+	// SchedulingPolicySpec is field-for-field identical in both versions, so
+	// a type conversion copies it. It is also the guard: the day a field is
+	// added to one version's spec and not the other, this stops compiling
+	// instead of silently dropping the field. Status declares the same fields
+	// in a different order, which a conversion does not accept.
 	dst.ObjectMeta = src.ObjectMeta
-
-	dst.Spec.Scheduler = src.Spec.Scheduler
-	dst.Spec.QueueName = src.Spec.QueueName
-	dst.Spec.PriorityClass = src.Spec.PriorityClass
-	dst.Spec.Preemption = src.Spec.Preemption
-	dst.Spec.PriorityValue = src.Spec.PriorityValue
-	dst.Spec.QueueWeight = src.Spec.QueueWeight
-
-	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.OwnedPriorityClass = src.Status.OwnedPriorityClass
-	dst.Status.OwnedQueue = src.Status.OwnedQueue
-	dst.Status.OwnedQueueScheduler = src.Status.OwnedQueueScheduler
-	dst.Status.Conditions = src.Status.Conditions
+	dst.Spec = v1beta1.SchedulingPolicySpec(src.Spec)
+	dst.Status = v1beta1.SchedulingPolicyStatus{
+		ObservedGeneration:  src.Status.ObservedGeneration,
+		OwnedPriorityClass:  src.Status.OwnedPriorityClass,
+		OwnedQueue:          src.Status.OwnedQueue,
+		OwnedQueueScheduler: src.Status.OwnedQueueScheduler,
+		Conditions:          src.Status.Conditions,
+	}
 
 	return nil
 }
@@ -511,20 +510,16 @@ func (dst *SchedulingPolicy) ConvertFrom(srcRaw conversion.Hub) error {
 		return fmt.Errorf("ConvertFrom: expected *v1beta1.SchedulingPolicy, got %T", srcRaw)
 	}
 
+	// Same shapes as in ConvertTo, in the other direction.
 	dst.ObjectMeta = src.ObjectMeta
-
-	dst.Spec.Scheduler = src.Spec.Scheduler
-	dst.Spec.QueueName = src.Spec.QueueName
-	dst.Spec.PriorityClass = src.Spec.PriorityClass
-	dst.Spec.Preemption = src.Spec.Preemption
-	dst.Spec.PriorityValue = src.Spec.PriorityValue
-	dst.Spec.QueueWeight = src.Spec.QueueWeight
-
-	dst.Status.ObservedGeneration = src.Status.ObservedGeneration
-	dst.Status.OwnedPriorityClass = src.Status.OwnedPriorityClass
-	dst.Status.OwnedQueue = src.Status.OwnedQueue
-	dst.Status.OwnedQueueScheduler = src.Status.OwnedQueueScheduler
-	dst.Status.Conditions = src.Status.Conditions
+	dst.Spec = SchedulingPolicySpec(src.Spec)
+	dst.Status = SchedulingPolicyStatus{
+		ObservedGeneration:  src.Status.ObservedGeneration,
+		OwnedPriorityClass:  src.Status.OwnedPriorityClass,
+		OwnedQueue:          src.Status.OwnedQueue,
+		OwnedQueueScheduler: src.Status.OwnedQueueScheduler,
+		Conditions:          src.Status.Conditions,
+	}
 
 	return nil
 }

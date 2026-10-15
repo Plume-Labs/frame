@@ -119,22 +119,8 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 	if serialErr != nil {
 		return fail(PhasePending, phaseErr(pendingCtx, fmt.Errorf("reading the machine's serial: %w", serialErr)))
 	}
-	switch {
-	// An empty confirmation and an empty reported serial compare equal to
-	// each other, so the comparison below must never be reached with either
-	// side empty: doing so would run the whole destructive sequence with no
-	// confirmation having actually happened. Checked, and named, separately
-	// -- ssh.go's WaitForOurSystem guards the identical shape for an empty
-	// install UID, on the less dangerous of the two checks here (a wrong
-	// marker match versus a wrong machine wiped).
-	case o.ConfirmSerial == "":
-		return fail(PhasePending, fmt.Errorf("no serial was confirmed for this install: refusing, because an empty confirmation proves nothing about which machine this is"))
-	case serial == "":
-		return fail(PhasePending, fmt.Errorf("the machine reports an empty serial: refusing, because it cannot be compared against the confirmed serial %q", o.ConfirmSerial))
-	case serial != o.ConfirmSerial:
-		return fail(PhasePending, fmt.Errorf(
-			"this machine reports serial %q and the request confirmed %q: refusing, because the cost of being wrong here is a wiped disk on the wrong machine",
-			serial, o.ConfirmSerial))
+	if err := checkConfirmedSerial(serial, o.ConfirmSerial); err != nil {
+		return fail(PhasePending, err)
 	}
 
 	// Preparing. Every phase gets its own deadline: a build that hangs must
@@ -289,4 +275,27 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (res Result, err er
 		case <-time.After(o.Poll):
 		}
 	}
+}
+
+// checkConfirmedSerial is Install's Pending guard: serial is what the machine
+// reports, confirmed what the request retyped by hand.
+func checkConfirmedSerial(serial, confirmed string) error {
+	switch {
+	// An empty confirmation and an empty reported serial compare equal to
+	// each other, so the comparison below must never be reached with either
+	// side empty: doing so would run the whole destructive sequence with no
+	// confirmation having actually happened. Checked, and named, separately
+	// -- ssh.go's WaitForOurSystem guards the identical shape for an empty
+	// install UID, on the less dangerous of the two checks here (a wrong
+	// marker match versus a wrong machine wiped).
+	case confirmed == "":
+		return fmt.Errorf("no serial was confirmed for this install: refusing, because an empty confirmation proves nothing about which machine this is")
+	case serial == "":
+		return fmt.Errorf("the machine reports an empty serial: refusing, because it cannot be compared against the confirmed serial %q", confirmed)
+	case serial != confirmed:
+		return fmt.Errorf(
+			"this machine reports serial %q and the request confirmed %q: refusing, because the cost of being wrong here is a wiped disk on the wrong machine",
+			serial, confirmed)
+	}
+	return nil
 }

@@ -91,7 +91,9 @@ func or(v, def string) string {
 // the address they're built from.
 func validateMediaURL(raw string) error {
 	if raw == "" {
-		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot arguments, so provisiond refuses to start rather than build images that fetch their autoinstall seed from nowhere")
+		return fmt.Errorf("MEDIA_URL is not set: every built image bakes this address into its own boot " +
+			"arguments, so provisiond refuses to start rather than build images that fetch their autoinstall seed " +
+			"from nowhere")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {

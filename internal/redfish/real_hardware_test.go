@@ -163,7 +163,7 @@ func realRoutes(state string) map[string]string {
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/":            "smartstorage_arraycontrollers_0_degraded.json",
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/": "smartstorage_diskdrives_degraded.json",
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
 	}
@@ -230,7 +230,7 @@ func TestTheCachedTemperatureIsIdenticalInEveryPowerState(t *testing.T) {
 	if len(readings) != 3 {
 		t.Fatalf("expected a CPU reading in each state, got %v", readings)
 	}
-	if !(readings[0] == readings[1] && readings[1] == readings[2]) {
+	if readings[0] != readings[1] || readings[1] != readings[2] {
 		t.Fatalf("readings differ across power states (%v) — the premise of this lot's "+
 			"trustworthiness flag no longer holds and Finding 1 must be re-derived", readings)
 	}
@@ -537,7 +537,7 @@ func TestSmartStorageRootIsDiscoveredNotGuessed(t *testing.T) {
 	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/", "smartstorage_arraycontrollers_degraded.json")
 	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/", "smartstorage_arraycontrollers_0_degraded.json")
 	serve("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/", "smartstorage_diskdrives_degraded.json")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		serve(
 			fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i),
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i),
@@ -631,7 +631,7 @@ func realSmartStorageRoutes() map[string]string {
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/":            "smartstorage_arraycontrollers_0_degraded.json",
 		"/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/": "smartstorage_diskdrives_degraded.json",
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		routes[fmt.Sprintf("/redfish/v1/Systems/1/SmartStorage/ArrayControllers/0/DiskDrives/%d/", i)] =
 			fmt.Sprintf("smartstorage_diskdrive_%d_degraded.json", i)
 	}
@@ -674,7 +674,7 @@ func TestOneMissingDiskDocumentCostsOnlyThatDisk(t *testing.T) {
 		t.Errorf("got %d drives, want 7 — one 404 document must cost exactly one disk, not the rest of the walk",
 			len(snap.Inventory.Drives))
 	}
-	var serials []string
+	serials := make([]string, 0, len(snap.Inventory.Drives))
 	for _, d := range snap.Inventory.Drives {
 		serials = append(serials, d.SerialNumber)
 	}

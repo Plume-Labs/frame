@@ -22,6 +22,14 @@ const (
 	maxValueBytes = 4096
 )
 
+// The two values of an Alertmanager webhook alert's status, lowercase on the
+// wire. FrameAlert's own states (AlertStateFiring/Resolved) are capitalised
+// and distinct.
+const (
+	statusFiring   = "firing"
+	statusResolved = "resolved"
+)
+
 var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 
 // Payload is Alertmanager's webhook body, version 4. Frame both reads it and
@@ -57,7 +65,7 @@ func Validate(p Payload) error {
 		if !fingerprintPattern.MatchString(a.Fingerprint) {
 			return fmt.Errorf("alert %d: fingerprint %q", i, a.Fingerprint)
 		}
-		if a.Status != "firing" && a.Status != "resolved" {
+		if a.Status != statusFiring && a.Status != statusResolved {
 			return fmt.Errorf("alert %d: status %q", i, a.Status)
 		}
 	}

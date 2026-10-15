@@ -157,7 +157,8 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if info.Mode().Perm()&worldReadable != 0 {
 		return Config{}, fmt.Errorf(
-			"config %s is world-readable (mode %s): refusing, because this file carries a BMC password and there is nowhere else on a laptop with no cluster yet to put one",
+			"config %s is world-readable (mode %s): refusing, because this file carries a BMC password and there "+
+				"is nowhere else on a laptop with no cluster yet to put one",
 			path, info.Mode().Perm())
 	}
 
@@ -200,7 +201,8 @@ func LoadConfig(path string) (Config, error) {
 
 	if strings.TrimSpace(cfg.ConfirmSerial) == "" {
 		return Config{}, fmt.Errorf(
-			"confirmSerial is empty: refusing, because an empty confirmation proves nothing about which machine this is and the cost of being wrong is a wiped disk on the wrong one")
+			"confirmSerial is empty: refusing, because an empty confirmation proves nothing about which machine " +
+				"this is and the cost of being wrong is a wiped disk on the wrong one")
 	}
 
 	if err := resolveSecrets(&cfg); err != nil {
@@ -275,7 +277,8 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("sshKeyPath is empty")
 	}
 	if _, err := os.Stat(cfg.SSHKeyPath + ".pub"); err != nil {
-		return Config{}, fmt.Errorf("ssh key %s: its public half %s.pub could not be read: %w", cfg.SSHKeyPath, cfg.SSHKeyPath, err)
+		return Config{}, fmt.Errorf("ssh key %s: its public half %s.pub could not be read: %w",
+			cfg.SSHKeyPath, cfg.SSHKeyPath, err)
 	}
 
 	return cfg, nil
@@ -294,7 +297,8 @@ func LoadConfig(path string) (Config, error) {
 func validateMediaBaseURL(raw string) error {
 	if raw == "" {
 		return fmt.Errorf(
-			"mediaBaseURL is not set: every built image bakes this address into its own boot arguments, so frame bootstrap refuses to start rather than build an image that fetches its autoinstall seed from nowhere")
+			"mediaBaseURL is not set: every built image bakes this address into its own boot arguments, so frame " +
+				"bootstrap refuses to start rather than build an image that fetches its autoinstall seed from nowhere")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -309,7 +313,8 @@ func validateMediaBaseURL(raw string) error {
 	switch strings.ToLower(u.Hostname()) {
 	case "localhost", "127.0.0.1":
 		return fmt.Errorf(
-			"mediaBaseURL %q: names this laptop itself (%s); a BMC on the management network cannot reach it, and the failure that produces is a long silence ending in a timeout, not an error",
+			"mediaBaseURL %q: names this laptop itself (%s); a BMC on the management network cannot reach it, and "+
+				"the failure that produces is a long silence ending in a timeout, not an error",
 			raw, u.Hostname())
 	}
 

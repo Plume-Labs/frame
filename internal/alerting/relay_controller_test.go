@@ -98,9 +98,11 @@ func getAlert(t *testing.T, c client.Client) *framev1beta1.FrameAlert {
 	return &fa
 }
 
-func delivery(fa *framev1beta1.FrameAlert, sub string) *framev1beta1.AlertDelivery {
+// delivery returns fa's delivery record for the "acme" subscription, the
+// one every test in this file subscribes.
+func delivery(fa *framev1beta1.FrameAlert) *framev1beta1.AlertDelivery {
 	for i := range fa.Status.Deliveries {
-		if fa.Status.Deliveries[i].Subscription == sub {
+		if fa.Status.Deliveries[i].Subscription == "acme" {
 			return &fa.Status.Deliveries[i]
 		}
 	}
@@ -118,7 +120,7 @@ func TestRelayDeliversAFiringAlertOnce(t *testing.T) {
 	if len(tn.received) != 1 || tn.received[0] != "firing" {
 		t.Fatalf("tenant received %v", tn.received)
 	}
-	d := delivery(getAlert(t, c), "acme")
+	d := delivery(getAlert(t, c))
 	if d == nil || d.DeliveredState != "Firing" || d.Attempts != 0 || d.LastDeliveredAt == nil {
 		t.Fatalf("delivery: %+v", d)
 	}
@@ -141,7 +143,7 @@ func TestRelaySendsFiringThenResolvedForAnAlertNeverDelivered(t *testing.T) {
 	if len(tn.received) != 2 || tn.received[0] != "firing" || tn.received[1] != "resolved" {
 		t.Fatalf("tenant received %v, want [firing resolved]", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d.DeliveredState != "Resolved" {
+	if d := delivery(getAlert(t, c)); d.DeliveredState != "Resolved" {
 		t.Fatalf("delivery: %+v", d)
 	}
 }
@@ -163,7 +165,7 @@ func TestRelayDoesNotReplayResolvedAlertsToANewSubscription(t *testing.T) {
 	if len(tn.received) != 0 {
 		t.Fatalf("tenant received %v, want nothing", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || d.DeliveredState != "Resolved" || d.LastDeliveredAt != nil {
+	if d := delivery(getAlert(t, c)); d == nil || d.DeliveredState != "Resolved" || d.LastDeliveredAt != nil {
 		t.Fatalf("delivery: %+v", d)
 	}
 }
@@ -174,7 +176,7 @@ func TestRelayRetriesA5xxWithBackoffThenDelivers(t *testing.T) {
 	r, c, ck := newRelay(t, storedAlert("Firing", nil), subscription("acme", tn.srv.URL, framev1beta1.AlertFilter{}), subToken("acme"))
 
 	res := reconcileAlert(t, r)
-	d := delivery(getAlert(t, c), "acme")
+	d := delivery(getAlert(t, c))
 	if d.Attempts != 1 || d.DeliveredState != "" || d.LastError == "" || res.RequeueAfter != 5*time.Second {
 		t.Fatalf("after 503: %+v requeue=%v", d, res.RequeueAfter)
 	}
@@ -187,7 +189,7 @@ func TestRelayRetriesA5xxWithBackoffThenDelivers(t *testing.T) {
 
 	ck.t = ck.t.Add(4 * time.Second)
 	reconcileAlert(t, r)
-	if d := delivery(getAlert(t, c), "acme"); d.DeliveredState != "Firing" || d.Attempts != 0 {
+	if d := delivery(getAlert(t, c)); d.DeliveredState != "Firing" || d.Attempts != 0 {
 		t.Fatalf("not delivered after backoff: %+v", d)
 	}
 }
@@ -204,7 +206,7 @@ func TestRelayStopsOnAPermanentFailureUntilTheSubscriptionChanges(t *testing.T) 
 	if len(tn.received) != 1 {
 		t.Fatalf("401 retried: %v", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); !d.PermanentFailure {
+	if d := delivery(getAlert(t, c)); !d.PermanentFailure {
 		t.Fatalf("not marked permanent: %+v", d)
 	}
 
@@ -225,7 +227,7 @@ func TestRelayLiftsAPermanentFailureWhenTheAlertChangesState(t *testing.T) {
 	r, c, ck := newRelay(t, storedAlert("Firing", nil), sub, subToken("acme"))
 
 	reconcileAlert(t, r)
-	if d := delivery(getAlert(t, c), "acme"); !d.PermanentFailure || d.FailedState != "Firing" {
+	if d := delivery(getAlert(t, c)); !d.PermanentFailure || d.FailedState != "Firing" {
 		t.Fatalf("not marked permanent for Firing: %+v", d)
 	}
 
@@ -238,7 +240,7 @@ func TestRelayLiftsAPermanentFailureWhenTheAlertChangesState(t *testing.T) {
 	_ = c.Status().Update(context.Background(), &fa)
 
 	reconcileAlert(t, r)
-	if d := delivery(getAlert(t, c), "acme"); d.PermanentFailure || d.DeliveredState != "Resolved" {
+	if d := delivery(getAlert(t, c)); d.PermanentFailure || d.DeliveredState != "Resolved" {
 		t.Fatalf("permanent failure not lifted on state change: %+v", d)
 	}
 	if got := tn.received[len(tn.received)-1]; got != "resolved" {
@@ -256,7 +258,7 @@ func TestRelayHoldsDeliveriesWhilePaused(t *testing.T) {
 	if len(tn.received) != 0 {
 		t.Fatal("paused subscription received an alert")
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || d.DeliveredState != "" {
+	if d := delivery(getAlert(t, c)); d == nil || d.DeliveredState != "" {
 		t.Fatalf("paused delivery must stay pending: %+v", d)
 	}
 }
@@ -311,7 +313,7 @@ func TestRelayRefusesAnUnlabelledTokenSecretAndRecordsAPermanentFailure(t *testi
 		t.Fatalf("tenant received %v, want nothing", tn.received)
 	}
 	want := "token Secret acme-token is not labelled " + AlertTokenLabel + "=true"
-	d := delivery(getAlert(t, c), "acme")
+	d := delivery(getAlert(t, c))
 	if d == nil || !d.PermanentFailure || d.LastError != want {
 		t.Fatalf("delivery: %+v, want PermanentFailure with lastError %q", d, want)
 	}
@@ -335,7 +337,7 @@ func TestRelayDoesNotReplayResolvedAlertsWhenAFilterWidens(t *testing.T) {
 	if len(tn.received) != 0 {
 		t.Fatalf("tenant received %v while firing and excluded, want nothing", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d != nil {
+	if d := delivery(getAlert(t, c)); d != nil {
 		t.Fatalf("delivery created for a non-matching firing alert: %+v", d)
 	}
 
@@ -358,7 +360,7 @@ func TestRelayDoesNotReplayResolvedAlertsWhenAFilterWidens(t *testing.T) {
 	if len(tn.received) != 0 {
 		t.Fatalf("tenant received %v on resolution while excluded, want nothing", tn.received)
 	}
-	d := delivery(getAlert(t, c), "acme")
+	d := delivery(getAlert(t, c))
 	if d == nil || !d.Excluded || d.DeliveredState != "Resolved" {
 		t.Fatalf("delivery: %+v, want Excluded Resolved", d)
 	}
@@ -408,7 +410,7 @@ func TestRelaySendsFiringWhenAFilterWidensOnAnActiveAlert(t *testing.T) {
 	if len(tn.received) != 1 || tn.received[0] != "firing" {
 		t.Fatalf("tenant received %v after the filter widened on an active alert, want [firing]", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || d.DeliveredState != "Firing" || d.Excluded {
+	if d := delivery(getAlert(t, c)); d == nil || d.DeliveredState != "Firing" || d.Excluded {
 		t.Fatalf("delivery: %+v", d)
 	}
 }
@@ -455,7 +457,7 @@ func TestRelayStillResolvesAnAlertThatLeftTheFilter(t *testing.T) {
 	if len(tn.received) != 2 || tn.received[1] != "resolved" {
 		t.Fatalf("tenant received %v, want [firing resolved]", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || d.DeliveredState != "Resolved" || d.Excluded {
+	if d := delivery(getAlert(t, c)); d == nil || d.DeliveredState != "Resolved" || d.Excluded {
 		t.Fatalf("delivery: %+v", d)
 	}
 }
@@ -515,7 +517,7 @@ func TestRelayKeepsAGenuinelyResolvedEntryUnchangedOnASecondReconcile(t *testing
 	if len(tn.received) != 2 || tn.received[1] != "resolved" {
 		t.Fatalf("tenant received %v, want [firing resolved]", tn.received)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || d.Excluded || d.DeliveredState != "Resolved" {
+	if d := delivery(getAlert(t, c)); d == nil || d.Excluded || d.DeliveredState != "Resolved" {
 		t.Fatalf("delivery after the resolution-only delivery: %+v, want DeliveredState=Resolved Excluded=false", d)
 	}
 
@@ -524,7 +526,7 @@ func TestRelayKeepsAGenuinelyResolvedEntryUnchangedOnASecondReconcile(t *testing
 	if writes != 0 {
 		t.Fatalf("second reconcile wrote the FrameAlert status %d times, want 0", writes)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || d.Excluded {
+	if d := delivery(getAlert(t, c)); d == nil || d.Excluded {
 		t.Fatalf("genuinely delivered entry relabelled Excluded: %+v", d)
 	}
 }
@@ -547,7 +549,7 @@ func TestRelayResetsStaleFailureFieldsWhenAnUndeliveredEntryBecomesExcluded(t *t
 
 	reconcileAlert(t, r)
 
-	d := delivery(getAlert(t, c), "acme")
+	d := delivery(getAlert(t, c))
 	if d == nil || !d.Excluded || d.DeliveredState != "Resolved" {
 		t.Fatalf("delivery: %+v, want Excluded Resolved", d)
 	}
@@ -595,7 +597,7 @@ func TestRelayDoesNotTouchAnAlreadyExcludedEntryOnAnUnrelatedGenerationBump(t *t
 	if writes != 0 {
 		t.Fatalf("reconcile wrote the FrameAlert status %d times, want 0", writes)
 	}
-	if d := delivery(getAlert(t, c), "acme"); d == nil || !d.Excluded || d.SubscriptionGeneration != 0 {
+	if d := delivery(getAlert(t, c)); d == nil || !d.Excluded || d.SubscriptionGeneration != 0 {
 		t.Fatalf("already-excluded entry touched: %+v", d)
 	}
 }

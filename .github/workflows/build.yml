@@ -16,8 +16,7 @@ permissions: {}
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  NODE_VERSION: '20'
+  NODE_VERSION: '24'
   SMOKE_RETRIES: '15'
   SMOKE_RETRY_DELAY_SECONDS: '2'
   # Pinned rather than resolved at run time: see the Install kustomize step.
@@ -105,14 +104,44 @@ jobs:
             done < <(find "${dir}" -type f -name '*.sh' -print0)
           done
 
-  # ── 3. Build and push container image ────────────────────────────────────
+  # ── 3. Build and push the container images ───────────────────────────────
+  #
+  # One image per Dockerfile, each under its own name:
+  # ghcr.io/<owner>/frame-<name>. This used to be a single leg building the
+  # root Dockerfile -- the UI -- and pushing it as ghcr.io/<owner>/frame, the
+  # bare repository name, while the operator the Helm chart installs
+  # (Dockerfile.controller) and provisiond (Dockerfile.provisiond, also
+  # installed by the chart) were never pushed at all. A v* tag therefore
+  # published the one image the chart does not use, under the name a reader
+  # would take for the operator.
+  #
+  # The legs are the same five as the scan matrix below, which is what the
+  # release job gates on: an image is pushed only if it is also scanned.
+  # Dockerfile.agent (the node-tuning DaemonSet) is in neither yet.
+  #
+  # Tags: {{version}} is the semver without the leading v (1.0.0), which is
+  # what the chart's image.tag defaults to (.Chart.AppVersion).
   build:
-    name: Build
+    name: Build (${{ matrix.name }})
     runs-on: ubuntu-latest
     needs: [quality, iac]
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: controller
+            dockerfile: Dockerfile.controller
+          - name: ui
+            dockerfile: Dockerfile
+          - name: authd
+            dockerfile: Dockerfile.authd
+          - name: uiproxy
+            dockerfile: Dockerfile.uiproxy
+          - name: provisiond
+            dockerfile: Dockerfile.provisiond
 
     steps:
       - name: Clone the code
@@ -135,7 +164,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # metadata-action lowercases the name (the owner is Plume-Labs;
+          # registries only accept lowercase repositories).
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/frame-${{ matrix.name }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -147,11 +178,15 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per image: the legs share one GitHub Actions cache, and an
+          # unscoped mode=max export from five different Dockerfiles would
+          # have them evict each other's layers.
+          cache-from: type=gha,scope=build-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.name }}
           # Buildx attaches both as OCI referrers beside the pushed image, so
           # the SBOM travels with the artifact instead of living in a CI
           # artifact nobody correlates back to a digest. No extra action needed.

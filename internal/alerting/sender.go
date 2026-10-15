@@ -61,10 +61,10 @@ func (s *Sender) Send(ctx context.Context, url, token, receiver string, a *frame
 }
 
 func buildPayload(receiver string, a *framev1beta1.FrameAlert, state string) Payload {
-	status := "firing"
+	status := statusFiring
 	var endsAt time.Time
 	if state == framev1beta1.AlertStateResolved {
-		status = "resolved"
+		status = statusResolved
 		if a.Spec.EndsAt != nil {
 			endsAt = a.Spec.EndsAt.Time
 		}

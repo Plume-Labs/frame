@@ -1,6 +1,5 @@
 import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { NavigationContext } from '@/hooks/useNavigation'
-import { ClusterNode } from '@/lib/types'
 import { currentSession, ensureToken, identityFromToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
 import { inviteTokenFromLocation } from '@/lib/accounts'
 import { loadConfig } from '@/lib/frame-config'
