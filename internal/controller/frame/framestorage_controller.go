@@ -316,7 +316,7 @@ func (r *FrameStorageReconciler) reconcileHealth(ctx context.Context, fs *framev
 			Type: "Healthy", Status: metav1.ConditionTrue, Reason: "CephHealthOK",
 			Message: health, ObservedGeneration: fs.Generation,
 		})
-		return "Ready"
+		return conditionTypeReady
 	}
 
 	msg := health
