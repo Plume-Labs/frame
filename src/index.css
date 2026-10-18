@@ -34,49 +34,54 @@
 }
 
 :root {
-  --background: oklch(0.15 0.02 240);
-  --foreground: oklch(0.95 0 0);
+  /* Sober operations-console palette: near-neutral greys (hue 250, chroma
+     0.005) and low-chroma accents. Status colours stay distinct and clear
+     WCAG AA (>= 4.5:1) as text on both --background and --card. */
+  --background: oklch(0.17 0.005 250);
+  --foreground: oklch(0.93 0.005 250);
 
-  --card: oklch(0.25 0.01 240);
-  --card-foreground: oklch(0.95 0 0);
-  
-  --popover: oklch(0.20 0.015 240);
-  --popover-foreground: oklch(0.95 0 0);
+  --card: oklch(0.21 0.005 250);
+  --card-foreground: oklch(0.93 0.005 250);
 
-  --primary: oklch(0.75 0.15 195);
-  --primary-foreground: oklch(0.15 0.02 240);
+  --popover: oklch(0.21 0.005 250);
+  --popover-foreground: oklch(0.93 0.005 250);
 
-  --secondary: oklch(0.30 0.01 240);
-  --secondary-foreground: oklch(0.95 0 0);
+  --primary: oklch(0.72 0.06 235);
+  --primary-foreground: oklch(0.17 0.005 250);
 
-  --muted: oklch(0.30 0.01 240);
-  --muted-foreground: oklch(0.60 0.03 240);
+  --secondary: oklch(0.27 0.005 250);
+  --secondary-foreground: oklch(0.93 0.005 250);
 
-  --accent: oklch(0.85 0.20 145);
-  --accent-foreground: oklch(0.15 0.02 240);
+  --muted: oklch(0.27 0.005 250);
+  --muted-foreground: oklch(0.68 0.01 250);
 
-  --destructive: oklch(0.60 0.22 25);
-  --destructive-foreground: oklch(0.95 0 0);
+  /* Doubles as the "ok / healthy" status colour (text-accent) across views;
+     UI primitives use --secondary for hover chrome instead. */
+  --accent: oklch(0.74 0.09 155);
+  --accent-foreground: oklch(0.17 0.005 250);
 
-  --border: oklch(0.35 0.02 240);
-  --input: oklch(0.35 0.02 240);
-  --ring: oklch(0.75 0.15 195);
+  --destructive: oklch(0.66 0.15 25);
+  --destructive-foreground: oklch(0.17 0.005 250);
+
+  --border: oklch(0.32 0.005 250);
+  --input: oklch(0.32 0.005 250);
+  --ring: oklch(0.62 0.06 235);
 
   --radius: 0.375rem;
 
-  --warning: oklch(0.75 0.18 75);
-  --warning-foreground: oklch(0.15 0.02 240);
+  --warning: oklch(0.78 0.11 80);
+  --warning-foreground: oklch(0.17 0.005 250);
 
   /* Sidebar — the vendored shadcn sidebar reads these; it sits between
      --background and --card so the nav reads as chrome, not content. */
-  --sidebar: oklch(0.19 0.015 240);
-  --sidebar-foreground: oklch(0.95 0 0);
-  --sidebar-primary: oklch(0.75 0.15 195);
-  --sidebar-primary-foreground: oklch(0.15 0.02 240);
-  --sidebar-accent: oklch(0.28 0.015 240);
-  --sidebar-accent-foreground: oklch(0.95 0 0);
-  --sidebar-border: oklch(0.30 0.02 240);
-  --sidebar-ring: oklch(0.75 0.15 195);
+  --sidebar: oklch(0.19 0.005 250);
+  --sidebar-foreground: oklch(0.93 0.005 250);
+  --sidebar-primary: oklch(0.72 0.06 235);
+  --sidebar-primary-foreground: oklch(0.17 0.005 250);
+  --sidebar-accent: oklch(0.26 0.005 250);
+  --sidebar-accent-foreground: oklch(0.93 0.005 250);
+  --sidebar-border: oklch(0.29 0.005 250);
+  --sidebar-ring: oklch(0.62 0.06 235);
 }
 
 @theme {
@@ -131,15 +136,6 @@ body {
   font-family: var(--font-mono);
 }
 
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 5px currentColor;
-  }
-  50% {
-    box-shadow: 0 0 20px currentColor, 0 0 30px currentColor;
-  }
-}
-
 @keyframes status-pulse {
   0%, 100% {
     opacity: 1;
@@ -147,10 +143,6 @@ body {
   50% {
     opacity: 0.5;
   }
-}
-
-.pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
 }
 
 .status-pulse {
