@@ -1286,6 +1286,11 @@ func TestFrameInstallRefusesWhenNoProvisiondMediaURLIsConfigured(t *testing.T) {
 		if !strings.Contains(got.Status.Message, "provisiond") {
 			t.Errorf("%s: message %q does not name what is missing", name, got.Status.Message)
 		}
+		// The media Service ships closed: the message must say what to
+		// open, and must survive failPending's 512-rune truncation.
+		if !strings.Contains(got.Status.Message, "expose the frame-provisiond-media Service") {
+			t.Errorf("%s: message %q does not say the media Service must be exposed", name, got.Status.Message)
+		}
 	}
 }
 

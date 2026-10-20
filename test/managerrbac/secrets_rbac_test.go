@@ -135,8 +135,11 @@ func render(t *testing.T, dir string) string {
 
 // The overlay is applied as rendered (make deploy-production): it must
 // carry the images it was given — never config/manager's placeholder or a
-// :latest — and includes frame-provisiond (a Deployment and two Services,
-// one a NodePort), whose removal the overlay only documents as an option.
+// :latest — and includes frame-provisiond (a Deployment and two Services),
+// whose removal the overlay only documents as an option. Both Services are
+// ClusterIP: the media one is closed to the machine network until the
+// operator opens it (the overlay documents that patch, it does not apply
+// it), so the recommended install opens no port on any node.
 func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 	raw, err := os.ReadFile(render(t, overlay))
 	if err != nil {
@@ -158,6 +161,19 @@ func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 		}
 		if strings.Contains(u.GetName(), "provisiond") {
 			provisiondObjects[u.GetKind()+"/"+u.GetName()] = true
+		}
+		if u.GetKind() == "Service" && strings.Contains(u.GetName(), "provisiond") {
+			if typ, _, _ := unstructured.NestedString(u.Object, "spec", "type"); typ != "ClusterIP" {
+				t.Errorf("%s: Service %s is type %q, want ClusterIP: frame-provisiond's media "+
+					"listener is closed by default, opened only by an explicit patch", overlay, u.GetName(), typ)
+			}
+			ports, _, _ := unstructured.NestedSlice(u.Object, "spec", "ports")
+			for _, p := range ports {
+				if m, ok := p.(map[string]any); ok && m["nodePort"] != nil {
+					t.Errorf("%s: Service %s port %v carries nodePort %v; the default install opens no node port",
+						overlay, u.GetName(), m["name"], m["nodePort"])
+				}
+			}
 		}
 		if u.GetKind() == "Deployment" && u.GetName() == "frame-provisiond" {
 			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")

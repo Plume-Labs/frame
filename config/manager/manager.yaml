@@ -68,11 +68,13 @@ spec:
           - --provisiond-build-url=http://frame-provisiond:8080
           # A placeholder, like the image reference below: there is no
           # address this manifest could default to that is guaranteed
-          # reachable from a management network it knows nothing about, and
-          # the manager refuses to start without a valid one
-          # (cmd/main.go's validateProvisiondMediaURL). Override with the
-          # base URL a machine's BMC can actually reach frame-provisiond's
-          # media listener at before applying this outside hack/helm-parity.sh.
+          # reachable from a management network it knows nothing about. The
+          # manager starts with it (cmd/main.go's
+          # validateProvisiondMediaURL checks syntax only) and every
+          # FrameInstall fails at once with it named. To provision machines,
+          # expose frame-provisiond-media (ClusterIP by default -- see
+          # config/provisiond/service.yaml) and override this with the base
+          # URL a machine's BMC reaches it at.
           - --provisiond-media-url=http://ci-placeholder.invalid:30581
           - --alert-receiver-bind-address=:8445
           # Usable GPU memory per card, in MiB, that FrameService inference

@@ -28,12 +28,40 @@ spec:
       targetPort: build
       protocol: TCP
 ---
-# The media listener. This is the one the BMC reaches, so it is the one
-# exposed on the machine network -- and it carries no secret, because no
-# secret ever enters an installer image. It is not read-only: it may
-# deposit an installation's progress (the beacon route), and it may never
-# disclose one -- see internal/provision/server.go's MediaHandler doc
-# comment, which this mirrors.
+# The media listener. This is the one the BMC reaches, and it carries no
+# secret, because no secret ever enters an installer image. It is not
+# read-only: it may deposit an installation's progress (the beacon route),
+# and it may never disclose one -- see internal/provision/server.go's
+# MediaHandler doc comment, which this mirrors.
+#
+# ClusterIP by default, like config/provisiond/service.yaml: closed to the
+# machine network until the operator opens it through
+# provisiond.media.service.* (values.yaml). The values are read through
+# `default`/`dig` rather than straight off .Values, because `helm upgrade
+# --reuse-values` from a chart that predates provisiond.media.service never
+# sees this chart's defaults for it: the block arrives absent, and absent
+# has to mean ClusterIP, not a template error.
+{{- $media := .Values.provisiond.media | default dict }}
+{{- if hasKey $media "nodePort" }}
+{{- fail "provisiond.media.nodePort was removed: the media Service is ClusterIP by default and is opened explicitly. To keep a NodePort, set provisiond.media.service.type=NodePort and provisiond.media.service.nodePort=<port> (docs/upgrading.md). To keep it closed, drop provisiond.media.nodePort from your values." }}
+{{- end }}
+{{- $svc := dig "service" dict $media }}
+{{- $type := dig "type" "ClusterIP" $svc | default "ClusterIP" }}
+{{- $nodePort := dig "nodePort" "" $svc }}
+{{- $etp := dig "externalTrafficPolicy" "" $svc }}
+{{- $lbRanges := dig "loadBalancerSourceRanges" list $svc }}
+{{- if not (has $type (list "ClusterIP" "NodePort" "LoadBalancer")) }}
+{{- fail (printf "provisiond.media.service.type must be ClusterIP, NodePort or LoadBalancer, got %q" $type) }}
+{{- end }}
+{{- if and (eq $type "ClusterIP") (or $nodePort $etp $lbRanges) }}
+{{- fail "provisiond.media.service.nodePort, externalTrafficPolicy and loadBalancerSourceRanges only apply when provisiond.media.service.type is NodePort or LoadBalancer; the media Service is ClusterIP (closed) by default. Set the type too, or drop them." }}
+{{- end }}
+{{- if and $lbRanges (ne $type "LoadBalancer") }}
+{{- fail "provisiond.media.service.loadBalancerSourceRanges only applies when provisiond.media.service.type is LoadBalancer." }}
+{{- end }}
+{{- if and $etp (not (has $etp (list "Cluster" "Local"))) }}
+{{- fail (printf "provisiond.media.service.externalTrafficPolicy must be Cluster or Local, got %q" $etp) }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -43,13 +71,22 @@ metadata:
     {{- include "frame.chartLabels" . | nindent 4 }}
     app.kubernetes.io/component: provisiond
 spec:
-  type: NodePort
+  type: {{ $type }}
+  {{- with $etp }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  {{- with $lbRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     {{- include "frame.provisiondSelectorLabels" . | nindent 4 }}
   ports:
     - name: media
       port: 8081
       targetPort: media
-      nodePort: {{ .Values.provisiond.media.nodePort }}
+      {{- with $nodePort }}
+      nodePort: {{ . | int }}
+      {{- end }}
       protocol: TCP
 {{- end }}

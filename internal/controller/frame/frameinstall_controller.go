@@ -404,9 +404,17 @@ func (r *FrameInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// whose boot arguments point nowhere a BMC can reach is an install that
 	// wipes nothing and hangs until its phase deadline, with nothing in the
 	// object saying the operator's cluster was never configured for this.
+	//
+	// The media Service ships closed (ClusterIP), and the shipped manifests
+	// carry a placeholder URL, so an install on a cluster nobody opened for
+	// provisioning lands here -- which is why the message says what to open
+	// and not only what is wrong. This cannot tell whether a well-formed
+	// URL actually reaches the Service: an operator may front it with a
+	// load balancer of their own, so a real but unreachable address still
+	// surfaces later, as the MediaAttached deadline.
 	if err := provision.ValidateMediaURL(r.ProvisiondMediaURL); err != nil {
 		return r.failPending(ctx, &fi, fmt.Sprintf(
-			"frame-provisiond's media URL (the manager's -provisiond-media-url flag, the chart's provisiond.media.url) %v -- this cluster is not configured to provision machines", err))
+			"frame-provisiond's media URL (the manager's -provisiond-media-url flag, the chart's provisiond.media.url) %v -- this cluster is not configured to provision machines: expose the frame-provisiond-media Service (ClusterIP, closed, by default) to the BMCs' network and set this URL to the address they reach it at", err))
 	}
 
 	if err := r.checkNotALiveClusterMember(ctx, fi.Spec.Hostname, fi.Spec.Network.Address); err != nil {

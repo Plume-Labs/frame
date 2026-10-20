@@ -8,7 +8,7 @@
 # The build API. ClusterIP -- which means reachable by EVERY pod in the
 # cluster, not only by the manager. A ClusterIP Service is not an access
 # control; it only keeps the endpoint off the LAN, which is the one thing it
-# is here to do (the media listener below is the NodePort). On this platform
+# is here to do. On this platform
 # "every pod" includes notebooks and coding sandboxes, so this endpoint is
 # treated as unauthenticated and reachable by them: it accepts a Spec and
 # writes a 700 MB file, and the manager deliberately zeroes Spec.Cluster
@@ -43,12 +43,23 @@ spec:
       targetPort: build
       protocol: TCP
 ---
-# The media listener. This is the one the BMC reaches, so it is the one
-# exposed on the machine network -- and it carries no secret, because no
-# secret ever enters an installer image. It is not read-only: it may
-# deposit an installation's progress (the beacon route), and it may never
-# disclose one -- see internal/provision/server.go's MediaHandler doc
-# comment, which this mirrors.
+# The media listener. This is the one the BMC reaches, and it carries no
+# secret, because no secret ever enters an installer image. It is not
+# read-only: it may deposit an installation's progress (the beacon route),
+# and it may never disclose one -- see internal/provision/server.go's
+# MediaHandler doc comment, which this mirrors.
+#
+# ClusterIP by default: closed to the machine network. It used to be a
+# NodePort fixed at 30581, which opened that port on every node of every
+# cluster that applied config/default, whether or not it would ever
+# provision a machine, and collided with any second Frame cluster (or
+# anything else holding 30581) on the same management network. Opening it
+# is now the operator's explicit choice, with the port the operator picks:
+# config/overlays/production/kustomization.yaml carries a commented patch
+# to copy, and the chart's provisiond.media.service.* does the same. Until
+# it is exposed, a BMC cannot reach it, and the shipped placeholder media
+# URL makes every FrameInstall fail at once with that placeholder named
+# (docs/deployment.md, "Exposing the media listener").
 apiVersion: v1
 kind: Service
 metadata:
@@ -60,12 +71,11 @@ metadata:
     app.kubernetes.io/name: frame-provisiond
     app.kubernetes.io/part-of: frame
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: frame-provisiond
   ports:
     - name: media
       port: 8081
       targetPort: media
-      nodePort: 30581
       protocol: TCP

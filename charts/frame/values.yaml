@@ -160,15 +160,41 @@ provisiond:
     # headroom).
     storage: 32Gi
   media:
-    # A fixed NodePort, not a Service-allocated one, because the BMC's boot
-    # media configuration has to name a concrete address — it cannot be
-    # re-read from the cluster on every reinstall. Matches
-    # config/provisiond/service.yaml's hardcoded 30581. A second cluster on
-    # the same management network collides with this number if left at the
-    # default; override per cluster if that's a real risk in your
-    # environment (there is no way for this chart to choose a value that
-    # can't collide with something on a network it knows nothing about).
-    nodePort: 30581
+    # How the media listener's Service is exposed. Closed by default
+    # (ClusterIP), like config/provisiond/service.yaml: a BMC on the
+    # management network cannot reach it until you open it here. The chart
+    # used to open it unconditionally as a NodePort fixed at 30581 -- open on
+    # every node of every cluster, provisioning or not, and colliding with
+    # any second cluster or other service holding 30581 on the same
+    # management network. That key, provisiond.media.nodePort, is gone; a
+    # values file still carrying it fails the render with the migration
+    # (docs/upgrading.md).
+    #
+    # To provision machines, pick one:
+    #   type: NodePort      + nodePort: <a port free on your network>
+    #   type: LoadBalancer  + loadBalancerSourceRanges: [<BMC CIDR>]
+    # and restrict who reaches it to the BMCs' network (NetworkPolicy or
+    # the nodes' firewall; docs/deployment.md, "Exposing the media
+    # listener"). It is plain HTTP and each image's URL carries its token.
+    service:
+      # ClusterIP (closed), NodePort or LoadBalancer.
+      type: ClusterIP
+      # NodePort/LoadBalancer only. A fixed port, because the BMC's boot
+      # media configuration names a concrete address -- it is not re-read
+      # from the cluster on every reinstall. Empty lets Kubernetes allocate
+      # one, which then has to be read back and put into url below.
+      nodePort: ""
+      # NodePort/LoadBalancer only. "Local" is recommended: it keeps the
+      # BMC's source address, so a NetworkPolicy can admit the BMC CIDR and
+      # nothing else (with Cluster, the source a policy sees is a node).
+      # Its cost: only the node running frame-provisiond answers. Behind a
+      # LoadBalancer that is handled for you; with a NodePort, url must
+      # name that node, and this chart does not pin frame-provisiond to
+      # one. Empty leaves the Kubernetes default, Cluster.
+      externalTrafficPolicy: ""
+      # LoadBalancer only: source CIDRs the load balancer admits, e.g. the
+      # BMCs' management network.
+      loadBalancerSourceRanges: []
     # The base URL a machine's BMC -- on the management network, not the
     # pod network -- can reach the media listener above at, e.g.
     # "http://192.0.2.10:30581". Left empty and `required` at render

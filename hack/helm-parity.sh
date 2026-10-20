@@ -193,6 +193,65 @@ fi
 echo "OK: identical resource sets."
 echo
 
+# --- frame-provisiond-media: closed by default, opened only on request ------
+# The body diff below proves the chart and config/provisiond agree; it would
+# stay green if both reopened the media listener together. Being closed by
+# default is the decision (CHANGELOG, "frame-provisiond's media listener
+# closed by default"), so assert it on both renders, and assert that the
+# chart's opt-in actually opens it and that the removed key is refused
+# rather than silently ignored.
+echo "== provisiond media Service: ClusterIP by default, NodePort only when asked =="
+media_fail=0
+media_shape() {
+  # $1 = JSONL file. "<type> <nodePort or -> <externalTrafficPolicy or ->"
+  jq -r 'select(.kind=="Service" and .metadata.name=="frame-provisiond-media")
+    | "\(.spec.type) \(.spec.ports[0].nodePort // "-") \(.spec.externalTrafficPolicy // "-")"' "$1"
+}
+for side in kustomize helm-default; do
+  shape="$(media_shape "$tmpdir/$side.jsonl")"
+  if [ "$shape" != "ClusterIP - -" ]; then
+    echo "FAIL: $side renders frame-provisiond-media as '$shape', want 'ClusterIP - -': the media listener is closed by default." >&2
+    media_fail=1
+  fi
+done
+
+"$HELM" template frame "$CHART_DIR" --namespace frame-system \
+  --set image.repository="$CI_PLACEHOLDER_IMAGE" \
+  --set provisiond.media.url="$CI_PLACEHOLDER_MEDIA_URL" \
+  --set provisiond.media.service.type=NodePort \
+  --set provisiond.media.service.nodePort=30999 \
+  --set provisiond.media.service.externalTrafficPolicy=Local \
+  > "$tmpdir/helm-media-open.yaml"
+extract_jsonl "$tmpdir/helm-media-open.yaml" > "$tmpdir/helm-media-open.jsonl"
+shape="$(media_shape "$tmpdir/helm-media-open.jsonl")"
+if [ "$shape" != "NodePort 30999 Local" ]; then
+  echo "FAIL: provisiond.media.service.type=NodePort,nodePort=30999,externalTrafficPolicy=Local renders '$shape', want 'NodePort 30999 Local'." >&2
+  media_fail=1
+fi
+build_type="$(jq -r 'select(.kind=="Service" and .metadata.name=="frame-provisiond") | .spec.type' "$tmpdir/helm-media-open.jsonl")"
+if [ "$build_type" != "ClusterIP" ]; then
+  echo "FAIL: opening the media listener changed the build API's Service to '$build_type'; it must stay ClusterIP." >&2
+  media_fail=1
+fi
+
+if "$HELM" template frame "$CHART_DIR" --namespace frame-system \
+  --set image.repository="$CI_PLACEHOLDER_IMAGE" \
+  --set provisiond.media.url="$CI_PLACEHOLDER_MEDIA_URL" \
+  --set provisiond.media.nodePort=30581 > /dev/null 2> "$tmpdir/helm-media-oldkey.err"; then
+  echo "FAIL: the removed provisiond.media.nodePort key rendered; it must fail with the migration, not be silently ignored." >&2
+  media_fail=1
+elif ! grep -q "provisiond.media.service.type=NodePort" "$tmpdir/helm-media-oldkey.err"; then
+  echo "FAIL: the removed provisiond.media.nodePort key failed without naming its replacement:" >&2
+  cat "$tmpdir/helm-media-oldkey.err" >&2
+  media_fail=1
+fi
+
+if [ "$media_fail" -ne 0 ]; then
+  exit 1
+fi
+echo "OK: frame-provisiond-media is ClusterIP on both install paths by default; the chart's opt-in opens it as asked, and the removed key is refused."
+echo
+
 # --- default content diff: body-level, not just kind/namespace/name --------
 # A name-only diff was the pre-existing weak spot: a dropped ClusterRole
 # verb, a dropped --leader-elect, or a changed probe port would all pass the

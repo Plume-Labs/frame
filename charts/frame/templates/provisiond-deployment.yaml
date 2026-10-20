@@ -65,17 +65,19 @@ spec:
             # to start without a valid one (cmd/provisiond/main.go's
             # validateMediaURL), for the same reason the manager does.
             - name: MEDIA_URL
-              value: {{ required "provisiond.media.url is required: the base URL a machine's BMC (on the management network, not the pod network) can reach frame-provisiond's NodePort media listener at, e.g. http://192.0.2.10:30581. provisiond will not start without it." .Values.provisiond.media.url | quote }}
+              value: {{ required "provisiond.media.url is required: the base URL a machine's BMC (on the management network, not the pod network) will reach frame-provisiond's media listener at once it is exposed (provisiond.media.service.type NodePort or LoadBalancer, or your own load balancer), e.g. http://192.0.2.10:30581. provisiond will not start without it." .Values.provisiond.media.url | quote }}
           ports:
-            # The build API. Reachable only through the ClusterIP Service
-            # in provisiond-service.yaml -- never through the NodePort one.
+            # The build API. Reachable only through its own ClusterIP
+            # Service in provisiond-service.yaml -- never through the media
+            # one, which an operator may expose to the machine network.
             - name: build
               containerPort: 8080
               protocol: TCP
-            # The media listener. This is the one the NodePort Service
-            # exposes to the machine network; it is read-only by
-            # construction (MediaHandler), which is what makes exposing it
-            # to the BMCs on that network safe.
+            # The media listener. Its Service is ClusterIP by default; an
+            # operator who provisions machines exposes it to the BMCs on the
+            # machine network (provisiond.media.service.*). It discloses
+            # nothing by construction (MediaHandler), which is what makes
+            # that exposure acceptable.
             - name: media
               containerPort: 8081
               protocol: TCP

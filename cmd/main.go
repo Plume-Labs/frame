@@ -338,8 +338,9 @@ func main() {
 			"which this manager posts a Spec to.")
 	flag.StringVar(&provisiondMediaURL, "provisiond-media-url", "",
 		"The base URL a machine's BMC -- on the management network, not the pod network -- can reach "+
-			"frame-provisiond's media listener at (config/provisiond/service.yaml's NodePort Service). "+
-			"FrameInstall creation fails until this is set: there is no address a BMC could safely default to.")
+			"frame-provisiond's media listener at (config/provisiond/service.yaml's frame-provisiond-media Service, "+
+			"ClusterIP and so unreachable from the BMCs until the operator exposes it). "+
+			"FrameInstall fails until this is set: there is no address a BMC could safely default to.")
 	var machineProbeInterval time.Duration
 	flag.DurationVar(&machineProbeInterval, "machine-probe-interval", controller.DefaultProbeInterval,
 		"Delay between two successful Redfish probes of a FrameMachine's BMC. Values under "+
@@ -377,6 +378,13 @@ func main() {
 	if provisiondMediaURL == "" {
 		setupLog.Info("no -provisiond-media-url is set: FrameInstall reconciliation will refuse " +
 			"rather than build images whose boot arguments point nowhere; every other controller is unaffected")
+	} else if err := provision.ValidateMediaURL(provisiondMediaURL); err != nil {
+		// The shipped placeholder: well formed, so the manager starts, but
+		// no BMC can resolve it. Said once here so the operator reading the
+		// start-up log learns it before the first FrameInstall fails on it.
+		setupLog.Info("-provisiond-media-url cannot be reached by any BMC: FrameInstall reconciliation will refuse "+
+			"until frame-provisiond-media is exposed and this flag names it; every other controller is unaffected",
+			"reason", err.Error())
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled

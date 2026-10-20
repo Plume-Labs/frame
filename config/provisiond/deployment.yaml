@@ -72,15 +72,17 @@ spec:
             - name: MEDIA_URL
               value: http://ci-placeholder.invalid:30581
           ports:
-            # The build API. Reachable only through the ClusterIP Service in
-            # service.yaml -- never through the NodePort one.
+            # The build API. Reachable only through its own ClusterIP Service
+            # in service.yaml -- never through the media one, which an
+            # operator may expose to the machine network.
             - name: build
               containerPort: 8080
               protocol: TCP
-            # The media listener. This is the one the NodePort Service
-            # exposes to the machine network; it is read-only by
-            # construction (MediaHandler), which is what makes exposing it
-            # to the BMCs on that network safe.
+            # The media listener. Its Service is ClusterIP by default; an
+            # operator who provisions machines exposes it to the BMCs on the
+            # machine network (docs/deployment.md, "Exposing the media
+            # listener"). It discloses nothing by construction
+            # (MediaHandler), which is what makes that exposure acceptable.
             - name: media
               containerPort: 8081
               protocol: TCP

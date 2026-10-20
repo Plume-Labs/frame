@@ -23,16 +23,41 @@ resources:
 - ../../default
 - secret-access.yaml
 # frame-provisiond is included (from config/default): it assembles installer
-# images for FrameInstall and serves them to a BMC over a NodePort (30581,
-# open on every node). Before running a FrameInstall, set the manager's
-# --provisiond-media-url and provisiond's MEDIA_URL to an address your BMCs
-# reach (docs/deployment.md, "Provisioning a machine with Ubuntu"); until
-# then FrameInstall reconciliation refuses with the placeholder named.
+# images for FrameInstall and serves them to a BMC from its media listener.
+# That listener's Service, frame-provisiond-media, is ClusterIP: closed to
+# the machine network until you open it. Before running a FrameInstall:
+#   1. expose it -- uncomment the patch below and pick the port, or front it
+#      with a LoadBalancer -- and restrict it to the BMCs' network
+#      (NetworkPolicy or the nodes' firewall);
+#   2. set the manager's --provisiond-media-url and provisiond's MEDIA_URL
+#      to the address the BMCs reach it at (docs/deployment.md, "Exposing
+#      the media listener" and "Provisioning a machine with Ubuntu").
+# Until then FrameInstall fails at once with the placeholder URL named.
+#
+# Exposing the media listener on a NodePort (pick a port free on your
+# management network; 30581 was the old fixed default and collides with any
+# other cluster still using it). externalTrafficPolicy: Local keeps the
+# BMC's source address for a NetworkPolicy to filter on, and answers only on
+# the node running frame-provisiond, so the media URL must name that node;
+# drop it to answer on every node:
+#
+# patches:
+# - target: {kind: Service, name: frame-provisiond-media}
+#   patch: |
+#     - op: replace
+#       path: /spec/type
+#       value: NodePort
+#     - op: add
+#       path: /spec/externalTrafficPolicy
+#       value: Local
+#     - op: add
+#       path: /spec/ports/0/nodePort
+#       value: 30581   # yours: a port free on the management network
 #
 # Optional — a cluster that will never provision a machine can leave
-# frame-provisiond out rather than run it unused with a port open on every
-# node. Uncomment these patches; the render then carries no provisiond
-# image, so any IMG_PROVISIOND satisfies `make deploy-production` (e.g.
+# frame-provisiond out rather than run it unused. Uncomment these patches
+# instead of the one above; the render then carries no provisiond image, so
+# any IMG_PROVISIOND satisfies `make deploy-production` (e.g.
 # IMG_PROVISIOND=unused.invalid/frame-provisiond:none):
 #
 # patches:
