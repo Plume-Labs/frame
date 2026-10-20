@@ -4,7 +4,7 @@
 # apps/statefulsets was removed on 2026-08-10 (see
 # ../base/rbac.yaml) because patching a pod template to add
 # `securityContext.privileged: true` and a `hostPath: /` volume is root on the
-# node, and nothing on this cluster refused such a pod. RBAC cannot bound a
+# node, and nothing refused such a pod. RBAC cannot bound a
 # patch to one JSON path, so the only way to hold "may restart a deployment"
 # without also holding "may take the node" is to make the second one fail at
 # admission. That is what `baseline` does.

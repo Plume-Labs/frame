@@ -5,9 +5,9 @@
 #
 # Engine is selectable:
 #   llamacpp (default) — GGUF via llama.cpp. Runs on any CUDA GPU, including
-#                        Pascal (the test cluster's Tesla P4, sm_6.1).
+#                        Pascal (e.g. a Tesla P4, sm_6.1).
 #   vllm               — vLLM OpenAI server. REQUIRES compute capability >= 7.0,
-#                        so it does NOT run on the P4 (see llm-d-up.sh). Kept
+#                        so it does NOT run on Pascal (see llm-d-up.sh). Kept
 #                        selectable for a newer GPU; guarded by a preflight check.
 #
 # Either way the result speaks the OpenAI API on :8080 and is routed by
@@ -32,6 +32,12 @@
 #   VLLM_IMAGE        vLLM image                      (default: vllm/vllm-openai:latest)
 #   VLLM_EXTRA_ARGS   extra vLLM flags                (default: --gpu-memory-utilization 0.9)
 #   INFER_RENDER_ONLY 1 = print the manifests instead of applying them
+#
+# The defaults below are EXAMPLES, not requirements: they were tuned on one
+# node with a single 8 GB Pascal card (a Tesla P4, ~7.68 GB usable), a 10-core
+# CPU and a local-path cache volume. The measurements quoted next to them are
+# from that node. Every one is overridden by the env var named above — set
+# the ones that differ for your GPU, CPU and disk rather than editing them.
 #
 # Values that depend on one site's hardware (offload depth, batch sizes, KV
 # cache quantisation, thread counts) belong in that site's own env file, not
@@ -65,8 +71,9 @@ PARALLEL="${INFER_PARALLEL:-1}"
 # the node's 10 cores unless told otherwise, and then thrashes against its own
 # cgroup quota. Keep this equal to the CPU limit below.
 THREADS="${INFER_THREADS:-6}"
-# 30Gi, matching the PVC already bound on w2: a PersistentVolumeClaim cannot be
-# shrunk, so any smaller value here makes the apply fail rather than resize.
+# 30Gi by default. A PersistentVolumeClaim cannot be shrunk: once the cache PVC
+# is bound, a smaller value here makes the apply fail rather than resize, so
+# keep INFER_CACHE_SIZE at (or above) what the first run created.
 CACHE_SIZE="${INFER_CACHE_SIZE:-30Gi}"
 
 say() { echo -e "\n\033[1;35m==>\033[0m $*"; }
@@ -212,7 +219,7 @@ ${ARGS}
           # of the usual image churn. On the default 51GB the cache plus ~23GB of
           # container images drove the node to DiskPressure, which evicted pods and
           # failed unrelated image pulls with ENOSPC. Budget the model size + 40GB;
-          # the test cluster's GPU node was grown to 119GB.
+          # the node these defaults were tuned on was grown to 119GB.
           # A PVC, not an emptyDir: an emptyDir dies with the pod, so every
           # restart re-downloaded ~18.5GB and left the assistant without
           # inference for ~25 minutes — twice in one morning during routine

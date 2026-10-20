@@ -109,9 +109,10 @@ else
 fi
 
 # ── NVIDIA GPU driver (only on a node with a passed-through NVIDIA GPU) ────────
-# Requires the Proxmox host to have done PCI passthrough (see docs/test-cluster.md
-# "GPU passthrough"): vfio-pci bound at boot + Secure Boot OFF, else the DKMS
-# module fails to load ("Key was rejected by service"). We install the driver on
+# On a virtual machine, requires the hypervisor host to pass the GPU through
+# (PCI passthrough, e.g. vfio-pci bound on the host at boot), and on any node
+# Secure Boot OFF, else the DKMS module fails to load ("Key was rejected by
+# service"). We install the driver on
 # the node; the GPU operator (bring-up, GPU=1) runs with driver.enabled=false.
 if lspci 2>/dev/null | grep -qi 'NVIDIA'; then
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then

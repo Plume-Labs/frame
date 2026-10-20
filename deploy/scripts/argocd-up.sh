@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # argocd-up.sh — install Argo CD for GitOps continuous delivery.
 #
-# Why: every deploy on this cluster so far (applications, Frame's own UI) has been
-# manual — build, podman save, ssh, ctr import per node, kubectl set image.
+# Why: without it every deploy (applications, Frame's own UI) is manual —
+# build, push or import the image on each node, kubectl set image.
 # Argo CD watches a git repo and reconciles the cluster to match; `git push`
 # replaces that whole dance for anything it manages.
 #
-# Trimmed footprint for a 3-node test cluster (cp node already sits at ~76%
-# memory): no Dex (no SSO — admin password auth is enough here), no
-# notifications controller, single replica everywhere. ApplicationSet stays
+# Trimmed footprint for a small cluster (sized for 3 nodes with a
+# memory-tight control-plane node): no Dex (no SSO — admin password auth is
+# enough here), no notifications controller, single replica everywhere. ApplicationSet stays
 # (cheap, useful for multiple Applications later).
 #
 # Config — all optional env vars:

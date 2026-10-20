@@ -17,9 +17,10 @@ say "Falco + Falcosidekick (runtime security)"
 helm repo add falcosecurity https://falcosecurity.github.io/charts >/dev/null 2>&1 || true
 helm repo update falcosecurity >/dev/null 2>&1 || true
 
-# modern_ebpf is the only workable driver on this cluster's kernel (7.0.0-28):
+# modern_ebpf is the only workable driver on a kernel Falco publishes no module
+# for (measured on 7.0.0-28):
 #   - kmod: no prebuilt module is published for it (download.falco.org 404s) and
-#     the nodes carry no kernel headers to build one;
+#     nodes without kernel headers cannot build one;
 #   - ebpf (legacy probe): removed from chart 9.x, see its BREAKING-CHANGES.md.
 # KNOWN ISSUE, not a misconfiguration: on this kernel the modern probe
 # periodically emits an event the userspace parser rejects — "could not parse

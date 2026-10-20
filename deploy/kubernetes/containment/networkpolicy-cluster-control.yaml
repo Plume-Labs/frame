@@ -31,7 +31,7 @@
 #    draft of this file DID get wrong — the source address is NOT the node IP.
 #    kube-proxy masquerades to the address of the interface the packet leaves
 #    by, and the route to the pod network does not leave by the LAN NIC. On
-#    this cluster (k3s, flannel vxlan) that means, measured from the live UI
+#    k3s with flannel vxlan that means, measured from the live UI
 #    pods' own nginx logs while a browser was on http://192.0.2.201:30379/ :
 #
 #      pod on a REMOTE node  <- 10.42.0.0   the ingress node's flannel.1

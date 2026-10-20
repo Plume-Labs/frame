@@ -48,7 +48,7 @@ it ever ran. On the live cluster, 2026-09-10:
   `topology.frame.io/{rack,hypervisor,host-pcpu,host-pmem-gib}`, written by
   `deploy/scripts/label-racks.sh` — a shell script talking to Proxmox.
 
-So the Talos path has never produced a single byte of status on this cluster.
+So the Talos path has never produced a single byte of status.
 Dropping it removes nothing that worked. What the decision does is make a
 permanent state explicit.
 
@@ -59,7 +59,7 @@ permanent state explicit.
 `topology.kubernetes.io/zone` — but it does so in `reconcileOnline`, which is
 only reached **after provisioning**. A `FrameNode` with no `spec.disk` stops
 at discovery and never gets there. All three stored objects are in that
-state, so **no node on this cluster carries any of those five labels.**
+state, so **no node carries any of those five labels.**
 
 `internal/services/provider/inference/inference.go:47` says, in a comment,
 that `frame.plume-labs.io/service-class` is "the label the FrameNode

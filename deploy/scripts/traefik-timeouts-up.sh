@@ -17,15 +17,15 @@
 # (Traefik, not nginx) silently ignored. proxy-buffering has no Traefik
 # equivalent needed — Traefik streams responses by default, unlike nginx.
 #
-# Was broken on this cluster from 2026-07-28 to 2026-07-29: applying ANY
+# Known failure (seen 2026-07-28, fixed 2026-07-29): applying ANY
 # HelmChartConfig for `traefik` made k3s's helm-install-traefik job fail
 # with "Required CRDs are missing", despite every traefik.io CRD being
 # present. Root cause (found 2026-07-28, fixed same day, verified by
 # reapplying this script 2026-07-29): unrelated Gateway API tooling had
 # pinned v1.3.0 and applied it after k3s's own CRDs, downgrading
 # ReferenceGrant to v1beta1-only — the chart needs v1 (Gateway API >= 1.4).
-# Gateway API is now pinned to v1.5.1; this script applies cleanly and the
-# live traefik pod picks up idleTimeout=1h in its args.
+# With Gateway API >= 1.4 (v1.5.1 verified) this script applies cleanly and
+# the traefik pod picks up idleTimeout=1h in its args.
 set -euo pipefail
 
 export KUBECONFIG="${KUBECONFIG:?set KUBECONFIG to your cluster kubeconfig}"

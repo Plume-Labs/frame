@@ -3,8 +3,8 @@
 # llama.cpp model server (deploy/scripts/inference-up.sh).
 #
 # Why not the full llm-d stack: llm-d's serving engine is vLLM/SGLang, which
-# require GPU compute capability >= 7.0. The test GPU (Tesla P4) is Pascal
-# (sm_6.1), so the engine is llama.cpp. What IS Pascal-compatible and is the
+# require GPU compute capability >= 7.0. Pascal GPUs (e.g. the Tesla P4) are
+# sm_6.1, so the engine is llama.cpp. What IS Pascal-compatible and is the
 # engine-agnostic heart of llm-d is the Gateway API Inference Extension
 # (Inference Gateway + InferencePool + EPP endpoint-picker) — the concurrency /
 # queue-aware router. Prefill/decode disaggregation + KV-cache-aware scoring are

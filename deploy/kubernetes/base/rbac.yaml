@@ -217,7 +217,7 @@ rules:
   # `patch` REMOVED 2026-08-10. It is the single grant that turned the
   # unauthenticated UI into cluster-admin: patch any Deployment's pod template
   # to add `securityContext.privileged: true` and a `hostPath: /` volume and you
-  # have root on the node, and no namespace on this cluster carries a
+  # have root on the node, and no namespace carried a
   # `pod-security.kubernetes.io/enforce` label to stop it. That mattered less
   # while reaching the UI meant already running in the cluster; the
   # `cluster-control-ui-lan` NodePort (30379) made it reachable from the LAN.
