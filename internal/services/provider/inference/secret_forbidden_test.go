@@ -16,9 +16,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/services/provider"
-	"github.com/gothshoot/frame/internal/services/provider/inference"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider/inference"
 )
 
 // With no RoleBinding for the manager in the FrameService's namespace, the

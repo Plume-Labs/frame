@@ -30,8 +30,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/test/utils"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/test/utils"
 )
 
 // agentImage is the node agent image built and loaded for these specs. Its own

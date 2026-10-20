@@ -35,10 +35,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/cephmgr"
-	framectrl "github.com/gothshoot/frame/internal/controller/frame"
-	"github.com/gothshoot/frame/test/manifests"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/cephmgr"
+	framectrl "github.com/Plume-Labs/frame/internal/controller/frame"
+	"github.com/Plume-Labs/frame/test/manifests"
 )
 
 const (

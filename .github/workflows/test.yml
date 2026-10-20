@@ -56,7 +56,7 @@ jobs:
         run: |
           # cover.out format: file:start,end numstmts hitcount
           # Filter to internal/controller, compute covered statements / total statements.
-          pct=$(grep 'github.com/gothshoot/frame/internal/controller/' cover.out \
+          pct=$(grep 'github.com/Plume-Labs/frame/internal/controller/' cover.out \
             | awk '{ total+=$2; if ($3>0) covered+=$2 } END { printf "%.1f", (total>0 ? covered*100/total : 0) }')
           echo "Controller coverage: ${pct}%"
           awk -v p="${pct}" 'BEGIN { if (p+0 < 45) { print "FAIL: controller coverage " p "% < 45%"; exit 1 } }'

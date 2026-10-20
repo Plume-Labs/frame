@@ -1635,7 +1635,7 @@ func TestBeaconStateNeverEndsOrFailsAnInstall(t *testing.T) {
 }
 ```
 
-Add `"errors"`, `"strings"`, `"time"`, `metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"` and `"github.com/gothshoot/frame/internal/provision"` to the test file's imports if missing.
+Add `"errors"`, `"strings"`, `"time"`, `metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"` and `"github.com/Plume-Labs/frame/internal/provision"` to the test file's imports if missing.
 
 - [ ] **Step 2: Run it to make sure it fails**
 

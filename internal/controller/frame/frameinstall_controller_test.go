@@ -39,8 +39,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/provision"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // Fixtures are prefixed fi-ctrl- throughout this file, unique to it, so a

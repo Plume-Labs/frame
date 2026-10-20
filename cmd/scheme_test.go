@@ -22,8 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 )
 
 // TestSchemeServesConversion pins the one property of this binary's scheme

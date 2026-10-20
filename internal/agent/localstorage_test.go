@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // Fixtures under testdata/localstorage/. mdstat-g9.txt and pvs-empty-g9.json

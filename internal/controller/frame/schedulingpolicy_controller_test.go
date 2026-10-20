@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 var _ = Describe("SchedulingPolicy Controller", func() {

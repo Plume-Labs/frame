@@ -33,8 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/agent"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/agent"
 )
 
 // patchFailingClient fails every Patch of one named Node and delegates

@@ -390,7 +390,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // These specs go through the real apiserver (k8sClient / envtest, wired in
@@ -1156,8 +1156,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/redfish"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // fakeRedfish is the seam the whole controller is tested through: no network,

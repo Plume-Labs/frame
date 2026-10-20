@@ -32,10 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	servicesv1alpha1 "github.com/gothshoot/frame/api/services/v1alpha1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/scheduling"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	servicesv1alpha1 "github.com/Plume-Labs/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/scheduling"
 )
 
 // Retain and Delete are spelled often enough below that goconst asks for a

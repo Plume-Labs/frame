@@ -21,7 +21,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/gothshoot/frame/internal/redfish"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // A BMC that reports more drives, or longer strings, than the CRD accepts

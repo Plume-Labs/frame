@@ -23,7 +23,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gothshoot/frame/internal/redfish/redfishtest"
+	"github.com/Plume-Labs/frame/internal/redfish/redfishtest"
 )
 
 const probesPerTest = 5

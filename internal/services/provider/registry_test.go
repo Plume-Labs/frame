@@ -8,7 +8,7 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/gothshoot/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider"
 )
 
 // stub is the smallest thing that satisfies Provider, so registry behaviour can

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Module path is `github.com/gothshoot/frame`. API group for new kinds: `frame.plume-labs.io`, version `v1beta1` (storage/hub version).
+- Module path is `github.com/Plume-Labs/frame`. API group for new kinds: `frame.plume-labs.io`, version `v1beta1` (storage/hub version).
 - Impersonated group names are `frame:admins`, `frame:operators`, `frame:viewers`. `internal/authd.GroupForRole` returns them **unprefixed** (`admins`/`operators`/`viewers`); the `frame:` prefix is applied by the proxy so that migrating to native OIDC (`--oidc-groups-prefix=frame:`) leaves every RBAC binding untouched.
 - FrameUser roles are `admin`, `operator`, `viewer` (`framev1beta1.RoleAdmin` etc.). Tier ClusterRoles are named `frame-<kind>-{viewer,editor,admin}-role`. The mapping, stated once: `frame:viewers` → `*-viewer-role`, `frame:operators` → `*-editor-role`, `frame:admins` → `*-admin-role`.
 - `FrameTask` objects are always written in the `frame-system` namespace, whatever namespace the proxied request targets.
@@ -906,7 +906,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func TestParsePath(t *testing.T) {
@@ -1062,7 +1062,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // TaskRecorder writes one FrameTask per mutating request.
@@ -1313,8 +1313,8 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/uiproxy"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/uiproxy"
 )
 
 type config struct {
@@ -1666,8 +1666,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/uiproxy"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/uiproxy"
 )
 
 var (

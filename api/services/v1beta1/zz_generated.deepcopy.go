@@ -21,7 +21,7 @@ limitations under the License.
 package v1beta1
 
 import (
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"

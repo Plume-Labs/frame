@@ -32,9 +32,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/redfish"
-	"github.com/gothshoot/frame/internal/redfish/redfishtest"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/redfish"
+	"github.com/Plume-Labs/frame/internal/redfish/redfishtest"
 )
 
 // Observed on the real ML350 Gen9 (iLO4 2.77): the controller authenticated

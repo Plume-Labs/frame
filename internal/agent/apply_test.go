@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	v1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	v1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // Writing the drop-in is not enough — it only takes effect on the next unit

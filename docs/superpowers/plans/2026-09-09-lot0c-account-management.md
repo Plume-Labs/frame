@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Module path is `github.com/gothshoot/frame`. Go 1.26.1. This lot adds **no dependency**; if that changes, the new entry needs an upper bound in `go.mod`.
+- Module path is `github.com/Plume-Labs/frame`. Go 1.26.1. This lot adds **no dependency**; if that changes, the new entry needs an upper bound in `go.mod`.
 - The API group is `frame.plume-labs.io`. `v1beta1` is the storage version and the conversion hub; `v1alpha1` is served and deprecated. Both are patched for the conversion webhook (`config/crd/patches/webhook_in_frame_frameusers.yaml`).
 - `TestHubRoundTripIsLossless` in `api/frame/v1alpha1/conversion_test.go` fuzzes **v1beta1 → v1alpha1 → v1beta1** and demands exact equality. **A field added to `v1beta1` alone fails it.** Every new `v1beta1` field must also exist on `v1alpha1` and be carried in both directions of `api/frame/v1alpha1/conversion.go`.
 - `spec.state` values are exactly `enabled` and `disabled` (`framev1beta1.StateEnabled` / `StateDisabled`), default `enabled`.
@@ -300,7 +300,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // hasSessionCookie reports whether a response handed out a session. Every
@@ -483,7 +483,7 @@ package authd
 import (
 	"errors"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // ErrAccountDisabled is what requireIssuable returns for an account whose
@@ -919,7 +919,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // sessionFor mints a session cookie for u against srv, which is how every
@@ -1196,7 +1196,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // maxEmailLength mirrors the CRD's MaxLength on spec.email (RFC 5321's limit,
@@ -1685,7 +1685,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func key(id, label string) framev1beta1.WebAuthnCredential {
@@ -1931,7 +1931,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // credentialView is what a caller may see of an enrolled authenticator.

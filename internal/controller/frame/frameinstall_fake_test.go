@@ -22,7 +22,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // fakeInstallBMC, fakeInstallImages, fakeInstallSSH/fakeInstallSession and

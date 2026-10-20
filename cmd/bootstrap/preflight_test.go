@@ -33,7 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // fakeCluster is an apiserver serving exactly what the join preflight and

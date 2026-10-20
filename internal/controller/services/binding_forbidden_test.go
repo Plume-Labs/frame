@@ -18,8 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/services/provider"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
 )
 
 // The manager holds nothing on Secrets cluster-wide: in a namespace where

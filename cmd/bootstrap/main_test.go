@@ -32,7 +32,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 func TestAddressWithoutCIDR(t *testing.T) {

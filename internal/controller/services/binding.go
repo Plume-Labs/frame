@@ -29,8 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/services/provider"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
 )
 
 // ownedByLabel is written onto every Secret this controller creates, purely

@@ -3,7 +3,7 @@ package authd
 import (
 	"errors"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // ErrAccountDisabled is what requireIssuable returns for an account whose

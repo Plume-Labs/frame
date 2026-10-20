@@ -30,7 +30,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // The laptop's address is not discoverable from inside this process, and a

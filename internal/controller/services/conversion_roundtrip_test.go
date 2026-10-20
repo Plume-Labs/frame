@@ -25,8 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	servicesv1alpha1 "github.com/gothshoot/frame/api/services/v1alpha1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
+	servicesv1alpha1 "github.com/Plume-Labs/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 )
 
 // The services-group half of what internal/controller/frame's

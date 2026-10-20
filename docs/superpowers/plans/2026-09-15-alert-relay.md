@@ -84,7 +84,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // Schema only: both kinds are post-freeze, v1beta1-only, without conversion.
@@ -877,7 +877,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"github.com/go-logr/logr"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 const ns = "frame-system"
@@ -1152,7 +1152,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 const lastReceivedRefresh = 15 * time.Minute
@@ -1342,7 +1342,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func alertNamed(name, sev, namespace string) *framev1beta1.FrameAlert {
@@ -1394,7 +1394,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func sampleAlert() *framev1beta1.FrameAlert {
@@ -1509,7 +1509,7 @@ package alerting
 import (
 	"slices"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // Matches applies a subscription filter. A namespace filter drops alerts
@@ -1542,7 +1542,7 @@ import (
 	"net/http"
 	"time"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 type Outcome int
@@ -1673,7 +1673,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // tenant records what it received and answers with the next scripted code.
@@ -1930,7 +1930,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framealerts,verbs=get;list;watch;create;patch;delete
@@ -2163,7 +2163,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func alertWith(name, state string, ds ...framev1beta1.AlertDelivery) *framev1beta1.FrameAlert {
@@ -2251,7 +2251,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 const statusRecomputeEvery = time.Minute
@@ -2450,7 +2450,7 @@ Avec les autres déclarations de flags :
 		"Days a resolved, fully delivered FrameAlert is kept before purge.")
 ```
 
-Import : `"github.com/gothshoot/frame/internal/alerting"`. Après le dernier bloc `SetupWithManager` et avant `mgr.AddHealthzCheck` :
+Import : `"github.com/Plume-Labs/frame/internal/alerting"`. Après le dernier bloc `SetupWithManager` et avant `mgr.AddHealthzCheck` :
 
 ```go
 	if err := (&alerting.RelayReconciler{

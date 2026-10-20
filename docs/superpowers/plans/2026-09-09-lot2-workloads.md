@@ -14,7 +14,7 @@ The rest keeps going through `frame-uiproxy` on the path it already serves. Thre
 
 ## Global Constraints
 
-- Module path is `github.com/gothshoot/frame`. Go 1.26.1. **This lot adds no Go dependency.**
+- Module path is `github.com/Plume-Labs/frame`. Go 1.26.1. **This lot adds no Go dependency.**
 - **This lot adds exactly two npm dependencies**, both in `package.json` `dependencies`, both with an explicit upper bound as the repo requires: `"@xterm/xterm": ">=6.0.0,<7"` and `"@xterm/addon-fit": ">=0.11.0,<0.12"`. (`addon-fit` is pre-1.0, where a minor bump is the breaking one, so its ceiling is the next minor — the same thing `^0.11.0` would mean, spelled so the bound is visible.) **No other dependency, Go or npm.** In particular: no YAML library — the apiserver serialises YAML itself (`Accept: application/yaml`, `Content-Type: application/yaml`), which is why the manifest editor needs no parser.
 - Vitest runs `environment: 'node'` with `include: ['src/**/*.test.ts']` — **`.tsx` specs never execute.** Anything needing a test lives in `src/lib/`. Component code carries no coverage by construction; do not write a `.tsx` test and believe it ran.
 - The frontend publishes the session on `globalThis`, not `window` (`publish()` in `src/lib/auth.ts`). New code follows suit. Note that `bearerToken()` in `frame-sdk.ts` and `authHeaders()` in `frame-config.ts`/`k8s-watch.ts` still *read* `window`, which is why every test that touches them calls `vi.stubGlobal('window', globalThis)` — copy that, do not "fix" it in this lot.

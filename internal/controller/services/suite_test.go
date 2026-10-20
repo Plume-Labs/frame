@@ -40,8 +40,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	conversionwebhook "sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
-	servicesv1alpha1 "github.com/gothshoot/frame/api/services/v1alpha1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
+	servicesv1alpha1 "github.com/Plume-Labs/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 

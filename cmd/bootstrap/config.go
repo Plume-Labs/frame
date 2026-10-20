@@ -31,7 +31,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // Config is the flat file that stands in for a FrameInstall when there is no

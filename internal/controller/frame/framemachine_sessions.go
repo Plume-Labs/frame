@@ -26,7 +26,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/gothshoot/frame/internal/redfish"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // Probe cadence. Every probe is a full Redfish walk of the machine — a few

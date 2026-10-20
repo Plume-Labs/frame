@@ -39,8 +39,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	framev1alpha1 "github.com/gothshoot/frame/api/frame/v1alpha1"
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1alpha1 "github.com/Plume-Labs/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	// +kubebuilder:scaffold:imports
 )
 

@@ -1,4 +1,4 @@
-module github.com/gothshoot/frame
+module github.com/Plume-Labs/frame
 
 go 1.26.8
 

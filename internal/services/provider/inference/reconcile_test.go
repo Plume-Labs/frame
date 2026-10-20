@@ -17,10 +17,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/services/provider"
-	"github.com/gothshoot/frame/internal/services/provider/inference"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider/inference"
 )
 
 // defaultModelCachePVC is the PVC name inference.Provider mounts when

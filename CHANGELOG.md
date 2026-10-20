@@ -6,6 +6,19 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — Go module path (breaking for importers)
+
+- The Go module is now `github.com/Plume-Labs/frame` (was
+  `github.com/gothshoot/frame`, a path that did not resolve to this repository).
+  Every package path changes with it, including the API types
+  (`github.com/Plume-Labs/frame/api/frame/v1beta1`, …) and the kubebuilder
+  `PROJECT` file. Container images, CRDs, the chart and the on-cluster API
+  group are unchanged. **Upgrade note:** code that imports Frame packages
+  must replace the prefix, e.g.
+  `go mod edit -droprequire github.com/gothshoot/frame && go get github.com/Plume-Labs/frame@<version>`
+  then `find . -name '*.go' -exec sed -i 's#github.com/gothshoot/frame#github.com/Plume-Labs/frame#g' {} +`
+  and `gofmt -w`.
+
 ### Changed
 
 - The `Installing` phase budget of `FrameInstall` and `frame bootstrap` is

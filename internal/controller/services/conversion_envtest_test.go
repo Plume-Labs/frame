@@ -25,8 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	servicesv1alpha1 "github.com/gothshoot/frame/api/services/v1alpha1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
+	servicesv1alpha1 "github.com/Plume-Labs/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 )
 
 // The FrameService half of the conversion specs in

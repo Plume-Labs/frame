@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // memoryKSMCachePath is where the agent's apply half (Task 3) caches the

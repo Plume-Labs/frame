@@ -28,9 +28,9 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	servicesv1alpha1 "github.com/gothshoot/frame/api/services/v1alpha1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/services/provider"
+	servicesv1alpha1 "github.com/Plume-Labs/frame/api/services/v1alpha1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
 )
 
 // These specs use two real, separate namespaces for projection — distinct

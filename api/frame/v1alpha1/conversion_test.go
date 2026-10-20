@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 	"sigs.k8s.io/randfill"
 
-	v1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	v1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // A hand-written fixture is written from the same mental model as the

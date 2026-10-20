@@ -21,8 +21,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 )
 
 // Conversion between the services group's v1alpha1 (spoke) and v1beta1 (hub).

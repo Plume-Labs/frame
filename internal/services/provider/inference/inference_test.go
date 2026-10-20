@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gothshoot/frame/internal/services/provider/inference"
+	"github.com/Plume-Labs/frame/internal/services/provider/inference"
 )
 
 // The cluster's Tesla P4 reports 7680 MiB.

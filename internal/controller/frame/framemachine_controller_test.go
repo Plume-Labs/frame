@@ -36,9 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	"github.com/gothshoot/frame/internal/agent"
-	"github.com/gothshoot/frame/internal/redfish"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/agent"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // fakeRedfish and fakeTimeoutError live in framemachine_fake_test.go.

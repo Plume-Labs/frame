@@ -20,10 +20,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
-	"github.com/gothshoot/frame/internal/services/provider"
-	"github.com/gothshoot/frame/internal/services/provider/inference"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider/inference"
 )
 
 var _ = Describe("FrameService Webhook", func() {

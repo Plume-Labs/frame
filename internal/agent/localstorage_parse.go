@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // Parsers for the local-storage reader. Text formats, not JSON, for ZFS on

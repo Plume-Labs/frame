@@ -24,7 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 
-	v1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	v1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // Conversion between v1alpha1 (spoke) and v1beta1 (hub).

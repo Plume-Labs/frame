@@ -2195,8 +2195,8 @@ func TestProvisionImportsNothingFromKubernetes(t *testing.T) {
 			for _, imp := range f.Imports {
 				p := strings.Trim(imp.Path.Value, `"`)
 				if strings.HasPrefix(p, "k8s.io/") || strings.HasPrefix(p, "sigs.k8s.io/") ||
-					strings.HasPrefix(p, "github.com/gothshoot/frame/api/") ||
-					strings.HasPrefix(p, "github.com/gothshoot/frame/internal/controller") {
+					strings.HasPrefix(p, "github.com/Plume-Labs/frame/api/") ||
+					strings.HasPrefix(p, "github.com/Plume-Labs/frame/internal/controller") {
 					t.Errorf("%s imports %s", name, p)
 				}
 			}

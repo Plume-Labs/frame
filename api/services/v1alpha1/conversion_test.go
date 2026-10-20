@@ -24,7 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/randfill"
 
-	servicesv1beta1 "github.com/gothshoot/frame/api/services/v1beta1"
+	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 )
 
 // The same fixed seed as the frame group's conversion_test.go, for the same

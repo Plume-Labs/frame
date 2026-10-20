@@ -6,7 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func bmc(serial, location string) framev1beta1.DriveInfo {

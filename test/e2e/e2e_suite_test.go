@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/gothshoot/frame/test/utils"
+	"github.com/Plume-Labs/frame/test/utils"
 )
 
 var (

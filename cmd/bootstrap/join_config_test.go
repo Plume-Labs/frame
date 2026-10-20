@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // testJoinToken is shaped like a real k3s token and is what every secret

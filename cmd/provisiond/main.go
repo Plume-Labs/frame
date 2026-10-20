@@ -46,7 +46,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 type config struct {

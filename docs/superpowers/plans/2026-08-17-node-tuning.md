@@ -25,7 +25,7 @@ envtest, Ginkgo/Gomega, Kind e2e, tuned (in the agent image).
 - API group `frame.plume-labs.io`, version **`v1beta1`**. V1 ships on `v1beta1`;
   there is no `v1`.
 - `NodeTuning` is **cluster-scoped**.
-- Module path `github.com/gothshoot/frame`; `PROJECT` has `multigroup: true`.
+- Module path `github.com/Plume-Labs/frame`; `PROJECT` has `multigroup: true`.
 - Every new CRD must exist in **both** `config/crd/bases/` and
   `charts/frame/files/crds/` — `hack/helm-parity.sh` is what guards this.
 - ClusterRole rules are maintained in **two** hand-kept copies:
@@ -59,7 +59,7 @@ package frame
 import (
 	"testing"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 func TestNodeTuningKSMDefaultsOff(t *testing.T) {

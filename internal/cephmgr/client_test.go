@@ -42,7 +42,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // fakeDashboard serves the fixtures (anonymised) the way Ceph v20.2.2's

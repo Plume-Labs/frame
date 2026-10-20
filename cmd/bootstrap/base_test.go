@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gothshoot/frame/internal/provision"
+	"github.com/Plume-Labs/frame/internal/provision"
 )
 
 // A mirror may change where the ISO comes from, never which ISO it is: the

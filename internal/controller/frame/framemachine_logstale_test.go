@@ -28,10 +28,10 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/gothshoot/frame/internal/redfish"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // This file is split out of framemachine_controller_test.go, which it would

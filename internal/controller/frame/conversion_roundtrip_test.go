@@ -30,8 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 
-	framev1alpha1 "github.com/gothshoot/frame/api/frame/v1alpha1"
-	framev1beta1 "github.com/gothshoot/frame/api/frame/v1beta1"
+	framev1alpha1 "github.com/Plume-Labs/frame/api/frame/v1alpha1"
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // These specs are the half of F14 layer 1 that api/frame/v1alpha1's fuzz

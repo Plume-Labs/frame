@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gothshoot/frame/internal/redfish"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // RedfishBMC adapts lot 1's redfish.Client to the BMC interface Install

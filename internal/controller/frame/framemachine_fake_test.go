@@ -19,7 +19,7 @@ package controller
 import (
 	"context"
 
-	"github.com/gothshoot/frame/internal/redfish"
+	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
 // fakeRedfish and fakeTimeoutError are split out of framemachine_controller_
