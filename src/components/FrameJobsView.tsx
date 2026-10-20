@@ -34,12 +34,12 @@ export function FrameJobsView() {
     [frameListPath('framejobs')],
   )
   const jobs = state.phase === 'ready' ? state.data.items : []
-  // acmeSandboxJobs() lists real Pods (sandbox pods, cluster-wide by
+  // sandboxJobs() lists real Pods (sandbox pods, cluster-wide by
   // selector) through k8sFetch — the same kind of read jobs.list() above
   // watches, and it predates this mechanism only because it predates the
   // branch that added one.
   const { state: nsState } = useLiveResource(
-    () => frame.cluster.acmeSandboxJobs(),
+    () => frame.cluster.sandboxJobs(),
     [],
     [coreListPath('pods')],
   )
@@ -88,7 +88,7 @@ export function FrameJobsView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <Queue className="text-primary" size={18} /> Acme cluster jobs (sandbox pods)
+              <Queue className="text-primary" size={18} /> Sandbox jobs (pods)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">

@@ -640,8 +640,8 @@ export interface AppComponent {
 /**
  * A deployed application — the workloads sharing an
  * `app.kubernetes.io/instance` label (a Helm release), or failing that, a
- * namespace. This is how Acme (api + client + worker + postgres + redis)
- * shows up as a single entry.
+ * namespace. This is how a single-release application (api + client +
+ * worker + postgres + redis) shows up as a single entry.
  */
 export interface Application {
   name: string
@@ -1433,7 +1433,7 @@ function crToComponent(cr: WorkloadCR, kind: AppComponent['kind']): AppComponent
  * application" (e.g. rook-ceph's mon-a/mon-b/osd-0/osd-1 all set part-of:
  * rook-ceph but a per-daemon instance: a/b/0/1 — grouping on instance first
  * would fragment them into one card each). Falls back to instance (a
- * single-release chart like Acme sets only instance, uniformly, across all
+ * single-release chart sets only instance, uniformly, across all
  * its components), then namespace.
  */
 function appKey(cr: WorkloadCR): string {
@@ -2577,12 +2577,13 @@ class ClusterClient {
   }
 
   /**
-   * Acme cluster jobs = ephemeral sandbox pods (coding-agent / CAD). Ops
-   * summary: counts by phase + recent pods. Detail lives in Acme itself.
+   * Sandbox jobs = ephemeral sandbox pods an integrated application launches
+   * (`integrations.sandboxPods`). Ops summary: counts by phase + recent pods;
+   * the detail lives in that application.
    */
-  async acmeSandboxJobs(): Promise<{ byPhase: Record<string, number>; recent: Array<{ name: string; phase: string; node: string; age: string }> }> {
+  async sandboxJobs(): Promise<{ byPhase: Record<string, number>; recent: Array<{ name: string; phase: string; node: string; age: string }> }> {
     const res = await k8sFetch<ListResponse<{ metadata: { name: string; creationTimestamp?: string }; spec?: { nodeName?: string }; status?: { phase?: string } }>>(
-      integrationPods(config().integrations.acmeSandbox),
+      integrationPods(config().integrations.sandboxPods),
     )
     const byPhase: Record<string, number> = {}
     const recent = (res.items ?? [])

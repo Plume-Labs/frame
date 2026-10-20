@@ -167,7 +167,7 @@ describe('buildWorkloadTree', () => {
       pods: [],
       replicaSetOwners: new Map(),
     })
-    expect(tree.map((n) => n.namespace)).toEqual(['inference', 'acme', 'kube-system', 'rook-ceph'])
+    expect(tree.map((n) => n.namespace)).toEqual(['acme', 'inference', 'kube-system', 'rook-ceph'])
     expect(tree.map((n) => n.infrastructure)).toEqual([false, false, true, true])
   })
 })
@@ -242,11 +242,20 @@ describe('OPERABLE_NAMESPACES', () => {
   })
 
   it('answers for a namespace on each side', () => {
-    expect(canOperateWorkloads('acme')).toBe(true)
+    expect(canOperateWorkloads('inference')).toBe(true)
     expect(canOperateWorkloads('rook-ceph')).toBe(false)
     // Neither enforced nor infrastructure: the case a `!isInfrastructure`
     // predicate gets wrong, and the case that produces a button that 403s.
     expect(canOperateWorkloads('sandbox')).toBe(false)
+  })
+
+  // A site that binds the same grant in its own namespaces lists them in the
+  // runtime config; the shipped list stays the manifest's.
+  it('also answers true for the extra namespaces a site configured', () => {
+    expect(canOperateWorkloads('acme', [])).toBe(false)
+    expect(canOperateWorkloads('acme', ['acme', 'acme-batch'])).toBe(true)
+    expect(canOperateWorkloads('acme-batch', ['acme', 'acme-batch'])).toBe(true)
+    expect(canOperateWorkloads('rook-ceph', ['acme'])).toBe(false)
   })
 
   // Not a tautology — it is the invariant that keeps the two lists from ever
@@ -270,8 +279,8 @@ describe('canEditManifest', () => {
   // that reverted to `namespace-only` would pass every other case here and
   // still fail this one.
   it('requires the admin tier even in an operable namespace', () => {
-    expect(canEditManifest(false, 'acme')).toBe(false)
-    expect(canEditManifest(true, 'acme')).toBe(true)
+    expect(canEditManifest(false, 'inference')).toBe(false)
+    expect(canEditManifest(true, 'inference')).toBe(true)
   })
 
   it('requires an operable namespace even for an admin', () => {

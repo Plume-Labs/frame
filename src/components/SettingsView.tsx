@@ -44,7 +44,7 @@ const FEEDS: Record<IntegrationKey, string> = {
   tetragon: 'Security (network)',
   prometheus: 'Capacity (forecast) · Storage (OSD, PG, pools)',
   alertmanager: 'Alerts',
-  acmeSandbox: 'Jobs (Acme sandbox pods)',
+  sandboxPods: 'Jobs (sandbox pods)',
 }
 
 /** The integrations the Inference panel operates, which alone take a Deployment name. */
@@ -174,7 +174,7 @@ export function SettingsView() {
                     id={`${key}-ns`}
                     label="Namespace"
                     value={i.namespace}
-                    placeholder={key === 'acmeSandbox' ? 'all namespaces' : undefined}
+                    placeholder={key === 'sandboxPods' ? 'all namespaces' : undefined}
                     onChange={(v) => setIntegration(key, { namespace: v })}
                   />
                   <Field
@@ -271,6 +271,28 @@ export function SettingsView() {
             hint="Mountpoint reported as the scratch tier"
             value={draft.burstBuffer.mount}
             onChange={(v) => setDraft((d) => ({ ...d, burstBuffer: { mount: v } }))}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-lg">Workloads</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            id="extra-operable-namespaces"
+            label="Extra operable namespaces"
+            hint="Comma-separated; restart, scale and the editor are offered here too — only where your site grants the workload RoleBindings"
+            value={draft.workloads.extraOperableNamespaces.join(', ')}
+            onChange={(v) =>
+              setDraft((d) => ({
+                ...d,
+                workloads: {
+                  extraOperableNamespaces: v.split(',').map((s) => s.trim()).filter(Boolean),
+                },
+              }))
+            }
           />
         </CardContent>
       </Card>

@@ -133,21 +133,21 @@ describe('mapJobPhase', () => {
   it('reads the lifecycle off the Ready condition, not a stored phase', () => {
     const running = __testing.crToJob({
       metadata: { name: 'j1', namespace: 'default' },
-      spec: { pipeline: 'acme-training-dag' },
+      spec: { pipeline: 'training-dag' },
       status: { conditions: [{ type: 'Ready', status: 'False', reason: 'Running' }] },
     })
     expect(running.status).toBe('running')
 
     const done = __testing.crToJob({
       metadata: { name: 'j2', namespace: 'default' },
-      spec: { pipeline: 'acme-training-dag' },
+      spec: { pipeline: 'training-dag' },
       status: { conditions: [{ type: 'Ready', status: 'True', reason: 'Completed' }] },
     })
     expect(done.status).toBe('completed')
 
     const failed = __testing.crToJob({
       metadata: { name: 'j3', namespace: 'default' },
-      spec: { pipeline: 'acme-training-dag' },
+      spec: { pipeline: 'training-dag' },
       status: { conditions: [{ type: 'Ready', status: 'False', reason: 'Failed' }] },
     })
     expect(failed.status).toBe('failed')
@@ -158,7 +158,7 @@ describe('mapJobPhase', () => {
     // find() over the whole list would match it if the type check were dropped.
     const j = __testing.crToJob({
       metadata: { name: 'j4', namespace: 'default' },
-      spec: { pipeline: 'acme-training-dag' },
+      spec: { pipeline: 'training-dag' },
       status: {
         conditions: [
           { type: 'Degraded', status: 'True', reason: 'Running' },
@@ -185,7 +185,7 @@ describe('mapJobPhase', () => {
     // `queued`.
     const legacy = __testing.crToJob({
       metadata: { name: 'acme-embed-refresh', namespace: 'default', creationTimestamp: '2026-07-28T18:22:09Z' },
-      spec: { pipeline: 'acme-inference-dag', serviceClass: 'HIGH', priority: 'high', gpuCount: 0, suspended: false },
+      spec: { pipeline: 'inference-dag', serviceClass: 'HIGH', priority: 'high', gpuCount: 0, suspended: false },
       status: {
         argoWorkflowName: 'acme-embed-refresh',
         observedGeneration: 1,
@@ -205,7 +205,7 @@ describe('mapJobPhase', () => {
   it('takes the namespace from metadata, since spec.namespace is gone', () => {
     const j = __testing.crToJob({
       metadata: { name: 'j5', namespace: 'team-a' },
-      spec: { pipeline: 'acme-training-dag' },
+      spec: { pipeline: 'training-dag' },
     })
     expect(j.namespace).toBe('team-a')
   })
@@ -215,7 +215,7 @@ describe('mapJobPhase', () => {
     // kubectl-versus-UI disagreement the freeze removed.
     const j = __testing.crToJob({
       metadata: { name: 'j6', namespace: 'default' },
-      spec: { pipeline: 'acme-training-dag' },
+      spec: { pipeline: 'training-dag' },
     })
     expect(j.serviceClass).toBe('LOW')
     expect(j.priority).toBe('medium')
@@ -335,10 +335,10 @@ describe('JobClient.submit', () => {
   it('sends neither spec.namespace nor a serviceClass the caller did not choose', async () => {
     const { sent } = capture()
 
-    await createFrameClient().jobs.submit({ name: 'llm-run-4', pipeline: 'acme-training-dag' })
+    await createFrameClient().jobs.submit({ name: 'llm-run-4', pipeline: 'training-dag' })
 
     const spec = (sent[0].body as { spec: Record<string, unknown> }).spec
-    expect(spec).toEqual({ pipeline: 'acme-training-dag', gpuCount: 0 })
+    expect(spec).toEqual({ pipeline: 'training-dag', gpuCount: 0 })
     expect(spec).not.toHaveProperty('namespace')
     expect(spec).not.toHaveProperty('serviceClass')
     expect(spec).not.toHaveProperty('priority')
@@ -352,7 +352,7 @@ describe('JobClient.submit', () => {
     const { sent } = capture()
 
     const job = await createFrameClient().jobs.submit({
-      name: 'llm-run-5', pipeline: 'acme-training-dag', namespace: 'team-a', serviceClass: 'HIGH',
+      name: 'llm-run-5', pipeline: 'training-dag', namespace: 'team-a', serviceClass: 'HIGH',
     })
 
     expect(sent[0].url).toBe('/apis/frame.plume-labs.io/v1beta1/namespaces/team-a/framejobs')

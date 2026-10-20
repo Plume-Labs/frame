@@ -63,8 +63,13 @@ export interface FrameConfig {
     tetragon: Integration
     prometheus: Integration
     alertmanager: Integration
-    /** Cluster-wide (namespace ignored) — sandbox pods run wherever Acme puts them. */
-    acmeSandbox: Integration
+    /**
+     * Ephemeral sandbox pods an integrated application launches (coding
+     * agents, notebooks…), summarised on the Jobs screen. Cluster-wide when the
+     * namespace is empty. Set the selector to the label your application puts
+     * on its sandbox pods.
+     */
+    sandboxPods: Integration
   }
   /** Components addressed through their own API group, so only a namespace applies. */
   namespaces: {
@@ -81,6 +86,17 @@ export interface FrameConfig {
   burstBuffer: {
     /** Filesystem mountpoint reported as the scratch tier. */
     mount: string
+  }
+  workloads: {
+    /**
+     * Namespaces, beyond the ones Frame's own manifests grant, where the
+     * Workloads screen offers restart, scale and the manifest editor. List a
+     * namespace here only once your site has given it the same
+     * `cluster-control-workload-operator`/`-admin` RoleBindings and baseline
+     * Pod Security that `deploy/kubernetes/base/rbac-workload-operator.yaml`
+     * gives `default` and `inference` — otherwise every button returns 403.
+     */
+    extraOperableNamespaces: string[]
   }
   storage: {
     /**
@@ -115,7 +131,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
       selector: 'app.kubernetes.io/name=alertmanager',
       port: 9093,
     },
-    acmeSandbox: { namespace: '', selector: 'app=acme-sandbox' },
+    sandboxPods: { namespace: '', selector: 'app=sandbox' },
   },
   namespaces: {
     ceph: 'rook-ceph',
@@ -125,6 +141,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
   },
   network: { devices: ['eth0', 'flannel.1', 'cni0'] },
   burstBuffer: { mount: '/burst-buffer' },
+  workloads: { extraOperableNamespaces: [] },
   storage: { osdStableAfterMinutes: 60 },
 }
 
@@ -150,6 +167,9 @@ export function configStatus(): { source: ConfigSource; error?: string } {
   return { source, error: loadError }
 }
 
+/** The 1.0 name of `integrations.sandboxPods`, still read from stored configs. */
+const LEGACY_SANDBOX_KEY = 'acmeSandbox'
+
 /** A Kubernetes object name (DNS-1123 subdomain): nothing that could leave its path segment. */
 function isObjectName(s: string): boolean {
   return s.length > 0 && s.length <= 253 && /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(s)
@@ -164,6 +184,14 @@ function isObjectName(s: string): boolean {
  */
 function merge(stored: unknown): FrameConfig {
   const s = (stored ?? {}) as Partial<FrameConfig>
+  // Frame 1.0 stored the sandbox integration under a key named after one
+  // downstream application. A config saved by 1.0 still carries it: read it as
+  // `sandboxPods` when the new key is absent, so upgrading keeps the
+  // operator's selector instead of silently falling back to the default.
+  const legacy = (s.integrations as Record<string, Integration | undefined> | undefined)?.[LEGACY_SANDBOX_KEY]
+  if (legacy && !s.integrations?.sandboxPods) {
+    s.integrations = { ...s.integrations, sandboxPods: legacy } as FrameConfig['integrations']
+  }
   const integrations = { ...DEFAULT_CONFIG.integrations }
   for (const key of Object.keys(DEFAULT_CONFIG.integrations) as Array<
     keyof FrameConfig['integrations']
@@ -189,6 +217,15 @@ function merge(stored: unknown): FrameConfig {
       devices: s.network?.devices?.length ? s.network.devices : DEFAULT_CONFIG.network.devices,
     },
     burstBuffer: { mount: s.burstBuffer?.mount || DEFAULT_CONFIG.burstBuffer.mount },
+    workloads: {
+      // Namespace names only (DNS-1123 labels): anything else is dropped
+      // rather than compared against, so a typo cannot widen the list.
+      extraOperableNamespaces: Array.isArray(s.workloads?.extraOperableNamespaces)
+        ? s.workloads!.extraOperableNamespaces.filter(
+            (n): n is string => typeof n === 'string' && /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(n),
+          )
+        : DEFAULT_CONFIG.workloads.extraOperableNamespaces,
+    },
     storage: {
       // A positive number of minutes, or the default: 0 would forget every
       // restart at once, a negative or non-numeric value is a typo.

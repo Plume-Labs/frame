@@ -583,7 +583,7 @@ function App() {
         return (
           <NotEnabledView
             title="Pipeline parallelism"
-            reason="Pipeline parallelism splits a model across multiple GPUs. This cluster has a single GPU (Tesla P4 on node-w2), so PP is not applicable — the model runs fully on one device."
+            reason="Pipeline parallelism splits a model across multiple GPUs. This cluster has a single GPU (a single Tesla P4), so PP is not applicable — the model runs fully on one device."
             enable="Add GPUs across nodes, then serve with tensor/pipeline-parallel size > 1."
           />
         )

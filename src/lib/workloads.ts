@@ -1,3 +1,5 @@
+import { config } from './frame-config'
+
 /**
  * What the Workloads screen decides, minus the rendering.
  *
@@ -120,16 +122,12 @@ export function isInfrastructureNamespace(ns: string): boolean {
  * that is neither enforced nor recognisably infrastructure — a `sandbox`, a
  * one-off — must fall on the "no button" side, and only an explicit list does
  * that.
+ *
+ * A site that grants the same RoleBindings in its own application namespaces
+ * lists them in the runtime config (`workloads.extraOperableNamespaces`,
+ * Settings screen); `canOperateWorkloads` honours both lists.
  */
-export const OPERABLE_NAMESPACES: readonly string[] = [
-  'default',
-  'inference',
-  'acme',
-  'acme-batch',
-  'acme-database',
-  'acme-inference',
-  'acme-training',
-]
+export const OPERABLE_NAMESPACES: readonly string[] = ['default', 'inference']
 
 /**
  * True where the console may restart or scale a workload.
@@ -138,8 +136,11 @@ export const OPERABLE_NAMESPACES: readonly string[] = [
  * is cluster-wide, operating is not, and the screen says which is which rather
  * than offering a button that returns 403.
  */
-export function canOperateWorkloads(ns: string): boolean {
-  return OPERABLE_NAMESPACES.includes(ns)
+export function canOperateWorkloads(
+  ns: string,
+  extra: readonly string[] = config().workloads.extraOperableNamespaces,
+): boolean {
+  return OPERABLE_NAMESPACES.includes(ns) || extra.includes(ns)
 }
 
 /**

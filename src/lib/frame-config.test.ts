@@ -71,3 +71,52 @@ describe('storage.osdStableAfterMinutes', () => {
     }
   })
 })
+
+describe('integrations.sandboxPods', () => {
+  it('ships a selector that names no particular application', () => {
+    expect(DEFAULT_CONFIG.integrations.sandboxPods.selector).toBe('app=sandbox')
+  })
+
+  // A ConfigMap saved by Frame 1.0 holds the integration under its old key.
+  // Upgrading must keep the operator's selector, not fall back to the default.
+  it('reads the 1.0 key when the stored config predates the rename', async () => {
+    stubConfigMap({
+      'config.json': JSON.stringify({ integrations: { acmeSandbox: { namespace: '', selector: 'app=my-sandbox' } } }),
+    })
+    await loadConfig()
+    expect(config().integrations.sandboxPods.selector).toBe('app=my-sandbox')
+  })
+
+  it('prefers the new key when both are stored', async () => {
+    stubConfigMap({
+      'config.json': JSON.stringify({
+        integrations: {
+          acmeSandbox: { namespace: '', selector: 'app=old' },
+          sandboxPods: { namespace: '', selector: 'app=new' },
+        },
+      }),
+    })
+    await loadConfig()
+    expect(config().integrations.sandboxPods.selector).toBe('app=new')
+  })
+})
+
+describe('workloads.extraOperableNamespaces', () => {
+  it('is empty by default', () => {
+    expect(DEFAULT_CONFIG.workloads.extraOperableNamespaces).toEqual([])
+  })
+
+  it('keeps namespace names and drops anything that is not one', async () => {
+    stubConfigMap({
+      'config.json': JSON.stringify({ workloads: { extraOperableNamespaces: ['team-a', 'Bad_Name', 42, 'team-b'] } }),
+    })
+    await loadConfig()
+    expect(config().workloads.extraOperableNamespaces).toEqual(['team-a', 'team-b'])
+  })
+
+  it('keeps the default when the stored config predates the field', async () => {
+    stubConfigMap({ 'config.json': JSON.stringify({ frameNamespace: 'frame-system' }) })
+    await loadConfig()
+    expect(config().workloads.extraOperableNamespaces).toEqual([])
+  })
+})
