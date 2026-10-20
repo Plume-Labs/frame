@@ -499,20 +499,33 @@ installer images from — is now `ClusterIP` in both install paths
 `FrameInstall` waits for media its BMC cannot reach until the
 `MediaAttached` deadline:
 
-- Helm — the old key `provisiond.media.nodePort` is removed, and a values
-  file still carrying it (or a release that set it, upgraded with
-  `--reuse-values`) fails the render
-  with this migration in the message. Replace it with:
+- Helm — the old key `provisiond.media.nodePort` is removed, and any render
+  that still carries it fails with this migration in the message: a values
+  file setting it, a release that set it, and **every `--reuse-values`
+  upgrade from the previous chart**, set or not — `--reuse-values` renders
+  with the previous chart's `values.yaml` as defaults, and that file held
+  `nodePort: 30581`. Upgrade with `--reset-then-reuse-values` (Helm
+  3.14+: this chart's defaults, then the values you had set) and null the
+  old key in the same command:
 
   ```bash
-  helm upgrade frame charts/frame -n frame-system --reuse-values \
+  helm upgrade frame charts/frame -n frame-system --reset-then-reuse-values \
+    --set provisiond.media.nodePort=null \
     --set provisiond.media.service.type=NodePort \
     --set provisiond.media.service.nodePort=30581
   ```
 
-  `--reuse-values` does not see the new `provisiond.media.service` defaults;
-  the chart reads an absent block as `ClusterIP`, which is what you get if
-  you set nothing.
+  `--reuse-values` with the same `--set`s works only if you never set
+  `provisiond.media.nodePort` yourself: if you did, Helm drops your null
+  while merging your old values and the previous chart's default brings the
+  key back, so the render still fails.
+
+  `--reuse-values` does not see the new `provisiond.media.service` defaults
+  either; the chart reads an absent block as `ClusterIP`. Without a values
+  file and without either flag, `helm upgrade` takes this chart's defaults
+  plus the values you had set: unless you had set the old key yourself, the
+  Service becomes `ClusterIP` without any error — open it in that same
+  command if your BMCs used it.
 - Kustomize — copy the commented patch from
   `config/overlays/production/kustomization.yaml` into your overlay and
   set `nodePort: 30581`. Render (`make diff-production`) and check the
@@ -530,6 +543,7 @@ NodePort it answers only on the node running frame-provisiond: if your
 media URL names a different node, adding it breaks the URL. See
 docs/deployment.md, "Exposing the media listener".
 
-**If you never provision machines**, there is nothing to do: the port
-closes, and a `FrameInstall` fails at once with a message saying the media
+**If you never provision machines**, there is nothing to do beyond
+`--set provisiond.media.nodePort=null` (with `--reset-then-reuse-values`
+rather than `--reuse-values`, as above): the port closes, and a `FrameInstall` fails at once with a message saying the media
 listener must be exposed and its URL set.

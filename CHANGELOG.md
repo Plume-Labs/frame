@@ -53,7 +53,12 @@ or with the upgrade:
   --set provisiond.media.service.nodePort=30581` (your media URL keeps
   working unchanged). The chart key `provisiond.media.nodePort` is
   **removed**: a values file still setting it fails the render with this
-  migration in the message.
+  migration in the message — and so does every `--reuse-values` upgrade
+  from the previous chart, whose own defaults carried the key: upgrade with
+  `--reset-then-reuse-values --set provisiond.media.nodePort=null` (with
+  `--reuse-values`, the null is dropped if you had set the key yourself). A plain `helm upgrade` with neither flag
+  nor values file (this chart's defaults plus the values you had set) closes
+  the port without failing, unless you had set the old key yourself.
 - Kustomize: add the example patch from
   `config/overlays/production/kustomization.yaml` to your overlay, with
   `nodePort: 30581`.

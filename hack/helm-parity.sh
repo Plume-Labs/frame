@@ -246,6 +246,26 @@ elif ! grep -q "provisiond.media.service.type=NodePort" "$tmpdir/helm-media-oldk
   media_fail=1
 fi
 
+# The documented migration nulls the removed key (docs/upgrading.md). With
+# no default left to delete, Helm keeps it as a nil-valued key: that must
+# read as absent (ClusterIP here), not as the removed key.
+"$HELM" template frame "$CHART_DIR" --namespace frame-system \
+  --set image.repository="$CI_PLACEHOLDER_IMAGE" \
+  --set provisiond.media.url="$CI_PLACEHOLDER_MEDIA_URL" \
+  --set provisiond.media.nodePort=null > "$tmpdir/helm-media-null.yaml" 2> "$tmpdir/helm-media-null.err" || {
+  echo "FAIL: --set provisiond.media.nodePort=null (the documented migration) failed the render:" >&2
+  cat "$tmpdir/helm-media-null.err" >&2
+  media_fail=1
+}
+if [ -s "$tmpdir/helm-media-null.yaml" ]; then
+  extract_jsonl "$tmpdir/helm-media-null.yaml" > "$tmpdir/helm-media-null.jsonl"
+  shape="$(media_shape "$tmpdir/helm-media-null.jsonl")"
+  if [ "$shape" != "ClusterIP - -" ]; then
+    echo "FAIL: --set provisiond.media.nodePort=null renders '$shape', want 'ClusterIP - -'." >&2
+    media_fail=1
+  fi
+fi
+
 if [ "$media_fail" -ne 0 ]; then
   exit 1
 fi

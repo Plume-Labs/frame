@@ -1361,6 +1361,10 @@ helm upgrade frame charts/frame --reuse-values \
   --set provisiond.media.service.externalTrafficPolicy=Local
 # or: type=LoadBalancer plus
 #   --set 'provisiond.media.service.loadBalancerSourceRanges={192.0.2.0/24}'
+# Upgrading a release from a chart that predates provisiond.media.service?
+# Use --reset-then-reuse-values plus --set provisiond.media.nodePort=null:
+# --reuse-values brings back that chart's default for the removed key
+# (docs/upgrading.md).
 ```
 
 The chart refuses `nodePort`, `externalTrafficPolicy` or

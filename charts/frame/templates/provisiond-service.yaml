@@ -39,11 +39,18 @@ spec:
 # provisiond.media.service.* (values.yaml). The values are read through
 # `default`/`dig` rather than straight off .Values, because `helm upgrade
 # --reuse-values` from a chart that predates provisiond.media.service never
-# sees this chart's defaults for it: the block arrives absent, and absent
-# has to mean ClusterIP, not a template error.
+# sees this chart's defaults for it: Helm then renders with the PREVIOUS
+# chart's values.yaml as defaults, so the block arrives absent, and absent
+# has to mean ClusterIP, not a template error. The same mechanism brings
+# back that chart's own default `provisiond.media.nodePort: 30581`, so such
+# an upgrade trips the removed-key check below even when the operator never
+# set it: the message names `--set provisiond.media.nodePort=null` and
+# --reset-then-reuse-values for that case. A null that had no default to
+# delete survives into .Values as a nil-valued key, so the check looks at
+# the value, not only at the key (hasKey alone would refuse the remedy).
 {{- $media := .Values.provisiond.media | default dict }}
-{{- if hasKey $media "nodePort" }}
-{{- fail "provisiond.media.nodePort was removed: the media Service is ClusterIP by default and is opened explicitly. To keep a NodePort, set provisiond.media.service.type=NodePort and provisiond.media.service.nodePort=<port> (docs/upgrading.md). To keep it closed, drop provisiond.media.nodePort from your values." }}
+{{- if and (hasKey $media "nodePort") (not (kindIs "invalid" (get $media "nodePort"))) }}
+{{- fail "provisiond.media.nodePort was removed: the media Service is ClusterIP by default and is opened explicitly. To keep a NodePort, set provisiond.media.service.type=NodePort and provisiond.media.service.nodePort=<port> (docs/upgrading.md). To keep it closed, drop provisiond.media.nodePort from your values. Upgrading from an older chart, the key can come back from that chart's defaults: use --reset-then-reuse-values (not --reuse-values) with --set provisiond.media.nodePort=null." }}
 {{- end }}
 {{- $svc := dig "service" dict $media }}
 {{- $type := dig "type" "ClusterIP" $svc | default "ClusterIP" }}
