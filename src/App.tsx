@@ -98,8 +98,8 @@ import {
  * Within a screen, panels that answer the *same* question sit on tabs.
  *
  * The sidebar was 28 flat entries, most of them one-card panels (MPS, KSM, PTP,
- * burst buffer) or capabilities this cluster cannot run at all (speculative
- * decoding, pipeline parallelism). Folding those into tabs cuts the sidebar to
+ * burst buffer) or capabilities Frame does not set up (speculative decoding,
+ * pipeline parallelism). Folding those into tabs cuts the sidebar to
  * 13 without hiding anything: every former entry is still one click away.
  */
 /**
@@ -575,7 +575,7 @@ function App() {
         return (
           <NotEnabledView
             title="Speculative decoding"
-            reason="Draft-model speculative decoding is available in the llama.cpp server but no draft model is loaded on this deployment, so no accept-rate telemetry is produced."
+            reason="Draft-model speculative decoding is available in the llama.cpp server, but Frame does not load a draft model, so no accept-rate telemetry is reported here."
             enable="llama-server --model <target> --model-draft <small-draft> --draft-max 16"
           />
         )
@@ -583,7 +583,7 @@ function App() {
         return (
           <NotEnabledView
             title="Pipeline parallelism"
-            reason="Pipeline parallelism splits a model across multiple GPUs. This cluster has a single GPU (a single Tesla P4), so PP is not applicable — the model runs fully on one device."
+            reason="Pipeline parallelism splits a model across multiple GPUs; Frame does not set it up, so nothing is reported here."
             enable="Add GPUs across nodes, then serve with tensor/pipeline-parallel size > 1."
           />
         )

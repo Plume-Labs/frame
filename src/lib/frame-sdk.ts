@@ -361,7 +361,7 @@ export interface RackNodeInfo {
 /**
  * A rack: nodes grouped by physical topology via the `topology.frame.io/rack`
  * node label (falls back to the FrameNode `spec.rack`). On bare metal — Frame's
- * primary target — this is the datacenter rack. On the virtualized test cluster
+ * primary target — this is the datacenter rack. On a virtualized cluster
  * the label resolves to the hypervisor host and `physical` is additionally set
  * (host capacity + VM oversubscription); it is absent on metal.
  */
@@ -1377,7 +1377,7 @@ const ALL_PODS_CACHED = '/api/v1/pods?resourceVersion=0'
  * The phase join reproduces what summing the pod list does: kube-state-metrics
  * keeps emitting requests for Succeeded and Failed pods, whose objects still
  * exist, and counting those would overstate what is actually asked of the
- * scheduler. Verified equal to the pod-list computation on this cluster —
+ * scheduler. Verified equal to the pod-list computation on a live cluster —
  * 4.965 cores and 15.244 GiB from both.
  *
  * Returns null, never a partial answer, if Prometheus is absent or either

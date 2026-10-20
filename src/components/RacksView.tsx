@@ -35,8 +35,8 @@ export function RacksView() {
         <CardContent>
           <p className="text-sm text-muted-foreground">
             Nodes grouped by physical rack — the <span className="font-mono">topology.frame.io/rack</span> label.
-            On bare metal this is the datacenter rack; on the virtualized test cluster it resolves to the
-            hypervisor host (shown below with core oversubscription).
+            On bare metal this is the datacenter rack; on a virtualized cluster it can name the
+            hypervisor host instead (shown below with core oversubscription).
           </p>
         </CardContent>
       </Card>

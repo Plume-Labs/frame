@@ -68,9 +68,9 @@ export function MpsView() {
       }
       note={
         <p className="text-sm text-muted-foreground">
-          Multi-Process Service lets several processes share one GPU context. The device-plugin here
-          advertises each GPU as a single exclusive resource, so a second workload cannot be admitted
-          however idle the device is — the headroom above is the share that goes unused rather than
+          Multi-Process Service lets several processes share one GPU context. With the NVIDIA
+          device plugin's default configuration, each GPU is advertised as a single exclusive
+          resource, so a second workload cannot be admitted however idle the device is — the headroom above is the share that goes unused rather than
           being reclaimable. Enabling MPS or time-slicing trades that back for weaker isolation:
           clients share a context, so one of them faulting can take the others down with it.
         </p>
