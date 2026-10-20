@@ -262,7 +262,7 @@ The protocol changes, and the code says so:
 
 ### GPU nodes (not in `charts/frame`)
 
-The GPU Operator is a separate Helm release (`deploy/scripts/acme-bootstrap.sh`),
+The GPU Operator is a separate Helm release (`deploy/scripts/hpc-bootstrap.sh`),
 not part of `charts/frame`. That release changes:
 
 - `driver.enabled=true`, `driver.nvidiaDriverCRD.enabled=true`,

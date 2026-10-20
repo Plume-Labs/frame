@@ -57,7 +57,7 @@
 | `src/lib/alert-registry.ts` (+ `.test.ts`) | projection console des deux types |
 | `src/lib/frame-sdk.ts` | deux lectures |
 | `src/components/AlertsView.tsx` | vues Actives/Historique + carte Abonnements |
-| `deploy/samples/test-cluster/frame-alert-subscription-acme.yaml`, `kps-values.yaml`, `check-alert-routes.sh` | déploiement |
+| `deploy/samples/test-cluster/frame-alert-subscription-example.yaml`, `kps-values.yaml`, `check-alert-routes.sh` | déploiement |
 
 ---
 
@@ -2878,7 +2878,7 @@ git commit -m "feat(console): alert registry history and subscription health"
 ### Task 10: Échantillons de déploiement et routage Alertmanager
 
 **Files:**
-- Create: `deploy/samples/test-cluster/frame-alert-subscription-acme.yaml`
+- Create: `deploy/samples/test-cluster/frame-alert-subscription-example.yaml`
 - Modify: `deploy/samples/test-cluster/kps-values.yaml`
 - Create: `deploy/samples/test-cluster/check-alert-routes.sh`
 
@@ -2960,7 +2960,7 @@ Et sous `alertmanagerSpec:` :
 
 - [ ] **Step 3: Abonnement Acme**
 
-`deploy/samples/test-cluster/frame-alert-subscription-acme.yaml` :
+`deploy/samples/test-cluster/frame-alert-subscription-example.yaml` :
 
 ```yaml
 # Acme receives every cluster alert except the two meta alerts (defaulted).
@@ -2986,7 +2986,7 @@ Expected: trois `ok`, exit 0.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add deploy/samples/test-cluster/kps-values.yaml deploy/samples/test-cluster/frame-alert-subscription-acme.yaml deploy/samples/test-cluster/check-alert-routes.sh
+git add deploy/samples/test-cluster/kps-values.yaml deploy/samples/test-cluster/frame-alert-subscription-example.yaml deploy/samples/test-cluster/check-alert-routes.sh
 git commit -m "feat(monitoring): route Alertmanager to Frame's receiver; Acme subscription sample"
 ```
 
@@ -3003,7 +3003,7 @@ Tâche d'exploitation, **exécutée par la session principale** (pas par un sous
 - [ ] **Step 1: Image**
 
 ```bash
-export KUBECONFIG=~/Acme/.test-cluster/kubeconfig-acme-test.yaml
+export KUBECONFIG=/path/to/your/kubeconfig
 SHA=$(git rev-parse --short HEAD)
 make docker-build docker-push IMG=192.0.2.201:30500/frame-controller:$SHA
 ```
@@ -3090,7 +3090,7 @@ Expected: `401`, `blocked`, `blocked`. Un `401` sur l'une des deux dernières ve
 - [ ] **Step 5: Abonnement puis Alertmanager**
 
 ```bash
-kubectl apply -f deploy/samples/test-cluster/frame-alert-subscription-acme.yaml
+kubectl apply -f deploy/samples/test-cluster/frame-alert-subscription-example.yaml
 deploy/samples/test-cluster/check-alert-routes.sh
 helm -n monitoring get values kps -o yaml > /tmp/kps-live.yaml
 python3 - <<'EOF'

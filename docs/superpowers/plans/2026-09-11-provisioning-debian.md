@@ -187,7 +187,7 @@ func TestPartmanRecipeNamesEveryDiskItWasGiven(t *testing.T) {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestPartman' -v`
+Run: `go test ./internal/provision/ -run 'TestPartman' -v`
 Expected: FAIL — the package does not compile, `undefined: PartmanRecipe`.
 
 - [ ] **Step 3: Write `types.go` and `layout.go`**
@@ -286,7 +286,7 @@ func diskSizeAssertion(l Layout) string {
 
 - [ ] **Step 4: Run the layout tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestPartman' -v`
+Run: `go test ./internal/provision/ -run 'TestPartman' -v`
 Expected: PASS, four tests.
 
 - [ ] **Step 5: Write the failing preseed tests**
@@ -486,7 +486,7 @@ func TestRenderPreseedRejectsAnEmptyUID(t *testing.T) {
 
 - [ ] **Step 6: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestRenderPreseed' -v`
+Run: `go test ./internal/provision/ -run 'TestRenderPreseed' -v`
 Expected: FAIL — `undefined: RenderPreseed`.
 
 - [ ] **Step 7: Write `preseed.go`**
@@ -686,7 +686,7 @@ func checkPublicKeyOnly(key string) error {
 
 - [ ] **Step 8: Run the preseed tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -v`
+Run: `go test ./internal/provision/ -v`
 Expected: PASS, fifteen tests.
 
 - [ ] **Step 9: Prove each half of the key guard discriminates**
@@ -700,12 +700,12 @@ Two mutations, because the guard has two halves that fail differently. Both must
 
 Restore all three. Paste all three commands and all three failures into the task report.
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestRenderPreseed' -v`
+Run: `go test ./internal/provision/ -run 'TestRenderPreseed' -v`
 
 - [ ] **Step 10: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/provision/
 git commit -m "feat(provision): render a preseed that names its disks and carries no secret
 
@@ -844,7 +844,7 @@ func TestDefaultBaseIsThePinnedDebianImage(t *testing.T) {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestFetchBase|TestDefaultBase' -v`
+Run: `go test ./internal/provision/ -run 'TestFetchBase|TestDefaultBase' -v`
 Expected: FAIL — `undefined: FetchBase`.
 
 - [ ] **Step 3: Write `base.go`**
@@ -950,7 +950,7 @@ func fileSHA256(path string) (string, error) {
 
 - [ ] **Step 4: Run the checksum tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestFetchBase|TestDefaultBase' -v`
+Run: `go test ./internal/provision/ -run 'TestFetchBase|TestDefaultBase' -v`
 Expected: PASS, three tests.
 
 - [ ] **Step 5: Write the failing remaster tests**
@@ -1068,7 +1068,7 @@ func TestRemasterProducesAnImageWithNoPrivateKeyMaterial(t *testing.T) {
 
 - [ ] **Step 6: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestRemaster' -v`
+Run: `go test ./internal/provision/ -run 'TestRemaster' -v`
 Expected: FAIL — `undefined: Remaster`. If instead it fails with "xorriso is not installed", install it (`sudo apt install xorriso`) and re-run; the lot cannot be built without it.
 
 - [ ] **Step 7: Write `iso.go`**
@@ -1179,7 +1179,7 @@ func run(ctx context.Context, name string, args ...string) error {
 
 - [ ] **Step 8: Run the remaster tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -v`
+Run: `go test ./internal/provision/ -v`
 Expected: PASS. The tiny test ISO has no `isohdpfx.bin` or `efi.img`, so `Remaster` will fail on the real `xorriso` invocation. Make the boot-record arguments conditional on those files existing — a real netinst has them, the test fixture does not — and say so in a comment:
 
 ```go
@@ -1208,7 +1208,7 @@ Change `bootArgs` to the empty string, run `TestRemasterMakesBothBootPathsUnatte
 - [ ] **Step 10: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/provision/
 git commit -m "feat(provision): fetch the pinned netinst and remaster it per machine
 
@@ -1355,7 +1355,7 @@ func TestWaitForOurSystemStopsWhenTheContextExpires(t *testing.T) {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestWaitForOurSystem' -v`
+Run: `go test ./internal/provision/ -run 'TestWaitForOurSystem' -v`
 Expected: FAIL — `undefined: WaitForOurSystem`.
 
 - [ ] **Step 3: Write `ssh.go`**
@@ -1412,7 +1412,7 @@ The `sshClient` implementation dials with `ssh.ClientConfig`, capturing the host
 
 - [ ] **Step 4: Run the fake-driven tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestWaitForOurSystem' -v`
+Run: `go test ./internal/provision/ -run 'TestWaitForOurSystem' -v`
 Expected: PASS, four tests.
 
 - [ ] **Step 5: Add one test against a real in-process SSH server**
@@ -1488,7 +1488,7 @@ It fails rather than skips if the handshake does not complete. A skipped test he
 
 - [ ] **Step 6: Run the whole package**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -v`
+Run: `go test ./internal/provision/ -v`
 Expected: PASS.
 
 - [ ] **Step 7: Prove the marker check discriminates**
@@ -1498,7 +1498,7 @@ Delete the `strings.TrimSpace(string(b)) != uid` case from the switch, run the s
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/provision/ssh.go internal/provision/ssh_test.go
 git commit -m "feat(provision): wait for the machine to come up as our system, not just as a machine
 
@@ -1650,7 +1650,7 @@ Declare `errNotFound = errors.New("no such file")` beside the fakes.
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestJoin|TestRewrite' -v`
+Run: `go test ./internal/provision/ -run 'TestJoin|TestRewrite' -v`
 Expected: FAIL — `undefined: Join`.
 
 - [ ] **Step 3: Write `join.go`**
@@ -1711,13 +1711,13 @@ func Join(ctx context.Context, sess Session, t ClusterTarget, nodeAddress string
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -v`
+Run: `go test ./internal/provision/ -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/provision/join.go internal/provision/join_test.go go.mod go.sum
 git commit -m "feat(provision): start a cluster, or join one, over the session we already hold
 
@@ -2028,7 +2028,7 @@ func contains(ss []string, want string) bool {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestInstall' -v`
+Run: `go test ./internal/provision/ -run 'TestInstall' -v`
 Expected: FAIL — `undefined: Install`.
 
 - [ ] **Step 3: Write `install.go`**
@@ -2159,7 +2159,7 @@ func Install(ctx context.Context, d Deps, s Spec, o Options) (Result, error) {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -v`
+Run: `go test ./internal/provision/ -v`
 Expected: PASS.
 
 - [ ] **Step 5: Add the test that keeps the package boundary honest**
@@ -2209,12 +2209,12 @@ func TestProvisionImportsNothingFromKubernetes(t *testing.T) {
 
 Add `_ "k8s.io/api/core/v1"` to `install.go`, run it, confirm red, remove it. Paste the failure into the report.
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestProvisionImports' -v`
+Run: `go test ./internal/provision/ -run 'TestProvisionImports' -v`
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/provision/
 git commit -m "feat(provision): the phase machine, with cleanup on every exit
 
@@ -2380,7 +2380,7 @@ Markers on the root type: `+kubebuilder:object:root=true`, `+kubebuilder:subreso
 
 - [ ] **Step 2: Generate and build**
 
-Run: `cd /home/user/frame-provision && make manifests generate && go build ./...`
+Run: `make manifests generate && go build ./...`
 Expected: a new `config/crd/bases/frame.plume-labs.io_frameinstalls.yaml`, and a clean build.
 
 - [ ] **Step 3: Copy the CRD into the chart**
@@ -2445,7 +2445,7 @@ and **accepts** a complete `mirror`/`init` object, and a complete
 
 - [ ] **Step 5: Run it**
 
-Run: `cd /home/user/frame-provision && make test ARGS='-run TestFrameInstallV1Beta1Schema'`
+Run: `make test ARGS='-run TestFrameInstallV1Beta1Schema'`
 Expected: PASS. If envtest cannot start, run `make crd-render setup-envtest` first. **Never apply `bin/crd-render/`'s output to the cluster** — it switches CRD conversion to a webhook pointing at a service that does not exist.
 
 - [ ] **Step 6: Prove one rule discriminates**
@@ -2455,7 +2455,7 @@ Delete the `mirror is exactly two disks` CEL rule, regenerate, and confirm that 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add api/ config/crd/ charts/frame/files/crds/ internal/controller/frame/frameinstall_v1beta1_schema_test.go cmd/scheme_test.go
 git commit -m "feat(api): add FrameInstall, an installation as an object
 
@@ -2526,7 +2526,7 @@ In `charts/frame/templates/_helpers.tpl`, inside `frame.tierRoleCRDs`, in alphab
 
 - [ ] **Step 3: Run parity, and run it again**
 
-Run: `cd /home/user/frame-provision && make helm-parity`
+Run: `make helm-parity`
 Expected: green.
 
 **It exits at its first red section.** When it goes green on the first fix, run it a second time: in lot 1 the first fix uncovered two further gaps that had been hidden behind it. Record both runs in the report.
@@ -2536,7 +2536,7 @@ Expected: green.
 Render the chart and confirm `frame-editor`'s aggregation rule does not select the FrameInstall editor role:
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 for role in editor viewer; do
   printf '%s: ' "$role"
   helm template charts/frame \
@@ -2554,7 +2554,7 @@ Then add `rbac.frame.plume-labs.io/tier: editor` to the editor role, re-render, 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add config/rbac/ charts/frame/templates/_helpers.tpl
 git commit -m "feat(rbac): admin and viewer roles for FrameInstall, and deliberately not editor
 
@@ -2698,7 +2698,7 @@ func TestBuildHandlerRejectsASpecItWouldRefuseToRender(t *testing.T) {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run 'TestMediaHandler|TestBuildHandler' -v`
+Run: `go test ./internal/provision/ -run 'TestMediaHandler|TestBuildHandler' -v`
 Expected: FAIL — `undefined: MediaHandler`.
 
 - [ ] **Step 3: Write `server.go`**
@@ -2737,7 +2737,7 @@ func MediaHandler(dir string) http.Handler {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -v`
+Run: `go test ./internal/provision/ -v`
 Expected: PASS.
 
 - [ ] **Step 5: Write `Dockerfile.provisiond`**
@@ -2775,7 +2775,7 @@ spec:
 - [ ] **Step 7: Build the image and confirm xorriso is in it**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 podman build -f Dockerfile.provisiond -t frame-provisiond:dev .
 podman run --rm frame-provisiond:dev xorriso -version
 ```
@@ -2785,7 +2785,7 @@ Expected: a version banner. **Podman, never Docker.**
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add cmd/provisiond/ internal/provision/server.go internal/provision/server_test.go Dockerfile.provisiond config/provisiond/ Makefile
 git commit -m "feat(provisiond): build installer images, and serve them to the BMC
 
@@ -2876,7 +2876,7 @@ That last one matters: without it, every resync re-runs a destructive operation.
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && make test ARGS='-run TestFrameInstallReconciler'`
+Run: `make test ARGS='-run TestFrameInstallReconciler'`
 Expected: FAIL — the reconciler does not exist.
 
 - [ ] **Step 3: Write the controller**
@@ -2925,7 +2925,7 @@ Register in `cmd/main.go` beside `FrameMachineReconciler`.
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/user/frame-provision && make test ARGS='-run TestFrameInstallReconciler'`
+Run: `make test ARGS='-run TestFrameInstallReconciler'`
 Expected: PASS.
 
 - [ ] **Step 5: Prove the run-once guard discriminates**
@@ -2935,7 +2935,7 @@ Remove the terminal-phase early return, run the "second reconcile does not start
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/controller/frame/frameinstall_controller.go internal/provision/redfishbmc.go internal/controller/frame/frameinstall_controller_test.go cmd/main.go config/rbac/role.yaml
 git commit -m "feat(controller): drive an installation from a FrameInstall
 
@@ -3062,7 +3062,7 @@ Write `validConfig` and `writeConfig` helpers alongside; `writeConfig` marshals 
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && go test ./cmd/bootstrap/ -v`
+Run: `go test ./cmd/bootstrap/ -v`
 Expected: FAIL — `undefined: LoadConfig`.
 
 - [ ] **Step 3: Write `config.go` and `main.go`**
@@ -3081,17 +3081,17 @@ Expected: FAIL — `undefined: LoadConfig`.
 
 `provision.RedfishBMC` was created in Task 9, in `internal/provision/redfishbmc.go`. This command uses it directly. Confirm it carries no Kubernetes import, which is the only reason this command can exist:
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run TestProvisionImports -v`
+Run: `go test ./internal/provision/ -run TestProvisionImports -v`
 
 - [ ] **Step 5: Build it**
 
-Run: `cd /home/user/frame-provision && go build -o bin/frame-bootstrap ./cmd/bootstrap && ./bin/frame-bootstrap -help`
+Run: `go build -o bin/frame-bootstrap ./cmd/bootstrap && ./bin/frame-bootstrap -help`
 Expected: usage text, and an exit that names `xorriso` if it is absent.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add cmd/bootstrap/ internal/provision/redfishbmc.go Makefile
 git commit -m "feat(bootstrap): install node zero, when there is no cluster to run an operator in
 
@@ -3227,7 +3227,7 @@ describe('who may create one', () => {
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `cd /home/user/frame-provision && npx vitest run src/lib/installs.test.ts`
+Run: `npx vitest run src/lib/installs.test.ts`
 Expected: FAIL — the module does not exist.
 
 - [ ] **Step 3: Write `src/lib/installs.ts`**
@@ -3259,7 +3259,7 @@ export function isStalledInPhase(p: InstallPhase, since: string | undefined, now
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/user/frame-provision && npx vitest run src/lib/installs.test.ts`
+Run: `npx vitest run src/lib/installs.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Write the components**
@@ -3272,13 +3272,13 @@ The tab is added to `src/App.tsx:238`, beside `{ id: 'hardware', label: 'Machine
 
 - [ ] **Step 6: Build and typecheck**
 
-Run: `cd /home/user/frame-provision && npx tsc --noEmit && npm run build`
+Run: `npx tsc --noEmit && npm run build`
 Expected: clean.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add src/lib/installs.ts src/lib/installs.test.ts src/components/hardware/ src/App.tsx src/lib/frame-sdk.ts
 git commit -m "feat(ui): show installations, and let an admin start one
 
@@ -3314,7 +3314,7 @@ an erased disk."
 - [ ] **Step 1: Verify it drives the dead path before removing anything**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 grep -n "framenodes\|spec.disk\|talos\|Talos" src/components/NodeProvisionWizard.tsx | head -20
 ```
 
@@ -3325,7 +3325,7 @@ Expected: references to `FrameNode` provisioning fields and/or Talos. Record the
 - [ ] **Step 3: Confirm nothing else referenced it**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 grep -rn "NodeProvisionWizard" src/ || echo "no references remain"
 npx tsc --noEmit && npm run build
 ```
@@ -3335,7 +3335,7 @@ Expected: `no references remain`, and a clean build.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add -u src/
 git commit -m "refactor(ui): remove the wizard that provisioned through the dead FrameNode path
 
@@ -3404,7 +3404,7 @@ Until these three run, this lot is proven only against fakes and captures.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add docs/
 git commit -m "docs(provisioning): record what this lot answers, and what it has not yet proven
 
@@ -3477,7 +3477,7 @@ func bootArgs(preseedURL string) string {
 
 - [ ] **Step 2: Run the existing tests and watch them fail**
 
-Run: `cd /home/user/frame-provision && go test ./internal/provision/ -run TestRemaster -v`
+Run: `go test ./internal/provision/ -run TestRemaster -v`
 Expected: FAIL — the tests that assert `file=/cdrom/preseed.cfg` and that `preseed.cfg` is on the image no longer describe the code. Rewrite them to assert the boot arguments carry `url=`, `interface=auto` and `frame=1`, and that the image does **not** carry `preseed.cfg`.
 
 Keep `TestRemasterMakesTheActualDefaultEntryUnattended` and `TestRemasterRewritesDebiansOwnAutomatedInstallEntries` — both run against the real committed Debian boot configs and both still matter. Confirm the second still discriminates now that the marker changed: Debian's five pre-existing `auto=true` entries must still receive our arguments, which is the whole reason the marker could not be `auto=true`.
@@ -3508,7 +3508,7 @@ Three: delete `interface=auto` from `bootArgsFixed`; change `alreadyRewritten` b
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/user/frame-provision
+cd /path/to/frame
 git add internal/provision/ docs/
 git commit -m "fix(provision): fetch the preseed over HTTP, because the machine would not read it from the image
 

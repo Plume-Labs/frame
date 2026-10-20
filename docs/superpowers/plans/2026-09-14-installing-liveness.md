@@ -153,7 +153,7 @@ func TestValidateBeaconBaseAcceptsEmptyAsMeaningNoBeacons(t *testing.T) {
 
 - [ ] **Step 2: Run it to make sure it fails**
 
-Run: `cd /home/user/frame-install-liveness && go test ./internal/provision/ -run 'Beacon|Checkpoint' -v`
+Run: `go test ./internal/provision/ -run 'Beacon|Checkpoint' -v`
 Expected: FAIL to compile — `undefined: CheckpointNetcfg`, `undefined: ValidCheckpoint`, and the rest.
 
 - [ ] **Step 3: Write the implementation**
@@ -260,7 +260,7 @@ Expected: PASS, six tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-install-liveness
+cd /path/to/frame
 git add internal/provision/beacon.go internal/provision/beacon_test.go
 git commit -m "feat(provision): le vocabulaire des balises et leurs fragments shell
 
@@ -1859,7 +1859,7 @@ In `cmd/main.go`, the `HTTPImageStore` already constructed for `Images` is also 
 
 - [ ] **Step 6: Run the whole suite**
 
-Run: `cd /home/user/frame-install-liveness && make test`
+Run: `make test`
 Expected: 0 failures. Read the output section by section — the envtest suite in this package is slow and its failures scroll past the summary.
 
 - [ ] **Step 7: Commit**

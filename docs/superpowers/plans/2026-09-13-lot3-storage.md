@@ -169,7 +169,7 @@ func TestSmartStorageRootIsDiscoveredNotGuessed(t *testing.T) {
 
 - [ ] **Step 2: Lancer le test, vérifier qu'il échoue**
 
-Run: `cd /home/user/frame-storage && go test ./internal/redfish/ -run TestSmartStorageRootIsDiscoveredNotGuessed -v`
+Run: `go test ./internal/redfish/ -run TestSmartStorageRootIsDiscoveredNotGuessed -v`
 Expected: FAIL — `Drives = 0, want 8` (le champ est laissé vide aujourd'hui).
 
 - [ ] **Step 3: Écrire le second test, celui qui fixe les valeurs**

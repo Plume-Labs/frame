@@ -139,7 +139,7 @@ Add to `internal/controller/frame/frameuser_v1beta1_schema_test.go`, inside the 
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && go build ./... && go test ./api/frame/v1alpha1/...
+go build ./... && go test ./api/frame/v1alpha1/...
 ```
 
 Expected: the packages do not compile — `user.Spec.State undefined (type v1beta1.FrameUserSpec has no field or method State)` and `framev1beta1.StateEnabled undefined`. That compile failure is the failing test.
@@ -187,7 +187,7 @@ and add the field to `FrameUserSpec`, after `PasswordAuth`:
 Then run the fuzz:
 
 ```bash
-cd /home/user/frame-lot0 && go test ./api/frame/v1alpha1/... -run 'TestHubRoundTrip|TestFuzzCorpus'
+go test ./api/frame/v1alpha1/... -run 'TestHubRoundTrip|TestFuzzCorpus'
 ```
 
 Expected: `TestFuzzCorpusReachesTheInterestingBranches` passes, and **`TestHubRoundTripIsLossless` fails** with a diff on `Spec.State` — v1beta1 → v1alpha1 dropped it and there was nothing to carry back. That is the constraint at the top of this plan, seen rather than trusted. Step 4 fixes it.
@@ -234,13 +234,13 @@ and in `(*FrameUser).ConvertFrom`, after `dst.Spec.Role = src.Spec.Role`:
 - [ ] **Step 5: Regenerate the manifests and the deepcopy**
 
 ```bash
-cd /home/user/frame-lot0 && make generate manifests
+make generate manifests
 ```
 
 `make manifests` calls `make helm-sync-crds` itself, so both CRD copies move together. Confirm the enum landed in both:
 
 ```bash
-cd /home/user/frame-lot0 && grep -c 'enabled$' config/crd/bases/frame.plume-labs.io_frameusers.yaml charts/frame/files/crds/frame.plume-labs.io_frameusers.yaml && grep -n -A6 'state:' config/crd/bases/frame.plume-labs.io_frameusers.yaml | head -40
+grep -c 'enabled$' config/crd/bases/frame.plume-labs.io_frameusers.yaml charts/frame/files/crds/frame.plume-labs.io_frameusers.yaml && grep -n -A6 'state:' config/crd/bases/frame.plume-labs.io_frameusers.yaml | head -40
 ```
 
 Expected: `state:` appears under both versions' `spec.properties`, each with `default: enabled` and `enum: [enabled, disabled]`.
@@ -250,9 +250,9 @@ Expected: `state:` appears under both versions' `spec.properties`, each with `de
 Run these as three separate commands, not one pipeline — a `| tail` swallows the exit code and a failed suite reads as a pass:
 
 ```bash
-cd /home/user/frame-lot0 && go test ./api/frame/...
-cd /home/user/frame-lot0 && make test
-cd /home/user/frame-lot0 && make helm-crds-check
+go test ./api/frame/...
+make test
+make helm-crds-check
 ```
 
 Expected: `TestHubRoundTripIsLossless` green, the three new `FrameUser v1beta1 schema` specs green, `helm-crds-check` silent (no drift). `make helm-parity` is not run here — see the known cpu-request failure in Global Constraints.
@@ -260,7 +260,7 @@ Expected: `TestHubRoundTripIsLossless` green, the three new `FrameUser v1beta1 s
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add api config/crd charts/frame/files/crds internal/controller/frame/frameuser_v1beta1_schema_test.go && git commit -m "feat(api): a FrameUser can be disabled without losing its keys"
+git add api config/crd charts/frame/files/crds internal/controller/frame/frameuser_v1beta1_schema_test.go && git commit -m "feat(api): a FrameUser can be disabled without losing its keys"
 ```
 
 ---
@@ -468,7 +468,7 @@ func TestPasskeyLoginPathAdmitsAnEnabledAccount(t *testing.T) {
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/...
+go test ./internal/authd/...
 ```
 
 Expected: the package does not compile — `undefined: requireIssuable` and `undefined: finishLogin`.
@@ -628,7 +628,7 @@ var finishLogin = (*Authenticator).FinishLogin
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/... -v -run 'Path|RequireIssuable|Password|Token'
+go test ./internal/authd/... -v -run 'Path|RequireIssuable|Password|Token'
 ```
 
 Expected: the five new tests green, and the existing `TestPasswordLoginSucceedsWhenEnabled`, `TestPasswordLoginAlwaysVerifiesExactlyOnce`, `TestTokenReflectsRoleChangedAfterSessionIssued`, `TestBootstrapSessionAllowsImmediateRegisterBegin` still green — the last one in particular, since `sessionUser` is now stricter and bootstrap's fresh admin has no explicit state.
@@ -638,7 +638,7 @@ Then the whole package: `go test ./internal/authd/...`
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add internal/authd && git commit -m "feat(authd): one function decides whether an identity may be issued"
+git add internal/authd && git commit -m "feat(authd): one function decides whether an identity may be issued"
 ```
 
 ---
@@ -763,7 +763,7 @@ Append to `internal/webhook/frame/v1beta1/frameuser_webhook_test.go`, inside the
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && make test 2>&1 | grep -A20 'FrameUser webhook'
+make test 2>&1 | grep -A20 'FrameUser webhook'
 ```
 
 Expected: `refuses a non-admin switching an account off`, `refuses disabling the only admin` and `does not count a disabled admin as the admin who remains` fail — the validator has no opinion about `spec.state` yet, so every one of those updates is allowed.
@@ -862,7 +862,7 @@ The message keeps the words "last admin" verbatim: the pre-existing specs `refus
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/user/frame-lot0 && make test
+make test
 ```
 
 Expected: the six new specs green and all pre-existing `FrameUser webhook` specs still green. Read Ginkgo's own summary line for `internal/webhook/frame/v1beta1` rather than piping through `grep` — a pipe hands you grep's exit code, and a failed suite then reads as a pass.
@@ -870,7 +870,7 @@ Expected: the six new specs green and all pre-existing `FrameUser webhook` specs
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add internal/webhook/frame/v1beta1 && git commit -m "fix(webhook): a disabled admin is not a way back in"
+git add internal/webhook/frame/v1beta1 && git commit -m "fix(webhook): a disabled admin is not a way back in"
 ```
 
 ---
@@ -1126,7 +1126,7 @@ and inside `bootstrapServer`'s `authd.ServerConfig{...}`, alongside `TokenTTL`:
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/... -run Invite
+go test ./internal/authd/... -run Invite
 ```
 
 Expected: compile failure — `undefined: PurposeInvite`, and `unknown field ConsoleOrigin in struct literal of type ServerConfig`.
@@ -1302,7 +1302,7 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/... && go build ./cmd/...
+go test ./internal/authd/... && go build ./cmd/...
 ```
 
 Expected: all six new `Invite` tests green, the whole `internal/authd` package green, `cmd/authd` still building.
@@ -1310,7 +1310,7 @@ Expected: all six new `Invite` tests green, the whole `internal/authd` package g
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add internal/authd cmd/authd && git commit -m "feat(authd): an admin can invite a second person"
+git add internal/authd cmd/authd && git commit -m "feat(authd): an admin can invite a second person"
 ```
 
 ---
@@ -1513,7 +1513,7 @@ Add the imports this appends need to the file's import block: `metav1 "k8s.io/ap
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/... -run 'InviteAccept|SecondInvite'
+go test ./internal/authd/... -run 'InviteAccept|SecondInvite'
 ```
 
 Expected: compile failure — `undefined: enrolSessionTTL` — and, once that resolves, 404s from the mux for `/auth/invite/accept`.
@@ -1630,7 +1630,7 @@ and add `"time"` to that file's imports.
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/...
+go test ./internal/authd/...
 ```
 
 Expected: the five new accept tests green, and the whole package green — in particular `TestPasswordLoginSucceedsWhenEnabled` and `TestBootstrapCreatesTheFirstAdminAndDeletesTheSecret`, which now reach the cookie through `setSessionFor`.
@@ -1638,7 +1638,7 @@ Expected: the five new accept tests green, and the whole package green — in pa
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add internal/authd && git commit -m "feat(authd): an invitation dies at the first enrolment"
+git add internal/authd && git commit -m "feat(authd): an invitation dies at the first enrolment"
 ```
 
 ---
@@ -1886,7 +1886,7 @@ Add `"errors"` to that file's import block.
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/... -run 'Credential|Revoke'
+go test ./internal/authd/... -run 'Credential|Revoke'
 ```
 
 Expected: compile failure — `undefined: credentialView`, `undefined: ErrLastCredential`.
@@ -2034,7 +2034,7 @@ func (s *Server) handleRevokeCredential(w http.ResponseWriter, r *http.Request) 
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/user/frame-lot0 && go test ./internal/authd/...
+go test ./internal/authd/...
 ```
 
 Expected: the ten new credential tests green and the package green — including `TestRemoveCredentialKeepsLastKeyWhenPasswordDisabled` and `TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset`, which assert only that an error occurred and so are unaffected by the wrapping.
@@ -2042,7 +2042,7 @@ Expected: the ten new credential tests green and the package green — including
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add internal/authd && git commit -m "feat(authd): list and revoke enrolled keys"
+git add internal/authd && git commit -m "feat(authd): list and revoke enrolled keys"
 ```
 
 ---
@@ -2254,7 +2254,7 @@ describe('revokeCredential', () => {
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-cd /home/user/frame-lot0 && npx vitest run src/lib/accounts.test.ts src/lib/auth.test.ts
+npx vitest run src/lib/accounts.test.ts src/lib/auth.test.ts
 ```
 
 Expected: `Failed to resolve import "@/lib/accounts"`, and `identityFromToken is not a function` in `auth.test.ts`.
@@ -2417,7 +2417,7 @@ export async function revokeCredential(id: string, email?: string): Promise<void
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/user/frame-lot0 && npx vitest run && npm run typecheck
+npx vitest run && npm run typecheck
 ```
 
 Expected: every spec in `src/lib/accounts.test.ts` and `src/lib/auth.test.ts` green, the whole suite green, `tsc -b` clean.
@@ -2425,7 +2425,7 @@ Expected: every spec in `src/lib/accounts.test.ts` and `src/lib/auth.test.ts` gr
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add src/lib && git commit -m "feat(ui): the account transformations, where vitest can reach them"
+git add src/lib && git commit -m "feat(ui): the account transformations, where vitest can reach them"
 ```
 
 ---
@@ -2457,7 +2457,7 @@ There is no unit test to write; the failing check is the compiler, and it fails 
 - [ ] **Step 2: Run it and watch it fail**
 
 ```bash
-cd /home/user/frame-lot0 && npm run typecheck
+npm run typecheck
 ```
 
 Expected: an error on `const unhandled: never = tab` in `renderTab`'s `default` branch (`src/App.tsx` line 552) — `'accounts'` is not assignable to `never`, because no `case` handles it. That is the gate doing its job; Step 3 walks through it.
@@ -2952,7 +2952,7 @@ In `src/App.tsx`:
 - [ ] **Step 4: Run the checks**
 
 ```bash
-cd /home/user/frame-lot0 && npm run build && npx vitest run
+npm run build && npx vitest run
 ```
 
 Expected: `tsc -b` clean (the three typed gates satisfied), the Vite build succeeding, and the whole vitest suite green — `src/lib/auth.test.ts` in particular, since `auth.ts` gained exports.
@@ -2960,7 +2960,7 @@ Expected: `tsc -b` clean (the three typed gates satisfied), the Vite build succe
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add src && git commit -m "feat(ui): an Accounts screen, and a page that spends an invitation"
+git add src && git commit -m "feat(ui): an Accounts screen, and a page that spends an invitation"
 ```
 
 ---
@@ -2982,7 +2982,7 @@ cd /home/user/frame-lot0 && git add src && git commit -m "feat(ui): an Accounts 
 The check here is a reader's, not a compiler's, so make it explicit — these three claims must be findable in the docs after this task, and none of them is today:
 
 ```bash
-cd /home/user/frame-lot0 && grep -c 'spec.state' docs/crd-reference.md docs/deployment.md docs/roadmap.md ; grep -c '/auth/invite' docs/api.md docs/deployment.md
+grep -c 'spec.state' docs/crd-reference.md docs/deployment.md docs/roadmap.md ; grep -c '/auth/invite' docs/api.md docs/deployment.md
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
@@ -3043,10 +3043,10 @@ and, plainly labelled as **not yet executed**, the end-to-end check this lot exi
 - [ ] **Step 4: Run the check**
 
 ```bash
-cd /home/user/frame-lot0 && grep -c 'spec.state' docs/crd-reference.md docs/deployment.md docs/roadmap.md
-cd /home/user/frame-lot0 && grep -c '/auth/invite' docs/api.md docs/deployment.md
-cd /home/user/frame-lot0 && make test
-cd /home/user/frame-lot0 && npm run build && npx vitest run
+grep -c 'spec.state' docs/crd-reference.md docs/deployment.md docs/roadmap.md
+grep -c '/auth/invite' docs/api.md docs/deployment.md
+make test
+npm run build && npx vitest run
 ```
 
 Expected: every count non-zero, and the whole tree green — Go, envtest and frontend — one last time before the branch is offered for review.
@@ -3054,5 +3054,5 @@ Expected: every count non-zero, and the whole tree green — Go, envtest and fro
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/user/frame-lot0 && git add docs && git commit -m "docs: inviting a second human, and the field that freezes with it"
+git add docs && git commit -m "docs: inviting a second human, and the field that freezes with it"
 ```

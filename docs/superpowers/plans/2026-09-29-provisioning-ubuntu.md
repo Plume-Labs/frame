@@ -79,7 +79,7 @@
 
 ### Task 6: GPU Operator release
 
-**Files:** `deploy/scripts/acme-bootstrap.sh`, new `deploy/gpu/nvidiadriver-580.yaml`
+**Files:** `deploy/scripts/hpc-bootstrap.sh`, new `deploy/gpu/nvidiadriver-580.yaml`
 
 - [ ] `driver.enabled=true`, `driver.nvidiaDriverCRD.enabled=true`, `driver.nvidiaDriverCRD.deployDefaultCR=false`; NVIDIADriver `version: 580.178.04`, nodeSelector gpu.present + `feature.node.kubernetes.io/system-os_release.VERSION_ID: "24.04"`. `helm template` renders; commit.
 

@@ -32,7 +32,7 @@ The rest keeps going through `frame-uiproxy` on the path it already serves. Thre
 - Go's `net/http` forces HTTP/1.1 for a request whose `Connection` contains `upgrade` **and** whose `Upgrade` header is exactly `websocket` (`Request.requiresHTTP1`), so the SA transport built by `rest.TransportFor` does not need an HTTP/2-free twin. The console must therefore send `Upgrade: websocket` — which is what a browser's `new WebSocket()` does — and nothing else.
 - Test commands: `make test` (full; chains `manifests generate fmt vet crd-render setup-envtest`), `go test ./internal/...`, `go test ./test/manifests/`, `npx vitest run`, `npm run build`.
 - **RBAC is testable and already has a harness.** `test/manifests` parses the shipped YAML (`config/rbac/*_role.yaml` + `deploy/kubernetes/base/rbac.yaml`), reconstructs what the controller-manager aggregates into `frame-viewer`/`frame-editor`/`frame-admin`, and asserts on it — `ClusterRoles`, `AggregatedRules`, `Grants`, `Access`. It exists because a whole lot once passed every per-task review and every Go test while the manifests granted nobody the rights to use any of it. Assert new grants there, not with `grep`.
-- Work in `/home/user/frame-lot2` on branch `feat/lot2-workloads`. Every command below assumes that directory.
+- Work in `/path/to/frame` on branch `feat/lot2-workloads`. Every command below assumes that directory.
 
 ---
 
