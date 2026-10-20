@@ -54,9 +54,9 @@ const (
 type ParameterValue string
 
 // WorkloadType is the substrate a FrameJob runs on, independent of
-// ServiceClass (resource tier) and Priority (urgency) — see
-// docs/superpowers/specs/2026-08-19-frame-typed-job-submission-design.md
-// section 3.1 in the Acme repo, the design this field materialises. Before
+// ServiceClass (resource tier) and Priority (urgency) — the typed
+// job-submission design (2026-08-19, section 3.1) this field materialises,
+// kept outside this repository. Before
 // this field existed, "substrate" was implicit in which controller a caller
 // happened to talk to: Argo for a pipeline, or straight past Frame to
 // Volcano/the Kubernetes Job API for anything else, because Frame offered no

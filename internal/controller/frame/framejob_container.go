@@ -102,7 +102,7 @@ func (r *FrameJobReconciler) buildContainerObject(ctx context.Context, job *fram
 	}
 
 	// labels starts from the FrameJob's own metadata.labels — this is what
-	// lets Acme's JobWatcher (and anything else selecting by label) find
+	// lets a client's job watcher (and anything else selecting by label) find
 	// the Job it submitted, the correlation GAP 2 exists to restore. Frame's
 	// own labels are applied second, into the same map, so they win any key
 	// collision: a caller must not be able to overwrite
@@ -328,8 +328,8 @@ func batchJobPhase(job *unstructured.Unstructured, suspended bool) string {
 //     (the minAvailable pods finished but the rest haven't been reaped).
 //   - Terminating/Terminated/Aborting/Aborted fold onto Failed: none of them
 //     is a success, and Frame's Ready vocabulary has no "cancelled" reason
-//     to add one for — that vocabulary is contractual (clients, including
-//     Acme, branch on it), so widening it is its own review, not a side
+//     to add one for — that vocabulary is contractual (clients branch on
+//     it), so widening it is its own review, not a side
 //     effect of wiring Volcano in.
 func volcanoJobPhase(job *unstructured.Unstructured) string {
 	phase, _, _ := unstructured.NestedString(job.Object, "status", "state", "phase")

@@ -48,8 +48,8 @@ import (
 // so every existing object satisfies "exactly one of the two is set" simply
 // by having pipeline and never having heard of container — the rule widens
 // what the API accepts, it narrows nothing a stored object already relies
-// on. See docs/superpowers/specs/2026-08-19-frame-typed-job-submission-design.md
-// (Acme repo) section 3.2 for why container exists at all: Frame had no
+// on. The typed job-submission design (2026-08-19, section 3.2, kept outside
+// this repository) is why container exists at all: Frame had no
 // typed way to accept a container workload, so callers reached past it to
 // Volcano and the Kubernetes Job API directly.
 // +kubebuilder:validation:XValidation:rule="has(self.pipeline) != has(self.container)",message="exactly one of pipeline or container must be set"
@@ -196,7 +196,7 @@ type ContainerSpec struct {
 	// already exists — corev1.EnvFromSource covers both secretRef and
 	// configMapRef, so this does not need two separate fields the way Frame
 	// would if it minted its own type. It exists alongside Env for the same
-	// reason Acme's other container workloads need it: object-store
+	// reason other container workloads need it: object-store
 	// credentials and similar bulk config are handed to a workload as a
 	// whole Secret, not as individual Env entries a caller would have to
 	// enumerate by key.
@@ -232,8 +232,8 @@ type FrameJobStatus struct {
 
 	// Conditions represent the current state of the FrameJob resource.
 	// Ready's reason is one of Submitted, Running, Suspended, Completed,
-	// Failed — contractual across every substrate stage 2 added (clients,
-	// including Acme, branch on it), not just the pipeline path it started
+	// Failed — contractual across every substrate stage 2 added (clients
+	// branch on it), not just the pipeline path it started
 	// on. Two more condition types appear here only for a container-substrate
 	// job: SchedulingPolicyResolved (batch type only — records whether the
 	// frame-<type>-named SchedulingPolicy that supplies the Volcano queue was

@@ -48,7 +48,7 @@ var _ = Describe("Conversion", func() {
 		alpha := &framev1alpha1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "conv-job", Namespace: "default"},
 			Spec: framev1alpha1.FrameJobSpec{
-				Pipeline:     "acme-training-dag",
+				Pipeline:     "training-dag",
 				ServiceClass: "HIGH",
 				Priority:     "high",
 				Namespace:    "somewhere-else",
@@ -63,7 +63,7 @@ var _ = Describe("Conversion", func() {
 		By("reading it at the storage version")
 		beta := &framev1beta1.FrameJob{}
 		Expect(k8sClient.Get(ctx, key, beta)).To(Succeed())
-		Expect(beta.Spec.Pipeline).To(Equal("acme-training-dag"))
+		Expect(beta.Spec.Pipeline).To(Equal("training-dag"))
 		Expect(beta.Spec.ServiceClass).To(Equal(framev1beta1.ServiceClassHigh))
 		Expect(beta.Spec.GPUCount).To(BeNumerically("==", 2))
 
@@ -77,7 +77,7 @@ var _ = Describe("Conversion", func() {
 	It("projects a phase out of conditions for a v1alpha1 reader", func() {
 		beta := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "conv-phase", Namespace: "default"},
-			Spec:       framev1beta1.FrameJobSpec{Pipeline: "acme-inference-dag"},
+			Spec:       framev1beta1.FrameJobSpec{Pipeline: "inference-dag"},
 		}
 		Expect(k8sClient.Create(ctx, beta)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, beta) })

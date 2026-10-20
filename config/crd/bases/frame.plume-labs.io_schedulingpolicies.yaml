@@ -450,12 +450,12 @@ spec:
                   above: a Volcano Queue (scheduling.volcano.sh) is cluster-scoped, so a
                   namespaced right to write a SchedulingPolicy naming one was a
                   cluster-scoped create, update and delete on it. And the label check
-                  this record replaces is poisoned here too, and not by analogy: on the
-                  live cluster the Queue acme-ingest belongs to the Acme Helm release
-                  (meta.helm.sh/release-name: acme) and *also* carries
-                  frame.plume-labs.io/policy-name: acme-ingest, written while the old
-                  code adopted it. acme-high, created by kubectl apply, carries the same
-                  pair. Both would read as Frame's own under a label check.
+                  this record replaces is poisoned here too, and not by analogy: on a
+                  live cluster, a Queue belonging to an application's Helm release
+                  (meta.helm.sh/release-name: <release>) was found *also* carrying
+                  frame.plume-labs.io/policy-name: <queue>, written while the old code
+                  adopted it, and a Queue created by kubectl apply carried the same pair.
+                  Both would read as Frame's own under a label check.
                 maxLength: 253
                 type: string
               ownedQueueScheduler:

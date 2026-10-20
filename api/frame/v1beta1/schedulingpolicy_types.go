@@ -26,8 +26,8 @@ import (
 // four object-level CEL rules the freeze makes permanent. It carries over
 // verbatim and nothing is added beside it: ratcheting is per-schema-node, so
 // an over-strict object-level rule permanently freezes a stored object.
-// Verified against the live cluster: the one stored policy sets
-// preemption: true with priorityClass: acme-high, which satisfies it.
+// Verified against a live cluster: the one stored policy there set
+// preemption: true with a priorityClass, which satisfies it.
 //
 // The has() guard is not decoration. preemption is `bool json:",omitempty"`
 // with `default: false`, so an object that never set it has no preemption key
@@ -148,12 +148,12 @@ type SchedulingPolicyStatus struct {
 	// above: a Volcano Queue (scheduling.volcano.sh) is cluster-scoped, so a
 	// namespaced right to write a SchedulingPolicy naming one was a
 	// cluster-scoped create, update and delete on it. And the label check
-	// this record replaces is poisoned here too, and not by analogy: on the
-	// live cluster the Queue acme-ingest belongs to the Acme Helm release
-	// (meta.helm.sh/release-name: acme) and *also* carries
-	// frame.plume-labs.io/policy-name: acme-ingest, written while the old
-	// code adopted it. acme-high, created by kubectl apply, carries the same
-	// pair. Both would read as Frame's own under a label check.
+	// this record replaces is poisoned here too, and not by analogy: on a
+	// live cluster, a Queue belonging to an application's Helm release
+	// (meta.helm.sh/release-name: <release>) was found *also* carrying
+	// frame.plume-labs.io/policy-name: <queue>, written while the old code
+	// adopted it, and a Queue created by kubectl apply carried the same pair.
+	// Both would read as Frame's own under a label check.
 	//
 	// +optional
 	// +kubebuilder:validation:MaxLength=253

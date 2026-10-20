@@ -50,7 +50,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		return &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 			Spec: framev1beta1.FrameJobSpec{
-				Pipeline:     "acme-inference-dag",
+				Pipeline:     "inference-dag",
 				ServiceClass: framev1beta1.ServiceClassHigh,
 				Priority:     "high",
 				GPUCount:     0,
@@ -99,7 +99,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 
 		back := &framev1beta1.FrameJob{}
 		Expect(k8sClient.Get(ctx, key, back)).To(Succeed())
-		Expect(back.Spec.Pipeline).To(Equal("acme-inference-dag"))
+		Expect(back.Spec.Pipeline).To(Equal("inference-dag"))
 		Expect(back.Spec.ServiceClass).To(Equal(framev1beta1.ServiceClassHigh))
 		Expect(back.Spec.Priority).To(Equal("high"))
 		Expect(back.Spec.GPUCount).To(BeNumerically("==", 0))
@@ -125,7 +125,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		// the CRD.
 		job := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "defaulted", Namespace: "default"},
-			Spec:       framev1beta1.FrameJobSpec{Pipeline: "acme-training-dag"},
+			Spec:       framev1beta1.FrameJobSpec{Pipeline: "training-dag"},
 		}
 		Expect(k8sClient.Create(ctx, job)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, job) })
@@ -154,7 +154,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 
 		back := &framev1beta1.FrameJob{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pipeline-only-unchanged", Namespace: "default"}, back)).To(Succeed())
-		Expect(back.Spec.Pipeline).To(Equal("acme-inference-dag"))
+		Expect(back.Spec.Pipeline).To(Equal("inference-dag"))
 		Expect(back.Spec.Container).To(BeNil())
 		Expect(back.Spec.Type).To(Equal(framev1beta1.WorkloadTypeBackground))
 	})
@@ -209,7 +209,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		Entry("a negative gpuCount", "reject-gpu-negative",
 			func(s *framev1beta1.FrameJobSpec) { s.GPUCount = -1 }),
 		Entry("a pipeline that is not DNS-1123-shaped (T7)", "reject-pipeline-case",
-			func(s *framev1beta1.FrameJobSpec) { s.Pipeline = "Acme-Training-DAG" }),
+			func(s *framev1beta1.FrameJobSpec) { s.Pipeline = "Training-DAG" }),
 		// Before stage 1, this was a Pattern rejection: pipeline had no
 		// omitempty, so a Go client's "" was sent on the wire and the
 		// pattern (which requires at least one character) refused it. Now
@@ -252,7 +252,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		raw.SetNamespace("default")
 		raw.SetName("reject-empty-class")
 		Expect(unstructured.SetNestedMap(raw.Object, map[string]any{
-			"pipeline":     "acme-inference-dag",
+			"pipeline":     "inference-dag",
 			"serviceClass": "",
 		}, "spec")).To(Succeed())
 
@@ -268,7 +268,7 @@ var _ = Describe("FrameJob v1beta1 schema", func() {
 		// defaulted.
 		typed := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "reject-empty-class", Namespace: "default"},
-			Spec:       framev1beta1.FrameJobSpec{Pipeline: "acme-inference-dag", ServiceClass: ""},
+			Spec:       framev1beta1.FrameJobSpec{Pipeline: "inference-dag", ServiceClass: ""},
 		}
 		Expect(k8sClient.Create(ctx, typed)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, typed) })

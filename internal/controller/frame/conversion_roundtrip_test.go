@@ -172,7 +172,7 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 			alpha := &framev1alpha1.FrameJob{
 				ObjectMeta: metav1.ObjectMeta{Name: "conv-job-modern", Namespace: "default"},
 				Spec: framev1alpha1.FrameJobSpec{
-					Pipeline:     "acme-inference-dag",
+					Pipeline:     "inference-dag",
 					ServiceClass: "HIGH",
 					Priority:     "high",
 					Namespace:    "default",
@@ -214,7 +214,7 @@ var _ = Describe("v1alpha1 <-> v1beta1 conversion through the apiserver", func()
 			alpha := &framev1alpha1.FrameJob{
 				ObjectMeta: metav1.ObjectMeta{Name: "conv-job-legacy", Namespace: "default"},
 				Spec: framev1alpha1.FrameJobSpec{
-					Pipeline:     "acme-training-dag",
+					Pipeline:     "training-dag",
 					ServiceClass: "LOW",
 					Priority:     "medium",
 					Namespace:    "default",
@@ -454,7 +454,7 @@ var _ = Describe("the apiserver dispatching conversion", func() {
 		alpha := &framev1alpha1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "dispatch-job", Namespace: "default"},
 			Spec: framev1alpha1.FrameJobSpec{
-				Pipeline:     "acme-inference-dag",
+				Pipeline:     "inference-dag",
 				ServiceClass: "HIGH",
 				Priority:     "high",
 				Namespace:    "default",
@@ -481,7 +481,7 @@ var _ = Describe("the apiserver dispatching conversion", func() {
 		// ConvertTo to answer this at all.
 		beta := &framev1beta1.FrameJob{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(alpha), beta)).To(Succeed())
-		Expect(beta.Spec.Pipeline).To(Equal("acme-inference-dag"))
+		Expect(beta.Spec.Pipeline).To(Equal("inference-dag"))
 		Expect(beta.Spec.ServiceClass).To(Equal(framev1beta1.ServiceClassHigh))
 		Expect(beta.Spec.Parameters).To(HaveKeyWithValue("dataset", framev1beta1.ParameterValue("embeddings")))
 		Expect(beta.Status.ArgoWorkflowName).To(Equal("acme-embed-refresh"))
@@ -513,7 +513,7 @@ var _ = Describe("the apiserver dispatching conversion", func() {
 		// it is the field the SDK still sends (Task 22).
 		beta := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: "dispatch-job-ns", Namespace: "default"},
-			Spec:       framev1beta1.FrameJobSpec{Pipeline: "acme-training-dag"},
+			Spec:       framev1beta1.FrameJobSpec{Pipeline: "training-dag"},
 		}
 		Expect(k8sClient.Create(ctx, beta)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, beta) })

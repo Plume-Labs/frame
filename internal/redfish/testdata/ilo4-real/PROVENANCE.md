@@ -2,7 +2,12 @@
 
 Relevées le **2026-09-10** sur un **HP ProLiant ML350 Gen9**, iLO 4 **v2.77**,
 BIOS P92 v2.80. Corps de réponse bruts, `python3 -m json.tool` pour la mise en
-forme, rien d'autre modifié.
+forme, et une seule autre modification : les identifiants propres à la machine
+capturée (numéros de série du châssis, des disques, des alimentations et du
+contrôleur, adresses MAC, UUID, nom d'hôte, adresse IP, fin de clé de licence
+iLO) ont été remplacés par des valeurs fictives de même forme et de même
+longueur, de façon cohérente dans tous les fichiers et dans les tests qui les
+citent.
 
 Machine : E5-2609 v3 (1 socket), 80 Gio en 6 barrettes, 2 × 500 W, pas de GPU,
 **aucun OS installé**.

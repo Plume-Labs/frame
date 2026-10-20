@@ -47,7 +47,7 @@ var _ = Describe("FrameJob Controller", func() {
 		*job = framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: framev1beta1.FrameJobSpec{
-				Pipeline:     "acme-training-dag",
+				Pipeline:     "training-dag",
 				ServiceClass: "HIGH",
 				Priority:     "high",
 				GPUCount:     8,
@@ -139,7 +139,7 @@ var _ = Describe("FrameJob Controller", func() {
 
 		job := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-			Spec:       framev1beta1.FrameJobSpec{Pipeline: "acme-training-dag"},
+			Spec:       framev1beta1.FrameJobSpec{Pipeline: "training-dag"},
 		}
 		Expect(k8sClient.Create(ctx, job)).To(Succeed())
 		DeferCleanup(func() {
@@ -192,7 +192,7 @@ var _ = Describe("FrameJob Controller", func() {
 		job := &framev1beta1.FrameJob{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 			Spec: framev1beta1.FrameJobSpec{
-				Pipeline: "acme-training-dag", GPUCount: 1,
+				Pipeline: "training-dag", GPUCount: 1,
 			},
 		}
 		Expect(k8sClient.Create(ctx, job)).To(Succeed())

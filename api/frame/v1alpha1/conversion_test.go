@@ -284,7 +284,7 @@ func TestSpokeRoundTripNormalisesTheRemovedNamespaceField(t *testing.T) {
 	t.Run("FrameJob.spec.namespace becomes the object's own", func(t *testing.T) {
 		src := &FrameJob{}
 		src.Namespace = ownNamespace
-		src.Spec.Pipeline = "acme-training-dag"
+		src.Spec.Pipeline = "training-dag"
 		src.Spec.Namespace = "somewhere-else"
 
 		hub := &v1beta1.FrameJob{}
@@ -392,7 +392,7 @@ func TestFrameJobContainerAndTypeSurviveAV1alpha1RoundTrip(t *testing.T) {
 // default spec.type.
 func TestFrameJobPipelineOnlyGetsNoContainerAnnotation(t *testing.T) {
 	hub := &v1beta1.FrameJob{}
-	hub.Spec.Pipeline = "acme-training-dag"
+	hub.Spec.Pipeline = "training-dag"
 
 	spoke := &FrameJob{}
 	if err := spoke.ConvertFrom(hub); err != nil {
@@ -443,7 +443,7 @@ func TestLegacyPhaseIsProjectedNotStored(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			hub := &v1beta1.FrameJob{}
-			hub.Spec.Pipeline = "acme-training-dag"
+			hub.Spec.Pipeline = "training-dag"
 			hub.Status.Conditions = tc.conditions
 			spoke := &FrameJob{}
 			if err := spoke.ConvertFrom(hub); err != nil {
