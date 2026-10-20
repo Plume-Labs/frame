@@ -256,6 +256,36 @@ live run of this code against that machine. **Guard 1 below exists
 precisely because that log is not a substitute for reading the serial off
 the actual machine before any destructive act.**
 
+### Serials behind a RAID controller in HBA mode
+
+Behind some RAID controllers switched to HBA mode — observed on an HPE Smart
+Array P440ar — udev's `ID_SERIAL` and `ID_SERIAL_SHORT` do **not** carry the
+disk's serial number but the controller-assigned WWN (`ID_SERIAL_SHORT`
+equals `ID_WWN` without its `0x`). The real serial survives in
+`ID_SCSI_SERIAL` and in the `/dev/disk/by-id/scsi-SATA_<model>_<serial>`
+link name.
+
+Frame is not affected, and should stay that way:
+
+- The node agent reads lsblk's `SERIAL` column, which reports the SCSI
+  serial (`ID_SCSI_SERIAL`, VPD page 0x80) when there is one, before
+  falling back to `ID_SERIAL_SHORT`. On that machine `observed[].serialNumber` holds
+  the label's serial and matches the BMC's `drives[].serialNumber`, so
+  `Join` pairs the disks and a `FrameDiskClaim` takes the serial printed on
+  the drive. Do not switch the agent to `ID_SERIAL_SHORT` (or to
+  `udevadm info` without `ID_SCSI_SERIAL`): every disk behind such a
+  controller would turn into one `bmc-only` plus one `os-only` divergence,
+  and guard 1 would refuse every claim.
+- Installation never matches on a serial. `FrameInstall` and `frame
+  bootstrap` name their disks by `/dev/disk/by-id` path
+  (`layout.disks[].byID`), resolved on the machine with `readlink -f`
+  (`internal/provision/autoinstall.go`, `diskPlaceholders`). Subiquity's own
+  `match: {serial: …}` reads `ID_SERIAL` and would not find these disks by
+  their label serial; that is one more reason the layout takes by-id paths.
+
+When checking a disk by hand on such a machine, read
+`lsblk -d -o NAME,SERIAL,WWN,MODEL`, not `udevadm info | grep ID_SERIAL`.
+
 ---
 
 ## Claiming a disk: procedure and the five refusals
