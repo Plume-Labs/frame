@@ -77,24 +77,21 @@ describe('integrations.sandboxPods', () => {
     expect(DEFAULT_CONFIG.integrations.sandboxPods.selector).toBe('app=sandbox')
   })
 
-  // A ConfigMap saved by Frame 1.0 holds the integration under its old key.
-  // Upgrading must keep the operator's selector, not fall back to the default.
-  it('reads the 1.0 key when the stored config predates the rename', async () => {
+  // Only `sandboxPods` is read: a stored key the defaults do not define (such
+  // as the 1.0 name of this integration) is ignored, never migrated, and
+  // never surfaces in the merged config.
+  it('ignores an integration key the defaults do not define', async () => {
     stubConfigMap({
-      'config.json': JSON.stringify({ integrations: { acmeSandbox: { namespace: '', selector: 'app=my-sandbox' } } }),
+      'config.json': JSON.stringify({ integrations: { legacySandbox: { namespace: '', selector: 'app=old' } } }),
     })
     await loadConfig()
-    expect(config().integrations.sandboxPods.selector).toBe('app=my-sandbox')
+    expect(config().integrations.sandboxPods.selector).toBe('app=sandbox')
+    expect(Object.keys(config().integrations)).not.toContain('legacySandbox')
   })
 
-  it('prefers the new key when both are stored', async () => {
+  it('reads the selector stored under sandboxPods', async () => {
     stubConfigMap({
-      'config.json': JSON.stringify({
-        integrations: {
-          acmeSandbox: { namespace: '', selector: 'app=old' },
-          sandboxPods: { namespace: '', selector: 'app=new' },
-        },
-      }),
+      'config.json': JSON.stringify({ integrations: { sandboxPods: { namespace: '', selector: 'app=new' } } }),
     })
     await loadConfig()
     expect(config().integrations.sandboxPods.selector).toBe('app=new')

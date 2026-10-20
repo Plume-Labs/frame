@@ -167,9 +167,6 @@ export function configStatus(): { source: ConfigSource; error?: string } {
   return { source, error: loadError }
 }
 
-/** The 1.0 name of `integrations.sandboxPods`, still read from stored configs. */
-const LEGACY_SANDBOX_KEY = 'acmeSandbox'
-
 /** A Kubernetes object name (DNS-1123 subdomain): nothing that could leave its path segment. */
 function isObjectName(s: string): boolean {
   return s.length > 0 && s.length <= 253 && /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(s)
@@ -184,14 +181,6 @@ function isObjectName(s: string): boolean {
  */
 function merge(stored: unknown): FrameConfig {
   const s = (stored ?? {}) as Partial<FrameConfig>
-  // Frame 1.0 stored the sandbox integration under a key named after one
-  // downstream application. A config saved by 1.0 still carries it: read it as
-  // `sandboxPods` when the new key is absent, so upgrading keeps the
-  // operator's selector instead of silently falling back to the default.
-  const legacy = (s.integrations as Record<string, Integration | undefined> | undefined)?.[LEGACY_SANDBOX_KEY]
-  if (legacy && !s.integrations?.sandboxPods) {
-    s.integrations = { ...s.integrations, sandboxPods: legacy } as FrameConfig['integrations']
-  }
   const integrations = { ...DEFAULT_CONFIG.integrations }
   for (const key of Object.keys(DEFAULT_CONFIG.integrations) as Array<
     keyof FrameConfig['integrations']
