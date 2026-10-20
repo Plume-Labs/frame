@@ -75,6 +75,10 @@ spec:
           # media listener at before applying this outside hack/helm-parity.sh.
           - --provisiond-media-url=http://ci-placeholder.invalid:30581
           - --alert-receiver-bind-address=:8445
+          # Usable GPU memory per card, in MiB, that FrameService inference
+          # instances are sized against. 7680 suits an 8 GB-class card; set
+          # it to your GPUs' usable memory (docs/deployment.md).
+          - --inference-gpu-memory-mib=7680
         image: controller:latest
         name: manager
         env:

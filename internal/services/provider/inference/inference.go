@@ -1,7 +1,7 @@
 // Package inference provisions llama.cpp model servers.
 //
 // llama.cpp is the only backend this package supports, and that is a hardware
-// fact rather than a preference: the cluster's Tesla P4 is Pascal, compute
+// fact rather than a preference: Pascal cards such as the Tesla P4 are compute
 // capability 6.1, and vLLM and KubeAI both need sm_7.0 or newer. The choice is
 // internal to this provider, so a newer card means a new implementation behind
 // the same spec.type, not an API change.

@@ -109,6 +109,13 @@ certManager:
   # named above to already exist — see charts/frame/README.md.
   enabled: true
 
+inference:
+  # Usable GPU memory per card, in MiB, that FrameService inference
+  # instances are sized against (the manager's --inference-gpu-memory-mib).
+  # An instance whose weights + KV cache exceed it is refused at admission.
+  # 7680 suits an 8 GB-class card; set it to your GPUs' usable memory.
+  gpuMemoryMiB: 7680
+
 provisiond:
   # frame-provisiond assembles per-machine Ubuntu installer images and
   # serves them to a machine's BMC (2026-09-11, provisioning/Debian lot,

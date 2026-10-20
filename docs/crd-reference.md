@@ -842,8 +842,8 @@ longer consulted and the new one does not recognise what was provisioned.
 
 ### The `inference` provider (`internal/services/provider/inference/`)
 
-The only backend is llama.cpp — the cluster's one GPU is a Tesla P4 (Pascal,
-compute capability 6.1), which rules out vLLM and KubeAI (need `sm_7.0`+).
+The only backend is llama.cpp, so that Pascal cards (compute capability 6.1,
+e.g. the Tesla P4) are served too — vLLM and KubeAI need `sm_7.0`+.
 The backend is a provider-internal choice: a future card just means a new
 provider behind the same `type`, not an API change.
 
@@ -864,8 +864,9 @@ construction rather than being silently accepted and never checked.
 **Sizing is derived, never chosen** — there is no `plan` field. `Size` reads
 `model` and `contextLength` and computes weights + KV cache for that model.
 Llama 3.1 8B Instruct at Q4_K_M is 4696Mi of weights; at `contextLength:
-"8192"` the KV cache adds 1024Mi, for 5720Mi total, which fits the P4's
-7680Mi. The same model at `contextLength: "32768"` would need 8792Mi and is
+"8192"` the KV cache adds 1024Mi, for 5720Mi total, which fits the
+manager's default GPU budget of 7680Mi (an 8 GB-class card; the
+`--inference-gpu-memory-mib` flag sets it to your GPUs' usable memory). The same model at `contextLength: "32768"` would need 8792Mi and is
 refused at admission.
 
 **A PersistentVolumeClaim for model weights is required.** The provider

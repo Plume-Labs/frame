@@ -104,10 +104,10 @@ func validateProvisiondMediaURL(raw string) error {
 }
 
 // cephClusterNamespace and cephClusterName name the CephCluster this manager
-// reads for FrameStorage health and capacity. deploy/ceph/cluster.yaml is
-// the only place this cluster is provisioned, and it puts both the object
-// and its rook operator in "rook-ceph" -- there is no flag for this yet
-// because there is only ever one CephCluster in this deployment. The same
+// reads for FrameStorage health and capacity. deploy/ceph/cluster.yaml, the
+// CephCluster this repository ships, puts both the object and its rook
+// operator in "rook-ceph" -- there is no flag for this yet because Frame
+// expects exactly one CephCluster, named and placed as that manifest does. The same
 // assumption backs readCephCapacity's CephBlockPool lookup below: a pool
 // backing a FrameStorage entry's StorageClass lives in this namespace too.
 const (
@@ -332,7 +332,7 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.Int64Var(&inferenceGPUMemoryMiB, "inference-gpu-memory-mib", 7680,
 		"Usable GPU memory per card, in MiB, that inference instances are sized against. "+
-			"Defaults to the Tesla P4's 7680.")
+			"Defaults to 7680 (an 8 GB-class card); set it to your GPUs' usable memory.")
 	flag.StringVar(&provisiondBuildURL, "provisiond-build-url", "http://frame-provisiond:8080",
 		"The in-cluster build API of frame-provisiond (config/provisiond/service.yaml's ClusterIP Service), "+
 			"which this manager posts a Spec to.")

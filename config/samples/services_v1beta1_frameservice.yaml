@@ -17,10 +17,11 @@ spec:
   # computes the GPU memory floor itself (weights + KV cache), publishing the
   # result in status.sizing — see "Sizing" in the design spec.
   #
-  # This pairing fits the cluster's only GPU, a Tesla P4 (7680Mi): Llama 3.1
-  # 8B Instruct at Q4_K_M is 4696Mi of weights, and 8192 tokens of KV cache
-  # add another 1024Mi, for 5720Mi total. Raising contextLength to 32768 would
-  # ask for 8792Mi and be refused at admission rather than left Pending.
+  # This pairing fits an 8 GB-class GPU (7680Mi, the manager's default
+  # --inference-gpu-memory-mib): Llama 3.1 8B Instruct at Q4_K_M is 4696Mi
+  # of weights, and 8192 tokens of KV cache add another 1024Mi, for 5720Mi
+  # total. Raising contextLength to 32768 would ask for 8792Mi and be refused
+  # at admission rather than left Pending.
   parameters:
     model: llama-3.1-8b-instruct
     contextLength: "8192"
