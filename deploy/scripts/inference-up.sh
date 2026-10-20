@@ -23,8 +23,21 @@
 #   LLAMACPP_NGL      layers to put on the GPU        (default: 99 = all)
 #   LLAMACPP_OFFLOAD  tensor-offload args             (default: -ot exps=CPU)
 #   LLAMACPP_REASONING_BUDGET  thinking tokens per reply (default: 1024; -1 = unbounded, 0 = off)
+#   LLAMACPP_REASONING_BUDGET_MESSAGE  text injected when the budget runs out
+#                     (default: none; one argument, spaces allowed)
+#   LLAMACPP_EXTRA_ARGS  extra llama-server flags, appended as-is and split on
+#                     whitespace (default: none), e.g. hardware tuning such as
+#                     "--threads-batch 18 -b 2048 -ub 2048 -ctk q8_0 -ctv q8_0"
+#   LLAMACPP_IMAGE    llama.cpp image                 (default: ghcr.io/ggml-org/llama.cpp:server-cuda)
 #   VLLM_IMAGE        vLLM image                      (default: vllm/vllm-openai:latest)
 #   VLLM_EXTRA_ARGS   extra vLLM flags                (default: --gpu-memory-utilization 0.9)
+#   INFER_RENDER_ONLY 1 = print the manifests instead of applying them
+#
+# Values that depend on one site's hardware (offload depth, batch sizes, KV
+# cache quantisation, thread counts) belong in that site's own env file, not
+# in these defaults: keep the file next to the site's other configuration and
+# run `set -a; . ./site.env; set +a; ./inference-up.sh`, so a re-run applies
+# the same tuning instead of reverting it to the defaults below.
 #
 # e.g.  INFER_MODEL=unsloth/Qwen-AgentWorld-35B-A3B-GGUF:UD-Q4_K_M ./inference-up.sh
 #       INFER_ENGINE=vllm INFER_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507 ./inference-up.sh
@@ -59,7 +72,16 @@ CACHE_SIZE="${INFER_CACHE_SIZE:-30Gi}"
 say() { echo -e "\n\033[1;35m==>\033[0m $*"; }
 
 # Emits one YAML list item per argument, at the indentation the Deployment needs.
-args_yaml() { for a in "$@"; do printf '            - "%s"\n' "$a"; done; }
+# Each argument becomes a double-quoted YAML scalar, so a backslash or a double
+# quote inside it (a free-text reasoning-budget message) is escaped first.
+args_yaml() {
+  local a
+  for a in "$@"; do
+    a=${a//\\/\\\\}
+    a=${a//\"/\\\"}
+    printf '            - "%s"\n' "$a"
+  done
+}
 
 case "$ENGINE" in
   llamacpp)
@@ -92,14 +114,21 @@ case "$ENGINE" in
     # thinking tag and the model answers. Needs a build that accepts N>0
     # (checked on b11277); -1 restores the unbounded default, 0 disables it.
     REASONING_BUDGET="${LLAMACPP_REASONING_BUDGET:-1024}"
-    IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
+    # One argument, never split: the message is free text.
+    BUDGET_MESSAGE=()
+    if [ -n "${LLAMACPP_REASONING_BUDGET_MESSAGE:-}" ]; then
+      BUDGET_MESSAGE=(--reasoning-budget-message "$LLAMACPP_REASONING_BUDGET_MESSAGE")
+    fi
+    EXTRA_ARGS="${LLAMACPP_EXTRA_ARGS:-}"
+    IMAGE="${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}"
     CACHE_ENV="LLAMA_CACHE"
-    # $OFFLOAD is intentionally unquoted: it must word-split into separate args.
+    # $OFFLOAD and $EXTRA_ARGS are intentionally unquoted: they must
+    # word-split into separate args.
     # shellcheck disable=SC2086
     ARGS=$(args_yaml -hf "$MODEL" --host 0.0.0.0 --port 8080 \
       -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX" \
-      --threads "$THREADS" --parallel "$PARALLEL" \
-      --reasoning-budget "$REASONING_BUDGET")
+      --threads "$THREADS" --parallel "$PARALLEL" $EXTRA_ARGS \
+      --reasoning-budget "$REASONING_BUDGET" "${BUDGET_MESSAGE[@]}")
     ;;
   vllm)
     MODEL="${INFER_MODEL:-Qwen/Qwen3-30B-A3B-Instruct-2507}"
@@ -123,12 +152,20 @@ case "$ENGINE" in
     ;;
 esac
 
-say "Inference server ($ENGINE, model=$MODEL)"
+# With INFER_RENDER_ONLY=1 the manifests go to stdout and nothing is applied,
+# so a site can compare what a run would write with what is running
+# (`... | kubectl diff -f -`) before letting it restart the model server.
+if [ "${INFER_RENDER_ONLY:-0}" = 1 ]; then
+  APPLY=(cat)
+else
+  say "Inference server ($ENGINE, model=$MODEL)"
+  APPLY=(kubectl apply -f -)
+fi
 
 # The label stays app=llamacpp for both engines on purpose: it is the selector
 # the Service, the InferencePool and llm-d-up.sh's EPP all route on. Renaming it
 # per engine would silently detach the routing layer.
-kubectl apply -f - <<YAML
+"${APPLY[@]}" <<YAML
 apiVersion: v1
 kind: Namespace
 metadata: { name: ${NS} }
