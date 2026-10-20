@@ -124,11 +124,13 @@ case "$ENGINE" in
     CACHE_ENV="LLAMA_CACHE"
     # $OFFLOAD and $EXTRA_ARGS are intentionally unquoted: they must
     # word-split into separate args.
+    # The empty-array guard on BUDGET_MESSAGE keeps bash 3.2 (macOS) from
+    # failing `set -u` with "unbound variable" when no message is set.
     # shellcheck disable=SC2086
     ARGS=$(args_yaml -hf "$MODEL" --host 0.0.0.0 --port 8080 \
       -ngl "$NGL" $OFFLOAD --jinja --metrics -c "$CTX" \
       --threads "$THREADS" --parallel "$PARALLEL" $EXTRA_ARGS \
-      --reasoning-budget "$REASONING_BUDGET" "${BUDGET_MESSAGE[@]}")
+      --reasoning-budget "$REASONING_BUDGET" ${BUDGET_MESSAGE[@]+"${BUDGET_MESSAGE[@]}"})
     ;;
   vllm)
     MODEL="${INFER_MODEL:-Qwen/Qwen3-30B-A3B-Instruct-2507}"
