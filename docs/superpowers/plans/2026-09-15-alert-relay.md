@@ -3137,4 +3137,4 @@ git add config/manager/kustomization.yaml deploy/samples/test-cluster/*.sealed.y
 git commit -m "chore(deploy): alert relay on the test cluster"
 ```
 
-Mettre à jour la description du jalon Acme « Alertes Frame reçues dans Acme » (projet Acme `678364ed-b50f-4a7e-882b-96c0ce29b1fc`, jalon `30a339ed-4d08-4267-973e-2b00182e49ea`) : chemin Alertmanager → Frame (`FrameAlert`, `FrameAlertSubscription/acme`) → webhook Acme, et les quatre constats de la Step 6 avec leur date. Ne passer le jalon à terminé qu'avec la fermeture réelle observée.
+Mettre à jour la description du jalon Acme « Alertes Frame reçues dans Acme » : chemin Alertmanager → Frame (`FrameAlert`, `FrameAlertSubscription/acme`) → webhook Acme, et les quatre constats de la Step 6 avec leur date. Ne passer le jalon à terminé qu'avec la fermeture réelle observée.
