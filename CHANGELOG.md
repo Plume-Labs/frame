@@ -8,15 +8,17 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ### Changed — Go module path (breaking for importers)
 
-- The Go module is now `github.com/Plume-Labs/frame` (was
-  `github.com/gothshoot/frame`, a path that did not resolve to this repository).
+- The Go module is now `github.com/Plume-Labs/frame` (was the module path of
+  the maintainer's former personal repository, which did not resolve to this
+  repository).
   Every package path changes with it, including the API types
   (`github.com/Plume-Labs/frame/api/frame/v1beta1`, …) and the kubebuilder
   `PROJECT` file. Container images, CRDs, the chart and the on-cluster API
   group are unchanged. **Upgrade note:** code that imports Frame packages
-  must replace the prefix, e.g.
-  `go mod edit -droprequire github.com/gothshoot/frame && go get github.com/Plume-Labs/frame@<version>`
-  then `find . -name '*.go' -exec sed -i 's#github.com/gothshoot/frame#github.com/Plume-Labs/frame#g' {} +`
+  must replace the prefix. With `OLD` set to the Frame module path your
+  `go.mod` currently requires:
+  `go mod edit -droprequire "$OLD" && go get github.com/Plume-Labs/frame@<version>`
+  then `find . -name '*.go' -exec sed -i "s#$OLD#github.com/Plume-Labs/frame#g" {} +`
   and `gofmt -w`.
 
 ### Changed
@@ -51,23 +53,23 @@ configurable.
 
 - `deploy/kubernetes/pod-security/namespaces.yaml` and
   `deploy/kubernetes/base/rbac-workload-operator.yaml` no longer declare the
-  five `acme*` application namespaces or their RoleBindings. Frame ships
+  five application namespaces of that site or their RoleBindings. Frame ships
   `default` and `inference` only.
-- `deploy/gitops/argocd/applications/acme.yaml` (an application of that
-  site), `deploy/scripts/test-cluster-up.sh` (that site's full-stack
-  bring-up) and `.test-cluster/kubeconfig-acme-test.yaml` (an empty stub)
-  are removed.
-- `deploy/samples/test-cluster/acme-alerts.yaml` becomes `example-alerts.yaml`
-  and `frame-alert-subscription-acme.yaml` becomes
-  `frame-alert-subscription-example.yaml`, both written for a placeholder
-  application (`my-app`).
+- That site's Argo CD application (under `deploy/gitops/argocd/applications/`),
+  `deploy/scripts/test-cluster-up.sh` (its full-stack bring-up) and an empty
+  kubeconfig stub under `.test-cluster/` are removed.
+- The sample alert rules and alert subscription of
+  `deploy/samples/test-cluster/`, named after that site, become
+  `example-alerts.yaml` and `frame-alert-subscription-example.yaml`, both
+  written for a placeholder application (`my-app`).
 
 ### Changed — neutral defaults
 
 - **Console** — the sandbox-pods integration is now
-  `integrations.sandboxPods`, default selector `app=sandbox` (was
-  `acmeSandbox`, `app=acme-sandbox`). A config stored by 1.0 under the old
-  key is still read. The Jobs screen's panel is "Sandbox jobs (pods)".
+  `integrations.sandboxPods`, default selector `app=sandbox` (1.0 stored it
+  under a key and a default selector named after the maintainers' former
+  downstream application). The 1.0 key is **no longer read**: see the
+  upgrade note below. The Jobs screen's panel is "Sandbox jobs (pods)".
 - **Console** — new runtime setting `workloads.extraOperableNamespaces`
   (Settings → Workloads): namespaces, beyond `default` and `inference`, where
   restart, scale and the manifest editor are offered. The compiled list no
@@ -80,9 +82,10 @@ configurable.
 - **Containment** (`deploy/kubernetes/containment/networkpolicy-cluster-control.yaml`):
   node IPs are example values from RFC 5737 (`192.0.2.0/24`) and node names
   are `node-cp`/`node-w1`/`node-w2`; the header says to patch them.
-- **Workflow templates** — `acme-inference-dag` / `acme-training-dag` are
-  renamed `inference-dag` / `training-dag` (files and `WorkflowTemplate`
-  names), and the FrameJob webhook's known pipelines follow.
+- **Workflow templates** — the inference and training DAG templates, named
+  after that site in 1.0, are renamed `inference-dag` / `training-dag` (files
+  and `WorkflowTemplate` names), and the FrameJob webhook's known pipelines
+  follow.
 - **Samples and scripts** — example tenant names use `acme`, storage objects
   `frame-*` (`frame-s3`, `frame-store`…), documentation addresses
   `192.0.2.0/24`, hostnames `example.com`. Scripts no longer default to a
@@ -91,7 +94,8 @@ configurable.
   `node-tuning-install.sh` requires `REGISTRY`; `backup-up.sh` requires
   `BACKUP_NAMESPACES` and takes `BACKUP_S3_URL` (schedule renamed `daily`);
   `security-up.sh` takes an optional `INSECURE_REGISTRY`;
-  `acme-bootstrap.sh` is renamed `hpc-bootstrap.sh`.
+  the HPC bootstrap script, named after that site in 1.0, is renamed
+  `hpc-bootstrap.sh`.
 - **Test fixtures** — the captured iLO 4 responses
   (`internal/redfish/testdata/ilo4-real`) keep their shape, but serial
   numbers, MAC addresses, UUIDs, hostnames, IP addresses and the licence-key
@@ -100,8 +104,8 @@ configurable.
 ### Upgrade notes — if you relied on those values
 
 - **Application namespaces — read before syncing.** If you deployed
-  `deploy/kubernetes/overlays/production` (or `base`) and the `acme*`
-  Namespaces exist on your cluster, they were rendered by Frame and are now
+  `deploy/kubernetes/overlays/production` (or `base`) and the five
+  application Namespaces it declared in 1.0 exist on your cluster, they were rendered by Frame and are now
   absent from its render. **A GitOps sync with pruning deletes a Namespace
   that left the render, and everything in it**, unless the live object
   carries `argocd.argoproj.io/sync-options: Prune=false`. Before syncing this
@@ -111,17 +115,22 @@ configurable.
   live cluster; then list the namespaces in Settings → Workloads so the
   console offers restart, scale and the editor there. See
   docs/deployment.md, "Turning Pod Security on".
-- **Sandbox pods.** If your sandbox pods are labelled `app=acme-sandbox`
-  and you never saved the Settings screen, set the selector in Settings →
-  Integrations → "Jobs (sandbox pods)"; a saved config is migrated as is.
+- **Sandbox pods.** The console no longer reads the 1.0 key of the
+  sandbox-pods integration. If you saved the Settings screen under 1.0, your
+  `config.json` (ConfigMap read by the console) holds the selector under
+  `integrations.<1.0 key>`: rename that key to `sandboxPods`, or set the
+  selector again in Settings → Integrations → "Jobs (sandbox pods)" and save.
+  If you never saved the Settings screen and your sandbox pods still carry
+  the 1.0 default label, set the selector there too: the default is now
+  `app=sandbox`. Until then the Jobs screen's sandbox panel is empty; nothing
+  else is affected.
 - **authd issuer.** On a cluster where `frame-auth-ca` already exists, keep
   your issuer: patch `issuerRef` of the `frame-auth-ca` Certificate back to
   it in your overlay. Switching issuers re-issues the CA, and an apiserver
   started with `--oidc-ca-file` then distrusts authd until the file is
   redistributed.
-- **Pipelines.** FrameJobs naming `acme-inference-dag` /
-  `acme-training-dag` keep working against WorkflowTemplates of those names
-  you already have; the webhook only warns that the pipeline is not one Frame
+- **Pipelines.** FrameJobs naming the 1.0 template names keep working
+  against WorkflowTemplates of those names you already have; the webhook only warns that the pipeline is not one Frame
   ships. New jobs should use `inference-dag` / `training-dag`.
 - **Containment.** Do not apply the shipped NetworkPolicy as is: patch the
   node addresses first (docs/runbook.md, pre-flight).
