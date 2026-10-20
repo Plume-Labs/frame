@@ -41,27 +41,46 @@ you as part of the install.
 
 ```bash
 # Full install: CRDs, RBAC, controller deployment, webhooks, cert-manager integration,
-# plus this site's Secret access (see "Manager access to Secrets")
-make diff-production IMG=<registry>/frame-controller:<tag>     # read only: what would change
-make deploy-production IMG=<registry>/frame-controller:<tag>
+# frame-provisiond, plus the manager's Secret access (see "Manager access to Secrets")
+make diff-production IMG=<registry>/frame-controller:<tag> \
+  IMG_PROVISIOND=<registry>/frame-provisiond:<tag>             # read only: what would change
+make deploy-production IMG=<registry>/frame-controller:<tag> \
+  IMG_PROVISIOND=<registry>/frame-provisiond:<tag>
 ```
 
-`config/overlays/production` is `config/default` plus one RoleBinding per
-namespace where the manager must use Secrets, minus `frame-provisiond`
-(not run on this cluster; see the overlay's comment). **Deploy it with
-`make deploy-production`, never `kubectl apply -k`**: the overlay carries
-no image — the registry address stays out of this public repository — so
-`hack/render-overlay.sh` sets `IMG` in a mktemp copy and renders that; a
-bare `apply -k` would put the controller on the placeholder
-`example.com/frame:v0.0.1`, which never pulls. The target refuses an empty,
-placeholder or `:latest` `IMG`.
+`config/overlays/production` is `config/default` (frame-provisiond
+included) plus one RoleBinding per namespace where the manager must use
+Secrets. **Deploy it with `make deploy-production`, never `kubectl apply
+-k`**: the overlay carries no image — no registry address is written into
+this repository — so `hack/render-overlay.sh` sets `IMG` and
+`IMG_PROVISIOND` in a mktemp copy and renders that; a bare `apply -k`
+would put the controller on the placeholder `example.com/frame:v0.0.1`,
+which never pulls. The target refuses an empty, placeholder or `:latest`
+image.
+
+**frame-provisiond is optional.** It serves installer images to BMCs over a
+`NodePort` (30581, open on every node) and is only used by `FrameInstall`.
+A cluster that will never provision a machine can leave it out: the
+overlay's `kustomization.yaml` carries the three delete patches, commented
+out — uncomment them (any `IMG_PROVISIOND` then satisfies the target, since
+nothing renders it). If you keep it, set the media URL before the first
+`FrameInstall` (see "Provisioning a machine with Ubuntu" below).
+
+**GPU memory for inference sizing.** The manager sizes every `FrameService`
+inference instance (weights + KV cache) against
+`--inference-gpu-memory-mib`, the usable memory of one GPU, in MiB. It
+defaults to `7680` (an 8 GB-class card); set it to your GPUs' usable
+memory, or instances that would fit are refused at admission (or ones that
+would not are admitted and left Pending). Kustomize: change the argument in
+`config/manager/manager.yaml`, or patch it in your copy of the overlay;
+Helm: `inference.gpuMemoryMiB`.
 
 Not `config/default` either: it grants the manager nothing on Secrets
 outside `frame-system`, so every FrameMachine, FrameInstall or FrameService
 elsewhere would fail with Forbidden. `make deploy` (config/default) now
 refuses unless `DEPLOY_DEFAULT=1` — for throwaway dev/e2e clusters only.
-On another cluster, edit the overlay's `secret-access.yaml` for that
-cluster's namespaces (or copy the overlay).
+Edit the overlay's `secret-access.yaml` for your cluster's namespaces (or
+copy the overlay).
 
 This applies the `frame-system` namespace, all ten CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
@@ -488,7 +507,7 @@ one. The mitigation is this tier boundary, not the audit trail.
 accepted.** It was removed on 2026-08-10 because RBAC cannot bound a patch to
 one JSON path: "may set the restartedAt annotation" and "may patch the pod
 template to `privileged: true` with a `hostPath: /` volume" are the same grant,
-and no namespace on this cluster carried a `pod-security.kubernetes.io/enforce`
+and no namespace carried a `pod-security.kubernetes.io/enforce`
 label to refuse the second. That comment named the safe way to earn it back,
 and lot 2 took it rather than accepting the risk: `baseline` Pod Security is
 enforced on the application namespaces
@@ -614,7 +633,7 @@ kubectl apply -k deploy/kubernetes/pod-security
 The `audit` label is the backstop for a violation created after that sweep: it
 writes a `pod-security.kubernetes.io/audit-violations` annotation into the
 apiserver audit log, which is readable only if audit logging is configured on
-this cluster's apiserver. Treat the server-side dry run as the instrument and
+your cluster's apiserver. Treat the server-side dry run as the instrument and
 the annotation as the safety net, not the other way round.
 
 **What the label set decides.** Every write the console can make to a pod
@@ -905,7 +924,7 @@ is bound to the domain it was created for, not to the account.
 1. Sign in as an admin, open **Accounts**, choose **Invite**, give an address
    and `viewer` or `operator`.
 2. Copy the link and send it however you already talk to that person. Frame
-   sends no mail: there is no mail path in this cluster, and adding one is a
+   sends no mail: Frame has no mail path, and adding one is a
    separate project.
 3. They open the link and enrol a key. The link then dies — refused because
    the account holds a credential, not because a flag was flipped. Nothing
@@ -1007,13 +1026,12 @@ rbac:
     write: [apps, team-a]  # FrameService namespaces and their projectTo targets
 ```
 
-Kustomize: the deployed overlay, `config/overlays/production`, holds the
-bindings in `secret-access.yaml` — today one: `default` (reader:
-FrameMachine `ml350-g9`). Nothing is bound to the writer: no FrameService
-exists on this cluster (`inference/llama-8b`, a catalogue test fixture never
-provisioned, was deleted on 2026-09-28, with its binding). `frame-system`
-(alert tokens, ceph-mgr) is covered by the Role. To adapt it: list the
-namespaces holding each kind —
+Kustomize: the recommended overlay, `config/overlays/production`, holds the
+bindings in `secret-access.yaml` — as shipped, one: `default` (reader: the
+namespace the samples and this guide put FrameMachines and FrameInstalls
+in). Nothing is bound to the writer: which namespaces hold FrameServices is
+yours to say. `frame-system` (alert tokens, ceph-mgr) is covered by the
+Role. To adapt it: list the namespaces holding each kind —
 
 ```bash
 kubectl get framemachines,frameinstalls -A        # → reader
@@ -1096,10 +1114,9 @@ below.**
 
 1. **The operator must reach the BMC's address at layer 3.** On a shared LOM
    port the BMC sits on the same `/24` as everything else and this is free;
-   on a separate management VLAN it needs a route. **NetworkPolicy is not
-   blanket-disabled on this cluster** — a containment policy applies to the
-   `cluster-control` namespace (see "Containing the control-plane UI" in
-   [runbook.md](runbook.md), applied and verified enforced 2026-08-11) — but
+   on a separate management VLAN it needs a route. **If you applied the
+   containment policy**, it restricts the `cluster-control` namespace (see
+   "Containing the control-plane UI" in [runbook.md](runbook.md)) — but
    nothing today restricts *this* traffic: that policy scopes ingress to the
    UI, not `frame-system`'s egress, and no `NetworkPolicy` names
    `frame-system` or a BMC's address at all. So the operator's egress to a
@@ -1576,7 +1593,7 @@ existing cluster and is Ready there`.
 - [ ] The static address lands on the cabled port (netplan `en*` stanza,
       carrier only), and the installed system's netplan names that port alone
       by MAC (`/etc/netplan/60-frame.yaml`); cabling a second port afterwards
-      gives it no address. Rehearsed in QEMU, not on the G9.
+      gives it no address. Rehearsed in QEMU, not on real hardware.
 - [ ] The two named 300 GB disks are resolved by the early-command,
       partitioned as a mirror with an ESP on each, and a named disk that is
       absent or the wrong size aborts the install before anything is wiped
@@ -1598,7 +1615,7 @@ existing cluster and is Ready there`.
 - [ ] **The one-time boot on the iLO 4 virtual CD has never been
       observed.** On an iLO 4, `SetBootOnce` sets
       `Oem.Hp.BootOnNextServerReset` on `VirtualMedia/2` and reads it back,
-      and sets no `Cd` override on the system: the G9's UEFI boot list also
+      and sets no `Cd` override on the system: the ML350 Gen9's UEFI boot list also
       holds an empty physical SATA DVD (`CD.Emb.9.1`), and nothing shows a
       `Cd` override would pick the virtual drive. Tested against captured
       GETs and a fake that refuses what the captured schema refuses; never
@@ -1621,7 +1638,7 @@ existing cluster and is Ready there`.
 - [ ] **`frame bootstrap` with `cluster.mode: join` has never run.** The
       node-password secret deletion, the rejoin under the same name and
       the labels surviving it are documented from k3s's behaviour, not
-      observed on this cluster. Nor is the install script's handling of
+      observed. Nor is the install script's handling of
       `K3S_TOKEN_FILE` with an explicit `agent` command: read from the
       script, not run.
 - [ ] **Nothing exercises `cmd/bootstrap`'s `run()` end to end.** Its
@@ -1720,6 +1737,7 @@ guide.
 | `certManager.enabled` | `true` | `false` means you provision `webhooks.certSecretName` and `webhooks.caBundle` yourself — see "Installing without cert-manager" in `charts/frame/README.md`. |
 | `metrics.serviceMonitor.enabled` | `false` | Turn on only if the Prometheus Operator CRDs are already installed. |
 | `networkPolicy.enabled` | `false` | Off by default, matching kustomize. If enabled, the webhook rule is intentionally open on port 9443 to any source — `charts/frame/README.md` explains why a source-restricted rule breaks admission on real clusters. |
+| `inference.gpuMemoryMiB` | `7680` | Usable memory of one GPU, in MiB, that inference instances are sized against (`--inference-gpu-memory-mib`); `7680` suits an 8 GB-class card — set it to yours. |
 | `rbac.managerSecretAccess` | `read: []`, `write: []` | Namespaces where the manager may read (FrameMachine, FrameInstall) or write (FrameService) Secrets; nothing on Secrets is cluster-wide. Upgrading from a release that had the cluster-wide rule: list every namespace holding those objects, or they fail with Forbidden — see "Manager access to Secrets". |
 | `rbac.tierRoles.install` | `true` | The 27 viewer/editor/admin convenience `ClusterRole`s (three per CRD); not required by the manager itself, and bound to nobody by the chart — the group bindings that make them reachable are `deploy/kubernetes/base/rbac-tier-bindings.yaml`, part of the UI/authd kustomize path, not this chart — see "RBAC" above. |
 
@@ -1780,7 +1798,7 @@ deploy/kubernetes/
 ```
 
 That tree is the UI. The operator's own overlay is separate:
-`config/overlays/production/` = `config/default` + this site's
+`config/overlays/production/` = `config/default` + the manager's
 secret-access RoleBindings (see "Manager access to Secrets").
 
 ---
@@ -1795,8 +1813,8 @@ secret-access RoleBindings (see "Manager access to Secrets").
 | `make docker-build-authd` / `make docker-push-authd` | Build/push the authd image (`IMG_AUTHD`) |
 | `make docker-build-agent` / `make docker-push-agent` | Build/push the node-tuning agent image (`IMG_AGENT`, default `frame-agent:latest` — it matches the name the DaemonSet declares, so `kustomize edit set image frame-agent=…` works) |
 | `make install` | Apply CRDs to the cluster |
-| `make deploy-production IMG=…` | Apply `config/overlays/production` (this cluster's install), image set in a mktemp copy |
-| `make diff-production IMG=…` | `kubectl diff` of the same render — read only |
+| `make deploy-production IMG=… IMG_PROVISIOND=…` | Apply `config/overlays/production` (the recommended install), images set in a mktemp copy |
+| `make diff-production IMG=… IMG_PROVISIOND=…` | `kubectl diff` of the same render — read only |
 | `make undeploy-production` | Remove what `deploy-production` applied |
 | `make deploy DEPLOY_DEFAULT=1 IMG=…` | Apply `config/default` — dev/e2e clusters only; refuses without `DEPLOY_DEFAULT=1` |
 | `make undeploy` | Remove what `make deploy` applied |

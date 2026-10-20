@@ -332,20 +332,23 @@ deploy: manifests kustomize ## Deploy config/default (dev/e2e only: DEPLOY_DEFAU
 undeploy: kustomize ## Undeploy config/default (dev/e2e). Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh default undeploy.invalid/frame:unused | "$(KUBECTL)" delete --ignore-not-found=$(ignore-not-found) -f -
 
-# The overlay this cluster runs (config/overlays/production): config/default
-# + the manager's per-namespace Secret access, without frame-provisiond.
-# IMG is required and never the placeholder: the overlay carries no image
-# (the registry address stays out of this public repository), and
-# hack/render-overlay.sh sets it in a mktemp copy.
+# The recommended install (config/overlays/production): config/default
+# + the manager's per-namespace Secret access, frame-provisiond included
+# (the overlay documents how to leave it out). IMG and IMG_PROVISIOND are
+# required and never a placeholder or :latest: the overlay carries no image
+# (no registry address is written into this repository), and
+# hack/render-overlay.sh sets both in a mktemp copy.
 .PHONY: deploy-production
-deploy-production: manifests kustomize ## Deploy config/overlays/production. IMG=<registry>/frame-controller:<tag> required.
+deploy-production: manifests kustomize ## Deploy config/overlays/production. IMG=<registry>/frame-controller:<tag> and IMG_PROVISIOND=<registry>/frame-provisiond:<tag> required.
 	@case "$(IMG)" in ""|controller:latest|example.com/*|*:latest) echo "deploy-production: IMG=<registry>/frame-controller:<tag> required, not '$(IMG)'" >&2; exit 1;; esac
-	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production "$(IMG)" | "$(KUBECTL)" apply -f -
+	@case "$(IMG_PROVISIOND)" in ""|*:latest) echo "deploy-production: IMG_PROVISIOND=<registry>/frame-provisiond:<tag> required, not '$(IMG_PROVISIOND)'" >&2; exit 1;; esac
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production "$(IMG)" "$(IMG_PROVISIOND)" | "$(KUBECTL)" apply -f -
 
 .PHONY: diff-production
-diff-production: kustomize ## Show what deploy-production would change (kubectl diff: read only). IMG required.
+diff-production: kustomize ## Show what deploy-production would change (kubectl diff: read only). IMG and IMG_PROVISIOND required.
 	@case "$(IMG)" in ""|controller:latest|example.com/*|*:latest) echo "diff-production: IMG=<registry>/frame-controller:<tag> required, not '$(IMG)'" >&2; exit 1;; esac
-	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production "$(IMG)" | "$(KUBECTL)" diff -f -
+	@case "$(IMG_PROVISIOND)" in ""|*:latest) echo "diff-production: IMG_PROVISIOND=<registry>/frame-provisiond:<tag> required, not '$(IMG_PROVISIOND)'" >&2; exit 1;; esac
+	KUSTOMIZE="$(KUSTOMIZE)" ./hack/render-overlay.sh overlays/production "$(IMG)" "$(IMG_PROVISIOND)" | "$(KUBECTL)" diff -f -
 
 .PHONY: undeploy-production
 undeploy-production: kustomize ## Remove config/overlays/production. Call with ignore-not-found=true to ignore missing resources.

@@ -2,7 +2,7 @@
 // shipped RBAC lets it do with Secrets — and what it no longer can.
 //
 // The roles and bindings are rendered by kustomize from
-// config/overlays/production — the overlay this cluster is deployed from —
+// config/overlays/production — the recommended install overlay —
 // never written here: a fixture that builds its own RBAC proves the code,
 // not the manifest (an earlier version of this test bound the namespaces
 // itself, and could not see that the deployed render bound none). Every
@@ -44,7 +44,7 @@ import (
 const (
 	mgrNS   = "frame-system" // kustomize's namespace for everything under config/
 	mgrSA   = "frame-controller-manager"
-	readNS  = "default"   // overlay: frame-manager-secret-reader (FrameMachine default/ml350-g9)
+	readNS  = "default"   // overlay: frame-manager-secret-reader (the samples' FrameMachine namespace)
 	writeNS = "apps"      // not bound by the overlay: a FrameService namespace, bound by the test as the doc says
 	otherNS = "elsewhere" // bound to nothing
 	overlay = "config/overlays/production"
@@ -84,11 +84,16 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// testIMG stands in for the registry image deploy-production is given.
-const testIMG = "registry.invalid/frame-controller:test"
+// testIMG and testIMGProvisiond stand in for the registry images
+// deploy-production is given.
+const (
+	testIMG           = "registry.invalid/frame-controller:test"
+	testIMGProvisiond = "registry.invalid/frame-provisiond:test"
+)
 
 // render renders dir (under config/) through hack/render-overlay.sh — the
-// code path `make deploy-production` uses — with testIMG, and returns the
+// code path `make deploy-production` uses — with testIMG and
+// testIMGProvisiond, and returns the
 // path of the rendered YAML. `make test` builds bin/kustomize first
 // (crd-render); KUSTOMIZE overrides it.
 //
@@ -111,7 +116,7 @@ func render(t *testing.T, dir string) string {
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command(filepath.Join(root, "hack", "render-overlay.sh"), strings.TrimPrefix(dir, "config/"), testIMG)
+	cmd := exec.Command(filepath.Join(root, "hack", "render-overlay.sh"), strings.TrimPrefix(dir, "config/"), testIMG, testIMGProvisiond)
 	if os.Getenv("KUSTOMIZE") == "" {
 		cmd.Env = append(os.Environ(), "KUSTOMIZE="+filepath.Join(root, "bin", "kustomize"))
 	}
@@ -129,15 +134,16 @@ func render(t *testing.T, dir string) string {
 }
 
 // The overlay is applied as rendered (make deploy-production): it must
-// carry the image it was given — never config/manager's placeholder or a
-// :latest — and must not create frame-provisiond, which this cluster
-// doesn't run (a Deployment and two Services, one a NodePort).
-func TestProductionRenderImageAndNoProvisiond(t *testing.T) {
+// carry the images it was given — never config/manager's placeholder or a
+// :latest — and includes frame-provisiond (a Deployment and two Services,
+// one a NodePort), whose removal the overlay only documents as an option.
+func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 	raw, err := os.ReadFile(render(t, overlay))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var managerImage string
+	var managerImage, provisiondImage string
+	provisiondObjects := map[string]bool{}
 	dec := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
 	for {
 		var u unstructured.Unstructured
@@ -151,7 +157,15 @@ func TestProductionRenderImageAndNoProvisiond(t *testing.T) {
 			continue
 		}
 		if strings.Contains(u.GetName(), "provisiond") {
-			t.Errorf("%s: renders %s %s; frame-provisiond must not be deployed", overlay, u.GetKind(), u.GetName())
+			provisiondObjects[u.GetKind()+"/"+u.GetName()] = true
+		}
+		if u.GetKind() == "Deployment" && u.GetName() == "frame-provisiond" {
+			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
+			for _, c := range cs {
+				if m, ok := c.(map[string]any); ok && m["name"] == "provisiond" {
+					provisiondImage, _ = m["image"].(string)
+				}
+			}
 		}
 		if u.GetKind() == "Deployment" && u.GetName() == "frame-controller-manager" {
 			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
@@ -174,6 +188,14 @@ func TestProductionRenderImageAndNoProvisiond(t *testing.T) {
 	}
 	if managerImage != testIMG {
 		t.Errorf("%s: manager image %q, want the IMG given, %q", overlay, managerImage, testIMG)
+	}
+	for _, want := range []string{"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media"} {
+		if !provisiondObjects[want] {
+			t.Errorf("%s: does not render %s; frame-provisiond is part of the recommended install", overlay, want)
+		}
+	}
+	if provisiondImage != testIMGProvisiond {
+		t.Errorf("%s: provisiond image %q, want the IMG_PROVISIOND given, %q", overlay, provisiondImage, testIMGProvisiond)
 	}
 }
 

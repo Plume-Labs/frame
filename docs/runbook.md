@@ -58,7 +58,8 @@ configurations, do the write, and reinstall them:
 kubectl delete validatingwebhookconfiguration frame-validating-webhook-configuration
 kubectl delete mutatingwebhookconfiguration frame-mutating-webhook-configuration
 # ... write the CR, unvalidated and undefaulted ...
-make deploy-production IMG=<registry>/frame-controller:<tag>   # or: helm upgrade, which recreates both
+make deploy-production IMG=<registry>/frame-controller:<tag> \
+  IMG_PROVISIOND=<registry>/frame-provisiond:<tag>             # or: helm upgrade, which recreates both
 ```
 
 Reach for this only when the alternative is worse. The defaulting webhook is
@@ -222,8 +223,8 @@ Restored objects come back spec-identical and the controllers re-reconcile
 them into a `Ready` condition without intervention.
 
 **Check `status.progress.itemsBackedUp`, every time.** A Velero backup whose
-selector matches nothing completes green with zero items — this cluster has
-already been bitten once by backups that were silently empty for months.
+selector matches nothing completes green with zero items — backups that
+were silently empty for months have already been seen in practice.
 
 ```bash
 kubectl get backup -n velero frame-crs \
@@ -625,18 +626,18 @@ objects change.
 
 ### Applying the containment: what actually happened
 
-Applied to the live k3s cluster 2026-08-11. Two facts the rehearsal could not
+Applied to a live three-node k3s cluster. Two facts the rehearsal could not
 establish, both learned here:
 
-**NetworkPolicy is enforced on this cluster.** The report could not confirm it,
+**NetworkPolicy is enforced on k3s.** The report could not confirm it,
 because k3s embeds kube-router in its own process and nothing about it is
 readable through the API. Deleting `cluster-control-allow-ui-ingress` blackholed
 the UI on all three nodes within seconds, and re-applying it restored them. That
 is the proof, and it is worth keeping: it means every policy here has teeth.
 
 **kube-router's convergence lag will make you misdiagnose the ipBlock.** After
-each apply, probes failed on a different node each round — first `.202`, then
-`.201` and `.202`, then none — before settling green on all three about a minute
+each apply, probes failed on a different node each round — first one, then
+two, then none — before settling green on all three about a minute
 later. The six `/32`s (flannel.1 and cni0 per node) are correct as written. A
 supplementary `10.42.0.0/16` rule was added on the strength of the first failure
 and removed once three consecutive clean rounds showed it unnecessary; leaving it

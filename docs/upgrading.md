@@ -16,18 +16,19 @@ manifests alone.
 
 ## 1. Migrating an existing kustomize install to Helm
 
-This is the situation that exists today: the live test cluster's
-`frame-controller-manager` was installed by `make deploy`
-(`kubectl apply -k config/default`), and carries
-`app.kubernetes.io/managed-by: kustomize` — confirmed by reading it directly.
-No Helm release exists there yet.
+The starting point: a `frame-controller-manager` installed with kustomize
+(`make deploy-production`, or `make deploy` / `kubectl apply -k
+config/default`) carries `app.kubernetes.io/managed-by: kustomize`, and no
+Helm release exists yet.
 
-Since 2026-09-28 that cluster runs `config/overlays/production` (`make
-deploy-production`), not `config/default`: taking it over with Helm needs
-the same per-namespace Secret access in values —
-`rbac.managerSecretAccess.read: [default]` (no `.write`: no FrameService
-exists there since 2026-09-28) — or its FrameMachine loses its BMC
-credentials. `make helm-parity`
+If the cluster runs `config/overlays/production` rather than
+`config/default`, taking it over with Helm needs the same per-namespace
+Secret access in values — `rbac.managerSecretAccess.read` and `.write`
+listing the namespaces bound in your `secret-access.yaml` — or its
+FrameMachines lose their BMC credentials and its FrameServices their
+Secrets. The overlay includes frame-provisiond, as the chart does with
+`provisiond.enabled: true` (unless you uncommented the overlay's delete
+patches: then set `provisiond.enabled: false`). `make helm-parity`
 compares the chart with `config/default` only, not with that overlay.
 
 The chart was deliberately built to make this migration possible: every
