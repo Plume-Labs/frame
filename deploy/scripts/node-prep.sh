@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# node-prep.sh — per-node prerequisites for the virtualized test cluster.
+# node-prep.sh — per-node prerequisites for a k3s node (written for nodes that
+# are Proxmox VMs; the VM-side list below does not apply on bare metal).
 # Run once on EACH k3s node (SSH). Idempotent.
 #
 #   scp deploy/scripts/node-prep.sh <user>@<node>:/tmp/ && ssh <user>@<node> 'sudo bash /tmp/node-prep.sh'

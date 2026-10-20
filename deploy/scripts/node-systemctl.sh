@@ -49,7 +49,7 @@ usage: node-systemctl.sh <restart|status> <node> <unit>
   unit   one of: $ALLOWED_UNITS
 
 env:
-  KUBECONFIG     defaults to the Frame test cluster
+  KUBECONFIG     required: the kubeconfig of the cluster to act on
   READY_TIMEOUT  seconds to wait for the node to return Ready (default 240)
 USAGE
   exit 2

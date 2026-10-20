@@ -41,9 +41,10 @@ helm repo update falcosecurity >/dev/null 2>&1 || true
 #   2. Building on the host instead DOES work: install dkms/build-essential/cmake,
 #      fetch falcosecurity/libs at the matching driver tag (10.2.0+driver for
 #      Falco 0.44.1), cmake-configure, make. Produces a clean scap.ko.
-#   3. It then cannot be loaded: cp and w1 run with Secure Boot enabled and the
-#      kernel in lockdown=integrity, so an unsigned module is rejected ("Key was
-#      rejected by service"). Only w2 has Secure Boot off, for the NVIDIA driver.
+#   3. It then cannot be loaded on a node running with Secure Boot enabled and
+#      the kernel in lockdown=integrity: an unsigned module is rejected ("Key was
+#      rejected by service"). Only a node with Secure Boot off (as the NVIDIA
+#      driver also requires) loads it.
 #      Fixing that means either disabling Secure Boot fleet-wide or enrolling a
 #      MOK key, which is interactive at the boot console.
 #   4. Even if loaded, the module is tied to the exact kernel build and has to be
