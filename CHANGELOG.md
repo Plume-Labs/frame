@@ -23,6 +23,30 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Installation independent of any one site.** `config/overlays/production`
+  is now a generic recommended install: it **keeps frame-provisiond**
+  (previously deleted from the render) and documents leaving it out as an
+  option (the three delete patches, commented out in its
+  `kustomization.yaml`). Its comments, `secret-access.yaml`, the Makefile,
+  the samples, the UI's "not enabled" panels, the `--inference-gpu-memory-mib`
+  help text, the docs and the deploy scripts no longer describe one
+  maintainer cluster or its hardware as if it were yours.
+  **Upgrade note:** `make deploy-production` and `make diff-production` now
+  require `IMG_PROVISIOND=<registry>/frame-provisiond:<tag>` (no `:latest`),
+  and on a cluster that used this overlay they now create the
+  `frame-provisiond` Deployment and Services, including the NodePort 30581
+  on every node. Run `make diff-production` first; to keep the previous
+  behaviour, uncomment the delete patches in your copy of the overlay.
+  `hack/render-overlay.sh` takes the provisiond image as an optional third
+  argument.
+- The manager's `--inference-gpu-memory-mib` (default `7680`, an 8 GB-class
+  card) is now set explicitly in `config/manager/manager.yaml` and exposed
+  in the chart as `inference.gpuMemoryMiB`, and documented in
+  `docs/deployment.md`. Set it to your GPUs' usable memory; the rendered
+  default is unchanged.
+- `deploy/scripts/inference-up.sh` states that its defaults are examples
+  tuned on one 8 GB Pascal node, each overridden by its environment
+  variable.
 - The `Installing` phase budget of `FrameInstall` and `frame bootstrap` is
   now **90 minutes** (was a provisional 45). The first install timed on
   hardware took 55 minutes from the live system to the installed one, plus
