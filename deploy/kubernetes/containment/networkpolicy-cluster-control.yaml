@@ -49,10 +49,16 @@
 #    into an outage.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# THE ADDRESSES BELOW, AND HOW TO RE-DERIVE THEM
+# THE ADDRESSES BELOW ARE AN EXAMPLE — REPLACE THEM BEFORE APPLYING
+#
+# They describe a three-node k3s cluster (node-cp, node-w1, node-w2) whose
+# node IPs are written with the RFC 5737 documentation range 192.0.2.0/24.
+# Applied as shipped, the apiserver egress rule allows no real control plane
+# and the UI goes dark. Patch the ipBlocks with your own node IPs and podCIDR
+# addresses in your site's overlay, measured as described below.
 #
 # Per node, flannel gives `flannel.1` the network address of that node's
-# podCIDR and `cni0` the next one. Today:
+# podCIDR and `cni0` the next one. In the example:
 #
 #   kubectl get nodes -o custom-columns=NAME:.metadata.name,POD_CIDR:.spec.podCIDR
 #     node-cp   10.42.0.0/24   ->  10.42.0.0 (flannel.1)  10.42.0.1 (cni0)

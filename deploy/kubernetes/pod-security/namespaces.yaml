@@ -44,14 +44,22 @@
 # --dry-run=server` has been run against every namespace below and come back
 # clean. See docs/deployment.md, "Turning Pod Security on".
 #
-# `enforce` was added on 2026-09-10, after `kubectl label --dry-run=server`
-# came back clean for the three namespaces that exist on this cluster today
-# (default, inference, acme). The other four — acme-batch, acme-database,
-# acme-inference, acme-training — do not exist yet; they carry `enforce`
-# from the moment they are created, so the first pod ever admitted into them
-# is already checked. `warn` and `audit` are kept alongside `enforce`
-# deliberately: enforce refuses, warn explains, and a person applying a
-# rejected manifest wants both.
+# `enforce` is set here for both namespaces Frame ships with, after
+# `kubectl label --dry-run=server` came back clean for them. A namespace that
+# does not exist yet carries `enforce` from the moment it is created, so the
+# first pod ever admitted into it is already checked. `warn` and `audit` are
+# kept alongside `enforce` deliberately: enforce refuses, warn explains, and a
+# person applying a rejected manifest wants both.
+#
+# ── YOUR OWN APPLICATION NAMESPACES ──────────────────────────────────────────
+#
+# Frame ships only `default` and `inference`. A site that wants restart,
+# scale and the manifest editor in its own application namespaces adds, in its
+# own overlay (not in this file): the Namespace with these six labels, the two
+# RoleBindings ../base/rbac-workload-operator.yaml gives `default`, and the
+# namespace's name in the console's runtime config
+# (`workloads.extraOperableNamespaces`, Settings screen). See
+# docs/deployment.md, "Turning Pod Security on".
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -68,66 +76,6 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: inference
-  labels:
-    pod-security.kubernetes.io/warn: baseline
-    pod-security.kubernetes.io/warn-version: v1.29
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/audit-version: v1.29
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: v1.29
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: acme
-  labels:
-    pod-security.kubernetes.io/warn: baseline
-    pod-security.kubernetes.io/warn-version: v1.29
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/audit-version: v1.29
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: v1.29
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: acme-batch
-  labels:
-    pod-security.kubernetes.io/warn: baseline
-    pod-security.kubernetes.io/warn-version: v1.29
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/audit-version: v1.29
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: v1.29
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: acme-database
-  labels:
-    pod-security.kubernetes.io/warn: baseline
-    pod-security.kubernetes.io/warn-version: v1.29
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/audit-version: v1.29
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: v1.29
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: acme-inference
-  labels:
-    pod-security.kubernetes.io/warn: baseline
-    pod-security.kubernetes.io/warn-version: v1.29
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/audit-version: v1.29
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: v1.29
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: acme-training
   labels:
     pod-security.kubernetes.io/warn: baseline
     pod-security.kubernetes.io/warn-version: v1.29

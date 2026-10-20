@@ -28,7 +28,8 @@ commonLabels:
 # before every apply — deployment.yaml's image: field is a placeholder, same
 # as base/kustomization.yaml's `images: - name: cluster-control` convention
 # for the UI. Run: kustomize edit set image cluster-control-auth=<registry>/<image>:<tag>
+#
+# No registry or tag is committed here: they belong to the site that deploys,
+# not to the project. Set them in your own overlay or with the command above.
 images:
 - name: cluster-control-auth
-  newName: 192.0.2.201:30500/cluster-control-auth
-  newTag: 783d7fd

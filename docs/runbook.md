@@ -468,8 +468,9 @@ independent layer, not a stand-in for the first one.
 
 ### Pre-flight — three things to confirm, all read-only
 
-The NetworkPolicy is written against addresses measured on this cluster. If any
-of them has moved, applying it takes the UI offline. None of these commands
+The NetworkPolicy ships with example addresses (RFC 5737 node IPs, k3s default
+podCIDRs — see its header); patch in the ones measured on your cluster first.
+If any of them is wrong or has moved, applying it takes the UI offline. None of these commands
 changes anything.
 
 ```bash

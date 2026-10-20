@@ -75,7 +75,7 @@ func resolveKustomizationFiles(t *testing.T, dir string) []string {
 // TestGrantIsPairedWithItsControl is the regression test for whole-branch
 // review Critical 1: deploy/kubernetes/base/kustomization.yaml shipped
 // rbac-workload-operator.yaml — the RoleBindings that grant `patch` on
-// Deployments/StatefulSets in seven namespaces — without ever rendering
+// Deployments/StatefulSets in the application namespaces — without ever rendering
 // deploy/kubernetes/pod-security/namespaces.yaml, the baseline Pod Security
 // enforcement that is the only thing refusing the privileged pod that grant
 // would otherwise allow. Neither overlay, nor the Argo CD `frame` Application,

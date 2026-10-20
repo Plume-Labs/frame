@@ -1,7 +1,7 @@
 # The NVIDIA driver on GPU nodes, owned by the GPU Operator rather than
 # installed by hand on each host. Requires the operator installed with
 # driver.nvidiaDriverCRD.enabled=true and deployDefaultCR=false
-# (deploy/scripts/acme-bootstrap.sh), so this is the only driver CR.
+# (deploy/scripts/hpc-bootstrap.sh), so this is the only driver CR.
 #
 # 580 is the last driver branch that supports Pascal (Tesla P4); the image
 # nvcr.io/nvidia/driver:580.178.04-ubuntu24.04 exists, and there is none for

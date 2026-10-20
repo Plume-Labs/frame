@@ -6,7 +6,7 @@ import "testing"
 // template: restart/scale (cluster-control-workload-operator) and the YAML
 // editor (cluster-control-workload-admin). Both are namespaced by design —
 // see rbac-workload-operator.yaml's own header — because Pod Security is only
-// enforced on the seven application namespaces in
+// enforced on the application namespaces in
 // deploy/kubernetes/pod-security/namespaces.yaml, and a cluster-wide grant of
 // either role would reach every namespace Pod Security does not (and cannot)
 // cover: rook-ceph, kube-system, monitoring, and the rest of that file's own

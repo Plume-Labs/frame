@@ -39,13 +39,13 @@
 # whole argument rests on, and `baseline` does refuse it.
 #
 # It does not bound, and admission accepts all of the following inside the
-# seven namespaces below: a `volumes.secret` mount, `envFrom.secretRef`,
+# namespaces below (and any a site adds): a `volumes.secret` mount, `envFrom.secretRef`,
 # `containers[].command`/`args`, `serviceAccountName`, or `runAsUser`. None of
 # those fields are host escape, so `baseline` — and `restricted`, which does
 # not bound Secret mounts either — has nothing to say about them.
 #
 # The residual reach, stated plainly: an account in `frame:operators` can
-# `patch` a Deployment in `acme-database` (or any of the other six) to mount
+# `patch` a Deployment in any namespace bound below to mount
 # any Secret in that namespace or add `envFrom.secretRef`, set
 # `command: ["sh","-c","env; sleep 1d"]`, and read the result straight back
 # through the cluster-wide `pods/log get` this same file's sibling role grants
@@ -60,7 +60,7 @@
 # its price against a tier held only by deliberately invited people, whose every
 # write leaves a FrameTask naming who patched what. The mitigation is the tier
 # plus the audit trail, not admission control. Grant frame:operators on the same
-# footing you would grant read access to the Secrets in those seven namespaces,
+# footing you would grant read access to the Secrets in those namespaces,
 # because that is what it carries. Revisit this before widening who holds it.
 # See docs/deployment.md, "Operating a workload: which tier gets what".
 #
@@ -199,76 +199,6 @@ subjects:
   - kind: Group
     name: "frame:admins"
     apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-operator
-  namespace: acme
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
-subjects:
-  - kind: Group
-    name: "frame:operators"
-    apiGroup: rbac.authorization.k8s.io
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-operator
-  namespace: acme-batch
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
-subjects:
-  - kind: Group
-    name: "frame:operators"
-    apiGroup: rbac.authorization.k8s.io
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-operator
-  namespace: acme-database
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
-subjects:
-  - kind: Group
-    name: "frame:operators"
-    apiGroup: rbac.authorization.k8s.io
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-operator
-  namespace: acme-inference
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
-subjects:
-  - kind: Group
-    name: "frame:operators"
-    apiGroup: rbac.authorization.k8s.io
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-operator
-  namespace: acme-training
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-operator}
-subjects:
-  - kind: Group
-    name: "frame:operators"
-    apiGroup: rbac.authorization.k8s.io
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
 # The editor's bindings. `frame:admins` only — the tier split the two roles
 # exist to preserve. An operator restarts and scales here; an admin also
 # rewrites.
@@ -289,61 +219,6 @@ kind: RoleBinding
 metadata:
   name: cluster-control-workload-admin
   namespace: inference
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
-subjects:
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-admin
-  namespace: acme
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
-subjects:
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-admin
-  namespace: acme-batch
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
-subjects:
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-admin
-  namespace: acme-database
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
-subjects:
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-admin
-  namespace: acme-inference
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
-subjects:
-  - kind: Group
-    name: "frame:admins"
-    apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: cluster-control-workload-admin
-  namespace: acme-training
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-control-workload-admin}
 subjects:
   - kind: Group

@@ -24,7 +24,7 @@ spec:
         #
         # Cette politique est un `podSelector: {}` — elle refuse par defaut
         # TOUT le namespace. Avec la seule entree ci-dessus, appliquer
-        # `acme-bootstrap.sh` etape 2 sur un k3s rendrait l'inference
+        # `hpc-bootstrap.sh` etape 2 sur un k3s rendrait l'inference
         # injoignable depuis l'exterieur : la liste d'autorisation ne
         # designerait aucun pod existant. Verifie sur le cluster de test le
         # 2026-09-05 — Traefik y tourne dans kube-system, `ingress-nginx`

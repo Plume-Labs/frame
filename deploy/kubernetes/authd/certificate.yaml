@@ -1,6 +1,20 @@
 # A dedicated CA rather than a self-signed leaf: the apiserver is given this CA
 # via --oidc-ca-file in Stage 2, so the serving certificate must be re-issuable
 # without touching the node again.
+#
+# The CA is self-signed by a namespaced Issuer shipped here, so the target
+# needs nothing pre-existing on the cluster beyond cert-manager. A cluster that
+# already issued frame-auth-ca from another issuer must keep pointing at that
+# issuer (patch `issuerRef` in its overlay): changing the issuer re-issues the
+# CA, and an apiserver started with --oidc-ca-file then distrusts authd.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: frame-auth-selfsigned
+  namespace: cluster-control
+spec:
+  selfSigned: {}
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -15,8 +29,8 @@ spec:
     algorithm: ECDSA
     size: 256
   issuerRef:
-    name: acme-selfsigned
-    kind: ClusterIssuer
+    name: frame-auth-selfsigned
+    kind: Issuer
     group: cert-manager.io
 ---
 apiVersion: cert-manager.io/v1

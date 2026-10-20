@@ -465,8 +465,8 @@ whose every write leaves a `FrameTask` naming who patched what. The mitigation i
 therefore the tier itself plus the audit trail, not admission control.
 
 Two things follow, and whoever grants `frame:operators` should know both. An
-operator can read any Secret in `default`, `inference` and the five `acme-*`
-namespaces, so grant that tier on the same footing you would grant read access to
+operator can read any Secret in `default`, `inference` and any application
+namespace your site adds to the grant, so grant that tier on the same footing you would grant read access to
 those Secrets directly. And if the day comes that the tier is handed to someone
 who should not have that reach — a contractor, an automation account, a wider
 team — this decision is the one to revisit first, before inventing a narrower
@@ -546,9 +546,8 @@ it.
 
 ### Turning Pod Security on
 
-`deploy/kubernetes/pod-security/` labels the application namespaces —
-`default`, `inference`, `acme`, `acme-batch`, `acme-database`,
-`acme-inference`, `acme-training` — with `baseline`, pinned to `v1.29` so a
+`deploy/kubernetes/pod-security/` labels the application namespaces Frame
+ships with — `default` and `inference` — with `baseline`, pinned to `v1.29` so a
 cluster upgrade cannot silently tighten what is admitted. Infrastructure
 namespaces are deliberately absent: `kube-system`, `monitoring`, `alluxio`,
 `ptp`, `cilium`, `rook-ceph`, `gpu-operator`, `node-feature-discovery`,
@@ -556,31 +555,33 @@ namespaces are deliberately absent: `kube-system`, `monitoring`, `alluxio`,
 `baseline` forbids, and labelling them would refuse those pods at their next
 restart.
 
-**Only three of the seven exist on this cluster today.** `default`,
-`inference` and `acme` are live, and `kubectl label --dry-run=server` came
-back clean for all three before `enforce` was added to them on 2026-09-10.
-`acme-batch`, `acme-database`, `acme-inference` and `acme-training` do not
-exist yet — they are declared here because this repository's own manifests
-name them (`deploy/kubernetes/scheduling/elastic-lpar-pools.yaml`,
-`deploy/jobs/speculative-decoding.yaml`), so labelling them now means the
-first pod ever admitted into each, whenever it is created, is already
-checked, rather than leaving a namespace this rollout has to remember to come
-back to. Two further application namespaces are live on the cluster today and
-deliberately **absent** from this list: `acme-jobs` and `acme-sandbox` are
-owned by Acme's own Helm chart, and a `kind: Namespace` document here would
-make this kustomization claim label ownership of a namespace another chart
-already owns — the server-side-apply ownership conflict this project has
-already been bitten by once. Neither is Pod-Security-enforced, and the
-Workloads screen shows no Restart or Scale button in either — reads still
-work, the same as any other unenforced namespace.
+**Your own application namespaces.** Frame does not declare them: their names
+belong to your site, not to the project. To give one restart, scale and the
+manifest editor, add to your own overlay (a kustomization that takes
+`deploy/kubernetes/overlays/production` as its base):
+
+1. the Namespace with the same six `pod-security.kubernetes.io/*` labels as
+   `default` in `namespaces.yaml`;
+2. the two RoleBindings `deploy/kubernetes/base/rbac-workload-operator.yaml`
+   gives `default` (`cluster-control-workload-operator` and
+   `cluster-control-workload-admin`), with `namespace:` changed;
+3. the namespace's name in the console's runtime config,
+   `workloads.extraOperableNamespaces` (Settings screen → Workloads), so the
+   screen offers the buttons the grant now backs.
+
+Run the dry-run sweep below on the namespace first. Do not declare a namespace
+that another chart already owns (`kind: Namespace` in two places is a
+server-side-apply ownership conflict); label it out of band instead. A
+namespace left out of all three stays readable, with no Restart or Scale
+button — the same as any other unenforced namespace.
 
 **Enforcing does not evict anything. It refuses the next admission.** A
 workload that has always violated the policy keeps running and fails the next
 time it restarts — which is during an incident, not during the change. That is
 why the dry-run sweep has to run **before** anything that adds `enforce` —
 not after, whatever this doc said before whole-branch review Important 5.
-`deploy/kubernetes/pod-security/namespaces.yaml` has carried `enforce` on all
-seven namespaces since commit `58ca5f6`, not `warn`/`audit` alone, so the
+`deploy/kubernetes/pod-security/namespaces.yaml` has carried `enforce` on
+every namespace it declares since commit `58ca5f6`, not `warn`/`audit` alone, so the
 order below is what to run before applying that file — or before syncing any
 overlay, since `deploy/kubernetes/base/kustomization.yaml` now renders it too
 (see the comment on its `../pod-security` resource entry) — for the first
@@ -591,7 +592,7 @@ time, and before adding any new namespace to the list:
 # Run this first — before `kubectl apply -k deploy/kubernetes/pod-security`,
 # before syncing an overlay that renders it, and before adding a namespace to
 # namespaces.yaml with `enforce` already set.
-for ns in default inference acme acme-batch acme-database acme-inference acme-training; do
+for ns in default inference; do   # plus each namespace your overlay adds
   echo "── $ns"
   kubectl label --dry-run=server --overwrite namespace "$ns" \
     pod-security.kubernetes.io/enforce=baseline \
@@ -649,6 +650,9 @@ silently, with no confirmation: `PodDetailPanel` remounts fully on every pod
 selection change, by design, for every other piece of pod-scoped state. Known
 and deferred, not a defect found here — worth remembering before moving
 between steps 5, 8 and 10 in one sitting.
+
+The steps below use `acme` for an application namespace your overlay added to
+the grant (see "Turning Pod Security on"); substitute your own, or `inference`.
 
 1. Before anything else, prove Pod Security is doing its job — everything below
    assumes it. In an enforced namespace, ask for the exact payload the grant
