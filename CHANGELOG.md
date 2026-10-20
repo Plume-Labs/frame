@@ -4,6 +4,30 @@ All notable changes to Frame are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the chart and
 release tags follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The `Installing` phase budget of `FrameInstall` and `frame bootstrap` is
+  now **90 minutes** (was a provisional 45). The first install timed on
+  hardware took 55 minutes from the live system to the installed one, plus
+  a POST on each side. `frame bootstrap`'s `installTimeout` still overrides
+  it. **Upgrade note:** a silent installer is now waited for up to 90 minutes
+  before the install is marked `Failed`; the `InstallerResponding` condition
+  still reports it early.
+
+### Added
+
+- `deploy/scripts/inference-up.sh`: `LLAMACPP_EXTRA_ARGS`,
+  `LLAMACPP_REASONING_BUDGET_MESSAGE`, `LLAMACPP_IMAGE` and
+  `INFER_RENDER_ONLY`, so a site keeps its hardware tuning in its own env
+  file and can diff a run before applying it. Unset, the output is unchanged.
+
+### Documentation
+
+- `docs/storage.md`: disk serials behind a RAID controller in HBA mode
+  (udev reports the WWN; lsblk and Frame's agent still report the serial).
+
 ## [1.0.0] - 2026-09-24
 
 First tagged release. V1 is a narrowing release: a frozen API, live status,
