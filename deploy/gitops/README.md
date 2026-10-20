@@ -17,7 +17,7 @@ This will install Flux controllers and bootstrap it against this repo — it the
 reconciles whatever Kustomizations live under `clusters/${CLUSTER_NAME}`.
 
 Flux manages the cluster add-ons that aren't part of the
-Acme/cluster-control application stack: `kmod-rdma-loader` (see
+cluster-control application stack: `kmod-rdma-loader` (see
 `flux/kustomizations/`).
 
 `ksm-tuner` and `node-feature-discovery` used to be here too. `ksm-tuner` is

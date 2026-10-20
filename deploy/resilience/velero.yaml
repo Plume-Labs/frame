@@ -91,12 +91,12 @@ metadata:
 spec:
   provider: aws
   objectStorage:
-    bucket: acme-velero-backups
+    bucket: frame-velero-backups
     prefix: cluster
   config:
     region: us-east-1        # RGW requires a region string; ignored for local-only deployments — Frame runs single-site
     s3ForcePathStyle: "true"
-    s3Url: http://rook-ceph-rgw-acme-store.rook-ceph.svc.cluster.local:80
+    s3Url: http://rook-ceph-rgw-frame-store.rook-ceph.svc.cluster.local:80
   credential:
     name: velero-s3-credentials
     key: cloud

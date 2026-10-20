@@ -94,7 +94,7 @@ func TestValidateFrameJobAdmitsGPUsAtLowServiceClass(t *testing.T) {
 	// git blame.
 	job := &framev1beta1.FrameJob{
 		Spec: framev1beta1.FrameJobSpec{
-			Pipeline:     "acme-training-dag",
+			Pipeline:     "training-dag",
 			ServiceClass: "LOW",
 			GPUCount:     2,
 		},

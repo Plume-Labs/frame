@@ -1,15 +1,15 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
-metadata: { name: acme-alerts, namespace: monitoring, labels: { release: kps } }
+metadata: { name: example-alerts, namespace: monitoring, labels: { release: kps } }
 spec:
   groups:
-    - name: acme.rules
+    - name: example.rules
       rules:
-        - alert: AcmeApiUnavailable
-          expr: kube_deployment_status_replicas_unavailable{namespace="acme",deployment="acme-acme-api"} > 0
+        - alert: AppApiUnavailable
+          expr: kube_deployment_status_replicas_unavailable{namespace="my-app",deployment="my-app-api"} > 0
           for: 5m
           labels: { severity: critical }
-          annotations: { summary: "Acme API has unavailable replicas" }
+          annotations: { summary: "my-app API has unavailable replicas" }
         - alert: InferenceServerDown
           expr: kube_deployment_status_replicas_available{namespace="inference",deployment="llamacpp"} < 1
           for: 5m

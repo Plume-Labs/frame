@@ -88,7 +88,7 @@ subjects:
 # long as the controller ran --namespaced and never reconciled them at all.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
-metadata: { name: acme-inference-dag, namespace: default }
+metadata: { name: inference-dag, namespace: default }
 spec:
   entrypoint: dag
   templates:
@@ -108,7 +108,7 @@ spec:
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
-metadata: { name: acme-training-dag, namespace: default }
+metadata: { name: training-dag, namespace: default }
 spec:
   entrypoint: dag
   templates:
@@ -128,12 +128,12 @@ spec:
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameJob
 metadata: { name: acme-embed-refresh, namespace: default }
-spec: { pipeline: acme-inference-dag, serviceClass: HIGH, priority: high, gpuCount: 0 }
+spec: { pipeline: inference-dag, serviceClass: HIGH, priority: high, gpuCount: 0 }
 ---
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameJob
 metadata: { name: nightly-consolidation, namespace: default }
-spec: { pipeline: acme-training-dag, serviceClass: LOW, priority: low, gpuCount: 0 }
+spec: { pipeline: training-dag, serviceClass: LOW, priority: low, gpuCount: 0 }
 ---
 # ── Volcano queues (elastic pools) ──────────────────────────────────────────
 apiVersion: scheduling.volcano.sh/v1beta1
@@ -185,9 +185,10 @@ metadata: { name: argo-executor, namespace: argo }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: argo-executor }
 subjects: [{ kind: ServiceAccount, name: argo, namespace: argo }]
 ---
-# ── Argo DAG that actually exercises the live Acme deployment (Lineage) ─────
-# Steps curl real Acme services, so the run's success/latency reflect Acme's
-# real state — not a synthetic sleep pipeline.
+# ── Argo DAG that exercises a live application (Lineage) ─────────────────────
+# Steps curl the application's real services (here an example `acme` Helm
+# release), so the run's success/latency reflect its real state — not a
+# synthetic sleep pipeline. Point the URLs at your own services.
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata: { name: acme-api-pipeline, namespace: argo }

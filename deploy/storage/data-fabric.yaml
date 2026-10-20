@@ -1,6 +1,6 @@
 ---
 # data-fabric namespace — hosts DataHub (metacat.yaml) and consumes the RGW
-# S3 endpoint (rook-ceph-rgw-acme-store, see deploy/storage/metacat.yaml)
+# S3 endpoint (rook-ceph-rgw-frame-store, see deploy/storage/metacat.yaml)
 # directly. No gateway/cache layer in front of it — MinIO was removed
 # (community edition console stripped 2025, repo archived 2026).
 apiVersion: v1

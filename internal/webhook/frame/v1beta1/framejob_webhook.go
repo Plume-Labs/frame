@@ -32,8 +32,8 @@ import (
 var framejoblog = logf.Log.WithName("framejob-resource")
 
 var knownPipelines = map[string]bool{
-	"acme-training-dag":   true,
-	"acme-inference-dag":  true,
+	"training-dag":         true,
+	"inference-dag":        true,
 	"speculative-decoding": true,
 }
 

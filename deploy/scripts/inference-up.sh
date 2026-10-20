@@ -101,7 +101,7 @@ case "$ENGINE" in
     #
     # The quant tag is UD-Q4_K_M, not Q4_K_M: unsloth publishes no bare Q4_K_M
     # file for this repo. This name is also the EPP's routing key, so it must
-    # stay byte-identical to Acme's AI_MODEL_NAME.
+    # stay byte-identical to the model name your application requests.
     MODEL="${INFER_MODEL:-unsloth/Qwen-AgentWorld-35B-A3B-GGUF:UD-Q4_K_M}"
     NGL="${LLAMACPP_NGL:-99}"
     # 36 of AgentWorld's 40 layers. The previous default was 42, sized for the

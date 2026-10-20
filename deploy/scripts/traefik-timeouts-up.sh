@@ -4,9 +4,8 @@
 # etc.) don't get silently dropped.
 #
 # Why a HelmChartConfig: k3s bundles Traefik via its own `helm.cattle.io`
-# HelmChart resource (see deploy/scripts/test-cluster-up.sh's header — this
-# is separate from that script, since it's a one-time cluster tunable, not
-# part of the app-provisioning flow). A HelmChartConfig of the same
+# HelmChart resource (a one-time cluster tunable, not part of any
+# app-provisioning flow). A HelmChartConfig of the same
 # name+namespace is how k3s lets you layer extra Helm values on top of its
 # defaults without hand-editing the HelmChart object it reconciles.
 #
@@ -14,7 +13,7 @@
 # idleTimeout (default 180s: max gap between reads/writes on an open
 # connection) is worth raising here. This replaces the
 # nginx.ingress.kubernetes.io/proxy-read-timeout / proxy-send-timeout
-# annotations on Acme's ingress, which the cluster's actual controller
+# annotations on an application's ingress, which the cluster's actual controller
 # (Traefik, not nginx) silently ignored. proxy-buffering has no Traefik
 # equivalent needed — Traefik streams responses by default, unlike nginx.
 #
@@ -29,7 +28,7 @@
 # live traefik pod picks up idleTimeout=1h in its args.
 set -euo pipefail
 
-export KUBECONFIG="${KUBECONFIG:-$HOME/Acme/.test-cluster/kubeconfig-acme-test.yaml}"
+export KUBECONFIG="${KUBECONFIG:?set KUBECONFIG to your cluster kubeconfig}"
 
 say() { echo -e "\n\033[1;36m==>\033[0m $*"; }
 

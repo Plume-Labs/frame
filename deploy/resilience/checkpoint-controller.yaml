@@ -25,7 +25,7 @@ rules:
   - apiGroups: [""]
     resources: [pods/checkpoint]
     verbs: [create]
-  - apiGroups: ["checkpoint.acme.io"]
+  - apiGroups: ["checkpoint.plume-labs.io"]
     resources: [checkpointpolicies, checkpointschedules, checkpointstatus]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [""]
@@ -49,9 +49,9 @@ subjects:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: checkpointpolicies.checkpoint.acme.io
+  name: checkpointpolicies.checkpoint.plume-labs.io
 spec:
-  group: checkpoint.acme.io
+  group: checkpoint.plume-labs.io
   versions:
     - name: v1alpha1
       served: true
@@ -87,7 +87,7 @@ spec:
     kind: CheckpointPolicy
 ---
 # Default CheckpointPolicy — checkpoint inference pods every 15 minutes
-apiVersion: checkpoint.acme.io/v1alpha1
+apiVersion: checkpoint.plume-labs.io/v1alpha1
 kind: CheckpointPolicy
 metadata:
   name: inference-checkpoint
@@ -99,11 +99,11 @@ spec:
       checkpoint: "enabled"
   intervalMinutes: 15
   retentionCount: 4
-  storageLocation: s3://acme-checkpoints/inference
+  storageLocation: s3://frame-checkpoints/inference
   enabled: true
 ---
 # Default CheckpointPolicy — checkpoint training workers every 10 minutes
-apiVersion: checkpoint.acme.io/v1alpha1
+apiVersion: checkpoint.plume-labs.io/v1alpha1
 kind: CheckpointPolicy
 metadata:
   name: training-checkpoint
@@ -114,7 +114,7 @@ spec:
       app: acme-training
   intervalMinutes: 10
   retentionCount: 6
-  storageLocation: s3://acme-checkpoints/training
+  storageLocation: s3://frame-checkpoints/training
   enabled: true
 ---
 # Checkpoint Controller deployment
@@ -141,8 +141,8 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --leader-elect=true
-            - --checkpoint-storage=s3://acme-checkpoints
-            - --s3-endpoint=http://rook-ceph-rgw-acme-store.rook-ceph.svc.cluster.local:80
+            - --checkpoint-storage=s3://frame-checkpoints
+            - --s3-endpoint=http://rook-ceph-rgw-frame-store.rook-ceph.svc.cluster.local:80
             - --loglevel=info
           env:
             - name: AWS_ACCESS_KEY_ID

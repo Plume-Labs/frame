@@ -19,7 +19,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-: "${KUBECONFIG:=/path/to/your/kubeconfig}"
+: "${KUBECONFIG:?set KUBECONFIG to your cluster kubeconfig}"
 # A relative KUBECONFIG — which is what the project settings export — makes this
 # script silently cwd-dependent: run it from a subdirectory and kubectl finds no
 # config, every lookup fails, and the failure surfaces as a wrong answer about

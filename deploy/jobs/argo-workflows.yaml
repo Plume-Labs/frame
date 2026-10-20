@@ -1,5 +1,5 @@
 ---
-# Argo Workflows — DAG-based job orchestration for Acme AI pipelines
+# Argo Workflows — DAG-based job orchestration for AI pipelines
 apiVersion: v1
 kind: Namespace
 metadata:

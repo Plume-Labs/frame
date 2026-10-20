@@ -154,7 +154,7 @@ spec:
 apiVersion: ceph.rook.io/v1
 kind: CephObjectStore
 metadata:
-  name: acme-store
+  name: frame-store
   namespace: rook-ceph
 spec:
   metadataPool:

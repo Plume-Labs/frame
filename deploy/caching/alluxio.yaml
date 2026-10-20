@@ -31,7 +31,7 @@ data:
     -Dalluxio.worker.tieredstore.level2.alias=HDD
     -Dalluxio.worker.tieredstore.level2.dirs.path=/underfs
     -Dalluxio.worker.tieredstore.level2.dirs.quota=20TB
-    -Dalluxio.underfs.address=s3a://acme-datalake/
+    -Dalluxio.underfs.address=s3a://frame-datalake/
     -Dalluxio.s3a.accessKeyId=${AWS_ACCESS_KEY_ID}
     -Dalluxio.s3a.secretKey=${AWS_SECRET_ACCESS_KEY}
     -Dalluxio.worker.memory.size=64GB

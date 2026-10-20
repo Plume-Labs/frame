@@ -12,7 +12,7 @@
 # Node<->VM are matched by name (k8s node name == Proxmox VM name).
 set -euo pipefail
 
-PVE_URL="${PVE_URL:?set PVE_URL, e.g. https://192.0.2.1:8006}"
+PVE_URL="${PVE_URL:?set PVE_URL, e.g. https://pve.example.com:8006}"
 PVE_USER="${PVE_USER:-root@pam}"
 PVE_PASS="${PVE_PASS:?set PVE_PASS}"
 

@@ -30,7 +30,7 @@ helm repo add postgres-operator-charts \
 helm repo update postgres-operator-charts >/dev/null 2>&1 || true
 
 # watch_the_whole_cluster: the operator reconciles postgresql CRs in every
-# namespace, so Acme can declare its own cluster inside the `acme` namespace
+# namespace, so an application can declare its own cluster inside its own namespace
 # without the operator chart having to know about it.
 helm upgrade --install postgres-operator \
   postgres-operator-charts/postgres-operator \
@@ -40,4 +40,4 @@ helm upgrade --install postgres-operator \
 
 kubectl -n "$NS" rollout status deploy/postgres-operator --timeout=180s
 
-say "Done. Declare clusters with acid.zalan.do/v1 postgresql (see the Acme chart)."
+say "Done. Declare clusters with acid.zalan.do/v1 postgresql (see your application chart)."

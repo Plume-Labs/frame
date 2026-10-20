@@ -1,4 +1,5 @@
-# The console's HTTPS origin on the k3s test cluster.
+# The console's HTTPS origin — an example: replace console.example.com with
+# the name your console is reached at.
 #
 # WebAuthn needs a secure context and authd's session cookie is `Secure`, so
 # the NodePort the console was reached on (http://<node>:30379) can carry
@@ -8,10 +9,10 @@
 # authd's RP_ID must hold. Changing that hostname later invalidates every
 # enrolled passkey, so it is chosen once, here.
 #
-# TLS is terminated by Traefik, not by the Nginx Proxy Manager that fronts
-# app.example.com: the console must not be reachable from the WAN. The DNS A
-# record points at a private address, so the name resolves everywhere and
-# answers only on the LAN.
+# TLS is terminated by Traefik inside the cluster, not by an edge proxy that
+# also serves public applications: the console must not be reachable from the
+# WAN. Point the DNS A record at a private address, so the name resolves
+# everywhere and answers only on the LAN.
 #
 # The certificate is issued by `frame-auth-ca`, the same in-cluster CA that
 # already issues authd's serving certificate, rather than by a new one — one

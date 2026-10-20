@@ -1,15 +1,17 @@
-# Acme receives every cluster alert except the two meta alerts (defaulted).
-# The token is the one Acme already expects in acme-acme-secret
-# (IT_ALERT_WEBHOOK_TOKEN); it is sealed into frame-system/acme-alert-webhook,
-# labelled frame.plume-labs.io/alert-token: "true" (required: the relay
-# refuses to read, and send, any token Secret without that label).
+# Example subscription: relay every cluster alert except the two meta alerts
+# (defaulted) to an application's Alertmanager-compatible webhook.
+#
+# The token Secret must already exist in frame-system and carry the label
+# frame.plume-labs.io/alert-token: "true" (required: the relay refuses to
+# read, and send, any token Secret without that label). Seal it with
+# sealed-secrets rather than committing it in clear.
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameAlertSubscription
 metadata:
-  name: acme
+  name: my-app
   namespace: frame-system
 spec:
-  url: http://acme-acme-api.acme.svc.cluster.local:3000/api/it/alerts/webhook
+  url: http://my-app-api.my-app.svc.cluster.local:3000/alerts/webhook
   tokenSecretRef:
-    name: acme-alert-webhook
+    name: my-app-alert-webhook
     key: token

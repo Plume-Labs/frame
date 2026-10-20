@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # registry-up.sh — in-cluster image registry (registry:2) for local builds.
 #
-# Acme images are built on the dev box (podman) and need somewhere to land
+# Application images are built on a dev box (podman) and need somewhere to land
 # that every node can pull from. Without this, images were ctr-imported
 # per-node — worked for kubelet (IfNotPresent) but broke anything needing a
 # real pull (trivy-operator scanning our own images, a node that doesn't

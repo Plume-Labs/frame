@@ -33,7 +33,7 @@ set -euo pipefail
 APPLY=0
 [ "${1:-}" = "--apply" ] && APPLY=1
 
-: "${KUBECONFIG:=/path/to/your/kubeconfig}"
+: "${KUBECONFIG:?set KUBECONFIG to your cluster kubeconfig}"
 # A relative KUBECONFIG makes a script silently cwd-dependent: run it from a
 # subdirectory and every lookup fails, surfacing as a wrong answer about the
 # cluster rather than as a missing file.
@@ -134,7 +134,7 @@ step "3. Agent image"
 # tag into the DaemonSet. Doing this BEFORE applying the manifests means the
 # agent's first scheduling attempt already has an image to pull, rather than
 # spending a backoff cycle failing first.
-: "${REGISTRY:=192.0.2.201:30500}"
+: "${REGISTRY:?set REGISTRY to the registry your nodes pull from, e.g. registry.example.com:5000}"
 : "${CONTAINER_TOOL:=podman}"
 AGENT_IMAGE="$REGISTRY/frame-agent:$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 

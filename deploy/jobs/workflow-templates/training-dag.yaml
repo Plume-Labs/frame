@@ -1,12 +1,12 @@
 ---
-# Acme Training Pipeline — DAG workflow with gang scheduling, checkpointing, and retry
+# Example training pipeline — DAG workflow with gang scheduling, checkpointing, and retry
 # EXAMPLE workflow: image refs are placeholders (REPLACE_REGISTRY/REPLACE_TAG).
 # Build/push your own data-utils/trainer/evaluator/exporter images and fill
 # these in before applying.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: acme-training-dag
+  name: training-dag
   namespace: argo
   labels:
     app: acme
@@ -31,7 +31,7 @@ spec:
       - name: model-version
         value: v3
       - name: dataset-path
-        value: s3://acme-datalake/datasets/latest
+        value: s3://frame-datalake/datasets/latest
       - name: num-gpus
         value: "8"
       - name: checkpoint-interval-steps
@@ -133,7 +133,7 @@ spec:
         args: ["--model-version", "{{inputs.parameters.model-version}}"]
         env:
           - name: CHECKPOINT_BUCKET
-            value: s3://acme-checkpoints
+            value: s3://frame-checkpoints
         resources:
           requests:
             cpu: "2"
@@ -189,7 +189,7 @@ spec:
           - --master_port=29500
           - /app/train.py
           - --checkpoint-interval={{inputs.parameters.checkpoint-interval}}
-          - --checkpoint-bucket=s3://acme-checkpoints
+          - --checkpoint-bucket=s3://frame-checkpoints
         env:
           - name: MASTER_ADDR
             value: "acme-training-master.argo.svc.cluster.local"

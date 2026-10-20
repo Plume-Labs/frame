@@ -2,9 +2,8 @@
 # sealed-secrets-up.sh — install the sealed-secrets controller, which lets app
 # repos commit encrypted Secret values instead of plaintext.
 #
-# Why: k8s/helm/acme/values.local.yaml (a tracked, non-gitignored file) had
-# real values in secrets.values (DB_PASSWORD, JWT_SECRET) sitting in plaintext
-# in git history. SealedSecret CRs are encrypted against this controller's
+# Why: a tracked application values file is the usual way real secret values
+# (database passwords, signing keys) end up in plaintext in git history. SealedSecret CRs are encrypted against this controller's
 # public key — only this specific controller instance (private key never
 # leaves the cluster) can decrypt them back into a regular Secret. Safe to
 # commit; useless to anyone without cluster access.

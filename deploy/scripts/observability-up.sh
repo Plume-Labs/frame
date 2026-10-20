@@ -3,7 +3,7 @@
 # Grafana + Alertmanager + kube-state-metrics) with the cluster's existing
 # node-exporter reused, plus ServiceMonitors/PodMonitors for the custom
 # exporters (DCGM, llama.cpp, Tetragon, Falcosidekick). Storage on Ceph RBD.
-#   Grafana: NodePort 30300 (admin / acme). Prometheus TSDB retention 3d.
+#   Grafana: NodePort 30300 (admin; password in the kps-grafana Secret). Prometheus TSDB retention 3d.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -20,6 +20,6 @@ kubectl -n monitoring rollout status statefulset/prometheus-kps-kube-prometheus-
 
 say "ServiceMonitors / PodMonitors for the custom exporters"
 kubectl apply -f deploy/samples/test-cluster/servicemonitors.yaml
-kubectl apply -f deploy/samples/test-cluster/acme-alerts.yaml   # custom PrometheusRules
+kubectl apply -f deploy/samples/test-cluster/example-alerts.yaml   # custom PrometheusRules
 
 say "Done. Grafana http://<node>:30300 (admin; password in the kps-grafana Secret). Prometheus scrapes node-exporter, DCGM, llama.cpp, Tetragon, Falcosidekick, kube-state-metrics, kubelet."

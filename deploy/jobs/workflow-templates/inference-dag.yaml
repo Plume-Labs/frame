@@ -1,12 +1,12 @@
 ---
-# Acme Inference Pipeline — DAG workflow for real-time model serving
+# Example inference pipeline — DAG workflow for real-time model serving
 # EXAMPLE workflow: image refs are placeholders (REPLACE_REGISTRY/REPLACE_TAG).
 # Build/push your own pipeline-utils/preprocessor/inference-server/postprocessor
 # images and fill these in before applying.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: acme-inference-dag
+  name: inference-dag
   namespace: argo
   labels:
     app: acme

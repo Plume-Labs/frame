@@ -3,7 +3,7 @@
 # buckets via ObjectBucketClaim.
 apiVersion: ceph.rook.io/v1
 kind: CephObjectStore
-metadata: { name: acme-s3, namespace: rook-ceph }
+metadata: { name: frame-s3, namespace: rook-ceph }
 spec:
   metadataPool: { failureDomain: host, replicated: { size: 2 } }
   dataPool: { failureDomain: host, replicated: { size: 2 } }
@@ -16,7 +16,7 @@ metadata: { name: ceph-bucket }
 provisioner: rook-ceph.ceph.rook.io/bucket
 reclaimPolicy: Delete
 parameters:
-  objectStoreName: acme-s3
+  objectStoreName: frame-s3
   objectStoreNamespace: rook-ceph
 ---
 # Bucket for Velero — Rook fills the velero-backups ConfigMap (bucket name/host)

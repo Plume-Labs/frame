@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# acme-bootstrap.sh — Bootstrap all HPC + Mainframe enhancements for the Acme platform
+# hpc-bootstrap.sh — Bootstrap all HPC + Mainframe enhancements on a Frame cluster
 # Installs components in dependency order:
 #   GPU Operator → MIG config → Volcano → Cilium → Alluxio → Redis →
 #   Velero → Checkpoint Controller → Monitoring (Jaeger + DCGM + OpenLineage) → Argo Workflows
@@ -136,7 +136,7 @@ step5_storage() {
   kubectl apply -f "$DEPLOY_DIR/storage/metacat.yaml"
 
   # Wait for the Ceph RGW gateway to be ready before configuring Alluxio underfs
-  wait_for_deploy rook-ceph rook-ceph-rgw-acme-store-a
+  wait_for_deploy rook-ceph rook-ceph-rgw-frame-store-a
   ok "Storage layer deployed"
 }
 
@@ -163,8 +163,8 @@ step7_velero() {
     --create-namespace \
     --set-json 'configuration.backupStorageLocation[0].name=default' \
     --set-json 'configuration.backupStorageLocation[0].provider=aws' \
-    --set-json 'configuration.backupStorageLocation[0].bucket=acme-velero-backups' \
-    --set-json 'configuration.backupStorageLocation[0].config.s3Url=http://rook-ceph-rgw-acme-store.rook-ceph.svc.cluster.local:80' \
+    --set-json 'configuration.backupStorageLocation[0].bucket=frame-velero-backups' \
+    --set-json 'configuration.backupStorageLocation[0].config.s3Url=http://rook-ceph-rgw-frame-store.rook-ceph.svc.cluster.local:80' \
     --set-json 'configuration.backupStorageLocation[0].config.s3ForcePathStyle=true' \
     --set features=EnableCSI \
     --timeout "$DEPLOY_TIMEOUT" \
@@ -195,8 +195,8 @@ step9_argo() {
   wait_for_deploy argo workflow-controller
   wait_for_deploy argo argo-server
 
-  kubectl apply -f "$DEPLOY_DIR/jobs/workflow-templates/acme-inference-dag.yaml"
-  kubectl apply -f "$DEPLOY_DIR/jobs/workflow-templates/acme-training-dag.yaml"
+  kubectl apply -f "$DEPLOY_DIR/jobs/workflow-templates/inference-dag.yaml"
+  kubectl apply -f "$DEPLOY_DIR/jobs/workflow-templates/training-dag.yaml"
   ok "Argo Workflows + pipeline templates deployed"
 }
 
@@ -208,7 +208,7 @@ step10_cluster_control() {
 }
 
 main() {
-  info "Acme HPC + Mainframe Bootstrap"
+  info "Frame HPC + Mainframe Bootstrap"
   info "Deploy dir: $DEPLOY_DIR"
   echo ""
 
@@ -226,13 +226,13 @@ main() {
   step10_cluster_control
 
   echo ""
-  ok "=== All Acme HPC + Mainframe components deployed successfully ==="
+  ok "=== All HPC + Mainframe components deployed successfully ==="
   echo ""
   info "Service endpoints:"
   info "  Cluster Control UI : kubectl port-forward svc/cluster-control-ui 8080:80 -n cluster-control"
   info "  Argo Workflows UI   : kubectl port-forward svc/argo-server 2746:2746 -n argo"
   info "  Jaeger UI           : kubectl port-forward svc/jaeger 16686:16686 -n monitoring"
-  info "  Ceph RGW (S3)       : kubectl port-forward svc/rook-ceph-rgw-acme-store 8000:80 -n rook-ceph"
+  info "  Ceph RGW (S3)       : kubectl port-forward svc/rook-ceph-rgw-frame-store 8000:80 -n rook-ceph"
   info "  Ceph Dashboard      : kubectl port-forward svc/rook-ceph-mgr-dashboard 8443:8443 -n rook-ceph"
   info "  DataHub UI          : kubectl port-forward svc/datahub-frontend 9002:9002 -n data-fabric"
   info "  Marquez (Lineage)   : kubectl port-forward svc/marquez-web 3000:3000 -n monitoring"

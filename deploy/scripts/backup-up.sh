@@ -2,7 +2,15 @@
 # backup-up.sh — disaster recovery: Ceph RGW object store + Velero.
 # Backs up k8s resources + PVC data (kopia file-level) to a Ceph S3 bucket, so a
 # node/cluster loss is recoverable. Idempotent.
+#
+# Env:
+#   BACKUP_NAMESPACES  required — comma-separated namespaces the daily schedule
+#                      backs up, e.g. "my-app,my-app-db"
+#   BACKUP_S3_URL      S3 endpoint of the RGW object store (default: the one
+#                      deploy/samples/test-cluster/ceph-objectstore.yaml creates)
 set -euo pipefail
+BACKUP_NAMESPACES="${BACKUP_NAMESPACES:?set BACKUP_NAMESPACES, e.g. my-app,my-app-db}"
+BACKUP_S3_URL="${BACKUP_S3_URL:-http://rook-ceph-rgw-frame-s3.rook-ceph.svc:80}"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 say() { echo -e "\n\033[1;36m==>\033[0m $*"; }
@@ -37,22 +45,22 @@ helm upgrade -i velero vmware-tanzu/velero -n velero \
   --set configuration.backupStorageLocation[0].bucket="$BUCKET" \
   --set configuration.backupStorageLocation[0].config.region=us-east-1 \
   --set configuration.backupStorageLocation[0].config.s3ForcePathStyle=true \
-  --set configuration.backupStorageLocation[0].config.s3Url=http://rook-ceph-rgw-acme-s3.rook-ceph.svc:80 \
+  --set configuration.backupStorageLocation[0].config.s3Url="$BACKUP_S3_URL" \
   --set snapshotsEnabled=false \
   --set deployNodeAgent=true \
   --set configuration.defaultVolumesToFsBackup=true
 rm -f /tmp/velero-creds
 kubectl -n velero rollout status deploy/velero --timeout=180s
 
-say "Daily backup schedule (acme ns, 14d retention)"
-kubectl apply -f - <<'SCHED'
+say "Daily backup schedule ($BACKUP_NAMESPACES, 14d retention)"
+kubectl apply -f - <<SCHED
 apiVersion: velero.io/v1
 kind: Schedule
-metadata: { name: daily-acme, namespace: velero }
+metadata: { name: daily, namespace: velero }
 spec:
   schedule: "0 2 * * *"
   template:
-    includedNamespaces: [acme]
+    includedNamespaces: [$BACKUP_NAMESPACES]
     defaultVolumesToFsBackup: true
     ttl: 336h0m0s
 SCHED

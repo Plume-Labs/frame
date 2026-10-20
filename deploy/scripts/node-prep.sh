@@ -2,7 +2,7 @@
 # node-prep.sh — per-node prerequisites for the virtualized test cluster.
 # Run once on EACH k3s node (SSH). Idempotent.
 #
-#   scp deploy/scripts/node-prep.sh acme@<node>:/tmp/ && ssh acme@<node> 'sudo bash /tmp/node-prep.sh'
+#   scp deploy/scripts/node-prep.sh <user>@<node>:/tmp/ && ssh <user>@<node> 'sudo bash /tmp/node-prep.sh'
 #
 # Proxmox-side prerequisites (not done here — set on the VM before boot):
 #   - cpu=host                         (Ceph v18+ needs x86-64-v2)

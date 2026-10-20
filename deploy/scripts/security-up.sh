@@ -6,6 +6,9 @@
 # Falco is CNI-agnostic (kernel/syscall level) — detects shell-in-container,
 # privilege escalation, sensitive-file reads, crypto-miners, unexpected exec,
 # etc. modern_ebpf needs kernel >= 5.8 (CO-RE, no kernel headers required).
+#
+# Env: INSECURE_REGISTRY  optional — a plain-HTTP registry (host:port) trivy
+#                         must be allowed to pull your own images from.
 set -euo pipefail
 
 say() { echo -e "\n\033[1;31m==>\033[0m $*"; }
@@ -75,7 +78,7 @@ helm upgrade -i trivy-operator aqua/trivy-operator -n trivy-system --create-name
   --set trivyOperator.scanJobsConcurrentLimit=2 \
   --set operator.builtInTrivyServer=true \
   --set operator.builtInServerRegistryInsecure=true \
-  --set trivy.insecureRegistries.local=192.0.2.201:30500 \
+  ${INSECURE_REGISTRY:+--set "trivy.insecureRegistries.local=$INSECURE_REGISTRY"} \
   --set trivy.resources.limits.memory=1Gi
 kubectl -n trivy-system rollout status deploy/trivy-operator --timeout=180s
 kubectl -n trivy-system rollout status statefulset/trivy-server --timeout=180s
