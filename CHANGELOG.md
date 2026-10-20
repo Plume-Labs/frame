@@ -28,6 +28,91 @@ release tags follow [Semantic Versioning](https://semver.org/).
 - `docs/storage.md`: disk serials behind a RAID controller in HBA mode
   (udev reports the WWN; lsblk and Frame's agent still report the serial).
 
+### Removed — configuration of the maintainers' own site
+
+Frame shipped values that described the cluster it was developed on: its
+registry, node addresses and names, ingress hostname, application namespaces
+and Argo CD application. None of it belongs to the project. It is removed or
+replaced by neutral defaults and documented variables; every feature stays
+configurable.
+
+- `deploy/kubernetes/pod-security/namespaces.yaml` and
+  `deploy/kubernetes/base/rbac-workload-operator.yaml` no longer declare the
+  five `acme*` application namespaces or their RoleBindings. Frame ships
+  `default` and `inference` only.
+- `deploy/gitops/argocd/applications/acme.yaml` (an application of that
+  site), `deploy/scripts/test-cluster-up.sh` (that site's full-stack
+  bring-up) and `.test-cluster/kubeconfig-acme-test.yaml` (an empty stub)
+  are removed.
+- `deploy/samples/test-cluster/acme-alerts.yaml` becomes `example-alerts.yaml`
+  and `frame-alert-subscription-acme.yaml` becomes
+  `frame-alert-subscription-example.yaml`, both written for a placeholder
+  application (`my-app`).
+
+### Changed — neutral defaults
+
+- **Console** — the sandbox-pods integration is now
+  `integrations.sandboxPods`, default selector `app=sandbox` (was
+  `acmeSandbox`, `app=acme-sandbox`). A config stored by 1.0 under the old
+  key is still read. The Jobs screen's panel is "Sandbox jobs (pods)".
+- **Console** — new runtime setting `workloads.extraOperableNamespaces`
+  (Settings → Workloads): namespaces, beyond `default` and `inference`, where
+  restart, scale and the manifest editor are offered. The compiled list no
+  longer names any site's namespaces.
+- **authd** (`deploy/kubernetes/authd`): the kustomization no longer pins a
+  registry and tag (set them with `make set-image-authd` or in your overlay),
+  and `frame-auth-ca` is now issued by a namespaced self-signed `Issuer`
+  shipped in the same target (`frame-auth-selfsigned`) instead of a
+  `ClusterIssuer` named after one site.
+- **Containment** (`deploy/kubernetes/containment/networkpolicy-cluster-control.yaml`):
+  node IPs are example values from RFC 5737 (`192.0.2.0/24`) and node names
+  are `node-cp`/`node-w1`/`node-w2`; the header says to patch them.
+- **Workflow templates** — `acme-inference-dag` / `acme-training-dag` are
+  renamed `inference-dag` / `training-dag` (files and `WorkflowTemplate`
+  names), and the FrameJob webhook's known pipelines follow.
+- **Samples and scripts** — example tenant names use `acme`, storage objects
+  `frame-*` (`frame-s3`, `frame-store`…), documentation addresses
+  `192.0.2.0/24`, hostnames `example.com`. Scripts no longer default to a
+  maintainer's kubeconfig or registry: `node-systemctl.sh`,
+  `node-tuning-install.sh` and `traefik-timeouts-up.sh` require `KUBECONFIG`;
+  `node-tuning-install.sh` requires `REGISTRY`; `backup-up.sh` requires
+  `BACKUP_NAMESPACES` and takes `BACKUP_S3_URL` (schedule renamed `daily`);
+  `security-up.sh` takes an optional `INSECURE_REGISTRY`;
+  `acme-bootstrap.sh` is renamed `hpc-bootstrap.sh`.
+- **Test fixtures** — the captured iLO 4 responses
+  (`internal/redfish/testdata/ilo4-real`) keep their shape, but serial
+  numbers, MAC addresses, UUIDs, hostnames, IP addresses and the licence-key
+  suffix are replaced by fictitious values (see its `PROVENANCE.md`).
+
+### Upgrade notes — if you relied on those values
+
+- **Application namespaces — read before syncing.** If you deployed
+  `deploy/kubernetes/overlays/production` (or `base`) and the `acme*`
+  Namespaces exist on your cluster, they were rendered by Frame and are now
+  absent from its render. **A GitOps sync with pruning deletes a Namespace
+  that left the render, and everything in it**, unless the live object
+  carries `argocd.argoproj.io/sync-options: Prune=false`. Before syncing this
+  version: add to your own overlay the Namespaces you keep (same Pod Security
+  labels) and the two RoleBindings `rbac-workload-operator.yaml` gives
+  `default`, re-pointed at each; render your overlay and diff it against the
+  live cluster; then list the namespaces in Settings → Workloads so the
+  console offers restart, scale and the editor there. See
+  docs/deployment.md, "Turning Pod Security on".
+- **Sandbox pods.** If your sandbox pods are labelled `app=acme-sandbox`
+  and you never saved the Settings screen, set the selector in Settings →
+  Integrations → "Jobs (sandbox pods)"; a saved config is migrated as is.
+- **authd issuer.** On a cluster where `frame-auth-ca` already exists, keep
+  your issuer: patch `issuerRef` of the `frame-auth-ca` Certificate back to
+  it in your overlay. Switching issuers re-issues the CA, and an apiserver
+  started with `--oidc-ca-file` then distrusts authd until the file is
+  redistributed.
+- **Pipelines.** FrameJobs naming `acme-inference-dag` /
+  `acme-training-dag` keep working against WorkflowTemplates of those names
+  you already have; the webhook only warns that the pipeline is not one Frame
+  ships. New jobs should use `inference-dag` / `training-dag`.
+- **Containment.** Do not apply the shipped NetworkPolicy as is: patch the
+  node addresses first (docs/runbook.md, pre-flight).
+
 ## [1.0.0] - 2026-09-24
 
 First tagged release. V1 is a narrowing release: a frozen API, live status,
