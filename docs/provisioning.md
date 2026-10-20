@@ -151,7 +151,7 @@ problem; it does not answer it.
 
 ## Reading a stuck `Installing`
 
-`Installing` runs for up to twenty minutes and ends only when the machine
+`Installing` runs for up to its budget (90 minutes by default) and ends only when the machine
 answers on SSH carrying this installation's UID. While it runs, the
 `InstallerResponding` condition says whether the installer is speaking:
 
@@ -174,5 +174,5 @@ from how long ago a beacon last arrived; progress comes from the checkpoint;
 the two move independently, and both are in the message.
 
 This condition is diagnosis only. It never ends the phase, never fails the
-install and never shortens the twenty-minute budget: the phase still ends
+install and never shortens the phase's budget: the phase still ends
 only when the machine proves it is ours.

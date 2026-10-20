@@ -1530,7 +1530,7 @@ cluster:
   joinTokenFile: /home/me/frame-secrets/node-token
   k3sVersion: v1.33.4+k3s1       # the version the cluster runs
 kubeconfig: /home/me/.kube/config   # the EXISTING cluster's; required for join
-installTimeout: 60m              # optional; default 45m
+installTimeout: 120m             # optional; default 90m
 bootMode: UEFI
 sshKeyPath: /home/me/.ssh/frame_install
 mediaBaseURL: http://192.0.2.50:8081
@@ -1606,9 +1606,14 @@ existing cluster and is Ready there`.
       `BootSourceOverrideMode`); it is read from the BIOS resource
       (`BootMode: Uefi`) and the install is refused if it differs. A BIOS
       change pending for the next reset is not read.
-- [ ] **Phase budgets are provisional** (Preparing 30 min, Installing
-      45 min): time the base download, the remaster, the virtual-media read
-      and `updates: security` on the first install, and set them from that.
+- [ ] **Preparing's budget is provisional** (30 min): time the base
+      download and the remaster on an install, and set it from that.
+      Installing is no longer provisional: the first install timed on an
+      ML350 Gen9 (iLO 4) took 55 minutes from the live system to the reboot
+      into the installed one (squashfs over virtual media 8 min, curthooks
+      30 min, postinstall with `updates: security` 6 min), plus a POST on
+      each side, and passed only under a 60-minute override. The default is
+      now 90 minutes; `installTimeout` still overrides it per run.
 - [ ] **`frame bootstrap` with `cluster.mode: join` has never run.** The
       node-password secret deletion, the rejoin under the same name and
       the labels surviving it are documented from k3s's behaviour, not

@@ -72,16 +72,25 @@ const frameInstallControllerUser = "system:controller:frameinstall"
 // spec before it ever reaches the machine (install.go's validateOptions).
 var defaultPhaseTimeouts = map[provision.Phase]time.Duration{
 	provision.PhasePending: 30 * time.Second,
-	// Preparing and Installing are PROVISIONAL, set for the Ubuntu server
-	// ISO before any install has been timed on hardware: Preparing includes
-	// the first ~4 GB base download, Installing the virtual-media read of the
-	// squashfs and `updates: security`. Revised from the recette's
-	// measurements (docs/superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
+	// Preparing is still PROVISIONAL: it includes the first ~4 GB base
+	// download, whose time is the archive mirror's, and no install has timed
+	// it end to end yet.
 	provision.PhasePreparing:     30 * time.Minute,
 	provision.PhaseMediaAttached: 2 * time.Minute,
-	provision.PhaseInstalling:    45 * time.Minute,
-	provision.PhaseJoining:       5 * time.Minute,
-	provision.PhaseReady:         5 * time.Minute,
+	// Installing is set from the first install timed on hardware (an HPE
+	// ML350 Gen9 behind an iLO 4, Ubuntu 24.04 server ISO): live system up
+	// to the reboot into the installed one took 55 minutes -- extraction of
+	// the squashfs over virtual media 8 min, curthooks 30 min, postinstall
+	// with `updates: security` 6 min -- plus a server POST on each side.
+	// That install passed under a budget raised to 60 minutes; the former
+	// 45-minute default would most likely have failed it. 90 minutes leaves
+	// room for a slower archive mirror, which dominates curthooks and
+	// `updates: security`. A dead installer is still reported early through
+	// the InstallerResponding condition; this budget only bounds how long a
+	// silent one is waited for.
+	provision.PhaseInstalling: 90 * time.Minute,
+	provision.PhaseJoining:    5 * time.Minute,
+	provision.PhaseReady:      5 * time.Minute,
 }
 
 const defaultPoll = 5 * time.Second

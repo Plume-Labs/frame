@@ -79,7 +79,7 @@ type Config struct {
 	// so without it a join could wipe the disk, install k3s, and only then
 	// discover it has no way to tell whether the node ever came back.
 	Kubeconfig string `yaml:"kubeconfig"`
-	// InstallTimeout overrides the Installing phase's budget (45 minutes by
+	// InstallTimeout overrides the Installing phase's budget (90 minutes by
 	// default, see defaultPhaseTimeouts). A Go duration: "90m", "1h30m".
 	// Zero or absent keeps the default. It is the one budget worth tuning
 	// per machine: it covers the virtual-media read and `updates: security`,

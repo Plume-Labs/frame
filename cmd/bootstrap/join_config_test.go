@@ -282,7 +282,7 @@ func TestPhaseTimeoutsKeepsTheDefaultsUnlessInstallingIsSet(t *testing.T) {
 			t.Errorf("an Installing override moved %s to %s", p, got[p])
 		}
 	}
-	if defaultPhaseTimeouts[provision.PhaseInstalling] != 45*time.Minute {
+	if defaultPhaseTimeouts[provision.PhaseInstalling] != 90*time.Minute {
 		t.Errorf("the override leaked into defaultPhaseTimeouts: Installing = %s",
 			defaultPhaseTimeouts[provision.PhaseInstalling])
 	}
