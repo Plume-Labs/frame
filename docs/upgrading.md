@@ -486,3 +486,50 @@ again while any of its processes is alive: the stack is then published
 the background, so it never holds the agent's cycle; LVM is re-read every
 5 minutes, ZFS and md every cycle. The host needs GNU coreutils `timeout`
 (a missing one is reported as an explicit error, not as "no ZFS").
+
+## 2026-10-20 — frame-provisiond's media listener closed by default
+
+The `frame-provisiond-media` Service — the media listener BMCs fetch
+installer images from — is now `ClusterIP` in both install paths
+(`config/provisiond/service.yaml`, so `config/default` and
+`config/overlays/production`; and the chart). It was a `NodePort` fixed at
+30581 on every node.
+
+**If you provision machines, open it before or with the upgrade**, or every
+`FrameInstall` waits for media its BMC cannot reach until the
+`MediaAttached` deadline:
+
+- Helm — the old key `provisiond.media.nodePort` is removed, and a values
+  file still carrying it (or a release that set it, upgraded with
+  `--reuse-values`) fails the render
+  with this migration in the message. Replace it with:
+
+  ```bash
+  helm upgrade frame charts/frame -n frame-system --reuse-values \
+    --set provisiond.media.service.type=NodePort \
+    --set provisiond.media.service.nodePort=30581
+  ```
+
+  `--reuse-values` does not see the new `provisiond.media.service` defaults;
+  the chart reads an absent block as `ClusterIP`, which is what you get if
+  you set nothing.
+- Kustomize — copy the commented patch from
+  `config/overlays/production/kustomization.yaml` into your overlay and
+  set `nodePort: 30581`. Render (`make diff-production`) and check the
+  Service still reads `type: NodePort` before applying.
+
+Keeping 30581 keeps your media URL valid. **Consider another port**: 30581
+was the same on every Frame install, so two Frame clusters on one
+management network — or anything else holding that port — collided. A new
+port means updating the media URL with it (`provisiond.media.url`, or the
+manager's `--provisiond-media-url` and provisiond's `MEDIA_URL`).
+
+`externalTrafficPolicy: Local` is recommended for a new exposure (a
+NetworkPolicy can then admit the BMC network by source address), but on a
+NodePort it answers only on the node running frame-provisiond: if your
+media URL names a different node, adding it breaks the URL. See
+docs/deployment.md, "Exposing the media listener".
+
+**If you never provision machines**, there is nothing to do: the port
+closes, and a `FrameInstall` fails at once with a message saying the media
+listener must be exposed and its URL set.

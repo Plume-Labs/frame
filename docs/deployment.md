@@ -58,13 +58,16 @@ would put the controller on the placeholder `example.com/frame:v0.0.1`,
 which never pulls. The target refuses an empty, placeholder or `:latest`
 image.
 
-**frame-provisiond is optional.** It serves installer images to BMCs over a
-`NodePort` (30581, open on every node) and is only used by `FrameInstall`.
-A cluster that will never provision a machine can leave it out: the
-overlay's `kustomization.yaml` carries the three delete patches, commented
-out — uncomment them (any `IMG_PROVISIOND` then satisfies the target, since
-nothing renders it). If you keep it, set the media URL before the first
-`FrameInstall` (see "Provisioning a machine with Ubuntu" below).
+**frame-provisiond is optional.** It serves installer images to BMCs from
+its media listener and is only used by `FrameInstall`. That listener's
+Service, `frame-provisiond-media`, is `ClusterIP`: **closed to the machine
+network by default**, no port opened on any node. A cluster that will never
+provision a machine can leave it closed, or leave frame-provisiond out
+entirely: the overlay's `kustomization.yaml` carries the three delete
+patches, commented out — uncomment them (any `IMG_PROVISIOND` then
+satisfies the target, since nothing renders it). To provision, expose the
+media listener and set the media URL before the first `FrameInstall` (see
+"Exposing the media listener" below).
 
 **GPU memory for inference sizing.** The manager sizes every `FrameService`
 inference instance (weights + KV cache) against
@@ -1284,22 +1287,113 @@ kubectl create secret generic frame-install-ssh \
 shred -u /tmp/frame-install-key /tmp/frame-install-key.pub
 ```
 
-### 2. Deploy frame-provisiond and confirm the media listener answers
+### 2. Deploy frame-provisiond, expose its media listener, set its URL
 
 `kubectl apply -k config/default` (step 2 above) already applies
 `config/provisiond` — it is wired in unconditionally, with no toggle on the
-kustomize side. Two values still need a real one in place of the
-placeholder before this does anything against a machine that isn't CI:
+kustomize side. It creates two Services, both `ClusterIP`:
+`frame-provisiond` (the build API, which the manager calls) and
+`frame-provisiond-media` (the media listener, which the BMCs fetch from).
+Neither is reachable from the management network as installed. Two things
+are needed before a `FrameInstall` can do anything against a machine:
+expose the media listener, then name the address it is exposed at.
+
+#### Exposing the media listener
+
+A BMC fetches the installer image, and the live installer fetches its
+autoinstall seed and posts its progress, from `frame-provisiond-media`
+(port 8081). Choose how the management network reaches it:
+
+- **NodePort** — a fixed port of your choosing, so the BMC's boot media
+  configuration can name a stable address. Pick one free on your
+  management network: before this change every Frame install opened
+  30581, so a second Frame cluster on the same network, or anything else
+  holding that port, collides with it.
+- **LoadBalancer** — if the cluster has a load balancer implementation
+  (MetalLB, kube-vip…), with `loadBalancerSourceRanges` set to the BMCs'
+  network.
+
+Whichever you pick, **restrict it to the BMCs' network**:
+
+- `externalTrafficPolicy: Local` is recommended. It keeps the client's
+  source address, so a `NetworkPolicy` on the `frame-provisiond` pods can
+  admit the BMC CIDR (and the installed machines' install-time addresses,
+  which fetch the seed and post the beacon) and nothing else; with the
+  default `Cluster`, traffic is SNATed and the source a policy sees is a
+  node. Its cost: only the node running frame-provisiond answers, so a
+  NodePort URL must name that node — or use a LoadBalancer, which routes
+  to it for you.
+- Or filter on the nodes' firewall (the NodePort on every node, or the
+  load balancer's address), admitting only the BMC network.
+
+Know what is being exposed: **plain HTTP**, no TLS, and each image's URL
+carries its token (`/iso/<token>.iso`, `/autoinstall/<token>/`). The
+token is the only thing that keeps one machine's image from another; a
+host on the path or able to reach the port with a guessed or observed
+token can fetch the image. No secret ever enters an image (the join token
+and SSH private key are not in it), which is what makes this exposure
+acceptable at all — but keep it off networks the BMCs do not need.
+
+Kustomize: `config/overlays/production/kustomization.yaml` carries the
+patch, commented out — copy it into your overlay and set your port:
+
+```yaml
+patches:
+- target: {kind: Service, name: frame-provisiond-media}
+  patch: |
+    - op: replace
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/externalTrafficPolicy
+      value: Local
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30581   # yours: a port free on the management network
+```
+
+Helm: `provisiond.media.service.*` —
+
+```bash
+helm upgrade frame charts/frame --reuse-values \
+  --set provisiond.media.service.type=NodePort \
+  --set provisiond.media.service.nodePort=30581 \
+  --set provisiond.media.service.externalTrafficPolicy=Local
+# or: type=LoadBalancer plus
+#   --set 'provisiond.media.service.loadBalancerSourceRanges={192.0.2.0/24}'
+```
+
+The chart refuses `nodePort`, `externalTrafficPolicy` or
+`loadBalancerSourceRanges` while the type is still `ClusterIP`, and fails
+outright on the removed `provisiond.media.nodePort` key (see
+`docs/upgrading.md`).
+
+**While the media listener is not exposed, Frame says so instead of
+waiting.** The shipped media URL is the placeholder
+`http://ci-placeholder.invalid:30581` (`.invalid` never resolves, RFC
+2606). The manager starts with it (or with none at all: the flag is
+checked for syntax only at start-up, and logs that FrameInstall will
+refuse), and every `FrameInstall` then fails at once — phase `Failed`,
+`failedPhase: Pending`, before the BMC is touched or an image built — with
+a message naming the placeholder and telling you to expose
+`frame-provisiond-media` and set the URL. What Frame cannot check is
+whether a real, well-formed URL actually reaches the Service: point it at
+an address the BMC cannot reach and the install fails later, at the
+`MediaAttached` deadline. Hence the `curl` from the management network
+below.
+
+#### Setting the media URL
 
 **The manager's `--provisiond-media-url` flag** (`config/manager/manager.yaml`)
 ships `http://ci-placeholder.invalid:30581`. Patch it to the base URL a
-machine's BMC — on the management network, not the pod network — can reach
-`frame-provisiond`'s `NodePort` media listener at, e.g.
-`http://192.0.2.10:30581`. The manager refuses to start on an unset or
-malformed value (`cmd/main.go`'s `validateProvisiondMediaURL`) rather than
-hand a BMC boot arguments that point nowhere. The Helm chart takes this as
-`provisiond.media.url`, required at render time — see "Installing the
-operator via Helm" below.
+machine's BMC — on the management network, not the pod network — reaches
+the media listener you exposed above at, e.g. `http://192.0.2.10:30581`.
+The manager refuses to start on a malformed value (`cmd/main.go`'s
+`validateProvisiondMediaURL`); an unset value or the placeholder only make
+`FrameInstall` refuse, as described above. The Helm chart takes this as
+`provisiond.media.url`, required at render time while
+`provisiond.enabled` is true — see "Installing the operator via Helm"
+below.
 
 **`frame-provisiond`'s own `MEDIA_URL` environment variable** carries the
 same placeholder, from the same one value. Both manifests set it —
@@ -1310,8 +1404,7 @@ exactly, because it is the same address seen from the other side: the
 manager hands it to a BMC's boot arguments, provisiond bakes it into the
 image those arguments point at. `cmd/provisiond/main.go`'s
 `validateMediaURL` refuses to start on an unset or malformed value, so left
-at the placeholder the pod starts and every install then fetches from a
-host that does not resolve.
+at the placeholder the pod starts and the manager refuses every install.
 
 *An earlier version of this step said, as something measured, that neither
 manifest set `MEDIA_URL`. That was true when it was written and stopped
@@ -1347,8 +1440,9 @@ without the flag. It refuses `FrameInstall` reconciliation instead, naming
 the missing setting on the object.
 
 Then confirm the media listener actually answers from where a BMC would
-reach it — not from inside the cluster, which proves nothing about the
-management network:
+reach it — from a host on the management network, not from inside the
+cluster, which proves nothing about it (and, if you restricted it, check
+that a host outside the BMC network is refused):
 
 ```bash
 curl -sf http://192.0.2.10:30581/healthz && echo "media listener reachable"

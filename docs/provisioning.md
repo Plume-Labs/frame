@@ -124,6 +124,17 @@ one.
    for the runbook and the claims this lot has not yet proven against real
    hardware.
 
+   **The media listener ships closed.** `frame-provisiond-media`, the
+   Service a BMC fetches the installer image from (and the live installer
+   its seed and progress beacons), is `ClusterIP` in both install paths:
+   nothing is reachable from the management network until an operator
+   exposes it (NodePort or LoadBalancer, restricted to the BMCs' network)
+   and sets the media URL to that address
+   ([deployment.md](deployment.md#exposing-the-media-listener)). Until
+   then, every `FrameInstall` fails in `Pending` — before the BMC is touched
+   or an image built — with a message saying so; it does not wait for media
+   no BMC can fetch.
+
 3. **Retire the Talos CRDs.** Deliberately last. `v1beta1` is frozen and
    removing a served kind is a breaking API change; the kinds also appear in
    `charts/frame/files/crds`, `hack/migrate-storage-version.sh`, the webhook

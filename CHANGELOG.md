@@ -21,6 +21,52 @@ release tags follow [Semantic Versioning](https://semver.org/).
   then `find . -name '*.go' -exec sed -i "s#$OLD#github.com/Plume-Labs/frame#g" {} +`
   and `gofmt -w`.
 
+### Changed — frame-provisiond's media listener closed by default
+
+- The `frame-provisiond-media` Service is now **`ClusterIP`** in
+  `config/provisiond` (so `config/default` and
+  `config/overlays/production`) and in the chart. It was a `NodePort` fixed
+  at 30581, which opened that port on every node of every cluster that
+  installed Frame, provisioning or not. Exposing it is now an explicit
+  choice, with the port the operator picks:
+  - chart: `provisiond.media.service.type` (`ClusterIP` | `NodePort` |
+    `LoadBalancer`), `.nodePort`, `.externalTrafficPolicy` (`Local`
+    recommended, so a NetworkPolicy can admit the BMC network by source
+    address), `.loadBalancerSourceRanges`;
+  - kustomize: a commented example patch in
+    `config/overlays/production/kustomization.yaml`.
+  docs/deployment.md, "Exposing the media listener", covers the choice,
+  restricting it to the BMCs' network, and what is exposed (plain HTTP,
+  per-image tokens in the URL).
+- A `FrameInstall` on a cluster whose media listener is not configured
+  (unset media URL, or the shipped `.invalid` placeholder) still fails at
+  once in `Pending`, before the BMC is touched, and its message now says to
+  expose `frame-provisiond-media` and set the URL. The manager also logs it
+  at start-up when the flag holds the placeholder.
+
+**Upgrade note — if BMCs reached the media listener on NodePort 30581.**
+Upgrading closes it: every `FrameInstall` would then wait for media its BMC
+cannot fetch until the `MediaAttached` deadline. Open it explicitly before
+or with the upgrade:
+
+- Helm: `--set provisiond.media.service.type=NodePort
+  --set provisiond.media.service.nodePort=30581` (your media URL keeps
+  working unchanged). The chart key `provisiond.media.nodePort` is
+  **removed**: a values file still setting it fails the render with this
+  migration in the message.
+- Kustomize: add the example patch from
+  `config/overlays/production/kustomization.yaml` to your overlay, with
+  `nodePort: 30581`.
+
+Consider choosing a different port while you are at it: 30581 was the same
+on every Frame install, so a second Frame cluster on the same management
+network (or anything else holding 30581) collided with it — the risk the
+audit of the site-independent install flagged. A new port means updating
+the media URL (`provisiond.media.url`, or the manager's
+`--provisiond-media-url` and provisiond's `MEDIA_URL`) to match.
+See docs/upgrading.md, "2026-10-20 — frame-provisiond's media listener
+closed by default".
+
 ### Changed
 
 - **Installation independent of any one site.** `config/overlays/production`
@@ -34,8 +80,9 @@ release tags follow [Semantic Versioning](https://semver.org/).
   **Upgrade note:** `make deploy-production` and `make diff-production` now
   require `IMG_PROVISIOND=<registry>/frame-provisiond:<tag>` (no `:latest`),
   and on a cluster that used this overlay they now create the
-  `frame-provisiond` Deployment and Services, including the NodePort 30581
-  on every node. Run `make diff-production` first; to keep the previous
+  `frame-provisiond` Deployment and Services (both `ClusterIP`: the media
+  listener is closed by default, see below). Run `make diff-production`
+  first; to keep the previous
   behaviour, uncomment the delete patches in your copy of the overlay.
   `hack/render-overlay.sh` takes the provisiond image as an optional third
   argument.
