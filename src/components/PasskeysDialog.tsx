@@ -30,7 +30,7 @@ import { Fingerprint, Plus, Trash } from '@phosphor-icons/react'
  * The list is the account's real one, read from `GET /auth/credentials` —
  * lot 0c added that route, and this component's previous "enrolled this
  * session" caveat was the visible shape of its absence. Revoking is refused
- * by authd (409) when it would leave a passkey-only account with no way in,
+ * by authd (409) when it would leave the account with no way in,
  * so the last key cannot be removed by accident from here — but a revoke
  * still asks first, since even a non-last key is a working sign-in method
  * removed with no undo.
@@ -102,7 +102,7 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             Passkeys
           </DialogTitle>
           <DialogDescription>
-            Add a hardware key or platform authenticator so you can sign in without a password.
+            Passkeys are how you sign in. Add a second one — a hardware key or a platform authenticator — so losing one does not lock you out.
           </DialogDescription>
         </DialogHeader>
 

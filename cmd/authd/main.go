@@ -15,9 +15,9 @@ limitations under the License.
 */
 
 // Command authd serves the Cluster Control UI's authentication surface:
-// WebAuthn and password login, session cookies, the OIDC discovery/JWKS
-// documents the apiserver will verify tokens against, and the one-shot
-// bootstrap that creates the first admin. See
+// WebAuthn login (there is no password login), session cookies, the OIDC
+// discovery/JWKS documents the apiserver will verify tokens against, and the
+// one-shot bootstrap that creates the first admin. See
 // docs/superpowers/plans/2026-07-30-frame-authd-stage1.md for the design.
 package main
 

@@ -2,99 +2,11 @@ package authd
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
-
-// dummyPasswordHash is a valid argon2id PHC string for a password nobody
-// will ever type. It exists purely so VerifyPassword is called with the same
-// cost parameters on every failure branch of handlePasswordLogin: Go
-// short-circuits `||`, so a naive `err != nil || ... || !VerifyPassword(...)`
-// never reaches VerifyPassword for an unknown email or a passkey-only
-// account, and those paths return in microseconds next to the ~100ms argon2id
-// costs on a real attempt — trivially distinguishable with a stopwatch, even
-// though the status code and body are already identical (see
-// TestUnknownEmailAndWrongPasswordAreIndistinguishable).
-var dummyPasswordHash = mustDummyPasswordHash()
-
-func mustDummyPasswordHash() string {
-	hash, err := HashPassword("authd-dummy-password-for-timing-safety")
-	if err != nil {
-		// HashPassword only fails if crypto/rand can't be read, which would
-		// make password hashing unsafe everywhere else too — fail loudly at
-		// package init rather than silently falling back to a timing oracle.
-		panic("authd: failed to precompute dummy password hash: " + err.Error())
-	}
-	return hash
-}
-
-// verifyPassword is an indirection over the package-level VerifyPassword,
-// solely so a test can count how many times handlePasswordLogin invokes it
-// per request — a structural, timing-independent way to pin down "exactly
-// one verification on every path" (see TestPasswordLoginAlwaysVerifiesExactlyOnce
-// in server_test.go) instead of relying on a wall-clock measurement, which
-// would be flaky. Production code always calls through this var unmodified.
-var verifyPassword = VerifyPassword
-
-func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-	u, err := s.cfg.Store.ByEmail(r.Context(), body.Email)
-	if err != nil && !errors.Is(err, ErrUserNotFound) {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// Always perform exactly one argon2id verification, on every path,
-	// whether or not there is a real account or a real hash to check: this
-	// keeps the CPU cost — and so the wall-clock time — identical for an
-	// unknown email, a passkey-only account, and a genuinely wrong password.
-	// usable stays false, and hash stays the dummy, for the first two; only
-	// a real, password-enabled account with a parseable hash gets its own
-	// hash checked. Folding hasUsableHash into usable matters because an
-	// account can have PasswordAuth: enabled with an empty or malformed
-	// status.passwordHash — nothing writes that field yet, so it's
-	// unreachable today, but it is exactly the half-completed state a future
-	// set-password endpoint will transiently create between enabling
-	// password auth and writing the hash. Without this check, that account
-	// would return 401 in microseconds (VerifyPassword's malformed-input
-	// fast path) while every other unknown/disabled account costs ~100ms of
-	// real argon2id work, positively identifying it by timing alone — the
-	// same class of oracle TestUnknownEmailAndWrongPasswordAreIndistinguishable
-	// guards against.
-	// The hash is on the status subresource, not in spec (F11): it is
-	// credential material, and only authd's frameusers/status RBAC reaches
-	// it. A v1alpha1 client still spells it spec.passwordHash; the conversion
-	// webhook moves it, so this read sees either origin.
-	usable := err == nil && requireIssuable(u) == nil &&
-		u.Spec.PasswordAuth == framev1beta1.PasswordEnabled && hashIsUsable(u.Status.PasswordHash)
-	hash := dummyPasswordHash
-	if usable {
-		hash = u.Status.PasswordHash
-	}
-	verified := verifyPassword(hash, body.Password)
-
-	// One response for every failure: unknown account, password disabled, and
-	// wrong password are indistinguishable, so this endpoint cannot be used to
-	// enumerate who has an account.
-	if !usable || !verified {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if !s.setSession(w, u) {
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
 
 // setSession seals a cookie lasting cfg.SessionTTL under PurposeSession for u
 // and writes it onto the response. It reports whether that succeeded; on

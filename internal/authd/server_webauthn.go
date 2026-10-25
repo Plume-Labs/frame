@@ -11,9 +11,8 @@ const challengeCookie = "frame_challenge"
 
 // finishLogin is an indirection over Authenticator.FinishLogin, so a test can
 // exercise handleLoginFinish's post-ceremony half — which is where the state
-// check lives — without signing a real WebAuthn assertion. Same idiom, and
-// same reason, as verifyPassword in server_session.go. Production code always
-// calls through this var unmodified.
+// check lives — without signing a real WebAuthn assertion. Production code
+// always calls through this var unmodified.
 var finishLogin = (*Authenticator).FinishLogin
 
 // setChallenge parks the sealed ceremony state in a short-lived cookie. Same

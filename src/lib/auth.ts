@@ -1,12 +1,12 @@
 /**
  * The UI's session.
  *
- * authd holds the real session: `POST /auth/login/password` sets an httpOnly
- * `frame_session` cookie (12h), and `POST /auth/token` reads that cookie and
- * mints a short-lived bearer token — deliberately returned in the response
- * body, never as a cookie, so it lives in this tab's memory only and a later
- * XSS cannot lift it from storage. This module is that memory: it holds the
- * one in-flight {@link Session} and mirrors its token onto
+ * authd holds the real session: a passkey sign-in (`/auth/login/finish`)
+ * sets an httpOnly `frame_session` cookie (12h), and `POST /auth/token` reads
+ * that cookie and mints a short-lived bearer token — deliberately returned in
+ * the response body, never as a cookie, so it lives in this tab's memory only
+ * and a later XSS cannot lift it from storage. This module is that memory: it
+ * holds the one in-flight {@link Session} and mirrors its token onto
  * `globalThis.__FRAME_TOKEN__`, which `bearerToken()` in `frame-sdk.ts` and
  * `authHeaders()` in `k8s-watch.ts` already read.
  *
@@ -15,13 +15,16 @@
  * every test. In a browser `window === globalThis`, so the two SDK
  * functions above keep working unchanged.
  *
- * WebAuthn (`loginWithPasskey`, `enrolPasskey`) rides the same `frame_session`
- * cookie: `/auth/login/finish` sets it exactly like `/auth/login/password`
- * does, and `/auth/register/begin`+`/finish` read it to know who is
- * enrolling. The data-shape translation between authd's base64url JSON and
+ * Enrolment (`enrolPasskey`) rides the same `frame_session` cookie:
+ * `/auth/register/begin`+`/finish` read it to know who is enrolling. The
+ * data-shape translation between authd's base64url JSON and
  * `navigator.credentials`' `ArrayBuffer`s lives in `webauthn.ts`, which is
  * the part that is actually unit-tested — this module only sequences the
  * two HTTP calls around the browser ceremony.
+ *
+ * There is no `loginWithPassword`: authd serves no password sign-in until it
+ * ships one together with a second factor (TOTP). See
+ * `TestPasswordLoginIsNotServed` in `internal/authd/server_test.go`.
  */
 
 import {
@@ -138,18 +141,6 @@ function clearSession(): void {
   for (const fn of [...sessionLostListeners]) fn()
 }
 
-export async function loginWithPassword(email: string, password: string): Promise<void> {
-  const res = await fetch('/auth/login/password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  if (!servedByAuthd(res)) throw new AuthUnreachableError('/auth/login/password', res.status)
-  if (!res.ok) {
-    throw new Error(`login failed: ${res.status} ${await res.text()}`)
-  }
-}
-
 /**
  * Thrown when a WebAuthn ceremony ends because the user dismissed or never
  * responded to the browser's prompt — `NotAllowedError`/`AbortError` per
@@ -194,10 +185,9 @@ function ensurePasskeysSupported(): void {
  * matches the RP ID, and authd identifies the account from the assertion's
  * `userHandle`.
  *
- * Like `loginWithPassword`, this only carries the ceremony through to
- * `/auth/login/finish`, which sets the `frame_session` cookie. It does not
- * mint a bearer token — call `currentSession()` afterwards, same as after
- * `loginWithPassword`.
+ * This only carries the ceremony through to `/auth/login/finish`, which
+ * sets the `frame_session` cookie. It does not mint a bearer token — call
+ * `currentSession()` afterwards.
  */
 export async function loginWithPasskey(): Promise<void> {
   ensurePasskeysSupported()

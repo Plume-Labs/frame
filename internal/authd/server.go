@@ -50,8 +50,16 @@ type ServerConfig struct {
 	InviteTTL time.Duration
 }
 
-// Server is authd's HTTP surface: WebAuthn and password login, session
-// cookies, OIDC discovery/JWKS, and the one-shot bootstrap.
+// Server is authd's HTTP surface: WebAuthn login, session cookies, OIDC
+// discovery/JWKS, and the one-shot bootstrap.
+//
+// There is no password login. POST /auth/login/password existed, but nothing
+// ever wrote status.passwordHash, and a password alone is a single factor on
+// an admin console whose every other way in is a passkey. The route is not
+// registered, so it answers the mux's own 404, byte for byte what any other
+// absent path gets (TestPasswordLoginIsNotServed). Reopening it — and
+// shipping the future "set a password" route — requires shipping a second
+// factor (TOTP) with it in the same change.
 type Server struct {
 	cfg ServerConfig
 	mux *http.ServeMux
@@ -69,7 +77,6 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.mux.HandleFunc("GET /keys", s.handleJWKS)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	s.mux.HandleFunc("POST /auth/bootstrap", s.handleBootstrap)
-	s.mux.HandleFunc("POST /auth/login/password", s.handlePasswordLogin)
 	s.mux.HandleFunc("POST /auth/token", s.handleToken)
 	s.mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	s.mux.HandleFunc("POST /auth/login/begin", s.handleLoginBegin)

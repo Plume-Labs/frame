@@ -17,9 +17,10 @@ var ErrAccountDisabled = errors.New("account is disabled")
 // requireIssuable is the one place that decides whether authd may mint or
 // re-mint an identity for u.
 //
-// Four paths turn something into an identity: POST /auth/token (a cookie into
-// a bearer token), password login, passkey login, and invitation acceptance
-// (each of the last three, a credential into a cookie). A check missing from
+// Three paths turn something into an identity: POST /auth/token (a cookie
+// into a bearer token), passkey login, and invitation acceptance (each of the
+// last two, a credential into a cookie). There is no password login (see
+// Server); if one is ever added back, it is a fourth path and calls this too. A check missing from
 // any one of them makes deactivation a lie, so they all call this. Each has
 // its own test, named for its path, that fails if its call is removed —
 // a single test of this function would not.

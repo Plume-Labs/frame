@@ -392,7 +392,7 @@ func TestInviteAcceptIsRefusedOnceAPasswordExists(t *testing.T) {
 	}
 }
 
-// TestInviteAcceptPathRefusesADisabledAccount covers path 4 of 4:
+// TestInviteAcceptPathRefusesADisabledAccount covers path 3 of 3:
 // POST /auth/invite/accept. Same shape as the three in state_test.go, and
 // named the same way, because the defect guarded against is "the check exists
 // in three places out of four".

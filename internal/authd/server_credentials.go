@@ -93,11 +93,11 @@ func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
 
 // handleRevokeCredential removes one enrolled authenticator.
 //
-// The one refusal it can meet is Store.RemoveCredential's: it will not strip a
-// passkey-only account of its last key. That is stricter than "refuses if it
-// would leave the last admin with none" — it protects every passkey-only
-// account, the last admin among them — so there is no second copy of the rule
-// here to drift from the first.
+// The one refusal it can meet is Store.RemoveCredential's: it will not strip
+// any account of its last key. That is stricter than "refuses if it would
+// leave the last admin with none" — it protects every account, the last admin
+// among them — so there is no second copy of the rule here to drift from the
+// first.
 func (s *Server) handleRevokeCredential(w http.ResponseWriter, r *http.Request) {
 	caller, ok := s.sessionUser(w, r)
 	if !ok {
@@ -120,7 +120,7 @@ func (s *Server) handleRevokeCredential(w http.ResponseWriter, r *http.Request) 
 		// store's wording (which also names the account) is free to change
 		// without silently changing the API's wire text underneath it.
 		http.Error(w, "refusing to remove this account's last credential: "+
-			"it has no password sign-in configured, so it would become unreachable",
+			"it would become unreachable",
 			http.StatusConflict)
 	default:
 		slog.Error("revoking a credential failed", "error", err)

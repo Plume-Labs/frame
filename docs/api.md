@@ -9,14 +9,23 @@ Frame exposes the Kubernetes CRD API directly — there is no intermediate REST 
 ## Authentication
 
 `authd` is the identity provider for the Cluster Control UI. It issues
-`frame_session` cookies from a password or a passkey, mints short-lived
-bearer tokens from that cookie, and is where an admin invites a second
-person. The routes:
+`frame_session` cookies from a passkey, mints short-lived bearer tokens from
+that cookie, and is where an admin invites a second person.
+
+**There is no sign-in by password.** `POST /auth/login/password` is not
+served: it answers the same 404 as any path authd has never had. Nothing ever
+wrote `status.passwordHash`, and a password alone would be the one
+single-factor door into an admin console. It comes back only together with a
+second factor (TOTP), and so does any future "set a password" route
+(`TestPasswordLoginIsNotServed` in `internal/authd/server_test.go`). The
+`passwordAuth` field and `status.passwordHash` stay in the CRD and grant
+nothing.
+
+The routes:
 
 | Route | Caller | Answer |
 |---|---|---|
 | `POST /auth/bootstrap` | one-shot token | 204 + `frame_session` (12h) — creates the first admin, then closes forever. |
-| `POST /auth/login/password` | anyone | 204 + `frame_session` (12h). Disabled account: 401. |
 | `POST /auth/login/begin` / `finish` | anyone | Usernameless WebAuthn. Disabled account: 401. |
 | `POST /auth/token` | session | `{id_token, expires_in}`. Disabled account: 401. |
 | `POST /auth/logout` | anyone | 204, clears the cookie. Unauthenticated by design — it reads no session and checks nothing, so it cannot itself 401. |
@@ -24,7 +33,7 @@ person. The routes:
 | `POST /auth/invite` | admin session | `{url}` — an account with no credential, plus a 24h link of the shape `<origin>/invite#token=<sealed>`. The token rides in the **fragment**, which is never sent to a server, so it stays out of access logs at every hop and out of the same-origin `Referer` of every asset the `/invite` page loads. Single-use by *enrolment*, not by acceptance: accepting the same unspent link twice is harmless (204 both times); the link only dies once a credential is added. `role` is `operator` or `viewer` only. |
 | `POST /auth/invite/accept` | invitation token | 204 + a 15-minute **enrolment session**, sealed under its own purpose. It reaches only the two WebAuthn enrolment routes above — it cannot mint a token and cannot call `/auth/invite`. The invitee holds no ordinary session after enrolling and signs in normally, the same as anyone else. Disabled account: **403** (`this account is disabled`), not the 401 every other route above answers with — deliberately: the caller has already proved a valid, unspent invitation for this exact account, so naming the reason leaks nothing a 401 would have hidden. 410 (`this account already has a credential`) once the account holds any credential — not "this invitation has already been used": the same guard also fires for a password, which need not have come from this invitation. |
 | `GET /auth/credentials` | session (`?user=` for an admin) | The enrolled keys, without public-key material. |
-| `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would leave a passkey-only account with no way in. |
+| `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would remove the account's last key, whatever `passwordAuth` says — a password is no way in. |
 
 **Every route in this table is invisible to the Tasks screen.** A `FrameTask`
 is written by `frame-uiproxy` for each mutating request it forwards

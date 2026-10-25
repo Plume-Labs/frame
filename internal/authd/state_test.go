@@ -49,7 +49,7 @@ func TestRequireIssuableTreatsAnUnsetStateAsEnabled(t *testing.T) {
 	}
 }
 
-// TestTokenPathRefusesADisabledAccount covers path 1 of 4: POST /auth/token.
+// TestTokenPathRefusesADisabledAccount covers path 1 of 3: POST /auth/token.
 //
 // This is the load-bearing one. The UI calls /auth/token every fifteen
 // minutes, so the session is deliberately minted here while the account is
@@ -89,36 +89,10 @@ func TestTokenPathRefusesADisabledAccount(t *testing.T) {
 	}
 }
 
-// TestPasswordLoginPathRefusesADisabledAccount covers path 2 of 4:
-// POST /auth/login/password. The fixture is exactly
-// TestPasswordLoginSucceedsWhenEnabled's, plus spec.state — so the only thing
-// that can turn that test's 204 into this test's 401 is the state check.
-func TestPasswordLoginPathRefusesADisabledAccount(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	hash, err := HashPassword("hunter2")
-	if err != nil {
-		t.Fatalf("HashPassword: %v", err)
-	}
-	u.Status.PasswordHash = hash
-	u.Spec.State = framev1beta1.StateDisabled
-	srv := testServer(t, u)
-
-	rec := do(t, srv, http.MethodPost, "/auth/login/password",
-		`{"email":"alice@example.com","password":"hunter2"}`)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("password login for a disabled account = %d, want 401", rec.Code)
-	}
-	if hasSessionCookie(rec) {
-		t.Fatal("a disabled account was handed a session cookie")
-	}
-}
-
 // stubFinishLogin replaces the WebAuthn half of handleLoginFinish for the
 // duration of one test, so the handler's post-ceremony half can be driven
-// without signing a real assertion. Same idiom, and same reason, as
-// verifyPassword in server_session.go: the alternative is a wall-clock or
-// crypto-heavy test of code that is not what is under test.
+// without signing a real assertion: the alternative is a crypto-heavy
+// test of code that is not what is under test.
 func stubFinishLogin(t *testing.T, u *framev1beta1.FrameUser) {
 	t.Helper()
 	restore := finishLogin
@@ -138,7 +112,7 @@ func postLoginFinish(t *testing.T, srv *Server) *httptest.ResponseRecorder {
 	return rec
 }
 
-// TestPasskeyLoginPathRefusesADisabledAccount covers path 3 of 4:
+// TestPasskeyLoginPathRefusesADisabledAccount covers path 2 of 3:
 // POST /auth/login/finish.
 func TestPasskeyLoginPathRefusesADisabledAccount(t *testing.T) {
 	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
