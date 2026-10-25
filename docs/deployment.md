@@ -906,8 +906,7 @@ passkey enrolled in the 12-hour window after bootstrap, and that enrolment
 ceremony is exactly where a wrong `RP_ID` bites. It does not fail loudly,
 and it does not fail invisibly-later either — it fails at the one moment
 that matters, stranding the first admin before they have any other way in,
-since password sign-in isn't a fallback for this specific account
-(`passwordAuth: disabled`).
+since authd serves no password sign-in to fall back on.
 
 **This changes what "step 4" can mean in practice.** `authd` is already
 running when step 1 executes (it has been since Stage 1), so the `RP_ID` /

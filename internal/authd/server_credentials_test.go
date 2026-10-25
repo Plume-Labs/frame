@@ -154,7 +154,7 @@ func TestRevokeRefusesToStrandTheLastAdmin(t *testing.T) {
 	// wording (which also names the account) cannot silently change what the
 	// API sends over the wire without a test noticing.
 	const wantBody = "refusing to remove this account's last credential: " +
-		"it has no password sign-in configured, so it would become unreachable\n"
+		"it would become unreachable\n"
 	if got := rec.Body.String(); got != wantBody {
 		t.Fatalf("409 body = %q, want %q", got, wantBody)
 	}

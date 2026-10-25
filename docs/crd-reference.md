@@ -582,17 +582,19 @@ CRD with no entry in the controller table.
 **Spec:** `email` (becomes the Kubernetes username, capped at 254
 characters), `role`
 (`admin` | `operator` | `viewer`, decides the group the issued token carries),
-`passwordAuth` (`enabled` | `disabled`, **defaults to `disabled`** — an account
-is passkey-only unless someone deliberately opens the other door). On
+`passwordAuth` (`enabled` | `disabled`, **defaults to `disabled`**). It
+currently grants nothing: `authd` serves no password sign-in, so every
+account is passkey-only whatever this says (see [api.md](api.md),
+"Authentication"). On
 `v1alpha1` only, `passwordHash` is also a spec field; see status below.
 
 `state` (`enabled` | `disabled`, **defaults to `enabled`**) decides whether
 `authd` may issue the account an identity at all. It is a flag rather than an
 absence on purpose: revoking every passkey would deactivate an account too,
 but destructively, and only re-enrolment in person would undo it. One
-function in `internal/authd` (`requireIssuable`) enforces it, and all four
-identity-issuing paths — `POST /auth/token`, password login, passkey login,
-invitation acceptance — call it. The load-bearing one is `/auth/token`: the
+function in `internal/authd` (`requireIssuable`) enforces it, and all three
+identity-issuing paths — `POST /auth/token`, passkey login, invitation
+acceptance — call it. The load-bearing one is `/auth/token`: the
 console polls it every five minutes and refreshes whenever the cached token
 is within two minutes of expiry (`src/lib/auth.ts`), so disabling an account
 cuts a session that is already open within at most one token lifetime,

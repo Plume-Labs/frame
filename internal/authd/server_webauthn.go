@@ -11,9 +11,8 @@ const challengeCookie = "frame_challenge"
 
 // finishLogin is an indirection over Authenticator.FinishLogin, so a test can
 // exercise handleLoginFinish's post-ceremony half — which is where the state
-// check lives — without signing a real WebAuthn assertion. Same idiom, and
-// same reason, as verifyPassword in server_session.go. Production code always
-// calls through this var unmodified.
+// check lives — without signing a real WebAuthn assertion. Production code
+// always calls through this var unmodified.
 var finishLogin = (*Authenticator).FinishLogin
 
 // setChallenge parks the sealed ceremony state in a short-lived cookie. Same
@@ -53,7 +52,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	u, err := finishLogin(s.cfg.Auth, r.Context(), c.Value, body)
+	u, result, err := finishLogin(s.cfg.Auth, r.Context(), c.Value, body)
 	if err != nil {
 		// A counter regression means a possible cloned authenticator. It is
 		// logged loudly and refused, but the credential is deliberately left
@@ -61,6 +60,15 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		// an unauthenticated denial-of-service.
 		if errors.Is(err, ErrCounterRegression) {
 			slog.Error("possible cloned authenticator: sign counter did not advance", "error", err)
+		}
+		// Logged so an operator who just switched to required can tell a key
+		// without a PIN from any other failed sign-in. ErrUserNotVerified is
+		// only returned after the assertion validated, signature included, so
+		// this line needs an enrolled key to produce: no anonymous caller can
+		// fill the log with it. The error names a credential fingerprint,
+		// never an account.
+		if errors.Is(err, ErrUserNotVerified) {
+			slog.Warn("Refused passkey sign-in without user verification", "error", err)
 		}
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -76,6 +84,17 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	if !s.setSession(w, u) {
 		return
 	}
+	// One line per successful passkey sign-in, saying whether the
+	// authenticator verified the user. In the default "log" mode this is how
+	// an operator finds the keys that "required" would refuse before
+	// switching. The role is logged, the account is not: FrameUser names are
+	// derived from the email address, and no other authd log line carries
+	// one. The credential is a fingerprint (credentialFingerprint), not its ID.
+	slog.Info("Signed in with passkey",
+		"userVerified", result.UserVerified,
+		"credential", result.Credential,
+		"role", u.Spec.Role,
+		"userVerificationMode", string(s.cfg.Auth.UserVerification()))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -122,6 +141,9 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.cfg.Auth.FinishRegistration(r.Context(), u, c.Value, body, label); err != nil {
+		if errors.Is(err, ErrUserNotVerified) {
+			slog.Warn("Refused passkey registration without user verification", "error", err)
+		}
 		http.Error(w, "registration failed", http.StatusBadRequest)
 		return
 	}

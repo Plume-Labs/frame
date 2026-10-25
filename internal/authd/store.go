@@ -39,7 +39,7 @@ func (s *Store) list(ctx context.Context) ([]framev1beta1.FrameUser, error) {
 
 // ByEmail resolves an identity from a caller-supplied address by exact
 // match. Every caller of this method is answering "which account holds the
-// credential/session that was just verified" (sessionUser, password login),
+// credential/session that was just verified" (sessionUser),
 // not "does an account claiming this address already exist" — an
 // identity-resolution lookup must return the one account the caller actually
 // authenticated as, never whichever case-variant happens to sort first in
@@ -131,9 +131,15 @@ func (s *Store) UpdateSignCount(ctx context.Context, u *framev1beta1.FrameUser, 
 // RemoveCredential refuses to strip an account of its last way in.
 //
 // Same class of guard as the admission webhook's, applied here because authd
-// is the only writer of status.credentials: revoking the final key of a
-// passkey-only account would lock its owner out with no recovery short of
-// kubectl.
+// is the only writer of status.credentials: revoking the final key would lock
+// its owner out with no recovery short of kubectl.
+//
+// Every account's last way in is a passkey, whatever spec.passwordAuth says:
+// authd serves no password login (see Server), so a password is not a
+// fallback and spec.passwordAuth: enabled no longer loosens this guard. It
+// did while POST /auth/login/password existed; keeping that exemption after
+// closing the route would let an account with passwordAuth: enabled revoke
+// its only key and strand itself.
 func (s *Store) RemoveCredential(ctx context.Context, u *framev1beta1.FrameUser, credID string) error {
 	kept := make([]framev1beta1.WebAuthnCredential, 0, len(u.Status.Credentials))
 	found := false
@@ -147,9 +153,8 @@ func (s *Store) RemoveCredential(ctx context.Context, u *framev1beta1.FrameUser,
 	if !found {
 		return ErrUserNotFound
 	}
-	if len(kept) == 0 && u.Spec.PasswordAuth != framev1beta1.PasswordEnabled {
-		return fmt.Errorf("%w: %s has no password sign-in, so the account would become unreachable",
-			ErrLastCredential, u.Spec.Email)
+	if len(kept) == 0 {
+		return fmt.Errorf("%w: %s would become unreachable", ErrLastCredential, u.Spec.Email)
 	}
 	u.Status.Credentials = kept
 	return s.client.Status().Update(ctx, u)

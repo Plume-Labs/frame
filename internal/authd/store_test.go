@@ -115,52 +115,41 @@ func TestUpdateSignCount(t *testing.T) {
 	}
 }
 
-func TestRemoveCredentialKeepsLastKeyWhenPasswordDisabled(t *testing.T) {
-	cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
-	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
-	u.Spec.PasswordAuth = framev1beta1.PasswordDisabled
-	s := storeWith(t, u)
-	if err := s.RemoveCredential(context.Background(), u, "only"); err == nil {
-		t.Fatal("removing the last key of a passkey-only account was allowed")
+// TestRemoveCredentialKeepsLastKeyWhateverPasswordAuthSays pins that the
+// last-credential guard no longer reads spec.passwordAuth. It used to let
+// passwordAuth: enabled through, when POST /auth/login/password was a way in;
+// authd serves no password login now, so with that exemption left in place an
+// account marked enabled could revoke its only key and strand itself. The
+// "enabled" case is the one that fails if the exemption comes back; the zero
+// value and "disabled" are there so a narrower guard cannot pass either.
+func TestRemoveCredentialKeepsLastKeyWhateverPasswordAuthSays(t *testing.T) {
+	for _, mode := range []string{"", framev1beta1.PasswordDisabled, framev1beta1.PasswordEnabled} {
+		cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
+		u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
+		u.Spec.PasswordAuth = mode
+		s := storeWith(t, u)
+		err := s.RemoveCredential(context.Background(), u, "only")
+		if !errors.Is(err, ErrLastCredential) {
+			t.Fatalf("passwordAuth=%q: RemoveCredential of the last key = %v, want ErrLastCredential", mode, err)
+		}
+		got, _ := s.ByEmail(context.Background(), "alice@example.com")
+		if len(got.Status.Credentials) != 1 {
+			t.Fatalf("passwordAuth=%q: a refused removal removed the key anyway: %v", mode, got.Status.Credentials)
+		}
 	}
 }
 
-// TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset pins the zero-value
-// behavior of Store.RemoveCredential's last-credential guard, which reads
-// `u.Spec.PasswordAuth != framev1beta1.PasswordEnabled` rather than
-// `== framev1beta1.PasswordDisabled`. Those two are equivalent today only
-// because fixture() never sets PasswordAuth explicitly here, leaving it at
-// Go's zero value for the string-typed field (""), which correctly falls on
-// the "not enabled" side of the `!=` comparison. A refactor to the `==`
-// spelling would compile, and every other RemoveCredential test would still
-// pass (they all set PasswordAuth explicitly), but it would silently treat
-// an unset field as "enabled" and let the last credential of an
-// unconfigured account be removed — reopening the lockout hole. This test is
-// the only thing that would catch that refactor, which matters because
-// RemoveCredential has no production caller yet: nothing else exercises this
-// guard until a future revocation endpoint wires it up.
-func TestRemoveCredentialKeepsLastKeyWhenPasswordAuthUnset(t *testing.T) {
-	cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
-	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
-	// PasswordAuth deliberately left at its zero value ("") — not set to
-	// PasswordDisabled, which is the point of this test.
+func TestRemoveCredentialRemovesANonLastKey(t *testing.T) {
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin,
+		framev1beta1.WebAuthnCredential{ID: "one", PublicKey: "pk1"},
+		framev1beta1.WebAuthnCredential{ID: "two", PublicKey: "pk2"})
 	s := storeWith(t, u)
-	if err := s.RemoveCredential(context.Background(), u, "only"); err == nil {
-		t.Fatal("removing the last key of an account with PasswordAuth unset (zero value) was allowed")
-	}
-}
-
-func TestRemoveCredentialAllowedWhenPasswordEnabled(t *testing.T) {
-	cred := framev1beta1.WebAuthnCredential{ID: "only", PublicKey: "pk"}
-	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred)
-	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	s := storeWith(t, u)
-	if err := s.RemoveCredential(context.Background(), u, "only"); err != nil {
+	if err := s.RemoveCredential(context.Background(), u, "one"); err != nil {
 		t.Fatalf("RemoveCredential: %v", err)
 	}
 	got, _ := s.ByEmail(context.Background(), "alice@example.com")
-	if len(got.Status.Credentials) != 0 {
-		t.Fatalf("credential not removed: %v", got.Status.Credentials)
+	if len(got.Status.Credentials) != 1 || got.Status.Credentials[0].ID != "two" {
+		t.Fatalf("credentials after removal = %v, want only \"two\"", got.Status.Credentials)
 	}
 }
 

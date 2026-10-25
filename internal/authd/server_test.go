@@ -272,37 +272,91 @@ func TestBootstrapRejectsAnOverLongEmail(t *testing.T) {
 	}
 }
 
-func TestPasswordLoginRefusedWhenDisabled(t *testing.T) {
+// TestPasswordLoginIsNotServed pins "no sign-in by password". authd used to
+// register POST /auth/login/password; it was closed because a password alone
+// is a single factor, on a console whose every other way in is a passkey.
+//
+// Reopening it is not a matter of deleting this test: a password route — this
+// one, or the future "set a password" one — ships only together with a second
+// factor (TOTP) in the same change, and this test is then rewritten to require
+// that factor rather than removed.
+//
+// The account below is the one the old route would have let in: password
+// sign-in enabled, a hash present on status, the right password in the body.
+// The answer must be the mux's own 404, identical in status and body to a
+// path that never existed, so the route cannot be told apart from absence; no
+// session cookie may come back.
+func TestPasswordLoginIsNotServed(t *testing.T) {
 	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1beta1.PasswordDisabled
-	hash, _ := HashPassword("hunter2")
-	u.Status.PasswordHash = hash
+	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
+	u.Status.PasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$c2FsdA$aGFzaA"
 	srv := testServer(t, u)
 
-	rec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("password login on a passkey-only account = %d, want 401", rec.Code)
+	absent := do(t, srv, http.MethodPost, "/auth/login/no-such-route", `{}`)
+	if absent.Code != http.StatusNotFound {
+		t.Fatalf("control: an absent route = %d, want 404", absent.Code)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		rec := do(t, srv, method, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
+		if rec.Code != absent.Code || rec.Body.String() != absent.Body.String() {
+			t.Fatalf("%s /auth/login/password = %d %q, want what an absent route answers: %d %q",
+				method, rec.Code, rec.Body.String(), absent.Code, absent.Body.String())
+		}
+		if hasSessionCookie(rec) {
+			t.Fatalf("%s /auth/login/password handed out a session cookie", method)
+		}
 	}
 }
 
-func TestPasswordLoginSucceedsWhenEnabled(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	hash, _ := HashPassword("hunter2")
-	u.Status.PasswordHash = hash
-	srv := testServer(t, u)
+// assertSessionCookie checks every attribute setSessionFor puts on the
+// frame_session cookie, on a real response. HttpOnly keeps it out of reach of
+// script (an XSS cannot lift the session), Secure keeps it off plain HTTP,
+// SameSite=Strict keeps cross-site requests from carrying it, Path "/" scopes
+// it to the console, and MaxAge bounds it to the session lifetime.
+func assertSessionCookie(t *testing.T, rec *httptest.ResponseRecorder, wantMaxAge time.Duration) {
+	t.Helper()
+	c := sessionCookieFrom(t, rec)
+	if c.Value == "" {
+		t.Fatal("session cookie is empty")
+	}
+	if !c.HttpOnly {
+		t.Fatal("session cookie is not HttpOnly")
+	}
+	if !c.Secure {
+		t.Fatal("session cookie is not Secure")
+	}
+	if c.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie SameSite = %v, want Strict", c.SameSite)
+	}
+	if c.Path != "/" {
+		t.Fatalf("session cookie Path = %q, want /", c.Path)
+	}
+	if c.MaxAge != int(wantMaxAge.Seconds()) {
+		t.Fatalf("session cookie MaxAge = %d, want %d", c.MaxAge, int(wantMaxAge.Seconds()))
+	}
+}
 
-	rec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
+// The two routes that hand out a full session: passkey sign-in and bootstrap.
+// (The invitation's enrolment cookie goes through the same setSessionFor; its
+// purpose and TTL are covered in server_invite_test.go.)
+func TestPasskeySignInSetsAHardenedSessionCookie(t *testing.T) {
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	srv := testServer(t, u)
+	stubFinishLogin(t, u)
+	rec := postLoginFinish(t, srv)
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("password login = %d, want 204", rec.Code)
+		t.Fatalf("passkey sign-in = %d, want 204: %s", rec.Code, rec.Body.String())
 	}
-	cookie := rec.Header().Get("Set-Cookie")
-	if !strings.Contains(cookie, "HttpOnly") || !strings.Contains(cookie, "Secure") {
-		t.Fatalf("session cookie is not HttpOnly+Secure: %q", cookie)
+	assertSessionCookie(t, rec, 12*time.Hour)
+}
+
+func TestBootstrapSetsAHardenedSessionCookie(t *testing.T) {
+	srv, _ := bootstrapServer(t, true)
+	rec := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"eve@example.com"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("bootstrap = %d, want 204: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(cookie, "SameSite=Strict") {
-		t.Fatalf("session cookie is not SameSite=Strict: %q", cookie)
-	}
+	assertSessionCookie(t, rec, 12*time.Hour)
 }
 
 func TestTokenRequiresASession(t *testing.T) {
@@ -310,113 +364,6 @@ func TestTokenRequiresASession(t *testing.T) {
 	rec := do(t, srv, http.MethodPost, "/auth/token", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("token without session = %d, want 401", rec.Code)
-	}
-}
-
-// TestDummyPasswordHashIsValidAndVerifiable covers the timing-oracle fix
-// found in review: handlePasswordLogin must call VerifyPassword exactly once
-// on every failure path, including the ones where there is no real account
-// or no real hash (unknown email, password disabled), using
-// dummyPasswordHash so the argon2id cost — and so the wall-clock time — is
-// identical to a genuine attempt. That guarantee only holds if
-// dummyPasswordHash is itself a real, correctly-parsing argon2id hash rather
-// than an empty or malformed placeholder that VerifyPassword would reject in
-// microseconds via its early parse-failure return (see VerifyPassword's own
-// "malformed input" fast path in password.go) — which would silently
-// reintroduce the timing gap this fix closes.
-func TestDummyPasswordHashIsValidAndVerifiable(t *testing.T) {
-	if dummyPasswordHash == "" {
-		t.Fatal("dummyPasswordHash was not initialized")
-	}
-	if !VerifyPassword(dummyPasswordHash, "authd-dummy-password-for-timing-safety") {
-		t.Fatal("dummyPasswordHash does not parse as a genuine argon2id hash — VerifyPassword would " +
-			"take its malformed-input fast path instead of paying the real argon2 cost, reopening the timing oracle")
-	}
-}
-
-// TestPasswordLoginAlwaysVerifiesExactlyOnce is the structural,
-// timing-independent counterpart to the timing-oracle fix: it proves
-// handlePasswordLogin calls verifyPassword exactly once per request on every
-// failure path (unknown email, password disabled, wrong password, disabled
-// account), not just that the dummy hash constant happens to be valid. A
-// regression to the original
-// `err != nil || u.Spec.PasswordAuth != Enabled || !VerifyPassword(...)`
-// short-circuit would make this test fail with 0 calls for the first two
-// cases, even though TestUnknownEmailAndWrongPasswordAreIndistinguishable and
-// TestDummyPasswordHashIsValidAndVerifiable would both still pass — neither
-// of those actually observes whether verifyPassword ran.
-//
-// The "disabled account" case guards the requireIssuable clause the same
-// way: it uses the correct password against a real hash, so the only thing
-// standing between this request and a session is spec.state. A caller that
-// "simplified" handlePasswordLogin into an early
-// `if requireIssuable(u) != nil { http.Error(w, "unauthorized", 401); return }`
-// before reaching verifyPassword would still return 401 — TestPasswordLoginPathRefusesADisabledAccount
-// would not catch it — but it would answer in microseconds instead of paying
-// the ~100ms argon2id cost every other refusal here pays, reopening exactly
-// the timing oracle this function's design comment exists to close. calls
-// != 1 is what catches that; the status code alone would not.
-func TestPasswordLoginAlwaysVerifiesExactlyOnce(t *testing.T) {
-	enabled := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
-	enabled.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	hash, err := HashPassword("hunter2")
-	if err != nil {
-		t.Fatalf("HashPassword: %v", err)
-	}
-	enabled.Status.PasswordHash = hash
-
-	disabled := fixture("bob", "bob@example.com", framev1beta1.RoleViewer)
-	disabled.Spec.PasswordAuth = framev1beta1.PasswordDisabled
-
-	disabledAccount := fixture("carol", "carol@example.com", framev1beta1.RoleAdmin)
-	disabledAccount.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	disabledAccount.Status.PasswordHash = hash
-	disabledAccount.Spec.State = framev1beta1.StateDisabled
-
-	cases := []struct {
-		name string
-		srv  *Server
-		body string
-	}{
-		{"unknown email", testServer(t, enabled), `{"email":"ghost@example.com","password":"nope"}`},
-		{"password disabled", testServer(t, disabled), `{"email":"bob@example.com","password":"nope"}`},
-		{"wrong password", testServer(t, enabled), `{"email":"alice@example.com","password":"nope"}`},
-		// Correct password, real hash — only spec.state stands between this
-		// request and a session.
-		{"disabled account", testServer(t, disabledAccount), `{"email":"carol@example.com","password":"hunter2"}`},
-	}
-
-	original := verifyPassword
-	defer func() { verifyPassword = original }()
-
-	for _, tc := range cases {
-		calls := 0
-		verifyPassword = func(encoded, plain string) bool {
-			calls++
-			return original(encoded, plain)
-		}
-		rec := do(t, tc.srv, http.MethodPost, "/auth/login/password", tc.body)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("%s: status = %d, want 401", tc.name, rec.Code)
-		}
-		if calls != 1 {
-			t.Fatalf("%s: verifyPassword called %d times, want exactly 1", tc.name, calls)
-		}
-	}
-}
-
-func TestUnknownEmailAndWrongPasswordAreIndistinguishable(t *testing.T) {
-	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	hash, _ := HashPassword("hunter2")
-	u.Status.PasswordHash = hash
-	srv := testServer(t, u)
-
-	wrong := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"nope"}`)
-	unknown := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"ghost@example.com","password":"nope"}`)
-	if wrong.Code != unknown.Code || wrong.Body.String() != unknown.Body.String() {
-		t.Fatalf("responses differ: wrong=%d/%q unknown=%d/%q — this leaks which accounts exist",
-			wrong.Code, wrong.Body.String(), unknown.Code, unknown.Body.String())
 	}
 }
 
@@ -453,13 +400,8 @@ func TestBootstrapSessionAllowsImmediateRegisterBegin(t *testing.T) {
 // a way to read it that surviving only in memory is meant to prevent.
 func TestTokenIsBodyOnlyNeverCookie(t *testing.T) {
 	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
-	u.Spec.PasswordAuth = framev1beta1.PasswordEnabled
-	hash, _ := HashPassword("hunter2")
-	u.Status.PasswordHash = hash
 	srv := testServer(t, u)
-
-	loginRec := do(t, srv, http.MethodPost, "/auth/login/password", `{"email":"alice@example.com","password":"hunter2"}`)
-	session := sessionCookieFrom(t, loginRec)
+	session := sessionFor(t, srv, u)
 
 	rec := doWithCookie(t, srv, "/auth/token", "", session)
 	if rec.Code != http.StatusOK {

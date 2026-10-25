@@ -203,13 +203,13 @@ describe('revokeCredential', () => {
     expect(calls[0].init?.method).toBe('DELETE')
   })
 
-  // The 409 is the design's own guard — the last key of a passkey-only
-  // account — and it is the one refusal a user can act on, so it must not be
+  // The 409 is the design's own guard — an account's last key — and it is
+  // the one refusal a user can act on, so it must not be
   // flattened into "request failed".
   it('surfaces the refusal to strand an account', async () => {
     stubFetch(
       new Response(
-        'refusing to remove an account\'s last credential: root@example.com has no password sign-in',
+        'refusing to remove this account\'s last credential: it would become unreachable',
         { status: 409 },
       ),
     )

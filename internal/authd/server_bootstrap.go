@@ -110,7 +110,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	// the time this handler returns the token that got the caller here is
 	// already spent — AdminCount() > 0 now closes /auth/bootstrap for good.
 	// Returning 204 without a session would leave the freshly-created admin
-	// unreachable: no password (PasswordDisabled above), no credential yet,
+	// unreachable: no password (authd serves no password login), no credential yet,
 	// and no way back in short of hand-editing the FrameUser's status or
 	// deleting the ValidatingWebhookConfiguration that guards the last
 	// admin.

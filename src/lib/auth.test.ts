@@ -7,7 +7,6 @@ import {
   identityFromToken,
   isAdminToken,
   loginWithPasskey,
-  loginWithPassword,
   AuthUnreachableError,
   logout,
   onSessionLost,
@@ -271,6 +270,8 @@ function htmlShell() {
 }
 
 describe('an /auth/ request that never reached authd', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
   it('reads as not signed in rather than throwing a parse error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => htmlShell()))
     await expect(currentSession()).resolves.toBeUndefined()
@@ -278,9 +279,10 @@ describe('an /auth/ request that never reached authd', () => {
   })
 
   it('tells a signing-in user what is actually wrong', async () => {
+    stubWebAuthnSupport()
     vi.stubGlobal('fetch', vi.fn(async () => htmlShell()))
-    await expect(loginWithPassword('a@b.c', 'pw')).rejects.toThrow(AuthUnreachableError)
-    await expect(loginWithPassword('a@b.c', 'pw')).rejects.toThrow(/\/auth\//)
+    await expect(loginWithPasskey()).rejects.toThrow(AuthUnreachableError)
+    await expect(loginWithPasskey()).rejects.toThrow(/\/auth\//)
   })
 })
 
