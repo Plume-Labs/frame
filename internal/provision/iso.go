@@ -93,6 +93,11 @@ func Remaster(ctx context.Context, baseISO string, s Spec, seedURL, out string) 
 		if i == 0 && !found {
 			return fmt.Errorf("no kernel line found to make unattended in %s", isoPath)
 		}
+		if i == 0 {
+			if err := requireLiveServer(local, baseISO); err != nil {
+				return err
+			}
+		}
 		args = append(args, "-map", local, isoPath)
 	}
 	args = append(args, "-boot_image", "any", "replay")
@@ -145,6 +150,28 @@ var seedURLShape = regexp.MustCompile(`^[A-Za-z0-9:/._-]+$`)
 func ValidateSeedBase(mediaURL string) error {
 	if u := seedURL(mediaURL, strings.Repeat("0", 32)); !seedURLShape.MatchString(u) {
 		return fmt.Errorf("%q: only letters, digits and : / . _ - are allowed; every image writes it onto a GRUB kernel line", mediaURL)
+	}
+	return nil
+}
+
+// casperKernelLine is a kernel line booting the live-server environment,
+// the one that runs subiquity and reads autoinstall.
+var casperKernelLine = regexp.MustCompile(`(?m)^\s*linux\s+/casper/`)
+
+// requireLiveServer refuses a base whose grub.cfg boots no /casper/ kernel.
+// Any other installer boots and ignores autoinstall: a Debian netinst
+// (/install.amd/vmlinuz, the base before 2026-09-29) would sit on its first
+// question, on a machine reachable only by its BMC. The checksum pin already
+// refuses such an image for the default base; this covers a base given by
+// URL and checksum (FRAME_BASE_ISO_URL), whose checksum proves only that the
+// download is the file its operator meant.
+func requireLiveServer(grubCfg, baseISO string) error {
+	b, err := os.ReadFile(grubCfg)
+	if err != nil {
+		return err
+	}
+	if !casperKernelLine.Match(b) {
+		return fmt.Errorf("%s is not an Ubuntu live-server image: its grub.cfg boots no /casper/ kernel, and any other installer ignores autoinstall", baseISO)
 	}
 	return nil
 }
