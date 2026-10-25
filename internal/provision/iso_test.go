@@ -239,8 +239,9 @@ func TestRemasterRefusesADebianInstallerImage(t *testing.T) {
 // A grub.cfg with no kernel line boots to a menu and waits for a keypress.
 func TestRemasterRefusesAGrubCfgWithNoKernelLine(t *testing.T) {
 	base := buildISO(t, map[string]string{"boot/grub/grub.cfg": "set timeout=30\n"}, bootable{bios: true, uefi: true})
-	if err := Remaster(context.Background(), base, goodSpec(), testSeedURL, filepath.Join(t.TempDir(), "o.iso")); err == nil {
-		t.Fatal("a grub.cfg with no kernel line was accepted")
+	err := Remaster(context.Background(), base, goodSpec(), testSeedURL, filepath.Join(t.TempDir(), "o.iso"))
+	if err == nil || !strings.Contains(err.Error(), "no kernel line") {
+		t.Fatalf("err = %v, want a grub.cfg with no kernel line refused as such", err)
 	}
 }
 

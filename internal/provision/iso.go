@@ -84,11 +84,6 @@ func Remaster(ctx context.Context, baseISO string, s Spec, seedURL, out string) 
 		if err := os.Chmod(local, 0o644); err != nil { // xorriso extracts read-only
 			return err
 		}
-		if i == 0 {
-			if err := requireLiveServer(local, baseISO); err != nil {
-				return err
-			}
-		}
 		found, _, err := addBootArgs(local, seedURL)
 		if err != nil {
 			return err
@@ -97,6 +92,11 @@ func Remaster(ctx context.Context, baseISO string, s Spec, seedURL, out string) 
 		// the image boots to a menu and waits for a keypress nobody gives.
 		if i == 0 && !found {
 			return fmt.Errorf("no kernel line found to make unattended in %s", isoPath)
+		}
+		if i == 0 {
+			if err := requireLiveServer(local, baseISO); err != nil {
+				return err
+			}
 		}
 		args = append(args, "-map", local, isoPath)
 	}
