@@ -97,8 +97,8 @@ func stubFinishLogin(t *testing.T, u *framev1beta1.FrameUser) {
 	t.Helper()
 	restore := finishLogin
 	t.Cleanup(func() { finishLogin = restore })
-	finishLogin = func(*Authenticator, context.Context, string, []byte) (*framev1beta1.FrameUser, error) {
-		return u, nil
+	finishLogin = func(*Authenticator, context.Context, string, []byte) (*framev1beta1.FrameUser, LoginResult, error) {
+		return u, LoginResult{}, nil
 	}
 }
 

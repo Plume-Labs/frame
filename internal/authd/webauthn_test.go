@@ -57,7 +57,7 @@ func TestBeginLoginIsUsernameless(t *testing.T) {
 
 func TestFinishLoginRejectsForgedChallenge(t *testing.T) {
 	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
-	_, err := a.FinishLogin(context.Background(), "forged.challenge", []byte(`{}`))
+	_, _, err := a.FinishLogin(context.Background(), "forged.challenge", []byte(`{}`))
 	if err == nil {
 		t.Fatal("a forged sealed challenge was accepted")
 	}
@@ -66,7 +66,7 @@ func TestFinishLoginRejectsForgedChallenge(t *testing.T) {
 func TestFinishLoginRejectsExpiredChallenge(t *testing.T) {
 	a := testAuthenticator(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	expired, _ := testCodec().Seal(PurposeChallenge, []byte(`{"challenge":"x"}`), -1)
-	if _, err := a.FinishLogin(context.Background(), expired, []byte(`{}`)); err == nil {
+	if _, _, err := a.FinishLogin(context.Background(), expired, []byte(`{}`)); err == nil {
 		t.Fatal("an expired challenge was accepted")
 	}
 }

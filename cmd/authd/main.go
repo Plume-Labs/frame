@@ -99,7 +99,8 @@ func run() error {
 
 	store := authd.NewStore(kc, cfg.namespace)
 	codec := authd.NewChallengeCodec(hmacKey)
-	auth, err := authd.NewAuthenticator(cfg.rpID, cfg.rpOrigin, store, codec)
+	auth, err := authd.NewAuthenticator(cfg.rpID, cfg.rpOrigin, store, codec,
+		authd.WithUserVerification(cfg.userVerification))
 	if err != nil {
 		return fmt.Errorf("configuring webauthn: %w", err)
 	}
@@ -129,7 +130,8 @@ func run() error {
 		Handler:   srv,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 	}
-	slog.Info("authd starting", "addr", httpSrv.Addr, "issuer", cfg.issuerURL, "namespace", cfg.namespace)
+	slog.Info("authd starting", "addr", httpSrv.Addr, "issuer", cfg.issuerURL, "namespace", cfg.namespace,
+		"userVerification", string(cfg.userVerification))
 	return httpSrv.ListenAndServeTLS("", "")
 }
 
@@ -147,6 +149,9 @@ type envConfig struct {
 	tlsCertFile         string
 	tlsKeyFile          string
 	bootstrapSecretName string
+	// userVerification is WEBAUTHN_USER_VERIFICATION: "log" (the default)
+	// or "required". See authd.UserVerificationMode.
+	userVerification authd.UserVerificationMode
 }
 
 func loadEnvConfig() (envConfig, error) {
@@ -181,6 +186,11 @@ func loadEnvConfig() (envConfig, error) {
 	cfg.tlsCertFile = envOrDefault("TLS_CERT_FILE", "/etc/frame-auth-tls/tls.crt")
 	cfg.tlsKeyFile = envOrDefault("TLS_KEY_FILE", "/etc/frame-auth-tls/tls.key")
 	cfg.bootstrapSecretName = envOrDefault("BOOTSTRAP_SECRET_NAME", "frame-auth-bootstrap")
+
+	cfg.userVerification, err = authd.ParseUserVerificationMode(os.Getenv("WEBAUTHN_USER_VERIFICATION"))
+	if err != nil {
+		return envConfig{}, fmt.Errorf("WEBAUTHN_USER_VERIFICATION: %w", err)
+	}
 	return cfg, nil
 }
 

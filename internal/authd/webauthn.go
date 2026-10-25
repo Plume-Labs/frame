@@ -2,7 +2,9 @@ package authd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,14 +39,63 @@ const challengeTTL = 5 * time.Minute
 // enrolled.
 var ErrCounterRegression = errors.New("authenticator sign counter did not advance")
 
-// Authenticator runs the two WebAuthn ceremonies against the FrameUser store.
-type Authenticator struct {
-	web   *webauthn.WebAuthn
-	store *Store
-	codec *ChallengeCodec
+// ErrUserNotVerified refuses a ceremony whose authenticator did not set the
+// UV (user verified) flag while the Authenticator runs in
+// UserVerificationRequired mode: the key was touched, but nobody proved to it
+// who they were (no PIN, no biometric), so possession of the key alone would
+// be the whole sign-in.
+var ErrUserNotVerified = errors.New("authenticator did not verify the user")
+
+// UserVerificationMode decides what authd does with WebAuthn user
+// verification (UV: a PIN or biometric checked by the authenticator itself).
+//
+// It is rolled out in two steps. UserVerificationLog, the default, keeps
+// the behaviour authd always had — the options leave UV unset, which WebAuthn
+// reads as "preferred", and a bare security key without a PIN is accepted —
+// and logs, for every successful passkey sign-in, whether the UV
+// flag was present, so an operator can see which keys would be refused before
+// refusing them. UserVerificationRequired asks for UV when each ceremony
+// opens and refuses any registration or assertion that comes back without it.
+type UserVerificationMode string
+
+const (
+	UserVerificationLog      UserVerificationMode = "log"
+	UserVerificationRequired UserVerificationMode = "required"
+)
+
+// ParseUserVerificationMode reads the WEBAUTHN_USER_VERIFICATION setting. An
+// empty value is the default, UserVerificationLog; anything other than the two
+// known words is an error, so a typo cannot silently fall back to the weaker
+// mode.
+func ParseUserVerificationMode(s string) (UserVerificationMode, error) {
+	switch UserVerificationMode(s) {
+	case "", UserVerificationLog:
+		return UserVerificationLog, nil
+	case UserVerificationRequired:
+		return UserVerificationRequired, nil
+	}
+	return "", fmt.Errorf("unknown user verification mode %q (want %q or %q)",
+		s, UserVerificationLog, UserVerificationRequired)
 }
 
-func NewAuthenticator(rpID, rpOrigin string, store *Store, codec *ChallengeCodec) (*Authenticator, error) {
+// Authenticator runs the two WebAuthn ceremonies against the FrameUser store.
+type Authenticator struct {
+	web    *webauthn.WebAuthn
+	store  *Store
+	codec  *ChallengeCodec
+	uvMode UserVerificationMode
+}
+
+// AuthenticatorOption adjusts an Authenticator built by NewAuthenticator.
+type AuthenticatorOption func(*Authenticator)
+
+// WithUserVerification sets the user verification mode. Without it the
+// Authenticator runs in UserVerificationLog.
+func WithUserVerification(mode UserVerificationMode) AuthenticatorOption {
+	return func(a *Authenticator) { a.uvMode = mode }
+}
+
+func NewAuthenticator(rpID, rpOrigin string, store *Store, codec *ChallengeCodec, opts ...AuthenticatorOption) (*Authenticator, error) {
 	web, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: "Frame Cluster Control",
 		RPID:          rpID,
@@ -53,7 +104,39 @@ func NewAuthenticator(rpID, rpOrigin string, store *Store, codec *ChallengeCodec
 	if err != nil {
 		return nil, fmt.Errorf("configuring webauthn: %w", err)
 	}
-	return &Authenticator{web: web, store: store, codec: codec}, nil
+	a := &Authenticator{web: web, store: store, codec: codec, uvMode: UserVerificationLog}
+	for _, opt := range opts {
+		opt(a)
+	}
+	if _, err := ParseUserVerificationMode(string(a.uvMode)); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// UserVerification reports the mode this Authenticator runs in.
+func (a *Authenticator) UserVerification() UserVerificationMode { return a.uvMode }
+
+func (a *Authenticator) requiresUV() bool { return a.uvMode == UserVerificationRequired }
+
+// LoginResult is what a verified assertion tells the caller beyond the
+// account: enough to log the sign-in without logging identifiers.
+type LoginResult struct {
+	// UserVerified is the assertion's UV flag.
+	UserVerified bool
+	// Credential is a short, one-way fingerprint of the credential ID (see
+	// credentialFingerprint), never the ID itself.
+	Credential string
+}
+
+// credentialFingerprint is what a log line carries in place of a credential
+// ID: the first 12 hex characters of its SHA-256. Enough to tell an
+// account's keys apart across log lines, and nothing that could be replayed
+// into an allowCredentials list or matched against status.credentials
+// without already holding the ID.
+func credentialFingerprint(rawID []byte) string {
+	sum := sha256.Sum256(rawID)
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 // webauthnUser adapts a FrameUser to the library's interface.
@@ -84,10 +167,17 @@ func (w webauthnUser) WebAuthnCredentials() []webauthn.Credential {
 }
 
 func (a *Authenticator) BeginRegistration(_ context.Context, u *framev1beta1.FrameUser) ([]byte, string, error) {
-	options, session, err := a.web.BeginRegistration(
-		webauthnUser{u},
+	opts := []webauthn.RegistrationOption{
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
-	)
+	}
+	if a.requiresUV() {
+		// Set on the options, and so on the sealed session: go-webauthn's
+		// CreateCredential then refuses an attestation without the UV flag.
+		opts = append(opts, func(o *protocol.PublicKeyCredentialCreationOptions) {
+			o.AuthenticatorSelection.UserVerification = protocol.VerificationRequired
+		})
+	}
+	options, session, err := a.web.BeginRegistration(webauthnUser{u}, opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("begin registration: %w", err)
 	}
@@ -107,6 +197,12 @@ func (a *Authenticator) FinishRegistration(ctx context.Context, u *framev1beta1.
 	if err != nil {
 		return fmt.Errorf("verifying registration: %w", err)
 	}
+	// The library already refuses this when the session asked for UV; this
+	// covers a ceremony opened before the mode was switched to required
+	// (its sealed session says "preferred") and finished after.
+	if a.requiresUV() && !cred.Flags.UserVerified {
+		return fmt.Errorf("%w: registration of credential %s", ErrUserNotVerified, credentialFingerprint(cred.ID))
+	}
 	return a.store.AddCredential(ctx, u, framev1beta1.WebAuthnCredential{
 		ID:        base64.RawURLEncoding.EncodeToString(cred.ID),
 		PublicKey: base64.RawStdEncoding.EncodeToString(cred.PublicKey),
@@ -119,22 +215,38 @@ func (a *Authenticator) FinishRegistration(ctx context.Context, u *framev1beta1.
 // BeginLogin starts a usernameless ceremony: no allowCredentials, so the
 // browser offers whichever resident key matches the RP ID. Listing credentials
 // here would tell an unauthenticated caller which accounts exist.
+//
+// In UserVerificationRequired mode the options ask for UV, and the sealed
+// session carries that requirement into FinishLogin.
 func (a *Authenticator) BeginLogin(_ context.Context) ([]byte, string, error) {
-	options, session, err := a.web.BeginDiscoverableLogin()
+	var opts []webauthn.LoginOption
+	if a.requiresUV() {
+		opts = append(opts, webauthn.WithUserVerification(protocol.VerificationRequired))
+	}
+	options, session, err := a.web.BeginDiscoverableLogin(opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("begin login: %w", err)
 	}
 	return a.seal(options, session)
 }
 
-func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response []byte) (*framev1beta1.FrameUser, error) {
+// FinishLogin verifies the assertion and returns the account it names, with
+// what the caller needs to log the sign-in.
+//
+// In UserVerificationRequired mode an assertion without the UV flag is
+// refused with ErrUserNotVerified, before the sign counter is written. For a
+// ceremony opened in that mode go-webauthn refuses it itself (the sealed
+// session says "required"); it is matched here too so the refusal reads as
+// ErrUserNotVerified rather than as any other bad assertion, and the explicit
+// check after validation covers a ceremony opened before the switch.
+func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response []byte) (*framev1beta1.FrameUser, LoginResult, error) {
 	session, err := a.openSession(sealed)
 	if err != nil {
-		return nil, err
+		return nil, LoginResult{}, err
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBody(strings.NewReader(string(response)))
 	if err != nil {
-		return nil, fmt.Errorf("parsing assertion: %w", err)
+		return nil, LoginResult{}, fmt.Errorf("parsing assertion: %w", err)
 	}
 
 	var matched *framev1beta1.FrameUser
@@ -149,13 +261,20 @@ func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response
 
 	cred, err := a.web.ValidateDiscoverableLogin(lookup, *session, parsed)
 	if err != nil {
-		return nil, fmt.Errorf("verifying assertion: %w", err)
+		if a.requiresUV() && !parsed.Response.AuthenticatorData.Flags.HasUserVerified() {
+			return nil, LoginResult{}, fmt.Errorf("%w: %w", ErrUserNotVerified, err)
+		}
+		return nil, LoginResult{}, fmt.Errorf("verifying assertion: %w", err)
+	}
+	result := LoginResult{UserVerified: cred.Flags.UserVerified, Credential: credentialFingerprint(cred.ID)}
+	if a.requiresUV() && !result.UserVerified {
+		return nil, LoginResult{}, fmt.Errorf("%w: credential %s", ErrUserNotVerified, result.Credential)
 	}
 
 	if err := a.recordLoginCounter(ctx, matched, cred); err != nil {
-		return nil, err
+		return nil, LoginResult{}, err
 	}
-	return matched, nil
+	return matched, result, nil
 }
 
 // recordLoginCounter applies the post-validation counter check for a login

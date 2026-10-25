@@ -35,6 +35,27 @@ The routes:
 | `GET /auth/credentials` | session (`?user=` for an admin) | The enrolled keys, without public-key material. |
 | `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would remove the account's last key, whatever `passwordAuth` says — a password is no way in. |
 
+**User verification (`WEBAUTHN_USER_VERIFICATION`).** WebAuthn user
+verification (UV) is the authenticator itself checking a PIN or a biometric.
+Without it, a security key with no PIN set signs in on a touch: possession
+alone. authd takes the setting from the `WEBAUTHN_USER_VERIFICATION`
+environment variable (`deploy/kubernetes/authd/deployment.yaml`), in two
+steps:
+
+| Value | Ceremonies | Logs |
+|---|---|---|
+| `log` (default, also when unset) | Unchanged: the options leave UV at WebAuthn's default, *preferred*, and a key without a PIN still signs in and enrols. | One `Signed in with passkey` line per successful sign-in, with `userVerified=true\|false`, a 12-character fingerprint of the credential ID (`credential=`, a SHA-256 prefix, not the ID), the account's `role` and the mode. Never the email address or the account name, which is derived from it. |
+| `required` | `userVerification: required` in the login and registration options; an assertion or an attestation without the UV flag is refused (sign-in 401, enrolment 400), including for a ceremony opened before the switch. | `Refused passkey sign-in without user verification` / `Refused passkey registration …` on each refusal. go-webauthn checks the flag before the signature, so a sign-in refusal can come from a caller holding no key: it is a hint, not an audit record. |
+
+Any other value stops authd at start-up. To move to `required`: run in `log`,
+read `kubectl -n cluster-control logs deploy/cluster-control-auth | grep
+'Signed in with passkey'` until no line says `userVerified=false` (set a PIN
+on, or replace, each key that does — the fingerprint tells keys apart), then
+set the variable to `required` and roll the Deployment. Have a key with UV
+enrolled on every admin account first: `required` refuses a key without one,
+and revoking down to zero is refused anyway, so an account whose only key has
+no PIN is locked out until it gets one.
+
 **Every route in this table is invisible to the Tasks screen.** A `FrameTask`
 is written by `frame-uiproxy` for each mutating request it forwards
 (`internal/uiproxy/recorder.go`); the console calls these routes directly, so

@@ -84,6 +84,15 @@ spec:
               value: /etc/frame-auth-tls/tls.key
             - name: BOOTSTRAP_SECRET_NAME
               value: frame-auth-bootstrap
+            # WebAuthn user verification (a PIN or biometric checked by the
+            # key itself). "log" accepts a key without one, as authd always
+            # has, and logs "Signed in with passkey" with userVerified=… on
+            # every sign-in. Switch to "required" once those lines no longer
+            # show userVerified=false: it asks for UV and refuses any sign-in
+            # or enrolment without it. See docs/api.md,
+            # "Authentication".
+            - name: WEBAUTHN_USER_VERIFICATION
+              value: log
           resources:
             requests:
               memory: "64Mi"

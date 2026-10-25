@@ -52,7 +52,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	u, err := finishLogin(s.cfg.Auth, r.Context(), c.Value, body)
+	u, result, err := finishLogin(s.cfg.Auth, r.Context(), c.Value, body)
 	if err != nil {
 		// A counter regression means a possible cloned authenticator. It is
 		// logged loudly and refused, but the credential is deliberately left
@@ -60,6 +60,14 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		// an unauthenticated denial-of-service.
 		if errors.Is(err, ErrCounterRegression) {
 			slog.Error("possible cloned authenticator: sign counter did not advance", "error", err)
+		}
+		// Logged so an operator who just switched to required can tell a key
+		// without a PIN from any other failed sign-in. The error names at
+		// most a credential fingerprint, never an account. go-webauthn checks
+		// the flag before the signature, so this line can also come from a
+		// caller who holds no key at all: it is a hint, not an audit record.
+		if errors.Is(err, ErrUserNotVerified) {
+			slog.Warn("Refused passkey sign-in without user verification", "error", err)
 		}
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -75,6 +83,17 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	if !s.setSession(w, u) {
 		return
 	}
+	// One line per successful passkey sign-in, saying whether the
+	// authenticator verified the user. In the default "log" mode this is how
+	// an operator finds the keys that "required" would refuse before
+	// switching. The role is logged, the account is not: FrameUser names are
+	// derived from the email address, and no other authd log line carries
+	// one. The credential is a fingerprint (credentialFingerprint), not its ID.
+	slog.Info("Signed in with passkey",
+		"userVerified", result.UserVerified,
+		"credential", result.Credential,
+		"role", u.Spec.Role,
+		"userVerificationMode", string(s.cfg.Auth.UserVerification()))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -121,6 +140,9 @@ func (s *Server) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.cfg.Auth.FinishRegistration(r.Context(), u, c.Value, body, label); err != nil {
+		if errors.Is(err, ErrUserNotVerified) {
+			slog.Warn("Refused passkey registration without user verification", "error", err)
+		}
 		http.Error(w, "registration failed", http.StatusBadRequest)
 		return
 	}
