@@ -1265,6 +1265,11 @@ against a real BMC. `frame-provisiond` builds the images and serves them —
 and their seeds — to the machine's BMC. Full design in
 [`docs/superpowers/specs/2026-09-29-provisioning-ubuntu-design.md`](superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
 
+The base image must be the Ubuntu live-server ISO. A base whose `grub.cfg`
+boots no `/casper/` kernel (a Debian netinst boots `/install.amd/vmlinuz`)
+is refused at build time: any other installer ignores autoinstall and would
+wait on its first question, on a machine reachable only by its BMC.
+
 This assumes the machine is already a registered, reachable `FrameMachine`
 (the "Registering a machine's BMC" section above) — `FrameInstall` drives
 the BMC the same way the console's power actions do, over the object

@@ -19,7 +19,7 @@ deploy/
 - Bare metal servers with:
   - RDMA-capable NICs (InfiniBand or RoCE)
   - Redfish BMC access (machines are registered as FrameMachine and
-    installed with Debian through FrameInstall — see docs/deployment.md)
+    installed with Ubuntu 24.04 through FrameInstall — see docs/deployment.md)
 - Control plane with:
   - kubectl 1.28+
   - Flux CLI 2.2+ or ArgoCD CLI 2.9+
@@ -29,8 +29,8 @@ deploy/
 ### 1. Install the machines
 
 Register each machine's BMC as a `FrameMachine` and install it with a
-`FrameInstall` (Debian preseed, k3s join) — see docs/deployment.md,
-"Provisioning a machine with Debian".
+`FrameInstall` (Ubuntu 24.04 autoinstall, k3s join) — see docs/deployment.md,
+"Provisioning a machine with Ubuntu".
 
 ### 2. Initialize GitOps
 

@@ -219,6 +219,23 @@ func TestRemasterAcceptsAnImageWithoutLoopbackCfg(t *testing.T) {
 	}
 }
 
+// The Debian netinst this package installed before 2026-09-29 boots
+// /install.amd/vmlinuz, which never reads autoinstall: the machine would wait
+// on the installer's first question. Its kernel line is a real one, so the
+// "no kernel line" refusal does not catch it.
+func TestRemasterRefusesADebianInstallerImage(t *testing.T) {
+	debian := "set timeout=30\nmenuentry --hotkey=i 'Install' {\n\tlinux\t/install.amd/vmlinuz vga=788 --- quiet\n\tinitrd\t/install.amd/initrd.gz\n}\n"
+	base := buildISO(t, map[string]string{"boot/grub/grub.cfg": debian}, bootable{bios: true, uefi: true})
+	out := filepath.Join(t.TempDir(), "o.iso")
+	err := Remaster(context.Background(), base, goodSpec(), testSeedURL, out)
+	if err == nil || !strings.Contains(err.Error(), "not an Ubuntu live-server image") {
+		t.Fatalf("err = %v, want the Debian installer refused as not live-server", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("the refused image was left at %s", out)
+	}
+}
+
 // A grub.cfg with no kernel line boots to a menu and waits for a keypress.
 func TestRemasterRefusesAGrubCfgWithNoKernelLine(t *testing.T) {
 	base := buildISO(t, map[string]string{"boot/grub/grub.cfg": "set timeout=30\n"}, bootable{bios: true, uefi: true})
