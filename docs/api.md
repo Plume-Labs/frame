@@ -33,7 +33,7 @@ The routes:
 | `POST /auth/invite` | admin session | `{url}` — an account with no credential, plus a 24h link of the shape `<origin>/invite#token=<sealed>`. The token rides in the **fragment**, which is never sent to a server, so it stays out of access logs at every hop and out of the same-origin `Referer` of every asset the `/invite` page loads. Single-use by *enrolment*, not by acceptance: accepting the same unspent link twice is harmless (204 both times); the link only dies once a credential is added. `role` is `operator` or `viewer` only. |
 | `POST /auth/invite/accept` | invitation token | 204 + a 15-minute **enrolment session**, sealed under its own purpose. It reaches only the two WebAuthn enrolment routes above — it cannot mint a token and cannot call `/auth/invite`. The invitee holds no ordinary session after enrolling and signs in normally, the same as anyone else. Disabled account: **403** (`this account is disabled`), not the 401 every other route above answers with — deliberately: the caller has already proved a valid, unspent invitation for this exact account, so naming the reason leaks nothing a 401 would have hidden. 410 (`this account already has a credential`) once the account holds any credential — not "this invitation has already been used": the same guard also fires for a password, which need not have come from this invitation. |
 | `GET /auth/credentials` | session (`?user=` for an admin) | The enrolled keys, without public-key material. |
-| `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would remove the account's last key, whatever `passwordAuth` says — a password is no way in. |
+| `DELETE /auth/credentials/{id}` | own, or admin | 204; 409 if it would remove the account's last key, whatever `passwordAuth` says — a password is no way in (no route serves password sign-in, and nothing writes `status.passwordHash`). |
 
 **User verification (`WEBAUTHN_USER_VERIFICATION`).** WebAuthn user
 verification (UV) is the authenticator itself checking a PIN or a biometric.
@@ -45,7 +45,7 @@ steps:
 | Value | Ceremonies | Logs |
 |---|---|---|
 | `log` (default, also when unset) | Unchanged: the options leave UV at WebAuthn's default, *preferred*, and a key without a PIN still signs in and enrols. | One `Signed in with passkey` line per successful sign-in, with `userVerified=true\|false`, a 12-character fingerprint of the credential ID (`credential=`, a SHA-256 prefix, not the ID), the account's `role` and the mode. Never the email address or the account name, which is derived from it. |
-| `required` | `userVerification: required` in the login and registration options; an assertion or an attestation without the UV flag is refused (sign-in 401, enrolment 400), including for a ceremony opened before the switch. | `Refused passkey sign-in without user verification` / `Refused passkey registration …` on each refusal. go-webauthn checks the flag before the signature, so a sign-in refusal can come from a caller holding no key: it is a hint, not an audit record. |
+| `required` | `userVerification: required` in the login and registration options; an assertion or an attestation without the UV flag is refused (sign-in 401, enrolment 400), including for a ceremony opened before the switch. | `Refused passkey sign-in without user verification` / `Refused passkey registration …` on each refusal. Only an assertion or attestation valid in every other respect (signature included) gets this error, so the line needs an enrolled key to produce; any other failure keeps its own error and is not logged. |
 
 Any other value stops authd at start-up. To move to `required`: run in `log`,
 read `kubectl -n cluster-control logs deploy/cluster-control-auth | grep
@@ -55,6 +55,35 @@ set the variable to `required` and roll the Deployment. Have a key with UV
 enrolled on every admin account first: `required` refuses a key without one,
 and revoking down to zero is refused anyway, so an account whose only key has
 no PIN is locked out until it gets one.
+
+**Replace a key without a PIN by a hardware key with a PIN, not by a synced
+passkey.** Known issue: authd does not store a credential's
+backup-eligible (BE) flag, and go-webauthn 0.17.4 refuses an assertion whose
+BE flag differs from the stored one. A synced passkey (iCloud Keychain,
+Google Password Manager, …) sets BE, so it enrols but then fails every
+sign-in. A hardware security key does not set it.
+
+**The switch does not end sessions already open.** `required` applies to
+ceremonies, and a `frame_session` cookie, once issued, lasts its 12 hours
+whatever mode issued it. `POST /auth/bootstrap` also issues a session with no
+ceremony at all. So `required` is fully in force only 12 hours after the
+rollout; to make it immediate, have every user sign out (`POST /auth/logout`)
+or rotate the challenge HMAC key (the `challenge-hmac` entry of the
+`frame-auth-keys` Secret) and restart authd, which invalidates every sealed
+cookie — and signs everyone out.
+
+**Recovery if `required` locks someone out.** Set the variable back to `log`
+and roll the Deployment:
+`kubectl -n cluster-control set env deploy/cluster-control-auth
+WEBAUTHN_USER_VERIFICATION=log` (it triggers the rollout itself; wait with
+`kubectl -n cluster-control rollout status deploy/cluster-control-auth`), or
+edit `deploy/kubernetes/authd/deployment.yaml` and re-apply it — which is also
+what keeps the change from being undone by the next apply. The locked-out
+user then signs in, adds a key with a PIN, and the switch can be made again.
+Another admin cannot help from the console: inviting the account again is
+refused with 410 (it still holds a credential), and removing its last key is
+refused with 409. Short of editing the FrameUser's status by hand, going back
+to `log` is the way out.
 
 **Every route in this table is invisible to the Tasks screen.** A `FrameTask`
 is written by `frame-uiproxy` for each mutating request it forwards

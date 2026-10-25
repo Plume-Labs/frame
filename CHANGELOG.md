@@ -31,7 +31,18 @@ release tags follow [Semantic Versioning](https://semver.org/).
   refuses any assertion or attestation without it. An unknown value stops
   authd at start-up. **Upgrade note:** nothing changes until you set
   `required`; before that, check the log for `userVerified=false` and give
-  those keys a PIN. docs/api.md, "Authentication", has the procedure.
+  those keys a PIN. docs/api.md, "Authentication", has the procedure. The
+  switch does not end sessions already open (up to 12 hours), and the
+  same section covers going back to `log` if `required` locks someone out.
+
+### Known issue — synced passkeys cannot sign in
+
+- authd does not store a credential's backup-eligible (BE) flag, and
+  go-webauthn 0.17.4 refuses an assertion whose BE flag differs from the
+  stored credential's. Synced passkeys (iCloud Keychain, Google Password
+  Manager) set it: they enrol, then fail every sign-in. Use hardware
+  security keys, with a PIN if you plan to switch
+  `WEBAUTHN_USER_VERIFICATION` to `required`.
 
 ### Changed — Go module path (breaking for importers)
 
