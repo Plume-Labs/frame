@@ -50,7 +50,7 @@ func TestUserVerificationCanBeRequired(t *testing.T) {
 // weaker mode the operator was trying to leave.
 func TestUserVerificationRejectsAnUnknownValue(t *testing.T) {
 	setRequiredEnv(t)
-	t.Setenv("WEBAUTHN_USER_VERIFICATION", "requried")
+	t.Setenv("WEBAUTHN_USER_VERIFICATION", "Required ")
 	if _, err := loadEnvConfig(); err == nil {
 		t.Fatal("loadEnvConfig accepted an unknown WEBAUTHN_USER_VERIFICATION")
 	}

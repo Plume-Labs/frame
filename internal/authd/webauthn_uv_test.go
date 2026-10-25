@@ -117,9 +117,13 @@ func clientData(t *testing.T, kind, challenge string) []byte {
 	return raw
 }
 
+// softUserHandle is the user handle every soft assertion carries: the
+// account the test key was enrolled for.
+const softUserHandle = "alice"
+
 // assert signs an assertion for the login options, the way a browser would
 // return it from navigator.credentials.get().
-func (s *softAuthenticator) assert(t *testing.T, options []byte, userHandle string, uv bool) []byte {
+func (s *softAuthenticator) assert(t *testing.T, options []byte, uv bool) []byte {
 	t.Helper()
 	challenge, _ := challengeOf(t, options)
 	cd := clientData(t, "webauthn.get", challenge)
@@ -141,7 +145,7 @@ func (s *softAuthenticator) assert(t *testing.T, options []byte, userHandle stri
 			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(cd),
 			"authenticatorData": base64.RawURLEncoding.EncodeToString(authData),
 			"signature":         base64.RawURLEncoding.EncodeToString(sig),
-			"userHandle":        base64.RawURLEncoding.EncodeToString([]byte(userHandle)),
+			"userHandle":        base64.RawURLEncoding.EncodeToString([]byte(softUserHandle)),
 		},
 	})
 	if err != nil {
@@ -261,7 +265,7 @@ func TestLogModeAcceptsAnAssertionWithoutUserVerification(t *testing.T) {
 		t.Fatalf("log mode asked for userVerification %q, want it unchanged (preferred)", uv)
 	}
 
-	u, result, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, "alice", false))
+	u, result, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, false))
 	if err != nil {
 		t.Fatalf("log mode refused an assertion without UV: %v", err)
 	}
@@ -286,7 +290,7 @@ func TestLogModeReportsUserVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginLogin: %v", err)
 	}
-	_, result, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, "alice", true))
+	_, result, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, true))
 	if err != nil {
 		t.Fatalf("FinishLogin: %v", err)
 	}
@@ -314,7 +318,7 @@ func TestRequiredModeRefusesAnAssertionWithoutUserVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginLogin: %v", err)
 	}
-	u, _, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, "alice", false))
+	u, _, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, false))
 	if !errors.Is(err, ErrUserNotVerified) {
 		t.Fatalf("FinishLogin without UV in required mode = %v, want ErrUserNotVerified", err)
 	}
@@ -333,7 +337,7 @@ func TestRequiredModeAcceptsAnAssertionWithUserVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginLogin: %v", err)
 	}
-	_, result, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, "alice", true))
+	_, result, err := a.FinishLogin(context.Background(), sealed, key.assert(t, options, true))
 	if err != nil {
 		t.Fatalf("required mode refused an assertion with UV: %v", err)
 	}
@@ -354,7 +358,7 @@ func TestRequiredModeRefusesACeremonyOpenedInLogMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginLogin: %v", err)
 	}
-	_, _, err = after.FinishLogin(context.Background(), sealed, key.assert(t, options, "alice", false))
+	_, _, err = after.FinishLogin(context.Background(), sealed, key.assert(t, options, false))
 	if !errors.Is(err, ErrUserNotVerified) {
 		t.Fatalf("FinishLogin = %v, want ErrUserNotVerified", err)
 	}
@@ -373,19 +377,19 @@ func TestRequiredModeKeepsOtherFailuresOutOfErrUserNotVerified(t *testing.T) {
 
 	cases := map[string]func(options []byte) []byte{
 		"unknown key": func(options []byte) []byte {
-			return newSoftAuthenticator(t, "not-enrolled").assert(t, options, "alice", false)
+			return newSoftAuthenticator(t, "not-enrolled").assert(t, options, false)
 		},
 		"wrong signature": func(options []byte) []byte {
 			// Same credential ID, different private key.
 			impostor := newSoftAuthenticator(t, "alice-key")
-			return impostor.assert(t, options, "alice", false)
+			return impostor.assert(t, options, false)
 		},
 		"wrong challenge": func([]byte) []byte {
 			other, _, err := a.BeginLogin(context.Background())
 			if err != nil {
 				t.Fatalf("BeginLogin: %v", err)
 			}
-			return key.assert(t, other, "alice", false)
+			return key.assert(t, other, false)
 		},
 	}
 	for name, build := range cases {
