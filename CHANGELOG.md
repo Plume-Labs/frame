@@ -6,6 +6,33 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed — authd password sign-in (breaking)
+
+- `POST /auth/login/password` is no longer served: it answers the same 404
+  as a path authd never had. Nothing ever wrote `status.passwordHash`, so no
+  account could sign in with it, and a password alone would have been the
+  console's one single-factor door. It comes back only with a second factor
+  (TOTP), as will any "set a password" route
+  (`TestPasswordLoginIsNotServed`). The console's login screen is
+  passkey-only and `loginWithPassword` is gone from `src/lib/auth.ts`. The
+  `passwordAuth` field and `status.passwordHash` stay in the CRD and grant
+  nothing.
+- `DELETE /auth/credentials/{id}` now refuses to remove an account's last
+  key whatever `passwordAuth` says (it used to allow it for
+  `passwordAuth: enabled`), and its 409 text no longer mentions a password.
+
+### Added — WebAuthn user verification setting for authd
+
+- `WEBAUTHN_USER_VERIFICATION` (`log` | `required`, default `log`, set
+  explicitly in `deploy/kubernetes/authd/deployment.yaml`). `log` keeps
+  passkey ceremonies as they were (UV preferred: a key without a PIN still
+  works) and logs `Signed in with passkey` with `userVerified=` on every
+  sign-in. `required` asks for user verification at login and enrolment and
+  refuses any assertion or attestation without it. An unknown value stops
+  authd at start-up. **Upgrade note:** nothing changes until you set
+  `required`; before that, check the log for `userVerified=false` and give
+  those keys a PIN. docs/api.md, "Authentication", has the procedure.
+
 ### Changed — Go module path (breaking for importers)
 
 - The Go module is now `github.com/Plume-Labs/frame` (was the module path of
