@@ -363,6 +363,46 @@ func TestRequiredModeRefusesACeremonyOpenedInLogMode(t *testing.T) {
 	}
 }
 
+// ErrUserNotVerified must mean "valid in every respect but UV". An assertion
+// that fails for another reason keeps its own error even when it also lacks
+// the UV flag: otherwise a caller holding no key could have every failed
+// sign-in reported, and logged, as a missing PIN.
+func TestRequiredModeKeepsOtherFailuresOutOfErrUserNotVerified(t *testing.T) {
+	store, key := loginFixture(t)
+	a := uvAuthenticator(t, store, UserVerificationRequired)
+
+	cases := map[string]func(options []byte) []byte{
+		"unknown key": func(options []byte) []byte {
+			return newSoftAuthenticator(t, "not-enrolled").assert(t, options, "alice", false)
+		},
+		"wrong signature": func(options []byte) []byte {
+			// Same credential ID, different private key.
+			impostor := newSoftAuthenticator(t, "alice-key")
+			return impostor.assert(t, options, "alice", false)
+		},
+		"wrong challenge": func([]byte) []byte {
+			other, _, err := a.BeginLogin(context.Background())
+			if err != nil {
+				t.Fatalf("BeginLogin: %v", err)
+			}
+			return key.assert(t, other, "alice", false)
+		},
+	}
+	for name, build := range cases {
+		options, sealed, err := a.BeginLogin(context.Background())
+		if err != nil {
+			t.Fatalf("BeginLogin: %v", err)
+		}
+		_, _, err = a.FinishLogin(context.Background(), sealed, build(options))
+		if err == nil {
+			t.Fatalf("%s: assertion accepted", name)
+		}
+		if errors.Is(err, ErrUserNotVerified) {
+			t.Fatalf("%s: reported as ErrUserNotVerified: %v", name, err)
+		}
+	}
+}
+
 func registrationFixture(t *testing.T, mode UserVerificationMode) (*Authenticator, *Store, *framev1beta1.FrameUser) {
 	t.Helper()
 	store := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
@@ -411,8 +451,8 @@ func TestRequiredModeAsksForAndEnforcesUserVerificationOnRegistration(t *testing
 	}
 
 	key := newSoftAuthenticator(t, "no-pin-key")
-	if err := a.FinishRegistration(context.Background(), u, sealed, key.attest(t, options, false), "k"); err == nil {
-		t.Fatal("required mode enrolled a key that did not verify the user")
+	if err := a.FinishRegistration(context.Background(), u, sealed, key.attest(t, options, false), "k"); !errors.Is(err, ErrUserNotVerified) {
+		t.Fatalf("FinishRegistration without UV in required mode = %v, want ErrUserNotVerified", err)
 	}
 	if n := credentialCount(t, store); n != 0 {
 		t.Fatalf("a refused registration stored a credential: %d", n)

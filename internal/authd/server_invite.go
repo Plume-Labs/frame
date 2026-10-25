@@ -337,7 +337,7 @@ func (s *Server) handleInviteAccept(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this invitation link is invalid or has expired", http.StatusUnauthorized)
 		return
 	}
-	// The fourth of the four identity-issuing paths; see requireIssuable in
+	// The third of the three identity-issuing paths; see requireIssuable in
 	// state.go. 403 rather than 401 here: the caller has already produced a
 	// valid, unexpired invitation for this exact account, so saying it is
 	// switched off tells them nothing they could not already infer, and

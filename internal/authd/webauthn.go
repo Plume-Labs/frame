@@ -119,6 +119,21 @@ func (a *Authenticator) UserVerification() UserVerificationMode { return a.uvMod
 
 func (a *Authenticator) requiresUV() bool { return a.uvMode == UserVerificationRequired }
 
+// withoutUVRequirement returns session with its UV requirement lowered to
+// "preferred", for validation only. go-webauthn checks the UV flag before the
+// signature and reports a missing flag as one more bad request, so validating
+// against "required" would make "no UV" indistinguishable from any other
+// failure and reachable without a key. Every UV decision is instead made by
+// the explicit flag checks after a successful validation, in
+// FinishLogin and FinishRegistration. The options sent to the browser — and
+// so what the authenticator is asked for — still say "required".
+func withoutUVRequirement(session webauthn.SessionData) webauthn.SessionData {
+	if session.UserVerification == protocol.VerificationRequired {
+		session.UserVerification = protocol.VerificationPreferred
+	}
+	return session
+}
+
 // LoginResult is what a verified assertion tells the caller beyond the
 // account: enough to log the sign-in without logging identifiers.
 type LoginResult struct {
@@ -193,13 +208,14 @@ func (a *Authenticator) FinishRegistration(ctx context.Context, u *framev1beta1.
 	if err != nil {
 		return fmt.Errorf("parsing registration response: %w", err)
 	}
-	cred, err := a.web.CreateCredential(webauthnUser{u}, *session, parsed)
+	cred, err := a.web.CreateCredential(webauthnUser{u}, withoutUVRequirement(*session), parsed)
 	if err != nil {
 		return fmt.Errorf("verifying registration: %w", err)
 	}
-	// The library already refuses this when the session asked for UV; this
-	// covers a ceremony opened before the mode was switched to required
-	// (its sealed session says "preferred") and finished after.
+	// See withoutUVRequirement: the library verified everything but the UV
+	// flag, so a refusal here has exactly one cause and is typed as such.
+	// This also covers a ceremony opened before the mode was switched to
+	// required (its sealed session says "preferred") and finished after.
 	if a.requiresUV() && !cred.Flags.UserVerified {
 		return fmt.Errorf("%w: registration of credential %s", ErrUserNotVerified, credentialFingerprint(cred.ID))
 	}
@@ -234,11 +250,13 @@ func (a *Authenticator) BeginLogin(_ context.Context) ([]byte, string, error) {
 // what the caller needs to log the sign-in.
 //
 // In UserVerificationRequired mode an assertion without the UV flag is
-// refused with ErrUserNotVerified, before the sign counter is written. For a
-// ceremony opened in that mode go-webauthn refuses it itself (the sealed
-// session says "required"); it is matched here too so the refusal reads as
-// ErrUserNotVerified rather than as any other bad assertion, and the explicit
-// check after validation covers a ceremony opened before the switch.
+// refused with ErrUserNotVerified, before the sign counter is written. The
+// assertion is validated with the UV requirement lifted (see
+// withoutUVRequirement) and the flag checked afterwards, so ErrUserNotVerified
+// means "everything else was valid, signature included": an unknown key, an
+// expired challenge or a wrong origin keeps its own error, and the refusal
+// cannot be produced by a caller who does not hold an enrolled key. The same
+// check covers a ceremony opened before the switch to required.
 func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response []byte) (*framev1beta1.FrameUser, LoginResult, error) {
 	session, err := a.openSession(sealed)
 	if err != nil {
@@ -259,11 +277,8 @@ func (a *Authenticator) FinishLogin(ctx context.Context, sealed string, response
 		return webauthnUser{u}, nil
 	}
 
-	cred, err := a.web.ValidateDiscoverableLogin(lookup, *session, parsed)
+	cred, err := a.web.ValidateDiscoverableLogin(lookup, withoutUVRequirement(*session), parsed)
 	if err != nil {
-		if a.requiresUV() && !parsed.Response.AuthenticatorData.Flags.HasUserVerified() {
-			return nil, LoginResult{}, fmt.Errorf("%w: %w", ErrUserNotVerified, err)
-		}
 		return nil, LoginResult{}, fmt.Errorf("verifying assertion: %w", err)
 	}
 	result := LoginResult{UserVerified: cred.Flags.UserVerified, Credential: credentialFingerprint(cred.ID)}

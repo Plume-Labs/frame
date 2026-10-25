@@ -308,6 +308,57 @@ func TestPasswordLoginIsNotServed(t *testing.T) {
 	}
 }
 
+// assertSessionCookie checks every attribute setSessionFor puts on the
+// frame_session cookie, on a real response. HttpOnly keeps it out of reach of
+// script (an XSS cannot lift the session), Secure keeps it off plain HTTP,
+// SameSite=Strict keeps cross-site requests from carrying it, Path "/" scopes
+// it to the console, and MaxAge bounds it to the session lifetime.
+func assertSessionCookie(t *testing.T, rec *httptest.ResponseRecorder, wantMaxAge time.Duration) {
+	t.Helper()
+	c := sessionCookieFrom(t, rec)
+	if c.Value == "" {
+		t.Fatal("session cookie is empty")
+	}
+	if !c.HttpOnly {
+		t.Fatal("session cookie is not HttpOnly")
+	}
+	if !c.Secure {
+		t.Fatal("session cookie is not Secure")
+	}
+	if c.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie SameSite = %v, want Strict", c.SameSite)
+	}
+	if c.Path != "/" {
+		t.Fatalf("session cookie Path = %q, want /", c.Path)
+	}
+	if c.MaxAge != int(wantMaxAge.Seconds()) {
+		t.Fatalf("session cookie MaxAge = %d, want %d", c.MaxAge, int(wantMaxAge.Seconds()))
+	}
+}
+
+// The two routes that hand out a full session: passkey sign-in and bootstrap.
+// (The invitation's enrolment cookie goes through the same setSessionFor; its
+// purpose and TTL are covered in server_invite_test.go.)
+func TestPasskeySignInSetsAHardenedSessionCookie(t *testing.T) {
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	srv := testServer(t, u)
+	stubFinishLogin(t, u)
+	rec := postLoginFinish(t, srv)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("passkey sign-in = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	assertSessionCookie(t, rec, 12*time.Hour)
+}
+
+func TestBootstrapSetsAHardenedSessionCookie(t *testing.T) {
+	srv, _ := bootstrapServer(t, true)
+	rec := do(t, srv, http.MethodPost, "/auth/bootstrap", `{"token":"s3cret-bootstrap","email":"eve@example.com"}`)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("bootstrap = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	assertSessionCookie(t, rec, 12*time.Hour)
+}
+
 func TestTokenRequiresASession(t *testing.T) {
 	srv := testServer(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin))
 	rec := do(t, srv, http.MethodPost, "/auth/token", "")

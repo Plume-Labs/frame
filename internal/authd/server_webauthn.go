@@ -62,10 +62,11 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 			slog.Error("possible cloned authenticator: sign counter did not advance", "error", err)
 		}
 		// Logged so an operator who just switched to required can tell a key
-		// without a PIN from any other failed sign-in. The error names at
-		// most a credential fingerprint, never an account. go-webauthn checks
-		// the flag before the signature, so this line can also come from a
-		// caller who holds no key at all: it is a hint, not an audit record.
+		// without a PIN from any other failed sign-in. ErrUserNotVerified is
+		// only returned after the assertion validated, signature included, so
+		// this line needs an enrolled key to produce: no anonymous caller can
+		// fill the log with it. The error names a credential fingerprint,
+		// never an account.
 		if errors.Is(err, ErrUserNotVerified) {
 			slog.Warn("Refused passkey sign-in without user verification", "error", err)
 		}
