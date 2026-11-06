@@ -156,6 +156,7 @@ func TestSchemaIsOneTheWebhookEnforces(t *testing.T) {
 func TestSizeRefusesWhatCannotWork(t *testing.T) {
 	p := New(nil)
 	for name, params := range map[string]map[string]string{
+		"adopt and create":          {"instances": "1", "volumeSize": "1Gi", "adoptUID": uid, "create": "true"},
 		"archive with no endpoint":  {"instances": "1", "volumeSize": "1Gi", "walBucketClaim": "b"},
 		"more instances than nodes": {"instances": "3", "volumeSize": "1Gi", "nodes": "a,b"},
 	} {
@@ -308,6 +309,63 @@ func TestTheLabelDoesNotReplaceTheUID(t *testing.T) {
 	}
 }
 
+// The same, for a cluster Frame created: a restore under a new UID is taken
+// back by no one but a person.
+func TestARestoredClusterIsNotClaimedByCreate(t *testing.T) {
+	restored := liveCluster()
+	restored.SetUID("99999999-2222-4333-8444-555555555555")
+	restored.SetLabels(map[string]string{OwnerLabel: "shop-db"})
+	restored.SetAnnotations(map[string]string{ClaimedUIDAnnotation: uid, keepAnnotation: keepValue})
+	p, _, w := newProvider(t, restored, liveBucket())
+	params := map[string]string{"instances": "2", "volumeSize": "5Gi", "create": "true"}
+	if res := reconcile(t, p, service(params)); res.Reason != ReasonNotOwned {
+		t.Fatalf("%+v", res)
+	}
+	if len(w.patches) != 0 {
+		t.Fatalf("wrote: %v", w.patches)
+	}
+}
+
+// Re-adopting a restore: the UID is given again, and the settings that moved
+// since must be stated, not applied to the restored database by surprise.
+func TestReAdoptingARestoreComparesTheMovableSettings(t *testing.T) {
+	restored := liveCluster()
+	restored.SetLabels(map[string]string{OwnerLabel: "shop-db"})
+	restored.SetAnnotations(map[string]string{ClaimedUIDAnnotation: "99999999-2222-4333-8444-555555555555"})
+	params := adopting()
+	params["instances"], params["nodes"] = "2", "a,b"
+	p, _, w := newProvider(t, restored, liveBucket())
+	if res := reconcile(t, p, service(params)); res.Reason != ReasonSpecDrift {
+		t.Fatalf("%+v", res)
+	}
+	if len(w.patches) != 0 {
+		t.Fatalf("wrote: %v", w.patches)
+	}
+}
+
+func TestAVolumeCheckThatFailsCreatesNothing(t *testing.T) {
+	var created []string
+	c := interceptor.NewClient(fake.NewClientBuilder().WithScheme(testScheme(t)).Build(), interceptor.Funcs{
+		Get: func(ctx context.Context, w client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+			if strings.HasPrefix(k.Name, "pgdata-") {
+				return errors.New("apiserver unavailable")
+			}
+			return w.Get(ctx, k, o, opts...)
+		},
+		Create: func(_ context.Context, _ client.WithWatch, o client.Object, _ ...client.CreateOption) error {
+			created = append(created, o.GetName())
+			return nil
+		},
+	})
+	svc := service(map[string]string{"instances": "1", "volumeSize": "1Gi", "create": "true"})
+	if _, err := New(c).Reconcile(context.Background(), svc); err == nil {
+		t.Fatal("no error")
+	}
+	if len(created) != 0 {
+		t.Fatalf("created %v", created)
+	}
+}
+
 func TestTheAdoptionPassWritesNoSpec(t *testing.T) {
 	tests := map[string]func(map[string]string){
 		"more instances": func(p map[string]string) { p["instances"] = "2" },
@@ -433,7 +491,8 @@ func TestAdoptionWritesOnlyTheClaim(t *testing.T) {
 	if string(after.GetUID()) != uid {
 		t.Fatal("not the same object")
 	}
-	if after.GetLabels()[OwnerLabel] != "shop-db" || after.GetAnnotations()[keepAnnotation] != keepValue {
+	if after.GetLabels()[OwnerLabel] != "shop-db" || after.GetAnnotations()[keepAnnotation] != keepValue ||
+		after.GetAnnotations()[ClaimedUIDAnnotation] != uid {
 		t.Fatalf("not claimed: %v %v", after.GetLabels(), after.GetAnnotations())
 	}
 	if after.GetAnnotations()["meta.helm.sh/release-name"] != "shop" {

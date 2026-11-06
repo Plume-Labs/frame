@@ -914,7 +914,7 @@ the rest. The instance's name has the operator's form, `<team>-<cluster>`.
 | `walRetentionDays` | no | fixed | Default `14`. |
 | `create` | no | stays | `true` lets the provider create the cluster. Excludes `adoptUID`. |
 | `adoptUID` | no | stays | UID of an existing cluster to take over, compared on every pass. |
-| `binding` | no | moves | `none` publishes no credentials Secret. |
+| `binding` | no | fixed | `none` publishes no credentials Secret. Set it from the start: changing it later leaves an earlier Secret behind, no longer updated. |
 
 `fixed` means compared, not applied: a parameter that differs from the live
 cluster degrades with `SpecDrift` and writes nothing at all. Changing `nodes`,
@@ -929,14 +929,16 @@ same name would come up without its users or settings, or empty.
 
 **A cluster is adopted only by UID, and that UID is checked on every pass.** An
 existing cluster this FrameService does not claim degrades with
-`ClusterNotOwned`, the message giving its UID. The label alone is not enough: a
-CR restored from a backup carries it under a new UID, and the provider leaves it
-alone until `adoptUID` says otherwise.
+`ClusterNotOwned`, the message giving its UID. The label alone is not enough: the
+claim records the UID it was made on (`services.plume-labs.io/claimed-uid`), so a
+CR restored from a backup, which keeps both under a new UID, counts as unclaimed.
+Frame leaves it alone until `adoptUID` names it, and that pass compares
+`instances`, `volumeSize` and `nodes` too, whichever way the cluster came.
 
 With `adoptUID` matching and no drift, including on `instances`, `volumeSize` and
 `nodes`, the provider writes the label `services.plume-labs.io/frameservice` and
-the annotation `helm.sh/resource-policy: keep` on the CR and the bucket claim, and
-nothing else: the spec and `metadata.generation` do not move. It leaves a chart's
+the annotations `helm.sh/resource-policy: keep` and `claimed-uid` on the CR, label
+and `keep` on the bucket claim, and nothing else: the spec and `metadata.generation` do not move. It leaves a chart's
 own labels in place; retiring the chart is a separate step, and the CR survives
 it only through that annotation. A bucket claim labelled for another FrameService
 is refused.

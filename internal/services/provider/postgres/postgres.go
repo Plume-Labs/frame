@@ -7,7 +7,7 @@
 // it:
 //
 //   - A cluster is never recreated. Creation takes an explicit create=true,
-//     once, for a FrameService that never served, on a name with no data
+//     which stays set, for a FrameService that never served, on a name with no data
 //     volume left. Anything else degrades and waits for a person: a new CR
 //     under that name would come up without its users, its patroni settings or
 //     its data, at the consumers' address.
@@ -70,6 +70,10 @@ const (
 	// OwnerLabel marks a cluster as this FrameService's. It is set on creation
 	// or adoption, and only there.
 	OwnerLabel = "services.plume-labs.io/frameservice"
+	// ClaimedUIDAnnotation is the UID the claim was made on. A CR restored from
+	// a backup brings the label back under a new UID: the two together, not the
+	// label, are what says this object was claimed.
+	ClaimedUIDAnnotation = "services.plume-labs.io/claimed-uid"
 	// keepAnnotation keeps the object through a Helm prune or uninstall, for a
 	// CR some chart rendered before Frame took it over.
 	keepAnnotation = "helm.sh/resource-policy"
@@ -279,7 +283,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		return provider.Result{}, fmt.Errorf("reading the cluster: %w", err)
 	}
 
-	claimed := cr.GetLabels()[OwnerLabel] == svc.Name
+	claimed := cr.GetLabels()[OwnerLabel] == svc.Name && cr.GetAnnotations()[ClaimedUIDAnnotation] == string(cr.GetUID())
 	owned := s.adoptUID == string(cr.GetUID()) || (s.adoptUID == "" && s.create && claimed)
 	if !owned {
 		return degraded(ReasonNotOwned,
@@ -349,6 +353,9 @@ func (p *Provider) reconcileAbsent(ctx context.Context, svc *servicesv1beta1.Fra
 	cr.Object["spec"] = newSpec(svc, s)
 	if err := p.client.Create(ctx, cr); err != nil {
 		return provider.Result{}, fmt.Errorf("creating the cluster: %w", err)
+	}
+	if err := p.claim(ctx, cr, svc); err != nil {
+		return provider.Result{}, err
 	}
 	return degraded(ReasonProvisioning, "cluster %s created, waiting for the operator", cr.GetName()), nil
 }
@@ -551,8 +558,11 @@ func (p *Provider) converge(ctx context.Context, cr *unstructured.Unstructured, 
 // does not react to it and the generation does not move.
 func (p *Provider) claim(ctx context.Context, cr *unstructured.Unstructured, svc *servicesv1beta1.FrameService) error {
 	err := p.merge(ctx, cr, map[string]any{"metadata": map[string]any{
-		"labels":      map[string]any{OwnerLabel: svc.Name},
-		"annotations": map[string]any{keepAnnotation: keepValue},
+		"labels": map[string]any{OwnerLabel: svc.Name},
+		"annotations": map[string]any{
+			keepAnnotation:       keepValue,
+			ClaimedUIDAnnotation: string(cr.GetUID()),
+		},
 	}})
 	if err != nil {
 		return fmt.Errorf("claiming the cluster: %w", err)
