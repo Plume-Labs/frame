@@ -116,7 +116,8 @@ func render(t *testing.T, dir string) string {
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command(filepath.Join(root, "hack", "render-overlay.sh"), strings.TrimPrefix(dir, "config/"), testIMG, testIMGProvisiond)
+	cmd := exec.Command(filepath.Join(root, "hack", "render-overlay.sh"),
+		strings.TrimPrefix(dir, "config/"), testIMG, testIMGProvisiond)
 	if os.Getenv("KUSTOMIZE") == "" {
 		cmd.Env = append(os.Environ(), "KUSTOMIZE="+filepath.Join(root, "bin", "kustomize"))
 	}
@@ -163,33 +164,13 @@ func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 			provisiondObjects[u.GetKind()+"/"+u.GetName()] = true
 		}
 		if u.GetKind() == "Service" && strings.Contains(u.GetName(), "provisiond") {
-			if typ, _, _ := unstructured.NestedString(u.Object, "spec", "type"); typ != "ClusterIP" {
-				t.Errorf("%s: Service %s is type %q, want ClusterIP: frame-provisiond's media "+
-					"listener is closed by default, opened only by an explicit patch", overlay, u.GetName(), typ)
-			}
-			ports, _, _ := unstructured.NestedSlice(u.Object, "spec", "ports")
-			for _, p := range ports {
-				if m, ok := p.(map[string]any); ok && m["nodePort"] != nil {
-					t.Errorf("%s: Service %s port %v carries nodePort %v; the default install opens no node port",
-						overlay, u.GetName(), m["name"], m["nodePort"])
-				}
-			}
+			checkProvisiondService(t, &u)
 		}
 		if u.GetKind() == "Deployment" && u.GetName() == "frame-provisiond" {
-			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
-			for _, c := range cs {
-				if m, ok := c.(map[string]any); ok && m["name"] == "provisiond" {
-					provisiondImage, _ = m["image"].(string)
-				}
-			}
+			provisiondImage = containerImage(&u, "provisiond")
 		}
 		if u.GetKind() == "Deployment" && u.GetName() == "frame-controller-manager" {
-			cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
-			for _, c := range cs {
-				if m, ok := c.(map[string]any); ok && m["name"] == "manager" {
-					managerImage, _ = m["image"].(string)
-				}
-			}
+			managerImage = containerImage(&u, "manager")
 		}
 	}
 	for line := range strings.SplitSeq(string(raw), "\n") {
@@ -205,7 +186,8 @@ func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 	if managerImage != testIMG {
 		t.Errorf("%s: manager image %q, want the IMG given, %q", overlay, managerImage, testIMG)
 	}
-	for _, want := range []string{"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media"} {
+	wantProvisiond := []string{"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media"}
+	for _, want := range wantProvisiond {
 		if !provisiondObjects[want] {
 			t.Errorf("%s: does not render %s; frame-provisiond is part of the recommended install", overlay, want)
 		}
@@ -213,6 +195,37 @@ func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 	if provisiondImage != testIMGProvisiond {
 		t.Errorf("%s: provisiond image %q, want the IMG_PROVISIOND given, %q", overlay, provisiondImage, testIMGProvisiond)
 	}
+}
+
+// checkProvisiondService fails the test if a frame-provisiond Service is
+// not ClusterIP or carries a nodePort: the default install opens no port
+// on any node.
+func checkProvisiondService(t *testing.T, u *unstructured.Unstructured) {
+	t.Helper()
+	if typ, _, _ := unstructured.NestedString(u.Object, "spec", "type"); typ != "ClusterIP" {
+		t.Errorf("%s: Service %s is type %q, want ClusterIP: frame-provisiond's media "+
+			"listener is closed by default, opened only by an explicit patch", overlay, u.GetName(), typ)
+	}
+	ports, _, _ := unstructured.NestedSlice(u.Object, "spec", "ports")
+	for _, p := range ports {
+		if m, ok := p.(map[string]any); ok && m["nodePort"] != nil {
+			t.Errorf("%s: Service %s port %v carries nodePort %v; the default install opens no node port",
+				overlay, u.GetName(), m["name"], m["nodePort"])
+		}
+	}
+}
+
+// containerImage returns the image of the named container of a Deployment,
+// or "" when the container is absent.
+func containerImage(u *unstructured.Unstructured, name string) string {
+	cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
+	for _, c := range cs {
+		if m, ok := c.(map[string]any); ok && m["name"] == name {
+			img, _ := m["image"].(string)
+			return img
+		}
+	}
+	return ""
 }
 
 // apply installs the RBAC of the rendered overlay, as `kubectl apply -k`
