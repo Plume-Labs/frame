@@ -6,6 +6,21 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — storage health alerts
+
+- The FrameMachine controller now judges what the agent and the BMC report:
+  four conditions (`StorageDegraded`, `ScrubErrors`, `StorageCapacityHigh`,
+  `DiskWearHigh`) and one FrameAlert per device, delivered by the existing
+  relay to every subscription whose filter takes them. A stack in `error` or
+  `busy`, a silent agent or a stale inventory neither raises nor clears
+  anything: an open alert stays, otherwise the condition is `Unknown`.
+- New cluster-scoped singleton `StorageHealthPolicy` (`default`) holds the
+  thresholds, 80 % for ZFS capacity and SSD wear unless set, with the three
+  RBAC tiers. **Upgrade:** the CRD ships with the chart; without it the
+  controller logs an error each pass and writes no storage condition.
+- Storage → Health tab in the console: state per machine and per mirror,
+  threshold editing traced by FrameTask.
+
 ### Removed — authd password sign-in (breaking)
 
 - `POST /auth/login/password` is no longer served: it answers the same 404
