@@ -6,6 +6,18 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — link health
+
+- The node agent reports each physical port (state, speed, duplex, MTU, error
+  and drop counters) and each bond (mode, members, LACP aggregator and partner)
+  in `FrameMachine.status.network`, read from sysfs alone: no new command.
+- New conditions and alerts `NetworkDegraded` (bond down, member out or outside
+  the LACP aggregator, required link down or absent) and `LinkSpeedLow`, under
+  the same rule as storage: only a read that mentions a device changes anything.
+- New cluster-scoped singleton `NetworkHealthPolicy` (`default`): a minimum speed,
+  1000 Mb/s unless set, and named links with their speed and bond members.
+- Network → Links tab in the console.
+
 ### Added — storage health alerts
 
 - The FrameMachine controller now judges what the agent and the BMC report:
