@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { createFrameClient } from '@/lib/frame-sdk'
 import type { Machine } from '@/lib/machines'
-import { checkVerdicts, mirrorRows, StorageThresholds, validThreshold } from '@/lib/storage-health'
+import { checkVerdicts, mirrorRows, readingNotes, StorageThresholds, validThreshold } from '@/lib/storage-health'
 import { TONE_TEXT } from '@/lib/thresholds'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -117,6 +117,11 @@ function MachineHealthCard({ machine }: { machine: Machine }) {
             <span className={TONE_TEXT[r.tone]}>{r.state}</span>
             <span className="text-muted-foreground">{r.detail}</span>
           </div>
+        ))}
+        {readingNotes(machine, Date.now()).map((n) => (
+          <p key={n} className="text-warning">
+            {n}
+          </p>
         ))}
         {attention.map((v) => (
           <p key={v.type} className={TONE_TEXT[v.tone]}>

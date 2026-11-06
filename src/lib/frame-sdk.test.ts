@@ -1415,16 +1415,28 @@ describe('StorageHealthPolicyClient', () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: String(input), init })
-      return json(init?.method === 'PATCH' ? 404 : 201)
+      return json(init?.method === 'POST' ? 201 : 404)
     }))
 
     await createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
 
-    expect(calls.map((c) => [c.init?.method, c.url])).toEqual([['PATCH', `${path}/default`], ['POST', path]])
+    // A write that 404s would leave a Failed FrameTask: only the POST is a write.
+    expect(calls.map((c) => [c.init?.method ?? 'GET', c.url])).toEqual([['GET', `${path}/default`], ['POST', path]])
     const body = JSON.parse(String(calls[1].init?.body)) as { metadata: { name: string }; spec: unknown }
     expect(body.metadata.name).toBe('default')
     expect(body.spec).toEqual({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
     expect((calls[1].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set storage health thresholds')
+  })
+
+  it('patches a policy that exists', async () => {
+    stubBrowser()
+    const methods: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET')
+      return json(200)
+    }))
+    await createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+    expect(methods).toEqual(['GET', 'PATCH'])
   })
 
   it('does not create over a refused save', async () => {

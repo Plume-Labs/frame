@@ -6,6 +6,7 @@
 // being wrong. Only the per-mirror rows read `status.storage.local`, to say
 // which array or pool the condition is about.
 
+import { agentFreshness } from './disk-inventory'
 import type { Machine } from './machines'
 import type { Tone } from './thresholds'
 
@@ -62,6 +63,9 @@ export function checkVerdicts(machine: Machine): CheckVerdict[] {
   })
 }
 
+/** The vdev states `internal/storage/health.go` reads as degraded. */
+const BAD_VDEV = ['DEGRADED', 'FAULTED', 'OFFLINE', 'UNAVAIL', 'REMOVED']
+
 export interface MirrorRow {
   key: string
   stack: 'md' | 'zfs'
@@ -115,15 +119,17 @@ export function mirrorRows(machine: Machine): MirrorRow[] {
     for (const p of local.zfs.pools ?? []) {
       const top = (p.vdevs ?? []).filter((v) => v.depth === 0).map((v) => v.name.replace(/-\d+$/, ''))
       const errors = (p.vdevs ?? []).reduce((n, v) => n + (v.readErrors ?? 0) + (v.writeErrors ?? 0) + (v.checksumErrors ?? 0), 0)
+      const badVdevs = (p.vdevs ?? []).filter((v) => BAD_VDEV.includes(v.state ?? '')).map((v) => `${v.name} ${v.state}`)
       rows.push({
         key: `zfs-${p.name}`,
         stack: 'zfs',
         name: p.name,
         layout: [...new Set(top)].join(' + '),
-        tone: p.health === 'ONLINE' && errors === 0 ? 'accent' : 'destructive',
+        tone: p.health === 'ONLINE' && errors === 0 && badVdevs.length === 0 ? 'accent' : 'destructive',
         state: p.health || '?',
         detail: [
           p.capacityPercent !== undefined ? `${p.capacityPercent} % used` : '',
+          ...badVdevs,
           errors ? `${errors} vdev errors` : '',
           p.scrubErrors ? `${p.scrubErrors} scrub errors` : '',
         ].filter(Boolean).join(' · '),
@@ -131,4 +137,16 @@ export function mirrorRows(machine: Machine): MirrorRow[] {
     }
   }
   return rows
+}
+
+/** What the rows above cannot show: their age when the agent is silent, and what its lists left out. */
+export function readingNotes(machine: Machine, now: number): string[] {
+  const storage = machine.storage
+  if (!storage?.local) return []
+  const notes: string[] = []
+  const { ageS, stale } = agentFreshness(storage.observedAt, now)
+  if (stale) notes.push(ageS === null ? 'The agent has not dated this reading.' : `Reading ${Math.round(ageS / 60)} min old: the agent is silent.`)
+  const cut = (storage.local.md.arraysOmitted ?? 0) + (storage.local.zfs.poolsOmitted ?? 0)
+  if (cut > 0) notes.push(`${cut} array(s) or pool(s) past the agent's list limit are not shown.`)
+  return notes
 }

@@ -3863,25 +3863,35 @@ class StorageHealthPolicyClient {
     return storageHealthPolicyPath()
   }
 
+  /**
+   * Reads first rather than trying the PATCH: a 404 through the proxy would
+   * leave a Failed FrameTask beside the create that follows.
+   */
   async save(thresholds: StorageThresholds): Promise<void> {
     const action = 'set storage health thresholds'
+    let exists = true
     try {
+      await k8sFetch<StorageHealthPolicyCR>(this.path)
+    } catch (e) {
+      if (!(e instanceof FrameAPIError && e.statusCode === 404)) throw e
+      exists = false
+    }
+    if (exists) {
       await k8sFetch<undefined>(this.path, {
         action, method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: thresholds },
       })
-    } catch (e) {
-      if (!(e instanceof FrameAPIError && e.statusCode === 404)) throw e
-      await k8sFetch<undefined>(storageHealthPolicyPath(), {
-        action,
-        method: 'POST',
-        body: {
-          apiVersion: `${GROUP}/${VERSION}`,
-          kind: 'StorageHealthPolicy',
-          metadata: { name: STORAGE_HEALTH_POLICY_NAME },
-          spec: thresholds,
-        },
-      })
+      return
     }
+    await k8sFetch<undefined>(storageHealthPolicyPath(), {
+      action,
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'StorageHealthPolicy',
+        metadata: { name: STORAGE_HEALTH_POLICY_NAME },
+        spec: thresholds,
+      },
+    })
   }
 }
 

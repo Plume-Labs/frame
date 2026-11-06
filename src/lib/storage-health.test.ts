@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { checkVerdicts, DEFAULT_STORAGE_THRESHOLDS, mirrorRows, toThresholds, validThreshold } from './storage-health'
+import { checkVerdicts, DEFAULT_STORAGE_THRESHOLDS, mirrorRows, readingNotes, toThresholds, validThreshold } from './storage-health'
+import { toMachine } from './machines'
 import { hwMachine } from './testdata/ceph-cluster'
 import { g9Local, zfsLocal } from './testdata/local-storage'
 import type { LocalStorage, Machine } from './machines'
@@ -57,6 +58,14 @@ describe('mirrorRows', () => {
     expect(mirrorRows(machine(zfsLocal())).find((r) => r.stack === 'zfs')).toMatchObject({ tone: 'destructive', state: 'DEGRADED' })
   })
 
+  it('ne montre pas en vert un pool ONLINE à la feuille en panne', () => {
+    const local = zfsLocal()
+    const p = local.zfs.pools![0]
+    p.health = 'ONLINE'
+    p.vdevs = [{ name: 'mirror-0', depth: 0, state: 'ONLINE' }, { name: '/dev/x', depth: 1, state: 'FAULTED' }]
+    expect(mirrorRows(machine(local)).find((r) => r.stack === 'zfs')).toMatchObject({ tone: 'destructive', detail: expect.stringContaining('FAULTED') })
+  })
+
   it("dit qu'une pile illisible n'a pas été lue, sans lister ses restes", () => {
     const local = g9Local()
     local.md.state = 'busy'
@@ -65,6 +74,45 @@ describe('mirrorRows', () => {
 
   it('reste vide sans rapport local', () => {
     expect(mirrorRows(machine(null))).toEqual([])
+  })
+})
+
+describe('toMachine', () => {
+  it('garde les conditions de stockage, sans Reachable', () => {
+    const m = toMachine({
+      metadata: { name: 'm', namespace: 'd' },
+      status: { conditions: [
+        { type: 'Reachable', status: 'True' },
+        { type: 'StorageDegraded', status: 'True', reason: 'Detected', message: 'md0' },
+      ] },
+    })
+    expect(m.storageConditions.map((c) => c.type)).toEqual(['StorageDegraded'])
+    expect(verdict(m, 'StorageDegraded')).toMatchObject({ tone: 'destructive', word: 'alert' })
+  })
+})
+
+describe('readingNotes', () => {
+  const now = Date.parse('2026-11-06T12:00:00Z')
+  const fresh = '2026-11-06T11:59:30Z'
+
+  it('ne dit rien d’une lecture fraîche et complète', () => {
+    const m = machine(g9Local())
+    m.storage!.observedAt = fresh
+    expect(readingNotes(m, now)).toEqual([])
+  })
+
+  it('date une lecture dont l’agent s’est tu', () => {
+    const m = machine(g9Local())
+    m.storage!.observedAt = '2026-11-06T11:40:00Z'
+    expect(readingNotes(m, now)[0]).toContain('20 min')
+  })
+
+  it('dit ce que les listes ont laissé de côté', () => {
+    const local = g9Local()
+    local.md.arraysOmitted = 2
+    const m = machine(local)
+    m.storage!.observedAt = fresh
+    expect(readingNotes(m, now)[0]).toContain('2 array(s)')
   })
 })
 
