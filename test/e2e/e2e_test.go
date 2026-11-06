@@ -932,6 +932,29 @@ spec:
       storage: 1Gi
 `, crNamespace))
 
+			// config/default binds the manager's Secret roles in no namespace
+			// but its own: which ones hold FrameServices is the operator's to
+			// say (docs/deployment.md, "Manager access to Secrets"). Unbound,
+			// ensureAPIKey is refused and the provider degrades with
+			// SecretAccessForbidden before it creates the Deployment, so this
+			// spec makes the same grant an operator has to make.
+			By("granting the manager Secret access in the FrameService's namespace")
+			applyCR(fmt.Sprintf(`
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frame-manager-secret-writer
+  namespace: %s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: frame-manager-secret-writer
+subjects:
+- kind: ServiceAccount
+  name: frame-controller-manager
+  namespace: %s
+`, crNamespace, namespace))
+
 			applyCR(fmt.Sprintf(`
 apiVersion: services.plume-labs.io/v1alpha1
 kind: FrameService
