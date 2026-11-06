@@ -336,7 +336,7 @@ func writeSysfsKnobTolerant(path, value string) {
 }
 
 // restartableUnits is the compile-time allowlist of systemd units the agent
-// may ever be told to restart. This is the agent's entire security boundary
+// may ever be told to restart. This, with smart.go, is the agent's security boundary
 // (see the package doc and the design doc's Security section): the agent
 // runs privileged with hostPID, which is host-root-equivalent, so once a
 // restart target is reachable from the CRD or from any argument a spec could

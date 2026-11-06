@@ -54,6 +54,10 @@ var smartDevice = regexp.MustCompile(`^/dev/(sd[a-z]{1,3}|nvme[0-9]{1,3}n[0-9]{1
 // several ATA commands on a disk in service.
 const smartInterval = 6 * time.Hour
 
+// smartRetry is how soon a failed read is tried again: one that timed out once
+// must not leave the disk unread for six hours.
+const smartRetry = 30 * time.Minute
+
 // smartArgv builds the one command this file runs.
 func smartArgv(device string) ([]string, error) {
 	if !smartDevice.MatchString(device) {
@@ -85,6 +89,9 @@ type SMARTReader struct {
 	running bool
 }
 
+// NewNodeSMARTReader is the agent's reader: smartctl from its own image.
+func NewNodeSMARTReader() *SMARTReader { return NewSMARTReader(NewImageStorageExecutor()) }
+
 // NewSMARTReader reads through x.
 func NewSMARTReader(x StorageExecutor) *SMARTReader {
 	return &SMARTReader{exec: x, now: time.Now, last: map[string]*framev1beta1.DiskSMART{}}
@@ -112,18 +119,25 @@ func (r *SMARTReader) Annotate(disks []framev1beta1.ObservedDisk) {
 }
 
 func (r *SMARTReader) refresh(disks []framev1beta1.ObservedDisk) {
+	failed := false
 	for i := range disks {
 		d := &disks[i]
-		if d.Rotational == nil || *d.Rotational {
+		// A device off the pattern, an eMMC say, is not one this reader reads:
+		// no failure, no report.
+		if d.Rotational == nil || *d.Rotational || !smartDevice.MatchString(d.Path) {
 			continue
 		}
 		s := r.read(d)
+		failed = failed || s.Error != ""
 		r.mu.Lock()
 		r.last[d.SerialNumber] = s
 		r.mu.Unlock()
 	}
 	r.mu.Lock()
 	r.running = false
+	if failed {
+		r.nextAt = r.now().Add(smartRetry)
+	}
 	r.mu.Unlock()
 }
 
@@ -137,30 +151,36 @@ func (r *SMARTReader) read(d *framev1beta1.ObservedDisk) *framev1beta1.DiskSMART
 		return failed(err)
 	}
 	stdout, stderr, err := execSMART(r.exec, argv)
-	switch {
-	case errors.Is(err, errBusy):
+	if errors.Is(err, errBusy) {
 		return failed(errBusy)
+	}
+	// smartctl's exit status is a bit field that also reports a failing disk,
+	// and timeout passes it on: 124 from smartctl is a dying disk, not a timeout.
+	// So its report comes first, and says whether it could speak to the disk.
+	report, perr := parseSMART(stdout)
+	if perr == nil {
+		report.ReadAt = &now
+		return report
+	}
+	switch {
 	case exitCode(err) == 127:
 		return failed(errors.New("smartctl not found in the agent image"))
 	case exitCode(err) == 124, exitCode(err) == 137:
 		return failed(fmt.Errorf("smartctl timed out after %ds", storageTimeoutSeconds))
+	case err != nil && stderr != "":
+		return failed(fmt.Errorf("%w: %s", err, firstLine(stderr)))
+	case err != nil && stdout == "":
+		return failed(err)
 	}
-	// smartctl's exit status is a bit field that also reports a failing disk:
-	// what counts is whether it could speak to the disk, which it says itself.
-	report, perr := parseSMART(stdout)
-	if perr != nil {
-		if err != nil {
-			return failed(fmt.Errorf("%w: %s", err, firstLine(stderr)))
-		}
-		return failed(perr)
-	}
-	report.ReadAt = &now
-	return report
+	return failed(perr)
 }
 
 type smartJSON struct {
 	Smartctl struct {
 		ExitStatus int `json:"exit_status"`
+		Messages   []struct {
+			String string `json:"string"`
+		} `json:"messages"`
 	} `json:"smartctl"`
 	SmartStatus *struct {
 		Passed *bool `json:"passed"`
@@ -218,15 +238,19 @@ func parseSMART(stdout string) (*framev1beta1.DiskSMART, error) {
 		return nil, fmt.Errorf("parsing smartctl output: %w", err)
 	}
 	if j.Smartctl.ExitStatus&smartExitNoRead != 0 {
-		return nil, fmt.Errorf("smartctl could not read the disk (exit status %d)", j.Smartctl.ExitStatus)
+		why := fmt.Sprintf("smartctl could not read the disk (exit status %d)", j.Smartctl.ExitStatus)
+		if len(j.Smartctl.Messages) > 0 {
+			why += ": " + j.Smartctl.Messages[0].String
+		}
+		return nil, errors.New(why)
 	}
 	out := &framev1beta1.DiskSMART{WearUsedPercent: wearOf(&j)}
 	if j.SmartStatus != nil {
 		out.Passed = j.SmartStatus.Passed
-	}
-	if j.NVMe != nil && j.NVMe.CriticalWarning != nil && *j.NVMe.CriticalWarning == nvmeTemperatureWarning {
-		passed := true
-		out.Passed = &passed
+		if out.Passed != nil && j.NVMe != nil && j.NVMe.CriticalWarning != nil && *j.NVMe.CriticalWarning == nvmeTemperatureWarning {
+			passed := true
+			out.Passed = &passed
+		}
 	}
 	return out, nil
 }

@@ -367,10 +367,10 @@ alert; the console's Storage → Health tab shows it per machine and per mirror.
 
 | Condition and alert | Severity | True when |
 |---|---|---|
-| `StorageDegraded` | critical | an md array is degraded (missing or failed member, inactive), any level; a pool's health is not `ONLINE`; a vdev is `DEGRADED`, `FAULTED`, `OFFLINE`, `UNAVAIL` or `REMOVED`, or has read, write or checksum errors |
+| `StorageDegraded` | critical | an md array is degraded (missing or failed member, inactive), any level; a pool's health is not `ONLINE`; a vdev is `DEGRADED`, `FAULTED`, `OFFLINE`, `UNAVAIL` or `REMOVED`, or has read, write or checksum errors; a solid-state disk fails its SMART self-assessment |
 | `ScrubErrors` | critical | the last completed scrub of a pool found errors |
 | `StorageCapacityHigh` | warning | a pool's capacity reaches `zfsCapacityPercent`; clears two points below |
-| `DiskWearHigh` | warning | a drive's BMC-reported endurance use reaches `ssdWearPercent` |
+| `DiskWearHigh` | warning | a drive's endurance use, from its BMC or else from the disk, reaches `ssdWearPercent` |
 
 There is one alert per device: `StorageDegraded` on `md0` and on `tank` are two
 alerts, and an alert stays one object from firing to resolution and through a
@@ -409,7 +409,8 @@ BMC inventory at its 32 drives. Drives past that limit are not assessed.
 **Wear comes from the BMC, then from the disk.** Where the BMC gives no figure
 (iLO 4 sends `SSDEnduranceUtilizationPercentage: null` for third-party SSDs), the
 agent reads the disk's own SMART data, in `status.storage.observed[].smart`,
-solid-state disks only, every six hours and when the agent starts, with `smartctl`
+solid-state disks only, every six hours, when the agent starts and thirty minutes
+after a failed read, with `smartctl`
 from its image. An NVMe gives `percentage_used`. A SATA disk gives the standard
 "Percentage Used Endurance Indicator" of its device statistics, or failing that
 the normalized value of a life attribute, chosen by the name smartctl gives it
@@ -421,10 +422,14 @@ the BMC stays at `null`. An SSD with no figure from either makes the condition
 `Unknown`, reason `WearNotReported`.
 
 A failing SMART self-assessment raises `StorageDegraded` on the disk's serial. An
-NVMe whose only critical warning is its temperature does not. A SMART read that
-fails makes `StorageDegraded` `Unknown`, reason `ReadUnavailable`, and keeps what
-that disk had open. So does a disk `smartctl` cannot reach, such as a logical
-volume behind a RAID controller. A disk replaced after a SMART alert stays
+NVMe whose only critical warning is its temperature does not. A read that fails or
+gives no self-assessment makes `StorageDegraded` `Unknown`, reason
+`ReadUnavailable`, naming the disk, and keeps what that disk had open. So does a
+disk `smartctl` cannot reach, such as a logical volume behind a RAID controller:
+such a machine stays `Unknown` on this condition, and a real fault still raises it.
+A device that is not `/dev/sdX` or `/dev/nvmeXnY` is not read and counts for
+nothing. A BMC that lists no drive leaves `DiskWearHigh` `Unknown`, though a figure
+from a disk still raises its alert. A disk replaced after a SMART alert stays
 `LastReadHeld` until "Removed on purpose" closes it.
 
 The assessment runs with the BMC probe, every minute, including when the BMC

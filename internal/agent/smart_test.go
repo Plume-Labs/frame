@@ -189,6 +189,15 @@ func TestNVMeHeatIsNotAFailingDisk(t *testing.T) {
 			t.Errorf("warning %s: %+v %v", warning, got, err)
 		}
 	}
+	for _, silent := range []string{
+		`{"nvme_smart_health_information_log":{"critical_warning":2}}`,
+		`{"smart_status":{},"nvme_smart_health_information_log":{"critical_warning":2}}`,
+	} {
+		got, err := parseSMART(silent)
+		if err != nil || got.Passed != nil {
+			t.Fatalf("a verdict made up: %+v %v", got, err)
+		}
+	}
 }
 
 type exitError int
@@ -250,8 +259,17 @@ func TestReaderRunsUnderTheTimeout(t *testing.T) {
 
 // smartctl comes from the image: through nsenter it would be the node's, or none.
 func TestImageExecutorDoesNotEnterTheHost(t *testing.T) {
-	if p := NewImageStorageExecutor().Prefix; len(p) != 0 {
-		t.Fatalf("%q", p)
+	x := NewImageStorageExecutor()
+	if len(x.Prefix) != 0 {
+		t.Fatalf("%q", x.Prefix)
+	}
+	// The one bound on a smartctl stuck in the kernel.
+	if host := NewHostStorageExecutor(); x.HardDeadline != host.HardDeadline {
+		t.Fatalf("%s", x.HardDeadline)
+	}
+	reader, ok := NewNodeSMARTReader().exec.(*HostStorageExecutor)
+	if !ok || len(reader.Prefix) != 0 {
+		t.Fatalf("%+v", reader)
 	}
 }
 
@@ -268,11 +286,63 @@ func TestReaderIsNotCalledAgainBeforeItsInterval(t *testing.T) {
 	if len(x.calls) != 1 {
 		t.Fatalf("%d calls", len(x.calls))
 	}
-	clock = clock.Add(smartInterval)
+	clock = clock.Add(smartRetry) // a good read waits its whole interval
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if len(x.calls) != 1 {
+		t.Fatalf("%d calls", len(x.calls))
+	}
+	clock = clock.Add(smartInterval - smartRetry)
 	r.Annotate(disks)
 	waitFor(t, r, disks)
 	if len(x.calls) != 2 {
 		t.Fatalf("%d calls", len(x.calls))
+	}
+}
+
+// A disk can fail in every way smartctl reports at once, and that is 124, the
+// code timeout uses for itself.
+func TestAReportBeatsWhatItsExitCodeLooksLike(t *testing.T) {
+	x := &recordingExec{err: exitError(124), stdout: `{"smartctl":{"exit_status":124},"smart_status":{"passed":false}}`}
+	r := NewSMARTReader(x)
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if s := disks[0].SMART; s == nil || s.Passed == nil || *s.Passed || s.Error != "" || s.ReadAt == nil {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestAFailedReadIsTriedAgainSooner(t *testing.T) {
+	x := &recordingExec{err: errors.New("boom")}
+	r := NewSMARTReader(x)
+	clock := time.Now()
+	r.now = func() time.Time { return clock }
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	clock = clock.Add(smartRetry - time.Minute)
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if len(x.calls) != 1 {
+		t.Fatalf("%d calls", len(x.calls))
+	}
+	clock = clock.Add(time.Minute)
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if len(x.calls) != 2 {
+		t.Fatalf("%d calls", len(x.calls))
+	}
+}
+
+func TestSmartctlsOwnWordsReachTheError(t *testing.T) {
+	x := &recordingExec{err: exitError(2), stdout: `{"smartctl":{"exit_status":2,"messages":[{"string":"Smartctl open device failed"}]}}`}
+	r := NewSMARTReader(x)
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if s := disks[0].SMART; s == nil || !strings.Contains(s.Error, "open device failed") {
+		t.Fatalf("%+v", s)
 	}
 }
 
@@ -285,8 +355,12 @@ func TestAPathOffThePatternIsNeverRun(t *testing.T) {
 	if len(x.calls) != 0 {
 		t.Fatalf("%q", x.calls)
 	}
-	if disks[0].SMART == nil || disks[0].SMART.Error == "" {
+	if disks[0].SMART != nil {
 		t.Fatalf("%+v", disks[0].SMART)
+	}
+	// And read() refuses it by itself, should the filter above it go.
+	if s := r.read(&disks[0]); s.Error == "" || len(x.calls) != 0 {
+		t.Fatalf("%+v %q", s, x.calls)
 	}
 }
 

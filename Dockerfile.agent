@@ -15,7 +15,7 @@
 # speaks to the disk, not to a kernel module it must match, so a node needs
 # nothing installed. What it may run is fixed in internal/agent/smart.go.
 #
-# It deliberately does NOT install tuned. Every host call is nsentered into PID
+# It deliberately does NOT install tuned. Its host calls are nsentered into PID
 # 1's namespaces, so `tuned-adm` resolves to the *node's* binary; a copy in
 # this image would never be the one that runs, and installing it would only
 # pull python in for nothing. tuned is therefore a node prerequisite — see

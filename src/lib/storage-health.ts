@@ -35,7 +35,7 @@ export function validThreshold(value: number): boolean {
 }
 
 export const STORAGE_CHECKS = [
-  { type: 'StorageDegraded', label: 'Mirrors' },
+  { type: 'StorageDegraded', label: 'Mirrors and disks' },
   { type: 'ScrubErrors', label: 'Scrub' },
   { type: 'StorageCapacityHigh', label: 'ZFS capacity' },
   { type: 'DiskWearHigh', label: 'SSD wear' },

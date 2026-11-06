@@ -65,7 +65,7 @@ var checkScopes = map[string][]Scope{
 	CheckDegraded:     {ScopeMD, ScopeZFS, ScopeSMART},
 	CheckScrubErrors:  {ScopeZFS},
 	CheckCapacityHigh: {ScopeZFS},
-	CheckWearHigh:     {ScopeDrives, ScopeSMART},
+	CheckWearHigh:     {ScopeDrives},
 }
 
 const (
@@ -124,9 +124,9 @@ type Assessment struct {
 	// WearUnreported counts the SSDs with no endurance figure, from their BMC
 	// or from themselves.
 	WearUnreported int
-	// SMARTFailed counts the disks whose last SMART read failed: nothing on
-	// their health, though their wear may come from the BMC.
-	SMARTFailed int
+	// SMARTSilent lists the disks whose last read gave nothing on their health,
+	// failed or empty, though their wear may come from the BMC.
+	SMARTSilent []string
 }
 
 // Thresholds are StorageHealthPolicySpec with its zero values resolved.
@@ -400,8 +400,8 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		d := &s.Observed[i]
 		listed = append(listed, d.SerialNumber)
 		wear, health := Key{CheckWearHigh, d.SerialNumber}, Key{CheckDegraded, d.SerialNumber}
-		if d.SMART != nil && d.SMART.Error != "" {
-			a.SMARTFailed++
+		if d.SMART != nil && d.SMART.Passed == nil {
+			a.SMARTSilent = append(a.SMARTSilent, d.SerialNumber)
 		}
 		// No read, a failed one, or a disk silent on this: nothing to clear on.
 		if d.SMART == nil || d.SMART.Passed == nil {
@@ -476,8 +476,8 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 			unread = append(unread, fmt.Sprintf("%s: %s", s, why))
 		}
 	}
-	if check == CheckDegraded && a.SMARTFailed > 0 {
-		unread = append(unread, fmt.Sprintf("%s: %d disk(s) could not be read", ScopeSMART, a.SMARTFailed))
+	if check == CheckDegraded && len(a.SMARTSilent) > 0 {
+		unread = append(unread, fmt.Sprintf("%s: nothing read from %s", ScopeSMART, strings.Join(a.SMARTSilent, ", ")))
 	}
 	if len(unread) > 0 {
 		return Verdict{"Unknown", "ReadUnavailable", clipRunes(strings.Join(unread, "; "), maxConditionMessage)}

@@ -503,6 +503,45 @@ func TestASilentAgentsFigureClearsNoBMCAlert(t *testing.T) {
 	}
 }
 
+// A disk that answered nothing on its health is no better than one unread.
+func TestAnEmptySMARTReportIsNeverHealthy(t *testing.T) {
+	st := healthyStatus()
+	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "SILENT", SMART: &framev1beta1.DiskSMART{}}}
+	v := Assess(st, defaults, true, nil, now).Verdict(CheckDegraded, nil)
+	if v.Status != "Unknown" || !strings.Contains(v.Message, "SILENT") {
+		t.Fatalf("%+v", v)
+	}
+}
+
+// One disk's figure says nothing of another's.
+func TestAnotherDisksFigureClearsNothing(t *testing.T) {
+	k := Key{CheckWearHigh, "S-A"}
+	st := healthyStatus()
+	st.Inventory.Drives[0].SSDEnduranceUsedPercent = nil
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("OTHER", new(int32(10)), new(true))}
+	if !Assess(st, defaults, true, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
+		t.Fatal("cleared")
+	}
+}
+
+// A spinning disk off the BMC's list has no SMART block and owes no figure.
+func TestADiskWithoutAReadOwesNoWear(t *testing.T) {
+	st := healthyStatus()
+	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "HDD"}}
+	if v := Assess(st, defaults, true, nil, now).Verdict(CheckWearHigh, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+// The BMC's figures stand on their own: wear does not need the agent.
+func TestBMCWearNeedsNoAgent(t *testing.T) {
+	st := healthyStatus()
+	st.Storage = nil
+	if v := Assess(st, defaults, true, nil, now).Verdict(CheckWearHigh, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
 func TestAFailedSMARTReadIsNeverHealthy(t *testing.T) {
 	failed := framev1beta1.ObservedDisk{SerialNumber: "OFF-BMC", SMART: &framev1beta1.DiskSMART{Error: "timed out"}}
 

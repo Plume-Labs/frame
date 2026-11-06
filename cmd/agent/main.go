@@ -125,7 +125,7 @@ func run() error {
 	// result and the in-flight commands (see agent.LocalCollector).
 	local := agent.NewLocalCollector(agent.DefaultLocalSources())
 	// SMART too: reads are hours apart and never wait on a tick.
-	smart := agent.NewSMARTReader(agent.NewImageStorageExecutor())
+	smart := agent.NewNodeSMARTReader()
 
 	ctx := ctrl.SetupSignalHandler()
 	slog.Info("frame-agent starting", "node", nodeName, "root", root, "interval", observeInterval)

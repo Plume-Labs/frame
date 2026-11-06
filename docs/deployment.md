@@ -240,8 +240,8 @@ The script refuses to start if any node is not `Ready`, then does five things:
    predates the injected common labels, since a DaemonSet selector is
    immutable.
 2. **Installs `tuned` on nodes that lack it.** Required only if a NodeTuning
-   sets `spec.tunedProfile`. It cannot ship in the agent image: every host
-   command the agent runs is `nsenter`ed into PID 1's namespaces, so
+   sets `spec.tunedProfile`. It cannot ship in the agent image: the agent's
+   host commands are `nsenter`ed into PID 1's namespaces, so
    `tuned-adm` resolves to the node's own binary. Ubuntu Server does not ship
    it.
 3. **Builds and pushes the agent image.**
