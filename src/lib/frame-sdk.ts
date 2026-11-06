@@ -41,6 +41,7 @@ import {
 import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
+import { parametersPatch, toDatabase, type Database, type DatabaseSettings, type FrameServiceCR } from './databases'
 import {
   installObjectName, randomNameSuffix, toInstall,
   type Install, type InstallCR, type InstallCreateSpec,
@@ -3829,6 +3830,36 @@ function crToDiskClaim(cr: FrameDiskClaimCR): DiskClaim {
   }
 }
 
+/**
+ * FrameService instances of type postgres, in every namespace. Editing patches
+ * spec.parameters through the UI proxy, so each change leaves a FrameTask; the
+ * webhook and the provider decide what is accepted.
+ */
+class DatabaseClient {
+  private readonly path = crdListPath('services.plume-labs.io', 'v1beta1', 'frameservices')
+
+  async list(): Promise<Database[]> {
+    const res = await k8sFetch<ListResponse<FrameServiceCR>>(this.path)
+    return (res.items ?? [])
+      .filter((cr) => cr.spec?.type === 'postgres')
+      .map(toDatabase)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  watchPath(): string {
+    return this.path
+  }
+
+  async save(db: Database, next: DatabaseSettings): Promise<void> {
+    await k8sFetch<undefined>(crdListPath('services.plume-labs.io', 'v1beta1', 'frameservices', db.namespace) + `/${db.name}`, {
+      action: `set database ${db.name}`,
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: parametersPatch(next),
+    })
+  }
+}
+
 /** Reads FrameDiskClaim objects — namespaced, mirroring `MachineClient`/`InstallClient` above. */
 class DiskClaimClient {
   constructor(private readonly ns?: string) {}
@@ -3940,6 +3971,7 @@ export class FrameClient {
   public readonly installs: InstallClient
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
+  public readonly databases: DatabaseClient
   public readonly inference: InferenceServiceClient
 
   constructor(opts: FrameClientOptions = {}) {
@@ -3955,6 +3987,7 @@ export class FrameClient {
     this.installs  = new InstallClient(opts.namespace)
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
+    this.databases = new DatabaseClient()
     this.inference = new InferenceServiceClient()
   }
 
