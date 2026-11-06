@@ -29,6 +29,7 @@ const LineageView = lazy(() => import('@/components/LineageView').then((m) => ({
 const GpuView = lazy(() => import('@/components/GpuView').then((m) => ({ default: m.GpuView })))
 const ClusterStorageView = lazy(() => import('@/components/ClusterStorageView').then((m) => ({ default: m.ClusterStorageView })))
 const FrameStorageView = lazy(() => import('@/components/FrameStorageView').then((m) => ({ default: m.FrameStorageView })))
+const StorageHealthView = lazy(() => import('@/components/StorageHealthView').then((m) => ({ default: m.StorageHealthView })))
 const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
 const NetworkView = lazy(() => import('@/components/NetworkView').then((m) => ({ default: m.NetworkView })))
 const WorkloadPlacementView = lazy(() => import('@/components/WorkloadPlacementView').then((m) => ({ default: m.WorkloadPlacementView })))
@@ -125,6 +126,7 @@ type TabId =
   | 'storage'
   | 'storage-entries'
   | 'disks'
+  | 'storage-health'
   | 'network'
   | 'data-locality'
   | 'inference'
@@ -262,6 +264,7 @@ const NAV: NavGroup[] = [
           { id: 'storage', label: 'Storage' },
           { id: 'storage-entries', label: 'Entries' },
           { id: 'disks', label: 'Disks' },
+          { id: 'storage-health', label: 'Health' },
         ],
       },
       {
@@ -559,6 +562,8 @@ function App() {
         return <FrameStorageView />
       case 'disks':
         return <MachineDisksPanel />
+      case 'storage-health':
+        return <StorageHealthView />
       case 'network':
         return <NetworkView />
       case 'data-locality':

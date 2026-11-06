@@ -42,6 +42,13 @@ import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
 import {
+  DEFAULT_STORAGE_THRESHOLDS,
+  STORAGE_HEALTH_POLICY_NAME,
+  toThresholds,
+  type StorageHealthPolicyCR,
+  type StorageThresholds,
+} from './storage-health'
+import {
   installObjectName, randomNameSuffix, toInstall,
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
@@ -821,6 +828,11 @@ export function installsPath(ns?: string): string {
 /** The list endpoint for FrameStorage CRs — cluster-scoped, see `frameClusterListPath`. */
 export function storageEntriesPath(): string {
   return frameClusterListPath('framestorages')
+}
+
+/** The list endpoint for StorageHealthPolicy CRs — cluster-scoped, see `frameClusterListPath`. */
+export function storageHealthPolicyPath(): string {
+  return frameClusterListPath('storagehealthpolicies')
 }
 
 /** The list endpoint for FrameDiskClaim CRs, for callers that want to watch it. */
@@ -3829,6 +3841,50 @@ function crToDiskClaim(cr: FrameDiskClaimCR): DiskClaim {
   }
 }
 
+/**
+ * Reads and writes the one StorageHealthPolicy. No object is not an error: the
+ * controller then runs on the defaults, and the first save creates it. Both
+ * writes go through the UI proxy, which records them as FrameTasks like any
+ * other mutation.
+ */
+class StorageHealthPolicyClient {
+  private readonly path = `${storageHealthPolicyPath()}/${STORAGE_HEALTH_POLICY_NAME}`
+
+  async get(): Promise<StorageThresholds> {
+    try {
+      return toThresholds(await k8sFetch<StorageHealthPolicyCR>(this.path))
+    } catch (e) {
+      if (e instanceof FrameAPIError && e.statusCode === 404) return DEFAULT_STORAGE_THRESHOLDS
+      throw e
+    }
+  }
+
+  watchPath(): string {
+    return storageHealthPolicyPath()
+  }
+
+  async save(thresholds: StorageThresholds): Promise<void> {
+    const action = 'set storage health thresholds'
+    try {
+      await k8sFetch<undefined>(this.path, {
+        action, method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: thresholds },
+      })
+    } catch (e) {
+      if (!(e instanceof FrameAPIError && e.statusCode === 404)) throw e
+      await k8sFetch<undefined>(storageHealthPolicyPath(), {
+        action,
+        method: 'POST',
+        body: {
+          apiVersion: `${GROUP}/${VERSION}`,
+          kind: 'StorageHealthPolicy',
+          metadata: { name: STORAGE_HEALTH_POLICY_NAME },
+          spec: thresholds,
+        },
+      })
+    }
+  }
+}
+
 /** Reads FrameDiskClaim objects — namespaced, mirroring `MachineClient`/`InstallClient` above. */
 class DiskClaimClient {
   constructor(private readonly ns?: string) {}
@@ -3940,6 +3996,7 @@ export class FrameClient {
   public readonly installs: InstallClient
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
+  public readonly storageHealthPolicy: StorageHealthPolicyClient
   public readonly inference: InferenceServiceClient
 
   constructor(opts: FrameClientOptions = {}) {
@@ -3955,6 +4012,7 @@ export class FrameClient {
     this.installs  = new InstallClient(opts.namespace)
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
+    this.storageHealthPolicy = new StorageHealthPolicyClient()
     this.inference = new InferenceServiceClient()
   }
 
