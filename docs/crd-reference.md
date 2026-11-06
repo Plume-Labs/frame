@@ -896,6 +896,53 @@ requests (including `nvidia.com/gpu`) and a node selector derived from
 
 ---
 
+### The `postgres` provider (`internal/services/provider/postgres/`)
+
+A cluster of the [Zalando postgres-operator](https://github.com/zalando/postgres-operator),
+which must be installed: Frame writes the `postgresql` CR and the operator does
+the rest. The instance's name has the operator's form, `<team>-<cluster>`.
+
+| Parameter | Required | After creation | Meaning |
+|---|---|---|---|
+| `instances` | yes | moves | Pods, primary included. Above one, a topology spread keeps them on different nodes. |
+| `volumeSize` | yes | grows | Size of each volume, e.g. `20Gi`. A smaller value degrades with `VolumeShrinkRefused`. |
+| `nodes` | no | moves | Comma-separated node names, replacing any node affinity. Absent leaves placement alone. |
+| `storageClass` | no | fixed | Empty is the cluster default. |
+| `postgresVersion` | no | fixed | Default `18`. |
+| `database`, `owner` | no | fixed | Default: the team. The binding carries `owner`'s credentials. |
+| `walBucketClaim`, `walEndpoint` | no | fixed | WAL-G archive to that ObjectBucketClaim, created if absent. Empty means no archiving. |
+| `walRetentionDays` | no | fixed | Default `14`. |
+| `adoptUID` | no | stays | UID of an existing cluster to take over. |
+
+`fixed` means compared, not applied: a parameter that differs from the live
+cluster degrades with `SpecDrift` and writes nothing at all. Changing `nodes`,
+or going above one instance, changes the pod template, so the operator restarts
+the pods.
+
+**A cluster is never recreated.** One is created only by a FrameService without
+`adoptUID` that never reached Ready. Otherwise a missing cluster degrades with
+`AdoptionTargetMissing` or `InstanceLost` and waits for a restore: a new CR
+under the same name would boot an empty database at the consumers' address.
+
+**A cluster is adopted only by UID.** An existing cluster not labelled for this
+FrameService degrades with `ClusterNotOwned`, the message giving its UID. With
+`adoptUID` matching and no drift, the provider writes the label
+`services.plume-labs.io/frameservice` and the annotation
+`helm.sh/resource-policy: keep` on the CR and the bucket claim, and nothing
+else: the spec and `metadata.generation` do not move. It leaves a chart's own
+labels in place; retiring the chart is a separate step, and the CR survives it
+only through that annotation.
+
+**`deletionPolicy` never reaches the data.** The CR and the bucket claim carry
+no owner reference and are not in `status.provisioned`, and the manager has no
+`delete` verb on either, so `Delete` behaves as `Retain` for them. Removing a
+database is a deliberate `kubectl delete` with the operator's delete annotations.
+
+The binding Secret carries `host`, `port`, `database`, `username` and
+`password`, copied from the operator's credentials Secret: the manager needs
+`frame-manager-secret-writer` in the namespace. Other Ready reasons:
+`Provisioning`, `ClusterNotRunning`, `OperatorMissing`, `InvalidName`.
+
 ## Webhooks
 
 FrameNode and FrameJob have **defaulting + validation**; the other four —
