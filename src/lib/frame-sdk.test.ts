@@ -1448,6 +1448,37 @@ describe('StorageHealthPolicyClient', () => {
   })
 })
 
+describe('NetworkHealthPolicyClient', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+  const path = '/apis/frame.plume-labs.io/v1beta1/networkhealthpolicies'
+  const json = (status: number, body: unknown = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  const expected = { minLinkSpeedMbps: 1000, links: [{ node: 'a', interface: 'bond0', members: 2 }] }
+
+  it('reads the default when no policy exists, but not a refusal', async () => {
+    stubBrowser()
+    vi.stubGlobal('fetch', vi.fn(async () => json(404)))
+    expect(await createFrameClient().networkHealthPolicy.get()).toEqual({ minLinkSpeedMbps: 1000, links: [] })
+    vi.stubGlobal('fetch', vi.fn(async () => json(403)))
+    await expect(createFrameClient().networkHealthPolicy.get()).rejects.toThrow()
+  })
+
+  it('creates on the first save without a failed write, then patches', async () => {
+    stubBrowser()
+    const calls: string[] = []
+    let exists = false
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)}`)
+      if (init?.method === 'POST') { exists = true; return json(201) }
+      return json(exists ? 200 : 404)
+    }))
+    const client = createFrameClient().networkHealthPolicy
+    await client.save(expected)
+    await client.save(expected)
+    expect(calls).toEqual([`GET ${path}/default`, `POST ${path}`, `GET ${path}/default`, `PATCH ${path}/default`])
+  })
+})
+
 describe('MachineClient', () => {
   it('declares a device removed as a merge-patch the proxy traces', async () => {
     stubBrowser()

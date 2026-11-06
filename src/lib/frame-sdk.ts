@@ -42,6 +42,13 @@ import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
 import {
+  DEFAULT_NETWORK_EXPECTATIONS,
+  NETWORK_HEALTH_POLICY_NAME,
+  toExpectations,
+  type NetworkExpectations,
+  type NetworkHealthPolicyCR,
+} from './network-health'
+import {
   alertReleaseBody,
   DEFAULT_STORAGE_THRESHOLDS,
   STORAGE_HEALTH_POLICY_NAME,
@@ -829,6 +836,11 @@ export function installsPath(ns?: string): string {
 /** The list endpoint for FrameStorage CRs — cluster-scoped, see `frameClusterListPath`. */
 export function storageEntriesPath(): string {
   return frameClusterListPath('framestorages')
+}
+
+/** The list endpoint for NetworkHealthPolicy CRs — cluster-scoped, see `frameClusterListPath`. */
+export function networkHealthPolicyPath(): string {
+  return frameClusterListPath('networkhealthpolicies')
 }
 
 /** The list endpoint for StorageHealthPolicy CRs — cluster-scoped, see `frameClusterListPath`. */
@@ -3906,6 +3918,49 @@ class StorageHealthPolicyClient {
   }
 }
 
+/** The one NetworkHealthPolicy, read and written like StorageHealthPolicyClient. */
+class NetworkHealthPolicyClient {
+  private readonly path = `${networkHealthPolicyPath()}/${NETWORK_HEALTH_POLICY_NAME}`
+
+  private async read(): Promise<NetworkHealthPolicyCR | null> {
+    try {
+      return await k8sFetch<NetworkHealthPolicyCR>(this.path)
+    } catch (e) {
+      if (e instanceof FrameAPIError && e.statusCode === 404) return null
+      throw e
+    }
+  }
+
+  async get(): Promise<NetworkExpectations> {
+    const cr = await this.read()
+    return cr ? toExpectations(cr) : DEFAULT_NETWORK_EXPECTATIONS
+  }
+
+  watchPath(): string {
+    return networkHealthPolicyPath()
+  }
+
+  async save(expected: NetworkExpectations): Promise<void> {
+    const action = 'set network expectations'
+    if (await this.read()) {
+      await k8sFetch<undefined>(this.path, {
+        action, method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: expected },
+      })
+      return
+    }
+    await k8sFetch<undefined>(networkHealthPolicyPath(), {
+      action,
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'NetworkHealthPolicy',
+        metadata: { name: NETWORK_HEALTH_POLICY_NAME },
+        spec: expected,
+      },
+    })
+  }
+}
+
 /** Reads FrameDiskClaim objects — namespaced, mirroring `MachineClient`/`InstallClient` above. */
 class DiskClaimClient {
   constructor(private readonly ns?: string) {}
@@ -4018,6 +4073,7 @@ export class FrameClient {
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
   public readonly storageHealthPolicy: StorageHealthPolicyClient
+  public readonly networkHealthPolicy: NetworkHealthPolicyClient
   public readonly inference: InferenceServiceClient
 
   constructor(opts: FrameClientOptions = {}) {
@@ -4034,6 +4090,7 @@ export class FrameClient {
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
     this.storageHealthPolicy = new StorageHealthPolicyClient()
+    this.networkHealthPolicy = new NetworkHealthPolicyClient()
     this.inference = new InferenceServiceClient()
   }
 

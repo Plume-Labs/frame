@@ -31,6 +31,7 @@ const ClusterStorageView = lazy(() => import('@/components/ClusterStorageView').
 const FrameStorageView = lazy(() => import('@/components/FrameStorageView').then((m) => ({ default: m.FrameStorageView })))
 const StorageHealthView = lazy(() => import('@/components/StorageHealthView').then((m) => ({ default: m.StorageHealthView })))
 const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
+const NetworkLinksView = lazy(() => import('@/components/NetworkLinksView').then((m) => ({ default: m.NetworkLinksView })))
 const NetworkView = lazy(() => import('@/components/NetworkView').then((m) => ({ default: m.NetworkView })))
 const WorkloadPlacementView = lazy(() => import('@/components/WorkloadPlacementView').then((m) => ({ default: m.WorkloadPlacementView })))
 const InferenceOverviewView = lazy(() => import('@/components/InferenceOverviewView').then((m) => ({ default: m.InferenceOverviewView })))
@@ -128,6 +129,7 @@ type TabId =
   | 'disks'
   | 'storage-health'
   | 'network'
+  | 'network-links'
   | 'data-locality'
   | 'inference'
   | 'kv-cache'
@@ -272,7 +274,10 @@ const NAV: NavGroup[] = [
         label: 'Network',
         icon: <Network />,
         description: 'Live per-node NIC throughput',
-        tabs: [{ id: 'network', label: 'Network' }],
+        tabs: [
+          { id: 'network', label: 'Network' },
+          { id: 'network-links', label: 'Links' },
+        ],
       },
       {
         id: 'data-locality',
@@ -566,6 +571,8 @@ function App() {
         return <StorageHealthView />
       case 'network':
         return <NetworkView />
+      case 'network-links':
+        return <NetworkLinksView />
       case 'data-locality':
         return <WorkloadPlacementView />
 
