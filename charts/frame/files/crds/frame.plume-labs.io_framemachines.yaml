@@ -1172,6 +1172,33 @@ spec:
                         sizeGB:
                           format: int32
                           type: integer
+                        smart:
+                          description: |-
+                            SMART is what the disk itself reports, solid-state disks only. Nil means
+                            no read has finished yet.
+                          properties:
+                            error:
+                              description: Error says why this read gave nothing.
+                              maxLength: 256
+                              type: string
+                            passed:
+                              description: Passed is the disk's overall self-assessment.
+                                Nil when it gave none.
+                              type: boolean
+                            readAt:
+                              description: ReadAt is when it was read; a read is hours
+                                apart, see the agent.
+                              format: date-time
+                              type: string
+                            wearUsedPercent:
+                              description: |-
+                                WearUsedPercent is endurance used, 0 to 100. Nil when the disk reports
+                                no attribute this reader knows: not the same as unworn.
+                              format: int32
+                              maximum: 100
+                              minimum: 0
+                              type: integer
+                          type: object
                         wwn:
                           description: |-
                             WWN is the World Wide Name lsblk reports, e.g. 0x5000c500deadbeef.

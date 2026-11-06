@@ -394,3 +394,93 @@ func TestSSDWithoutEnduranceFigureIsUnknownNotHealthy(t *testing.T) {
 		t.Fatal("alert cleared by a drive that stopped reporting")
 	}
 }
+
+func smartDisk(serial string, wear *int32, passed *bool) framev1beta1.ObservedDisk {
+	return framev1beta1.ObservedDisk{SerialNumber: serial, SMART: &framev1beta1.DiskSMART{WearUsedPercent: wear, Passed: passed}}
+}
+
+func i32p(n int32) *int32 { return &n }
+func boolp(b bool) *bool  { return &b }
+
+func TestSMARTFillsInWhereTheBMCIsSilent(t *testing.T) {
+	st := healthyStatus()
+	st.Inventory.Drives[0].SSDEnduranceUsedPercent = nil
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("S-A", i32p(defaults.SSDWearPercent), boolp(true))}
+	a := Assess(st, defaults, true, nil, now)
+	if !keys(a)[Key{CheckWearHigh, "S-A"}] {
+		t.Fatalf("%+v", a.Findings)
+	}
+
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("S-A", i32p(10), boolp(true))}
+	a = Assess(st, defaults, true, nil, now)
+	if v := a.Verdict(CheckWearHigh, nil); v.Status != "False" {
+		t.Fatalf("a disk reporting its own wear is not unreported: %+v", v)
+	}
+}
+
+func TestTheBMCFigureComesFirst(t *testing.T) {
+	st := healthyStatus() // BMC says 10
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("S-A", i32p(99), boolp(true))}
+	if a := Assess(st, defaults, true, nil, now); len(a.Findings) != 0 {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+func TestAFailingDiskIsDegraded(t *testing.T) {
+	st := healthyStatus()
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("S-A", nil, boolp(false))}
+	a := Assess(st, defaults, true, nil, now)
+	if !keys(a)[Key{CheckDegraded, "S-A"}] {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+func TestSMARTThatSaysNothingKeepsTheAlert(t *testing.T) {
+	wear, health := Key{CheckWearHigh, "X"}, Key{CheckDegraded, "X"}
+	for name, disks := range map[string][]framev1beta1.ObservedDisk{
+		"failed read": {{SerialNumber: "X", SMART: &framev1beta1.DiskSMART{Error: "timed out"}}},
+		"no read yet": {{SerialNumber: "X"}},
+		"disk gone":   nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := healthyStatus()
+			st.Storage.Observed = disks
+			open := Open{wear: ScopeSMART, health: ScopeSMART}
+			a := Assess(st, defaults, true, open, now)
+			if !a.Keeps(wear, ScopeSMART) || !a.Keeps(health, ScopeSMART) {
+				t.Fatal("cleared")
+			}
+		})
+	}
+}
+
+func TestSMARTAlertClearsOnAGoodRead(t *testing.T) {
+	st := healthyStatus()
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("X", i32p(5), boolp(true))}
+	wear, health := Key{CheckWearHigh, "X"}, Key{CheckDegraded, "X"}
+	a := Assess(st, defaults, true, Open{wear: ScopeSMART, health: ScopeSMART}, now)
+	if a.Keeps(wear, ScopeSMART) || a.Keeps(health, ScopeSMART) || len(a.Findings) != 0 {
+		t.Fatalf("%+v", a)
+	}
+}
+
+func TestNoSMARTReadIsNotAnUnknownStorageVerdict(t *testing.T) {
+	// A node without SMART data must not turn every StorageDegraded Unknown.
+	if v := func() Verdict {
+		a := Assess(healthyStatus(), defaults, true, nil, now)
+		return a.Verdict(CheckDegraded, nil)
+	}(); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestSilentAgentHoldsSMARTAlerts(t *testing.T) {
+	st := healthyStatus()
+	old := metav1.NewTime(now.Add(-AgentSilentAfter - time.Minute))
+	st.Storage.ObservedAt = &old
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("X", i32p(5), boolp(true))}
+	k := Key{CheckWearHigh, "X"}
+	if !Assess(st, defaults, true, Open{k: ScopeSMART}, now).Keeps(k, ScopeSMART) {
+		t.Fatal("cleared")
+	}
+}

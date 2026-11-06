@@ -406,9 +406,15 @@ A list known to be partial gives `Unknown`, reason `ReadUnavailable`, when nothi
 is wrong in what it shows: the agent's lists past their limit, a vdev tree cut, a
 BMC inventory at its 32 drives. Drives past that limit are not assessed.
 
-**`DiskWearHigh` needs a BMC that reports endurance.** An SSD whose BMC sends
-nothing makes the condition `Unknown`, reason `WearNotReported`. iLO 4 sends
-`SSDEnduranceUtilizationPercentage: null` for third-party SSDs.
+**Wear comes from the BMC, then from the disk.** Where the BMC gives no figure
+(iLO 4 sends `SSDEnduranceUtilizationPercentage: null` for third-party SSDs), the
+agent reads the disk's own SMART data, in `status.storage.observed[].smart`,
+solid-state disks only and every six hours, with `smartctl` from its image. An
+NVMe gives `percentage_used`. A SATA disk gives the standard "Percentage Used
+Endurance Indicator" of its device statistics, or failing that the normalized
+value of attribute 233, 231, 202 or 177. One that gives none of these makes the
+condition `Unknown`, reason `WearNotReported`. A failing SMART self-assessment
+raises `StorageDegraded` on the disk's serial.
 
 The assessment runs with the BMC probe, every minute, including when the BMC
 does not answer. A BMC that stays down stretches the probe's backoff, so a

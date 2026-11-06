@@ -343,6 +343,31 @@ type ObservedDisk struct {
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:MaxLength=128
 	Members []string `json:"members,omitempty"`
+
+	// SMART is what the disk itself reports, solid-state disks only. Nil means
+	// no read has finished yet.
+	// +optional
+	SMART *DiskSMART `json:"smart,omitempty"`
+}
+
+// DiskSMART is one read of a disk's own health data, read-only.
+type DiskSMART struct {
+	// ReadAt is when it was read; a read is hours apart, see the agent.
+	// +optional
+	ReadAt *metav1.Time `json:"readAt,omitempty"`
+	// Passed is the disk's overall self-assessment. Nil when it gave none.
+	// +optional
+	Passed *bool `json:"passed,omitempty"`
+	// WearUsedPercent is endurance used, 0 to 100. Nil when the disk reports
+	// no attribute this reader knows: not the same as unworn.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	WearUsedPercent *int32 `json:"wearUsedPercent,omitempty"`
+	// Error says why this read gave nothing.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Error string `json:"error,omitempty"`
 }
 
 // DiskDivergence is one disagreement between the BMC's list and the node's.

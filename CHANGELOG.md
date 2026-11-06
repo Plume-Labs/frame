@@ -6,6 +6,14 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — SMART reading of solid-state disks
+
+- The agent reads wear and health from SSD and NVMe disks with `smartctl`, every
+  six hours, into `status.storage.observed[].smart`. `DiskWearHigh` uses it where
+  the BMC gives no figure, and a failing self-assessment raises `StorageDegraded`.
+  Options are fixed at compile time and no self-test is ever started; see
+  SECURITY.md. The agent image now carries smartmontools.
+
 ### Added — storage health alerts
 
 - The FrameMachine controller now judges what the agent and the BMC report:

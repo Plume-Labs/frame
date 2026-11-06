@@ -57,14 +57,15 @@ const (
 	ScopeMD     Scope = "md"
 	ScopeZFS    Scope = "zfs"
 	ScopeDrives Scope = "drives"
+	ScopeSMART  Scope = "smart"
 )
 
 // checkScopes says which readings each check needs.
 var checkScopes = map[string][]Scope{
-	CheckDegraded:     {ScopeMD, ScopeZFS},
+	CheckDegraded:     {ScopeMD, ScopeZFS, ScopeSMART},
 	CheckScrubErrors:  {ScopeZFS},
 	CheckCapacityHigh: {ScopeZFS},
-	CheckWearHigh:     {ScopeDrives},
+	CheckWearHigh:     {ScopeDrives, ScopeSMART},
 }
 
 const (
@@ -148,7 +149,8 @@ func ThresholdsFrom(p *framev1beta1.StorageHealthPolicy) Thresholds {
 func Assess(st *framev1beta1.FrameMachineStatus, t Thresholds, inventoryFresh bool, open Open, now time.Time) Assessment {
 	a := Assessment{Unread: map[Scope]string{}, Cut: map[Scope]string{}, Held: map[Key]bool{}}
 	a.assessLocal(st.Storage, t, open, now)
-	a.assessDrives(st.Inventory, t, inventoryFresh, open)
+	a.assessDrives(st.Inventory, st.Storage, t, inventoryFresh, open)
+	a.assessSMART(st.Storage, st.Inventory, t, open)
 	return a
 }
 
@@ -159,11 +161,12 @@ func (a *Assessment) add(check, device string, scope Scope, severity, message st
 func (a *Assessment) assessLocal(s *framev1beta1.MachineStorage, t Thresholds, open Open, now time.Time) {
 	switch {
 	case s == nil || s.Local == nil:
-		a.Unread[ScopeMD], a.Unread[ScopeZFS] = "the agent has not reported the node's stacks", "the agent has not reported the node's stacks"
+		why := "the agent has not reported the node's stacks"
+		a.Unread[ScopeMD], a.Unread[ScopeZFS], a.Unread[ScopeSMART] = why, why, why
 		return
 	case s.ObservedAt == nil || now.Sub(s.ObservedAt.Time) > AgentSilentAfter:
 		why := "the agent has stopped reporting"
-		a.Unread[ScopeMD], a.Unread[ScopeZFS] = why, why
+		a.Unread[ScopeMD], a.Unread[ScopeZFS], a.Unread[ScopeSMART] = why, why, why
 		return
 	}
 	a.assessMD(&s.Local.MD, open)
@@ -315,7 +318,7 @@ func (a *Assessment) holdUnlisted(open Open, scope Scope, listed []string) {
 	}
 }
 
-func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, t Thresholds, fresh bool, open Open) {
+func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, s *framev1beta1.MachineStorage, t Thresholds, fresh bool, open Open) {
 	switch {
 	case !fresh:
 		a.Unread[ScopeDrives] = "the BMC did not answer the last probe"
@@ -340,7 +343,7 @@ func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, t Threshol
 			if key := (Key{CheckWearHigh, device}); open.has(key) {
 				a.Held[key] = true
 			}
-			if d.MediaType == "SSD" {
+			if d.MediaType == "SSD" && !smartReportsWear(s, d.SerialNumber) {
 				a.WearUnreported++
 			}
 		}
@@ -351,6 +354,66 @@ func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, t Threshol
 	if len(inv.Drives) >= MaxInventoryDrives {
 		a.Cut[ScopeDrives] = fmt.Sprintf("the inventory holds %d drives at most", MaxInventoryDrives)
 	}
+}
+
+// smartReportsWear says the disk itself gives the figure its BMC does not.
+func smartReportsWear(s *framev1beta1.MachineStorage, serial string) bool {
+	if s == nil {
+		return false
+	}
+	for i := range s.Observed {
+		d := &s.Observed[i]
+		if d.SerialNumber == serial && d.SMART != nil && d.SMART.WearUsedPercent != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func bmcReportsWear(inv *framev1beta1.MachineInventory, serial string) bool {
+	if inv == nil {
+		return false
+	}
+	for i := range inv.Drives {
+		if inv.Drives[i].SerialNumber == serial && inv.Drives[i].SSDEnduranceUsedPercent != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// assessSMART reads what the disks say of themselves. Wear only where the BMC
+// gives none: one figure per disk, and the BMC's comes first.
+func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1beta1.MachineInventory, t Thresholds, open Open) {
+	if _, unread := a.Unread[ScopeSMART]; unread || s == nil {
+		return
+	}
+	listed := make([]string, 0, len(s.Observed))
+	for i := range s.Observed {
+		d := &s.Observed[i]
+		listed = append(listed, d.SerialNumber)
+		wear, health := Key{CheckWearHigh, d.SerialNumber}, Key{CheckDegraded, d.SerialNumber}
+		// No read, a failed one, or a disk silent on this: nothing to clear on.
+		if d.SMART == nil || d.SMART.Passed == nil {
+			if open.has(health) {
+				a.Held[health] = true
+			}
+		} else if !*d.SMART.Passed {
+			a.add(CheckDegraded, d.SerialNumber, ScopeSMART, severityCritical,
+				fmt.Sprintf("disk %s (%s, %s) reports a failing SMART self-assessment", d.SerialNumber, d.Path, d.Model))
+		}
+		switch {
+		case bmcReportsWear(inv, d.SerialNumber):
+		case d.SMART == nil || d.SMART.WearUsedPercent == nil:
+			if open.has(wear) {
+				a.Held[wear] = true
+			}
+		case *d.SMART.WearUsedPercent >= t.SSDWearPercent:
+			a.add(CheckWearHigh, d.SerialNumber, ScopeSMART, severityWarning,
+				fmt.Sprintf("disk %s (%s, %s) has used %d %% of its endurance", d.SerialNumber, d.Path, d.Model, *d.SMART.WearUsedPercent))
+		}
+	}
+	a.holdUnlisted(open, ScopeSMART, listed)
 }
 
 // Verdict is one condition's value.

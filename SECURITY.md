@@ -90,6 +90,13 @@ and is exactly the kind of report this policy wants. So is any way to make the
 controller perform a restart without the per-node, per-generation approval
 annotation.
 
+The agent also runs one command from its own image, without `nsenter`:
+`smartctl`, in read-only form. Its options are a compile-time constant, and the
+one variable is a device path that came from the node's own `lsblk` and matches
+a strict pattern, in `internal/agent/smart.go`. No CRD field or annotation reaches
+it. **A way to make the agent run `smartctl` with another option, on another path,
+or to start a self-test, is a vulnerability.**
+
 Note also that **enabling KSM is a security trade-off, not just a performance
 one**: merged pages make writes take a measurable copy-on-write fault, which
 lets one container probe whether another holds a given page. That is why
