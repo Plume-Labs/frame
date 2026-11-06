@@ -54,8 +54,9 @@ var smartDevice = regexp.MustCompile(`^/dev/(sd[a-z]{1,3}|nvme[0-9]{1,3}n[0-9]{1
 // several ATA commands on a disk in service.
 const smartInterval = 6 * time.Hour
 
-// smartRetry is how soon a failed read is tried again: one that timed out once
-// must not leave the disk unread for six hours.
+// smartRetry is how soon a read that gave no self-assessment is tried again, and
+// how often new disks are looked for: one timeout must not leave a disk unread for
+// six hours. Per disk, so that one failing for good leaves the others in peace.
 const smartRetry = 30 * time.Minute
 
 // smartArgv builds the one command this file runs.
@@ -85,6 +86,7 @@ type SMARTReader struct {
 
 	mu      sync.Mutex
 	last    map[string]*framev1beta1.DiskSMART // by serial
+	due     map[string]time.Time               // by serial
 	nextAt  time.Time
 	running bool
 }
@@ -94,7 +96,7 @@ func NewNodeSMARTReader() *SMARTReader { return NewSMARTReader(NewImageStorageEx
 
 // NewSMARTReader reads through x.
 func NewSMARTReader(x StorageExecutor) *SMARTReader {
-	return &SMARTReader{exec: x, now: time.Now, last: map[string]*framev1beta1.DiskSMART{}}
+	return &SMARTReader{exec: x, now: time.Now, last: map[string]*framev1beta1.DiskSMART{}, due: map[string]time.Time{}}
 }
 
 // Annotate fills in the last read of each disk and starts a refresh when one
@@ -114,30 +116,34 @@ func (r *SMARTReader) Annotate(disks []framev1beta1.ObservedDisk) {
 		return
 	}
 	r.running = true
-	r.nextAt = r.now().Add(smartInterval)
+	r.nextAt = r.now().Add(smartRetry)
 	go r.refresh(slices.Clone(disks))
 }
 
 func (r *SMARTReader) refresh(disks []framev1beta1.ObservedDisk) {
-	failed := false
 	for i := range disks {
 		d := &disks[i]
-		// A device off the pattern, an eMMC say, is not one this reader reads:
-		// no failure, no report.
-		if d.Rotational == nil || *d.Rotational || !smartDevice.MatchString(d.Path) {
+		if d.Rotational == nil || *d.Rotational {
+			continue
+		}
+		r.mu.Lock()
+		due := r.due[d.SerialNumber]
+		r.mu.Unlock()
+		if r.now().Before(due) {
 			continue
 		}
 		s := r.read(d)
-		failed = failed || s.Error != ""
+		wait := smartInterval
+		if s.Passed == nil {
+			wait = smartRetry
+		}
 		r.mu.Lock()
 		r.last[d.SerialNumber] = s
+		r.due[d.SerialNumber] = r.now().Add(wait)
 		r.mu.Unlock()
 	}
 	r.mu.Lock()
 	r.running = false
-	if failed {
-		r.nextAt = r.now().Add(smartRetry)
-	}
 	r.mu.Unlock()
 }
 
@@ -151,14 +157,11 @@ func (r *SMARTReader) read(d *framev1beta1.ObservedDisk) *framev1beta1.DiskSMART
 		return failed(err)
 	}
 	stdout, stderr, err := execSMART(r.exec, argv)
-	if errors.Is(err, errBusy) {
-		return failed(errBusy)
-	}
 	// smartctl's exit status is a bit field that also reports a failing disk,
 	// and timeout passes it on: 124 from smartctl is a dying disk, not a timeout.
 	// So its report comes first, and says whether it could speak to the disk.
 	report, perr := parseSMART(stdout)
-	if perr == nil {
+	if perr == nil && (err == nil || report.Passed != nil || report.WearUsedPercent != nil) {
 		report.ReadAt = &now
 		return report
 	}
@@ -169,7 +172,7 @@ func (r *SMARTReader) read(d *framev1beta1.ObservedDisk) *framev1beta1.DiskSMART
 		return failed(fmt.Errorf("smartctl timed out after %ds", storageTimeoutSeconds))
 	case err != nil && stderr != "":
 		return failed(fmt.Errorf("%w: %s", err, firstLine(stderr)))
-	case err != nil && stdout == "":
+	case perr == nil, err != nil && stdout == "":
 		return failed(err)
 	}
 	return failed(perr)

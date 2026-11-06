@@ -274,7 +274,7 @@ func TestImageExecutorDoesNotEnterTheHost(t *testing.T) {
 }
 
 func TestReaderIsNotCalledAgainBeforeItsInterval(t *testing.T) {
-	x := &recordingExec{stdout: `{}`}
+	x := &recordingExec{stdout: `{"smart_status":{"passed":true}}`}
 	r := NewSMARTReader(x)
 	clock := time.Now()
 	r.now = func() time.Time { return clock }
@@ -335,6 +335,80 @@ func TestAFailedReadIsTriedAgainSooner(t *testing.T) {
 	}
 }
 
+type perDevice map[string]string
+
+func (p perDevice) Exec(argv []string) (string, string, error) {
+	return p[argv[len(argv)-1]], "", nil
+}
+
+type countingExec struct {
+	StorageExecutor
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (c *countingExec) Exec(argv []string) (string, string, error) {
+	c.mu.Lock()
+	c.calls[argv[len(argv)-1]]++
+	c.mu.Unlock()
+	return c.StorageExecutor.Exec(argv)
+}
+
+// One disk failing for good must not mean the others are read every half hour,
+// wherever it sits in the list.
+func TestRetriesAreCountedPerDisk(t *testing.T) {
+	x := &countingExec{StorageExecutor: perDevice{"/dev/sdb": `{"smart_status":{"passed":true}}`}, calls: map[string]int{}}
+	r := NewSMARTReader(x)
+	clock := time.Now()
+	r.now = func() time.Time { return clock }
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda"), ssd("/dev/sdb")}
+	for range 3 {
+		r.Annotate(disks)
+		waitFor(t, r, disks)
+		clock = clock.Add(smartRetry)
+	}
+	if x.calls["/dev/sda"] != 3 || x.calls["/dev/sdb"] != 1 {
+		t.Fatalf("%+v", x.calls)
+	}
+}
+
+// Bit 2 set, no self-assessment, a wear figure all the same: that figure counts.
+func TestAPartialReportIsKeptDespiteItsExitCode(t *testing.T) {
+	x := &recordingExec{err: exitError(4), stdout: `{"smartctl":{"exit_status":4},"nvme_smart_health_information_log":{"percentage_used":7}}`}
+	r := NewSMARTReader(x)
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if s := disks[0].SMART; s == nil || s.Error != "" || s.WearUsedPercent == nil || *s.WearUsedPercent != 7 {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestNoOutputAndNoErrorIsAFailedRead(t *testing.T) {
+	x := &recordingExec{}
+	r := NewSMARTReader(x)
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if s := disks[0].SMART; s == nil || s.Error == "" {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// A report that says nothing, next to a failure, is the failure.
+func TestAnEmptyReportWithAnErrorKeepsTheError(t *testing.T) {
+	for _, stdout := range []string{"null", "{}"} {
+		x := &recordingExec{err: errors.New("boom"), stdout: stdout}
+		r := NewSMARTReader(x)
+		disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+		r.Annotate(disks)
+		waitFor(t, r, disks)
+		if s := disks[0].SMART; s == nil || !strings.Contains(s.Error, "boom") {
+			t.Fatalf("%s: %+v", stdout, s)
+		}
+	}
+}
+
 func TestSmartctlsOwnWordsReachTheError(t *testing.T) {
 	x := &recordingExec{err: exitError(2), stdout: `{"smartctl":{"exit_status":2,"messages":[{"string":"Smartctl open device failed"}]}}`}
 	r := NewSMARTReader(x)
@@ -355,29 +429,29 @@ func TestAPathOffThePatternIsNeverRun(t *testing.T) {
 	if len(x.calls) != 0 {
 		t.Fatalf("%q", x.calls)
 	}
-	if disks[0].SMART != nil {
+	if disks[0].SMART == nil || disks[0].SMART.Error == "" {
 		t.Fatalf("%+v", disks[0].SMART)
-	}
-	// And read() refuses it by itself, should the filter above it go.
-	if s := r.read(&disks[0]); s.Error == "" || len(x.calls) != 0 {
-		t.Fatalf("%+v %q", s, x.calls)
 	}
 }
 
 func TestFailuresAreStatesAndLeaveNoFigure(t *testing.T) {
-	for name, err := range map[string]error{
-		"absent":  exitError(127),
-		"timeout": exitError(124),
-		"busy":    errBusy,
-		"other":   errors.New("boom"),
+	for name, tt := range map[string]struct {
+		err  error
+		says string
+	}{
+		"absent":  {exitError(127), "not found"},
+		"timeout": {exitError(124), "timed out"},
+		"killed":  {exitError(137), "timed out"},
+		"busy":    {errBusy, errBusy.Error()},
+		"other":   {errors.New("boom"), "boom"},
 	} {
-		x := &recordingExec{err: err}
+		x := &recordingExec{err: tt.err}
 		r := NewSMARTReader(x)
 		disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
 		r.Annotate(disks)
 		waitFor(t, r, disks)
 		s := disks[0].SMART
-		if s == nil || s.Error == "" || s.WearUsedPercent != nil || s.Passed != nil {
+		if s == nil || !strings.Contains(s.Error, tt.says) || s.WearUsedPercent != nil || s.Passed != nil {
 			t.Errorf("%s: %+v", name, s)
 		}
 	}

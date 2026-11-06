@@ -503,6 +503,52 @@ func TestASilentAgentsFigureClearsNoBMCAlert(t *testing.T) {
 	}
 }
 
+// False takes a read. An agent gone silent leaves only the BMC to speak.
+func TestASilentAgentLeavesADiskOffTheBMCUnknown(t *testing.T) {
+	old := metav1.NewTime(now.Add(-AgentSilentAfter - time.Minute))
+	offBMC := framev1beta1.ObservedDisk{SerialNumber: "OFF-BMC", Rotational: new(false)}
+	for name, disk := range map[string]framev1beta1.ObservedDisk{
+		"last figure": {SerialNumber: "OFF-BMC", Rotational: new(false), SMART: &framev1beta1.DiskSMART{WearUsedPercent: new(int32(79))}},
+		"no figure":   offBMC,
+	} {
+		st := healthyStatus()
+		st.Storage.ObservedAt = &old
+		st.Storage.Observed = []framev1beta1.ObservedDisk{disk}
+		if v := Assess(st, defaults, true, nil, now).Verdict(CheckWearHigh, nil); v.Status != "Unknown" {
+			t.Errorf("%s: %+v", name, v)
+		}
+	}
+	// The BMC's own disk keeps its figure, and a spinning one owes none.
+	st := healthyStatus()
+	st.Storage.ObservedAt = &old
+	st.Storage.Observed = []framev1beta1.ObservedDisk{
+		{SerialNumber: "S-A", Rotational: new(false)},
+		{SerialNumber: "HDD", Rotational: new(true)},
+	}
+	if v := Assess(st, defaults, true, nil, now).Verdict(CheckWearHigh, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+// A solid-state disk not read yet, or that cannot be, is not a healthy one.
+func TestASolidStateDiskWithoutAReadIsNeverHealthy(t *testing.T) {
+	st := healthyStatus()
+	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "EMMC", Rotational: new(false)}}
+	a := Assess(st, defaults, true, nil, now)
+	for _, check := range []string{CheckDegraded, CheckWearHigh} {
+		if v := a.Verdict(check, nil); v.Status != "Unknown" {
+			t.Errorf("%s: %+v", check, v)
+		}
+	}
+	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "HDD", Rotational: new(true)}}
+	a = Assess(st, defaults, true, nil, now)
+	for _, check := range []string{CheckDegraded, CheckWearHigh} {
+		if v := a.Verdict(check, nil); v.Status != "False" {
+			t.Errorf("%s: %+v", check, v)
+		}
+	}
+}
+
 // A disk that answered nothing on its health is no better than one unread.
 func TestAnEmptySMARTReportIsNeverHealthy(t *testing.T) {
 	st := healthyStatus()

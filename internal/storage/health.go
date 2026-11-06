@@ -377,6 +377,16 @@ func (a *Assessment) smartReportsWear(s *framev1beta1.MachineStorage, serial str
 	return false
 }
 
+func solidState(d *framev1beta1.ObservedDisk) bool {
+	return d.Rotational != nil && !*d.Rotational
+}
+
+// wearOwed says a solid-state disk needs its own figure and assessDrives, which
+// counts the SSDs it lists, has not counted it.
+func wearOwed(bmc *framev1beta1.DriveInfo) bool {
+	return bmc == nil || (bmc.SSDEnduranceUsedPercent == nil && bmc.MediaType != "SSD")
+}
+
 func bmcDrive(inv *framev1beta1.MachineInventory, serial string) *framev1beta1.DriveInfo {
 	if inv == nil {
 		return nil
@@ -392,7 +402,16 @@ func bmcDrive(inv *framev1beta1.MachineInventory, serial string) *framev1beta1.D
 // assessSMART reads what the disks say of themselves. Wear only where the BMC
 // gives none: one figure per disk, and the BMC's comes first.
 func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1beta1.MachineInventory, t Thresholds, open Open) {
-	if _, unread := a.Unread[ScopeSMART]; unread || s == nil {
+	if s == nil {
+		return
+	}
+	if _, unread := a.Unread[ScopeSMART]; unread {
+		// Nothing current from the agent: only the BMC can speak for a disk now.
+		for i := range s.Observed {
+			if d := &s.Observed[i]; solidState(d) && wearOwed(bmcDrive(inv, d.SerialNumber)) {
+				a.WearUnreported++
+			}
+		}
 		return
 	}
 	listed := make([]string, 0, len(s.Observed))
@@ -400,7 +419,10 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		d := &s.Observed[i]
 		listed = append(listed, d.SerialNumber)
 		wear, health := Key{CheckWearHigh, d.SerialNumber}, Key{CheckDegraded, d.SerialNumber}
-		if d.SMART != nil && d.SMART.Passed == nil {
+		// A disk the reader owes a read to, or one that gave nothing. A spinning
+		// disk is not read: no block, and nothing owed.
+		owed := d.SMART != nil || solidState(d)
+		if owed && (d.SMART == nil || d.SMART.Passed == nil) {
 			a.SMARTSilent = append(a.SMARTSilent, d.SerialNumber)
 		}
 		// No read, a failed one, or a disk silent on this: nothing to clear on.
@@ -419,8 +441,7 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 			if open.has(wear) {
 				a.Held[wear] = true
 			}
-			// assessDrives has counted the SSDs it lists.
-			if d.SMART != nil && (bmc == nil || bmc.MediaType != "SSD") {
+			if owed && wearOwed(bmc) {
 				a.WearUnreported++
 			}
 		case *d.SMART.WearUsedPercent >= t.SSDWearPercent:
@@ -483,7 +504,7 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 		return Verdict{"Unknown", "ReadUnavailable", clipRunes(strings.Join(unread, "; "), maxConditionMessage)}
 	}
 	if check == CheckWearHigh && a.WearUnreported > 0 {
-		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("neither the BMC nor the disk gives an endurance figure for %d SSD(s)", a.WearUnreported)}
+		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("no current endurance figure for %d SSD(s)", a.WearUnreported)}
 	}
 	return Verdict{"False", "Healthy", ""}
 }
