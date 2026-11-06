@@ -391,10 +391,16 @@ raises an alert nor clears one, whatever the last lists said:
 not import reads the same as a pool destroyed on purpose, and a disk the BMC
 failed to return the same as one pulled. So an alert stays open, `LastReadHeld`,
 when its device is missing from the list (a stack gone `absent` included), when
-the field it rests on is empty, or when a new scrub leaves no error count. To
-close the alert of a device removed on purpose, delete its FrameAlert:
-subscribers get no resolution for it. Deleting the machine resolves its alerts,
-even if the manager was down at the time.
+the field it rests on is empty, or when a new scrub leaves no error count.
+Deleting the machine resolves its alerts, even if the manager was down at the
+time.
+
+To close the alert of a device removed on purpose, an admin uses "Removed on
+purpose" in Storage → Health, after a confirmation. That writes
+`spec.alertRelease` on the FrameMachine, the admin-only patch that carries power
+actions, and leaves a FrameTask. The controller acts on it once, sends subscribers
+a real resolution, and records the outcome in `status.lastAlertRelease`. It closes
+only what a read is holding: an alert the current read confirms stays open.
 
 A list known to be partial gives `Unknown`, reason `ReadUnavailable`, when nothing
 is wrong in what it shows: the agent's lists past their limit, a vdev tree cut, a

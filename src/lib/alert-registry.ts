@@ -16,6 +16,7 @@ export type RegistryAlert = {
   startsAt: string
   endsAt: string
   deliveries: AlertDeliveryView[]
+  labels: Record<string, string>
 }
 
 export type AlertSubscriptionHealth = {
@@ -29,7 +30,7 @@ export type AlertSubscriptionHealth = {
 
 type RawAlert = {
   metadata?: { name?: string }
-  spec?: { fingerprint?: string; alertName?: string; severity?: string; namespace?: string; startsAt?: string; endsAt?: string }
+  spec?: { fingerprint?: string; alertName?: string; severity?: string; namespace?: string; startsAt?: string; endsAt?: string; labels?: Record<string, string> }
   status?: {
     state?: string
     deliveries?: { subscription?: string; deliveredState?: string; lastError?: string; permanentFailure?: boolean; excluded?: boolean }[]
@@ -50,6 +51,7 @@ export function projectAlerts(items: unknown[]): RegistryAlert[] {
         state,
         startsAt: i.spec?.startsAt ?? '',
         endsAt: i.spec?.endsAt ?? '',
+        labels: i.spec?.labels ?? {},
         // Excluded deliveries were recorded without ever being sent (the
         // subscription's filter did not match when the alert resolved) —
         // spec §5.3: they must not appear as a badge the tenant never saw.

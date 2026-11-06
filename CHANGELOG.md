@@ -14,8 +14,9 @@ release tags follow [Semantic Versioning](https://semver.org/).
   relay to every subscription whose filter takes them. A stack in `error` or
   `busy`, a silent agent or a stale inventory neither raises nor clears
   anything: an open alert stays, otherwise the condition is `Unknown`. A device
-  missing from a read keeps its alert too, until it reads healthy or someone
-  deletes the FrameAlert.
+  missing from a read keeps its alert too, until it reads healthy or an admin
+  declares it removed on purpose (`spec.alertRelease`), which sends subscribers
+  a real resolution.
 - New cluster-scoped singleton `StorageHealthPolicy` (`default`) holds the
   thresholds, 80 % for ZFS capacity and SSD wear unless set, with the three
   RBAC tiers. **Upgrade:** the CRD and the manager's role ship with the chart;

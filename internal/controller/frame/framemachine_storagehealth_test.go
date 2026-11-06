@@ -462,6 +462,82 @@ var _ = Describe("FrameMachine storage health", func() {
 		Expect(alert(storage.CheckDegraded, "md0").ResourceVersion).To(Equal(firstAlert.ResourceVersion))
 	})
 
+	Describe("spec.alertRelease", func() {
+		release := func(device string, at time.Time) {
+			GinkgoHelper()
+			var fm framev1beta1.FrameMachine
+			Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+			fm.Spec.AlertRelease = &framev1beta1.AlertReleaseRequest{Device: device, RequestedAt: metav1.NewTime(at)}
+			Expect(k8sClient.Update(ctx, &fm)).To(Succeed())
+		}
+		heldPool := func() {
+			GinkgoHelper()
+			degraded := pool(50)
+			degraded.Pools[0].Health = "DEGRADED"
+			report(cleanMD(), degraded)
+			reconcile()
+			report(cleanMD(), noZFS)
+			reconcile()
+			Expect(condition(storage.CheckDegraded).Reason).To(Equal("LastReadHeld"))
+		}
+		result := func() string {
+			GinkgoHelper()
+			var fm framev1beta1.FrameMachine
+			Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+			return fm.Status.LastAlertRelease
+		}
+
+		It("closes a held alert with a real resolution, and the condition follows", func() {
+			heldPool()
+			release("tank", time.Now())
+			reconcile()
+			fa := alert(storage.CheckDegraded, "tank")
+			Expect(fa.Status.State).To(Equal(framev1beta1.AlertStateResolved))
+			Expect(fa.Spec.EndsAt).NotTo(BeNil())
+			Expect(condition(storage.CheckDegraded).Status).To(Equal(metav1.ConditionFalse))
+			Expect(result()).To(ContainSubstring("1 alert(s) closed"))
+
+			// The pool coming back broken is a new incident.
+			degraded := pool(50)
+			degraded.Pools[0].Health = "FAULTED"
+			report(cleanMD(), degraded)
+			reconcile()
+			Expect(state(storage.CheckDegraded, "tank")).To(Equal(framev1beta1.AlertStateFiring))
+		})
+
+		It("keeps an alert the current read confirms", func() {
+			report(failedMD(), noZFS)
+			reconcile()
+			release("md0", time.Now())
+			reconcile()
+			Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
+			Expect(result()).To(ContainSubstring("1 kept"))
+		})
+
+		It("touches no other device", func() {
+			heldPool()
+			release("other", time.Now())
+			reconcile()
+			Expect(state(storage.CheckDegraded, "tank")).To(Equal(framev1beta1.AlertStateFiring))
+			Expect(result()).To(ContainSubstring("0 alert(s) closed"))
+		})
+
+		It("acts once: a stale request does not close the next incident", func() {
+			heldPool()
+			at := time.Now().Add(-time.Minute)
+			release("tank", at)
+			reconcile()
+
+			degraded := pool(50)
+			degraded.Pools[0].Health = "FAULTED"
+			report(cleanMD(), degraded)
+			reconcile()
+			report(cleanMD(), noZFS)
+			reconcile()
+			Expect(state(storage.CheckDegraded, "tank")).To(Equal(framev1beta1.AlertStateFiring))
+		})
+	})
+
 	It("resolves what a deleted machine leaves open", func() {
 		report(failedMD(), noZFS)
 		reconcile()

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -86,6 +87,9 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 
 	now := time.Now()
 	a := storage.Assess(&fm.Status, storage.ThresholdsFrom(policy), inventoryFresh, open, now)
+	if err := r.releaseStorageAlerts(ctx, fm, &a, alerts, open); err != nil {
+		log.Error(err, "Releasing storage alerts; next pass tries again", "machine", key)
+	}
 	if err := r.writeStorageAlerts(ctx, fm, &a, alerts); err != nil {
 		log.Error(err, "Writing storage alerts; next pass tries again", "machine", key)
 	}
@@ -99,6 +103,45 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 			ObservedGeneration: fm.Generation,
 		})
 	}
+}
+
+// releaseStorageAlerts acts on spec.alertRelease, once. It closes only what a
+// read is holding open, with a real resolution for the subscribers: an admin
+// saying a device was removed on purpose is the one thing no read can say. An
+// alert the current read confirms stays, whatever the request says.
+func (r *FrameMachineReconciler) releaseStorageAlerts(ctx context.Context, fm *framev1beta1.FrameMachine,
+	a *storage.Assessment, alerts map[storage.Key]*framev1beta1.FrameAlert, open storage.Open) error {
+	req := fm.Spec.AlertRelease
+	if req == nil || r.Alerts == nil {
+		return nil
+	}
+	if last := fm.Status.LastAlertReleaseAt; last != nil && !req.RequestedAt.After(last.Time) {
+		return nil
+	}
+	firing := make(map[storage.Key]bool, len(a.Findings))
+	for i := range a.Findings {
+		firing[a.Findings[i].Key] = true
+	}
+	closed, kept := 0, 0
+	for k, fa := range alerts {
+		switch {
+		case k.Device != req.Device:
+		case firing[k]:
+			kept++
+		case a.Keeps(k, open[k]):
+			if err := r.resolveStorageAlert(ctx, fa); err != nil {
+				return err
+			}
+			delete(alerts, k)
+			delete(open, k)
+			closed++
+		}
+	}
+	stamp := metav1.Now()
+	fm.Status.LastAlertReleaseAt = &stamp
+	fm.Status.LastAlertRelease = truncateString(
+		fmt.Sprintf("%s: %d alert(s) closed, %d kept because a read still shows them", req.Device, closed, kept), 256)
+	return nil
 }
 
 // openStorageAlerts lists what fires for this machine, and closes on the way

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { checkVerdicts, DEFAULT_STORAGE_THRESHOLDS, mirrorRows, readingNotes, toThresholds, validThreshold } from './storage-health'
+import { alertReleaseBody, checkVerdicts, DEFAULT_STORAGE_THRESHOLDS, heldDevices, mirrorRows, readingNotes, toThresholds, validThreshold } from './storage-health'
+import type { RegistryAlert } from './alert-registry'
 import { toMachine } from './machines'
 import { hwMachine } from './testdata/ceph-cluster'
 import { g9Local, zfsLocal } from './testdata/local-storage'
@@ -113,6 +114,49 @@ describe('readingNotes', () => {
     const m = machine(local)
     m.storage!.observedAt = fresh
     expect(readingNotes(m, now)[0]).toContain('2 array(s)')
+  })
+})
+
+describe('heldDevices', () => {
+  const alert = (over: Partial<RegistryAlert>, labels: Record<string, string> = {}): RegistryAlert => ({
+    name: 'fa', fingerprint: 'f', alertName: 'StorageDegraded', severity: 'critical', namespace: '', state: 'Firing',
+    startsAt: '', endsAt: '', deliveries: [],
+    labels: { source: 'frame-storage-health', machine: 'm', machine_namespace: 'd', device: 'tank', ...labels },
+    ...over,
+  })
+  const m = () => {
+    const x = machine(g9Local(), [{ type: 'StorageDegraded', status: 'True', reason: 'LastReadHeld' }])
+    x.name = 'm'
+    x.namespace = 'd'
+    return x
+  }
+
+  it('regroupe par périphérique ce qui est tenu', () => {
+    const x = m()
+    x.storageConditions.push({ type: 'ScrubErrors', status: 'True', reason: 'LastReadHeld' })
+    expect(heldDevices(x, [alert({}), alert({ alertName: 'ScrubErrors' })])).toEqual([{ device: 'tank', checks: ['StorageDegraded', 'ScrubErrors'] }])
+  })
+
+  it('ne propose pas une alerte que la lecture confirme', () => {
+    const x = machine(g9Local(), [{ type: 'StorageDegraded', status: 'True', reason: 'Detected' }])
+    x.name = 'm'
+    x.namespace = 'd'
+    expect(heldDevices(x, [alert({})])).toEqual([])
+  })
+
+  it('ignore les autres machines, les alertes closes et Alertmanager', () => {
+    expect(heldDevices(m(), [
+      alert({}, { machine: 'autre' }),
+      alert({}, { machine_namespace: 'autre' }),
+      alert({ state: 'Resolved' }),
+      alert({}, { source: 'alertmanager' }),
+    ])).toEqual([])
+  })
+
+  it('date la demande pour que le contrôleur agisse une fois', () => {
+    const b = alertReleaseBody('tank')
+    expect(b.spec.alertRelease.device).toBe('tank')
+    expect(Date.parse(b.spec.alertRelease.requestedAt)).not.toBeNaN()
   })
 })
 

@@ -1449,6 +1449,21 @@ describe('StorageHealthPolicyClient', () => {
 })
 
 describe('MachineClient', () => {
+  it('declares a device removed as a merge-patch the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    await createFrameClient().machines.releaseAlert({ name: 'm', namespace: 'default' } as Machine, 'tank')
+    vi.unstubAllGlobals()
+    expect(calls[0].url).toBe('/apis/frame.plume-labs.io/v1beta1/namespaces/default/framemachines/m')
+    expect(calls[0].init?.method).toBe('PATCH')
+    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('device removed: tank on m')
+    expect(JSON.parse(String(calls[0].init?.body)).spec.alertRelease.device).toBe('tank')
+  })
+
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('lists machines mapped through toMachine, sorted by name', async () => {

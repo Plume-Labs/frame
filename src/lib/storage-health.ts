@@ -7,6 +7,7 @@
 // which array or pool the condition is about.
 
 import { agentFreshness } from './disk-inventory'
+import type { RegistryAlert } from './alert-registry'
 import type { Machine } from './machines'
 import type { Tone } from './thresholds'
 
@@ -149,4 +150,31 @@ export function readingNotes(machine: Machine, now: number): string[] {
   const cut = (storage.local.md.arraysOmitted ?? 0) + (storage.local.zfs.poolsOmitted ?? 0)
   if (cut > 0) notes.push(`${cut} array(s) or pool(s) past the agent's list limit are not shown.`)
   return notes
+}
+
+export interface HeldDevice {
+  device: string
+  checks: string[]
+}
+
+/**
+ * Devices with an alert open while its check reads LastReadHeld: what a person
+ * may declare removed. A device a read confirms may still appear when another
+ * device holds the same check; the controller keeps its alert and says so.
+ */
+export function heldDevices(machine: Machine, alerts: RegistryAlert[]): HeldDevice[] {
+  const held = new Set(machine.storageConditions.filter((c) => c.reason === 'LastReadHeld').map((c) => c.type))
+  const byDevice = new Map<string, string[]>()
+  for (const a of alerts) {
+    const l = a.labels
+    if (a.state !== 'Firing' || l.source !== 'frame-storage-health') continue
+    if (l.machine !== machine.name || l.machine_namespace !== machine.namespace || !held.has(a.alertName)) continue
+    byDevice.set(l.device, [...(byDevice.get(l.device) ?? []), a.alertName])
+  }
+  return [...byDevice].map(([device, checks]) => ({ device, checks })).sort((a, b) => a.device.localeCompare(b.device))
+}
+
+/** Stamped like a power request: the controller acts once per moment. */
+export function alertReleaseBody(device: string): { spec: { alertRelease: { device: string; requestedAt: string } } } {
+  return { spec: { alertRelease: { device, requestedAt: new Date().toISOString() } } }
 }

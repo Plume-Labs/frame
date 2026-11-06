@@ -42,6 +42,7 @@ import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
 import {
+  alertReleaseBody,
   DEFAULT_STORAGE_THRESHOLDS,
   STORAGE_HEALTH_POLICY_NAME,
   toThresholds,
@@ -3626,6 +3627,16 @@ class MachineClient {
   /** For `useLiveResource`, so the console watches the same collection it reads. */
   watchPath(): string {
     return machinesPath(this.ns)
+  }
+
+  /** Admin only, like power: the same patch on the same object. */
+  async releaseAlert(machine: Machine, device: string): Promise<void> {
+    await k8sFetch<undefined>(`${machinesPath(machine.namespace)}/${machine.name}`, {
+      action: `device removed: ${device} on ${machine.name}`.slice(0, MAX_ACTION_LENGTH),
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: alertReleaseBody(device),
+    })
   }
 
   async power(machine: Machine, action: string): Promise<void> {

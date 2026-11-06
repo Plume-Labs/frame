@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { createFrameClient } from '@/lib/frame-sdk'
+import type { RegistryAlert } from '@/lib/alert-registry'
+import { isAdminToken } from '@/lib/auth'
+import { alertRegistryPath, createFrameClient } from '@/lib/frame-sdk'
 import type { Machine } from '@/lib/machines'
-import { checkVerdicts, mirrorRows, readingNotes, StorageThresholds, validThreshold } from '@/lib/storage-health'
+import { checkVerdicts, heldDevices, mirrorRows, readingNotes, StorageThresholds, validThreshold } from '@/lib/storage-health'
 import { TONE_TEXT } from '@/lib/thresholds'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -93,7 +105,45 @@ function ThresholdsCard() {
   )
 }
 
-function MachineHealthCard({ machine }: { machine: Machine }) {
+/** Admin only: says what no read can, and the alert closes for the subscribers too. */
+function ReleaseDevice({ machine, device, checks }: { machine: Machine; device: string; checks: string[] }) {
+  const [confirming, setConfirming] = useState(false)
+  async function release() {
+    setConfirming(false)
+    try {
+      await frame.machines.releaseAlert(machine, device)
+      toast.success(`${device}: declared removed`)
+    } catch (e) {
+      toast.error(`Échec : ${device}`, { description: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-border p-2">
+      <span className="font-bold">{device}</span>
+      <span className="text-muted-foreground">{checks.join(', ')} held, no read mentions it</span>
+      <Button variant="outline" size="sm" className="ml-auto" onClick={() => setConfirming(true)}>
+        Removed on purpose
+      </Button>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Was {device} removed on purpose?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This closes its alerts and tells subscribers the incident is resolved. A pool a reboot failed to import looks the
+              same: check before confirming. An alert a read still shows stays open.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={release}>Close the alerts</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alerts: RegistryAlert[]; admin: boolean }) {
   const rows = mirrorRows(machine)
   const attention = checkVerdicts(machine).filter((v) => v.detail)
   return (
@@ -123,6 +173,8 @@ function MachineHealthCard({ machine }: { machine: Machine }) {
             {n}
           </p>
         ))}
+        {admin &&
+          heldDevices(machine, alerts).map((h) => <ReleaseDevice key={h.device} machine={machine} device={h.device} checks={h.checks} />)}
         {attention.map((v) => (
           <p key={v.type} className={TONE_TEXT[v.tone]}>
             {v.label}: {v.detail}
@@ -136,6 +188,11 @@ function MachineHealthCard({ machine }: { machine: Machine }) {
 /** Storage health per machine and per mirror, and the thresholds that alert on it. */
 export function StorageHealthView() {
   const { state } = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
+  const { state: alertState } = useLiveResource<RegistryAlert[]>(() => frame.cluster.alertRegistry(), [], [alertRegistryPath()])
+  const alerts = alertState.phase === 'ready' ? alertState.data : []
+  // Hides the button only: patch on framemachines is what is admin-only.
+  const token = (globalThis as Record<string, unknown>).__FRAME_TOKEN__
+  const admin = typeof token === 'string' ? isAdminToken(token) : false
   return (
     <div className="space-y-6">
       <ThresholdsCard />
@@ -143,7 +200,7 @@ export function StorageHealthView() {
       {state.phase === 'ready' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {state.data.map((m) => (
-            <MachineHealthCard key={`${m.namespace}/${m.name}`} machine={m} />
+            <MachineHealthCard key={`${m.namespace}/${m.name}`} machine={m} alerts={alerts} admin={admin} />
           ))}
         </div>
       )}
