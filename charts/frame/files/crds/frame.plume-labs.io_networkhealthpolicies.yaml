@@ -76,7 +76,9 @@ spec:
                       minLength: 1
                       type: string
                     speedMbps:
-                      description: SpeedMbps replaces MinLinkSpeedMbps for this link.
+                      description: |-
+                        SpeedMbps replaces MinLinkSpeedMbps for this link, a physical port: on a
+                        bond it does nothing, name the bond's ports.
                       format: int32
                       minimum: 1
                       type: integer
@@ -86,6 +88,10 @@ spec:
                   type: object
                 maxItems: 64
                 type: array
+                x-kubernetes-list-map-keys:
+                - node
+                - interface
+                x-kubernetes-list-type: map
               minLinkSpeedMbps:
                 default: 1000
                 description: MinLinkSpeedMbps raises LinkSpeedLow on a physical link

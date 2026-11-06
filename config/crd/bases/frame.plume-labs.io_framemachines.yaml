@@ -591,6 +591,11 @@ spec:
                         membersOmitted:
                           format: int32
                           type: integer
+                        membersUnread:
+                          description: |-
+                            MembersUnread says the bond's list could not be read: an empty Members
+                            then says nothing.
+                          type: boolean
                         miiStatus:
                           maxLength: 16
                           type: string

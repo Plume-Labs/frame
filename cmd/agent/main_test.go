@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/agent"
 )
 
 // fakeRunner is a CommandRunner that records every invocation and never
@@ -323,7 +324,7 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 		`"fstype":null,"mountpoint":null}` +
 		`]}`}
 
-	tick(context.Background(), kc, "node-1", root, runner, nil)
+	tick(context.Background(), kc, "node-1", root, runner, nil, agent.NewNetworkCollector(root))
 
 	var got framev1beta1.FrameMachine
 	if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {

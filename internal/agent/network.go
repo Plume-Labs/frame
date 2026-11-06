@@ -17,11 +17,14 @@ limitations under the License.
 package agent
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +38,8 @@ import (
 // /sys here is the host's mount, and sysfs carries the same bonding state.
 //
 // Physical ports are the entries with a device link; veth, flannel and bridges
-// come and go with pods and say nothing about the machine.
+// come and go with pods and say nothing about the machine, and an SR-IOV virtual
+// function, which has a device link too, would push real ports past the limit.
 
 const (
 	sysClassNet = "sys/class/net"
@@ -45,6 +49,51 @@ const (
 	maxBondMembers = 16
 	maxNameLen     = 15
 )
+
+// NetworkCollector reads in the background: speed, duplex and the bond's lists go
+// through the driver, and one that hangs must not hold up the agent's tick. A read
+// that never returns leaves the last report to age, which the controller sees.
+type NetworkCollector struct {
+	read func() *framev1beta1.MachineNetwork
+
+	mu      sync.Mutex
+	last    *framev1beta1.MachineNetwork
+	running chan struct{}
+}
+
+// NewNetworkCollector reads root's links.
+func NewNetworkCollector(root string) *NetworkCollector {
+	return &NetworkCollector{read: func() *framev1beta1.MachineNetwork { return ObserveNetwork(root, time.Now()) }}
+}
+
+// Latest returns the newest report, waiting at most wait for a read started now
+// or already running. nil only before the first read has ever finished.
+func (c *NetworkCollector) Latest(wait time.Duration) *framev1beta1.MachineNetwork {
+	c.mu.Lock()
+	done := c.running
+	if done == nil {
+		done = make(chan struct{})
+		c.running = done
+		go func() {
+			res := c.read()
+			c.mu.Lock()
+			c.last, c.running = res, nil
+			c.mu.Unlock()
+			close(done)
+		}()
+	}
+	c.mu.Unlock()
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last.DeepCopy()
+}
 
 // ObserveNetwork reads root's links. It never fails: a tree it cannot read
 // comes back with Error set, which is a state and not an empty node.
@@ -72,6 +121,7 @@ func ObserveNetwork(root string, now time.Time) *framev1beta1.MachineNetwork {
 				continue
 			}
 			out.Bonds = append(out.Bonds, readBond(base, name))
+		case exists(filepath.Join(dir, "device", "physfn")):
 		case exists(filepath.Join(dir, "device")):
 			if len(out.Interfaces) == maxInterfaces {
 				out.InterfacesOmitted++
@@ -83,13 +133,16 @@ func ObserveNetwork(root string, now time.Time) *framev1beta1.MachineNetwork {
 	return out
 }
 
+// exists keeps an entry it cannot look at: unreadable is not absent, and the
+// entry then reads empty, which the controller will not take for healthy.
 func exists(path string) bool {
 	_, err := os.Stat(path)
-	return err == nil
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // text is a sysfs attribute, trimmed. A read error is "": a link that is down
 // answers EINVAL on speed and duplex, which is how the kernel says it has none.
+// So "" is never a state: the controller reads it as nothing known.
 func text(path string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -157,7 +210,14 @@ func readBond(base, name string) framev1beta1.NetworkBond {
 		PortsInAggregator: int32At(attr("ad_num_ports")),
 		PartnerMAC:        clipRunes(text(attr("ad_partner_mac")), 32),
 	}
-	for member := range strings.FieldsSeq(text(attr("slaves"))) {
+	slaves, err := os.ReadFile(attr("slaves"))
+	bond.MembersUnread = err != nil
+	for member := range strings.FieldsSeq(string(slaves)) {
+		// The kernel forbids a slash in a name; a tree that has one is no sysfs.
+		if filepath.Base(member) != member || !filepath.IsLocal(member) {
+			bond.MembersUnread = true
+			continue
+		}
 		if len(bond.Members) == maxBondMembers {
 			bond.MembersOmitted++
 			continue

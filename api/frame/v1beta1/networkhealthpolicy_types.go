@@ -39,7 +39,8 @@ type ExpectedLink struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=15
 	Interface string `json:"interface"`
-	// SpeedMbps replaces MinLinkSpeedMbps for this link.
+	// SpeedMbps replaces MinLinkSpeedMbps for this link, a physical port: on a
+	// bond it does nothing, name the bond's ports.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	SpeedMbps int32 `json:"speedMbps,omitempty"`
@@ -61,6 +62,9 @@ type NetworkHealthPolicySpec struct {
 	MinLinkSpeedMbps int32 `json:"minLinkSpeedMbps,omitempty"`
 
 	// Links are the expectations for named links.
+	// +listType=map
+	// +listMapKey=node
+	// +listMapKey=interface
 	// +kubebuilder:validation:MaxItems=64
 	// +optional
 	Links []ExpectedLink `json:"links,omitempty"`

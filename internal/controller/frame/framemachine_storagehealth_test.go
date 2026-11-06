@@ -33,6 +33,16 @@ func (failingReader) List(context.Context, client.ObjectList, ...client.ListOpti
 	return errors.New("forbidden")
 }
 
+// failingNetPolicy breaks only the NetworkHealthPolicy read.
+type failingNetPolicy struct{ client.Reader }
+
+func (f failingNetPolicy) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*framev1beta1.NetworkHealthPolicy); ok {
+		return errors.New("forbidden")
+	}
+	return f.Reader.Get(ctx, key, obj, opts...)
+}
+
 // failingAlertList breaks only the FrameAlert list.
 type failingAlertList struct{ client.Client }
 
@@ -307,6 +317,14 @@ var _ = Describe("FrameMachine storage health", func() {
 		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
 		Expect(condition(storage.CheckDegraded).Status).To(Equal(metav1.ConditionTrue))
 		Expect(condition(conditionReachable).Status).To(Equal(metav1.ConditionFalse))
+	})
+
+	It("goes on with storage when only the NetworkHealthPolicy cannot be read", func() {
+		report(failedMD(), noZFS)
+		r.PolicyReader = failingNetPolicy{r.Client}
+		reconcile()
+		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
+		Expect(condition(storage.CheckNetDegraded).Status).To(Equal(metav1.ConditionUnknown))
 	})
 
 	It("leaves storage as it was when the open alerts cannot be listed", func() {

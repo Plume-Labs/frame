@@ -33,10 +33,18 @@ import (
 
 const modeLACP = "802.3ad"
 
+// ScopeNetExpected carries what only the policy asked for: a link named there and
+// missing from the node. Unlike a device that left a read, it ends when the policy
+// stops naming it, or a typo in a name would stay open for good.
+const ScopeNetExpected Scope = "network-expected"
+
 // NetExpectations is the NetworkHealthPolicy as it applies to one node.
 type NetExpectations struct {
 	MinSpeedMbps int32
 	Links        map[string]framev1beta1.ExpectedLink
+	// Unread says why the policy could not be read: links are then unassessed,
+	// and storage, which does not depend on it, goes on.
+	Unread string
 }
 
 // NetExpectationsFrom resolves the policy for a node; nil means the default.
@@ -59,15 +67,19 @@ func NetExpectationsFrom(p *framev1beta1.NetworkHealthPolicy, node string) NetEx
 func memberDevice(bond, member string) string { return bond + "/" + member }
 
 func (a *Assessment) assessNetwork(n *framev1beta1.MachineNetwork, e NetExpectations, open Open, now time.Time) {
+	unread := func(why string) { a.Unread[ScopeNet], a.Unread[ScopeNetExpected] = why, why }
 	switch {
+	case e.Unread != "":
+		unread(e.Unread)
+		return
 	case n == nil:
-		a.Unread[ScopeNet] = "the agent has not reported the node's links"
+		unread("the agent has not reported the node's links")
 		return
 	case n.Error != "":
-		a.Unread[ScopeNet] = "read failed: " + n.Error
+		unread("read failed: " + n.Error)
 		return
 	case n.ObservedAt == nil || now.Sub(n.ObservedAt.Time) > AgentSilentAfter:
-		a.Unread[ScopeNet] = "the agent has stopped reporting"
+		unread("the agent has stopped reporting")
 		return
 	}
 
@@ -81,24 +93,49 @@ func (a *Assessment) assessNetwork(n *framev1beta1.MachineNetwork, e NetExpectat
 		for _, m := range n.Bonds[i].Members {
 			listed = append(listed, memberDevice(n.Bonds[i].Name, m.Name))
 		}
-		a.assessBond(&n.Bonds[i], e)
+		a.assessBond(&n.Bonds[i], e, open)
 	}
 
-	cut := n.InterfacesOmitted > 0 || n.BondsOmitted > 0
-	if cut {
+	cut := true
+	switch {
+	case n.InterfacesOmitted > 0 || n.BondsOmitted > 0:
 		a.Cut[ScopeNet] = fmt.Sprintf("%d port(s) and %d bond(s) past the agent's list limit", n.InterfacesOmitted, n.BondsOmitted)
+	case len(listed) == 0:
+		a.Cut[ScopeNet] = "the agent lists no port and no bond"
+	default:
+		cut = false
 	}
 	for name := range e.Links {
-		if !cut && !slices.Contains(listed, name) {
-			a.add(CheckNetDegraded, name, ScopeNet, severityCritical, fmt.Sprintf("expected link %s is not on the node", name))
+		switch key := (Key{CheckNetDegraded, name}); {
+		case slices.Contains(listed, name):
+		case cut:
+			if open.has(key) {
+				a.Held[key] = true
+			}
+		default:
+			a.add(CheckNetDegraded, name, ScopeNetExpected, severityCritical, fmt.Sprintf("expected link %s is not on the node", name))
 		}
 	}
 	a.holdUnlisted(open, ScopeNet, listed)
 }
 
+// unsure is a device listed with a field that says nothing: its alert stays, and
+// nobody can say False about it either.
+func (a *Assessment) unsure(key Key, open Open, why string) {
+	if open.has(key) {
+		a.Held[key] = true
+	}
+	a.Cut[ScopeNet] = why
+}
+
 func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpectations, open Open) {
 	expected, named := e.Links[i.Name]
-	if named && i.OperState != "up" {
+	switch {
+	case !named || i.OperState == "up":
+	// "unknown" is the kernel's own word for a driver that does not track it.
+	case i.OperState == "" || i.OperState == "unknown":
+		a.unsure(Key{CheckNetDegraded, i.Name}, open, fmt.Sprintf("link %s gives no state", i.Name))
+	default:
 		a.add(CheckNetDegraded, i.Name, ScopeNet, severityCritical, fmt.Sprintf("expected link %s is %s", i.Name, i.OperState))
 	}
 
@@ -107,6 +144,9 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 		// A link that is down has no speed: it says nothing of the last one.
 		if open.has(key) {
 			a.Held[key] = true
+		}
+		if i.OperState == "up" {
+			a.SpeedUnreported++
 		}
 		return
 	}
@@ -120,13 +160,23 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 	}
 }
 
-func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations) {
-	if b.MIIStatus != "" && b.MIIStatus != "up" {
-		a.add(CheckNetDegraded, b.Name, ScopeNet, severityCritical, fmt.Sprintf("bond %s is %s", b.Name, b.MIIStatus))
+func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations, open Open) {
+	key := Key{CheckNetDegraded, b.Name}
+	var bad []string
+	switch b.MIIStatus {
+	case "up":
+	case "":
+		a.unsure(key, open, fmt.Sprintf("bond %s gives no status", b.Name))
+	default:
+		bad = append(bad, "is "+b.MIIStatus)
 	}
-	if want := e.Links[b.Name].Members; want > 0 && int32(len(b.Members))+b.MembersOmitted < want {
-		a.add(CheckNetDegraded, b.Name, ScopeNet, severityCritical,
-			fmt.Sprintf("bond %s holds %d member(s), %d expected", b.Name, len(b.Members), want))
+	if want := e.Links[b.Name].Members; b.MembersUnread {
+		a.unsure(key, open, fmt.Sprintf("bond %s: its members could not be read", b.Name))
+	} else if want > 0 && int32(len(b.Members))+b.MembersOmitted < want {
+		bad = append(bad, fmt.Sprintf("holds %d member(s), %d expected", len(b.Members), want))
+	}
+	if len(bad) > 0 {
+		a.add(CheckNetDegraded, b.Name, ScopeNet, severityCritical, fmt.Sprintf("bond %s %s", b.Name, strings.Join(bad, ", ")))
 	}
 	if b.MembersOmitted > 0 {
 		a.Cut[ScopeNet] = fmt.Sprintf("bond %s: %d member(s) past the agent's list limit", b.Name, b.MembersOmitted)
@@ -137,14 +187,19 @@ func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations) 
 		if m.MIIStatus != "" && m.MIIStatus != "up" {
 			problems = append(problems, "link "+m.MIIStatus)
 		}
+		// An aggregator of 0 is a read that failed, "N/A", or none yet.
+		silent := m.MIIStatus == "" || b.Mode == "" || (b.Mode == modeLACP && (b.AggregatorID == 0 || m.AggregatorID == 0))
 		// A port in another aggregator has link and carries nothing: LACP did
 		// not bundle it, usually the switch side.
 		if b.Mode == modeLACP && b.AggregatorID > 0 && m.AggregatorID > 0 && m.AggregatorID != b.AggregatorID {
 			problems = append(problems, fmt.Sprintf("in aggregator %d, the bond uses %d", m.AggregatorID, b.AggregatorID))
 		}
-		if len(problems) > 0 {
-			a.add(CheckNetDegraded, memberDevice(b.Name, m.Name), ScopeNet, severityWarning,
+		switch device := memberDevice(b.Name, m.Name); {
+		case len(problems) > 0:
+			a.add(CheckNetDegraded, device, ScopeNet, severityWarning,
 				fmt.Sprintf("bond %s member %s: %s", b.Name, m.Name, strings.Join(problems, ", ")))
+		case silent:
+			a.unsure(Key{CheckNetDegraded, device}, open, fmt.Sprintf("bond %s member %s gives no status", b.Name, m.Name))
 		}
 	}
 }

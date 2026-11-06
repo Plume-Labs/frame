@@ -134,6 +134,7 @@ export interface NetworkBond {
   partnerMAC?: string
   members?: BondMember[]
   membersOmitted?: number
+  membersUnread?: boolean
 }
 
 export interface MachineNetwork {

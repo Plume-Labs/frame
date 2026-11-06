@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 // write lays out a file under root, the way sysfs presents it.
@@ -115,6 +117,170 @@ func TestListsPastTheirLimitAreCounted(t *testing.T) {
 func TestUnreadableTreeIsAStateNotAnEmptyNode(t *testing.T) {
 	got := ObserveNetwork(filepath.Join(t.TempDir(), "absent"), time.Now())
 	if got.Error == "" || got.ObservedAt == nil {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAMemberListThatCannotBeReadIsSaid(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{"sys/class/net/bond0/bonding/mode": "802.3ad 4"})
+	if b := ObserveNetwork(root, time.Now()).Bonds[0]; !b.MembersUnread {
+		t.Fatalf("%+v", b)
+	}
+	write(t, root, map[string]string{"sys/class/net/bond0/bonding/slaves": ""})
+	if b := ObserveNetwork(root, time.Now()).Bonds[0]; b.MembersUnread || len(b.Members) != 0 {
+		t.Fatalf("an empty bond is a read: %+v", b)
+	}
+}
+
+func TestAMemberNameCannotLeaveTheTree(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"sys/class/net/bond0/bonding/slaves": "../../../etc .. etc/bonding_slave eno1",
+		"etc/bonding_slave/state":            "secret",
+	})
+	b := ObserveNetwork(root, time.Now()).Bonds[0]
+	if len(b.Members) != 1 || b.Members[0].Name != "eno1" || !b.MembersUnread {
+		t.Fatalf("%+v", b)
+	}
+}
+
+func TestVirtualFunctionsAreNotPorts(t *testing.T) {
+	root := t.TempDir()
+	port(t, root, "ens2f0", nil)
+	for i := range maxInterfaces + 8 {
+		port(t, root, "a"+strconv.Itoa(i), map[string]string{"device/physfn/vendor": "0x8086"})
+	}
+	got := ObserveNetwork(root, time.Now())
+	if len(got.Interfaces) != 1 || got.Interfaces[0].Name != "ens2f0" || got.InterfacesOmitted != 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAnEntryThatCannotBeLookedAtIsNotAbsent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through the mode")
+	}
+	root := t.TempDir()
+	port(t, root, "eno1", nil)
+	dir := filepath.Join(root, sysClassNet, "eno1")
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	got := ObserveNetwork(root, time.Now())
+	if len(got.Bonds)+len(got.Interfaces) != 1 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestBondsPastTheirLimitAreCounted(t *testing.T) {
+	root := t.TempDir()
+	for i := range maxBonds + 2 {
+		write(t, root, map[string]string{"sys/class/net/bond" + strconv.Itoa(i) + "/bonding/slaves": ""})
+	}
+	got := ObserveNetwork(root, time.Now())
+	if len(got.Bonds) != maxBonds || got.BondsOmitted != 2 {
+		t.Fatalf("%d %d", len(got.Bonds), got.BondsOmitted)
+	}
+}
+
+// One value past its CRD bound gets the whole status refused.
+func TestValuesFitTheirFields(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	root := t.TempDir()
+	port(t, root, "eno1", map[string]string{"operstate": long, "duplex": long})
+	write(t, root, map[string]string{
+		"sys/class/net/bond0/bonding/mode":            long,
+		"sys/class/net/bond0/bonding/mii_status":      long,
+		"sys/class/net/bond0/bonding/ad_partner_mac":  long,
+		"sys/class/net/bond0/bonding/slaves":          "eno1",
+		"sys/class/net/eno1/bonding_slave/mii_status": long,
+		"sys/class/net/eno1/bonding_slave/state":      long,
+	})
+	got := ObserveNetwork(root, time.Now())
+	i, b := got.Interfaces[0], got.Bonds[0]
+	m := b.Members[0]
+	for name, tt := range map[string]struct {
+		s   string
+		max int
+	}{
+		"operstate": {i.OperState, 32}, "duplex": {i.Duplex, 16}, "mode": {b.Mode, 32}, "bond mii": {b.MIIStatus, 16},
+		"partner": {b.PartnerMAC, 32}, "member mii": {m.MIIStatus, 16}, "state": {m.State, 16},
+	} {
+		if len(tt.s) != tt.max {
+			t.Errorf("%s: %d", name, len(tt.s))
+		}
+	}
+}
+
+func TestAnIntegerPastItsWidthIsNothing(t *testing.T) {
+	root := t.TempDir()
+	port(t, root, "eno1", map[string]string{"mtu": "4294967295"})
+	port(t, root, "eno2", map[string]string{"mtu": "-1"})
+	got := ObserveNetwork(root, time.Now())
+	if got.Interfaces[0].MTU != 0 || got.Interfaces[1].MTU != 0 {
+		t.Fatalf("%+v", got.Interfaces)
+	}
+}
+
+func TestEveryCounterAndStateIsRead(t *testing.T) {
+	root := t.TempDir()
+	port(t, root, "eno1", map[string]string{
+		"statistics/rx_errors": "1", "statistics/tx_errors": "2", "statistics/rx_dropped": "3", "statistics/tx_dropped": "4",
+	})
+	write(t, root, map[string]string{
+		"sys/class/net/bond0/bonding/slaves":     "eno1",
+		"sys/class/net/eno1/bonding_slave/state": "backup",
+	})
+	got := ObserveNetwork(root, time.Now())
+	i := got.Interfaces[0]
+	if i.RxErrors != 1 || i.TxErrors != 2 || i.RxDropped != 3 || i.TxDropped != 4 {
+		t.Fatalf("%+v", i)
+	}
+	if got.Bonds[0].Members[0].State != "backup" {
+		t.Fatalf("%+v", got.Bonds[0])
+	}
+}
+
+func TestAHungReadDoesNotHoldTheCaller(t *testing.T) {
+	release := make(chan struct{})
+	reads := 0
+	c := &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
+		reads++ // one at a time: nothing else runs while the first hangs
+		<-release
+		return &framev1beta1.MachineNetwork{Error: "done"}
+	}}
+	if got := c.Latest(time.Millisecond); got != nil {
+		t.Fatalf("%+v", got)
+	}
+	if got := c.Latest(time.Millisecond); got != nil {
+		t.Fatalf("%+v", got)
+	}
+	close(release)
+	if got := c.Latest(time.Second); got == nil || got.Error != "done" {
+		t.Fatalf("%+v", got)
+	}
+	if reads != 1 {
+		t.Fatalf("%d reads at once", reads)
+	}
+}
+
+func TestAReadThatHangsLeavesTheLastReport(t *testing.T) {
+	block := make(chan struct{})
+	defer close(block)
+	first := true
+	c := &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
+		if !first {
+			<-block
+		}
+		first = false
+		return &framev1beta1.MachineNetwork{Error: "first"}
+	}}
+	if got := c.Latest(time.Second); got == nil || got.Error != "first" {
+		t.Fatalf("%+v", got)
+	}
+	if got := c.Latest(time.Millisecond); got == nil || got.Error != "first" {
 		t.Fatalf("%+v", got)
 	}
 }

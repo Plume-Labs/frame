@@ -127,6 +127,8 @@ type Assessment struct {
 	Held map[Key]bool
 	// WearUnreported counts the SSDs whose BMC gives no endurance figure.
 	WearUnreported int
+	// SpeedUnreported counts the links that are up and give no speed.
+	SpeedUnreported int
 }
 
 // Thresholds are StorageHealthPolicySpec with its zero values resolved.
@@ -409,6 +411,9 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 	}
 	if check == CheckWearHigh && a.WearUnreported > 0 {
 		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("the BMC gives no endurance figure for %d SSD(s)", a.WearUnreported)}
+	}
+	if check == CheckLinkSlow && a.SpeedUnreported > 0 {
+		return Verdict{"Unknown", "SpeedNotReported", fmt.Sprintf("%d link(s) up give no speed", a.SpeedUnreported)}
 	}
 	return Verdict{"False", "Healthy", ""}
 }

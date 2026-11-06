@@ -37,6 +37,7 @@ export function expectationsProblem(e: NetworkExpectations): string | null {
   if (e.links.length > 64) return 'At most 64 expected links.'
   for (const l of e.links) {
     if (!l.node || !l.interface) return 'Each expected link needs a node and an interface.'
+    if (e.links.some((o) => o !== l && o.node === l.node && o.interface === l.interface)) return `${l.interface}: named twice on ${l.node}.`
     if (l.interface.length > 15) return `${l.interface}: an interface name is 15 characters at most.`
     if (l.speedMbps !== undefined && (!Number.isInteger(l.speedMbps) || l.speedMbps < 1)) return `${l.interface}: speed must be a whole number of Mb/s.`
     if (l.members !== undefined && (!Number.isInteger(l.members) || l.members < 1 || l.members > 16)) return `${l.interface}: members go from 1 to 16.`
@@ -68,7 +69,7 @@ export function memberLine(b: NetworkBond): { name: string; tone: Tone; detail: 
     const up = m.miiStatus === 'up'
     return {
       name: m.name,
-      tone: up && !outOfAggregate ? 'accent' : 'destructive',
+      tone: outOfAggregate || (m.miiStatus && !up) ? 'destructive' : up ? 'accent' : 'muted',
       detail: [
         m.miiStatus ?? '?',
         outOfAggregate ? `aggregator ${m.aggregatorID}, the bond uses ${b.aggregatorID}` : '',
@@ -81,7 +82,7 @@ export function memberLine(b: NetworkBond): { name: string; tone: Tone; detail: 
 /** LACP's partner: all zeros means the switch side answers nothing. */
 export function lacpLine(b: NetworkBond): string {
   if (b.mode !== '802.3ad') return ''
-  const partner = !b.partnerMAC || /^[0:]+$/.test(b.partnerMAC) ? 'no LACP partner' : `partner ${b.partnerMAC}`
+  const partner = !b.partnerMAC ? 'LACP partner not read' : /^[0:]+$/.test(b.partnerMAC) ? 'no LACP partner' : `partner ${b.partnerMAC}`
   return `${partner} · ${b.portsInAggregator ?? 0} port(s) in aggregator ${b.aggregatorID ?? '?'}`
 }
 
@@ -94,6 +95,10 @@ export function networkNotes(n: MachineNetwork | null, now: number): string[] {
   if (stale) notes.push(ageS === null ? 'The agent has not dated this reading.' : `Reading ${Math.round(ageS / 60)} min old: the agent is silent.`)
   const cut = (n.interfacesOmitted ?? 0) + (n.bondsOmitted ?? 0)
   if (cut > 0) notes.push(`${cut} port(s) or bond(s) past the agent's list limit are not shown.`)
+  for (const b of n.bonds ?? []) {
+    if (b.membersUnread) notes.push(`${b.name}: its members could not be read.`)
+    if (b.membersOmitted) notes.push(`${b.name}: ${b.membersOmitted} member(s) past the agent's list limit are not shown.`)
+  }
   return notes
 }
 

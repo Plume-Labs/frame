@@ -156,7 +156,7 @@ function MachineLinksCard({ machine }: { machine: Machine }) {
             <div className="flex flex-wrap gap-x-4">
               <span className="font-bold">{b.name}</span>
               <span className="text-muted-foreground">{b.mode}</span>
-              <span className={b.miiStatus === 'up' ? 'text-accent' : 'text-destructive'}>{b.miiStatus ?? '?'}</span>
+              <span className={b.miiStatus === 'up' ? 'text-accent' : b.miiStatus ? 'text-destructive' : 'text-muted-foreground'}>{b.miiStatus ?? '?'}</span>
               <span className="text-muted-foreground">MTU {b.mtu ?? '—'}</span>
             </div>
             {lacpLine(b) && <div className="text-muted-foreground">{lacpLine(b)}</div>}

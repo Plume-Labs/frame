@@ -180,3 +180,225 @@ func TestMembersPastTheCutStillCount(t *testing.T) {
 		t.Fatalf("%+v", a.Findings)
 	}
 }
+
+// Every empty field below is a read that said nothing, on a device still listed.
+func TestAnEmptyFieldNeitherClearsNorRaises(t *testing.T) {
+	member, bond := Key{CheckNetDegraded, "bond0/eno2"}, Key{CheckNetDegraded, "bond0"}
+	port := Key{CheckNetDegraded, "eno1"}
+	expected := expecting(framev1beta1.ExpectedLink{Interface: "eno1"}, framev1beta1.ExpectedLink{Interface: "bond0", Members: 2})
+	tests := []struct {
+		name   string
+		mutate func(*framev1beta1.MachineNetwork)
+		key    Key
+	}{
+		{"member status", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].Members[1].MIIStatus = "" }, member},
+		{"bond mode", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].Mode = "" }, member},
+		{"bond aggregator", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].AggregatorID = 0 }, member},
+		{"member aggregator", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].Members[1].AggregatorID = 0 }, member},
+		{"bond status", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].MIIStatus = "" }, bond},
+		{"bond members", func(n *framev1beta1.MachineNetwork) {
+			n.Bonds[0].Members, n.Bonds[0].MembersUnread = nil, true
+		}, bond},
+		{"operstate", func(n *framev1beta1.MachineNetwork) { n.Interfaces[0].OperState = "" }, port},
+		{"operstate unknown", func(n *framev1beta1.MachineNetwork) { n.Interfaces[0].OperState = "unknown" }, port},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n := healthyNet()
+			tt.mutate(n)
+			a := assessNet(n, expected, nil)
+			if len(a.Findings) != 0 {
+				t.Fatalf("raised: %+v", a.Findings)
+			}
+			if v := a.Verdict(CheckNetDegraded, nil); v.Status != "Unknown" || v.Reason != "ReadUnavailable" {
+				t.Fatalf("%+v", v)
+			}
+			open := Open{tt.key: ScopeNet}
+			a = assessNet(n, expected, open)
+			if !a.Keeps(tt.key, ScopeNet) {
+				t.Fatal("cleared")
+			}
+			if v := a.Verdict(CheckNetDegraded, open); v.Status != "True" || v.Reason != "LastReadHeld" {
+				t.Fatalf("%+v", v)
+			}
+		})
+	}
+}
+
+// Outside LACP an aggregator of 0 is the normal case, not a read that failed.
+func TestAggregatorsMeanNothingOutsideLACP(t *testing.T) {
+	n := healthyNet()
+	n.Bonds[0].Mode = "active-backup"
+	n.Bonds[0].Members[0].AggregatorID, n.Bonds[0].Members[1].AggregatorID = 0, 7
+	a := assessNet(n, noNet, nil)
+	if v := a.Verdict(CheckNetDegraded, nil); v.Status != "False" || len(a.Findings) != 0 {
+		t.Fatalf("%+v %+v", v, a.Findings)
+	}
+}
+
+func TestAKnownDownMemberIsRaisedWhateverElseIsMissing(t *testing.T) {
+	n := healthyNet()
+	n.Bonds[0].Members[1].MIIStatus, n.Bonds[0].Members[1].AggregatorID = "down", 0
+	if !keys(assessNet(n, noNet, nil))[Key{CheckNetDegraded, "bond0/eno2"}] {
+		t.Fatal("not raised")
+	}
+}
+
+func TestABondDownAndShortIsOneFinding(t *testing.T) {
+	n := healthyNet()
+	n.Bonds[0].MIIStatus = "down"
+	n.Bonds[0].Members = n.Bonds[0].Members[:1]
+	var got []Finding
+	for _, f := range assessNet(n, expecting(framev1beta1.ExpectedLink{Interface: "bond0", Members: 2}), nil).Findings {
+		if f.Device == "bond0" {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 1 || got[0].Severity != severityCritical {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestSeverities(t *testing.T) {
+	n := healthyNet()
+	n.Bonds[0].Members[1].MIIStatus = "down"
+	n.Interfaces[0].SpeedMbps = new(int32(100))
+	e := expecting(framev1beta1.ExpectedLink{Interface: "eno9"}, framev1beta1.ExpectedLink{Interface: "eno3"})
+	want := map[Key]string{
+		{CheckNetDegraded, "bond0/eno2"}: severityWarning,
+		{CheckLinkSlow, "eno1"}:          severityWarning,
+		{CheckNetDegraded, "eno9"}:       severityCritical,
+		{CheckNetDegraded, "eno3"}:       severityCritical,
+	}
+	for _, f := range assessNet(n, e, nil).Findings {
+		if want[f.Key] != f.Severity {
+			t.Errorf("%+v", f)
+		}
+		delete(want, f.Key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing %+v", want)
+	}
+}
+
+func TestALinkUpWithNoSpeedIsNotHealthy(t *testing.T) {
+	n := healthyNet()
+	n.Interfaces[0].SpeedMbps = nil
+	a := assessNet(n, noNet, nil)
+	if v := a.Verdict(CheckLinkSlow, nil); v.Status != "Unknown" || v.Reason != "SpeedNotReported" {
+		t.Fatalf("%+v", v)
+	}
+	if v := a.Verdict(CheckNetDegraded, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestAPortDownOwesNoSpeedAndHasNoneChecked(t *testing.T) {
+	n := healthyNet()
+	n.Interfaces[2].SpeedMbps = new(int32(10)) // eno3, down
+	a := assessNet(n, noNet, nil)
+	if v := a.Verdict(CheckLinkSlow, nil); v.Status != "False" || len(a.Findings) != 0 {
+		t.Fatalf("%+v %+v", v, a.Findings)
+	}
+}
+
+func TestSpeedLimitIsMetAtTheExpectedValue(t *testing.T) {
+	n := healthyNet()
+	n.Interfaces[0].SpeedMbps = new(framev1beta1.DefaultMinLinkSpeedMbps)
+	if a := assessNet(n, noNet, nil); len(a.Findings) != 0 {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+func TestPolicyMinimumReplacesTheDefault(t *testing.T) {
+	e := NetExpectationsFrom(&framev1beta1.NetworkHealthPolicy{Spec: framev1beta1.NetworkHealthPolicySpec{MinLinkSpeedMbps: 25000}}, "node-a")
+	if !keys(assessNet(healthyNet(), e, nil))[Key{CheckLinkSlow, "eno1"}] {
+		t.Fatal("10 Gb/s passed a minimum of 25")
+	}
+}
+
+func TestAReportWithNothingListedIsNotHealthy(t *testing.T) {
+	seen := metav1.NewTime(now)
+	k := Key{CheckNetDegraded, "eno1"}
+	e := expecting(framev1beta1.ExpectedLink{Interface: "eno1"})
+	open := Open{k: ScopeNetExpected}
+	a := assessNet(&framev1beta1.MachineNetwork{ObservedAt: &seen}, e, open)
+	if keys(a)[k] {
+		t.Fatal("raised as absent")
+	}
+	if !a.Keeps(k, ScopeNetExpected) {
+		t.Fatal("cleared")
+	}
+	if v := assessNet(&framev1beta1.MachineNetwork{ObservedAt: &seen}, noNet, nil).Verdict(CheckNetDegraded, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestAnUndatedReportIsUnread(t *testing.T) {
+	n := healthyNet()
+	n.ObservedAt = nil
+	if v := assessNet(n, noNet, nil).Verdict(CheckNetDegraded, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestBondsPastTheCutAreNotHealthy(t *testing.T) {
+	n := healthyNet()
+	n.BondsOmitted = 1
+	if v := assessNet(n, noNet, nil).Verdict(CheckNetDegraded, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestMembersPastTheCutAreNotHealthy(t *testing.T) {
+	n := healthyNet()
+	n.Bonds[0].MembersOmitted = 1
+	if v := assessNet(n, noNet, nil).Verdict(CheckNetDegraded, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+// A typo in the policy must not leave a critical alert nobody can close.
+func TestAnAbsentLinkAlertEndsWithItsExpectation(t *testing.T) {
+	k := Key{CheckNetDegraded, "eno9"}
+	e := expecting(framev1beta1.ExpectedLink{Interface: "eno9"})
+	a := assessNet(healthyNet(), e, nil)
+	var scope Scope
+	for _, f := range a.Findings {
+		if f.Key == k {
+			scope = f.Scope
+		}
+	}
+	if scope != ScopeNetExpected {
+		t.Fatalf("%q", scope)
+	}
+	open := Open{k: scope}
+	a = assessNet(healthyNet(), noNet, open)
+	if a.Keeps(k, scope) {
+		t.Fatal("held after the policy dropped it")
+	}
+	if v := a.Verdict(CheckNetDegraded, open); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+	// Still expected, but a silent agent says nothing about it.
+	n := healthyNet()
+	n.Error = "EIO"
+	if !assessNet(n, noNet, open).Keeps(k, scope) {
+		t.Fatal("cleared on a failed read")
+	}
+}
+
+func TestAnUnreadPolicyLeavesLinksUnknownAndStorageAlone(t *testing.T) {
+	k := Key{CheckNetDegraded, "bond0/eno2"}
+	e := noNet
+	e.Unread = "the NetworkHealthPolicy could not be read"
+	n := healthyNet()
+	n.Bonds[0].Members[1].MIIStatus = "down"
+	a := assessNet(n, e, Open{k: ScopeNet})
+	if len(a.Findings) != 0 || !a.Keeps(k, ScopeNet) {
+		t.Fatalf("%+v", a)
+	}
+	if v := a.Verdict(CheckLinkSlow, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}

@@ -106,6 +106,10 @@ type NetworkBond struct {
 	Members []BondMember `json:"members,omitempty"`
 	// +optional
 	MembersOmitted int32 `json:"membersOmitted,omitempty"`
+	// MembersUnread says the bond's list could not be read: an empty Members
+	// then says nothing.
+	// +optional
+	MembersUnread bool `json:"membersUnread,omitempty"`
 }
 
 // BondMember is one port of a bond, as the bond sees it.
