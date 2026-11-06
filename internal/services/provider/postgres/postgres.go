@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -333,9 +334,7 @@ func newSpec(svc *servicesv1beta1.FrameService, s settings) map[string]any {
 	if class := scheduling.PriorityClassForServiceClass(string(svc.Spec.ServiceClass)); class != "" {
 		spec["podPriorityClassName"] = class
 	}
-	for k, v := range placement(svc.Name, s) {
-		spec[k] = v
-	}
+	maps.Copy(spec, placement(svc.Name, s))
 	if s.walClaim != "" {
 		spec["env"] = walEnv(s)
 	}
