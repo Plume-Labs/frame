@@ -90,6 +90,11 @@ func (r *Receiver) serve(req *http.Request) int {
 		return http.StatusBadRequest
 	}
 	for _, a := range p.Alerts {
+		state := framev1beta1.AlertStateFiring
+		if a.Status == StatusResolved {
+			state = framev1beta1.AlertStateResolved
+		}
+		alertsReceived.WithLabelValues(state).Inc()
 		if err := r.Record(req.Context(), a); err != nil {
 			r.Log.Error(err, "recording alert", "fingerprint", a.Fingerprint)
 			return http.StatusServiceUnavailable
@@ -136,7 +141,6 @@ func (r *Receiver) Record(ctx context.Context, a Alert) error {
 		t := metav1.NewTime(a.EndsAt.Truncate(time.Second))
 		endsAt = &t
 	}
-	alertsReceived.WithLabelValues(state).Inc()
 
 	// StartsAt/EndsAt are truncated to the second: Alertmanager sends
 	// sub-second precision, but metav1.Time only round-trips whole seconds
