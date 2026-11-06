@@ -25,6 +25,12 @@ release tags follow [Semantic Versioning](https://semver.org/).
   image, authd's Service and a throwaway `frame-auth-tls` CA.
 - The e2e inference spec binds `frame-manager-secret-writer` in its
   namespace, the grant `docs/deployment.md` asks of an operator.
+### Fixed — Redfish inventory on iDRAC 7
+
+- `MemorySummary.TotalSystemMemoryGiB` is decoded as a number and rounded.
+  iDRAC 7 (firmware 2.65) reports a fraction such as `59.6046720`; the integer
+  field made the whole system document fail to decode, so the FrameMachine
+  stayed `Reachable=False`. No migration: `status` keeps its integer field.
 
 ### Removed — authd password sign-in (breaking)
 
