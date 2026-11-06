@@ -33,6 +33,10 @@ const (
 	labelStack            = "stack"
 
 	annotationSummary = "summary"
+
+	// assessTimeout bounds one assessment, so a stuck read costs this pass's
+	// storage verdict and not the probe's status write.
+	assessTimeout = 20 * time.Second
 )
 
 // assessStorage writes the storage conditions onto fm, for the caller's status
@@ -44,18 +48,26 @@ const (
 //
 // Failing to read the policy or the open alerts changes nothing: without them
 // no conclusion is safe, and the next pass tries again. It never fails the
-// probe's own status write.
+// probe's own status write: the policy goes through PolicyReader, because the
+// cached client blocks on a kind it may not list instead of answering
+// Forbidden, and nothing here outlives assessTimeout.
 //
 // ponytail: the pass is the probe's, so a BMC that stays down stretches it to
 // the backoff (30 min at most, framemachine_sessions.go) and an alert with it.
 // Split the assessment off the probe's timer if that delay ever matters.
 func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1beta1.FrameMachine, inventoryFresh bool) {
+	ctx, cancel := context.WithTimeout(ctx, assessTimeout)
+	defer cancel()
 	log := logf.FromContext(ctx)
 	key := client.ObjectKeyFromObject(fm)
 
+	reader := r.PolicyReader
+	if reader == nil {
+		reader = r.Client
+	}
 	var policy *framev1beta1.StorageHealthPolicy
 	var p framev1beta1.StorageHealthPolicy
-	switch err := r.Get(ctx, types.NamespacedName{Name: framev1beta1.StorageHealthPolicyName}, &p); {
+	switch err := reader.Get(ctx, types.NamespacedName{Name: framev1beta1.StorageHealthPolicyName}, &p); {
 	case err == nil:
 		policy = &p
 	case !apierrors.IsNotFound(err):
@@ -89,7 +101,12 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 	}
 }
 
-// openStorageAlerts lists what fires for this machine.
+// openStorageAlerts lists what fires for this machine, and closes on the way
+// what fires for a machine that no longer exists: a deletion missed while the
+// manager was down has no other pass to catch it.
+//
+// Anything not Resolved counts as open, so a write that created an alert and
+// failed before its state is picked up here instead of left stateless forever.
 func (r *FrameMachineReconciler) openStorageAlerts(ctx context.Context, machine types.NamespacedName) (map[storage.Key]*framev1beta1.FrameAlert, error) {
 	open := map[storage.Key]*framev1beta1.FrameAlert{}
 	if r.Alerts == nil {
@@ -102,9 +119,18 @@ func (r *FrameMachineReconciler) openStorageAlerts(ctx context.Context, machine 
 	for i := range list.Items {
 		fa := &list.Items[i]
 		l := fa.Spec.Labels
-		if l[labelSource] == storageAlertSource && l[labelMachine] == machine.Name &&
-			l[labelMachineNamespace] == machine.Namespace && fa.Status.State == framev1beta1.AlertStateFiring {
+		if l[labelSource] != storageAlertSource || fa.Status.State == framev1beta1.AlertStateResolved {
+			continue
+		}
+		owner := types.NamespacedName{Name: l[labelMachine], Namespace: l[labelMachineNamespace]}
+		if owner == machine {
 			open[storage.Key{Check: fa.Spec.AlertName, Device: l[labelDevice]}] = fa
+			continue
+		}
+		if err := r.Get(ctx, owner, &framev1beta1.FrameMachine{}); apierrors.IsNotFound(err) {
+			if err := r.resolveStorageAlert(ctx, fa); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return open, nil
@@ -167,16 +193,15 @@ func (r *FrameMachineReconciler) resolveStorageAlert(ctx context.Context, fa *fr
 
 // resolveStorageAlerts closes what a deleted machine leaves open: nothing would
 // ever re-read it.
-func (r *FrameMachineReconciler) resolveStorageAlerts(ctx context.Context, machine types.NamespacedName) {
-	log := logf.FromContext(ctx)
+func (r *FrameMachineReconciler) resolveStorageAlerts(ctx context.Context, machine types.NamespacedName) error {
 	open, err := r.openStorageAlerts(ctx, machine)
 	if err != nil {
-		log.Error(err, "Listing the alerts of a deleted machine", "machine", machine)
-		return
+		return err
 	}
 	for _, fa := range open {
 		if err := r.resolveStorageAlert(ctx, fa); err != nil {
-			log.Error(err, "Resolving an alert of a deleted machine", "machine", machine, "alert", fa.Name)
+			return err
 		}
 	}
+	return nil
 }

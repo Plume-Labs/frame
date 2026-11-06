@@ -68,6 +68,9 @@ type FrameMachineReconciler struct {
 	// Alerts records what assessStorage raises and resolves. Nil means
 	// conditions only.
 	Alerts *alerting.Receiver
+	// PolicyReader reads the StorageHealthPolicy: mgr.GetAPIReader() in
+	// production, see assessStorage.
+	PolicyReader client.Reader
 
 	machines machineClients
 }
@@ -96,9 +99,10 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// The machine is gone: end its session rather than leave it open
 			// on the BMC until the idle timeout.
 			r.forget(ctx, req.NamespacedName)
-			r.resolveStorageAlerts(ctx, req.NamespacedName)
+			// An error here requeues, so a failed write is retried.
+			return ctrl.Result{}, r.resolveStorageAlerts(ctx, req.NamespacedName)
 		}
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
 	fresh, err := r.NewClient(ctx, r.Client, fm.Namespace, fm.Spec.BMC)

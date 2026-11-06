@@ -33,6 +33,11 @@ import (
 // A stack in error or busy is Unread, its lists are not looked at, and so it
 // neither raises a finding nor clears one; the same goes for an agent that has
 // stopped reporting, and for a BMC inventory the last probe did not refresh.
+//
+// And a read that says nothing about a device clears nothing. A pool a reboot
+// failed to import reads the same as a pool destroyed on purpose, a disk the
+// BMC failed to return the same as one pulled: the alert stays until the
+// device reads healthy, or until someone deletes the FrameAlert.
 
 // The four conditions, which are also the alert names.
 const (
@@ -70,6 +75,10 @@ const (
 	// alert must fall to clear.
 	capacityHysteresis = 2
 
+	// MaxInventoryDrives mirrors the MaxItems marker on
+	// MachineInventory.Drives: a list that long may have been cut.
+	MaxInventoryDrives = 32
+
 	// AgentSilentAfter is how long a report may age before the node's stacks
 	// count as unread. The agent reports every 30 s; this leaves a node room
 	// to restart its pod.
@@ -104,9 +113,12 @@ type Assessment struct {
 	Findings []Finding
 	// Unread maps each scope this pass could not read to why.
 	Unread map[Scope]string
+	// Cut maps each scope read only in part to why: what was read counts,
+	// but no one can say False about the rest.
+	Cut map[Scope]string
 	// Held lists open alerts this reading can say nothing about, although
-	// their scope was read: a pool mid-scrub has no error count, an array
-	// past the agent's cut is simply not listed.
+	// their scope was read: a pool mid-scrub has no error count, a device
+	// missing from the list may be cut, unimported or simply not returned.
 	Held map[Key]bool
 	// WearUnreported counts the SSDs whose BMC gives no endurance figure.
 	WearUnreported int
@@ -134,7 +146,7 @@ func ThresholdsFrom(p *framev1beta1.StorageHealthPolicy) Thresholds {
 // Assess reads a machine's status. inventoryFresh says the BMC answered this
 // pass; open is what already fires for this machine.
 func Assess(st *framev1beta1.FrameMachineStatus, t Thresholds, inventoryFresh bool, open Open, now time.Time) Assessment {
-	a := Assessment{Unread: map[Scope]string{}, Held: map[Key]bool{}}
+	a := Assessment{Unread: map[Scope]string{}, Cut: map[Scope]string{}, Held: map[Key]bool{}}
 	a.assessLocal(st.Storage, t, open, now)
 	a.assessDrives(st.Inventory, t, inventoryFresh, open)
 	return a
@@ -184,8 +196,9 @@ func (a *Assessment) assessMD(md *framev1beta1.MDStatus, open Open) {
 			a.add(CheckDegraded, arr.Name, ScopeMD, severityCritical, mdMessage(arr))
 		}
 	}
+	a.holdUnlisted(open, ScopeMD, listed)
 	if md.ArraysOmitted > 0 {
-		a.holdUnlisted(open, listed, CheckDegraded)
+		a.Cut[ScopeMD] = fmt.Sprintf("%d array(s) past the agent's list limit", md.ArraysOmitted)
 	}
 }
 
@@ -225,37 +238,47 @@ func (a *Assessment) assessZFS(z *framev1beta1.ZFSStatus, t Thresholds, open Ope
 		listed = append(listed, p.Name)
 		a.assessPool(p, t, open)
 	}
+	a.holdUnlisted(open, ScopeZFS, listed)
 	if z.PoolsOmitted > 0 {
-		a.holdUnlisted(open, listed, CheckDegraded, CheckScrubErrors, CheckCapacityHigh)
+		a.Cut[ScopeZFS] = fmt.Sprintf("%d pool(s) past the agent's list limit", z.PoolsOmitted)
 	}
 }
 
 func (a *Assessment) assessPool(p *framev1beta1.ZPool, t Thresholds, open Open) {
 	if msg := poolProblems(p); msg != "" {
 		a.add(CheckDegraded, p.Name, ScopeZFS, severityCritical, msg)
-	} else if key := (Key{CheckDegraded, p.Name}); p.VdevsOmitted > 0 && open.has(key) {
-		a.Held[key] = true
+	} else if p.VdevsOmitted > 0 || p.Health == "" {
+		a.Cut[ScopeZFS] = fmt.Sprintf("pool %s was not read in full", p.Name)
+		if key := (Key{CheckDegraded, p.Name}); open.has(key) {
+			a.Held[key] = true
+		}
 	}
 
 	switch key := (Key{CheckScrubErrors, p.Name}); {
 	case p.ScrubErrors != nil && *p.ScrubErrors > 0:
 		a.add(CheckScrubErrors, p.Name, ScopeZFS, severityCritical,
 			fmt.Sprintf("pool %s: last scrub found %d errors (%s)", p.Name, *p.ScrubErrors, p.LastScrub))
-	case p.ScrubErrors == nil && open.has(key) && p.Scan != "" && p.Scan != "none requested":
+	case p.ScrubErrors == nil && open.has(key) && p.Scan != "none requested":
 		// The count exists only for a completed scrub: a new one running,
 		// or cancelled, says nothing about the errors the last one found.
 		a.Held[key] = true
 	}
 
-	if p.CapacityPercent != nil {
-		limit := t.ZFSCapacityPercent
-		if open.has(Key{CheckCapacityHigh, p.Name}) {
-			limit -= capacityHysteresis
+	key := Key{CheckCapacityHigh, p.Name}
+	if p.CapacityPercent == nil {
+		// zpool prints "-" for a pool it cannot size, which is when it matters.
+		if open.has(key) {
+			a.Held[key] = true
 		}
-		if *p.CapacityPercent >= limit {
-			a.add(CheckCapacityHigh, p.Name, ScopeZFS, severityWarning,
-				fmt.Sprintf("pool %s is over the capacity threshold of %d %%", p.Name, t.ZFSCapacityPercent))
-		}
+		return
+	}
+	limit := t.ZFSCapacityPercent
+	if open.has(key) {
+		limit -= capacityHysteresis
+	}
+	if *p.CapacityPercent >= limit {
+		a.add(CheckCapacityHigh, p.Name, ScopeZFS, severityWarning,
+			fmt.Sprintf("pool %s is over the capacity threshold of %d %%", p.Name, t.ZFSCapacityPercent))
 	}
 }
 
@@ -282,11 +305,11 @@ func poolProblems(p *framev1beta1.ZPool) string {
 	return msg
 }
 
-// holdUnlisted keeps the open alerts of these checks whose device the agent
-// cut from its list: the read is complete, but not about them.
-func (a *Assessment) holdUnlisted(open Open, listed []string, checks ...string) {
-	for k := range open {
-		if slices.Contains(checks, k.Check) && !slices.Contains(listed, k.Device) {
+// holdUnlisted keeps the open alerts of a scope whose device the read did not
+// list: it says nothing about them.
+func (a *Assessment) holdUnlisted(open Open, scope Scope, listed []string) {
+	for k, s := range open {
+		if s == scope && !slices.Contains(listed, k.Device) {
 			a.Held[k] = true
 		}
 	}
@@ -301,22 +324,32 @@ func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, t Threshol
 		a.Unread[ScopeDrives] = "the BMC lists no drives"
 		return
 	}
+	listed := make([]string, 0, len(inv.Drives))
 	for i := range inv.Drives {
 		d := &inv.Drives[i]
 		device := d.SerialNumber
 		if device == "" {
 			device = d.Location
 		}
+		listed = append(listed, device)
 		switch used := d.SSDEnduranceUsedPercent; {
 		case used != nil && *used >= t.SSDWearPercent:
 			a.add(CheckWearHigh, device, ScopeDrives, severityWarning,
 				fmt.Sprintf("drive %s (bay %s, %s) has used %d %% of its endurance", device, d.Location, d.Model, *used))
-		case used == nil && d.MediaType == "SSD":
-			a.WearUnreported++
+		case used == nil:
 			if key := (Key{CheckWearHigh, device}); open.has(key) {
 				a.Held[key] = true
 			}
+			if d.MediaType == "SSD" {
+				a.WearUnreported++
+			}
 		}
+	}
+	// One disk the BMC failed to return does not fail the probe, so a drive
+	// missing here may be replaced or may be back next pass.
+	a.holdUnlisted(open, ScopeDrives, listed)
+	if len(inv.Drives) >= MaxInventoryDrives {
+		a.Cut[ScopeDrives] = fmt.Sprintf("the inventory holds %d drives at most", MaxInventoryDrives)
 	}
 }
 
@@ -360,6 +393,8 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 	var unread []string
 	for _, s := range checkScopes[check] {
 		if why, ok := a.Unread[s]; ok {
+			unread = append(unread, fmt.Sprintf("%s: %s", s, why))
+		} else if why, ok := a.Cut[s]; ok {
 			unread = append(unread, fmt.Sprintf("%s: %s", s, why))
 		}
 	}

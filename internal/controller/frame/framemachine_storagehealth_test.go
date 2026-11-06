@@ -22,6 +22,27 @@ import (
 	"github.com/Plume-Labs/frame/internal/storage"
 )
 
+// failingReader answers what a denied or broken read answers.
+type failingReader struct{}
+
+func (failingReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return errors.New("forbidden")
+}
+
+func (failingReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return errors.New("forbidden")
+}
+
+// failingAlertList breaks only the FrameAlert list.
+type failingAlertList struct{ client.Client }
+
+func (f failingAlertList) List(ctx context.Context, l client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := l.(*framev1beta1.FrameAlertList); ok {
+		return errors.New("list failed")
+	}
+	return f.Client.List(ctx, l, opts...)
+}
+
 // Real objects on envtest: the transitions below are only as good as what the
 // apiserver lets through, and the alert's whole memory is the FrameAlert.
 var _ = Describe("FrameMachine storage health", func() {
@@ -153,12 +174,16 @@ var _ = Describe("FrameMachine storage health", func() {
 		Expect(fa.Spec.Labels).To(HaveKeyWithValue(labelNode, "node-a"))
 		// A subscription scoped to namespaces must not receive it.
 		Expect(fa.Spec.Namespace).To(BeEmpty())
-		startedAt := fa.Spec.StartsAt
 
-		// A second pass on the same reading changes nothing the relay sees.
+		// A second pass on the same reading changes nothing the relay sees,
+		// the start included: moved back an hour so a rewrite cannot hide in
+		// the same second.
+		earlier := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+		fa.Spec.StartsAt = earlier
+		Expect(k8sClient.Update(ctx, fa)).To(Succeed())
 		reconcile()
 		again := alert(storage.CheckDegraded, "md0")
-		Expect(again.Spec.StartsAt).To(Equal(startedAt))
+		Expect(again.Spec.StartsAt.Time).To(BeTemporally("==", earlier.Time))
 		Expect(again.ResourceVersion).To(Equal(fa.ResourceVersion))
 
 		report(cleanMD(), noZFS)
@@ -168,12 +193,182 @@ var _ = Describe("FrameMachine storage health", func() {
 		Expect(fa.Status.State).To(Equal(framev1beta1.AlertStateResolved))
 		Expect(fa.Spec.EndsAt).NotTo(BeNil())
 
-		// The same array failing again reopens the same object.
+		// A pass after the resolution leaves it closed, its end where it was.
+		endedAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+		fa.Spec.EndsAt = &endedAt
+		Expect(k8sClient.Update(ctx, fa)).To(Succeed())
+		reconcile()
+		Expect(alert(storage.CheckDegraded, "md0").Spec.EndsAt.Time).To(BeTemporally("==", endedAt.Time))
+
+		// The same array failing again reopens the same object, as a new
+		// incident: it starts now, not when the last one did.
 		report(failedMD(), noZFS)
 		reconcile()
 		fa = alert(storage.CheckDegraded, "md0")
 		Expect(fa.Status.State).To(Equal(framev1beta1.AlertStateFiring))
 		Expect(fa.Spec.EndsAt).To(BeNil())
+		Expect(fa.Spec.StartsAt.Time).To(BeTemporally(">", earlier.Time))
+	})
+
+	It("keeps the alert of a pool the next read no longer lists", func() {
+		degraded := pool(50)
+		degraded.Pools[0].Health = "DEGRADED"
+		report(cleanMD(), degraded)
+		reconcile()
+		Expect(state(storage.CheckDegraded, "tank")).To(Equal(framev1beta1.AlertStateFiring))
+
+		for _, gone := range []framev1beta1.ZFSStatus{{State: framev1beta1.StackPresent}, noZFS} {
+			report(cleanMD(), gone)
+			reconcile()
+			Expect(state(storage.CheckDegraded, "tank")).To(Equal(framev1beta1.AlertStateFiring))
+			Expect(condition(storage.CheckDegraded).Reason).To(Equal("LastReadHeld"))
+		}
+	})
+
+	It("holds everything when the agent stops reporting", func() {
+		report(failedMD(), noZFS)
+		reconcile()
+
+		var fm framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+		long := metav1.NewTime(time.Now().Add(-storage.AgentSilentAfter - time.Minute))
+		fm.Status.Storage.ObservedAt = &long
+		fm.Status.Storage.Local.MD = cleanMD()
+		Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+		reconcile()
+		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
+		Expect(condition(storage.CheckDegraded).Reason).To(Equal("LastReadHeld"))
+	})
+
+	It("raises wear from the BMC, and only from a probe that answered", func() {
+		used := int32(95)
+		fake.snapshot.Inventory.Drives = []redfish.Drive{{SerialNumber: "WORN", Location: "1:1", MediaType: "SSD", SSDEnduranceUsedPercent: &used}}
+		report(cleanMD(), noZFS)
+		reconcile()
+		Expect(state(storage.CheckWearHigh, "WORN")).To(Equal(framev1beta1.AlertStateFiring))
+
+		// The drive reads fine in the stale status, and the probe failed:
+		// nothing may clear on what was not read.
+		var fm framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+		low := int32(5)
+		fm.Status.Inventory.Drives[0].SSDEnduranceUsedPercent = &low
+		Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+		fake.probeErr = errors.New("connection refused")
+		reconcile()
+		Expect(state(storage.CheckWearHigh, "WORN")).To(Equal(framev1beta1.AlertStateFiring))
+
+		fake.probeErr = nil
+		fake.snapshot.Inventory.Drives[0].SSDEnduranceUsedPercent = &low
+		reconcile()
+		Expect(state(storage.CheckWearHigh, "WORN")).To(Equal(framev1beta1.AlertStateResolved))
+	})
+
+	It("does not raise wear from a stale inventory", func() {
+		used := int32(95)
+		fake.snapshot.Inventory.Drives = []redfish.Drive{{SerialNumber: "OK", Location: "1:1", MediaType: "SSD"}}
+		report(cleanMD(), noZFS)
+		reconcile()
+		var fm framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+		fm.Status.Inventory.Drives[0].SSDEnduranceUsedPercent = &used
+		Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+
+		for _, broken := range []func(){
+			func() { fake.probeErr = errors.New("connection refused") },
+			func() {
+				r.NewClient = func(context.Context, client.Client, string, framev1beta1.BMCSpec) (redfish.Client, error) {
+					return nil, errors.New("no credentials")
+				}
+			},
+		} {
+			broken()
+			reconcile()
+			Expect(alert(storage.CheckWearHigh, "OK")).To(BeNil())
+		}
+	})
+
+	It("assesses the node's stacks when the BMC credentials are unusable", func() {
+		r.NewClient = func(context.Context, client.Client, string, framev1beta1.BMCSpec) (redfish.Client, error) {
+			return nil, errors.New("no credentials")
+		}
+		report(failedMD(), noZFS)
+		reconcile()
+		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
+	})
+
+	It("leaves storage as it was when the policy cannot be read, and still writes the probe", func() {
+		report(failedMD(), noZFS)
+		reconcile()
+		report(cleanMD(), noZFS)
+		r.PolicyReader = failingReader{}
+		fake.probeErr = errors.New("connection refused")
+		reconcile()
+		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
+		Expect(condition(storage.CheckDegraded).Status).To(Equal(metav1.ConditionTrue))
+		Expect(condition(conditionReachable).Status).To(Equal(metav1.ConditionFalse))
+	})
+
+	It("leaves storage as it was when the open alerts cannot be listed", func() {
+		report(failedMD(), noZFS)
+		reconcile()
+		report(cleanMD(), noZFS)
+		r.Client = failingAlertList{k8sClient}
+		reconcile()
+		r.Client = k8sClient
+		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateFiring))
+		Expect(condition(storage.CheckDegraded).Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	It("does not take another namespace's machine of the same name for its own", func() {
+		report(failedMD(), noZFS)
+		reconcile()
+		theirs := alert(storage.CheckDegraded, "md0")
+
+		other := "fm-h-other-" + name[len(name)-5:]
+		Expect(k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: other}})).To(Succeed())
+		Expect(k8sClient.Create(ctx, &framev1beta1.FrameMachine{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: other},
+			Spec: framev1beta1.FrameMachineSpec{BMC: framev1beta1.BMCSpec{
+				Address: "192.0.2.63", CredentialsRef: "unused",
+				TLS: framev1beta1.BMCTLSSpec{InsecureSkipVerify: true},
+			}},
+		})).To(Succeed())
+		var fm framev1beta1.FrameMachine
+		key := types.NamespacedName{Name: name, Namespace: other}
+		Expect(k8sClient.Get(ctx, key, &fm)).To(Succeed())
+		seen := metav1.Now()
+		fm.Status.Storage = &framev1beta1.MachineStorage{ObservedAt: &seen, Local: &framev1beta1.LocalStorage{
+			MD: cleanMD(), ZFS: noZFS, LVM: framev1beta1.LVMStatus{State: framev1beta1.StackAbsent},
+		}}
+		Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+		_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(alert(storage.CheckDegraded, "md0").ResourceVersion).To(Equal(theirs.ResourceVersion))
+	})
+
+	It("closes an alert whose machine vanished while nobody watched", func() {
+		report(failedMD(), noZFS)
+		reconcile()
+		orphan := name
+		var fm framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, &fm)).To(Succeed())
+
+		// No reconcile of the deleted machine: another machine's pass finds it.
+		name = orphan + "z"
+		Expect(k8sClient.Create(ctx, &framev1beta1.FrameMachine{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: framev1beta1.FrameMachineSpec{BMC: framev1beta1.BMCSpec{
+				Address: "192.0.2.64", CredentialsRef: orphan + "-creds",
+				TLS: framev1beta1.BMCTLSSpec{InsecureSkipVerify: true},
+			}},
+		})).To(Succeed())
+		report(cleanMD(), noZFS)
+		reconcile()
+		name = orphan
+		Expect(state(storage.CheckDegraded, "md0")).To(Equal(framev1beta1.AlertStateResolved))
 	})
 
 	DescribeTable("a read that cannot be trusted leaves an open alert open",
@@ -288,9 +483,16 @@ var _ = Describe("FrameMachine storage health", func() {
 	It("refuses a second policy and a threshold out of range", func() {
 		Expect(k8sClient.Create(ctx, &framev1beta1.StorageHealthPolicy{ObjectMeta: metav1.ObjectMeta{Name: "other"}})).
 			To(MatchError(ContainSubstring("singleton")))
-		Expect(k8sClient.Create(ctx, &framev1beta1.StorageHealthPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: framev1beta1.StorageHealthPolicyName},
-			Spec:       framev1beta1.StorageHealthPolicySpec{ZFSCapacityPercent: 101},
-		})).NotTo(Succeed())
+		for _, spec := range []framev1beta1.StorageHealthPolicySpec{
+			{ZFSCapacityPercent: 101},
+			{SSDWearPercent: 101},
+			{ZFSCapacityPercent: -1},
+			{SSDWearPercent: -1},
+		} {
+			Expect(k8sClient.Create(ctx, &framev1beta1.StorageHealthPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: framev1beta1.StorageHealthPolicyName},
+				Spec:       spec,
+			})).NotTo(Succeed())
+		}
 	})
 })

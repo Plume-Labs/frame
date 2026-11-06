@@ -15,7 +15,7 @@ var (
 	defaults = ThresholdsFrom(nil)
 )
 
-// healthyStatus is the G9 as read on 2026-11-06, with one ZFS pool added: md0
+// healthyStatus is a node with a clean md mirror and one ZFS pool: md0
 // a clean raid1, the pool ONLINE and scrubbed, one SSD reporting endurance.
 func healthyStatus() *framev1beta1.FrameMachineStatus {
 	seen := metav1.NewTime(now.Add(-time.Minute))
@@ -197,6 +197,105 @@ func TestAbsentStackIsARead(t *testing.T) {
 	}
 }
 
+// A pool a reboot did not import reads like a pool destroyed: neither may
+// tell subscribers the incident is over.
+func TestADeviceGoneFromAReadKeepsItsAlert(t *testing.T) {
+	tank := Key{CheckDegraded, "tank"}
+	tests := []struct {
+		name   string
+		mutate func(*framev1beta1.FrameMachineStatus)
+		key    Key
+		scope  Scope
+	}{
+		{"zfs module not loaded", func(st *framev1beta1.FrameMachineStatus) {
+			st.Storage.Local.ZFS = framev1beta1.ZFSStatus{State: framev1beta1.StackAbsent}
+		}, tank, ScopeZFS},
+		{"pool not imported", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.ZFS.Pools = nil }, tank, ScopeZFS},
+		{"scrub alert of a pool not imported", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.ZFS.Pools = nil },
+			Key{CheckScrubErrors, "tank"}, ScopeZFS},
+		{"array stopped", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.MD.Arrays = nil },
+			Key{CheckDegraded, "md0"}, ScopeMD},
+		{"disk not returned by the BMC", func(*framev1beta1.FrameMachineStatus) {}, Key{CheckWearHigh, "gone"}, ScopeDrives},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := healthyStatus()
+			tt.mutate(st)
+			open := Open{tt.key: tt.scope}
+			a := Assess(st, defaults, true, open, now)
+			if !a.Keeps(tt.key, tt.scope) {
+				t.Fatal("cleared by a read that does not mention it")
+			}
+			if v := a.Verdict(tt.key.Check, open); v.Status != "True" || v.Reason != "LastReadHeld" {
+				t.Fatalf("%+v", v)
+			}
+		})
+	}
+}
+
+func TestAnUnlistedDeviceOfAnotherScopeIsNotHeld(t *testing.T) {
+	st := healthyStatus()
+	k := Key{CheckDegraded, "md0"} // listed by md, not by zfs
+	if Assess(st, defaults, true, Open{k: ScopeMD}, now).Keeps(k, ScopeMD) {
+		t.Fatal("held by another stack's list")
+	}
+}
+
+// A field the read left empty says nothing, so it cannot clear anything.
+func TestAReadThatSaysNothingKeepsTheAlert(t *testing.T) {
+	pool := func(st *framev1beta1.FrameMachineStatus) *framev1beta1.ZPool { return &st.Storage.Local.ZFS.Pools[0] }
+	tests := []struct {
+		name   string
+		mutate func(*framev1beta1.FrameMachineStatus)
+		key    Key
+		scope  Scope
+	}{
+		{"pool with no capacity", func(st *framev1beta1.FrameMachineStatus) { pool(st).CapacityPercent = nil }, Key{CheckCapacityHigh, "tank"}, ScopeZFS},
+		{"pool with no health", func(st *framev1beta1.FrameMachineStatus) { pool(st).Health = "" }, Key{CheckDegraded, "tank"}, ScopeZFS},
+		{"pool with no scan", func(st *framev1beta1.FrameMachineStatus) { pool(st).ScrubErrors, pool(st).Scan = nil, "" }, Key{CheckScrubErrors, "tank"}, ScopeZFS},
+		{"vdev tree cut", func(st *framev1beta1.FrameMachineStatus) { pool(st).VdevsOmitted = 1 }, Key{CheckDegraded, "tank"}, ScopeZFS},
+		{"pool past the cut", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.ZFS.PoolsOmitted = 1 }, Key{CheckCapacityHigh, "cut"}, ScopeZFS},
+		{"drive with no endurance and no media type", func(st *framev1beta1.FrameMachineStatus) {
+			st.Inventory.Drives[0].SSDEnduranceUsedPercent, st.Inventory.Drives[0].MediaType = nil, ""
+		}, Key{CheckWearHigh, "S-A"}, ScopeDrives},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := healthyStatus()
+			tt.mutate(st)
+			if !Assess(st, defaults, true, Open{tt.key: tt.scope}, now).Keeps(tt.key, tt.scope) {
+				t.Fatal("cleared")
+			}
+		})
+	}
+}
+
+// With nothing open, a list known to be partial is not a False.
+func TestAPartialReadIsNeverHealthy(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*framev1beta1.FrameMachineStatus)
+		check  string
+	}{
+		{"arrays cut", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.MD.ArraysOmitted = 1 }, CheckDegraded},
+		{"pools cut", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.ZFS.PoolsOmitted = 1 }, CheckCapacityHigh},
+		{"vdevs cut", func(st *framev1beta1.FrameMachineStatus) { st.Storage.Local.ZFS.Pools[0].VdevsOmitted = 1 }, CheckDegraded},
+		{"inventory at its limit", func(st *framev1beta1.FrameMachineStatus) {
+			st.Inventory.Drives = make([]framev1beta1.DriveInfo, MaxInventoryDrives)
+		}, CheckWearHigh},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := healthyStatus()
+			tt.mutate(st)
+			a := Assess(st, defaults, true, nil, now)
+			if v := a.Verdict(tt.check, nil); v.Status != "Unknown" {
+				t.Fatalf("%+v", v)
+			}
+		})
+	}
+}
+
 func TestListCutByTheAgentHoldsOnlyWhatIsCut(t *testing.T) {
 	st := healthyStatus()
 	st.Storage.Local.MD.ArraysOmitted = 1
@@ -293,12 +392,5 @@ func TestSSDWithoutEnduranceFigureIsUnknownNotHealthy(t *testing.T) {
 	}
 	if !Assess(st, defaults, true, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
 		t.Fatal("alert cleared by a drive that stopped reporting")
-	}
-}
-
-func TestDriveGoneFromACompleteInventoryClearsItsWearAlert(t *testing.T) {
-	k := Key{CheckWearHigh, "replaced"}
-	if Assess(healthyStatus(), defaults, true, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
-		t.Fatal("alert on a drive no longer in the machine was kept")
 	}
 }

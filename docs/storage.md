@@ -387,17 +387,22 @@ raises an alert nor clears one, whatever the last lists said:
 - with nothing open the condition is `Unknown`, reason `ReadUnavailable`. It is
   never `False`, which would claim a read nobody made.
 
-Three narrower cases follow the same rule. A device past the agent's list limit
-keeps its alert, a pool running a new scrub keeps its `ScrubErrors` alert (the
-count exists only for a completed scrub), and an SSD that stops reporting
-endurance keeps its `DiskWearHigh` alert. A device gone from a complete read
-(array stopped, pool destroyed, drive replaced) resolves its alert, and so does
-deleting the machine.
+**A read that says nothing about a device clears nothing.** A pool a reboot did
+not import reads the same as a pool destroyed on purpose, and a disk the BMC
+failed to return the same as one pulled. So an alert stays open, `LastReadHeld`,
+when its device is missing from the list (a stack gone `absent` included), when
+the field it rests on is empty, or when a new scrub leaves no error count. To
+close the alert of a device removed on purpose, delete its FrameAlert:
+subscribers get no resolution for it. Deleting the machine resolves its alerts,
+even if the manager was down at the time.
+
+A list known to be partial gives `Unknown`, reason `ReadUnavailable`, when nothing
+is wrong in what it shows: the agent's lists past their limit, a vdev tree cut, a
+BMC inventory at its 32 drives. Drives past that limit are not assessed.
 
 **`DiskWearHigh` needs a BMC that reports endurance.** An SSD whose BMC sends
-nothing makes the condition `Unknown`, reason `WearNotReported`. That is the
-case of the two SSDs under `md0` on the ML350 G9: its iLO 4 sends
-`SSDEnduranceUtilizationPercentage: null` for them.
+nothing makes the condition `Unknown`, reason `WearNotReported`. iLO 4 sends
+`SSDEnduranceUtilizationPercentage: null` for third-party SSDs.
 
 The assessment runs with the BMC probe, every minute, including when the BMC
 does not answer. A BMC that stays down stretches the probe's backoff, so a
