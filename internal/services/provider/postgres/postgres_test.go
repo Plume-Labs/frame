@@ -172,7 +172,7 @@ func TestCreatesAClusterOnceWhenThereIsNone(t *testing.T) {
 	p, c, w := newProvider(t)
 	svc := service(map[string]string{
 		"instances": "2", "volumeSize": "10Gi", "storageClass": "fast", "nodes": "a,b",
-		"walBucketClaim": "shop-wal", "walEndpoint": "http://rgw:80",
+		"walBucketClaim": "shop-wal", "walEndpoint": "http://rgw:80", "create": "true",
 	})
 	if res := reconcile(t, p, svc); res.Ready || res.Reason != ReasonProvisioning {
 		t.Fatalf("%+v", res)
@@ -234,19 +234,26 @@ func mustSettings(t *testing.T, svc *servicesv1beta1.FrameService) settings {
 }
 
 func TestNeverRecreates(t *testing.T) {
-	served := service(map[string]string{"instances": "1", "volumeSize": "1Gi"})
+	served := service(map[string]string{"instances": "1", "volumeSize": "1Gi", "create": "true"})
 	served.Status.Binding.Endpoint = "shop-db.shop.svc:5432"
+	removed := adopting()
+	delete(removed, "adoptUID")
+	leftover := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "pgdata-shop-db-0", Namespace: ns}}
 	tests := []struct {
 		name string
 		svc  *servicesv1beta1.FrameService
+		objs []client.Object
 		want string
 	}{
-		{"adoption target gone", service(adopting()), ReasonAdoptionMissing},
-		{"a served cluster gone, adoptUID since removed", served, ReasonInstanceLost},
+		{"adoption target gone", service(adopting()), nil, ReasonAdoptionMissing},
+		{"cluster gone, adoptUID removed, never served", service(removed), nil, ReasonClusterMissing},
+		{"a served cluster gone", served, nil, ReasonInstanceLost},
+		{"never served, data volume still there", service(map[string]string{"instances": "1", "volumeSize": "1Gi", "create": "true"}),
+			[]client.Object{leftover}, ReasonInstanceLost},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, _, w := newProvider(t)
+			p, _, w := newProvider(t, tt.objs...)
 			if res := reconcile(t, p, tt.svc); res.Reason != tt.want {
 				t.Fatalf("%+v", res)
 			}
@@ -259,7 +266,8 @@ func TestNeverRecreates(t *testing.T) {
 
 func TestAnExistingClusterIsNotClaimedByAccident(t *testing.T) {
 	tests := map[string]map[string]string{
-		"no adoptUID": {"instances": "1", "volumeSize": "5Gi"},
+		"no adoptUID":        {"instances": "1", "volumeSize": "5Gi"},
+		"create is no claim": {"instances": "1", "volumeSize": "5Gi", "create": "true"},
 		"wrong UID": func() map[string]string {
 			p := adopting()
 			p["adoptUID"] = "00000000-0000-0000-0000-000000000000"
@@ -277,6 +285,136 @@ func TestAnExistingClusterIsNotClaimedByAccident(t *testing.T) {
 				t.Fatalf("wrote: %v %v", w.patches, w.creates)
 			}
 		})
+	}
+}
+
+// A CR restored from a backup taken after the adoption: label there, UID new.
+func TestTheLabelDoesNotReplaceTheUID(t *testing.T) {
+	restored := liveCluster()
+	restored.SetUID("99999999-2222-4333-8444-555555555555")
+	restored.SetLabels(map[string]string{OwnerLabel: "shop-db"})
+	p, _, w := newProvider(t, restored, liveBucket())
+	if res := reconcile(t, p, service(adopting())); res.Reason != ReasonNotOwned {
+		t.Fatalf("%+v", res)
+	}
+	removed := adopting()
+	delete(removed, "adoptUID")
+	removed["instances"] = "2"
+	if res := reconcile(t, p, service(removed)); res.Reason != ReasonNotOwned {
+		t.Fatalf("label alone: %+v", res)
+	}
+	if len(w.patches) != 0 {
+		t.Fatalf("wrote: %v", w.patches)
+	}
+}
+
+func TestTheAdoptionPassWritesNoSpec(t *testing.T) {
+	tests := map[string]func(map[string]string){
+		"more instances": func(p map[string]string) { p["instances"] = "2" },
+		"larger volume":  func(p map[string]string) { p["volumeSize"] = "6Gi" },
+		"smaller volume": func(p map[string]string) { p["volumeSize"] = "4Gi" },
+		"placement":      func(p map[string]string) { p["nodes"] = "a,b" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			params := adopting()
+			live := liveCluster()
+			if mutate == nil {
+				if err := unstructured.SetNestedField(live.Object, "other", "spec", "teamId"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				mutate(params)
+			}
+			p, _, w := newProvider(t, live, liveBucket())
+			if res := reconcile(t, p, service(params)); res.Reason != ReasonSpecDrift {
+				t.Fatalf("%+v", res)
+			}
+			if len(w.patches) != 0 {
+				t.Fatalf("wrote: %v", w.patches)
+			}
+		})
+	}
+}
+
+func TestTheSameSizeSpelledDifferentlyIsNoDrift(t *testing.T) {
+	params := adopting()
+	params["volumeSize"] = "5120Mi"
+	p, _, _ := newProvider(t, liveCluster(), liveBucket())
+	if res := reconcile(t, p, service(params)); !res.Ready {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestAdoptionClaimsTheBucketWithoutOwningIt(t *testing.T) {
+	p, c, _ := newProvider(t, liveCluster(), liveBucket())
+	reconcile(t, p, service(adopting()))
+	got := liveBucket()
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(got), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.GetLabels()[OwnerLabel] != "shop-db" || got.GetAnnotations()[keepAnnotation] != keepValue {
+		t.Fatalf("%v %v", got.GetLabels(), got.GetAnnotations())
+	}
+	if len(got.GetOwnerReferences()) != 0 || len(cluster(t, c).GetOwnerReferences()) != 0 {
+		t.Fatal("an owner reference would hand the data to garbage collection")
+	}
+}
+
+func TestABucketOfAnotherServiceIsNotTaken(t *testing.T) {
+	b := liveBucket()
+	b.SetLabels(map[string]string{OwnerLabel: "other-db"})
+	p, _, w := newProvider(t, liveCluster(), b)
+	res := reconcile(t, p, service(adopting()))
+	if res.Reason != ReasonNotOwned {
+		t.Fatalf("%+v", res)
+	}
+	for _, patch := range w.patches {
+		if strings.HasPrefix(patch, "ObjectBucketClaim") {
+			t.Fatalf("wrote: %s", patch)
+		}
+	}
+}
+
+func TestAnExistingBucketIsNotRecreated(t *testing.T) {
+	p, _, w := newProvider(t, liveBucket())
+	svc := service(map[string]string{"instances": "1", "volumeSize": "1Gi", "create": "true", "walBucketClaim": "shop-wal", "walEndpoint": "http://rgw:80"})
+	reconcile(t, p, svc)
+	for _, c := range w.creates {
+		if strings.HasPrefix(c, "ObjectBucketClaim") {
+			t.Fatalf("created: %v", w.creates)
+		}
+	}
+}
+
+func TestKeepIsPutBackIfRemoved(t *testing.T) {
+	p, c, w := newProvider(t, liveCluster(), liveBucket())
+	svc := service(adopting())
+	reconcile(t, p, svc)
+	got := cluster(t, c)
+	got.SetAnnotations(map[string]string{})
+	if err := c.Update(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	w.patches = nil
+	reconcile(t, p, svc)
+	if cluster(t, c).GetAnnotations()[keepAnnotation] != keepValue {
+		t.Fatal("keep not restored")
+	}
+}
+
+func TestBindingNoneTouchesNoSecret(t *testing.T) {
+	params := adopting()
+	params["binding"] = "none"
+	c := interceptor.NewClient(fake.NewClientBuilder().WithScheme(testScheme(t)).Build(), interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			t.Fatal("read a Secret")
+			return nil
+		},
+	})
+	b, err := New(c).Bind(context.Background(), service(params))
+	if err != nil || !b.None || b.Endpoint == "" || b.Data != nil {
+		t.Fatalf("%+v %v", b, err)
 	}
 }
 
@@ -338,6 +476,17 @@ func TestDriftWritesNothing(t *testing.T) {
 				t.Fatalf("wrote: %v", w.patches)
 			}
 		})
+	}
+}
+
+func TestOwnerMustBeAUserOfTheCluster(t *testing.T) {
+	live := liveCluster()
+	if err := unstructured.SetNestedField(live.Object, map[string]any{"other": []any{}}, "spec", "users"); err != nil {
+		t.Fatal(err)
+	}
+	p, _, _ := newProvider(t, live, liveBucket())
+	if res := reconcile(t, p, service(adopting())); res.Reason != ReasonSpecDrift {
+		t.Fatalf("%+v", res)
 	}
 }
 
@@ -415,7 +564,7 @@ func TestReportsANotRunningCluster(t *testing.T) {
 
 func TestNameWithoutTeamIsDegraded(t *testing.T) {
 	p, _, w := newProvider(t)
-	svc := service(map[string]string{"instances": "1", "volumeSize": "1Gi"})
+	svc := service(map[string]string{"instances": "1", "volumeSize": "1Gi", "create": "true"})
 	svc.Name = "shopdb"
 	if res := reconcile(t, p, svc); res.Reason != ReasonInvalidName {
 		t.Fatalf("%+v", res)

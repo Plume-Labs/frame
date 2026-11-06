@@ -399,3 +399,33 @@ func TestManagerSecretAccessIsPerNamespace(t *testing.T) {
 	forbidden(t, "update a Secret of its namespace other than the state Secret", mgr.Update(ctx, other))
 	forbidden(t, "delete in its own namespace", mgr.Delete(ctx, secret(mgrNS, "alert-token", nil)))
 }
+
+// The manager writes database CRs and bucket claims, and deleting either is
+// what destroyed a database once: that verb must stay a person's.
+func TestManagerCannotDeleteDatabaseObjects(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(manifests.Root(t), "config", "rbac", "role.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var role rbacv1.ClusterRole
+	if err := k8syaml.Unmarshal(raw, &role); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, r := range role.Rules {
+		for _, res := range r.Resources {
+			if res != "postgresqls" && res != "objectbucketclaims" && res != "*" {
+				continue
+			}
+			seen[res] = true
+			for _, v := range r.Verbs {
+				if v == "delete" || v == "deletecollection" || v == "*" {
+					t.Errorf("manager holds %s on %s", v, res)
+				}
+			}
+		}
+	}
+	if !seen["postgresqls"] || !seen["objectbucketclaims"] {
+		t.Fatalf("rule not found, the test proves nothing: %v", seen)
+	}
+}

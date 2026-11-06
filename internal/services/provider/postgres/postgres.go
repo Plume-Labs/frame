@@ -6,16 +6,19 @@
 // come from a CR that was once pruned by accident and took the database with
 // it:
 //
-//   - A cluster is never recreated. Creation happens once, for a FrameService
-//     that has never had an instance. An adopted or formerly Ready instance
-//     whose CR is gone degrades and waits for a person: a new CR under that
-//     name would boot an empty database under the consumers' address.
-//   - A cluster that exists is never claimed by accident. It takes
-//     adoptUID, the UID of the very object, read by whoever decided.
+//   - A cluster is never recreated. Creation takes an explicit create=true,
+//     once, for a FrameService that never served, on a name with no data
+//     volume left. Anything else degrades and waits for a person: a new CR
+//     under that name would come up without its users, its patroni settings or
+//     its data, at the consumers' address.
+//   - A cluster that exists is never claimed by accident. It takes adoptUID,
+//     the UID of the very object, read by whoever decided, and that UID is
+//     compared on every pass: a CR restored from a backup carries the label but
+//     not the UID, and whoever restored it has to say so.
 //   - Nothing about an existing cluster is rewritten but what can safely move:
 //     instances, volume size, placement. The other settings are compared, and
-//     a difference writes nothing at all (SpecDrift), so an adoption whose
-//     parameters do not describe the live cluster changes nothing.
+//     a difference writes nothing at all (SpecDrift). On the adoption pass the
+//     movable settings are compared too, so an adoption writes no spec.
 //   - The CR and the bucket claim are data, so they carry no owner reference
 //     and are not listed in status.provisioned: deletionPolicy never reaches
 //     them, and the manager holds no delete verb on either. Deleting a database
@@ -56,6 +59,7 @@ import (
 //
 // +kubebuilder:rbac:groups=acid.zalan.do,resources=postgresqls,verbs=get;create;patch
 // +kubebuilder:rbac:groups=objectbucket.io,resources=objectbucketclaims,verbs=get;create;patch
+// persistentvolumeclaims: get, granted by the FrameService controller's marker.
 
 var (
 	clusterGVK = schema.GroupVersionKind{Group: "acid.zalan.do", Version: "v1", Kind: "postgresql"}
@@ -88,6 +92,7 @@ const (
 	ReasonInvalidName     = "InvalidName"
 	ReasonAdoptionMissing = "AdoptionTargetMissing"
 	ReasonInstanceLost    = "InstanceLost"
+	ReasonClusterMissing  = "ClusterMissing"
 	ReasonNotOwned        = "ClusterNotOwned"
 	ReasonSpecDrift       = "SpecDrift"
 	ReasonVolumeShrink    = "VolumeShrinkRefused"
@@ -167,8 +172,19 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 			},
 			"adoptUID": {
 				Type:        "string",
-				Description: "UID of an existing cluster to take over. With it set, this provider never creates a cluster.",
+				Description: "UID of an existing cluster to take over, compared on every pass. Excludes create.",
 				Pattern:     `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+			},
+			"create": {
+				Type:        "string",
+				Description: "true creates the cluster if this FrameService never had one. Without it, nothing is ever created.",
+				Enum:        []apiextensionsv1.JSON{{Raw: []byte(`"true"`)}},
+			},
+			"binding": {
+				Type: "string",
+				Description: "none publishes no credentials Secret, for consumers reading the operator's own: " +
+					"the manager then needs no write on Secrets in the namespace.",
+				Enum: []apiextensionsv1.JSON{{Raw: []byte(`"none"`)}},
 			},
 		},
 	}
@@ -179,6 +195,9 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 	if params["walBucketClaim"] != "" && params["walEndpoint"] == "" {
 		return provider.Sizing{}, errors.New("walBucketClaim needs walEndpoint")
+	}
+	if params["adoptUID"] != "" && params["create"] != "" {
+		return provider.Sizing{}, errors.New("adoptUID and create exclude each other")
 	}
 	if n, nodes := params["instances"], params["nodes"]; nodes != "" {
 		if want, _ := strconv.Atoi(n); want > len(strings.Split(nodes, ",")) {
@@ -197,6 +216,7 @@ type settings struct {
 	nodes                                        []string
 	walClaim, walEndpoint, walRetention          string
 	adoptUID                                     string
+	create, noBinding                            bool
 }
 
 func settingsOf(svc *servicesv1beta1.FrameService) (settings, bool) {
@@ -222,8 +242,14 @@ func settingsOf(svc *servicesv1beta1.FrameService) (settings, bool) {
 		walEndpoint:  params["walEndpoint"],
 		walRetention: or("walRetentionDays", defaultRetentionDays),
 		adoptUID:     params["adoptUID"],
+		create:       params["create"] == "true",
+		noBinding:    params["binding"] == "none",
 	}
-	s.instances, _ = strconv.ParseInt(params["instances"], 10, 64)
+	n, err := strconv.ParseInt(params["instances"], 10, 64)
+	if err != nil || n < 1 {
+		return settings{}, false
+	}
+	s.instances = n
 	if params["nodes"] != "" {
 		s.nodes = strings.Split(params["nodes"], ",")
 	}
@@ -239,7 +265,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 	s, ok := settingsOf(svc)
 	if !ok {
 		return degraded(ReasonInvalidName,
-			"the operator needs a name of the form <team>-<cluster>, and %q has no dash", svc.Name), nil
+			"the operator needs a name of the form <team>-<cluster> and at least one instance: %q does not give them", svc.Name), nil
 	}
 
 	cr := newObject(clusterGVK, svc)
@@ -253,25 +279,29 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		return provider.Result{}, fmt.Errorf("reading the cluster: %w", err)
 	}
 
-	if cr.GetLabels()[OwnerLabel] != svc.Name {
-		if s.adoptUID != string(cr.GetUID()) {
-			return degraded(ReasonNotOwned,
-				"a cluster %s already exists (UID %s) and this FrameService does not claim it: set adoptUID to take it over",
-				cr.GetName(), cr.GetUID()), nil
-		}
+	claimed := cr.GetLabels()[OwnerLabel] == svc.Name
+	owned := s.adoptUID == string(cr.GetUID()) || (s.adoptUID == "" && s.create && claimed)
+	if !owned {
+		return degraded(ReasonNotOwned,
+			"a cluster %s exists (UID %s) and this FrameService does not claim it: set adoptUID to take it over",
+			cr.GetName(), cr.GetUID()), nil
 	}
-	if drift := driftOf(cr, s); len(drift) > 0 {
+	drift := driftOf(cr, s)
+	if !claimed {
+		drift = append(drift, movedOf(cr, s)...)
+	}
+	if len(drift) > 0 {
 		return degraded(ReasonSpecDrift, "nothing written: the parameters do not describe the cluster: %s",
 			strings.Join(drift, "; ")), nil
 	}
-	if cr.GetLabels()[OwnerLabel] != svc.Name {
+	if !claimed || cr.GetAnnotations()[keepAnnotation] != keepValue {
 		if err := p.claim(ctx, cr, svc); err != nil {
 			return provider.Result{}, err
 		}
 	}
 	if s.walClaim != "" {
-		if err := p.keepBucket(ctx, svc, s.walClaim); err != nil {
-			return provider.Result{}, err
+		if res, stop, err := p.keepBucket(ctx, svc, s.walClaim); stop || err != nil {
+			return res, err
 		}
 	}
 
@@ -291,9 +321,22 @@ func (p *Provider) reconcileAbsent(ctx context.Context, svc *servicesv1beta1.Fra
 	if s.adoptUID != "" {
 		return degraded(ReasonAdoptionMissing, "cluster %s (UID %s) does not exist: nothing created", svc.Name, s.adoptUID), nil
 	}
+	if !s.create {
+		return degraded(ReasonClusterMissing, "cluster %s does not exist, and create is not set: nothing created", svc.Name), nil
+	}
 	if svc.Status.Binding.Endpoint != "" {
 		return degraded(ReasonInstanceLost,
 			"cluster %s was serving and has disappeared: not recreated, a new one would be empty; restore it", svc.Name), nil
+	}
+	// The operator keeps volumes when a CR goes, and a new CR would mount them.
+	pvc := &unstructured.Unstructured{}
+	pvc.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
+	err := p.client.Get(ctx, client.ObjectKey{Namespace: svc.Namespace, Name: "pgdata-" + svc.Name + "-0"}, pvc)
+	if err == nil {
+		return degraded(ReasonInstanceLost, "the volume of a cluster %s is still there: not recreated; restore it", svc.Name), nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return provider.Result{}, fmt.Errorf("checking for a leftover volume: %w", err)
 	}
 	if s.walClaim != "" {
 		if err := p.ensureBucket(ctx, svc, s.walClaim); err != nil {
@@ -428,6 +471,23 @@ func driftOf(cr *unstructured.Unstructured, s settings) []string {
 	return out
 }
 
+// movedOf lists the settings that may move later but not on the pass that
+// adopts: an adoption is checked by its generation, and must write no spec.
+func movedOf(cr *unstructured.Unstructured, s settings) []string {
+	var out []string
+	if n, _, _ := unstructured.NestedInt64(cr.Object, "spec", "numberOfInstances"); n != s.instances {
+		out = append(out, fmt.Sprintf("instances is %d, the cluster has %d", s.instances, n))
+	}
+	size, _, _ := unstructured.NestedString(cr.Object, "spec", "volume", "size")
+	if live, err := resource.ParseQuantity(size); err != nil || live.Cmp(resource.MustParse(s.volumeSize)) != 0 {
+		out = append(out, fmt.Sprintf("volumeSize is %s, the cluster has %q", s.volumeSize, size))
+	}
+	if len(s.nodes) > 0 {
+		out = append(out, "nodes is set: placement moves after the adoption, not with it")
+	}
+	return out
+}
+
 func liveWAL(cr *unstructured.Unstructured) (claim, endpoint, retention string) {
 	env, _, _ := unstructured.NestedSlice(cr.Object, "spec", "env")
 	for _, e := range env {
@@ -524,23 +584,28 @@ func (p *Provider) ensureBucket(ctx context.Context, svc *servicesv1beta1.FrameS
 	return p.client.Create(ctx, obc)
 }
 
-// keepBucket makes sure a claim that survives its cluster's chart stays: its
-// storage class deletes the bucket with the claim.
-func (p *Provider) keepBucket(ctx context.Context, svc *servicesv1beta1.FrameService, name string) error {
+// keepBucket marks the claim behind the archive: its storage class deletes the
+// bucket with the claim. One claimed by another FrameService is not taken.
+func (p *Provider) keepBucket(ctx context.Context, svc *servicesv1beta1.FrameService, name string) (provider.Result, bool, error) {
 	obc := &unstructured.Unstructured{}
 	obc.SetGroupVersionKind(bucketGVK)
 	obc.SetName(name)
 	obc.SetNamespace(svc.Namespace)
 	if err := p.client.Get(ctx, client.ObjectKeyFromObject(obc), obc); err != nil {
-		return fmt.Errorf("reading the WAL bucket claim: %w", err)
+		return provider.Result{}, false, fmt.Errorf("reading the WAL bucket claim: %w", err)
 	}
-	if obc.GetAnnotations()[keepAnnotation] == keepValue && obc.GetLabels()[OwnerLabel] == svc.Name {
-		return nil
+	owner := obc.GetLabels()[OwnerLabel]
+	if owner != "" && owner != svc.Name {
+		return degraded(ReasonNotOwned, "WAL bucket claim %s belongs to FrameService %s", name, owner), true, nil
 	}
-	return p.merge(ctx, obc, map[string]any{"metadata": map[string]any{
+	if obc.GetAnnotations()[keepAnnotation] == keepValue && owner == svc.Name {
+		return provider.Result{}, false, nil
+	}
+	err := p.merge(ctx, obc, map[string]any{"metadata": map[string]any{
 		"labels":      map[string]any{OwnerLabel: svc.Name},
 		"annotations": map[string]any{keepAnnotation: keepValue},
 	}})
+	return provider.Result{}, false, err
 }
 
 // Bind hands consumers the address and the owner's credentials, read from the
@@ -550,6 +615,11 @@ func (p *Provider) Bind(ctx context.Context, svc *servicesv1beta1.FrameService) 
 	if !ok {
 		return provider.Binding{}, fmt.Errorf("invalid name %q", svc.Name)
 	}
+	host := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
+	endpoint := fmt.Sprintf("%s:%d", host, port)
+	if s.noBinding {
+		return provider.Binding{Endpoint: endpoint, None: true}, nil
+	}
 	var secret corev1.Secret
 	key := client.ObjectKey{Namespace: svc.Namespace, Name: fmt.Sprintf("%s.%s.credentials.postgresql.acid.zalan.do", s.owner, svc.Name)}
 	if err := p.client.Get(ctx, key, &secret); err != nil {
@@ -558,8 +628,6 @@ func (p *Provider) Bind(ctx context.Context, svc *servicesv1beta1.FrameService) 
 		}
 		return provider.Binding{}, fmt.Errorf("reading the operator's credentials: %w", err)
 	}
-	host := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
-	endpoint := fmt.Sprintf("%s:%d", host, port)
 	return provider.Binding{
 		Endpoint: endpoint,
 		Data: map[string][]byte{
