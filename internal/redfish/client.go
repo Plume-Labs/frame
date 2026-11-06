@@ -40,6 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -254,7 +255,7 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 			Model:          sys.Model,
 			SerialNumber:   sys.SerialNumber,
 			BIOSVersion:    sys.BiosVersion,
-			TotalMemoryGiB: sys.MemorySummary.TotalSystemMemoryGiB,
+			TotalMemoryGiB: int32(math.Round(sys.MemorySummary.TotalSystemMemoryGiB)),
 		},
 		LogCounts: map[string]int{},
 	}
