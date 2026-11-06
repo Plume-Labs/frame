@@ -323,7 +323,7 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 		`"fstype":null,"mountpoint":null}` +
 		`]}`}
 
-	tick(context.Background(), kc, "node-1", root, runner, nil)
+	tick(context.Background(), kc, "node-1", root, runner, nil, nil)
 
 	var got framev1beta1.FrameMachine
 	if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {

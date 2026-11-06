@@ -127,6 +127,20 @@ func TestWearReadsTheStandardFieldFirst(t *testing.T) {
 	}
 }
 
+// Written sectors pass 2^31 after 1 TiB: a failing, worn disk must not be lost
+// to the width of a number in the same table.
+func TestAHugeStatisticDoesNotLoseTheReport(t *testing.T) {
+	got, err := parseSMART(`{"smart_status":{"passed":false},"ata_device_statistics":{"pages":[{"table":[
+		{"name":"Logical Sectors Written","value":12884901888},
+		{"name":"Percentage Used Endurance Indicator","value":91}]}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Passed == nil || *got.Passed || got.WearUsedPercent == nil || *got.WearUsedPercent != 91 {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestParseSMARTSaysWhenItDidNotRead(t *testing.T) {
 	if _, err := parseSMART(`{"smartctl":{"exit_status":2}}`); err == nil {
 		t.Error("device not opened read as a report")

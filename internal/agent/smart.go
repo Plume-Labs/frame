@@ -93,6 +93,9 @@ func NewSMARTReader(x StorageExecutor) *SMARTReader {
 // Annotate fills in the last read of each disk and starts a refresh when one
 // is due. It never waits for it.
 func (r *SMARTReader) Annotate(disks []framev1beta1.ObservedDisk) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i := range disks {
@@ -168,8 +171,10 @@ type smartJSON struct {
 	DeviceStatistics struct {
 		Pages []struct {
 			Table []struct {
-				Name  string `json:"name"`
-				Value *int32 `json:"value"`
+				Name string `json:"name"`
+				// int64: the same table counts sectors written, past 2^31 after
+				// 1 TiB, and one number too wide would lose the whole report.
+				Value *int64 `json:"value"`
 			} `json:"table"`
 		} `json:"pages"`
 	} `json:"ata_device_statistics"`
@@ -216,7 +221,7 @@ func wearOf(j *smartJSON) *int32 {
 	for _, page := range j.DeviceStatistics.Pages {
 		for _, row := range page.Table {
 			if row.Name == endurancePercentUsed && row.Value != nil {
-				return percent(*row.Value)
+				return percent(int32(min(max(*row.Value, 0), 100)))
 			}
 		}
 	}
