@@ -227,7 +227,7 @@ func readBond(base, name string) framev1beta1.NetworkBond {
 	bond.MembersUnread = err != nil
 	for member := range strings.FieldsSeq(string(slaves)) {
 		// The kernel forbids a slash in a name; a tree that has one is no sysfs.
-		if filepath.Base(member) != member || member == "." || member == ".." {
+		if strings.ContainsRune(member, '/') || member == "." || member == ".." {
 			bond.MembersUnread = true
 			continue
 		}

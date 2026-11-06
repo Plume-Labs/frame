@@ -138,7 +138,7 @@ func TestAMemberListThatCannotBeReadIsSaid(t *testing.T) {
 func TestAMemberNameCannotLeaveTheTree(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, map[string]string{
-		"sys/class/net/bond0/bonding/slaves": "../../../etc .. . etc/bonding_slave eno1",
+		"sys/class/net/bond0/bonding/slaves": "../../../etc .. . / etc/bonding_slave eno1",
 		"etc/bonding_slave/state":            "secret",
 	})
 	b := ObserveNetwork(root, time.Now()).Bonds[0]
@@ -189,7 +189,7 @@ func TestADeviceThatCannotBeLookedAtIsStillAPort(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	got := ObserveNetwork(root, time.Now())
-	if len(got.Interfaces) != 1 || got.Interfaces[0].Name != "eno1" {
+	if len(got.Interfaces) != 1 || got.Interfaces[0].Name != "eno1" || got.Interfaces[0].OperState != "" {
 		t.Fatalf("%+v", got)
 	}
 }

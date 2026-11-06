@@ -251,14 +251,37 @@ func TestAnUnknownStateStillHasItsSpeedChecked(t *testing.T) {
 	if a := assessNet(n, noNet, nil); !keys(a)[Key{CheckLinkSlow, "eno3"}] {
 		t.Fatalf("%+v", a.Findings)
 	}
+	// Such a driver may never give one: that keeps no node Unknown for good.
 	n.Interfaces[2].SpeedMbps = nil
-	if v := assessNet(n, noNet, nil).Verdict(CheckLinkSlow, nil); v.Reason != "SpeedNotReported" {
+	if v := assessNet(n, noNet, nil).Verdict(CheckLinkSlow, nil); v.Status != "False" {
 		t.Fatalf("%+v", v)
 	}
-	// An unused port with unknown state owes nothing else.
 	n.Interfaces[2].SpeedMbps = new(int32(10000))
 	if v := assessNet(n, noNet, nil).Verdict(CheckNetDegraded, nil); v.Status != "False" {
 		t.Fatalf("%+v", v)
+	}
+}
+
+// What a silent field costs is NetworkDegraded: the speeds were read.
+func TestASilentFieldLeavesLinkSpeedAlone(t *testing.T) {
+	named := healthyNet()
+	named.Interfaces[0].OperState = "unknown"
+	member := healthyNet()
+	member.Bonds[0].Members[1].AggregatorID = 0
+	for name, tt := range map[string]struct {
+		n *framev1beta1.MachineNetwork
+		e NetExpectations
+	}{
+		"named link at unknown":     {named, expecting(framev1beta1.ExpectedLink{Interface: "eno1"})},
+		"member with no aggregator": {member, noNet},
+	} {
+		a := assessNet(tt.n, tt.e, nil)
+		if v := a.Verdict(CheckNetDegraded, nil); v.Status != "Unknown" {
+			t.Errorf("%s: %+v", name, v)
+		}
+		if v := a.Verdict(CheckLinkSlow, nil); v.Status != "False" {
+			t.Errorf("%s: %+v", name, v)
+		}
 	}
 }
 

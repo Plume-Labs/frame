@@ -38,6 +38,10 @@ const modeLACP = "802.3ad"
 // stops naming it, or a typo in a name would stay open for good.
 const ScopeNetExpected Scope = "network-expected"
 
+// scopeNetState holds what a silent field costs NetworkDegraded alone: a member
+// with no status says nothing against the speed of every port.
+const scopeNetState Scope = "network-state"
+
 // NetExpectations is the NetworkHealthPolicy as it applies to one node.
 type NetExpectations struct {
 	MinSpeedMbps int32
@@ -125,7 +129,7 @@ func (a *Assessment) unsure(key Key, open Open, why string) {
 	if open.has(key) {
 		a.Held[key] = true
 	}
-	a.Cut[ScopeNet] = why
+	a.Cut[scopeNetState] = why
 }
 
 func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpectations, open Open) {
@@ -136,8 +140,10 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 	key := Key{CheckLinkSlow, i.Name}
 	switch {
 	case i.OperState == "":
-		a.unsure(Key{CheckNetDegraded, i.Name}, open, fmt.Sprintf("link %s gives no state", i.Name))
-		a.unsure(key, open, fmt.Sprintf("link %s gives no state", i.Name))
+		why := fmt.Sprintf("link %s gives no state", i.Name)
+		a.unsure(Key{CheckNetDegraded, i.Name}, open, why)
+		a.unsure(key, open, why)
+		a.Cut[ScopeNet] = why
 		return
 	case named && i.OperState == "unknown":
 		a.unsure(Key{CheckNetDegraded, i.Name}, open, fmt.Sprintf("link %s gives no state", i.Name))
@@ -150,7 +156,7 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 		if open.has(key) {
 			a.Held[key] = true
 		}
-		if carrying {
+		if i.OperState == "up" {
 			a.SpeedUnreported++
 		}
 		return

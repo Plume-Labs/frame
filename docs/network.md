@@ -13,7 +13,7 @@ stacks: 32 ports, 8 bonds, 16 members per bond, with `*Omitted` counters.
 |---|---|---|
 | `NetworkDegraded` | critical | a bond is down; a bond holds fewer members than `members`; a link named in the policy is down or absent |
 | `NetworkDegraded` | warning | a bond member is down, or sits outside the LACP aggregator the bond uses (it has link and carries nothing) |
-| `LinkSpeedLow` | warning | a physical link that is up runs below its expected speed |
+| `LinkSpeedLow` | warning | a physical link that is up, or at the kernel's `unknown`, runs below its expected speed |
 
 A bond member's alert is on `<bond>/<member>`, the others on the interface. A port
 that is down and not named in the policy raises nothing: machines carry unused
@@ -26,11 +26,13 @@ A field that reads empty is a read that said nothing, not a healthy one: a link
 with no state, a named one at the kernel's `unknown`, a bond with no mode, a bond
 or member with no status, an
 LACP aggregator of 0 or `N/A`, a bond whose member list could not be read. Each
-keeps what it had open and makes the condition `Unknown`, reason `ReadUnavailable`,
-as does a report that lists no port and no bond. A link that is up and gives no
+keeps what it had open and makes `NetworkDegraded` `Unknown`, reason
+`ReadUnavailable`. A port with no state does so for `LinkSpeedLow` too, as does a
+report that lists no port and no bond. A link that is up and gives no
 speed, the case of every virtio NIC, makes `LinkSpeedLow` `Unknown`, reason
 `SpeedNotReported`. An SR-IOV virtual function is not a port, and is not listed. A link at `unknown`
-that shows a speed has it compared.
+that shows a speed has it compared; one that shows none owes nothing. Only ports
+and bonds are listed: a bridge, a VLAN or a VF named in the policy reads as absent.
 
 The agent reads links in the background, so a driver that hangs does not hold up
 its tick: the last report ages until the condition goes `Unknown`.
@@ -39,7 +41,8 @@ An alert for a link absent from the node ends when the policy stops naming it, s
 a typo in a name can be corrected. `speedMbps` applies to a physical port: on a
 bond it does nothing, name the bond's ports. If the policy itself cannot be read,
 links go `Unknown` and storage goes on. An alert held open has its "Removed on
-purpose" in Storage → Health, like the storage ones.
+purpose" in Storage → Health, for an admin, like the storage ones. An alert
+raised on a named link whose driver then stays at `unknown` needs it to close.
 
 A member that left a bond altogether is in no list, so only `members` in the
 [`NetworkHealthPolicy`](crd-reference.md#networkhealthpolicy) can notice it. Error

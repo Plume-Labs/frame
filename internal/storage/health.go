@@ -68,7 +68,7 @@ var checkScopes = map[string][]Scope{
 	CheckScrubErrors:  {ScopeZFS},
 	CheckCapacityHigh: {ScopeZFS},
 	CheckWearHigh:     {ScopeDrives},
-	CheckNetDegraded:  {ScopeNet},
+	CheckNetDegraded:  {ScopeNet, scopeNetState},
 	CheckLinkSlow:     {ScopeNet},
 }
 
