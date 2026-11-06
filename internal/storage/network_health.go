@@ -130,22 +130,27 @@ func (a *Assessment) unsure(key Key, open Open, why string) {
 
 func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpectations, open Open) {
 	expected, named := e.Links[i.Name]
+	// "unknown" is the kernel's own word for a driver that does not track it: no
+	// verdict on a link that must be up, but the speed it shows still counts.
+	carrying := i.OperState == "up" || i.OperState == "unknown"
+	key := Key{CheckLinkSlow, i.Name}
 	switch {
-	case !named || i.OperState == "up":
-	// "unknown" is the kernel's own word for a driver that does not track it.
-	case i.OperState == "" || i.OperState == "unknown":
+	case i.OperState == "":
 		a.unsure(Key{CheckNetDegraded, i.Name}, open, fmt.Sprintf("link %s gives no state", i.Name))
-	default:
+		a.unsure(key, open, fmt.Sprintf("link %s gives no state", i.Name))
+		return
+	case named && i.OperState == "unknown":
+		a.unsure(Key{CheckNetDegraded, i.Name}, open, fmt.Sprintf("link %s gives no state", i.Name))
+	case named && i.OperState != "up":
 		a.add(CheckNetDegraded, i.Name, ScopeNet, severityCritical, fmt.Sprintf("expected link %s is %s", i.Name, i.OperState))
 	}
 
-	key := Key{CheckLinkSlow, i.Name}
-	if i.OperState != "up" || i.SpeedMbps == nil {
+	if !carrying || i.SpeedMbps == nil {
 		// A link that is down has no speed: it says nothing of the last one.
 		if open.has(key) {
 			a.Held[key] = true
 		}
-		if i.OperState == "up" {
+		if carrying {
 			a.SpeedUnreported++
 		}
 		return
@@ -169,6 +174,9 @@ func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations, 
 		a.unsure(key, open, fmt.Sprintf("bond %s gives no status", b.Name))
 	default:
 		bad = append(bad, "is "+b.MIIStatus)
+	}
+	if b.Mode == "" {
+		a.unsure(key, open, fmt.Sprintf("bond %s gives no mode", b.Name))
 	}
 	if want := e.Links[b.Name].Members; b.MembersUnread {
 		a.unsure(key, open, fmt.Sprintf("bond %s: its members could not be read", b.Name))

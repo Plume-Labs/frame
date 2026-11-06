@@ -24,6 +24,10 @@ describe('memberLine', () => {
   it('ne colore pas en rouge un état non lu', () => {
     expect(memberLine(bond({ members: [{ name: 'eno1' }] }))[0]).toMatchObject({ tone: 'muted', detail: '?' })
   })
+  it('ne compare pas à un agrégateur du bond non lu', () => {
+    const b = bond({ aggregatorID: undefined, members: [{ name: 'eno1', miiStatus: 'up', aggregatorID: 2 }] })
+    expect(memberLine(b)[0].tone).toBe('accent')
+  })
   it('ignore les agrégateurs hors LACP', () => {
     const b = bond({ mode: 'active-backup', members: [{ name: 'eno1', miiStatus: 'up', aggregatorID: 2 }] })
     expect(memberLine(b)[0].tone).toBe('accent')
@@ -36,6 +40,9 @@ describe('lacpLine', () => {
   })
   it('distingue un partenaire non lu d’un partenaire absent', () => {
     expect(lacpLine(bond({ partnerMAC: undefined }))).toContain('not read')
+  })
+  it('ne compte pas des ports non lus', () => {
+    expect(lacpLine(bond({ portsInAggregator: undefined }))).toContain('? port(s)')
   })
   it('se tait hors LACP', () => {
     expect(lacpLine(bond({ mode: 'balance-rr' }))).toBe('')

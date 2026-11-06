@@ -196,6 +196,7 @@ func TestAnEmptyFieldNeitherClearsNorRaises(t *testing.T) {
 		{"bond aggregator", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].AggregatorID = 0 }, member},
 		{"member aggregator", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].Members[1].AggregatorID = 0 }, member},
 		{"bond status", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].MIIStatus = "" }, bond},
+		{"mode of a bond with no member", func(n *framev1beta1.MachineNetwork) { n.Bonds[0].Mode = "" }, bond},
 		{"bond members", func(n *framev1beta1.MachineNetwork) {
 			n.Bonds[0].Members, n.Bonds[0].MembersUnread = nil, true
 		}, bond},
@@ -222,6 +223,42 @@ func TestAnEmptyFieldNeitherClearsNorRaises(t *testing.T) {
 				t.Fatalf("%+v", v)
 			}
 		})
+	}
+}
+
+// Not named, a port owes no state, but nothing can be said of one that gives none.
+func TestAnUnnamedPortWithNoStateIsNotHealthy(t *testing.T) {
+	n := healthyNet()
+	n.Interfaces[2] = framev1beta1.NetworkInterface{Name: "eno3"}
+	slow, down := Key{CheckLinkSlow, "eno3"}, Key{CheckNetDegraded, "eno3"}
+	open := Open{slow: ScopeNet, down: ScopeNet}
+	a := assessNet(n, noNet, open)
+	if !a.Keeps(slow, ScopeNet) || !a.Keeps(down, ScopeNet) {
+		t.Fatalf("%+v", a.Held)
+	}
+	a = assessNet(n, noNet, nil)
+	for _, c := range []string{CheckNetDegraded, CheckLinkSlow} {
+		if v := a.Verdict(c, nil); v.Status != "Unknown" {
+			t.Errorf("%s: %+v", c, v)
+		}
+	}
+}
+
+// The speed of a link whose driver tracks no state is still a speed.
+func TestAnUnknownStateStillHasItsSpeedChecked(t *testing.T) {
+	n := healthyNet()
+	n.Interfaces[2].OperState, n.Interfaces[2].SpeedMbps = "unknown", new(int32(100))
+	if a := assessNet(n, noNet, nil); !keys(a)[Key{CheckLinkSlow, "eno3"}] {
+		t.Fatalf("%+v", a.Findings)
+	}
+	n.Interfaces[2].SpeedMbps = nil
+	if v := assessNet(n, noNet, nil).Verdict(CheckLinkSlow, nil); v.Reason != "SpeedNotReported" {
+		t.Fatalf("%+v", v)
+	}
+	// An unused port with unknown state owes nothing else.
+	n.Interfaces[2].SpeedMbps = new(int32(10000))
+	if v := assessNet(n, noNet, nil).Verdict(CheckNetDegraded, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
 	}
 }
 

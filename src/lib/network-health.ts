@@ -83,7 +83,7 @@ export function memberLine(b: NetworkBond): { name: string; tone: Tone; detail: 
 export function lacpLine(b: NetworkBond): string {
   if (b.mode !== '802.3ad') return ''
   const partner = !b.partnerMAC ? 'LACP partner not read' : /^[0:]+$/.test(b.partnerMAC) ? 'no LACP partner' : `partner ${b.partnerMAC}`
-  return `${partner} · ${b.portsInAggregator ?? 0} port(s) in aggregator ${b.aggregatorID ?? '?'}`
+  return `${partner} · ${b.portsInAggregator ?? '?'} port(s) in aggregator ${b.aggregatorID ?? '?'}`
 }
 
 /** What the rows cannot show: a read that failed, its age, what was cut. */

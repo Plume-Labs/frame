@@ -611,6 +611,29 @@ var _ = Describe("FrameMachine storage health", func() {
 		Expect(state(storage.CheckLinkSlow, "eno1")).To(Equal(framev1beta1.AlertStateFiring))
 	})
 
+	It("closes nothing on links when the policy cannot be read", func() {
+		var fm framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+		seen := metav1.Now()
+		fm.Status.Network = &framev1beta1.MachineNetwork{ObservedAt: &seen, Interfaces: []framev1beta1.NetworkInterface{
+			{Name: "eno1", OperState: "up", SpeedMbps: new(int32(10000))},
+		}}
+		Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+		p := &framev1beta1.NetworkHealthPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: framev1beta1.NetworkHealthPolicyName},
+			Spec:       framev1beta1.NetworkHealthPolicySpec{Links: []framev1beta1.ExpectedLink{{Node: "node-a", Interface: "eno9"}}},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
+		reconcile()
+		Expect(state(storage.CheckNetDegraded, "eno9")).To(Equal(framev1beta1.AlertStateFiring))
+
+		r.PolicyReader = failingNetPolicy{r.Client}
+		reconcile()
+		Expect(state(storage.CheckNetDegraded, "eno9")).To(Equal(framev1beta1.AlertStateFiring))
+		Expect(condition(storage.CheckLinkSlow).Status).To(Equal(metav1.ConditionUnknown))
+	})
+
 	It("refuses a second network policy", func() {
 		Expect(k8sClient.Create(ctx, &framev1beta1.NetworkHealthPolicy{ObjectMeta: metav1.ObjectMeta{Name: "other"}})).
 			To(MatchError(ContainSubstring("singleton")))

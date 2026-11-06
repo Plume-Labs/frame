@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -112,32 +113,44 @@ func ObserveNetwork(root string, now time.Time) *framev1beta1.MachineNetwork {
 	}
 	sort.Strings(names)
 
+	port := func(i framev1beta1.NetworkInterface) {
+		if len(out.Interfaces) == maxInterfaces {
+			out.InterfacesOmitted++
+			return
+		}
+		out.Interfaces = append(out.Interfaces, i)
+	}
 	for _, name := range names {
 		dir := filepath.Join(base, name)
+		bond, berr := exists(filepath.Join(dir, "bonding"))
+		vf, verr := exists(filepath.Join(dir, "device", "physfn"))
+		device, derr := exists(filepath.Join(dir, "device"))
 		switch {
-		case exists(filepath.Join(dir, "bonding")):
+		// Unreadable is not absent: a port with no state, which the controller
+		// will not take for healthy, and neither a bond nor nothing.
+		case errors.Join(berr, verr, derr) != nil:
+			port(framev1beta1.NetworkInterface{Name: clipRunes(name, maxNameLen)})
+		case bond:
 			if len(out.Bonds) == maxBonds {
 				out.BondsOmitted++
 				continue
 			}
 			out.Bonds = append(out.Bonds, readBond(base, name))
-		case exists(filepath.Join(dir, "device", "physfn")):
-		case exists(filepath.Join(dir, "device")):
-			if len(out.Interfaces) == maxInterfaces {
-				out.InterfacesOmitted++
-				continue
-			}
-			out.Interfaces = append(out.Interfaces, readInterface(dir, name))
+		case device && !vf:
+			port(readInterface(dir, name))
 		}
 	}
 	return out
 }
 
-// exists keeps an entry it cannot look at: unreadable is not absent, and the
-// entry then reads empty, which the controller will not take for healthy.
-func exists(path string) bool {
+// exists says whether path is there, and gives the error when it cannot tell.
+// ENOTDIR is an answer: bonding_masters sits among the links as a plain file.
+func exists(path string) (bool, error) {
 	_, err := os.Stat(path)
-	return !errors.Is(err, fs.ErrNotExist)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // text is a sysfs attribute, trimmed. A read error is "": a link that is down
@@ -214,7 +227,7 @@ func readBond(base, name string) framev1beta1.NetworkBond {
 	bond.MembersUnread = err != nil
 	for member := range strings.FieldsSeq(string(slaves)) {
 		// The kernel forbids a slash in a name; a tree that has one is no sysfs.
-		if filepath.Base(member) != member || !filepath.IsLocal(member) {
+		if filepath.Base(member) != member || member == "." || member == ".." {
 			bond.MembersUnread = true
 			continue
 		}

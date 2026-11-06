@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +57,7 @@ func TestObserveNetworkReadsPortsAndBonds(t *testing.T) {
 		"sys/class/net/bond0/bonding/ad_num_ports":   "1",
 		"sys/class/net/bond0/bonding/ad_partner_mac": "02:00:00:00:00:01",
 		"sys/class/net/veth0/operstate":              "up",
+		"sys/class/net/bonding_masters":              "bond0",
 	})
 	if err := os.Symlink("../bond0", filepath.Join(root, sysClassNet, "eno1", "master")); err != nil {
 		t.Fatal(err)
@@ -136,7 +138,7 @@ func TestAMemberListThatCannotBeReadIsSaid(t *testing.T) {
 func TestAMemberNameCannotLeaveTheTree(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, map[string]string{
-		"sys/class/net/bond0/bonding/slaves": "../../../etc .. etc/bonding_slave eno1",
+		"sys/class/net/bond0/bonding/slaves": "../../../etc .. . etc/bonding_slave eno1",
 		"etc/bonding_slave/state":            "secret",
 	})
 	b := ObserveNetwork(root, time.Now()).Bonds[0]
@@ -169,7 +171,35 @@ func TestAnEntryThatCannotBeLookedAtIsNotAbsent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	got := ObserveNetwork(root, time.Now())
-	if len(got.Bonds)+len(got.Interfaces) != 1 {
+	if len(got.Bonds) != 0 || len(got.Interfaces) != 1 || got.Interfaces[0].Name != "eno1" || got.Interfaces[0].OperState != "" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// Neither taken for a virtual function, and so dropped.
+func TestADeviceThatCannotBeLookedAtIsStillAPort(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through the mode")
+	}
+	root := t.TempDir()
+	port(t, root, "eno1", map[string]string{"operstate": "up"})
+	dir := filepath.Join(root, sysClassNet, "eno1", "device")
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	got := ObserveNetwork(root, time.Now())
+	if len(got.Interfaces) != 1 || got.Interfaces[0].Name != "eno1" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// bonding_masters is a plain file among the links, on every node with bonds.
+func TestBondingMastersIsNotABond(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{"sys/class/net/bonding_masters": "bond0"})
+	got := ObserveNetwork(root, time.Now())
+	if len(got.Bonds)+len(got.Interfaces) != 0 {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -280,7 +310,25 @@ func TestAReadThatHangsLeavesTheLastReport(t *testing.T) {
 	if got := c.Latest(time.Second); got == nil || got.Error != "first" {
 		t.Fatalf("%+v", got)
 	}
-	if got := c.Latest(time.Millisecond); got == nil || got.Error != "first" {
+	got := c.Latest(time.Millisecond)
+	if got == nil || got.Error != "first" {
 		t.Fatalf("%+v", got)
+	}
+	got.Error = "scribbled on" // a copy: the caller patches and keeps it
+	if again := c.Latest(time.Millisecond); again == nil || again.Error != "first" {
+		t.Fatalf("%+v", again)
+	}
+}
+
+func TestEachCallAfterAFinishedReadStartsAnother(t *testing.T) {
+	var reads atomic.Int32
+	c := &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
+		reads.Add(1)
+		return &framev1beta1.MachineNetwork{}
+	}}
+	c.Latest(time.Second)
+	c.Latest(time.Second)
+	if n := reads.Load(); n != 2 {
+		t.Fatalf("%d reads", n)
 	}
 }
