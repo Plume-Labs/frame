@@ -90,7 +90,7 @@ func (r *Receiver) serve(req *http.Request) int {
 		return http.StatusBadRequest
 	}
 	for _, a := range p.Alerts {
-		if err := r.record(req.Context(), a); err != nil {
+		if err := r.Record(req.Context(), a); err != nil {
 			r.Log.Error(err, "recording alert", "fingerprint", a.Fingerprint)
 			return http.StatusServiceUnavailable
 		}
@@ -124,11 +124,14 @@ func (r *Receiver) authorize(req *http.Request) int {
 	return 0
 }
 
-func (r *Receiver) record(ctx context.Context, a Alert) error {
+// Record writes one alert to its FrameAlert, whoever raised it: the webhook
+// above, or a controller with something of its own to say. Same object, same
+// relay, same subscriptions.
+func (r *Receiver) Record(ctx context.Context, a Alert) error {
 	now := metav1.NewTime(r.Now())
 	state := framev1beta1.AlertStateFiring
 	var endsAt *metav1.Time
-	if a.Status == statusResolved {
+	if a.Status == StatusResolved {
 		state = framev1beta1.AlertStateResolved
 		t := metav1.NewTime(a.EndsAt.Truncate(time.Second))
 		endsAt = &t

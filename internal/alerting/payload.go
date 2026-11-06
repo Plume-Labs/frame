@@ -4,6 +4,8 @@
 package alerting
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -26,8 +28,8 @@ const (
 // wire. FrameAlert's own states (AlertStateFiring/Resolved) are capitalised
 // and distinct.
 const (
-	statusFiring   = "firing"
-	statusResolved = "resolved"
+	StatusFiring   = "firing"
+	StatusResolved = "resolved"
 )
 
 var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
@@ -65,7 +67,7 @@ func Validate(p Payload) error {
 		if !fingerprintPattern.MatchString(a.Fingerprint) {
 			return fmt.Errorf("alert %d: fingerprint %q", i, a.Fingerprint)
 		}
-		if a.Status != statusFiring && a.Status != statusResolved {
+		if a.Status != StatusFiring && a.Status != StatusResolved {
 			return fmt.Errorf("alert %d: status %q", i, a.Status)
 		}
 	}
@@ -112,4 +114,13 @@ func truncate(s string, max int) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// LocalFingerprint is the fingerprint of an alert Frame raises itself:
+// Alertmanager's is a stable hash of the labels, and this one is a stable hash
+// of what identifies the alert, 32 digits where Alertmanager's has 16 so the
+// two never meet.
+func LocalFingerprint(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:16])
 }

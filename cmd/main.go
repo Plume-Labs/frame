@@ -577,6 +577,7 @@ func main() {
 		Recorder:      mgr.GetEventRecorderFor("framemachine"), //nolint:staticcheck
 		NewClient:     controller.BuildRedfishClient,
 		ProbeInterval: machineProbeInterval,
+		Alerts:        &alerting.Receiver{Client: mgr.GetClient(), Namespace: alertNamespace, Now: time.Now},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "framemachine")
 		os.Exit(1)
