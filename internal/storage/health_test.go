@@ -530,22 +530,36 @@ func TestASilentAgentLeavesADiskOffTheBMCUnknown(t *testing.T) {
 	}
 }
 
-// A solid-state disk not read yet, or that cannot be, is not a healthy one.
-func TestASolidStateDiskWithoutAReadIsNeverHealthy(t *testing.T) {
+// A disk not known to spin, not read yet or that cannot be, is not a healthy one.
+func TestADiskNotKnownToSpinWithoutAReadIsNeverHealthy(t *testing.T) {
 	st := healthyStatus()
-	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "EMMC", Rotational: new(false)}}
-	a := Assess(st, defaults, true, nil, now)
-	for _, check := range []string{CheckDegraded, CheckWearHigh} {
-		if v := a.Verdict(check, nil); v.Status != "Unknown" {
-			t.Errorf("%s: %+v", check, v)
+	for _, rotational := range []*bool{new(false), nil} {
+		st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "EMMC", Rotational: rotational}}
+		a := Assess(st, defaults, true, nil, now)
+		for _, check := range []string{CheckDegraded, CheckWearHigh} {
+			if v := a.Verdict(check, nil); v.Status != "Unknown" {
+				t.Errorf("%s: %+v", check, v)
+			}
 		}
 	}
+	var a Assessment
 	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "HDD", Rotational: new(true)}}
 	a = Assess(st, defaults, true, nil, now)
 	for _, check := range []string{CheckDegraded, CheckWearHigh} {
 		if v := a.Verdict(check, nil); v.Status != "False" {
 			t.Errorf("%s: %+v", check, v)
 		}
+	}
+}
+
+// The kernel says solid state, the BMC says spinning and gives no figure: the
+// disk still owes one, and the BMC's list did not count it.
+func TestADriveTheBMCTakesForAnHDDStillOwesWear(t *testing.T) {
+	st := healthyStatus()
+	st.Inventory.Drives[0].SSDEnduranceUsedPercent, st.Inventory.Drives[0].MediaType = nil, "HDD"
+	st.Storage.Observed = []framev1beta1.ObservedDisk{smartDisk("S-A", nil, new(true))}
+	if a := Assess(st, defaults, true, nil, now); a.WearUnreported != 1 {
+		t.Fatalf("%d", a.WearUnreported)
 	}
 }
 
@@ -573,7 +587,7 @@ func TestAnotherDisksFigureClearsNothing(t *testing.T) {
 // A spinning disk off the BMC's list has no SMART block and owes no figure.
 func TestADiskWithoutAReadOwesNoWear(t *testing.T) {
 	st := healthyStatus()
-	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "HDD"}}
+	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "HDD", Rotational: new(true)}}
 	if v := Assess(st, defaults, true, nil, now).Verdict(CheckWearHigh, nil); v.Status != "False" {
 		t.Fatalf("%+v", v)
 	}

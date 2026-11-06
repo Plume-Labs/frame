@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -43,7 +44,8 @@ import (
 // without its reviewed copy changing too, or if it carries such an option.
 //
 // --nocheck=standby,0 leaves a sleeping disk asleep, though the manual does not
-// promise it during device type detection. Spinning disks are not read at all.
+// promise it during device type detection. Disks known to spin are not read at
+// all; one whose kind lsblk does not give is.
 var smartArgvPrefix = []string{"smartctl", "--json=c", "--nocheck=standby,0", "--all", "--log=devstat"}
 
 // smartDevice is a whole disk by its kernel name: nothing else, and no room for
@@ -107,11 +109,16 @@ func (r *SMARTReader) Annotate(disks []framev1beta1.ObservedDisk) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	present := make(map[string]bool, len(disks))
 	for i := range disks {
+		present[disks[i].SerialNumber] = true
 		if s, ok := r.last[disks[i].SerialNumber]; ok {
 			disks[i].SMART = s.DeepCopy()
 		}
 	}
+	// A disk that comes back is read anew, not shown as it left.
+	maps.DeleteFunc(r.last, func(serial string, _ *framev1beta1.DiskSMART) bool { return !present[serial] })
+	maps.DeleteFunc(r.due, func(serial string, _ time.Time) bool { return !present[serial] })
 	if r.running || r.now().Before(r.nextAt) {
 		return
 	}
@@ -121,15 +128,18 @@ func (r *SMARTReader) Annotate(disks []framev1beta1.ObservedDisk) {
 }
 
 func (r *SMARTReader) refresh(disks []framev1beta1.ObservedDisk) {
+	// From the start of the pass, like nextAt: from the end of the read, a disk
+	// would not be due yet at the next pass and would wait for the one after.
+	start := r.now()
 	for i := range disks {
 		d := &disks[i]
-		if d.Rotational == nil || *d.Rotational {
+		if d.Rotational != nil && *d.Rotational {
 			continue
 		}
 		r.mu.Lock()
 		due := r.due[d.SerialNumber]
 		r.mu.Unlock()
-		if r.now().Before(due) {
+		if start.Before(due) {
 			continue
 		}
 		s := r.read(d)
@@ -139,7 +149,7 @@ func (r *SMARTReader) refresh(disks []framev1beta1.ObservedDisk) {
 		}
 		r.mu.Lock()
 		r.last[d.SerialNumber] = s
-		r.due[d.SerialNumber] = r.now().Add(wait)
+		r.due[d.SerialNumber] = start.Add(wait)
 		r.mu.Unlock()
 	}
 	r.mu.Lock()
@@ -161,7 +171,7 @@ func (r *SMARTReader) read(d *framev1beta1.ObservedDisk) *framev1beta1.DiskSMART
 	// and timeout passes it on: 124 from smartctl is a dying disk, not a timeout.
 	// So its report comes first, and says whether it could speak to the disk.
 	report, perr := parseSMART(stdout)
-	if perr == nil && (err == nil || report.Passed != nil || report.WearUsedPercent != nil) {
+	if perr == nil && (report.Passed != nil || report.WearUsedPercent != nil) {
 		report.ReadAt = &now
 		return report
 	}
@@ -172,8 +182,10 @@ func (r *SMARTReader) read(d *framev1beta1.ObservedDisk) *framev1beta1.DiskSMART
 		return failed(fmt.Errorf("smartctl timed out after %ds", storageTimeoutSeconds))
 	case err != nil && stderr != "":
 		return failed(fmt.Errorf("%w: %s", err, firstLine(stderr)))
-	case perr == nil, err != nil && stdout == "":
+	case err != nil && (perr == nil || stdout == ""):
 		return failed(err)
+	case perr == nil:
+		return failed(errors.New("smartctl reported neither health nor wear"))
 	}
 	return failed(perr)
 }

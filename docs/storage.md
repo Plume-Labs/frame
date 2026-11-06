@@ -410,8 +410,8 @@ BMC inventory at its 32 drives. Drives past that limit are not assessed.
 **Wear comes from the BMC, then from the disk.** Where the BMC gives no figure
 (iLO 4 sends `SSDEnduranceUtilizationPercentage: null` for third-party SSDs), the
 agent reads the disk's own SMART data, in `status.storage.observed[].smart`,
-solid-state disks only, every six hours, when the agent starts and, for a disk
-whose read gave no self-assessment, every thirty minutes, with `smartctl`
+every disk not known to spin, every six hours, when the agent starts and, for a
+disk whose read gave no self-assessment, every thirty minutes, with `smartctl`
 from its image. An NVMe gives `percentage_used`. A SATA disk gives the standard
 "Percentage Used Endurance Indicator" of its device statistics, or failing that
 the normalized value of a life attribute, chosen by the name smartctl gives it
@@ -423,13 +423,15 @@ the BMC stays at `null`. An SSD with no figure from either makes the condition
 `Unknown`, reason `WearNotReported`.
 
 A failing SMART self-assessment raises `StorageDegraded` on the disk's serial. An
-NVMe whose only critical warning is its temperature does not. A solid-state disk
-not read yet, or whose read fails or gives no self-assessment, makes
+NVMe whose only critical warning is its temperature does not. A disk not known
+to spin, not read yet or whose read fails or gives no self-assessment, makes
 `StorageDegraded` `Unknown`, reason `ReadUnavailable`, naming the disk, and keeps
-what that disk had open. So does a disk `smartctl` cannot reach, such as a logical
-volume behind a RAID controller, and one that is not `/dev/sdX` or `/dev/nvmeXnY`,
-which is refused: such a machine stays `Unknown` on this condition, and a real
-fault still raises it. Wear does not need the agent where the BMC gives a figure:
+what that disk had open. So does one `smartctl` cannot reach, such as a logical
+volume behind a RAID controller if the kernel does not call it rotational, and one
+that is not `/dev/sdX` or `/dev/nvmeXnY`, which is refused: such a machine stays
+`Unknown` on this condition, and a real fault still raises it. A new disk waits up
+to thirty minutes for its first read. So the conditions also go `Unknown` for a
+moment when the agent restarts, without touching what is open. Wear does not need the agent where the BMC gives a figure:
 with the agent silent, `DiskWearHigh` stays what the BMC says, and `Unknown` if a
 solid-state disk depends on the agent. A BMC that lists no drive leaves `DiskWearHigh` `Unknown`, though a figure
 from a disk still raises its alert. A disk replaced after a SMART alert stays

@@ -377,8 +377,9 @@ func (a *Assessment) smartReportsWear(s *framev1beta1.MachineStorage, serial str
 	return false
 }
 
-func solidState(d *framev1beta1.ObservedDisk) bool {
-	return d.Rotational != nil && !*d.Rotational
+// maybeSolidState is every disk not known to spin: lsblk may not say.
+func maybeSolidState(d *framev1beta1.ObservedDisk) bool {
+	return d.Rotational == nil || !*d.Rotational
 }
 
 // wearOwed says a solid-state disk needs its own figure and assessDrives, which
@@ -408,7 +409,7 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 	if _, unread := a.Unread[ScopeSMART]; unread {
 		// Nothing current from the agent: only the BMC can speak for a disk now.
 		for i := range s.Observed {
-			if d := &s.Observed[i]; solidState(d) && wearOwed(bmcDrive(inv, d.SerialNumber)) {
+			if d := &s.Observed[i]; maybeSolidState(d) && wearOwed(bmcDrive(inv, d.SerialNumber)) {
 				a.WearUnreported++
 			}
 		}
@@ -419,9 +420,9 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		d := &s.Observed[i]
 		listed = append(listed, d.SerialNumber)
 		wear, health := Key{CheckWearHigh, d.SerialNumber}, Key{CheckDegraded, d.SerialNumber}
-		// A disk the reader owes a read to, or one that gave nothing. A spinning
-		// disk is not read: no block, and nothing owed.
-		owed := d.SMART != nil || solidState(d)
+		// A disk the reader owes a read to, or one that gave nothing. A disk known
+		// to spin is not read: no block, and nothing owed.
+		owed := d.SMART != nil || maybeSolidState(d)
 		if owed && (d.SMART == nil || d.SMART.Passed == nil) {
 			a.SMARTSilent = append(a.SMARTSilent, d.SerialNumber)
 		}

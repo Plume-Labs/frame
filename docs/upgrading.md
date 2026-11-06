@@ -128,6 +128,10 @@ podDisruptionBudget.enabled=true` scaled the Deployment to 2 replicas and
 created the PodDisruptionBudget immediately, and `helm history` showed a
 second, `deployed` revision superseding the first.
 
+A controller that reads SMART under an agent that does not yet makes
+`StorageDegraded` and `DiskWearHigh` `Unknown` on solid-state disks until the
+agent is rolled out too. Nothing open is touched.
+
 ### CRDs
 
 This chart's CRDs are **not** in Helm's special `crds/` directory — they

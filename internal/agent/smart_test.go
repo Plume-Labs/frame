@@ -226,7 +226,7 @@ func ssd(path string) framev1beta1.ObservedDisk {
 	return framev1beta1.ObservedDisk{Path: path, SerialNumber: "S-" + path, Rotational: &no}
 }
 
-func TestReaderSkipsSpinningAndUnknownDisks(t *testing.T) {
+func TestReaderSkipsOnlyDisksKnownToSpin(t *testing.T) {
 	yes := true
 	x := &recordingExec{stdout: `{"smart_status":{"passed":true}}`}
 	r := NewSMARTReader(x)
@@ -237,10 +237,10 @@ func TestReaderSkipsSpinningAndUnknownDisks(t *testing.T) {
 	}
 	r.Annotate(disks)
 	waitFor(t, r, disks)
-	if len(x.calls) != 1 || x.calls[0][len(x.calls[0])-1] != "/dev/sdc" {
+	if len(x.calls) != 2 || x.calls[0][len(x.calls[0])-1] != "/dev/sdb" || x.calls[1][len(x.calls[1])-1] != "/dev/sdc" {
 		t.Fatalf("%q", x.calls)
 	}
-	if disks[2].SMART == nil || disks[0].SMART != nil {
+	if disks[2].SMART == nil || disks[1].SMART == nil || disks[0].SMART != nil {
 		t.Fatalf("%+v", disks)
 	}
 }
@@ -384,14 +384,93 @@ func TestAPartialReportIsKeptDespiteItsExitCode(t *testing.T) {
 	}
 }
 
-func TestNoOutputAndNoErrorIsAFailedRead(t *testing.T) {
-	x := &recordingExec{}
+func TestAReadThatSaysNothingIsAFailedRead(t *testing.T) {
+	for _, stdout := range []string{"", "null", "{}", `{"smartctl":{"exit_status":0}}`} {
+		x := &recordingExec{stdout: stdout}
+		r := NewSMARTReader(x)
+		disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+		r.Annotate(disks)
+		waitFor(t, r, disks)
+		if s := disks[0].SMART; s == nil || s.Error == "" {
+			t.Fatalf("%q: %+v", stdout, s)
+		}
+	}
+}
+
+// A read a few seconds long must not push the disk past the pass that was due.
+func TestASlowReadKeepsItsPace(t *testing.T) {
+	var mu sync.Mutex
+	clock := time.Now()
+	x := slowExec{tick: func() {
+		mu.Lock()
+		clock = clock.Add(5 * time.Second)
+		mu.Unlock()
+	}}
 	r := NewSMARTReader(x)
+	r.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	c := &countingExec{StorageExecutor: x, calls: map[string]int{}}
+	r.exec = c
+	start := r.now()
+	for i := 1; i <= 3; i++ {
+		r.Annotate(disks)
+		waitFor(t, r, disks)
+		mu.Lock()
+		clock = start.Add(time.Duration(i) * smartRetry)
+		mu.Unlock()
+	}
+	if c.calls["/dev/sda"] != 3 {
+		t.Fatalf("%+v", c.calls)
+	}
+}
+
+type slowExec struct{ tick func() }
+
+func (s slowExec) Exec([]string) (string, string, error) {
+	s.tick()
+	return "", "", errors.New("boom")
+}
+
+// A figure is not a self-assessment: the health is still to be read.
+func TestAFigureWithoutASelfAssessmentIsReadAgainSoon(t *testing.T) {
+	x := &recordingExec{stdout: `{"nvme_smart_health_information_log":{"percentage_used":7}}`}
+	r := NewSMARTReader(x)
+	clock := time.Now()
+	r.now = func() time.Time { return clock }
 	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
 	r.Annotate(disks)
 	waitFor(t, r, disks)
-	if s := disks[0].SMART; s == nil || s.Error == "" {
-		t.Fatalf("%+v", s)
+	clock = clock.Add(smartRetry)
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if len(x.calls) != 2 {
+		t.Fatalf("%d calls", len(x.calls))
+	}
+}
+
+func TestADiskThatLeftIsForgotten(t *testing.T) {
+	x := &recordingExec{stdout: `{"smart_status":{"passed":false}}`}
+	r := NewSMARTReader(x)
+	clock := time.Now()
+	r.now = func() time.Time { return clock }
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	r.Annotate(nil)
+	back := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(back)
+	if back[0].SMART != nil {
+		t.Fatalf("%+v", back[0].SMART)
+	}
+	clock = clock.Add(smartRetry) // not its six hours: it is a new disk
+	r.Annotate(back)
+	waitFor(t, r, back)
+	if len(x.calls) != 2 {
+		t.Fatalf("%d calls", len(x.calls))
 	}
 }
 
