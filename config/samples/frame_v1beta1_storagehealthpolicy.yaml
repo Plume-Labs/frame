@@ -1,0 +1,10 @@
+apiVersion: frame.plume-labs.io/v1beta1
+kind: StorageHealthPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  zfsCapacityPercent: 80
+  ssdWearPercent: 80

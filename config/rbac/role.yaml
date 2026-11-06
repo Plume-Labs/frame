@@ -132,6 +132,7 @@ rules:
   resources:
   - framealertsubscriptions
   - frameusers
+  - storagehealthpolicies
   verbs:
   - get
   - list
