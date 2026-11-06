@@ -33,7 +33,7 @@ cmd/agent/      Node-tuning agent — a privileged DaemonSet, one per node. Not 
                 by kubebuilder; the CLI commands below do not apply to it.
 internal/agent/ The agent's logic: observe.go, apply.go, systemd.go, status.go
 ```
-The agent is privileged with `hostPID`, so treat `internal/agent/` as security-critical: the restartable-unit allowlist in `apply.go` is its whole boundary. See [SECURITY.md](SECURITY.md).
+The agent is privileged with `hostPID`, so treat `internal/agent/` as security-critical: the restartable-unit allowlist in `apply.go` and the fixed `smartctl` command in `smart.go` are its boundary. See [SECURITY.md](SECURITY.md).
 
 **To convert to multi-group layout:**
 1. Run: `kubebuilder edit --multigroup=true`

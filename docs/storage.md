@@ -409,12 +409,23 @@ BMC inventory at its 32 drives. Drives past that limit are not assessed.
 **Wear comes from the BMC, then from the disk.** Where the BMC gives no figure
 (iLO 4 sends `SSDEnduranceUtilizationPercentage: null` for third-party SSDs), the
 agent reads the disk's own SMART data, in `status.storage.observed[].smart`,
-solid-state disks only and every six hours, with `smartctl` from its image. An
-NVMe gives `percentage_used`. A SATA disk gives the standard "Percentage Used
-Endurance Indicator" of its device statistics, or failing that the normalized
-value of attribute 233, 231, 202 or 177. One that gives none of these makes the
-condition `Unknown`, reason `WearNotReported`. A failing SMART self-assessment
-raises `StorageDegraded` on the disk's serial.
+solid-state disks only, every six hours and when the agent starts, with `smartctl`
+from its image. An NVMe gives `percentage_used`. A SATA disk gives the standard
+"Percentage Used Endurance Indicator" of its device statistics, or failing that
+the normalized value of a life attribute, chosen by the name smartctl gives it
+(`Media_Wearout_Indicator`, `SSD_Life_Left`, `Percent_Lifetime_Remain`,
+`Remaining_Lifetime_Perc`, `Perc_Rated_Life_Remain`, `Percent_Life_Remaining`,
+`Wear_Leveling_Count`): an ID means something else from one model to the next. A
+figure from the disk settles an open `DiskWearHigh`, raised or cleared, even while
+the BMC stays at `null`. An SSD with no figure from either makes the condition
+`Unknown`, reason `WearNotReported`.
+
+A failing SMART self-assessment raises `StorageDegraded` on the disk's serial. An
+NVMe whose only critical warning is its temperature does not. A SMART read that
+fails makes `StorageDegraded` `Unknown`, reason `ReadUnavailable`, and keeps what
+that disk had open. So does a disk `smartctl` cannot reach, such as a logical
+volume behind a RAID controller. A disk replaced after a SMART alert stays
+`LastReadHeld` until "Removed on purpose" closes it.
 
 The assessment runs with the BMC probe, every minute, including when the BMC
 does not answer. A BMC that stays down stretches the probe's backoff, so a

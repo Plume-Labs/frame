@@ -121,8 +121,12 @@ type Assessment struct {
 	// their scope was read: a pool mid-scrub has no error count, a device
 	// missing from the list may be cut, unimported or simply not returned.
 	Held map[Key]bool
-	// WearUnreported counts the SSDs whose BMC gives no endurance figure.
+	// WearUnreported counts the SSDs with no endurance figure, from their BMC
+	// or from themselves.
 	WearUnreported int
+	// SMARTFailed counts the disks whose last SMART read failed: nothing on
+	// their health, though their wear may come from the BMC.
+	SMARTFailed int
 }
 
 // Thresholds are StorageHealthPolicySpec with its zero values resolved.
@@ -340,10 +344,12 @@ func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, s *framev1
 			a.add(CheckWearHigh, device, ScopeDrives, severityWarning,
 				fmt.Sprintf("drive %s (bay %s, %s) has used %d %% of its endurance", device, d.Location, d.Model, *used))
 		case used == nil:
-			if key := (Key{CheckWearHigh, device}); open.has(key) {
+			// A figure from the disk settles it, in assessSMART, either way.
+			reported := a.smartReportsWear(s, d.SerialNumber)
+			if key := (Key{CheckWearHigh, device}); open.has(key) && !reported {
 				a.Held[key] = true
 			}
-			if d.MediaType == "SSD" && !smartReportsWear(s, d.SerialNumber) {
+			if d.MediaType == "SSD" && !reported {
 				a.WearUnreported++
 			}
 		}
@@ -356,9 +362,10 @@ func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, s *framev1
 	}
 }
 
-// smartReportsWear says the disk itself gives the figure its BMC does not.
-func smartReportsWear(s *framev1beta1.MachineStorage, serial string) bool {
-	if s == nil {
+// smartReportsWear says the disk itself gives the figure its BMC does not, in a
+// report still current.
+func (a *Assessment) smartReportsWear(s *framev1beta1.MachineStorage, serial string) bool {
+	if _, unread := a.Unread[ScopeSMART]; unread || s == nil {
 		return false
 	}
 	for i := range s.Observed {
@@ -370,16 +377,16 @@ func smartReportsWear(s *framev1beta1.MachineStorage, serial string) bool {
 	return false
 }
 
-func bmcReportsWear(inv *framev1beta1.MachineInventory, serial string) bool {
+func bmcDrive(inv *framev1beta1.MachineInventory, serial string) *framev1beta1.DriveInfo {
 	if inv == nil {
-		return false
+		return nil
 	}
 	for i := range inv.Drives {
-		if inv.Drives[i].SerialNumber == serial && inv.Drives[i].SSDEnduranceUsedPercent != nil {
-			return true
+		if inv.Drives[i].SerialNumber == serial {
+			return &inv.Drives[i]
 		}
 	}
-	return false
+	return nil
 }
 
 // assessSMART reads what the disks say of themselves. Wear only where the BMC
@@ -393,6 +400,9 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		d := &s.Observed[i]
 		listed = append(listed, d.SerialNumber)
 		wear, health := Key{CheckWearHigh, d.SerialNumber}, Key{CheckDegraded, d.SerialNumber}
+		if d.SMART != nil && d.SMART.Error != "" {
+			a.SMARTFailed++
+		}
 		// No read, a failed one, or a disk silent on this: nothing to clear on.
 		if d.SMART == nil || d.SMART.Passed == nil {
 			if open.has(health) {
@@ -402,11 +412,16 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 			a.add(CheckDegraded, d.SerialNumber, ScopeSMART, severityCritical,
 				fmt.Sprintf("disk %s (%s, %s) reports a failing SMART self-assessment", d.SerialNumber, d.Path, d.Model))
 		}
+		bmc := bmcDrive(inv, d.SerialNumber)
 		switch {
-		case bmcReportsWear(inv, d.SerialNumber):
+		case bmc != nil && bmc.SSDEnduranceUsedPercent != nil:
 		case d.SMART == nil || d.SMART.WearUsedPercent == nil:
 			if open.has(wear) {
 				a.Held[wear] = true
+			}
+			// assessDrives has counted the SSDs it lists.
+			if d.SMART != nil && (bmc == nil || bmc.MediaType != "SSD") {
+				a.WearUnreported++
 			}
 		case *d.SMART.WearUsedPercent >= t.SSDWearPercent:
 			a.add(CheckWearHigh, d.SerialNumber, ScopeSMART, severityWarning,
@@ -461,11 +476,14 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 			unread = append(unread, fmt.Sprintf("%s: %s", s, why))
 		}
 	}
+	if check == CheckDegraded && a.SMARTFailed > 0 {
+		unread = append(unread, fmt.Sprintf("%s: %d disk(s) could not be read", ScopeSMART, a.SMARTFailed))
+	}
 	if len(unread) > 0 {
 		return Verdict{"Unknown", "ReadUnavailable", clipRunes(strings.Join(unread, "; "), maxConditionMessage)}
 	}
 	if check == CheckWearHigh && a.WearUnreported > 0 {
-		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("the BMC gives no endurance figure for %d SSD(s)", a.WearUnreported)}
+		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("neither the BMC nor the disk gives an endurance figure for %d SSD(s)", a.WearUnreported)}
 	}
 	return Verdict{"False", "Healthy", ""}
 }

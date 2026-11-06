@@ -42,8 +42,8 @@ import (
 // options that do is reachable. smart_test.go fails if the prefix changes
 // without its reviewed copy changing too, or if it carries such an option.
 //
-// --nocheck=standby,0 leaves a sleeping disk asleep. Spinning disks are not
-// read at all.
+// --nocheck=standby,0 leaves a sleeping disk asleep, though the manual does not
+// promise it during device type detection. Spinning disks are not read at all.
 var smartArgvPrefix = []string{"smartctl", "--json=c", "--nocheck=standby,0", "--all", "--log=devstat"}
 
 // smartDevice is a whole disk by its kernel name: nothing else, and no room for
@@ -166,7 +166,8 @@ type smartJSON struct {
 		Passed *bool `json:"passed"`
 	} `json:"smart_status"`
 	NVMe *struct {
-		PercentageUsed *int32 `json:"percentage_used"`
+		PercentageUsed  *int32 `json:"percentage_used"`
+		CriticalWarning *int   `json:"critical_warning"`
 	} `json:"nvme_smart_health_information_log"`
 	DeviceStatistics struct {
 		Pages []struct {
@@ -180,7 +181,7 @@ type smartJSON struct {
 	} `json:"ata_device_statistics"`
 	Attributes struct {
 		Table []struct {
-			ID    int    `json:"id"`
+			Name  string `json:"name"`
 			Value *int32 `json:"value"`
 		} `json:"table"`
 	} `json:"ata_smart_attributes"`
@@ -191,13 +192,25 @@ const (
 	// Above them, smartctl did read the disk.
 	smartExitNoRead = 0b11
 
+	// Bit 1 of an NVMe critical warning: temperature past its threshold. smartctl
+	// fails the self-assessment on any bit, but a hot room is no failing disk.
+	nvmeTemperatureWarning = 0b10
+
 	endurancePercentUsed = "Percentage Used Endurance Indicator"
 )
 
 // wearAttributes are the ATA attributes whose normalized value counts down from
-// 100, in order of trust: Media_Wearout_Indicator, SSD_Life_Left,
-// Percent_Lifetime_Remain, Wear_Leveling_Count.
-var wearAttributes = []int{233, 231, 202, 177}
+// 100, in order of trust. By name, which smartctl takes from its drive database:
+// the same ID means something else on other models, 233 being flash writes on
+// many and 231 a temperature.
+//
+// ponytail: a model missing from that database gets the default names, 233 being
+// Media_Wearout_Indicator. Refresh the database with the image if one shows up.
+var wearAttributes = []string{
+	"Media_Wearout_Indicator", "SSD_Life_Left", "Percent_Lifetime_Remain",
+	"Remaining_Lifetime_Perc", "Perc_Rated_Life_Remain", "Percent_Life_Remaining",
+	"Wear_Leveling_Count",
+}
 
 func parseSMART(stdout string) (*framev1beta1.DiskSMART, error) {
 	var j smartJSON
@@ -210,6 +223,10 @@ func parseSMART(stdout string) (*framev1beta1.DiskSMART, error) {
 	out := &framev1beta1.DiskSMART{WearUsedPercent: wearOf(&j)}
 	if j.SmartStatus != nil {
 		out.Passed = j.SmartStatus.Passed
+	}
+	if j.NVMe != nil && j.NVMe.CriticalWarning != nil && *j.NVMe.CriticalWarning == nvmeTemperatureWarning {
+		passed := true
+		out.Passed = &passed
 	}
 	return out, nil
 }
@@ -225,9 +242,9 @@ func wearOf(j *smartJSON) *int32 {
 			}
 		}
 	}
-	for _, id := range wearAttributes {
+	for _, name := range wearAttributes {
 		for _, a := range j.Attributes.Table {
-			if a.ID == id && a.Value != nil && *a.Value <= 100 {
+			if a.Name == name && a.Value != nil && *a.Value <= 100 {
 				return percent(100 - *a.Value)
 			}
 		}

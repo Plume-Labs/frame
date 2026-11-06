@@ -42,7 +42,8 @@ FROM debian:13-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends smartmontools \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /usr/sbin/smartd /usr/sbin/update-smart-drivedb \
+        /etc/init.d/smartmontools /etc/smartmontools
 
 # Root, and not a mistake: nsenter into PID 1 and writing the host's
 # /etc/systemd and /sys both need it, which is why the DaemonSet declares

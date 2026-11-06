@@ -2,11 +2,13 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
@@ -21,17 +23,31 @@ func TestSMARTCommandIsExactlyTheReviewedOne(t *testing.T) {
 	}
 }
 
-// Every option of smartctl that writes to a disk or its settings, in both
-// spellings. None may appear, joined to a value or not.
+// The options of smartctl that write to a disk or its settings, in long form.
+// Short forms are refused whole, since they take their value joined (-tshort),
+// and --log takes only devstat: some of its values write (scterc,70,70,
+// sataphy,reset).
 func TestSMARTCommandCarriesNoWritingOption(t *testing.T) {
-	forbidden := []string{"-t", "--test", "-X", "--abort", "-s", "--smart", "-S", "--saveauto", "-o", "--offlineauto", "--set", "-F", "-v", "--vendorattribute", "-d", "--device"}
-	for _, arg := range smartArgvPrefix {
-		for _, f := range forbidden {
-			if arg == f || strings.HasPrefix(arg, f+"=") {
-				t.Errorf("%q", arg)
-			}
+	if err := writingOption(smartArgvPrefix); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"-tshort", "-t", "--test=short", "--log=scterc,70,70", "--log=sataphy,reset", "--smart=off", "--set=standby,now"} {
+		if writingOption(append(slices.Clone(smartArgvPrefix), bad)) == nil {
+			t.Errorf("%q passed", bad)
 		}
 	}
+}
+
+func writingOption(prefix []string) error {
+	forbidden := []string{"--test", "--abort", "--captive", "--smart", "--saveauto", "--offlineauto", "--set", "--firmwarebug", "--vendorattribute", "--device", "--drivedb"}
+	for _, arg := range prefix[1:] {
+		name, value, _ := strings.Cut(arg, "=")
+		switch {
+		case !strings.HasPrefix(arg, "--"), slices.Contains(forbidden, name), name == "--log" && value != "devstat":
+			return fmt.Errorf("%q", arg)
+		}
+	}
+	return nil
 }
 
 func TestSMARTArgvTakesOnlyAWholeDiskByKernelName(t *testing.T) {
@@ -44,7 +60,7 @@ func TestSMARTArgvTakesOnlyAWholeDiskByKernelName(t *testing.T) {
 	for _, bad := range []string{
 		"", "sda", "/dev/sda1", "/dev/nvme0n1p1", "/dev/sda ", " /dev/sda", "/dev/sda\n", "/dev/sda -t short",
 		"-t", "--test=short", "/etc/passwd", "/dev/../etc/passwd", "/dev/sd/../sda", "/dev/disk/by-id/x", "/dev/sda;id",
-		"/dev/sda\x00", "/dev/SDA", "/dev/mem", "/dev/nvme0",
+		"/dev/sda\x00", "/dev/SDA", "/dev/mem", "/dev/nvme0", "/dev/sdabcd", "/dev/nvme1234n1", "/dev/nvme0n1234",
 	} {
 		if argv, err := smartArgv(bad); err == nil {
 			t.Errorf("%q accepted: %q", bad, argv)
@@ -71,14 +87,15 @@ func TestExecSMARTRefusesEveryOtherInvocation(t *testing.T) {
 	withTest := slices.Clone(good)
 	withTest[3] = "--test=short"
 	for name, argv := range map[string][]string{
-		"empty":            nil,
-		"no device":        smartArgvPrefix,
-		"self-test":        withTest,
-		"extra argument":   append(slices.Clone(good), "--test=short"),
-		"option as device": append(slices.Clone(smartArgvPrefix), "-t"),
-		"other path":       append(slices.Clone(smartArgvPrefix), "/etc/shadow"),
-		"other tool":       {"sh", "-c", "id"},
-		"storage command":  storageCommands[0],
+		"empty":             nil,
+		"no device":         smartArgvPrefix,
+		"self-test":         withTest,
+		"extra argument":    append(slices.Clone(good), "--test=short"),
+		"option in between": append(slices.Clone(smartArgvPrefix), "--test=short", "/dev/sda"),
+		"option as device":  append(slices.Clone(smartArgvPrefix), "-t"),
+		"other path":        append(slices.Clone(smartArgvPrefix), "/etc/shadow"),
+		"other tool":        {"sh", "-c", "id"},
+		"storage command":   storageCommands[0],
 	} {
 		x := &recordingExec{}
 		if _, _, err := execSMART(x, argv); err == nil {
@@ -105,11 +122,16 @@ func TestWearReadsTheStandardFieldFirst(t *testing.T) {
 		{"nvme", `{"nvme_smart_health_information_log":{"percentage_used":7}}`, new(int32(7))},
 		{"nvme past its rating", `{"nvme_smart_health_information_log":{"percentage_used":130}}`, new(int32(100))},
 		{"ata statistics beat attributes", `{"ata_device_statistics":{"pages":[{"table":[{"name":"Percentage Used Endurance Indicator","value":12}]}]},
-			"ata_smart_attributes":{"table":[{"id":233,"value":10}]}}`, new(int32(12))},
-		{"Media_Wearout_Indicator counts down", `{"ata_smart_attributes":{"table":[{"id":233,"value":97}]}}`, new(int32(3))},
-		{"attribute order", `{"ata_smart_attributes":{"table":[{"id":177,"value":50},{"id":231,"value":90}]}}`, new(int32(10))},
-		{"a value past 100 is not a percentage", `{"ata_smart_attributes":{"table":[{"id":177,"value":253}]}}`, nil},
-		{"nothing known", `{"ata_smart_attributes":{"table":[{"id":9,"value":99}]}}`, nil},
+			"ata_smart_attributes":{"table":[{"id":233,"name":"Media_Wearout_Indicator","value":10}]}}`, new(int32(12))},
+		{"an NVMe reading below nothing", `{"nvme_smart_health_information_log":{"percentage_used":-1}}`, new(int32(0))},
+		{"Media_Wearout_Indicator counts down", `{"ata_smart_attributes":{"table":[{"id":233,"name":"Media_Wearout_Indicator","value":97}]}}`, new(int32(3))},
+		{"attribute order", `{"ata_smart_attributes":{"table":[{"id":177,"name":"Wear_Leveling_Count","value":50},{"id":231,"name":"SSD_Life_Left","value":90}]}}`, new(int32(10))},
+		{"a value past 100 is not a percentage", `{"ata_smart_attributes":{"table":[{"id":177,"name":"Wear_Leveling_Count","value":253}]}}`, nil},
+		{"nothing known", `{"ata_smart_attributes":{"table":[{"id":9,"name":"Power_On_Hours","value":99}]}}`, nil},
+		{"233 means flash writes here, not wear", `{"ata_smart_attributes":{"table":[{"id":233,"name":"Flash_Writes_GiB","value":100},{"id":231,"name":"SSD_Life_Left","value":3}]}}`, new(int32(97))},
+		{"233 is SandForce's own", `{"ata_smart_attributes":{"table":[{"id":233,"name":"SandForce_Internal","value":0},{"id":231,"name":"SSD_Life_Left","value":95}]}}`, new(int32(5))},
+		{"231 is a temperature", `{"ata_smart_attributes":{"table":[{"id":231,"name":"Controller_Temperature","value":40}]}}`, nil},
+		{"the same life by another ID", `{"ata_smart_attributes":{"table":[{"id":169,"name":"Remaining_Lifetime_Perc","value":80}]}}`, new(int32(20))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,6 +167,9 @@ func TestParseSMARTSaysWhenItDidNotRead(t *testing.T) {
 	if _, err := parseSMART(`{"smartctl":{"exit_status":2}}`); err == nil {
 		t.Error("device not opened read as a report")
 	}
+	if _, err := parseSMART(`{"smartctl":{"exit_status":1}}`); err == nil {
+		t.Error("bad command line read as a report")
+	}
 	if _, err := parseSMART(`not json`); err == nil {
 		t.Error("garbage read as a report")
 	}
@@ -152,6 +177,17 @@ func TestParseSMARTSaysWhenItDidNotRead(t *testing.T) {
 	got, err := parseSMART(`{"smartctl":{"exit_status":8},"smart_status":{"passed":false}}`)
 	if err != nil || got.Passed == nil || *got.Passed {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// smartctl sets passed to false on any NVMe critical warning. A disk only too hot
+// is not failing; one with any other bit, alone or with heat, is.
+func TestNVMeHeatIsNotAFailingDisk(t *testing.T) {
+	for warning, passed := range map[string]bool{"2": true, "4": false, "6": false, "1": false} {
+		got, err := parseSMART(`{"smart_status":{"passed":false},"nvme_smart_health_information_log":{"critical_warning":` + warning + `}}`)
+		if err != nil || got.Passed == nil || *got.Passed != passed {
+			t.Errorf("warning %s: %+v %v", warning, got, err)
+		}
 	}
 }
 
@@ -197,6 +233,25 @@ func TestReaderSkipsSpinningAndUnknownDisks(t *testing.T) {
 	}
 	if disks[2].SMART == nil || disks[0].SMART != nil {
 		t.Fatalf("%+v", disks)
+	}
+}
+
+func TestReaderRunsUnderTheTimeout(t *testing.T) {
+	x := &recordingExec{stdout: `{}`}
+	r := NewSMARTReader(x)
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	want := append(append(slices.Clone(timeoutPrefix), smartArgvPrefix...), "/dev/sda")
+	if len(x.calls) != 1 || !slices.Equal(x.calls[0], want) {
+		t.Fatalf("%q", x.calls)
+	}
+}
+
+// smartctl comes from the image: through nsenter it would be the node's, or none.
+func TestImageExecutorDoesNotEnterTheHost(t *testing.T) {
+	if p := NewImageStorageExecutor().Prefix; len(p) != 0 {
+		t.Fatalf("%q", p)
 	}
 }
 
@@ -251,6 +306,19 @@ func TestFailuresAreStatesAndLeaveNoFigure(t *testing.T) {
 		if s == nil || s.Error == "" || s.WearUsedPercent != nil || s.Passed != nil {
 			t.Errorf("%s: %+v", name, s)
 		}
+	}
+}
+
+// The error is published in a CR field of 256 at most: one past it would get the
+// whole status refused.
+func TestALongErrorFitsItsField(t *testing.T) {
+	x := &recordingExec{err: errors.New(strings.Repeat("é", 1000))}
+	r := NewSMARTReader(x)
+	disks := []framev1beta1.ObservedDisk{ssd("/dev/sda")}
+	r.Annotate(disks)
+	waitFor(t, r, disks)
+	if s := disks[0].SMART; s == nil || utf8.RuneCountInString(s.Error) != 256 {
+		t.Fatalf("%+v", s)
 	}
 }
 
