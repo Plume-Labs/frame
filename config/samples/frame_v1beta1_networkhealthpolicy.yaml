@@ -1,0 +1,13 @@
+apiVersion: frame.plume-labs.io/v1beta1
+kind: NetworkHealthPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  minLinkSpeedMbps: 1000
+  links:
+    - node: node-a
+      interface: bond0
+      members: 2

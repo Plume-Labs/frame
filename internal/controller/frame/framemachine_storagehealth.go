@@ -75,6 +75,15 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 		log.Error(err, "Reading the StorageHealthPolicy; storage left as it was", "machine", key)
 		return
 	}
+	var netPolicy *framev1beta1.NetworkHealthPolicy
+	var np framev1beta1.NetworkHealthPolicy
+	switch err := reader.Get(ctx, types.NamespacedName{Name: framev1beta1.NetworkHealthPolicyName}, &np); {
+	case err == nil:
+		netPolicy = &np
+	case !apierrors.IsNotFound(err):
+		log.Error(err, "Reading the NetworkHealthPolicy; storage and network left as they were", "machine", key)
+		return
+	}
 	alerts, err := r.openStorageAlerts(ctx, key)
 	if err != nil {
 		log.Error(err, "Listing open storage alerts; storage left as it was", "machine", key)
@@ -86,7 +95,8 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 	}
 
 	now := time.Now()
-	a := storage.Assess(&fm.Status, storage.ThresholdsFrom(policy), inventoryFresh, open, now)
+	a := storage.Assess(&fm.Status, storage.ThresholdsFrom(policy),
+		storage.NetExpectationsFrom(netPolicy, fm.Spec.NodeRef), inventoryFresh, open, now)
 	if err := r.releaseStorageAlerts(ctx, fm, &a, alerts, open); err != nil {
 		log.Error(err, "Releasing storage alerts; next pass tries again", "machine", key)
 	}

@@ -538,6 +538,66 @@ var _ = Describe("FrameMachine storage health", func() {
 		})
 	})
 
+	It("alerts when a bond member goes out, and comes back", func() {
+		reportNet := func(member string) {
+			GinkgoHelper()
+			var fm framev1beta1.FrameMachine
+			Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+			seen := metav1.Now()
+			fm.Status.Network = &framev1beta1.MachineNetwork{ObservedAt: &seen, Bonds: []framev1beta1.NetworkBond{{
+				Name: "bond0", Mode: "802.3ad", MIIStatus: "up", AggregatorID: 1,
+				Members: []framev1beta1.BondMember{{Name: "eno1", MIIStatus: member, AggregatorID: 1}},
+			}}}
+			Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+		}
+		report(cleanMD(), noZFS)
+		reconcile()
+		Expect(condition(storage.CheckNetDegraded).Status).To(Equal(metav1.ConditionUnknown))
+
+		reportNet("up")
+		reconcile()
+		Expect(condition(storage.CheckNetDegraded).Status).To(Equal(metav1.ConditionFalse))
+
+		reportNet("down")
+		reconcile()
+		Expect(state(storage.CheckNetDegraded, "bond0/eno1")).To(Equal(framev1beta1.AlertStateFiring))
+		Expect(alert(storage.CheckNetDegraded, "bond0/eno1").Spec.Labels).To(HaveKeyWithValue(labelStack, "network"))
+
+		reportNet("up")
+		reconcile()
+		Expect(state(storage.CheckNetDegraded, "bond0/eno1")).To(Equal(framev1beta1.AlertStateResolved))
+	})
+
+	It("follows an expected speed moved in the policy", func() {
+		var fm framev1beta1.FrameMachine
+		Expect(k8sClient.Get(ctx, key(), &fm)).To(Succeed())
+		seen := metav1.Now()
+		speed := int32(1000)
+		fm.Status.Network = &framev1beta1.MachineNetwork{ObservedAt: &seen, Interfaces: []framev1beta1.NetworkInterface{
+			{Name: "eno1", OperState: "up", SpeedMbps: &speed},
+		}}
+		Expect(k8sClient.Status().Update(ctx, &fm)).To(Succeed())
+		reconcile()
+		Expect(alert(storage.CheckLinkSlow, "eno1")).To(BeNil())
+
+		p := &framev1beta1.NetworkHealthPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: framev1beta1.NetworkHealthPolicyName},
+			Spec: framev1beta1.NetworkHealthPolicySpec{Links: []framev1beta1.ExpectedLink{
+				{Node: "node-a", Interface: "eno1", SpeedMbps: 10000},
+			}},
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
+		Expect(p.Spec.MinLinkSpeedMbps).To(Equal(framev1beta1.DefaultMinLinkSpeedMbps))
+		reconcile()
+		Expect(state(storage.CheckLinkSlow, "eno1")).To(Equal(framev1beta1.AlertStateFiring))
+	})
+
+	It("refuses a second network policy", func() {
+		Expect(k8sClient.Create(ctx, &framev1beta1.NetworkHealthPolicy{ObjectMeta: metav1.ObjectMeta{Name: "other"}})).
+			To(MatchError(ContainSubstring("singleton")))
+	})
+
 	It("resolves what a deleted machine leaves open", func() {
 		report(failedMD(), noZFS)
 		reconcile()

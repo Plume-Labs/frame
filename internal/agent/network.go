@@ -1,0 +1,175 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package agent
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+)
+
+// Reading the node's links. Files only, under root: no command, so nothing
+// joins the command list in localstorage.go. /proc/net/bonding is not used:
+// /proc/net follows the reader's network namespace, which is the pod's, while
+// /sys here is the host's mount, and sysfs carries the same bonding state.
+//
+// Physical ports are the entries with a device link; veth, flannel and bridges
+// come and go with pods and say nothing about the machine.
+
+const (
+	sysClassNet = "sys/class/net"
+
+	maxInterfaces  = 32
+	maxBonds       = 8
+	maxBondMembers = 16
+	maxNameLen     = 15
+)
+
+// ObserveNetwork reads root's links. It never fails: a tree it cannot read
+// comes back with Error set, which is a state and not an empty node.
+func ObserveNetwork(root string, now time.Time) *framev1beta1.MachineNetwork {
+	seen := metav1.NewTime(now)
+	out := &framev1beta1.MachineNetwork{ObservedAt: &seen}
+	base := filepath.Join(root, sysClassNet)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		out.Error = clipRunes(err.Error(), 256)
+		return out
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		dir := filepath.Join(base, name)
+		switch {
+		case exists(filepath.Join(dir, "bonding")):
+			if len(out.Bonds) == maxBonds {
+				out.BondsOmitted++
+				continue
+			}
+			out.Bonds = append(out.Bonds, readBond(base, name))
+		case exists(filepath.Join(dir, "device")):
+			if len(out.Interfaces) == maxInterfaces {
+				out.InterfacesOmitted++
+				continue
+			}
+			out.Interfaces = append(out.Interfaces, readInterface(dir, name))
+		}
+	}
+	return out
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// text is a sysfs attribute, trimmed. A read error is "": a link that is down
+// answers EINVAL on speed and duplex, which is how the kernel says it has none.
+func text(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func number(path string) int64 {
+	n, err := strconv.ParseInt(text(path), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func int32At(path string) int32 {
+	n := number(path)
+	if n < 0 || n > 1<<31-1 {
+		return 0
+	}
+	return int32(n)
+}
+
+// firstField is the name in attributes printed as "802.3ad 4".
+func firstField(s string) string {
+	if f := strings.Fields(s); len(f) > 0 {
+		return f[0]
+	}
+	return ""
+}
+
+func readInterface(dir, name string) framev1beta1.NetworkInterface {
+	stat := func(counter string) int64 { return number(filepath.Join(dir, "statistics", counter)) }
+	iface := framev1beta1.NetworkInterface{
+		Name:      clipRunes(name, maxNameLen),
+		OperState: clipRunes(text(filepath.Join(dir, "operstate")), 32),
+		Duplex:    clipRunes(text(filepath.Join(dir, "duplex")), 16),
+		MTU:       int32At(filepath.Join(dir, "mtu")),
+		RxErrors:  stat("rx_errors"),
+		TxErrors:  stat("tx_errors"),
+		RxDropped: stat("rx_dropped"),
+		TxDropped: stat("tx_dropped"),
+	}
+	// -1 and its unsigned reading both mean unknown.
+	if speed := number(filepath.Join(dir, "speed")); speed > 0 && speed < 1<<31-1 {
+		s := int32(speed)
+		iface.SpeedMbps = &s
+	}
+	if target, err := os.Readlink(filepath.Join(dir, "master")); err == nil {
+		iface.Master = clipRunes(filepath.Base(target), maxNameLen)
+	}
+	return iface
+}
+
+func readBond(base, name string) framev1beta1.NetworkBond {
+	dir := filepath.Join(base, name)
+	attr := func(a string) string { return filepath.Join(dir, "bonding", a) }
+	bond := framev1beta1.NetworkBond{
+		Name:              clipRunes(name, maxNameLen),
+		Mode:              clipRunes(firstField(text(attr("mode"))), 32),
+		MIIStatus:         clipRunes(text(attr("mii_status")), 16),
+		MTU:               int32At(filepath.Join(dir, "mtu")),
+		AggregatorID:      int32At(attr("ad_aggregator")),
+		PortsInAggregator: int32At(attr("ad_num_ports")),
+		PartnerMAC:        clipRunes(text(attr("ad_partner_mac")), 32),
+	}
+	for member := range strings.FieldsSeq(text(attr("slaves"))) {
+		if len(bond.Members) == maxBondMembers {
+			bond.MembersOmitted++
+			continue
+		}
+		slave := filepath.Join(base, member, "bonding_slave")
+		bond.Members = append(bond.Members, framev1beta1.BondMember{
+			Name:         clipRunes(member, maxNameLen),
+			MIIStatus:    clipRunes(text(filepath.Join(slave, "mii_status")), 16),
+			State:        clipRunes(text(filepath.Join(slave, "state")), 16),
+			LinkFailures: number(filepath.Join(slave, "link_failure_count")),
+			AggregatorID: int32At(filepath.Join(slave, "ad_aggregator_id")),
+		})
+	}
+	return bond
+}

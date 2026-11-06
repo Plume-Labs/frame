@@ -545,6 +545,142 @@ spec:
                   answering.
                 format: date-time
                 type: string
+              network:
+                description: |-
+                  Network is what the node itself reports about its links. Written by the
+                  node agent in the same patch as Storage.
+                properties:
+                  bonds:
+                    items:
+                      description: NetworkBond is one bonding device.
+                      properties:
+                        aggregatorID:
+                          description: AggregatorID is the active LACP aggregator;
+                            zero outside 802.3ad.
+                          format: int32
+                          type: integer
+                        members:
+                          items:
+                            description: BondMember is one port of a bond, as the
+                              bond sees it.
+                            properties:
+                              aggregatorID:
+                                description: |-
+                                  AggregatorID is the LACP aggregator this port joined; a port outside
+                                  the bond's own is up and carries nothing.
+                                format: int32
+                                type: integer
+                              linkFailures:
+                                format: int64
+                                type: integer
+                              miiStatus:
+                                maxLength: 16
+                                type: string
+                              name:
+                                maxLength: 15
+                                type: string
+                              state:
+                                description: State is active or backup.
+                                maxLength: 16
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          maxItems: 16
+                          type: array
+                        membersOmitted:
+                          format: int32
+                          type: integer
+                        miiStatus:
+                          maxLength: 16
+                          type: string
+                        mode:
+                          description: Mode is the kernel's name, e.g. 802.3ad.
+                          maxLength: 32
+                          type: string
+                        mtu:
+                          format: int32
+                          type: integer
+                        name:
+                          maxLength: 15
+                          type: string
+                        partnerMAC:
+                          description: PartnerMAC is the switch's LACP system id;
+                            all zeros means no partner.
+                          maxLength: 32
+                          type: string
+                        portsInAggregator:
+                          description: PortsInAggregator is how many ports LACP has
+                            in it.
+                          format: int32
+                          type: integer
+                      required:
+                      - name
+                      type: object
+                    maxItems: 8
+                    type: array
+                  bondsOmitted:
+                    format: int32
+                    type: integer
+                  error:
+                    description: Error says why nothing could be read; the lists are
+                      then empty.
+                    maxLength: 256
+                    type: string
+                  interfaces:
+                    items:
+                      description: NetworkInterface is one physical port.
+                      properties:
+                        duplex:
+                          maxLength: 16
+                          type: string
+                        master:
+                          description: Master is the bond holding this port.
+                          maxLength: 15
+                          type: string
+                        mtu:
+                          format: int32
+                          type: integer
+                        name:
+                          maxLength: 15
+                          type: string
+                        operState:
+                          description: 'OperState is the kernel''s, verbatim: up,
+                            down, lowerlayerdown…'
+                          maxLength: 32
+                          type: string
+                        rxDropped:
+                          format: int64
+                          type: integer
+                        rxErrors:
+                          description: Counters since the driver loaded.
+                          format: int64
+                          type: integer
+                        speedMbps:
+                          description: |-
+                            SpeedMbps is nil when the kernel gives none, which is every link that
+                            is down.
+                          format: int32
+                          type: integer
+                        txDropped:
+                          format: int64
+                          type: integer
+                        txErrors:
+                          format: int64
+                          type: integer
+                      required:
+                      - name
+                      type: object
+                    maxItems: 32
+                    type: array
+                  interfacesOmitted:
+                    format: int32
+                    type: integer
+                  observedAt:
+                    description: ObservedAt is when the agent read them.
+                    format: date-time
+                    type: string
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

@@ -76,7 +76,7 @@ rules:
     resources: [nodes, pods]
     verbs: [get, list]
   - apiGroups: [frame.plume-labs.io]
-    resources: [framejobs, framenodes, schedulingpolicies, frameresourcequotas, storagehealthpolicies]
+    resources: [framejobs, framenodes, schedulingpolicies, frameresourcequotas, storagehealthpolicies, networkhealthpolicies]
     verbs: [get, list, watch]
   # trivy-operator security posture for the Security screen.
   # frame-sdk.ts:1860-1861 and SecurityView.tsx:41-42 read these two kinds and
@@ -326,7 +326,7 @@ rules:
     resources: [framejobs, schedulingpolicies, framenodes]
     verbs: [get, list, watch, create, patch, delete]
   - apiGroups: [frame.plume-labs.io]
-    resources: [frameresourcequotas, storagehealthpolicies]
+    resources: [frameresourcequotas, storagehealthpolicies, networkhealthpolicies]
     verbs: [get, list, watch, create, patch]
   #
   # REMOVED 2026-08-10 — same audit as the viewer role above:

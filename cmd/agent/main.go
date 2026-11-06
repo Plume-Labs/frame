@@ -237,7 +237,7 @@ func tick(
 		if localStorage != nil {
 			local = localStorage.Latest(serialOf, localStorageWait)
 		}
-		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local); err != nil {
+		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local, agent.ObserveNetwork(root, time.Now())); err != nil {
 			slog.Error("publishing node disks", "node", nodeName, "error", err)
 		}
 	}

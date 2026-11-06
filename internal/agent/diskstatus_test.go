@@ -129,10 +129,10 @@ func TestPatchObservedStorageKeepsTheStacksWhenNoneAreGiven(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(newDiskStatusScheme(t)).WithStatusSubresource(&framev1beta1.FrameMachine{}).WithObjects(m).Build()
 	local := &framev1beta1.LocalStorage{MD: framev1beta1.MDStatus{State: framev1beta1.StackPresent, Arrays: []framev1beta1.MDArray{{Name: "md0"}}}}
-	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, local); err != nil {
+	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, local, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, nil); err != nil {
+	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	var got framev1beta1.FrameMachine
@@ -141,5 +141,29 @@ func TestPatchObservedStorageKeepsTheStacksWhenNoneAreGiven(t *testing.T) {
 	}
 	if got.Status.Storage.Local == nil || len(got.Status.Storage.Local.MD.Arrays) != 1 {
 		t.Fatalf("local = %+v, want the previous stacks kept", got.Status.Storage.Local)
+	}
+}
+
+func TestStorageAndNetworkShareOnePatch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := framev1beta1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	fm := &framev1beta1.FrameMachine{ObjectMeta: metav1.ObjectMeta{Name: "m", Namespace: "d"}, Spec: framev1beta1.FrameMachineSpec{NodeRef: "node-1"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(fm).WithStatusSubresource(fm).Build()
+	net := &framev1beta1.MachineNetwork{Interfaces: []framev1beta1.NetworkInterface{{Name: "eno1"}}}
+	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, nil, net); err != nil {
+		t.Fatal(err)
+	}
+	// A cycle that read nothing keeps the last report.
+	if err := PatchObservedStorage(context.Background(), c, "node-1", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got framev1beta1.FrameMachine
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(fm), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Network == nil || got.Status.Network.Interfaces[0].Name != "eno1" {
+		t.Fatalf("%+v", got.Status.Network)
 	}
 }

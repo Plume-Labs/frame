@@ -1,0 +1,105 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: networkhealthpolicies.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: NetworkHealthPolicy
+    listKind: NetworkHealthPolicyList
+    plural: networkhealthpolicies
+    singular: networkhealthpolicy
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.minLinkSpeedMbps
+      name: Min speed (Mb/s)
+      type: integer
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NetworkHealthPolicy holds what FrameMachine's network conditions and alerts
+          expect. Its absence means the default. It has no status: the machine
+          controller reads it on each pass.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              NetworkHealthPolicySpec is what the machine controller compares a node's
+              links against. What counts as a bond member out is not a setting.
+            properties:
+              links:
+                description: Links are the expectations for named links.
+                items:
+                  description: |-
+                    ExpectedLink is what one node's interface should be. Naming a link makes it
+                    required: it raises NetworkDegraded when absent or down, which an unused port
+                    on a machine with no expectation never does.
+                  properties:
+                    interface:
+                      description: Interface is the kernel name, a physical port or
+                        a bond.
+                      maxLength: 15
+                      minLength: 1
+                      type: string
+                    members:
+                      description: |-
+                        Members is how many members a bond must hold: a member that left the
+                        bond altogether is in no list, so only this number can miss it.
+                      format: int32
+                      maximum: 16
+                      minimum: 1
+                      type: integer
+                    node:
+                      description: Node is the FrameMachine's spec.nodeRef.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    speedMbps:
+                      description: SpeedMbps replaces MinLinkSpeedMbps for this link.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                  required:
+                  - interface
+                  - node
+                  type: object
+                maxItems: 64
+                type: array
+              minLinkSpeedMbps:
+                default: 1000
+                description: MinLinkSpeedMbps raises LinkSpeedLow on a physical link
+                  that is up below it.
+                format: int32
+                minimum: 1
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: the policy is a singleton named default
+          rule: self.metadata.name == 'default'
+    served: true
+    storage: true
+    subresources: {}

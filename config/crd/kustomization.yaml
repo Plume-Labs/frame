@@ -17,6 +17,7 @@ resources:
 - bases/frame.plume-labs.io_framealerts.yaml
 - bases/frame.plume-labs.io_framealertsubscriptions.yaml
 - bases/frame.plume-labs.io_storagehealthpolicies.yaml
+- bases/frame.plume-labs.io_networkhealthpolicies.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
