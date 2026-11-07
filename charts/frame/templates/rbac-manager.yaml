@@ -79,6 +79,14 @@ rules:
 # rbac.managerSecretAccess) puts it. See docs/deployment.md, "Manager access
 # to Secrets".
 - apiGroups:
+  - acid.zalan.do
+  resources:
+  - postgresqls
+  verbs:
+  - create
+  - get
+  - patch
+- apiGroups:
   - apps
   resources:
   - deployments
@@ -233,6 +241,14 @@ rules:
   - frametasks
   verbs:
   - create
+- apiGroups:
+  - objectbucket.io
+  resources:
+  - objectbucketclaims
+  verbs:
+  - create
+  - get
+  - patch
 - apiGroups:
   - scheduling.k8s.io
   resources:

@@ -6,6 +6,18 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `postgres` FrameService provider
+
+- `spec.type: postgres` creates a Zalando postgres-operator cluster with its
+  WAL-G archive when told to, or adopts an existing one by UID without moving
+  its spec. A cluster is never recreated, parameters that disagree with the live cluster
+  write nothing, and `deletionPolicy` never reaches the data.
+- The manager gains `get`, `create`, `patch` on `postgresqls` and
+  `objectbucketclaims`, and no `delete`.
+- Storage → Databases tab in the console: state and the settings that can move
+  (instances, volume size, nodes), traced by FrameTask. Console tiers read
+  FrameServices, and the operator tier may patch them.
+
 ### Added — storage health alerts
 
 - The FrameMachine controller now judges what the agent and the BMC report:

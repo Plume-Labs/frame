@@ -53,6 +53,9 @@ type Binding struct {
 	Data map[string][]byte
 	// Endpoint is safe to publish in status: it carries no credential.
 	Endpoint string
+	// None says there is no credentials Secret to write: consumers get their
+	// credentials elsewhere, and the manager needs no Secret access for them.
+	None bool
 }
 
 // Result is what one reconcile pass achieved.
