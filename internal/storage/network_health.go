@@ -53,9 +53,9 @@ const (
 // clear, so that a link hovering at it does not page on every crossing.
 const saturationHysteresis = 5
 
-// fullHistorySeconds is the history under which a low figure proves nothing: the
-// agent's own five-minute window less its slack.
-const fullHistorySeconds = 285
+// FullHistorySeconds is the history under which a low figure proves nothing: the
+// agent's own five-minute window less its slack, which a test there holds it to.
+const FullHistorySeconds = 285
 
 // NetExpectations is the NetworkHealthPolicy as it applies to one node.
 type NetExpectations struct {
@@ -220,7 +220,7 @@ func (a *Assessment) assessTraffic(name string, t *framev1beta1.LinkTraffic, car
 	if t == nil {
 		hold(saturated)
 		hold(errs)
-		a.Cut[scopeNetTraffic] = fmt.Sprintf("link %s has no rates yet", name)
+		a.Cut[scopeNetTraffic] = fmt.Sprintf("link %s has no rates", name)
 		a.Cut[scopeNetSustained] = a.Cut[scopeNetTraffic]
 		return
 	}
@@ -229,7 +229,7 @@ func (a *Assessment) assessTraffic(name string, t *framev1beta1.LinkTraffic, car
 	case t.ErrorsPerMinute >= int64(e.ErrorsPerMinute):
 		// Figures stay out of the message: it is the alert's text, written on change.
 		a.add(CheckLinkErrors, name, ScopeNet, severityWarning, fmt.Sprintf("link %s is counting errors", name))
-	case t.HistorySeconds < fullHistorySeconds:
+	case t.HistorySeconds < FullHistorySeconds:
 		// An agent that just restarted saw no error: that clears nothing.
 		hold(errs)
 		a.Cut[scopeNetTraffic] = fmt.Sprintf("link %s has under five minutes of readings", name)
@@ -251,14 +251,15 @@ func (a *Assessment) assessTraffic(name string, t *framev1beta1.LinkTraffic, car
 		}
 		if *t.SustainedUtilizationPercent >= limit {
 			a.add(CheckSaturated, name, ScopeNet, severityWarning,
-				fmt.Sprintf("link %s averages over %d %% of its speed over five minutes", name, e.SaturatedPercent))
+				fmt.Sprintf("link %s is near its speed over five minutes, threshold %d %%", name, e.SaturatedPercent))
 		}
 	}
 }
 
 func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations, open Open) {
 	key := Key{CheckNetDegraded, b.Name}
-	a.assessTraffic(b.Name, b.Traffic, b.MIIStatus == "up", b.MIIStatus == "up", e, open)
+	// An empty status is a read that said nothing, not a bond that is down.
+	a.assessTraffic(b.Name, b.Traffic, b.MIIStatus != "down", b.MIIStatus == "up", e, open)
 	// Loading the bonding module makes a bond0 that nobody brought up and that has
 	// no member: like an unused port, it counts only if the policy names it. A bond
 	// that was brought up and lost its members is a real loss, however empty.

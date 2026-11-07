@@ -58,7 +58,8 @@ The agent keeps each link's counters in memory for 15 minutes, read every 30
 seconds, and writes `traffic` beside the port or bond: bytes a second over the last
 minute, the busiest interval of the last 15, and utilisation against the link's
 speed or the bond's total, in the busier direction. The history dies with the
-agent and starts over when a driver resets its counters.
+agent and starts over when a driver resets its counters, or after a gap of over 15
+minutes. A shorter gap gives the average across it.
 
 A link with no rates yet, or under five minutes of history, makes `LinkSaturated`
 and `LinkErrorsRising` `Unknown`, reason `ReadUnavailable`, and keeps what was open,
@@ -73,7 +74,8 @@ member with the bond itself far from full is a hash that does not spread.
 The manager publishes `frame_link_utilization_percent`,
 `frame_link_bytes_per_second{direction}` and `frame_link_errors_per_minute`, by
 machine and interface, updated at each pass over the machine, about a minute, and
-dropped when the agent goes silent. Prometheus needs
+dropped once the report is ten minutes old. A machine whose BMC is silent is passed
+over less often, 30 minutes at most, and keeps its last figures until then. Prometheus needs
 `metrics.serviceMonitor.enabled` to see them. Network → Bottlenecks ranks the links by their 15-minute peak,
 and lists the pods sending and receiving the most from Prometheus' cAdvisor
 counters (`container_network_*_bytes_total`). Pods on the host network are left

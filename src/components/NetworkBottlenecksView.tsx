@@ -52,7 +52,7 @@ function LinksCard({ machines }: { machines: Machine[] }) {
           </table>
         )}
         <p className="mt-3 text-xs text-muted-foreground">
-          Percentages are of the link's speed, in its busier direction. A dash is a link that gives no speed, as on virtio, not an idle one.
+          Percentages are of the link's speed, in its busier direction. A dash is a link that gives no speed, as on virtio, or under five minutes of readings: not an idle one.
         </p>
       </CardContent>
     </Card>

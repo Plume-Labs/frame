@@ -24,6 +24,7 @@ import (
 	"time"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/storage"
 )
 
 // writeCounters writes a port's counters into a sysfs tree.
@@ -269,19 +270,49 @@ func TestTheBusierDirectionIsTheOneMeasured(t *testing.T) {
 
 func TestAResetOnAnyCounterStartsAgain(t *testing.T) {
 	for name, s := range map[string]trafficSample{
-		"tx":     {tx: 1},
-		"errors": {errors: 1},
-		"drops":  {drops: 1},
+		"rx":     {rx: 9},
+		"tx":     {tx: 9},
+		"errors": {errors: 9},
+		"drops":  {drops: 9},
 	} {
 		t.Run(name, func(t *testing.T) {
 			base := t.TempDir()
 			w := newTrafficWindows(base)
-			w.history["eno1"] = []trafficSample{{at: at(0), rx: 1, tx: s.tx + 5, errors: s.errors + 5, drops: s.drops + 5}}
-			writeCounters(t, base, "eno1", 2, 0, 0)
+			s.at = at(0)
+			w.history["eno1"] = []trafficSample{s}
+			writeCounters(t, base, "eno1", 0, 0, 0)
 			if got := w.observe("eno1", gigabit(), at(30)); got != nil {
 				t.Fatalf("%+v", got)
 			}
 		})
+	}
+}
+
+// Hours of average would be called the last minute, and close an alert on it.
+func TestAGapPastTheWindowStartsAgain(t *testing.T) {
+	w := newTrafficWindows(t.TempDir())
+	writeCounters(t, w.base, "eno1", 0, 0, 0)
+	w.observe("eno1", gigabit(), at(0))
+	writeCounters(t, w.base, "eno1", 1000, 0, 0)
+	if got := w.observe("eno1", gigabit(), at(7200)); got != nil {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAReportThatListedNothingKeepsTheHistory(t *testing.T) {
+	w := newTrafficWindows(t.TempDir())
+	writeCounters(t, w.base, "eno1", 0, 0, 0)
+	w.observe("eno1", gigabit(), at(0))
+	w.annotate(&framev1beta1.MachineNetwork{Error: "read failed"}, at(30))
+	if len(w.history) != 1 {
+		t.Fatalf("%v", w.history)
+	}
+}
+
+// The controller's "too little history" is this window, and it has no other tie to it.
+func TestTheControllerAgreesOnFullHistory(t *testing.T) {
+	if got := int((sustainedWindow - windowSlack).Seconds()); got != storage.FullHistorySeconds {
+		t.Fatalf("the agent's window %d, the controller's %d", got, storage.FullHistorySeconds)
 	}
 }
 

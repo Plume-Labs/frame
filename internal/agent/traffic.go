@@ -55,6 +55,10 @@ func newTrafficWindows(base string) *trafficWindows {
 
 // annotate records a reading of every link in n and fills in its traffic.
 func (w *trafficWindows) annotate(n *framev1beta1.MachineNetwork, now time.Time) {
+	// A report that could not list the links says none left.
+	if n.Error != "" {
+		return
+	}
 	seen := make(map[string]bool, len(n.Interfaces)+len(n.Bonds))
 	for i := range n.Interfaces {
 		iface := &n.Interfaces[i]
@@ -109,7 +113,10 @@ func (w *trafficWindows) observe(name string, capacity *int32, now time.Time) *f
 	h := w.history[name]
 	// A counter going back is a driver reloaded: what came before says nothing
 	// about what follows, and a difference across it would be nonsense.
-	if n := len(h); n > 0 && (s.rx < h[n-1].rx || s.tx < h[n-1].tx || s.errors < h[n-1].errors || s.drops < h[n-1].drops) {
+	// So is a gap past the whole window: an average over hours would read as the
+	// last minute, and settle an alert on load nobody saw.
+	if n := len(h); n > 0 && (s.rx < h[n-1].rx || s.tx < h[n-1].tx || s.errors < h[n-1].errors || s.drops < h[n-1].drops ||
+		now.Sub(h[n-1].at) > peakWindow) {
 		h = nil
 	}
 	h = append(h, s)

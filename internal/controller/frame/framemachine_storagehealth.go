@@ -62,6 +62,11 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 	log := logf.FromContext(ctx)
 	key := client.ObjectKeyFromObject(fm)
 
+	// ponytail: at each pass, so a machine whose BMC went quiet keeps its last
+	// figures until the backoff's next pass, 30 minutes at most. A collector
+	// reading status at scrape time would close that if anyone graphs on it.
+	recordLinkMetrics(fm.Name, fm.Status.Network, time.Now())
+
 	reader := r.PolicyReader
 	if reader == nil {
 		reader = r.Client
@@ -96,7 +101,6 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 	}
 
 	now := time.Now()
-	recordLinkMetrics(fm.Name, fm.Status.Network, now)
 	expectations := storage.NetExpectationsFrom(netPolicy, fm.Spec.NodeRef)
 	expectations.Unread = netUnread
 	a := storage.Assess(&fm.Status, storage.ThresholdsFrom(policy), expectations, inventoryFresh, open, now)

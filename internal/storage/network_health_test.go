@@ -720,3 +720,13 @@ func TestTrafficMessagesDoNotMoveWithTheLoad(t *testing.T) {
 		t.Fatalf("%q / %q", a, b)
 	}
 }
+
+// An empty status is a read that said nothing: its figures still count.
+func TestABondWithNoStatusIsStillJudgedOnItsLoad(t *testing.T) {
+	n := withTraffic(loaded(1))
+	n.Bonds[0].Traffic = loaded(95)
+	n.Bonds[0].MIIStatus = ""
+	if a := assessNet(n, noNet, nil); !hasFinding(a, CheckSaturated, "bond0") {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
