@@ -538,7 +538,8 @@ type EventLogEntry struct {
 //
 // No status.phase: the Ready-equivalent condition is Reachable, and its reason
 // carries why — Probed when it succeeded, and one of TLSError, AuthFailed,
-// Timeout, Unsupported, CredentialsUnavailable or ProbeFailed when it did not.
+// Timeout, ConnectionRefused, Unsupported, CredentialsUnavailable or
+// ProbeFailed when it did not.
 type FrameMachineStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

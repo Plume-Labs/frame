@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -290,6 +291,16 @@ func probeFailureReason(err error) string {
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "Timeout"
+	}
+	// A refused connection is the BMC's own network stack answering with a
+	// RST: the address is right and routed, but nothing listens on the
+	// Redfish port (web service down, management port disabled, a BMC
+	// mid-reset). That is a fact about the BMC, not a reading Frame could not
+	// decode, so it must not drown in ProbeFailed with the 5xx and decode
+	// failures — a supervisor reading Reachable needs to tell "the BMC is
+	// down" from "Frame cannot parse it".
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "ConnectionRefused"
 	}
 	return "ProbeFailed"
 }
