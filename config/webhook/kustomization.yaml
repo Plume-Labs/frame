@@ -12,11 +12,11 @@ patches:
 #
 # Whoever adds the next webhook: read this before you do. The patch below
 # targets `vpersistentvolumeclaim.kb.io` by its numeric array index (today
-# 6), because manifests.yaml is controller-gen's alphabetical-by-name
+# 7), because manifests.yaml is controller-gen's alphabetical-by-name
 # ordering and JSON6902 has no by-name selector. If a new webhook's name
 # sorts before "vpersistentvolumeclaim" alphabetically, every index after it
 # shifts by one — including this one — and the patch silently starts adding
-# objectSelector to whatever webhook now sits at index 6, not to the PVC
+# objectSelector to whatever webhook now sits at index 7, not to the PVC
 # one.
 #
 # That is worse than it sounds, and worse than what `make helm-parity`'s

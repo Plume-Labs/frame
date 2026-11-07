@@ -36,12 +36,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -523,6 +525,30 @@ func main() {
 		cache.New(mgr.GetClient(), mgr.GetAPIReader()),
 	)
 
+	// Before the first reconcile, so an instance never meets an empty catalog.
+	// Direct reads and writes: the caches have not started, and no webhook
+	// guards creating a model, so nothing here waits on this manager. A failure
+	// must not take every other controller down: it costs inference alone, and
+	// the runnable below tries again, with the webhooks up, until it passes.
+	seedCtx, seedDone := context.WithTimeout(context.Background(), time.Minute)
+	defer seedDone()
+	if err := inference.SeedCatalog(seedCtx, mgr.GetClient(), mgr.GetAPIReader()); err != nil {
+		setupLog.Error(err, "Failed to seed the inference catalog; retrying once started")
+	}
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		_ = wait.PollUntilContextCancel(ctx, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+			err := inference.SeedCatalog(ctx, mgr.GetClient(), mgr.GetAPIReader())
+			if err != nil {
+				setupLog.Error(err, "Failed to seed the inference catalog")
+			}
+			return err == nil, nil
+		})
+		return nil
+	})); err != nil {
+		setupLog.Error(err, "Failed to add the inference catalog seed")
+		os.Exit(1)
+	}
+
 	// mgr.GetEventRecorderFor is deprecated in favour of GetEventRecorder, but
 	// that method returns the newer events/v1 events.EventRecorder, whose
 	// Eventf(regarding, related, eventtype, reason, action, note, args...)
@@ -717,6 +743,10 @@ func main() {
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
+		if err := webhookservicesv1beta1.SetupInferenceModelWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "InferenceModel")
+			os.Exit(1)
+		}
 		if err := webhookservicesv1beta1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
 			os.Exit(1)

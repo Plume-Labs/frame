@@ -16,6 +16,7 @@ import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
 import type { Cache } from './caches'
 import type { Database } from './databases'
+import { EMPTY_SETTINGS } from './inference-models'
 import type { Machine } from './machines'
 // Raw source, for the structural guard at the bottom of this file.
 import frameSdkSource from './frame-sdk.ts?raw'
@@ -1707,6 +1708,25 @@ describe('DatabaseClient', () => {
     expect(calls[0].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/b-db')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { parameters: { instances: '2', volumeSize: '8Gi', nodes: null } } })
     expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set database b-db')
+  })
+
+  it('writes the inference catalog at cluster scope, with the action the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const settings = { ...EMPTY_SETTINGS, weightsMiB: '1', layers: '2', kvHeads: '3', headDim: '4' }
+    const models = createFrameClient().inferenceModels
+    await models.create('m', settings)
+    await models.save('m', settings)
+    await models.remove('m')
+    const path = '/apis/services.plume-labs.io/v1beta1/inferencemodels'
+    expect(calls.map((c) => [c.init?.method, c.url])).toEqual([['POST', path], ['PATCH', `${path}/m`], ['DELETE', `${path}/m`]])
+    expect(JSON.parse(String(calls[0].init?.body)).spec).toEqual({ weightsMiB: 1, layers: 2, kvHeads: 3, headDim: 4 })
+    expect(JSON.parse(String(calls[1].init?.body)).spec.parallel).toBeNull()
+    expect((calls[2].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('delete inference model m')
   })
 
   it('lists only caches, and patches one in its own namespace', async () => {

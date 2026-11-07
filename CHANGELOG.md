@@ -21,6 +21,32 @@ release tags follow [Semantic Versioning](https://semver.org/).
   `restoredVolumeUID` names the new one.
 - The console gains Storage → Caches, with `maxMemory` and `volumeSize` editable.
 
+### Added — `InferenceModel`: the inference catalog leaves the code
+
+- The cluster-scoped `InferenceModel` replaces the three models compiled into the
+  `inference` provider. It holds the sizing figures and llama.cpp's options:
+  `contextLength`, `parallel`, `kvCacheType`, `cpuMoELayers`, `threads`,
+  `reasoningBudget`.
+  `spec.parameters.model` of a FrameService names one.
+- The manager writes the three defaults into a cluster with no model at all, and
+  any default an instance names into one that lacks it. They set no option, which
+  adds no flag, so an instance keeps its arguments and sizing.
+- The llama.cpp image is pinned to `server-cuda-b11277`, by digest: the tag it used
+  moves, and an older build refuses flags a model can set. This changes the pod
+  template, so upgrading restarts every inference instance once.
+- Editing a model's flags or resources restarts the instances serving it within
+  ten minutes.
+  Deleting one an instance serves is refused.
+- Inference Deployments move to the `Recreate` strategy: on one card the surge pod
+  waited for the GPU forever while the instance read Ready on its old settings.
+  Readiness now waits for the rollout, and a pod that fits no node reports
+  `Unschedulable`. A healthy pod is not restarted by the move, though its instance
+  reads `RolloutInProgress` for a moment; a rollout already stuck goes through.
+- A FrameService refused for its size is now retried every two minutes, because
+  the catalog can move under it.
+- The manager gains `get`, `list`, `create` on `inferencemodels`.
+- The console gains Inference → Models: add, edit, delete.
+
 ### Added — SMART reading of solid-state disks
 
 - The agent reads wear and health from SSD and NVMe disks with `smartctl`, every
