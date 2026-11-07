@@ -6,7 +6,6 @@ import { loadConfig } from '@/lib/frame-config'
 
 import { PasskeysDialog } from '@/components/PasskeysDialog'
 import { HeaderStats } from '@/components/HeaderStats'
-import { NotEnabledView } from '@/components/NotEnabledView'
 import { LoginView } from '@/components/LoginView'
 import { InviteAcceptView } from '@/components/InviteAcceptView'
 
@@ -85,7 +84,6 @@ import {
   Gauge,
   Gear,
   HardDrive,
-  HardDrives,
   Lightning,
   ListChecks,
   Network,
@@ -105,8 +103,8 @@ import {
  * what runs (Workloads), what Frame serves to it (Services: inference,
  * databases, caches and queues, the FrameService providers), what it runs on
  * (Compute, node tuning included), what it consumes (Resources), and how it is
- * behaving (Operations). Within a screen, panels that answer the *same*
- * question sit on tabs.
+ * behaving (Operations). Administration holds who may do what and what was
+ * done. Within a screen, panels that answer the *same* question sit on tabs.
  *
  * Databases and Caches sat on Storage's tab strip and Inference under Tuning;
  * they are services a workload binds to, not where its bytes land or how a
@@ -114,9 +112,9 @@ import {
  * scratch tier — storage, not a node knob — so it moved to Storage.
  *
  * The sidebar was 28 flat entries, most of them one-card panels (MPS, KSM, PTP,
- * burst buffer) or capabilities Frame does not set up (speculative decoding,
- * pipeline parallelism). Folding those into tabs cuts the sidebar to
- * 13 without hiding anything: every former entry is still one click away.
+ * burst buffer). Folding those into tabs keeps it short without hiding
+ * anything. Panels that only said "Frame does not set this up" (speculative
+ * decoding, pipeline parallelism) were dropped: a tab is for something to see.
  */
 /**
  * Every panel the app can render. Typing it as a union — rather than `string` —
@@ -151,8 +149,6 @@ type TabId =
   | 'inference'
   | 'inference-models'
   | 'kv-cache'
-  | 'speculative'
-  | 'pipeline-pp'
   | 'mps'
   | 'ptp'
   | 'burst-buffer'
@@ -246,13 +242,11 @@ const NAV: NavGroup[] = [
         id: 'inference',
         label: 'Inference',
         icon: <ChartBar />,
-        description: 'Served models, KV-cache pressure and the decode strategies in play',
+        description: 'Served models, their GPU and KV-cache pressure, and the request queue behind them',
         tabs: [
           { id: 'inference', label: 'Overview' },
           { id: 'inference-models', label: 'Models' },
           { id: 'kv-cache', label: 'KV-Cache' },
-          { id: 'speculative', label: 'Speculative' },
-          { id: 'pipeline-pp', label: 'Pipeline PP' },
         ],
       },
       {
@@ -278,11 +272,12 @@ const NAV: NavGroup[] = [
         id: 'nodes',
         label: 'Nodes',
         icon: <Cpu />,
-        description: 'Fleet health, operator-managed FrameNodes and their hypervisor racks',
+        description: 'Fleet health, operator-managed FrameNodes, their hypervisor racks and what runs where',
         tabs: [
           { id: 'nodes', label: 'Fleet' },
           { id: 'provisioned-nodes', label: 'Provisioned' },
           { id: 'racks', label: 'Racks' },
+          { id: 'data-locality', label: 'Placement' },
         ],
       },
       {
@@ -342,13 +337,6 @@ const NAV: NavGroup[] = [
           { id: 'network-bottlenecks', label: 'Bottlenecks' },
         ],
       },
-      {
-        id: 'data-locality',
-        label: 'Placement',
-        icon: <HardDrives />,
-        description: 'Live pod-to-node workload placement',
-        tabs: [{ id: 'data-locality', label: 'Placement' }],
-      },
     ],
   },
   {
@@ -375,6 +363,11 @@ const NAV: NavGroup[] = [
           { id: 'events', label: 'Events' },
         ],
       },
+    ],
+  },
+  {
+    label: 'Administration',
+    items: [
       {
         id: 'tasks',
         label: 'Tasks',
@@ -626,22 +619,6 @@ function App() {
         return <InferenceView />
       case 'elastic-pools':
         return <VolcanoPoolsView />
-      case 'speculative':
-        return (
-          <NotEnabledView
-            title="Speculative decoding"
-            reason="Draft-model speculative decoding is available in the llama.cpp server, but Frame does not load a draft model, so no accept-rate telemetry is reported here."
-            enable="llama-server --model <target> --model-draft <small-draft> --draft-max 16"
-          />
-        )
-      case 'pipeline-pp':
-        return (
-          <NotEnabledView
-            title="Pipeline parallelism"
-            reason="Pipeline parallelism splits a model across multiple GPUs; Frame does not set it up, so nothing is reported here."
-            enable="Add GPUs across nodes, then serve with tensor/pipeline-parallel size > 1."
-          />
-        )
       case 'mps':
         return <MpsView />
       case 'ptp':

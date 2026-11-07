@@ -14,6 +14,11 @@ release tags follow [Semantic Versioning](https://semver.org/).
   Buffer (the NVMe scratch tier, moved from Node Tuning).
 - Node Tuning (MPS, PTP, KSM) moves into Compute; the Tuning group is gone.
 - Tabs say what they show: Storage › Ceph, Network › Throughput.
+- Operations keeps Capacity and Security; Tasks, Accounts and Settings move to
+  a new **Administration** group.
+- Placement becomes a tab of Nodes instead of a one-tab screen.
+- Inference drops its Speculative and Pipeline PP tabs, which only said that
+  Frame does not set those up.
 
 ### Added — `cache` FrameService provider
 
