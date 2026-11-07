@@ -64,7 +64,13 @@ type NetworkCollector struct {
 
 // NewNetworkCollector reads root's links.
 func NewNetworkCollector(root string) *NetworkCollector {
-	return &NetworkCollector{read: func() *framev1beta1.MachineNetwork { return ObserveNetwork(root, time.Now()) }}
+	windows := newTrafficWindows(filepath.Join(root, sysClassNet))
+	return &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
+		n := ObserveNetwork(root, time.Now())
+		// Its own time: a slow driver above must not read as a long interval.
+		windows.annotate(n, time.Now())
+		return n
+	}}
 }
 
 // Latest returns the newest report, waiting at most wait for a read started now

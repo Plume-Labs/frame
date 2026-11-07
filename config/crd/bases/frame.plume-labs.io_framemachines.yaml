@@ -624,6 +624,75 @@ spec:
                             in it.
                           format: int32
                           type: integer
+                        traffic:
+                          description: |-
+                            Traffic counts the bond as a whole; its ports have their own, which is
+                            what shows a hash putting everything on one of them.
+                          properties:
+                            capacityMbps:
+                              description: |-
+                                CapacityMbps is what utilisation is measured against: the link's speed, or
+                                a bond's total. nil when the kernel gives none, as on virtio, and the
+                                percentages below are nil with it.
+                              format: int32
+                              type: integer
+                            dropsPerMinute:
+                              format: int64
+                              type: integer
+                            errorsPerMinute:
+                              description: |-
+                                ErrorsPerMinute and DropsPerMinute are over the last five minutes, or what
+                                there is of them, rounded up: one error stays visible.
+                              format: int64
+                              type: integer
+                            historySeconds:
+                              description: HistorySeconds is how far back the readings
+                                go, some 15 minutes at most.
+                              format: int32
+                              type: integer
+                            peakRxBytesPerSecond:
+                              description: |-
+                                PeakRxBytesPerSecond and PeakTxBytesPerSecond are the busiest interval
+                                between two readings in the last 15 minutes.
+                              format: int64
+                              type: integer
+                            peakTxBytesPerSecond:
+                              format: int64
+                              type: integer
+                            peakUtilizationPercent:
+                              description: PeakUtilizationPercent goes with the peaks
+                                above.
+                              format: int32
+                              type: integer
+                            rxBytesPerSecond:
+                              description: RxBytesPerSecond and TxBytesPerSecond are
+                                over the last minute.
+                              format: int64
+                              type: integer
+                            sustainedUtilizationPercent:
+                              description: |-
+                                SustainedUtilizationPercent is the average over the last five minutes, and
+                                nil until the readings go back that far. It is what LinkSaturated judges.
+                              format: int32
+                              type: integer
+                            txBytesPerSecond:
+                              format: int64
+                              type: integer
+                            utilizationPercent:
+                              description: |-
+                                UtilizationPercent is the last minute's, in the busier direction: a link
+                                is full duplex, and either way can be the one that is full.
+                              format: int32
+                              type: integer
+                          required:
+                          - dropsPerMinute
+                          - errorsPerMinute
+                          - historySeconds
+                          - peakRxBytesPerSecond
+                          - peakTxBytesPerSecond
+                          - rxBytesPerSecond
+                          - txBytesPerSecond
+                          type: object
                       required:
                       - name
                       type: object
@@ -672,6 +741,74 @@ spec:
                             is down.
                           format: int32
                           type: integer
+                        traffic:
+                          description: Traffic is nil until the agent has two readings
+                            of the port.
+                          properties:
+                            capacityMbps:
+                              description: |-
+                                CapacityMbps is what utilisation is measured against: the link's speed, or
+                                a bond's total. nil when the kernel gives none, as on virtio, and the
+                                percentages below are nil with it.
+                              format: int32
+                              type: integer
+                            dropsPerMinute:
+                              format: int64
+                              type: integer
+                            errorsPerMinute:
+                              description: |-
+                                ErrorsPerMinute and DropsPerMinute are over the last five minutes, or what
+                                there is of them, rounded up: one error stays visible.
+                              format: int64
+                              type: integer
+                            historySeconds:
+                              description: HistorySeconds is how far back the readings
+                                go, some 15 minutes at most.
+                              format: int32
+                              type: integer
+                            peakRxBytesPerSecond:
+                              description: |-
+                                PeakRxBytesPerSecond and PeakTxBytesPerSecond are the busiest interval
+                                between two readings in the last 15 minutes.
+                              format: int64
+                              type: integer
+                            peakTxBytesPerSecond:
+                              format: int64
+                              type: integer
+                            peakUtilizationPercent:
+                              description: PeakUtilizationPercent goes with the peaks
+                                above.
+                              format: int32
+                              type: integer
+                            rxBytesPerSecond:
+                              description: RxBytesPerSecond and TxBytesPerSecond are
+                                over the last minute.
+                              format: int64
+                              type: integer
+                            sustainedUtilizationPercent:
+                              description: |-
+                                SustainedUtilizationPercent is the average over the last five minutes, and
+                                nil until the readings go back that far. It is what LinkSaturated judges.
+                              format: int32
+                              type: integer
+                            txBytesPerSecond:
+                              format: int64
+                              type: integer
+                            utilizationPercent:
+                              description: |-
+                                UtilizationPercent is the last minute's, in the busier direction: a link
+                                is full duplex, and either way can be the one that is full.
+                              format: int32
+                              type: integer
+                          required:
+                          - dropsPerMinute
+                          - errorsPerMinute
+                          - historySeconds
+                          - peakRxBytesPerSecond
+                          - peakTxBytesPerSecond
+                          - rxBytesPerSecond
+                          - txBytesPerSecond
+                          type: object
                         txDropped:
                           format: int64
                           type: integer

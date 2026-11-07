@@ -48,6 +48,23 @@ spec:
               NetworkHealthPolicySpec is what the machine controller compares a node's
               links against. What counts as a bond member out is not a setting.
             properties:
+              linkErrorsPerMinute:
+                default: 1
+                description: |-
+                  LinkErrorsPerMinute raises LinkErrorsRising on a link or bond counting at
+                  least this many errors a minute, over five minutes.
+                format: int32
+                minimum: 1
+                type: integer
+              linkSaturatedPercent:
+                default: 80
+                description: |-
+                  LinkSaturatedPercent raises LinkSaturated on a link or bond whose busier
+                  direction averages at least this over five minutes.
+                format: int32
+                maximum: 100
+                minimum: 1
+                type: integer
               links:
                 description: Links are the expectations for named links.
                 items:

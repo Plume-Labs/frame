@@ -17,11 +17,18 @@ export interface ExpectedLink {
 
 export interface NetworkExpectations {
   minLinkSpeedMbps: number
+  linkSaturatedPercent: number
+  linkErrorsPerMinute: number
   links: ExpectedLink[]
 }
 
-/** Mirrors `DefaultMinLinkSpeedMbps` in networkhealthpolicy_types.go. */
-export const DEFAULT_NETWORK_EXPECTATIONS: NetworkExpectations = { minLinkSpeedMbps: 1000, links: [] }
+/** Mirrors the `Default…` constants in networkhealthpolicy_types.go. */
+export const DEFAULT_NETWORK_EXPECTATIONS: NetworkExpectations = {
+  minLinkSpeedMbps: 1000,
+  linkSaturatedPercent: 80,
+  linkErrorsPerMinute: 1,
+  links: [],
+}
 
 export interface NetworkHealthPolicyCR {
   spec?: Partial<NetworkExpectations>
@@ -34,6 +41,10 @@ export function toExpectations(cr: NetworkHealthPolicyCR): NetworkExpectations {
 /** The CRD's bounds; an empty optional stays absent rather than zero. */
 export function expectationsProblem(e: NetworkExpectations): string | null {
   if (!Number.isInteger(e.minLinkSpeedMbps) || e.minLinkSpeedMbps < 1) return 'Minimum speed: a whole number of Mb/s.'
+  if (!Number.isInteger(e.linkSaturatedPercent) || e.linkSaturatedPercent < 1 || e.linkSaturatedPercent > 100) {
+    return 'Saturation: a percentage from 1 to 100.'
+  }
+  if (!Number.isInteger(e.linkErrorsPerMinute) || e.linkErrorsPerMinute < 1) return 'Errors: a whole number a minute.'
   if (e.links.length > 64) return 'At most 64 expected links.'
   for (const l of e.links) {
     if (!l.node || !l.interface) return 'Each expected link needs a node and an interface.'

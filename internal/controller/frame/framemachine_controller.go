@@ -99,6 +99,7 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// The machine is gone: end its session rather than leave it open
 			// on the BMC until the idle timeout.
 			r.forget(ctx, req.NamespacedName)
+			recordLinkMetrics(req.Name, nil, time.Now())
 			// An error here requeues, so a failed write is retried.
 			return ctrl.Result{}, r.resolveStorageAlerts(ctx, req.NamespacedName)
 		}

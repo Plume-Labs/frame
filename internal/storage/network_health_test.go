@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -492,5 +493,240 @@ func TestAnUnreadPolicyLeavesLinksUnknownAndStorageAlone(t *testing.T) {
 	}
 	if v := a.Verdict(CheckLinkSlow, nil); v.Status != "Unknown" {
 		t.Fatalf("%+v", v)
+	}
+}
+
+// loaded is a port carrying a five-minute average of pct percent of a gigabit.
+func loaded(pct int32) *framev1beta1.LinkTraffic {
+	return &framev1beta1.LinkTraffic{
+		HistorySeconds: 600, CapacityMbps: new(int32(1000)),
+		UtilizationPercent: new(pct), SustainedUtilizationPercent: new(pct),
+	}
+}
+
+func withTraffic(t *framev1beta1.LinkTraffic) *framev1beta1.MachineNetwork {
+	n := healthyNet()
+	for i := range n.Interfaces {
+		if n.Interfaces[i].OperState == "up" {
+			n.Interfaces[i].Traffic = &framev1beta1.LinkTraffic{
+				HistorySeconds: 600, CapacityMbps: new(int32(1000)), SustainedUtilizationPercent: new(int32(1)),
+			}
+		}
+	}
+	n.Interfaces[0].Traffic = t
+	n.Bonds[0].Traffic = &framev1beta1.LinkTraffic{
+		HistorySeconds: 600, CapacityMbps: new(int32(2000)), SustainedUtilizationPercent: new(int32(1)),
+	}
+	return n
+}
+
+func TestASustainedLoadRaisesLinkSaturatedAtTheThreshold(t *testing.T) {
+	a := assessNet(withTraffic(loaded(80)), noNet, nil)
+	if !hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+	if v := a.Verdict(CheckSaturated, nil); v.Status != "True" {
+		t.Fatalf("%+v", v)
+	}
+	a = assessNet(withTraffic(loaded(79)), noNet, nil)
+	if hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+	if v := a.Verdict(CheckSaturated, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestPolicyMovesTheSaturationThreshold(t *testing.T) {
+	e := NetExpectationsFrom(&framev1beta1.NetworkHealthPolicy{Spec: framev1beta1.NetworkHealthPolicySpec{LinkSaturatedPercent: 50, LinkErrorsPerMinute: 10}}, "node-a")
+	if a := assessNet(withTraffic(loaded(50)), e, nil); !hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+	tr := loaded(1)
+	tr.ErrorsPerMinute = 9
+	if a := assessNet(withTraffic(tr), e, nil); hasFinding(a, CheckLinkErrors, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+func TestAnOpenSaturationNeedsToFallFurtherToClear(t *testing.T) {
+	open := Open{{CheckSaturated, "eno1"}: ScopeNet}
+	if a := assessNet(withTraffic(loaded(75)), noNet, open); !hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("75 %% holds an alert raised at 80: %+v", a.Findings)
+	}
+	if a := assessNet(withTraffic(loaded(74)), noNet, open); hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+// A saturated bond and a saturated member are two findings: the member alone is
+// a hash that does not spread.
+func TestABondIsJudgedOnItsOwnTotal(t *testing.T) {
+	n := withTraffic(loaded(1))
+	n.Bonds[0].Traffic = loaded(90)
+	if a := assessNet(n, noNet, nil); !hasFinding(a, CheckSaturated, "bond0") {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+func TestErrorsRiseAndDropsAreNotJudged(t *testing.T) {
+	tr := loaded(1)
+	tr.ErrorsPerMinute = 1
+	a := assessNet(withTraffic(tr), noNet, nil)
+	if !hasFinding(a, CheckLinkErrors, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+	tr = loaded(1)
+	tr.DropsPerMinute = 1000
+	if a := assessNet(withTraffic(tr), noNet, nil); hasFinding(a, CheckLinkErrors, "eno1") {
+		t.Fatalf("rx_dropped counts frames nobody wanted: %+v", a.Findings)
+	}
+}
+
+// virtio: rates, but nothing to measure them against.
+func TestNoCapacityIsUnknownAndKeepsAnOpenAlert(t *testing.T) {
+	tr := &framev1beta1.LinkTraffic{HistorySeconds: 600, RxBytesPerSecond: 1000}
+	a := assessNet(withTraffic(tr), noNet, nil)
+	if v := a.Verdict(CheckSaturated, nil); v.Status != "Unknown" || v.Reason != "SpeedNotReported" {
+		t.Fatalf("%+v", v)
+	}
+	if v := a.Verdict(CheckLinkErrors, nil); v.Status != "False" {
+		t.Fatalf("errors need no speed: %+v", v)
+	}
+	open := Open{{CheckSaturated, "eno1"}: ScopeNet}
+	if a := assessNet(withTraffic(tr), noNet, open); !a.Held[Key{CheckSaturated, "eno1"}] {
+		t.Fatalf("%+v", a.Held)
+	}
+}
+
+func TestTooLittleHistorySaysNothing(t *testing.T) {
+	for name, tr := range map[string]*framev1beta1.LinkTraffic{
+		"no rates":    nil,
+		"under 5 min": {HistorySeconds: 60, CapacityMbps: new(int32(1000))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := assessNet(withTraffic(tr), noNet, nil)
+			if v := a.Verdict(CheckSaturated, nil); v.Status != "Unknown" {
+				t.Fatalf("%+v", v)
+			}
+			open := Open{{CheckSaturated, "eno1"}: ScopeNet}
+			if a := assessNet(withTraffic(tr), noNet, open); !a.Held[Key{CheckSaturated, "eno1"}] {
+				t.Fatalf("%+v", a.Held)
+			}
+		})
+	}
+}
+
+func TestALinkDownNeitherRaisesNorClearsItsLoad(t *testing.T) {
+	n := withTraffic(loaded(99))
+	n.Interfaces[0].OperState = "down"
+	open := Open{{CheckSaturated, "eno1"}: ScopeNet}
+	a := assessNet(n, noNet, open)
+	if hasFinding(a, CheckSaturated, "eno1") || !a.Held[Key{CheckSaturated, "eno1"}] {
+		t.Fatalf("%+v / %+v", a.Findings, a.Held)
+	}
+	// An unused port with no rates must not make the whole check Unknown.
+	if v := assessNet(withTraffic(loaded(1)), noNet, nil).Verdict(CheckSaturated, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func hasFinding(a Assessment, check, device string) bool {
+	for _, f := range a.Findings {
+		if f.Check == check && f.Device == device {
+			return true
+		}
+	}
+	return false
+}
+
+// An agent that just restarted saw no error in thirty seconds: that closes nothing.
+func TestAnErrorAlertSurvivesAnAgentRestart(t *testing.T) {
+	open := Open{{CheckLinkErrors, "eno1"}: ScopeNet}
+	tr := loaded(1)
+	tr.HistorySeconds = 30
+	a := assessNet(withTraffic(tr), noNet, open)
+	if !a.Held[Key{CheckLinkErrors, "eno1"}] {
+		t.Fatalf("%+v", a.Held)
+	}
+	if v := assessNet(withTraffic(tr), noNet, nil).Verdict(CheckLinkErrors, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+	if a := assessNet(withTraffic(loaded(1)), noNet, open); a.Held[Key{CheckLinkErrors, "eno1"}] {
+		t.Fatalf("a full window with no error clears it: %+v", a.Held)
+	}
+}
+
+func TestNoFigureClosesAnErrorAlert(t *testing.T) {
+	open := Open{{CheckLinkErrors, "eno1"}: ScopeNet}
+	if a := assessNet(withTraffic(nil), noNet, open); !a.Held[Key{CheckLinkErrors, "eno1"}] {
+		t.Fatalf("no rates: %+v", a.Held)
+	}
+	n := withTraffic(loaded(1))
+	n.Interfaces[0].OperState = "down"
+	if a := assessNet(n, noNet, open); !a.Held[Key{CheckLinkErrors, "eno1"}] {
+		t.Fatalf("link down: %+v", a.Held)
+	}
+	if v := assessNet(withTraffic(nil), noNet, nil).Verdict(CheckLinkErrors, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestABondThatIsDownIsNotJudgedOnItsLoad(t *testing.T) {
+	n := withTraffic(loaded(1))
+	n.Bonds[0].Traffic = loaded(99)
+	n.Bonds[0].MIIStatus = "down"
+	if a := assessNet(n, noNet, nil); hasFinding(a, CheckSaturated, "bond0") {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+// A driver at unknown that shows a speed is judged; one that shows none owes none.
+func TestALinkAtUnknownCarriesAndOwesNoSpeed(t *testing.T) {
+	n := withTraffic(loaded(90))
+	n.Interfaces[0].OperState = "unknown"
+	if a := assessNet(n, noNet, nil); !hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+	n = withTraffic(&framev1beta1.LinkTraffic{HistorySeconds: 600})
+	n.Interfaces[0].OperState = "unknown"
+	if v := assessNet(n, noNet, nil).Verdict(CheckSaturated, nil); v.Status != "False" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+// Under the hysteresis a low threshold must still let an alert close.
+func TestALowThresholdStillClears(t *testing.T) {
+	e := NetExpectationsFrom(&framev1beta1.NetworkHealthPolicy{Spec: framev1beta1.NetworkHealthPolicySpec{LinkSaturatedPercent: 3}}, "node-a")
+	open := Open{{CheckSaturated, "eno1"}: ScopeNet}
+	if a := assessNet(withTraffic(loaded(0)), e, open); hasFinding(a, CheckSaturated, "eno1") {
+		t.Fatalf("%+v", a.Findings)
+	}
+}
+
+// The message is the alert's text: a figure in it would write the alert every pass.
+func TestTrafficMessagesDoNotMoveWithTheLoad(t *testing.T) {
+	msg := func(pct int32, errs int64) []string {
+		tr := loaded(pct)
+		tr.ErrorsPerMinute = errs
+		findings := assessNet(withTraffic(tr), noNet, nil).Findings
+		out := make([]string, 0, len(findings))
+		for _, f := range findings {
+			out = append(out, f.Message)
+		}
+		return out
+	}
+	if a, b := msg(81, 2), msg(97, 900); !slices.Equal(a, b) {
+		t.Fatalf("%q / %q", a, b)
+	}
+}
+
+// An empty status is a read that said nothing: its figures still count.
+func TestABondWithNoStatusIsStillJudgedOnItsLoad(t *testing.T) {
+	n := withTraffic(loaded(1))
+	n.Bonds[0].Traffic = loaded(95)
+	n.Bonds[0].MIIStatus = ""
+	if a := assessNet(n, noNet, nil); !hasFinding(a, CheckSaturated, "bond0") {
+		t.Fatalf("%+v", a.Findings)
 	}
 }

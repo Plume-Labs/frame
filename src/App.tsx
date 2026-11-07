@@ -33,6 +33,7 @@ const DatabasesView = lazy(() => import('@/components/DatabasesView').then((m) =
 
 const StorageHealthView = lazy(() => import('@/components/StorageHealthView').then((m) => ({ default: m.StorageHealthView })))
 const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
+const NetworkBottlenecksView = lazy(() => import('@/components/NetworkBottlenecksView').then((m) => ({ default: m.NetworkBottlenecksView })))
 const NetworkLinksView = lazy(() => import('@/components/NetworkLinksView').then((m) => ({ default: m.NetworkLinksView })))
 const NetworkView = lazy(() => import('@/components/NetworkView').then((m) => ({ default: m.NetworkView })))
 const WorkloadPlacementView = lazy(() => import('@/components/WorkloadPlacementView').then((m) => ({ default: m.WorkloadPlacementView })))
@@ -135,6 +136,7 @@ type TabId =
   | 'storage-health'
   | 'network'
   | 'network-links'
+  | 'network-bottlenecks'
   | 'data-locality'
   | 'inference'
   | 'inference-models'
@@ -285,6 +287,7 @@ const NAV: NavGroup[] = [
         tabs: [
           { id: 'network', label: 'Network' },
           { id: 'network-links', label: 'Links' },
+          { id: 'network-bottlenecks', label: 'Bottlenecks' },
         ],
       },
       {
@@ -585,6 +588,8 @@ function App() {
         return <NetworkView />
       case 'network-links':
         return <NetworkLinksView />
+      case 'network-bottlenecks':
+        return <NetworkBottlenecksView />
       case 'data-locality':
         return <WorkloadPlacementView />
 
