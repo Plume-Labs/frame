@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"slices"
@@ -785,4 +787,62 @@ func TestBind(t *testing.T) {
 func hashInput(template corev1.PodTemplateSpec) (string, error) {
 	raw, err := template.Marshal()
 	return string(raw), err
+}
+
+// The digest that rolls the pod must not let a reader of pods test password
+// guesses: an edited password can be a weak one.
+func TestTheAuthDigestNamesNoGuessablePassword(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := lru()
+	reconcileOK(t, p, svc)
+	ctx := context.Background()
+	key := client.ObjectKey{Namespace: ns, Name: "jobs-valkey-auth"}
+	var secret corev1.Secret
+	if err := c.Get(ctx, key, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if len(secret.Data[saltKey]) != 32 {
+		t.Fatalf("salt: %d bytes", len(secret.Data[saltKey]))
+	}
+	secret.Data[passwordKey] = []byte("hunter2")
+	if err := c.Update(ctx, &secret); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOK(t, p, svc)
+	got := statefulSet(t, c).Spec.Template.Annotations[authDigestAnnotation]
+	bare := sha256.Sum256([]byte("hunter2"))
+	if got == "" || got == hex.EncodeToString(bare[:]) {
+		t.Fatalf("auth digest %q is a bare hash of the password", got)
+	}
+}
+
+// A Secret written before the salt existed gets one, and the pod follows.
+func TestASecretWithoutSaltGetsOne(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := lru()
+	reconcileOK(t, p, svc)
+	ctx := context.Background()
+	key := client.ObjectKey{Namespace: ns, Name: "jobs-valkey-auth"}
+	var secret corev1.Secret
+	if err := c.Get(ctx, key, &secret); err != nil {
+		t.Fatal(err)
+	}
+	delete(secret.Data, saltKey)
+	if err := c.Update(ctx, &secret); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOK(t, p, svc)
+	if err := c.Get(ctx, key, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if len(secret.Data[saltKey]) != 32 {
+		t.Fatalf("salt after the upgrade: %d bytes", len(secret.Data[saltKey]))
+	}
+	first := statefulSet(t, c).Spec.Template.Annotations[authDigestAnnotation]
+	reconcileOK(t, p, svc)
+	if statefulSet(t, c).Spec.Template.Annotations[authDigestAnnotation] != first {
+		t.Error("the digest moved on a pass that changed nothing")
+	}
 }

@@ -28,6 +28,7 @@ package cache
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -98,7 +99,11 @@ const (
 
 	authSecretSuffix = "-valkey-auth"
 	passwordKey      = "password"
-	authConfKey      = "auth.conf"
+	// saltKey keys the HMAC whose sum rides on the pod template. A bare hash
+	// of the password there would let anyone who reads pods test guesses
+	// against a password edited by hand.
+	saltKey     = "digest-salt"
+	authConfKey = "auth.conf"
 
 	// Memory a server needs besides its dataset: clients, buffers, the process.
 	overheadMiB = 64
@@ -264,7 +269,7 @@ func (p *Provider) converge(ctx context.Context, svc *servicesv1beta1.FrameServi
 		}
 	}
 
-	password, res, stop, err := p.ensureAuth(ctx, svc)
+	digest, res, stop, err := p.ensureAuth(ctx, svc)
 	if stop || err != nil {
 		return res, err
 	}
@@ -283,7 +288,7 @@ func (p *Provider) converge(ctx context.Context, svc *servicesv1beta1.FrameServi
 		}
 	}
 
-	template, err := podTemplate(svc, params, sizing, password)
+	template, err := podTemplate(svc, params, sizing, digest)
 	if err != nil {
 		return provider.Result{}, err
 	}
@@ -449,7 +454,9 @@ func (p *Provider) growVolume(ctx context.Context, pvc *corev1.PersistentVolumeC
 	return degraded(ReasonProvisioning, "volume %s growing to %s", pvc.Name, size), true, nil
 }
 
-// ensureAuth returns the instance's password, generating it on the first pass.
+// ensureAuth returns the instance's auth digest (an HMAC of the password,
+// keyed by a random salt kept in the same Secret), generating the password and
+// the salt on the first pass.
 // The Secret exists before the pod that mounts it, and is separate from the
 // binding Secret: the controller writes that one only after Ready, which a pod
 // waiting on it would never reach. Valkey takes the password from auth.conf, so
@@ -475,9 +482,18 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 			return "", degraded(ReasonAuthInvalid, "Secret %s has no %q key: delete it for a new password", name, passwordKey), true, nil
 		}
 		// A password edited by hand: the server reads auth.conf, the probe and
-		// consumers read password, and the two must not part.
-		if conf := authConf(password); !bytes.Equal(secret.Data[authConfKey], conf) {
+		// consumers read password, and the two must not part. A Secret from
+		// before the salt gets one.
+		conf := authConf(password)
+		if salt := secret.Data[saltKey]; !bytes.Equal(secret.Data[authConfKey], conf) || len(salt) == 0 {
 			secret.Data[authConfKey] = conf
+			if len(salt) == 0 {
+				fresh, err := randomBytes()
+				if err != nil {
+					return "", provider.Result{}, false, err
+				}
+				secret.Data[saltKey] = fresh
+			}
 			if err := p.client.Update(ctx, &secret); err != nil {
 				if apierrors.IsForbidden(err) {
 					return forbidden("write")
@@ -485,16 +501,20 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 				return "", provider.Result{}, false, fmt.Errorf("updating the auth Secret: %w", err)
 			}
 		}
-		return password, provider.Result{}, false, nil
+		return authDigest(secret.Data[saltKey], password), provider.Result{}, false, nil
 	case apierrors.IsForbidden(err):
 		return forbidden("read")
 	case !apierrors.IsNotFound(err):
 		return "", provider.Result{}, false, fmt.Errorf("reading the auth Secret: %w", err)
 	}
 
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", provider.Result{}, false, fmt.Errorf("generating the password: %w", err)
+	raw, err := randomBytes()
+	if err != nil {
+		return "", provider.Result{}, false, err
+	}
+	salt, err := randomBytes()
+	if err != nil {
+		return "", provider.Result{}, false, err
 	}
 	password := hex.EncodeToString(raw)
 	secret = corev1.Secret{
@@ -502,6 +522,7 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 		Data: map[string][]byte{
 			passwordKey: []byte(password),
 			authConfKey: authConf(password),
+			saltKey:     salt,
 		},
 	}
 	if err := controllerutil.SetControllerReference(svc, &secret, p.client.Scheme()); err != nil {
@@ -513,7 +534,23 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 		}
 		return "", provider.Result{}, false, fmt.Errorf("creating the auth Secret: %w", err)
 	}
-	return password, provider.Result{}, false, nil
+	return authDigest(salt, password), provider.Result{}, false, nil
+}
+
+func randomBytes() ([]byte, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, fmt.Errorf("generating auth material: %w", err)
+	}
+	return raw, nil
+}
+
+// authDigest changes with the password, so a new one restarts the server, and
+// says nothing about it to someone without the salt.
+func authDigest(salt []byte, password string) string {
+	mac := hmac.New(sha256.New, salt)
+	mac.Write([]byte(password))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func authConf(password string) []byte { return fmt.Appendf(nil, "requirepass %q\n", password) }
@@ -603,14 +640,13 @@ func serverArgs(params map[string]string) ([]string, error) {
 }
 
 func podTemplate(
-	svc *servicesv1beta1.FrameService, params map[string]string, sizing provider.Sizing, password string,
+	svc *servicesv1beta1.FrameService, params map[string]string, sizing provider.Sizing, digest string,
 ) (corev1.PodTemplateSpec, error) {
 	args, err := serverArgs(params)
 	if err != nil {
 		return corev1.PodTemplateSpec{}, err
 	}
 	memory := resource.MustParse(sizing.Memory)
-	digest := sha256.Sum256([]byte(password))
 
 	data := corev1.Volume{Name: dataVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	volumes := []corev1.Volume{{
@@ -627,7 +663,7 @@ func podTemplate(
 	return corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:      map[string]string{OwnerLabel: svc.Name},
-			Annotations: map[string]string{authDigestAnnotation: hex.EncodeToString(digest[:])},
+			Annotations: map[string]string{authDigestAnnotation: digest},
 		},
 		Spec: corev1.PodSpec{
 			AutomountServiceAccountToken: new(false),
