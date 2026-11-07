@@ -127,3 +127,70 @@ describe('collectFindings', () => {
     ])
   })
 })
+
+describe('collectFindings — machine checks and services', () => {
+  const machine = (name: string, conditions: { type: string; status: string; message?: string }[]) => ({
+    name,
+    storageConditions: conditions,
+  })
+  const service = (name: string, over: Partial<{ ready: boolean; reason: string; message: string }> = {}) => ({
+    name,
+    namespace: 'neura',
+    ready: true,
+    reason: 'Ready',
+    message: '',
+    ...over,
+  })
+
+  it('groups one failing check across machines into one finding, on the tab that shows it', () => {
+    const f = collectFindings(
+      {
+        machines: [
+          machine('pve-00', [{ type: 'DiskWearHigh', status: 'True' }]),
+          machine('pve-01', [{ type: 'DiskWearHigh', status: 'True' }]),
+          machine('pve-02', [{ type: 'DiskWearHigh', status: 'False' }]),
+        ],
+      },
+      NOW,
+    )
+    expect(f).toHaveLength(1)
+    expect(f[0]).toMatchObject({ tone: 'warning', screen: 'storage', tab: 'storage-health' })
+    expect(f[0].detail).toBe('pve-00, pve-01')
+  })
+
+  it('treats a degraded mirror as destructive and sends a network check to Links', () => {
+    const f = collectFindings(
+      {
+        machines: [
+          machine('pve-00', [
+            { type: 'StorageDegraded', status: 'True', message: 'rpool DEGRADED' },
+            { type: 'LinkSaturated', status: 'True' },
+          ]),
+        ],
+      },
+      NOW,
+    )
+    const degraded = f.find((x) => x.key === 'check-StorageDegraded')
+    expect(degraded).toMatchObject({ tone: 'destructive' })
+    expect(degraded?.detail).toContain('rpool DEGRADED')
+    expect(f.find((x) => x.key === 'check-LinkSaturated')).toMatchObject({ screen: 'network', tab: 'network-links' })
+  })
+
+  it('does not report a check that is Unknown or not yet assessed', () => {
+    const f = collectFindings({ machines: [machine('pve-00', [{ type: 'ScrubErrors', status: 'Unknown' }])] }, NOW)
+    expect(f).toEqual([])
+  })
+
+  it('reports a lost queue as destructive and other unready services as warnings', () => {
+    const f = collectFindings(
+      {
+        caches: [service('jobs', { ready: false, reason: 'InstanceLost', message: 'volume replaced' }), service('lru')],
+        databases: [service('neura-db', { ready: false, reason: 'Provisioning' })],
+      },
+      NOW,
+    )
+    expect(f.find((x) => x.screen === 'caches')).toMatchObject({ tone: 'destructive', label: 'Cache neura/jobs not ready' })
+    expect(f.find((x) => x.screen === 'databases')).toMatchObject({ tone: 'warning', detail: 'Provisioning' })
+    expect(f).toHaveLength(2)
+  })
+})

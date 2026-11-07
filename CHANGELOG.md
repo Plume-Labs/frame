@@ -6,6 +6,15 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Overview reports storage, network and service problems
+
+- Needs attention now lists every failing storage check (degraded mirror, scrub
+  errors, ZFS capacity, SSD wear) and network check (degraded bond, low link
+  speed, saturated link, rising errors), one row per check naming the machines,
+  linking to Storage › Health or Network › Links.
+- A cache or database FrameService that is not Ready is listed too; a queue
+  that lost its volume (`InstanceLost`) is destructive, anything else a warning.
+
 ### Changed — console navigation
 
 - A new **Services** group holds what a workload binds to: Inference (moved

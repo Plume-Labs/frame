@@ -20,6 +20,9 @@ import { Stat, StatGrid, ScreenHeader } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { TONE_TEXT, formatAge, inverseScoreTone } from '@/lib/thresholds'
 import { Finding, collectFindings } from '@/lib/findings'
+import type { Cache } from '@/lib/caches'
+import type { Database } from '@/lib/databases'
+import type { Machine } from '@/lib/machines'
 import { cn } from '@/lib/utils'
 import {
   Bell,
@@ -80,6 +83,11 @@ export function OverviewView() {
     crdListPath('velero.io', 'v1', 'backupstoragelocations', veleroNs),
     crdListPath('velero.io', 'v1', 'schedules', veleroNs),
   ])
+  // Same reads, same watch paths as the Health, Links, Caches and Databases
+  // tabs, so a condition flipping there flips here at the same moment.
+  const machines = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
+  const caches = useLiveResource<Cache[]>(() => frame.caches.list(), [], [frame.caches.watchPath()])
+  const databases = useLiveResource<Database[]>(() => frame.databases.list(), [], [frame.databases.watchPath()])
   const inference = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
   const posture = useLiveResource<PostureStatus | null>(() => frame.cluster.posture(), [], [
     crdListPath('aquasecurity.github.io', 'v1alpha1', 'vulnerabilityreports'),
@@ -109,7 +117,15 @@ export function OverviewView() {
         onReload={reloadAll}
       />
 
-      <AttentionCard nodes={nodes.state} alerts={alerts.state} ceph={ceph.state} backups={backups.state} />
+      <AttentionCard
+        nodes={nodes.state}
+        alerts={alerts.state}
+        ceph={ceph.state}
+        backups={backups.state}
+        machines={machines.state}
+        caches={caches.state}
+        databases={databases.state}
+      />
 
       <TrendCard state={trendState.state} />
 
@@ -143,17 +159,26 @@ function AttentionCard({
   alerts,
   ceph,
   backups,
+  machines,
+  caches,
+  databases,
 }: {
   nodes: ReturnType<typeof useLiveResource<ClusterNodeInfo[]>>['state']
   alerts: ReturnType<typeof useLiveResource<AlertsStatus | null>>['state']
   ceph: ReturnType<typeof useLiveResource<CephStatus>>['state']
   backups: ReturnType<typeof useLiveResource<BackupStatus | null>>['state']
+  machines: ReturnType<typeof useLiveResource<Machine[]>>['state']
+  caches: ReturnType<typeof useLiveResource<Cache[]>>['state']
+  databases: ReturnType<typeof useLiveResource<Database[]>>['state']
 }) {
   const findings = collectFindings({
     nodes: nodes.phase === 'ready' ? nodes.data : undefined,
     alerts: alerts.phase === 'ready' ? alerts.data : undefined,
     ceph: ceph.phase === 'ready' ? ceph.data : undefined,
     backups: backups.phase === 'ready' ? backups.data : undefined,
+    machines: machines.phase === 'ready' ? machines.data : undefined,
+    caches: caches.phase === 'ready' ? caches.data : undefined,
+    databases: databases.phase === 'ready' ? databases.data : undefined,
   })
 
   return (
@@ -174,7 +199,7 @@ function AttentionCard({
           // panel that failed to load.
           <div className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
             <CheckCircle size={18} className="text-accent" />
-            No firing alerts, every node ready, Ceph healthy, backups current.
+            No firing alerts, every node ready, Ceph and disks healthy, links clean, services ready, backups current.
           </div>
         ) : (
           findings.map((f) => <FindingRow key={f.key} finding={f} />)

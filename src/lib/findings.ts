@@ -4,6 +4,10 @@ import {
   CephStatus,
   ClusterNodeInfo,
 } from './frame-sdk'
+import type { Cache } from './caches'
+import type { Database } from './databases'
+import type { Machine } from './machines'
+import { NETWORK_CHECKS, STORAGE_CHECKS } from './storage-health'
 import { Tone, formatAge } from './thresholds'
 
 /**
@@ -37,6 +41,9 @@ export function collectFindings(
     alerts?: AlertsStatus | null
     ceph?: CephStatus | null
     backups?: BackupStatus | null
+    machines?: Pick<Machine, 'name' | 'storageConditions'>[]
+    caches?: Pick<Cache, 'name' | 'namespace' | 'ready' | 'reason' | 'message'>[]
+    databases?: Pick<Database, 'name' | 'namespace' | 'ready' | 'reason' | 'message'>[]
   },
   now: number = Date.now(),
 ): Finding[] {
@@ -127,5 +134,67 @@ export function collectFindings(
     }
   }
 
+  for (const m of machineChecks(input.machines ?? [])) findings.push(m)
+  for (const f of serviceFindings('Cache', 'caches', input.caches ?? [])) findings.push(f)
+  for (const f of serviceFindings('Database', 'databases', input.databases ?? [])) findings.push(f)
+
   return findings
+}
+
+/**
+ * Checks that mean data is at risk now. The others (capacity, wear, speed,
+ * load, rising errors) say it will be if nothing changes, so they warn.
+ */
+const DESTRUCTIVE_CHECKS = new Set(['StorageDegraded', 'ScrubErrors', 'NetworkDegraded'])
+
+/**
+ * One finding per failing check, naming every machine it fails on — the same
+ * shape as "2 nodes not ready", so a switch dying does not bury the list under
+ * one row per host. Only `True` counts: `Unknown` and a check not yet written
+ * are shown on the Health and Links tabs, and are not a problem to act on.
+ */
+function machineChecks(machines: Pick<Machine, 'name' | 'storageConditions'>[]): Finding[] {
+  const out: Finding[] = []
+  const groups = [
+    { checks: STORAGE_CHECKS, screen: 'storage', tab: 'storage-health' },
+    { checks: NETWORK_CHECKS, screen: 'network', tab: 'network-links' },
+  ]
+  for (const { checks, screen, tab } of groups) {
+    for (const { type, label } of checks) {
+      const hit = machines.filter((m) => m.storageConditions.some((c) => c.type === type && c.status === 'True'))
+      if (hit.length === 0) continue
+      const first = hit[0].storageConditions.find((c) => c.type === type)
+      out.push({
+        key: `check-${type}`,
+        tone: DESTRUCTIVE_CHECKS.has(type) ? 'destructive' : 'warning',
+        label: `${label}: ${plural(hit.length, 'machine')}`,
+        detail: hit.length === 1 && first?.message ? `${hit[0].name} · ${first.message}` : hit.map((m) => m.name).join(', '),
+        screen,
+        tab,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * A FrameService that is not Ready. `InstanceLost` is the queue whose volume
+ * was replaced — jobs written before it are gone — so it is the one that is
+ * destructive; anything else not Ready (still provisioning, a bad parameter)
+ * is a warning.
+ */
+function serviceFindings(
+  kind: string,
+  screen: string,
+  services: Pick<Cache, 'name' | 'namespace' | 'ready' | 'reason' | 'message'>[],
+): Finding[] {
+  return services
+    .filter((s) => !s.ready)
+    .map((s): Finding => ({
+      key: `${screen}-${s.namespace}-${s.name}`,
+      tone: s.reason === 'InstanceLost' ? 'destructive' : 'warning',
+      label: `${kind} ${s.namespace}/${s.name} not ready`,
+      detail: s.message ? `${s.reason} · ${s.message}` : s.reason,
+      screen,
+    }))
 }
