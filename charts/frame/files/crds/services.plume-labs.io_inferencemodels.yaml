@@ -1,0 +1,167 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: inferencemodels.services.plume-labs.io
+spec:
+  group: services.plume-labs.io
+  names:
+    kind: InferenceModel
+    listKind: InferenceModelList
+    plural: inferencemodels
+    singular: inferencemodel
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.weightsMiB
+      name: Weights MiB
+      type: integer
+    - jsonPath: .spec.contextLength
+      name: Context
+      type: integer
+    - jsonPath: .spec.kvCacheType
+      name: KV cache
+      type: string
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          InferenceModel is one entry of the catalog FrameServices of type inference
+          choose from. It has no status: nothing reconciles it, the provider reads it on
+          each pass, so an edit that moves a flag or the pod's resources restarts the
+          instances on their next one.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              InferenceModelSpec is what the inference provider needs to size a set of
+              weights and start llama.cpp on them. The weights themselves are
+              <name>.gguf on the instance's model cache.
+            properties:
+              contextLength:
+                description: |-
+                  ContextLength is the context window of an instance that names none.
+                  Absent means 4096. Slots share it: see Parallel.
+                format: int64
+                minimum: 1
+                type: integer
+              cpuMoELayers:
+                description: |-
+                  CPUMoELayers is llama.cpp's --n-cpu-moe: the experts of the first N
+                  layers stay in host memory, and every layer is otherwise on the GPU.
+                  Absent offloads nothing.
+                format: int32
+                maximum: 1024
+                minimum: 1
+                type: integer
+              headDim:
+                format: int64
+                maximum: 4096
+                minimum: 1
+                type: integer
+              hostMemoryMiB:
+                description: |-
+                  HostMemoryMiB is the pod's memory. Absent means twice WeightsMiB, enough
+                  to load and map weights that end up on the GPU. A model offloading to
+                  the CPU needs it set: the experts live here.
+                format: int64
+                maximum: 16777216
+                minimum: 1
+                type: integer
+              kvCacheType:
+                description: |-
+                  KVCacheType quantises the KV cache, K and V alike. Sizing follows it.
+                  Absent is f16. A quantised V needs flash attention, which llama.cpp
+                  decides by itself: a card that cannot do it fails at startup.
+                enum:
+                - f16
+                - q8_0
+                - q4_0
+                type: string
+              kvHeads:
+                format: int64
+                maximum: 1024
+                minimum: 1
+                type: integer
+              layers:
+                description: |-
+                  Layers, KVHeads and HeadDim give the KV cache per token. Layers counts
+                  only those holding a growing cache: a hybrid model's linear-attention
+                  layers do not.
+                format: int64
+                maximum: 1024
+                minimum: 1
+                type: integer
+              parallel:
+                description: |-
+                  Parallel is llama.cpp's --parallel: server slots, which divide the
+                  context between them. Absent leaves llama.cpp's own choice.
+                format: int32
+                maximum: 64
+                minimum: 1
+                type: integer
+              reasoningBudget:
+                description: |-
+                  ReasoningBudget is llama.cpp's --reasoning-budget: tokens of thinking,
+                  -1 for no limit, 0 for none. Absent leaves llama.cpp's default.
+                format: int32
+                minimum: -1
+                type: integer
+              reasoningBudgetMessage:
+                description: ReasoningBudgetMessage is injected when the budget runs
+                  out.
+                maxLength: 1024
+                minLength: 1
+                type: string
+              threads:
+                description: |-
+                  Threads is llama.cpp's --threads, and the pod's CPU. Absent keeps four
+                  CPUs and, without CPU offload, llama.cpp's own choice. A pool sized on the
+                  node's cores thrashes against the pod's quota, which is what offload pays.
+                format: int32
+                maximum: 256
+                minimum: 1
+                type: integer
+              weightsMiB:
+                description: |-
+                  WeightsMiB is what the weights occupy on the GPU, with any CPU offload
+                  below already taken off.
+                format: int64
+                maximum: 16777216
+                minimum: 1
+                type: integer
+            required:
+            - headDim
+            - kvHeads
+            - layers
+            - weightsMiB
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: reasoningBudgetMessage needs reasoningBudget
+          rule: '!has(self.spec.reasoningBudgetMessage) || has(self.spec.reasoningBudget)'
+        - message: 'cpuMoELayers needs hostMemoryMiB: the experts live there'
+          rule: '!has(self.spec.cpuMoELayers) || has(self.spec.hostMemoryMiB)'
+    served: true
+    storage: true
+    subresources: {}

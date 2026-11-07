@@ -178,6 +178,25 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-services-plume-labs-io-v1beta1-inferencemodel
+  failurePolicy: Fail
+  name: vinferencemodel-v1beta1.kb.io
+  rules:
+  - apiGroups:
+    - services.plume-labs.io
+    apiVersions:
+    - v1beta1
+    operations:
+    - DELETE
+    resources:
+    - inferencemodels
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate--v1-persistentvolumeclaim
   failurePolicy: Ignore
   name: vpersistentvolumeclaim.kb.io

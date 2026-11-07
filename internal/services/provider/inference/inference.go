@@ -35,6 +35,13 @@ import (
 )
 
 const (
+	// image is pinned: the tag server-cuda moves, a node keeps whichever one it
+	// pulled first, and an older build refuses flags an InferenceModel can set.
+	// b11277 is the build that serves on this project's P4, with q8_0 KV, slots,
+	// threads and the reasoning budget; its README lists every flag of modelArgs.
+	image = "ghcr.io/ggml-org/llama.cpp:server-cuda-b11277@sha256:7149a45c80596644320de1d565db1b3b8e70b22c66fed612e69b73f6b1e0d746"
+	// defaultCPUs is the pod's CPU when the model names none.
+	defaultCPUs = 4
 	// defaultContextLength is what llama.cpp itself defaults to.
 	defaultContextLength = 4096
 	// bytesPerMiB converts the KV cache arithmetic into the unit the catalog
@@ -171,11 +178,10 @@ type Provider struct {
 	gpuMemoryMiB int64
 	// client creates the Deployment and Service a FrameService needs. Reconcile
 	// and Bind are the only methods that touch it; Type, ParameterSchema and
-	// Size never do, so a caller that only validates and sizes — the webhook —
-	// can pass nil.
+	// Size never do, so a caller that only validates and sizes can pass nil.
 	client client.Client
-	// apiReader is the manager's uncached reader (mgr.GetAPIReader()), used
-	// solely for the model-cache PVC existence check in Reconcile. That check
+	// apiReader is the manager's uncached reader (mgr.GetAPIReader()), for the
+	// catalog (see lookup) and the model-cache PVC existence check. That check
 	// is a single Get by name, and controller-runtime's cached client cannot
 	// serve a Get without first opening an informer for the whole GVK — a
 	// cluster-scoped List+Watch across every PersistentVolumeClaim in the
@@ -183,8 +189,8 @@ type Provider struct {
 	// answer one named lookup. The uncached reader talks straight to the
 	// apiserver instead, so the RBAC this provider needs stays a single `get`
 	// on one object rather than list+watch on the whole resource type
-	// cluster-wide. May be nil for a caller that only ever calls Size and
-	// ParameterSchema, exactly like client above.
+	// cluster-wide. Nil sizes against the compiled defaults: a caller that only
+	// ever calls Size and ParameterSchema, in a test.
 	apiReader client.Reader
 }
 
@@ -192,8 +198,7 @@ type Provider struct {
 // converge the workload and apiReader for the uncached model-cache PVC check
 // (see the field comment on apiReader for why it must not go through c's
 // cache). Both may be nil for a caller that only ever calls Size and
-// ParameterSchema — the webhook is the only such caller today — since
-// Reconcile and Bind are the sole methods that dereference either.
+// ParameterSchema, in a test.
 func New(gpuMemoryMiB int64, c client.Client, apiReader client.Reader) *Provider {
 	return &Provider{gpuMemoryMiB: gpuMemoryMiB, client: c, apiReader: apiReader}
 }
@@ -207,15 +212,15 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 		Properties: map[string]apiextensionsv1.JSONSchemaProps{
 			"model": {
 				Type:        "string",
-				Description: "Model to serve. Must be one of: " + strings.Join(knownModels(), ", "),
-				Enum:        enumOf(knownModels()),
+				Description: "Model to serve: the name of an InferenceModel.",
+				Pattern:     `^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`,
 			},
 			"contextLength": {
 				Type: "string",
 				Description: fmt.Sprintf(
-					"Context window in tokens, as a string. Defaults to %d. Sized against the "+
-						"GPU: an oversized window is refused here rather than exhausting the KV "+
-						"cache at runtime.", defaultContextLength),
+					"Context window in tokens, as a string. Defaults to the model's, or %d. Sized "+
+						"against the GPU: an oversized window is refused here rather than exhausting "+
+						"the KV cache at runtime.", defaultContextLength),
 				Pattern: `^[0-9]+$`,
 			},
 			"modelCache": {
@@ -229,26 +234,22 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 	}
 }
 
-func enumOf(values []string) []apiextensionsv1.JSON {
-	out := make([]apiextensionsv1.JSON, 0, len(values))
-	for _, v := range values {
-		out = append(out, apiextensionsv1.JSON{Raw: []byte(strconv.Quote(v))})
-	}
-	return out
-}
-
 // Size derives the footprint from the model and the requested context window,
 // and refuses anything that will not fit the card.
 func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
-	name := params["model"]
-	m, ok := catalog[name]
-	if !ok {
-		return provider.Sizing{}, fmt.Errorf(
-			"parameters.model %q is not a model this provider serves: known models are %s",
-			name, strings.Join(knownModels(), ", "))
+	m, err := p.lookup(params["model"])
+	if err != nil {
+		return provider.Sizing{}, err
 	}
+	return p.sizeOf(params, m)
+}
 
-	ctx, err := resolveContextLength(params)
+// sizeOf is Size once the model is read. Reconcile reads it once for both this
+// and the flags, so an edit between the two cannot give resources of one version
+// and arguments of another.
+func (p *Provider) sizeOf(params map[string]string, m model) (provider.Sizing, error) {
+	name := params["model"]
+	ctx, err := resolveContextLength(params, m)
 	if err != nil {
 		return provider.Sizing{}, err
 	}
@@ -298,17 +299,38 @@ func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 		GPUMemory: fmt.Sprintf("%dMi", totalMiB),
 		// Host resources scale off the model rather than being guessed: llama.cpp
 		// needs enough RAM to load and mmap the weights before they reach the GPU.
-		CPU:    "4",
-		Memory: fmt.Sprintf("%dMi", m.WeightsMiB*2),
+		// A model offloading to the CPU states its own.
+		CPU:    strconv.Itoa(int(threads(m))),
+		Memory: fmt.Sprintf("%dMi", hostMemoryMiB(m)),
 	}, nil
+}
+
+// threads is the pod's CPU, and what a model that names it, or offloads to the
+// CPU, runs llama.cpp on: a pool sized on the node's cores thrashes against the
+// quota (deploy/scripts/inference-up.sh measured it).
+func threads(m model) int32 {
+	if m.Threads > 0 {
+		return m.Threads
+	}
+	return defaultCPUs
+}
+
+func hostMemoryMiB(m model) int64 {
+	if m.HostMemoryMiB > 0 {
+		return m.HostMemoryMiB
+	}
+	return m.WeightsMiB * 2
 }
 
 // resolveContextLength parses parameters.contextLength the same way Size
 // does — same default, same validation — so Reconcile starts llama.cpp with
 // exactly the context window Size costed. Deriving it twice, independently,
 // would risk the two silently drifting apart the next time either is edited.
-func resolveContextLength(params map[string]string) (int64, error) {
+func resolveContextLength(params map[string]string, m model) (int64, error) {
 	ctx := int64(defaultContextLength)
+	if m.ContextLength > 0 {
+		ctx = m.ContextLength
+	}
 	if raw, set := params["contextLength"]; set && raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || parsed <= 0 {
@@ -472,11 +494,15 @@ func (p *Provider) readAPIKey(ctx context.Context, svc *servicesv1beta1.FrameSer
 // down inside a single container's Ports and Resources.
 func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameService) (provider.Result, error) {
 	params := provider.Params(svc.Spec.Parameters)
-	sizing, err := p.Size(params)
+	m, err := p.lookup(params["model"])
 	if err != nil {
 		return provider.Result{}, err
 	}
-	contextLength, err := resolveContextLength(params)
+	sizing, err := p.sizeOf(params, m)
+	if err != nil {
+		return provider.Result{}, err
+	}
+	contextLength, err := resolveContextLength(params, m)
 	if err != nil {
 		return provider.Result{}, err
 	}
@@ -546,6 +572,10 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 	if _, err := controllerutil.CreateOrUpdate(ctx, p.client, deployment, func() error {
 		replicas := int32(desiredReplicas)
 		deployment.Spec.Replicas = &replicas
+		// One card: a surge pod waits for the GPU the old pod holds, and the old
+		// pod stays ready, so an edit would never land and nothing would say so.
+		// Assigned whole: the rollingUpdate a server defaulted is refused here.
+		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		deployment.Spec.Template.Labels = labels
 		// Frame decides placement: the selector reaches the label the
@@ -598,6 +628,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 			"-m", modelPath(params["model"]),
 			"-c", strconv.FormatInt(contextLength, 10),
 		}
+		args = append(args, modelArgs(m)...)
 		// The API key reaches llama.cpp through the environment, sourced
 		// from the Secret ensureAPIKey just converged — never as a --api-key
 		// argument, which kubectl describe pod and Events would expose to
@@ -620,7 +651,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		// than being recomputed here, so the resources a pod actually gets
 		// are the ones the operator's request was costed against.
 		setContainer(&deployment.Spec.Template.Spec, containerName,
-			"ghcr.io/ggml-org/llama.cpp:server-cuda", args, containerPort, mounts, env, sizing)
+			image, args, containerPort, mounts, env, sizing)
 		return controllerutil.SetControllerReference(svc, deployment, p.client.Scheme())
 	}); err != nil {
 		return provider.Result{}, fmt.Errorf("reconciling Deployment %s/%s: %w", svc.Namespace, svc.Name, err)
@@ -651,7 +682,8 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 	// about an endpoint nothing is serving on. The controller already
 	// degrades and requeues on Ready: false, which is exactly right for a
 	// rollout in progress.
-	if deployment.Status.ReadyReplicas < desiredReplicas {
+	if deployment.Status.ReadyReplicas < desiredReplicas || deployment.Status.UpdatedReplicas < desiredReplicas ||
+		deployment.Status.ObservedGeneration < deployment.Generation {
 		// A replica is actually missing, so it's worth asking why: this is
 		// the only situation the pod List below exists to explain, and
 		// listing pods on every reconcile of every already-healthy instance
@@ -694,6 +726,17 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 			return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
 		}
 		for i := range pods.Items {
+			// Recreate has already stopped the old pod: a new one that fits
+			// nowhere is an outage, and it has no container status to explain it.
+			for _, c := range pods.Items[i].Status.Conditions {
+				if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+					return provider.Result{
+						Reason:      corev1.PodReasonUnschedulable,
+						Message:     fmt.Sprintf("Pod %s fits no node: %s", pods.Items[i].Name, c.Message),
+						Provisioned: provisioned,
+					}, nil
+				}
+			}
 			for _, cs := range pods.Items[i].Status.ContainerStatuses {
 				if cs.State.Waiting == nil || !blockedWaitingReasons[cs.State.Waiting.Reason] {
 					continue
@@ -709,9 +752,10 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		}
 
 		return provider.Result{
-			Ready:       false,
-			Reason:      "RolloutInProgress",
-			Message:     fmt.Sprintf("Deployment %s has %d/%d ready replicas", deployment.Name, deployment.Status.ReadyReplicas, desiredReplicas),
+			Ready:  false,
+			Reason: "RolloutInProgress",
+			Message: fmt.Sprintf("Deployment %s has %d/%d ready replicas, %d on the latest template",
+				deployment.Name, deployment.Status.ReadyReplicas, desiredReplicas, deployment.Status.UpdatedReplicas),
 			Provisioned: provisioned,
 		}, nil
 	}
@@ -722,6 +766,34 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		Message:     "Deployment and Service created",
 		Provisioned: provisioned,
 	}, nil
+}
+
+// modelArgs turns a model's options into llama.cpp flags, and an option left
+// unset into no flag at all: a model with none keeps the arguments it had.
+func modelArgs(m model) []string {
+	var args []string
+	if m.Parallel > 0 {
+		args = append(args, "--parallel", strconv.Itoa(int(m.Parallel)))
+	}
+	if m.KVCacheType != "" {
+		args = append(args, "--cache-type-k", m.KVCacheType, "--cache-type-v", m.KVCacheType)
+	}
+	if m.CPUMoELayers > 0 {
+		// Past the CRD's bound on layers: every other tensor stays on the GPU,
+		// which --n-cpu-moe assumes.
+		args = append(args, "-ngl", "9999", "--n-cpu-moe", strconv.Itoa(int(m.CPUMoELayers)))
+	}
+	if m.Threads > 0 || m.CPUMoELayers > 0 {
+		args = append(args, "--threads", strconv.Itoa(int(threads(m))))
+	}
+	if m.ReasoningBudget != nil {
+		args = append(args, "--reasoning-budget", strconv.Itoa(int(*m.ReasoningBudget)))
+	}
+	if m.ReasoningBudgetMessage != "" {
+		// The kubelet expands $(VAR) in args, and the API key is in the environment.
+		args = append(args, "--reasoning-budget-message", strings.ReplaceAll(m.ReasoningBudgetMessage, "$", "$$"))
+	}
+	return args
 }
 
 // blockedWaitingReasons are the pod waiting reasons that mean "this container

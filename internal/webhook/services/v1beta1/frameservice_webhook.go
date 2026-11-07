@@ -19,6 +19,7 @@ package v1beta1
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -76,7 +77,7 @@ type FrameServiceCustomValidator struct {
 func (v *FrameServiceCustomValidator) ValidateCreate(
 	_ context.Context, svc *servicesv1beta1.FrameService,
 ) (admission.Warnings, error) {
-	return nil, v.validate(svc)
+	return nil, v.validate(svc, true)
 }
 
 func (v *FrameServiceCustomValidator) ValidateUpdate(
@@ -90,7 +91,13 @@ func (v *FrameServiceCustomValidator) ValidateUpdate(
 			"spec.type is immutable: it is %q and cannot become %q. Delete the service and create a new one",
 			oldObj.Spec.Type, newObj.Spec.Type)
 	}
-	return nil, v.validate(newObj)
+	// The controller's own writes pass here. Sizing reads a catalog that can move
+	// under an instance: refusing it would keep a finalizer on, or a label off, an
+	// object nobody is resizing.
+	if newObj.DeletionTimestamp != nil {
+		return nil, nil
+	}
+	return nil, v.validate(newObj, !maps.Equal(oldObj.Spec.Parameters, newObj.Spec.Parameters))
 }
 
 func (v *FrameServiceCustomValidator) ValidateDelete(
@@ -99,7 +106,7 @@ func (v *FrameServiceCustomValidator) ValidateDelete(
 	return nil, nil
 }
 
-func (v *FrameServiceCustomValidator) validate(svc *servicesv1beta1.FrameService) error {
+func (v *FrameServiceCustomValidator) validate(svc *servicesv1beta1.FrameService, size bool) error {
 	p, err := v.Registry.Get(svc.Spec.Type)
 	if err != nil {
 		return fmt.Errorf("spec.type: %w", err)
@@ -110,8 +117,10 @@ func (v *FrameServiceCustomValidator) validate(svc *servicesv1beta1.FrameService
 		return fmt.Errorf("spec.parameters: %w", err)
 	}
 
-	if _, err := p.Size(params); err != nil {
-		return fmt.Errorf("spec.parameters: %w", err)
+	if size {
+		if _, err := p.Size(params); err != nil {
+			return fmt.Errorf("spec.parameters: %w", err)
+		}
 	}
 
 	if slices.Contains(svc.Spec.Binding.ProjectTo, "") {
