@@ -46,9 +46,9 @@ type StorageHealthPolicySpec struct {
 	// +optional
 	ZFSCapacityPercent int32 `json:"zfsCapacityPercent,omitempty"`
 
-	// SSDWearPercent raises DiskWearHigh when a drive's BMC-reported
-	// endurance use reaches it. A drive whose BMC reports no endurance never
-	// raises it: the condition then says Unknown, not False.
+	// SSDWearPercent raises DiskWearHigh when a drive's endurance use, from its
+	// BMC or else from the disk's SMART data, reaches it. A drive with neither
+	// never raises it: the condition then says Unknown, not False.
 	// +kubebuilder:default=80
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=100

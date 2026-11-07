@@ -367,10 +367,10 @@ alert; the console's Storage → Health tab shows it per machine and per mirror.
 
 | Condition and alert | Severity | True when |
 |---|---|---|
-| `StorageDegraded` | critical | an md array is degraded (missing or failed member, inactive), any level; a pool's health is not `ONLINE`; a vdev is `DEGRADED`, `FAULTED`, `OFFLINE`, `UNAVAIL` or `REMOVED`, or has read, write or checksum errors |
+| `StorageDegraded` | critical | an md array is degraded (missing or failed member, inactive), any level; a pool's health is not `ONLINE`; a vdev is `DEGRADED`, `FAULTED`, `OFFLINE`, `UNAVAIL` or `REMOVED`, or has read, write or checksum errors; a solid-state disk fails its SMART self-assessment |
 | `ScrubErrors` | critical | the last completed scrub of a pool found errors |
 | `StorageCapacityHigh` | warning | a pool's capacity reaches `zfsCapacityPercent`; clears two points below |
-| `DiskWearHigh` | warning | a drive's BMC-reported endurance use reaches `ssdWearPercent` |
+| `DiskWearHigh` | warning | a drive's endurance use, from its BMC or else from the disk, reaches `ssdWearPercent` |
 
 There is one alert per device: `StorageDegraded` on `md0` and on `tank` are two
 alerts, and an alert stays one object from firing to resolution and through a
@@ -385,7 +385,8 @@ raises an alert nor clears one, whatever the last lists said:
 - an alert already open stays open, and its condition stays `True` with reason
   `LastReadHeld`;
 - with nothing open the condition is `Unknown`, reason `ReadUnavailable`. It is
-  never `False`, which would claim a read nobody made.
+  never `False`, which would claim a read nobody made. `DiskWearHigh` rests on
+  the BMC where it gives figures, so a silent agent alone does not touch those.
 
 **A read that says nothing about a device clears nothing.** A pool a reboot did
 not import reads the same as a pool destroyed on purpose, and a disk the BMC
@@ -403,12 +404,41 @@ a real resolution, and records the outcome in `status.lastAlertRelease`. It clos
 only what a read is holding: an alert the current read confirms stays open.
 
 A list known to be partial gives `Unknown`, reason `ReadUnavailable`, when nothing
-is wrong in what it shows: the agent's lists past their limit, a vdev tree cut, a
+is wrong in what it shows: the agent's lists past their limit, its 64 disks, a vdev tree cut, a
 BMC inventory at its 32 drives. Drives past that limit are not assessed.
 
-**`DiskWearHigh` needs a BMC that reports endurance.** An SSD whose BMC sends
-nothing makes the condition `Unknown`, reason `WearNotReported`. iLO 4 sends
-`SSDEnduranceUtilizationPercentage: null` for third-party SSDs.
+**Wear comes from the BMC, then from the disk.** Where the BMC gives no figure
+(iLO 4 sends `SSDEnduranceUtilizationPercentage: null` for third-party SSDs), the
+agent reads the disk's own SMART data, in `status.storage.observed[].smart`,
+every disk not known to spin, every six hours, when the agent starts and, for a
+disk whose read gave no self-assessment, every thirty minutes, with `smartctl`
+from its image. An NVMe gives `percentage_used`, a SAS disk its solid state media
+log page. A SATA disk gives the standard
+"Percentage Used Endurance Indicator" of its device statistics, or failing that
+the normalized value of a life attribute, chosen by the name smartctl gives it
+(`Media_Wearout_Indicator`, `SSD_Life_Left`, `Percent_Lifetime_Remain`,
+`Remaining_Lifetime_Perc`, `Perc_Rated_Life_Remain`, `Percent_Life_Remaining`,
+`Wear_Leveling_Count`): an ID means something else from one model to the next. A
+figure from the disk settles an open `DiskWearHigh`, raised or cleared, even while
+the BMC stays at `null`. An SSD with no figure from either makes the condition
+`Unknown`, reason `WearNotReported`.
+
+A failing SMART self-assessment raises `StorageDegraded` on the disk's serial. An
+NVMe whose only critical warning is its temperature does not. A disk not known
+to spin, not read yet or whose read fails or gives no self-assessment, makes
+`StorageDegraded` `Unknown`, reason `ReadUnavailable`, naming the disk, and keeps
+what that disk had open. So does one `smartctl` cannot reach, such as a logical
+volume behind a RAID controller if the kernel does not call it rotational, and one
+that is not `/dev/sdX` or `/dev/nvmeXnY`, which is refused: such a machine stays
+`Unknown` on this condition, and a real fault still raises it. So does a disk the
+kernel calls rotational and the BMC an SSD: it is not read. A drive only the BMC
+lists is not presented to the node and owes no read. A new disk waits up
+to thirty minutes for its first read. So the conditions also go `Unknown` for a
+moment when the agent restarts, without touching what is open. Wear does not need the agent where the BMC gives a figure:
+with the agent silent, `DiskWearHigh` stays what the BMC says, and `Unknown` if a
+solid-state disk depends on the agent. A BMC that lists no drive leaves `DiskWearHigh` `Unknown`, though a figure
+from a disk still raises its alert. A disk replaced after a SMART alert stays
+`LastReadHeld` until "Removed on purpose" closes it.
 
 The assessment runs with the BMC probe, every minute, including when the BMC
 does not answer. A BMC that stays down stretches the probe's backoff, so a

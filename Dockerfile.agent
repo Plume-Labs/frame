@@ -6,13 +6,16 @@
 # container could reach — and this one is the most sensitive of the three,
 # since it runs host-root-equivalent on every node it lands on.
 #
-# The runtime stage carries no packages at all. It cannot be distroless/static
-# like the other two only because the agent's every host interaction goes
+# The runtime stage carries one package, smartmontools. It cannot be
+# distroless/static like the other two because the agent's host interactions go
 # through `nsenter --target 1`, and nsenter has to exist in this image —
-# debian:13-slim ships it as part of util-linux, which is Essential, so no
-# apt-get layer is needed to get it.
+# debian:13-slim ships it as part of util-linux, which is Essential.
 #
-# It deliberately does NOT install tuned. Every host call is nsentered into PID
+# smartctl is the one command run from the image rather than from the node: it
+# speaks to the disk, not to a kernel module it must match, so a node needs
+# nothing installed. What it may run is fixed in internal/agent/smart.go.
+#
+# It deliberately does NOT install tuned. Its host calls are nsentered into PID
 # 1's namespaces, so `tuned-adm` resolves to the *node's* binary; a copy in
 # this image would never be the one that runs, and installing it would only
 # pull python in for nothing. tuned is therefore a node prerequisite — see
@@ -36,6 +39,11 @@ COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -a -o frame-agent cmd/agent/main.go
 
 FROM debian:13-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends smartmontools \
+    && rm -rf /var/lib/apt/lists/* /usr/sbin/smartd /usr/sbin/update-smart-drivedb \
+        /etc/init.d/smartmontools /etc/smartmontools
 
 # Root, and not a mistake: nsenter into PID 1 and writing the host's
 # /etc/systemd and /sys both need it, which is why the DaemonSet declares

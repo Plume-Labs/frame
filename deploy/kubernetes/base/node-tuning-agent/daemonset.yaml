@@ -18,7 +18,7 @@
 #
 # NODE PREREQUISITE: tuned must be installed on every node this lands on, if
 # any NodeTuning sets spec.tunedProfile. It is NOT in the agent image and
-# cannot be: every host call the agent makes is nsentered into PID 1's
+# cannot be: the agent's host calls, smartctl aside, are nsentered into PID 1's
 # namespaces, so `tuned-adm` resolves to the node's own binary. Ubuntu Server
 # does not ship tuned, and the three nodes of the live cluster were checked and
 # do not have it, so on those nodes:
@@ -89,6 +89,13 @@ spec:
               # which would silently turn the KSM scanner knobs, the systemd
               # cache and the restart latch into writes to nowhere.
               mountPropagation: HostToContainer
+            # smartctl runs from the image against the paths the host's lsblk
+            # gives. A pod's own /dev is a copy from when it started: a disk
+            # swapped since would be missing from it, or an NVMe minor reused
+            # would name another disk and its health be published under the
+            # wrong serial.
+            - name: dev
+              mountPath: /dev
           resources:
             requests:
               cpu: 10m
@@ -103,4 +110,8 @@ spec:
         - name: host
           hostPath:
             path: /
+            type: Directory
+        - name: dev
+          hostPath:
+            path: /dev
             type: Directory

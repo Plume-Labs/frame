@@ -62,7 +62,7 @@ resources:
   # requires `kubectl delete ds -n kube-system ksm-tuner`.
   #
   # It also requires tuned on every node, if any NodeTuning sets
-  # spec.tunedProfile: the agent nsenters for every host call, so tuned-adm is
+  # spec.tunedProfile: the agent nsenters for its host calls, so tuned-adm is
   # the node's binary and cannot be shipped in the image. See the header of
   # node-tuning-agent/daemonset.yaml.
   - nfd

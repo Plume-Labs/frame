@@ -79,16 +79,25 @@ the admission webhooks, the Helm chart, and the deployment manifests under
 `deploy/`.
 
 **The node-tuning agent deserves particular attention.** It runs on every node
-as a privileged DaemonSet with `hostPID`, and every host command it issues is
-`nsenter`ed into PID 1's namespaces — which is host-root-equivalent by
-construction. Its entire security boundary is one compile-time allowlist of
-restartable systemd units (`k3s`, `k3s-agent`, `kubelet`, `containerd`, exact
+as a privileged DaemonSet with `hostPID`, and its host commands are `nsenter`ed
+into PID 1's namespaces — which is host-root-equivalent by construction, and
+`smartctl`, below, is the one exception. Its security boundary is that command and
+one compile-time allowlist of restartable systemd units (`k3s`, `k3s-agent`, `kubelet`, `containerd`, exact
 match, in `internal/agent/apply.go`). **Any path by which a CRD field, an
 annotation, or any other attacker-influenced input reaches a unit name, a
 command argument, or a file path outside that allowlist is a vulnerability**,
 and is exactly the kind of report this policy wants. So is any way to make the
 controller perform a restart without the per-node, per-generation approval
 annotation.
+
+The agent also runs one command from its own image, without `nsenter`:
+`smartctl`, in read-only form, under `timeout`. Its options are a compile-time constant, and the
+one variable is a device path that came from the node's own `lsblk` and matches
+a strict pattern, in `internal/agent/smart.go`. No CRD field or annotation reaches
+it. **A way to make the agent run `smartctl` with another option, on another path,
+or to start a self-test, is a vulnerability.** `smartctl` parses what a disk's
+firmware answers, as root and unconfined: a memory bug in it, reachable from a
+hostile disk, would give the node.
 
 Note also that **enabling KSM is a security trade-off, not just a performance
 one**: merged pages make writes take a measurable copy-on-write fault, which

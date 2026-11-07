@@ -27,6 +27,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -324,7 +325,7 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 		`"fstype":null,"mountpoint":null}` +
 		`]}`}
 
-	tick(context.Background(), kc, "node-1", root, runner, nil, agent.NewNetworkCollector(root))
+	tick(context.Background(), kc, "node-1", root, runner, nil, nil, agent.NewNetworkCollector(root))
 
 	var got framev1beta1.FrameMachine
 	if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {
@@ -336,6 +337,47 @@ func TestTickPublishesDisksEvenWhenObserveFails(t *testing.T) {
 	if len(got.Status.Storage.Observed) != 1 || got.Status.Storage.Observed[0].SerialNumber != "HDDTST01" {
 		t.Errorf("Observed = %+v, want the one disk lsblk reported", got.Status.Storage.Observed)
 	}
+}
+
+// smartExec answers a SMART read.
+type smartExec struct{}
+
+func (smartExec) Exec([]string) (string, string, error) {
+	return `{"smart_status":{"passed":true}}`, "", nil
+}
+
+func TestTickPublishesSMART(t *testing.T) {
+	sch := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(sch); err != nil {
+		t.Fatal(err)
+	}
+	if err := framev1beta1.AddToScheme(sch); err != nil {
+		t.Fatal(err)
+	}
+	machine := &framev1beta1.FrameMachine{
+		ObjectMeta: metav1.ObjectMeta{Name: "m1", Namespace: "default"},
+		Spec: framev1beta1.FrameMachineSpec{
+			BMC:     framev1beta1.BMCSpec{Address: "192.0.2.60", CredentialsRef: "m1-creds"},
+			NodeRef: "node-1",
+		},
+	}
+	kc := fake.NewClientBuilder().WithScheme(sch).WithStatusSubresource(&framev1beta1.FrameMachine{}).
+		WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}}, machine).Build()
+	runner := &fakeRunner{out: `{"blockdevices":[{"name":"sda","path":"/dev/sda","serial":"SSD1","size":1200000000000,` +
+		`"type":"disk","rota":false,"fstype":null,"mountpoint":null}]}`}
+	smart := agent.NewSMARTReader(smartExec{})
+	for range 100 {
+		tick(context.Background(), kc, "node-1", t.TempDir(), runner, nil, smart, agent.NewNetworkCollector(t.TempDir()))
+		var got framev1beta1.FrameMachine
+		if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {
+			t.Fatal(err)
+		}
+		if s := got.Status.Storage; s != nil && len(s.Observed) == 1 && s.Observed[0].SMART != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no SMART read reached the status")
 }
 
 func mustWriteFile(t *testing.T, path, content string) {

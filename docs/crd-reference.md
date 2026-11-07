@@ -431,15 +431,15 @@ is a scar:
 **Node agent** (`cmd/agent`, `Dockerfile.agent`, DaemonSet in
 `deploy/kubernetes/base/node-tuning-agent/`): runs on every node including
 tainted ones and the control-plane server, `priorityClassName:
-system-node-critical`, privileged with `hostPID` so every host call is
-`nsenter`ed into PID 1's namespaces. It observes every 30 s, applies what
+system-node-critical`, privileged with `hostPID` so its host calls are
+`nsenter`ed into PID 1's namespaces, `smartctl` aside. It observes every 30 s, applies what
 matches, and publishes node state through annotations
 (`frame.plume-labs.io/tuning-*`) that the controller reads.
 
 Because privileged + `hostPID` is host-root-equivalent, **the set of units the
 agent may restart is a compile-time allowlist**, not anything reachable from a
 spec: `k3s`, `k3s-agent`, `kubelet`, `containerd`. Exact match, never a prefix
-— that allowlist is the agent's entire security boundary.
+— that allowlist and the fixed `smartctl` command are the agent's security boundary.
 
 **Node prerequisite:** `tuned` must already be installed on any node a
 NodeTuning sets `tunedProfile` on. It is *not* in the agent image and cannot

@@ -7,11 +7,11 @@
 // a disk one side cannot see still shows as a row with the other side
 // marked absent: the gap is the datum (docs/superpowers/specs/2026-09-13-storage-design.md §3).
 //
-// SMART and per-disk temperature are not collected yet (the iLO4 reports
-// 0 °C and no hours for SAS disks, and smartctl is not run). They are
-// stated as such, never shown as 0.
+// Per-disk temperature is not collected yet (the iLO4 reports 0 °C and no
+// hours for SAS disks). It is stated as such, never shown as 0. SMART gives a
+// self-assessment and wear only, from the agent's smartctl read.
 
-import type { Machine, DriveInfo, ObservedDisk } from './machines'
+import type { Machine, DriveInfo, ObservedDisk, DiskSmart } from './machines'
 import type { OsdRow, PromSample } from './ceph-diagnostic'
 
 /** `os-unreported`: the BMC lists it and the node agent has never published — no verdict. */
@@ -49,6 +49,7 @@ export interface DiskRow {
   linkSpeedMbps: number | null
   temperatureCelsius: number | null
   powerOnHours: number | null
+  smart: DiskSmart | null
   /**
    * Whether the disk's WWN by-id path is one the CephCluster spec declares.
    * null when either side is unknown (no WWN published, or the spec lists no
@@ -91,6 +92,15 @@ export function diskRole(
     default:
       return occupancy
   }
+}
+
+/** What the disk said of itself, in a table cell: silence never reads as healthy. */
+export function smartCell(s: DiskSmart | null): string {
+  if (!s) return 'not read'
+  const wear = s.wearUsedPercent === undefined ? '' : ` · ${s.wearUsedPercent} % used`
+  if (s.passed === true) return `passed${wear}`
+  if (s.passed === false) return `FAILING${wear}`
+  return `no verdict${wear}`
 }
 
 function kernelName(path: string | null): string {
@@ -163,6 +173,7 @@ export function buildDiskRows(
       linkSpeedMbps: b?.linkSpeedMbps || null,
       temperatureCelsius: b?.temperatureCelsius || null,
       powerOnHours: b?.powerOnHours || null,
+      smart: o?.smart ?? null,
       declaredInCeph: declaredInCeph(o?.byIdPath, cephDevices),
       duplicateOn: allMachines
         .filter((m) => m.name !== machine.name && machineSerials(m).includes(serial))
@@ -197,7 +208,7 @@ function emptyRow(): DiskRow {
     bmcReasons: [], osPath: null, occupancy: null, presence: 'no-serial', osd: null, role: '',
     io: { utilPct: null, awaitMs: null }, wwn: null, byIdPath: null, mountPoint: null, members: [],
     firmware: null, rotationSpeedRPM: null, linkSpeedMbps: null, temperatureCelsius: null, powerOnHours: null,
-    declaredInCeph: null, duplicateOn: [],
+    smart: null, declaredInCeph: null, duplicateOn: [],
   }
 }
 
