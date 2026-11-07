@@ -56,6 +56,13 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # Runs after the tests, like govulncheck in test.yml, so a vulnerable
+      # dependency never masks a real failure. Blocking at high: the go side is
+      # covered by govulncheck and the image scan, this covers the UI's npm tree,
+      # which never ships inside an image Trivy can see.
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
+
   # ── 2. IaC validation: render and dry-run Kubernetes + script checks ──────
   iac:
     name: IaC Validation
