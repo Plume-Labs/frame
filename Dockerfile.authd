@@ -4,7 +4,7 @@
 # operator) for the same reason as the latter: each binary gets its own
 # minimal image rather than a shared one that overgrants what a compromised
 # container could reach.
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 

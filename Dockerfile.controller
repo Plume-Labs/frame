@@ -2,7 +2,7 @@
 # Kept separate from the root Dockerfile, which builds the Cluster Control UI —
 # `make docker-build` used to point at that one by mistake, silently tagging
 # the UI image as `controller:latest`. See Makefile's docker-build target.
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
