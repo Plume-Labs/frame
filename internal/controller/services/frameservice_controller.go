@@ -197,6 +197,13 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("binding %s: %w", svc.Name, err)
 	}
 
+	if binding.None {
+		svc.Status.Binding.Endpoint = binding.Endpoint
+		frameServiceReady.Inc()
+		return ctrl.Result{RequeueAfter: readyRequeue}, r.setStatus(ctx, &svc, metav1.ConditionTrue,
+			result.Reason, result.Message, &sizing, result.Provisioned)
+	}
+
 	secretRefName, err := r.reconcileBinding(ctx, &svc, binding)
 	if err != nil {
 		// A bindingDegradation is not a transient error: retrying without

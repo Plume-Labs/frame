@@ -52,6 +52,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - acid.zalan.do
+  resources:
+  - postgresqls
+  verbs:
+  - create
+  - get
+  - patch
+- apiGroups:
   - apps
   resources:
   - deployments
@@ -196,6 +204,14 @@ rules:
   - frametasks
   verbs:
   - create
+- apiGroups:
+  - objectbucket.io
+  resources:
+  - objectbucketclaims
+  verbs:
+  - create
+  - get
+  - patch
 - apiGroups:
   - scheduling.k8s.io
   resources:
