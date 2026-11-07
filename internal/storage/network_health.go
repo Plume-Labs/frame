@@ -173,10 +173,14 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 
 func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations, open Open) {
 	key := Key{CheckNetDegraded, b.Name}
+	// Loading the bonding module makes a bond0 with no member, which is down and
+	// carries nothing: like an unused port, it counts only if the policy names it.
+	_, named := e.Links[b.Name]
+	unused := !named && !b.MembersUnread && len(b.Members) == 0 && b.MembersOmitted == 0
 	var bad []string
-	switch b.MIIStatus {
-	case "up":
-	case "":
+	switch {
+	case b.MIIStatus == "up", unused:
+	case b.MIIStatus == "":
 		a.unsure(key, open, fmt.Sprintf("bond %s gives no status", b.Name))
 	default:
 		bad = append(bad, "is "+b.MIIStatus)

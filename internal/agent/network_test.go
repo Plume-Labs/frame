@@ -275,9 +275,12 @@ func TestEveryCounterAndStateIsRead(t *testing.T) {
 
 func TestAHungReadDoesNotHoldTheCaller(t *testing.T) {
 	release := make(chan struct{})
-	reads := 0
+	var inFlight, overlaps atomic.Int32
 	c := &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
-		reads++ // one at a time: nothing else runs while the first hangs
+		if inFlight.Add(1) > 1 { // one at a time: nothing else runs while the first hangs
+			overlaps.Add(1)
+		}
+		defer inFlight.Add(-1)
 		<-release
 		return &framev1beta1.MachineNetwork{Error: "done"}
 	}}
@@ -291,8 +294,8 @@ func TestAHungReadDoesNotHoldTheCaller(t *testing.T) {
 	if got := c.Latest(time.Second); got == nil || got.Error != "done" {
 		t.Fatalf("%+v", got)
 	}
-	if reads != 1 {
-		t.Fatalf("%d reads at once", reads)
+	if n := overlaps.Load(); n != 0 {
+		t.Fatalf("%d reads overlapped", n)
 	}
 }
 
