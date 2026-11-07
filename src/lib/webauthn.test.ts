@@ -10,7 +10,7 @@ import {
   type CredentialRequestOptionsJSON,
 } from './webauthn'
 
-function bytesOf(...values: number[]): Uint8Array {
+function bytesOf(...values: number[]): Uint8Array<ArrayBuffer> {
   return new Uint8Array(values)
 }
 
