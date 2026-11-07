@@ -366,6 +366,9 @@ jobs:
               echo "No CRITICAL/HIGH findings outside \`.trivyignore\`."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          # Also in the job log: the run summary is not reachable from the
+          # logs API, so a red gate would otherwise not say which CVE tripped it.
+          if [ -s "trivy-${IMAGE_NAME}.txt" ]; then cat "trivy-${IMAGE_NAME}.txt"; fi
 
   # ── 5. Integration test on a kind virtual cluster ─────────────────────────
   integration:
