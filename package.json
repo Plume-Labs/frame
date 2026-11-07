@@ -93,7 +93,7 @@
         "@typescript-eslint/typescript-estree.minimatch": "Scoped exact-pin of the ^9.0.4 that typescript-estree requests, keeping it off the root's minimatch 3.1.2 and on one 9.x copy."
     },
     "overrides": {
-        "picomatch": "4.0.4",
+        "picomatch": "4.0.7",
         "path-to-regexp": "8.4.0",
         "lodash": "4.17.21",
         "@typescript-eslint/typescript-estree": {
