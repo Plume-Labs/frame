@@ -540,6 +540,11 @@ type FrameMachineStatus struct {
 	// +optional
 	Storage *MachineStorage `json:"storage,omitempty"`
 
+	// Network is what the node itself reports about its links. Written by the
+	// node agent in the same patch as Storage.
+	// +optional
+	Network *MachineNetwork `json:"network,omitempty"`
+
 	// Sensors is nil whenever the last probe found the readings untrustworthy
 	// (see SensorsValidAt) rather than kept alongside a caveat nobody reads —
 	// see the controller's applySnapshot for why clearing, not flagging, is

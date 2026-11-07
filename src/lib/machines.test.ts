@@ -55,6 +55,7 @@ describe('machineTemperatureReadings', () => {
     address: '192.0.2.60',
     nodeRef: '',
     storageConditions: [],
+    network: null,
     powerState: 'Off',
     postState: 'PowerOff',
     indicatorLED: '',

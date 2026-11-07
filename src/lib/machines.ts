@@ -103,6 +103,50 @@ export interface MachineStorage {
   local: LocalStorage | null
 }
 
+export interface NetworkInterface {
+  name: string
+  operState?: string
+  speedMbps?: number
+  duplex?: string
+  mtu?: number
+  master?: string
+  rxErrors?: number
+  txErrors?: number
+  rxDropped?: number
+  txDropped?: number
+}
+
+export interface BondMember {
+  name: string
+  miiStatus?: string
+  state?: string
+  linkFailures?: number
+  aggregatorID?: number
+}
+
+export interface NetworkBond {
+  name: string
+  mode?: string
+  miiStatus?: string
+  mtu?: number
+  aggregatorID?: number
+  portsInAggregator?: number
+  partnerMAC?: string
+  members?: BondMember[]
+  membersOmitted?: number
+  membersUnread?: boolean
+  adminDown?: boolean
+}
+
+export interface MachineNetwork {
+  observedAt?: string
+  error?: string
+  interfaces?: NetworkInterface[]
+  interfacesOmitted?: number
+  bonds?: NetworkBond[]
+  bondsOmitted?: number
+}
+
 export type StackState = 'present' | 'absent' | 'error' | 'busy'
 
 export interface ZVdev {
@@ -250,6 +294,8 @@ export interface Machine {
   storage: MachineStorage | null
   /** The controller's verdicts on that storage, by condition type (`src/lib/storage-health.ts`). */
   storageConditions: MachineCondition[]
+  /** The node's links (`status.network`); null from an agent that predates them. */
+  network: MachineNetwork | null
   sensors: MachineSensors | null
   eventLog: MachineEvent[]
   eventLogCounts: Record<string, number>
@@ -287,6 +333,7 @@ export interface MachineCR {
     indicatorLED?: string
     inventory?: MachineInventory
     storage?: { observed?: ObservedDisk[]; divergences?: DiskDivergence[]; observedAt?: string; local?: LocalStorage }
+    network?: MachineNetwork
     sensors?: MachineSensors
     sensorsValidAt?: string
     eventLog?: MachineEvent[]
@@ -330,6 +377,7 @@ export function toMachine(cr: MachineCR): Machine {
         }
       : null,
     storageConditions: conditions.filter((c) => c.type !== 'Reachable'),
+    network: status.network ?? null,
     sensors: status.sensors ?? null,
     eventLog: status.eventLog ?? [],
     eventLogCounts: status.eventLogCounts ?? {},

@@ -124,6 +124,8 @@ func run() error {
 	// The local-storage collector outlives the ticks: it holds the last
 	// result and the in-flight commands (see agent.LocalCollector).
 	local := agent.NewLocalCollector(agent.DefaultLocalSources())
+	// The links too: a read goes through the driver, which can hang.
+	network := agent.NewNetworkCollector(root)
 
 	ctx := ctrl.SetupSignalHandler()
 	slog.Info("frame-agent starting", "node", nodeName, "root", root, "interval", observeInterval)
@@ -132,7 +134,7 @@ func run() error {
 	// freshly (re)started agent reports current state right away instead of
 	// leaving status.nodes stale — and so a restart request that arrived
 	// while it was down is serviced now rather than in 30 seconds.
-	tick(ctx, kc, nodeName, root, runner, local)
+	tick(ctx, kc, nodeName, root, runner, local, network)
 
 	ticker := time.NewTicker(observeInterval)
 	defer ticker.Stop()
@@ -141,7 +143,7 @@ func run() error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			tick(ctx, kc, nodeName, root, runner, local)
+			tick(ctx, kc, nodeName, root, runner, local, network)
 		}
 	}
 }
@@ -158,7 +160,7 @@ const localStorageWait = 5 * time.Second
 
 func tick(
 	ctx context.Context, kc client.Client, nodeName, root string,
-	runner agent.CommandRunner, localStorage *agent.LocalCollector,
+	runner agent.CommandRunner, localStorage *agent.LocalCollector, network *agent.NetworkCollector,
 ) {
 	var node corev1.Node
 	if err := kc.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
@@ -237,7 +239,7 @@ func tick(
 		if localStorage != nil {
 			local = localStorage.Latest(serialOf, localStorageWait)
 		}
-		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local); err != nil {
+		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local, network.Latest(localStorageWait)); err != nil {
 			slog.Error("publishing node disks", "node", nodeName, "error", err)
 		}
 	}

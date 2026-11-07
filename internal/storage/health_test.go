@@ -13,6 +13,7 @@ import (
 var (
 	now      = time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	defaults = ThresholdsFrom(nil)
+	noNet    = NetExpectationsFrom(nil, "")
 )
 
 // healthyStatus is a node with a clean md mirror and one ZFS pool: md0
@@ -64,11 +65,11 @@ func keys(a Assessment) map[Key]bool {
 }
 
 func TestHealthyMachineHasNoFindingAndEveryConditionFalse(t *testing.T) {
-	a := Assess(healthyStatus(), defaults, true, nil, now)
+	a := Assess(healthyStatus(), defaults, noNet, true, nil, now)
 	if len(a.Findings) != 0 {
 		t.Fatalf("findings: %+v", a.Findings)
 	}
-	for _, c := range Checks {
+	for _, c := range []string{CheckDegraded, CheckScrubErrors, CheckCapacityHigh, CheckWearHigh} {
 		if v := a.Verdict(c, nil); v.Status != "False" {
 			t.Errorf("%s = %+v", c, v)
 		}
@@ -105,7 +106,7 @@ func TestDegradedStorageIsFound(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := healthyStatus()
 			tt.mutate(st)
-			a := Assess(st, defaults, true, nil, now)
+			a := Assess(st, defaults, noNet, true, nil, now)
 			if got := keys(a); len(got) != 1 || !got[tt.want] {
 				t.Fatalf("findings %v, want only %v", got, tt.want)
 			}
@@ -119,7 +120,7 @@ func TestDegradedStorageIsFound(t *testing.T) {
 func TestFailedMemberIsNamedWithItsSerial(t *testing.T) {
 	st := healthyStatus()
 	degradeMD(st)
-	msg := Assess(st, defaults, true, nil, now).Findings[0].Message
+	msg := Assess(st, defaults, noNet, true, nil, now).Findings[0].Message
 	if !strings.Contains(msg, "sda2") || !strings.Contains(msg, "S-A") {
 		t.Fatalf("message %q does not name the failed disk", msg)
 	}
@@ -129,9 +130,9 @@ func TestRebuildProgressDoesNotMoveTheAlertMessage(t *testing.T) {
 	st := healthyStatus()
 	degradeMD(st)
 	st.Storage.Local.MD.Arrays[0].Sync = "recovery 8.5%"
-	before := Assess(st, defaults, true, nil, now).Findings[0].Message
+	before := Assess(st, defaults, noNet, true, nil, now).Findings[0].Message
 	st.Storage.Local.MD.Arrays[0].Sync = "recovery 9.1%"
-	if after := Assess(st, defaults, true, nil, now).Findings[0].Message; after != before {
+	if after := Assess(st, defaults, noNet, true, nil, now).Findings[0].Message; after != before {
 		t.Fatalf("%q != %q", after, before)
 	}
 }
@@ -157,7 +158,7 @@ func TestUnreadableStackNeitherRaisesNorClears(t *testing.T) {
 			st := healthyStatus()
 			degradeMD(st)
 			tt.mutate(st)
-			a := Assess(st, defaults, true, nil, now)
+			a := Assess(st, defaults, noNet, true, nil, now)
 			if keys(a)[k] {
 				t.Fatal("raised from an unread stack")
 			}
@@ -168,7 +169,7 @@ func TestUnreadableStackNeitherRaisesNorClears(t *testing.T) {
 			st = healthyStatus()
 			tt.mutate(st)
 			open := Open{k: ScopeMD}
-			a = Assess(st, defaults, true, open, now)
+			a = Assess(st, defaults, noNet, true, open, now)
 			if !a.Keeps(k, ScopeMD) {
 				t.Fatal("open alert not kept")
 			}
@@ -183,7 +184,7 @@ func TestOneUnreadableStackDoesNotHoldTheOther(t *testing.T) {
 	st := healthyStatus()
 	st.Storage.Local.ZFS.State = framev1beta1.StackError
 	k := Key{CheckDegraded, "md0"}
-	if Assess(st, defaults, true, Open{k: ScopeMD}, now).Keeps(k, ScopeMD) {
+	if Assess(st, defaults, noNet, true, Open{k: ScopeMD}, now).Keeps(k, ScopeMD) {
 		t.Fatal("a ZFS read error held an md alert")
 	}
 }
@@ -191,7 +192,7 @@ func TestOneUnreadableStackDoesNotHoldTheOther(t *testing.T) {
 func TestAbsentStackIsARead(t *testing.T) {
 	st := healthyStatus()
 	st.Storage.Local.ZFS = framev1beta1.ZFSStatus{State: framev1beta1.StackAbsent}
-	a := Assess(st, defaults, true, nil, now)
+	a := Assess(st, defaults, noNet, true, nil, now)
 	if v := a.Verdict(CheckScrubErrors, nil); v.Status != "False" {
 		t.Fatalf("%+v", v)
 	}
@@ -222,7 +223,7 @@ func TestADeviceGoneFromAReadKeepsItsAlert(t *testing.T) {
 			st := healthyStatus()
 			tt.mutate(st)
 			open := Open{tt.key: tt.scope}
-			a := Assess(st, defaults, true, open, now)
+			a := Assess(st, defaults, noNet, true, open, now)
 			if !a.Keeps(tt.key, tt.scope) {
 				t.Fatal("cleared by a read that does not mention it")
 			}
@@ -236,7 +237,7 @@ func TestADeviceGoneFromAReadKeepsItsAlert(t *testing.T) {
 func TestAnUnlistedDeviceOfAnotherScopeIsNotHeld(t *testing.T) {
 	st := healthyStatus()
 	k := Key{CheckDegraded, "md0"} // listed by md, not by zfs
-	if Assess(st, defaults, true, Open{k: ScopeMD}, now).Keeps(k, ScopeMD) {
+	if Assess(st, defaults, noNet, true, Open{k: ScopeMD}, now).Keeps(k, ScopeMD) {
 		t.Fatal("held by another stack's list")
 	}
 }
@@ -263,7 +264,7 @@ func TestAReadThatSaysNothingKeepsTheAlert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := healthyStatus()
 			tt.mutate(st)
-			if !Assess(st, defaults, true, Open{tt.key: tt.scope}, now).Keeps(tt.key, tt.scope) {
+			if !Assess(st, defaults, noNet, true, Open{tt.key: tt.scope}, now).Keeps(tt.key, tt.scope) {
 				t.Fatal("cleared")
 			}
 		})
@@ -288,7 +289,7 @@ func TestAPartialReadIsNeverHealthy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := healthyStatus()
 			tt.mutate(st)
-			a := Assess(st, defaults, true, nil, now)
+			a := Assess(st, defaults, noNet, true, nil, now)
 			if v := a.Verdict(tt.check, nil); v.Status != "Unknown" {
 				t.Fatalf("%+v", v)
 			}
@@ -300,7 +301,7 @@ func TestListCutByTheAgentHoldsOnlyWhatIsCut(t *testing.T) {
 	st := healthyStatus()
 	st.Storage.Local.MD.ArraysOmitted = 1
 	cut, listed := Key{CheckDegraded, "md9"}, Key{CheckDegraded, "md0"}
-	a := Assess(st, defaults, true, Open{cut: ScopeMD, listed: ScopeMD}, now)
+	a := Assess(st, defaults, noNet, true, Open{cut: ScopeMD, listed: ScopeMD}, now)
 	if !a.Keeps(cut, ScopeMD) {
 		t.Error("an array past the cut was resolved")
 	}
@@ -315,7 +316,7 @@ func TestScrubErrorsStayOpenWhileTheNextScrubRuns(t *testing.T) {
 	p.ScrubErrors, p.Scan = nil, "scrub in progress since Fri Nov  6 10:00:00 2026"
 	k := Key{CheckScrubErrors, "tank"}
 	open := Open{k: ScopeZFS}
-	a := Assess(st, defaults, true, open, now)
+	a := Assess(st, defaults, noNet, true, open, now)
 	if !a.Keeps(k, ScopeZFS) {
 		t.Fatal("alert dropped by a scrub in progress")
 	}
@@ -323,7 +324,7 @@ func TestScrubErrorsStayOpenWhileTheNextScrubRuns(t *testing.T) {
 		t.Fatalf("%+v", v)
 	}
 	p.Scan = "none requested"
-	if Assess(st, defaults, true, open, now).Keeps(k, ScopeZFS) {
+	if Assess(st, defaults, noNet, true, open, now).Keeps(k, ScopeZFS) {
 		t.Fatal("a pool with no scan at all held the alert")
 	}
 }
@@ -334,15 +335,15 @@ func TestCapacityClearsBelowTheThresholdNotOnIt(t *testing.T) {
 	open := Open{k: ScopeZFS}
 	belowByOne := defaults.ZFSCapacityPercent - 1
 	st.Storage.Local.ZFS.Pools[0].CapacityPercent = &belowByOne
-	if !keys(Assess(st, defaults, true, open, now))[k] {
+	if !keys(Assess(st, defaults, noNet, true, open, now))[k] {
 		t.Error("open alert cleared one point under the threshold")
 	}
-	if keys(Assess(st, defaults, true, nil, now))[k] {
+	if keys(Assess(st, defaults, noNet, true, nil, now))[k] {
 		t.Error("alert raised under the threshold")
 	}
 	clear := defaults.ZFSCapacityPercent - capacityHysteresis - 1
 	st.Storage.Local.ZFS.Pools[0].CapacityPercent = &clear
-	if keys(Assess(st, defaults, true, open, now))[k] {
+	if keys(Assess(st, defaults, noNet, true, open, now))[k] {
 		t.Error("open alert did not clear past the margin")
 	}
 }
@@ -350,7 +351,7 @@ func TestCapacityClearsBelowTheThresholdNotOnIt(t *testing.T) {
 func TestThresholdsComeFromThePolicy(t *testing.T) {
 	st := healthyStatus()
 	th := ThresholdsFrom(&framev1beta1.StorageHealthPolicy{Spec: framev1beta1.StorageHealthPolicySpec{ZFSCapacityPercent: 40, SSDWearPercent: 5}})
-	got := keys(Assess(st, th, true, nil, now))
+	got := keys(Assess(st, th, noNet, true, nil, now))
 	if !got[Key{CheckCapacityHigh, "tank"}] || !got[Key{CheckWearHigh, "S-A"}] {
 		t.Fatalf("findings %v", got)
 	}
@@ -367,12 +368,12 @@ func TestStaleInventoryNeitherRaisesNorClearsWear(t *testing.T) {
 	st := healthyStatus()
 	used := int32(95)
 	st.Inventory.Drives[0].SSDEnduranceUsedPercent = &used
-	a := Assess(st, defaults, false, nil, now)
+	a := Assess(st, defaults, noNet, false, nil, now)
 	if len(a.Findings) != 0 {
 		t.Fatalf("raised from a stale inventory: %+v", a.Findings)
 	}
 	k := Key{CheckWearHigh, "S-A"}
-	if !Assess(healthyStatus(), defaults, false, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
+	if !Assess(healthyStatus(), defaults, noNet, false, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
 		t.Fatal("cleared on a stale inventory")
 	}
 	if v := a.Verdict(CheckWearHigh, nil); v.Status != "Unknown" {
@@ -386,11 +387,11 @@ func TestSSDWithoutEnduranceFigureIsUnknownNotHealthy(t *testing.T) {
 	st := healthyStatus()
 	st.Inventory.Drives[0].SSDEnduranceUsedPercent = nil
 	k := Key{CheckWearHigh, "S-A"}
-	a := Assess(st, defaults, true, nil, now)
+	a := Assess(st, defaults, noNet, true, nil, now)
 	if v := a.Verdict(CheckWearHigh, nil); v.Status != "Unknown" || v.Reason != "WearNotReported" {
 		t.Fatalf("%+v", v)
 	}
-	if !Assess(st, defaults, true, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
+	if !Assess(st, defaults, noNet, true, Open{k: ScopeDrives}, now).Keeps(k, ScopeDrives) {
 		t.Fatal("alert cleared by a drive that stopped reporting")
 	}
 }

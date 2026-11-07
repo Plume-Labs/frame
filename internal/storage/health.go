@@ -39,16 +39,18 @@ import (
 // BMC failed to return the same as one pulled: the alert stays until the
 // device reads healthy, or until someone deletes the FrameAlert.
 
-// The four conditions, which are also the alert names.
+// The conditions, which are also the alert names.
 const (
 	CheckDegraded     = "StorageDegraded"
 	CheckScrubErrors  = "ScrubErrors"
 	CheckCapacityHigh = "StorageCapacityHigh"
 	CheckWearHigh     = "DiskWearHigh"
+	CheckNetDegraded  = "NetworkDegraded"
+	CheckLinkSlow     = "LinkSpeedLow"
 )
 
 // Checks lists them in the order the conditions are written.
-var Checks = []string{CheckDegraded, CheckScrubErrors, CheckCapacityHigh, CheckWearHigh}
+var Checks = []string{CheckDegraded, CheckScrubErrors, CheckCapacityHigh, CheckWearHigh, CheckNetDegraded, CheckLinkSlow}
 
 // Scope is the reading a check rests on.
 type Scope string
@@ -57,6 +59,7 @@ const (
 	ScopeMD     Scope = "md"
 	ScopeZFS    Scope = "zfs"
 	ScopeDrives Scope = "drives"
+	ScopeNet    Scope = "network"
 )
 
 // checkScopes says which readings each check needs.
@@ -65,6 +68,8 @@ var checkScopes = map[string][]Scope{
 	CheckScrubErrors:  {ScopeZFS},
 	CheckCapacityHigh: {ScopeZFS},
 	CheckWearHigh:     {ScopeDrives},
+	CheckNetDegraded:  {ScopeNet, scopeNetState},
+	CheckLinkSlow:     {ScopeNet},
 }
 
 const (
@@ -122,6 +127,8 @@ type Assessment struct {
 	Held map[Key]bool
 	// WearUnreported counts the SSDs whose BMC gives no endurance figure.
 	WearUnreported int
+	// SpeedUnreported counts the links that are up and give no speed.
+	SpeedUnreported int
 }
 
 // Thresholds are StorageHealthPolicySpec with its zero values resolved.
@@ -145,10 +152,11 @@ func ThresholdsFrom(p *framev1beta1.StorageHealthPolicy) Thresholds {
 
 // Assess reads a machine's status. inventoryFresh says the BMC answered this
 // pass; open is what already fires for this machine.
-func Assess(st *framev1beta1.FrameMachineStatus, t Thresholds, inventoryFresh bool, open Open, now time.Time) Assessment {
+func Assess(st *framev1beta1.FrameMachineStatus, t Thresholds, net NetExpectations, inventoryFresh bool, open Open, now time.Time) Assessment {
 	a := Assessment{Unread: map[Scope]string{}, Cut: map[Scope]string{}, Held: map[Key]bool{}}
 	a.assessLocal(st.Storage, t, open, now)
 	a.assessDrives(st.Inventory, t, inventoryFresh, open)
+	a.assessNetwork(st.Network, net, open, now)
 	return a
 }
 
@@ -403,6 +411,9 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 	}
 	if check == CheckWearHigh && a.WearUnreported > 0 {
 		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("the BMC gives no endurance figure for %d SSD(s)", a.WearUnreported)}
+	}
+	if check == CheckLinkSlow && a.SpeedUnreported > 0 {
+		return Verdict{"Unknown", "SpeedNotReported", fmt.Sprintf("%d link(s) up give no speed", a.SpeedUnreported)}
 	}
 	return Verdict{"False", "Healthy", ""}
 }
