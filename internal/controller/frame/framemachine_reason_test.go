@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -57,9 +58,14 @@ func TestProbeFailureReasonNamesARefusedConnection(t *testing.T) {
 // none of the sentinels explain stays ProbeFailed.
 func TestProbeFailureReasonKeepsTheOtherReasons(t *testing.T) {
 	cases := map[string]error{
-		"Timeout":     fakeTimeoutError{},
+		"Timeout":     fmt.Errorf("redfish: request /redfish/v1/: %w", context.DeadlineExceeded),
 		"ProbeFailed": errors.New("redfish: decode /redfish/v1/Systems/1: unexpected EOF"),
 		"TLSError":    redfish.ErrTLS,
+		"AuthFailed":  redfish.ErrAuth,
+		"Unsupported": redfish.ErrUnsupported,
+	}
+	if got := probeFailureReason(fakeTimeoutError{}); got != "Timeout" {
+		t.Errorf("a net.Error timeout = %q, want Timeout", got)
 	}
 	for want, err := range cases {
 		if got := probeFailureReason(err); got != want {

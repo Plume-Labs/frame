@@ -292,10 +292,11 @@ func probeFailureReason(err error) string {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "Timeout"
 	}
-	// A refused connection is the BMC's own network stack answering with a
-	// RST: the address is right and routed, but nothing listens on the
-	// Redfish port (web service down, management port disabled, a BMC
-	// mid-reset). That is a fact about the BMC, not a reading Frame could not
+	// A refused connection is, almost always, the BMC's own network stack
+	// answering with a RST: the address is right and routed, but nothing
+	// listens on the Redfish port (web service down, management port
+	// disabled, a BMC mid-reset). A firewall that rejects on the path gives
+	// the same errno; no proxy can (the Redfish transport sets none). That is a fact about the BMC, not a reading Frame could not
 	// decode, so it must not drown in ProbeFailed with the 5xx and decode
 	// failures — a supervisor reading Reachable needs to tell "the BMC is
 	// down" from "Frame cannot parse it".
