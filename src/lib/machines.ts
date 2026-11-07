@@ -87,6 +87,16 @@ export interface ObservedDisk {
   fsType?: string
   /** md arrays (`md0`) or the ZFS pool this disk belongs to. */
   members?: string[]
+  /** The disk's own last SMART read; absent until the agent has read it. */
+  smart?: DiskSmart
+}
+
+/** `passed` absent means no self-assessment, never a healthy disk. */
+export interface DiskSmart {
+  readAt?: string
+  passed?: boolean
+  wearUsedPercent?: number
+  error?: string
 }
 
 /**

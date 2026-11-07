@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, declaredInCeph, diskRole, duplicateSerials, ioIndex, mdArrays, osdsWithoutMachine } from './disk-inventory'
+import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, declaredInCeph, diskRole, duplicateSerials, ioIndex, mdArrays, osdsWithoutMachine, smartCell } from './disk-inventory'
 import { buildOsdRows } from './ceph-diagnostic'
 import { healthyPods, healthyProm, hwMachine, setSample, HW_NODE } from './testdata/ceph-cluster'
 
@@ -9,6 +9,19 @@ function diskRows(machine = hwMachine(), prom = healthyProm()) {
   const osds = buildOsdRows({ prom, pods: healthyPods(), machines: [machine], now: NOW })
   return buildDiskRows(machine, osds, ioIndex(prom.diskUtil, prom.diskAwait))
 }
+
+describe('smartCell', () => {
+  it('ne fait jamais passer un silence pour un disque sain', () => {
+    expect(smartCell(null)).toBe('not read')
+    expect(smartCell({ error: 'smartctl timed out' })).toBe('no verdict')
+    expect(smartCell({ wearUsedPercent: 12 })).toBe('no verdict · 12 % used')
+  })
+
+  it('distingue le verdict et garde une usure à 0', () => {
+    expect(smartCell({ passed: true, wearUsedPercent: 0 })).toBe('passed · 0 % used')
+    expect(smartCell({ passed: false })).toBe('FAILING')
+  })
+})
 
 describe('buildDiskRows', () => {
   it('rend une ligne par série, dans l-ordre des baies', () => {

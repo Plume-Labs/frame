@@ -47,7 +47,7 @@ function ThresholdsCard() {
 
   const fields = [
     { key: 'zfsCapacityPercent', label: 'ZFS pool capacity (%)', hint: 'Alert at this level, clears two points below.' },
-    { key: 'ssdWearPercent', label: 'SSD endurance used (%)', hint: 'Only for drives whose BMC reports endurance.' },
+    { key: 'ssdWearPercent', label: 'SSD endurance used (%)', hint: 'From the BMC, or the disk\'s own SMART where the BMC gives no figure.' },
   ] as const
   const valid = draft !== null && fields.every((f) => validThreshold(draft[f.key]))
   const changed = draft !== null && saved !== null && fields.some((f) => draft[f.key] !== saved[f.key])

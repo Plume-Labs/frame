@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react'
-import type { DiskRow } from '@/lib/disk-inventory'
+import { smartCell, type DiskRow } from '@/lib/disk-inventory'
 import type { DiskClaim } from '@/lib/frame-sdk'
 import { NOT_COLLECTED } from '@/lib/storage'
 
@@ -67,7 +67,12 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                   >
                     {d.temperatureCelsius === null ? 'n/r' : `${d.temperatureCelsius} °C`}
                   </td>
-                  <td className="pr-3 text-muted-foreground">{NOT_COLLECTED}</td>
+                  <td
+                    className={`pr-3 ${d.smart?.passed === false ? 'text-warning font-bold' : d.smart?.passed === true ? '' : 'text-muted-foreground'}`}
+                    title={d.smart?.error}
+                  >
+                    {smartCell(d.smart)}
+                  </td>
                   <td>{io(d)}</td>
                 </tr>
                 {open === key && (
@@ -97,6 +102,13 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                         {d.bmcReasons.length ? ` (${d.bmcReasons.join(', ')})` : ''} · OS {osCell(d)}
                         {d.presence === 'bmc-only' ? ' — seen by the BMC, not presented to the node (masked, not failed)' : ''}
                       </div>
+                      {d.smart && (
+                        <div>
+                          SMART: {smartCell(d.smart)}
+                          {d.smart.readAt ? ` · read ${d.smart.readAt}` : ''}
+                          {d.smart.error ? ` · ${d.smart.error}` : ''}
+                        </div>
+                      )}
                       <div className="text-muted-foreground">
                         SMART (reallocated, pending, grown defects): {NOT_COLLECTED} · power-on hours:{' '}
                         {d.powerOnHours ?? 'not reported'}
