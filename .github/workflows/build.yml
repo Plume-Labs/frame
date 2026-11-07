@@ -307,7 +307,7 @@ jobs:
         # succeed there and must not fail the scan when it does not. The gate
         # below is what enforces; this step only publishes.
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3.37.6
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           # Without a distinct category the three matrix legs overwrite each
