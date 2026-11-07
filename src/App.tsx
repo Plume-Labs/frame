@@ -38,6 +38,7 @@ const NetworkLinksView = lazy(() => import('@/components/NetworkLinksView').then
 const NetworkView = lazy(() => import('@/components/NetworkView').then((m) => ({ default: m.NetworkView })))
 const WorkloadPlacementView = lazy(() => import('@/components/WorkloadPlacementView').then((m) => ({ default: m.WorkloadPlacementView })))
 const InferenceOverviewView = lazy(() => import('@/components/InferenceOverviewView').then((m) => ({ default: m.InferenceOverviewView })))
+const InferenceModelsView = lazy(() => import('@/components/InferenceModelsView').then((m) => ({ default: m.InferenceModelsView })))
 const InferenceView = lazy(() => import('@/components/InferenceView').then((m) => ({ default: m.InferenceView })))
 const VolcanoPoolsView = lazy(() => import('@/components/VolcanoPoolsView').then((m) => ({ default: m.VolcanoPoolsView })))
 const MpsView = lazy(() => import('@/components/MpsView').then((m) => ({ default: m.MpsView })))
@@ -138,6 +139,7 @@ type TabId =
   | 'network-bottlenecks'
   | 'data-locality'
   | 'inference'
+  | 'inference-models'
   | 'kv-cache'
   | 'speculative'
   | 'pipeline-pp'
@@ -307,6 +309,7 @@ const NAV: NavGroup[] = [
         description: 'Serving status, KV-cache pressure and the decode strategies in play',
         tabs: [
           { id: 'inference', label: 'Overview' },
+          { id: 'inference-models', label: 'Models' },
           { id: 'kv-cache', label: 'KV-Cache' },
           { id: 'speculative', label: 'Speculative' },
           { id: 'pipeline-pp', label: 'Pipeline PP' },
@@ -591,6 +594,8 @@ function App() {
         return <WorkloadPlacementView />
 
       // ── Tuning ──────────────────────────────────────────────────────────
+      case 'inference-models':
+        return <InferenceModelsView />
       case 'inference':
         return <InferenceOverviewView />
       case 'kv-cache':

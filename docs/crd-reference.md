@@ -895,8 +895,8 @@ provider behind the same `type`, not an API change.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
-| `model` | string | yes | Enum, closed to the provider's model catalog (currently `llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) |
-| `contextLength` | string | no | Pattern `^[0-9]+$`; defaults to 4096. Sized against the GPU — too large is refused here, not left to crash-loop |
+| `model` | string | yes | Name of an [InferenceModel](#inferencemodel). One that does not exist is refused, naming those that do |
+| `contextLength` | string | no | Pattern `^[0-9]+$`; defaults to the model's `contextLength`, then 4096. Sized against the GPU — too large is refused here, not left to crash-loop |
 | `modelCache` | string | no | Name of a PersistentVolumeClaim, already present in the namespace, holding cached GGUF weights. Defaults to `model-cache-pvc` |
 
 Only a deliberately narrow slice of JSON Schema is enforced, on purpose: on
@@ -935,6 +935,49 @@ the instance is recreated.
 **What it creates:** a Deployment running llama.cpp with the sized resource
 requests (including `nvidia.com/gpu`) and a node selector derived from
 `serviceClass`, a Service in front of it, and the two Secrets above.
+
+---
+
+### InferenceModel
+
+Cluster-scoped: `services.plume-labs.io/v1beta1`, plural `inferencemodels`. One
+entry of the catalog, with no status: nothing reconciles it, the `inference`
+provider reads it on each pass. The name is the file: `/models/<name>.gguf` on the
+instance's model cache.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `weightsMiB` | yes | Weights on the GPU, CPU offload already taken off. |
+| `layers`, `kvHeads`, `headDim` | yes | KV cache per token. `layers` counts those holding a growing cache: a hybrid model's linear-attention layers do not. |
+| `hostMemoryMiB` | no | The pod's memory. Default twice `weightsMiB`. |
+| `contextLength` | no | Default context of an instance that states none. Passed as `-c`. Slots share it. |
+| `parallel` | no | `--parallel`. Absent leaves llama.cpp's choice. |
+| `kvCacheType` | no | `f16`, `q8_0` or `q4_0`: `--cache-type-k` and `--cache-type-v`. Sizing follows it. A quantised V needs flash attention, which llama.cpp decides: a card that cannot do it fails at startup. |
+| `cpuMoELayers` | no | `--n-cpu-moe N`, with every other tensor on the GPU: the experts of the first N layers stay in host memory. Needs `hostMemoryMiB`. Passes `--threads` too. |
+| `threads` | no | `--threads`, and the pod's CPU. Absent keeps 4 CPUs. |
+| `reasoningBudget` | no | `--reasoning-budget`: tokens, `-1` no limit, `0` none. |
+| `reasoningBudgetMessage` | no | `--reasoning-budget-message`. Needs `reasoningBudget`. |
+
+An option left out adds no flag. The image is fixed per Frame release, by digest
+(`server-cuda-b11277`, the build served on a Tesla P4): moving it means checking the
+flags above on the new build, and restarts every instance. The manager creates the three defaults
+(`llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) when it
+starts on a cluster with no InferenceModel at all, so a default deleted from a
+catalog that has anything else in it stays deleted, unless an instance still names
+it. A seed that fails is logged and the manager carries on, retrying every 30
+seconds. Until it passes, inference instances report `SizeRefused`, or an event
+when the catalog cannot be read at all, and their Deployments stay as they are.
+
+An edit reaches instances on their next pass, within ten minutes, and changing a
+flag or the pod's resources restarts them. An instance runs one pod under
+`Recreate`, so the old pod goes first: a flag llama.cpp refuses takes it down, with
+the exit code in its status and the reason in the pod's log, and resources no node
+has leave it `Unschedulable`. If an instance no longer
+fits, it degrades with `SizeRefused` and its Deployment is left as it was.
+Deleting a model an instance serves is refused at admission; with webhooks off,
+that instance degrades the same way. A FrameService update that leaves
+`spec.parameters` alone is not sized again, so a model edited under it does not
+hold up its labels, or its deletion.
 
 ---
 

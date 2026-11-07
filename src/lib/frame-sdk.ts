@@ -41,6 +41,7 @@ import {
 import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
+import { toCreateSpec, toInferenceModel, toSpec, type InferenceModel, type InferenceModelCR, type ModelSettings } from './inference-models'
 import { parametersPatch, toDatabase, type Database, type DatabaseSettings, type FrameServiceCR } from './databases'
 import {
   DEFAULT_NETWORK_EXPECTATIONS,
@@ -3902,6 +3903,46 @@ class DatabaseClient {
   }
 }
 
+/** The InferenceModel catalog. Cluster-scoped, written through the UI proxy like any mutation. */
+class InferenceModelClient {
+  private readonly path = crdListPath('services.plume-labs.io', 'v1beta1', 'inferencemodels')
+
+  async list(): Promise<InferenceModel[]> {
+    const res = await k8sFetch<ListResponse<InferenceModelCR>>(this.path)
+    return (res.items ?? []).map(toInferenceModel).sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  watchPath(): string {
+    return this.path
+  }
+
+  async create(name: string, settings: ModelSettings): Promise<void> {
+    await k8sFetch<undefined>(this.path, {
+      action: `add inference model ${name}`,
+      method: 'POST',
+      body: {
+        apiVersion: 'services.plume-labs.io/v1beta1',
+        kind: 'InferenceModel',
+        metadata: { name },
+        spec: toCreateSpec(settings),
+      },
+    })
+  }
+
+  async save(name: string, settings: ModelSettings): Promise<void> {
+    await k8sFetch<undefined>(`${this.path}/${name}`, {
+      action: `set inference model ${name}`,
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: toSpec(settings) },
+    })
+  }
+
+  async remove(name: string): Promise<void> {
+    await k8sFetch<undefined>(`${this.path}/${name}`, { action: `delete inference model ${name}`, method: 'DELETE' })
+  }
+}
+
 /**
  * Reads and writes the one StorageHealthPolicy. No object is not an error: the
  * controller then runs on the defaults, and the first save creates it. Both
@@ -4115,6 +4156,7 @@ export class FrameClient {
   public readonly storageHealthPolicy: StorageHealthPolicyClient
   public readonly networkHealthPolicy: NetworkHealthPolicyClient
   public readonly inference: InferenceServiceClient
+  public readonly inferenceModels: InferenceModelClient
 
   constructor(opts: FrameClientOptions = {}) {
     this.nodes     = new NodeClient(opts.namespace)
@@ -4134,6 +4176,7 @@ export class FrameClient {
     this.storageHealthPolicy = new StorageHealthPolicyClient()
     this.networkHealthPolicy = new NetworkHealthPolicyClient()
     this.inference = new InferenceServiceClient()
+    this.inferenceModels = new InferenceModelClient()
   }
 
   async health(): Promise<HealthStatus> {

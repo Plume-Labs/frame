@@ -48,6 +48,14 @@ func argsContain(args []string, flag, value string) bool {
 	return false
 }
 
+// llama8B is the catalog entry every fixture serves.
+func llama8B() *servicesv1beta1.InferenceModel {
+	return &servicesv1beta1.InferenceModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama-3.1-8b-instruct"},
+		Spec:       servicesv1beta1.InferenceModelSpec{WeightsMiB: 4696, Layers: 32, KVHeads: 8, HeadDim: 128},
+	}
+}
+
 // newFixture builds a fake client seeded with the schemes Reconcile and Bind
 // touch, the provider under test, and the FrameService every test in this
 // file reconciles against. seedModelCache controls whether the default model
@@ -61,7 +69,7 @@ func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.
 	_ = appsv1.AddToScheme(scheme)
 	_ = servicesv1beta1.AddToScheme(scheme)
 
-	builder := fake.NewClientBuilder().WithScheme(scheme)
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(llama8B())
 	if seedModelCache {
 		builder = builder.WithObjects(&corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: defaultModelCachePVC, Namespace: "research"},
@@ -315,7 +323,7 @@ func TestReconcileReportsNotReadyUntilThePodIsServing(t *testing.T) {
 	if err := c.Get(ctx, types.NamespacedName{Name: "llama", Namespace: "research"}, &d); err != nil {
 		t.Fatalf("Deployment not created: %v", err)
 	}
-	d.Status.ReadyReplicas = 1
+	d.Status.ReadyReplicas, d.Status.UpdatedReplicas, d.Status.ObservedGeneration = 1, 1, d.Generation
 	// Deployment is one of the fake client's built-in status-subresource
 	// types, so a plain Update silently discards a Status change — the
 	// status subresource writer is what actually persists it, same as a
@@ -465,7 +473,7 @@ func TestReconcileDegradesWhenModelCacheCheckFails(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = servicesv1beta1.AddToScheme(scheme)
 
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(llama8B()).Build()
 	// Only the PVC lookup is intercepted: everything else — the Deployment
 	// and Service CreateOrUpdate calls Reconcile would reach next, if this
 	// branch failed to stop it from getting there — goes through the real
@@ -938,7 +946,7 @@ func TestReconcileRollsThePodOntoARegeneratedAPIKey(t *testing.T) {
 		t.Fatal("pod template has no api-key digest annotation after the first Reconcile")
 	}
 	// Mark the instance running, the way TestReconcileReportsNotReadyUntilThePodIsServing does.
-	d.Status.ReadyReplicas = 1
+	d.Status.ReadyReplicas, d.Status.UpdatedReplicas, d.Status.ObservedGeneration = 1, 1, d.Generation
 	if err := c.Status().Update(ctx, &d); err != nil {
 		t.Fatalf("marking the Deployment ready: %v", err)
 	}
@@ -1230,5 +1238,168 @@ func TestReconcileOmitsPriorityClassForAnUnrecognisedServiceClass(t *testing.T) 
 	}
 	if got := d.Spec.Template.Spec.PriorityClassName; got != "" {
 		t.Fatalf("priorityClassName = %q, want empty for an unrecognised serviceClass", got)
+	}
+}
+
+// One card: a surge pod would wait for the GPU forever.
+func TestDeploymentReplacesThePodRatherThanSurging(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	var d appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType || d.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("%+v", d.Spec.Strategy)
+	}
+}
+
+// The old pod stays ready while a new one waits: that is not serving the edit.
+func TestAnUnfinishedRolloutIsNotProvisioned(t *testing.T) {
+	for name, spoil := range map[string]func(*appsv1.DeploymentStatus, int64){
+		"not updated":  func(s *appsv1.DeploymentStatus, _ int64) { s.UpdatedReplicas = 0 },
+		"not observed": func(s *appsv1.DeploymentStatus, gen int64) { s.ObservedGeneration = gen - 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, c, svc := newFixture(t, true)
+			ctx := context.Background()
+			if _, err := p.Reconcile(ctx, svc); err != nil {
+				t.Fatal(err)
+			}
+			var d appsv1.Deployment
+			if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+				t.Fatal(err)
+			}
+			d.Status.ReadyReplicas, d.Status.UpdatedReplicas, d.Status.ObservedGeneration = 1, 1, d.Generation
+			spoil(&d.Status, d.Generation)
+			if err := c.Status().Update(ctx, &d); err != nil {
+				t.Fatal(err)
+			}
+			res, err := p.Reconcile(ctx, svc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Ready {
+				t.Fatalf("%+v", res)
+			}
+		})
+	}
+}
+
+// The surge strategy a server defaulted: a type left beside it is refused.
+func TestTheDefaultedRollingUpdateGoesWithTheStrategy(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	var d appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+		t.Fatal(err)
+	}
+	d.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{}}
+	if err := c.Update(ctx, &d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("%+v", d.Spec.Strategy)
+	}
+}
+
+// Recreate stops the old pod first: a new one with nowhere to go has to be named.
+func TestAPodThatFitsNowhereIsNamed(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama-0", Namespace: svc.Namespace, Labels: map[string]string{"app": svc.Name}},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: "insufficient cpu",
+		}}},
+	}
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	res, err := p.Reconcile(ctx, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Reason != corev1.PodReasonUnschedulable || !strings.Contains(res.Message, "insufficient cpu") {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// An edit, then its undoing, on a Deployment that already exists.
+func TestAnEditedModelReachesARunningInstanceAndAnOptionCanLeave(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+	args := func() string {
+		t.Helper()
+		if _, err := p.Reconcile(ctx, svc); err != nil {
+			t.Fatal(err)
+		}
+		var d appsv1.Deployment
+		if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(d.Spec.Template.Spec.Containers[0].Args, " ")
+	}
+	set := func(kv string) {
+		t.Helper()
+		model := llama8B()
+		if err := c.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
+			t.Fatal(err)
+		}
+		model.Spec.KVCacheType = kv
+		if err := c.Update(ctx, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := args()
+	set("q8_0")
+	if got := args(); !strings.Contains(got, "--cache-type-k q8_0") {
+		t.Fatalf("args: %s", got)
+	}
+	set("")
+	if got := args(); got != before {
+		t.Fatalf("args: %s", got)
+	}
+}
+
+// The model's options reach the server, after the flags every instance gets.
+func TestReconcilePassesTheModelsOptionsToLlamaCpp(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+
+	model := llama8B()
+	if err := c.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
+		t.Fatal(err)
+	}
+	model.Spec.KVCacheType = "q8_0"
+	if err := c.Update(ctx, model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(deployment.Spec.Template.Spec.Containers[0].Args, " ")
+	if !strings.HasSuffix(args, "-c 8192 --cache-type-k q8_0 --cache-type-v q8_0") {
+		t.Fatalf("args: %s", args)
 	}
 }
