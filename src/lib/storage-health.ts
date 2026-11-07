@@ -41,6 +41,11 @@ export const STORAGE_CHECKS = [
   { type: 'DiskWearHigh', label: 'SSD wear' },
 ] as const
 
+export const NETWORK_CHECKS = [
+  { type: 'NetworkDegraded', label: 'Bonds and links' },
+  { type: 'LinkSpeedLow', label: 'Link speed' },
+] as const
+
 export interface CheckVerdict {
   type: string
   label: string
@@ -53,8 +58,11 @@ export interface CheckVerdict {
  * One badge per check. A check the controller has not written yet — a manager
  * that predates it — reads as not assessed, never as healthy.
  */
-export function checkVerdicts(machine: Machine): CheckVerdict[] {
-  return STORAGE_CHECKS.map(({ type, label }) => {
+export function checkVerdicts(
+  machine: Machine,
+  checks: readonly { type: string; label: string }[] = STORAGE_CHECKS,
+): CheckVerdict[] {
+  return checks.map(({ type, label }) => {
     const c = machine.storageConditions.find((x) => x.type === type)
     const detail = c?.message ?? ''
     if (c?.status === 'True') return { type, label, tone: 'destructive', word: c.reason === 'LastReadHeld' ? 'alert held' : 'alert', detail }

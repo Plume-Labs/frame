@@ -32,7 +32,7 @@ import (
 // names nodeName in spec.nodeRef, and recomputes the divergences against
 // that machine's BMC drive list.
 //
-// It writes status.storage and nothing else. FrameMachine.status has two
+// It writes status.storage and status.network and nothing else. FrameMachine.status has two
 // writers — this one and the machine controller — and a CRD status patch is
 // a JSON merge patch, which replaces an array wholesale. The same two
 // mechanisms as PatchObserved are therefore load-bearing here, and neither
@@ -58,7 +58,7 @@ func PatchObservedDisks(
 	nodeName string,
 	disks []framev1beta1.ObservedDisk,
 ) error {
-	return PatchObservedStorage(ctx, c, nodeName, disks, nil)
+	return PatchObservedStorage(ctx, c, nodeName, disks, nil, nil)
 }
 
 // PatchObservedStorage is PatchObservedDisks plus the node's local storage
@@ -66,12 +66,15 @@ func PatchObservedDisks(
 // patch, so the disks and the stacks built on them always describe one
 // agent cycle. A nil local (no collection has completed yet, or a caller
 // that does not read the stacks) keeps whatever status.storage.local holds.
+// The node's links ride in the same patch, status.network, so a cycle costs
+// one write; nil leaves them as they are.
 func PatchObservedStorage(
 	ctx context.Context,
 	c client.Client,
 	nodeName string,
 	disks []framev1beta1.ObservedDisk,
 	local *framev1beta1.LocalStorage,
+	network *framev1beta1.MachineNetwork,
 ) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var machines framev1beta1.FrameMachineList
@@ -104,6 +107,9 @@ func PatchObservedStorage(
 			Divergences: storage.Join(bmcDrives, disks),
 			ObservedAt:  &now,
 			Local:       local,
+		}
+		if network != nil {
+			target.Status.Network = network
 		}
 
 		return c.Status().Patch(ctx, target, client.MergeFromWithOptions(

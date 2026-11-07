@@ -82,7 +82,7 @@ type FrameMachineReconciler struct {
 // ClusterRole bound where FrameMachines live (docs/deployment.md, "Manager
 // access to Secrets"); nothing on Secrets cluster-wide.
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=storagehealthpolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=storagehealthpolicies;networkhealthpolicies,verbs=get;list;watch
 
 // Reconcile polls the machine's BMC and records what it read.
 //

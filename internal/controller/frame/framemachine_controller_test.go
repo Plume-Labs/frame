@@ -746,7 +746,7 @@ var _ = Describe("FrameMachine controller", func() {
 			LVM: framev1beta1.LVMStatus{State: framev1beta1.StackAbsent},
 		}
 		Expect(agent.PatchObservedStorage(ctx, k8sClient, "node-local-stacks",
-			[]framev1beta1.ObservedDisk{{Path: "/dev/sdd", SerialNumber: "SER-SSD2", SizeGB: 1024, Occupancy: "md-member"}}, local,
+			[]framev1beta1.ObservedDisk{{Path: "/dev/sdd", SerialNumber: "SER-SSD2", SizeGB: 1024, Occupancy: "md-member"}}, local, nil,
 		)).To(Succeed())
 
 		var back framev1beta1.FrameMachine
@@ -758,7 +758,7 @@ var _ = Describe("FrameMachine controller", func() {
 
 		bad := local.DeepCopy()
 		bad.LVM.State = "unknown"
-		err := agent.PatchObservedStorage(ctx, k8sClient, "node-local-stacks", nil, bad)
+		err := agent.PatchObservedStorage(ctx, k8sClient, "node-local-stacks", nil, bad, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("lvm.state"))
 	})

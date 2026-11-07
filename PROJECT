@@ -156,4 +156,11 @@ resources:
   kind: StorageHealthPolicy
   path: github.com/Plume-Labs/frame/api/frame/v1beta1
   version: v1beta1
+- api:
+    crdVersion: v1
+  domain: plume-labs.io
+  group: frame
+  kind: NetworkHealthPolicy
+  path: github.com/Plume-Labs/frame/api/frame/v1beta1
+  version: v1beta1
 version: "3"

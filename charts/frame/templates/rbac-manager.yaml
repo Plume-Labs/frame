@@ -167,6 +167,7 @@ rules:
   resources:
   - framealertsubscriptions
   - frameusers
+  - networkhealthpolicies
   - storagehealthpolicies
   verbs:
   - get

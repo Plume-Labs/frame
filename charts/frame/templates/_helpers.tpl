@@ -158,6 +158,9 @@ thing. `make helm-parity` compares them, including this label.
   apiGroup: frame.plume-labs.io
   resource: frameusers
   aggregate: [admin]
+- roleBase: networkhealthpolicy
+  apiGroup: frame.plume-labs.io
+  resource: networkhealthpolicies
 - roleBase: schedulingpolicy
   apiGroup: frame.plume-labs.io
   resource: schedulingpolicies

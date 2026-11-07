@@ -23,6 +23,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the frame itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- networkhealthpolicy_admin_role.yaml
+- networkhealthpolicy_editor_role.yaml
+- networkhealthpolicy_viewer_role.yaml
 - storagehealthpolicy_admin_role.yaml
 - storagehealthpolicy_editor_role.yaml
 - storagehealthpolicy_viewer_role.yaml
