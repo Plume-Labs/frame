@@ -946,23 +946,30 @@ instance's model cache.
 |---|---|---|
 | `weightsMiB` | yes | Weights on the GPU, CPU offload already taken off. |
 | `layers`, `kvHeads`, `headDim` | yes | KV cache per token. `layers` counts those holding a growing cache: a hybrid model's linear-attention layers do not. |
-| `hostMemoryMiB` | no | The pod's memory. Default twice `weightsMiB`. A model offloading to the CPU must set it. |
+| `hostMemoryMiB` | no | The pod's memory. Default twice `weightsMiB`. |
 | `contextLength` | no | Default context of an instance that states none. Passed as `-c`. Slots share it. |
 | `parallel` | no | `--parallel`. Absent leaves llama.cpp's choice. |
 | `kvCacheType` | no | `f16`, `q8_0` or `q4_0`: `--cache-type-k` and `--cache-type-v`. Sizing follows it. A quantised V needs flash attention, which llama.cpp decides: a card that cannot do it fails at startup. |
-| `cpuMoELayers` | no | `--n-cpu-moe N`, with `-ngl 99`: the experts of the first N layers stay in host memory. |
+| `cpuMoELayers` | no | `--n-cpu-moe N`, with every other tensor on the GPU: the experts of the first N layers stay in host memory. Needs `hostMemoryMiB`. Passes `--threads` too. |
+| `threads` | no | `--threads`, and the pod's CPU. Absent keeps 4 CPUs. |
 | `reasoningBudget` | no | `--reasoning-budget`: tokens, `-1` no limit, `0` none. |
 | `reasoningBudgetMessage` | no | `--reasoning-budget-message`. Needs `reasoningBudget`. |
 
 An option left out adds no flag. The manager creates the three defaults
 (`llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) when it
 starts on a cluster with no InferenceModel at all, so a default deleted from a
-catalog that has anything else in it stays deleted.
+catalog that has anything else in it stays deleted, unless an instance still names
+it. A seed that fails is logged and the manager carries on; it is retried at the
+next start.
 
 An edit reaches instances on their next pass, within ten minutes, and changing a
-flag restarts them. If an instance no longer fits, it degrades with `SizeRefused`
-and its Deployment is left as it was. Deleting a model an instance serves is
-refused at admission; with webhooks off, that instance degrades the same way.
+flag restarts them: an instance runs one pod under `Recreate`, so a flag llama.cpp
+refuses takes it down, with the reason in its status. If an instance no longer
+fits, it degrades with `SizeRefused` and its Deployment is left as it was.
+Deleting a model an instance serves is refused at admission; with webhooks off,
+that instance degrades the same way. A FrameService update that leaves
+`spec.parameters` alone is not sized again, so a model edited under it does not
+hold up its labels, or its deletion.
 
 ---
 

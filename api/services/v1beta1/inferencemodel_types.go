@@ -83,6 +83,14 @@ type InferenceModelSpec struct {
 	// +kubebuilder:validation:Maximum=1024
 	CPUMoELayers int32 `json:"cpuMoELayers,omitempty"`
 
+	// Threads is llama.cpp's --threads, and the pod's CPU. Absent keeps four
+	// CPUs and, without CPU offload, llama.cpp's own choice. A pool sized on the
+	// node's cores thrashes against the pod's quota, which is what offload pays.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=256
+	Threads int32 `json:"threads,omitempty"`
+
 	// ReasoningBudget is llama.cpp's --reasoning-budget: tokens of thinking,
 	// -1 for no limit, 0 for none. Absent leaves llama.cpp's default.
 	// +optional
@@ -99,13 +107,14 @@ type InferenceModelSpec struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.reasoningBudgetMessage) || has(self.spec.reasoningBudget)",message="reasoningBudgetMessage needs reasoningBudget"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.cpuMoELayers) || has(self.spec.hostMemoryMiB)",message="cpuMoELayers needs hostMemoryMiB: the experts live there"
 // +kubebuilder:printcolumn:name="Weights MiB",type=integer,JSONPath=`.spec.weightsMiB`
 // +kubebuilder:printcolumn:name="Context",type=integer,JSONPath=`.spec.contextLength`
 // +kubebuilder:printcolumn:name="KV cache",type=string,JSONPath=`.spec.kvCacheType`
 
 // InferenceModel is one entry of the catalog FrameServices of type inference
 // choose from. It has no status: nothing reconciles it, the provider reads it on
-// each pass, so an edit restarts the instances serving it on their next one.
+// each pass, so an edit that moves a flag restarts the instances on their next one.
 type InferenceModel struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

@@ -34,6 +34,11 @@ describe('settingsProblem', () => {
     expect(settingsProblem({ ...base, reasoningBudgetMessage: 'stop' })).toMatch(/needs reasoningBudget/)
   })
 
+  it('refuses CPU offload with no host memory, as the CRD does', () => {
+    expect(settingsProblem({ ...base, cpuMoELayers: '36' })).toMatch(/hostMemoryMiB/)
+    expect(settingsProblem({ ...base, cpuMoELayers: '36', hostMemoryMiB: '24000' })).toBeNull()
+  })
+
   it('refuses a KV type the CRD does not list', () => {
     expect(settingsProblem({ ...base, kvCacheType: 'q2_k' })).toMatch(/kvCacheType/)
   })

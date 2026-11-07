@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
@@ -36,6 +37,10 @@ func Params(in map[string]framev1beta1.ParameterValue) map[string]string {
 	}
 	return out
 }
+
+// ErrSizeUnread wraps a Size that could not read what it sizes from. It is no
+// refusal: the instance is as it was, and the controller retries.
+var ErrSizeUnread = errors.New("sizing input unread")
 
 // Sizing is the resource footprint a provider derived from an instance's
 // parameters. Quantities are strings so they can be surfaced in status without

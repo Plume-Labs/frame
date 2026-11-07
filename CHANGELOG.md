@@ -10,13 +10,17 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 - The cluster-scoped `InferenceModel` replaces the three models compiled into the
   `inference` provider. It holds the sizing figures and llama.cpp's options:
-  `contextLength`, `parallel`, `kvCacheType`, `cpuMoELayers`, `reasoningBudget`.
+  `contextLength`, `parallel`, `kvCacheType`, `cpuMoELayers`, `threads`,
+  `reasoningBudget`.
   `spec.parameters.model` of a FrameService names one.
 - The manager writes the three defaults into a cluster with no model at all, so an
   upgrade changes nothing: they set no option, which adds no flag, and running
   instances keep their pod template.
-- Editing a model restarts the instances serving it within ten minutes. Deleting
-  one an instance serves is refused.
+- Editing a model's flags restarts the instances serving it within ten minutes.
+  Deleting one an instance serves is refused.
+- Inference Deployments move to the `Recreate` strategy: on one card the surge pod
+  waited for the GPU forever while the instance read Ready on its old settings.
+  Readiness now waits for the rollout. Running pods are not restarted by this.
 - A FrameService refused for its size is now retried every two minutes, because
   the catalog can move under it.
 - The manager gains `get`, `list`, `create` on `inferencemodels`.

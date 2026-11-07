@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
+	"github.com/Plume-Labs/frame/internal/services/provider"
 )
 
 // The catalog is read uncached: Size runs at admission, which can come before
@@ -54,16 +55,32 @@ var catalog = map[string]model{
 
 // SeedCatalog writes the defaults into a cluster with no InferenceModel at all,
 // which is what an upgrade from the compiled catalog finds. A catalog with
-// anything in it is the operator's: a default they deleted stays deleted.
+// anything in it is the operator's, and a default they deleted stays deleted,
+// save one an instance names: only a seed cut short leaves that, since deleting
+// a model in use is refused.
 func SeedCatalog(ctx context.Context, c client.Client, r client.Reader) error {
 	var models servicesv1beta1.InferenceModelList
 	if err := r.List(ctx, &models); err != nil {
 		return fmt.Errorf("listing the inference models: %w", err)
 	}
-	if len(models.Items) > 0 {
-		return nil
+	var services servicesv1beta1.FrameServiceList
+	if err := r.List(ctx, &services); err != nil {
+		return fmt.Errorf("listing the FrameServices: %w", err)
+	}
+	named := map[string]bool{}
+	for i := range services.Items {
+		if s := &services.Items[i]; s.Spec.Type == "inference" {
+			named[string(s.Spec.Parameters["model"])] = true
+		}
+	}
+	present := map[string]bool{}
+	for i := range models.Items {
+		present[models.Items[i].Name] = true
 	}
 	for name, m := range catalog {
+		if present[name] || (len(models.Items) > 0 && !named[name]) {
+			continue
+		}
 		err := c.Create(ctx, &servicesv1beta1.InferenceModel{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec:       servicesv1beta1.InferenceModelSpec(m),
@@ -97,11 +114,11 @@ func (p *Provider) lookup(name string) (model, error) {
 		return model(found.Spec), nil
 	}
 	if !apierrors.IsNotFound(err) {
-		return model{}, fmt.Errorf("reading the inference model %q: %w", name, err)
+		return model{}, fmt.Errorf("%w: reading the inference model %q: %w", provider.ErrSizeUnread, name, err)
 	}
 	var all servicesv1beta1.InferenceModelList
 	if err := p.apiReader.List(ctx, &all); err != nil {
-		return model{}, fmt.Errorf("listing the inference models: %w", err)
+		return model{}, fmt.Errorf("%w: listing the inference models: %w", provider.ErrSizeUnread, err)
 	}
 	names := make([]string, 0, len(all.Items))
 	for i := range all.Items {

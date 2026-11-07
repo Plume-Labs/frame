@@ -149,11 +149,9 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	// nil client, nil apiReader: the webhook only ever calls Size and
-	// ParameterSchema through this registry, neither of which dereferences
-	// either — Reconcile and Bind are the only methods that do, and
-	// admission never reaches them.
-	err = SetupFrameServiceWebhookWithManager(mgr, provider.NewRegistry(inference.New(7680, nil, nil)))
+	// The real catalog, as in production: admission sizes against InferenceModels.
+	Expect(inference.SeedCatalog(ctx, k8sClient, k8sClient)).To(Succeed())
+	err = SetupFrameServiceWebhookWithManager(mgr, provider.NewRegistry(inference.New(7680, nil, mgr.GetAPIReader())))
 	Expect(err).NotTo(HaveOccurred())
 
 	err = SetupInferenceModelWebhookWithManager(mgr)

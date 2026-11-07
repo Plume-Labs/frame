@@ -19,6 +19,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -178,6 +179,19 @@ var _ = Describe("FrameService Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.RequeueAfter).To(Equal(degradedRequeue))
 		Expect(fake.reconciles).To(BeZero(), "a refused instance is left as it was")
+	})
+
+	It("retries a sizing it could not read, without calling the instance refused", func() {
+		fake.sizeErr = fmt.Errorf("%w: etcd is away", provider.ErrSizeUnread)
+		_, err := r().Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r().Reconcile(ctx, req)
+		Expect(err).To(MatchError(provider.ErrSizeUnread))
+		fresh := &servicesv1beta1.FrameService{}
+		Expect(k8sClient.Get(ctx, key, fresh)).To(Succeed())
+		for _, c := range fresh.Status.Conditions {
+			Expect(c.Reason).NotTo(Equal("SizeRefused"))
+		}
 	})
 
 	It("keeps a previously recorded status.Provisioned when a later degrade reports none", func() {

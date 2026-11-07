@@ -15,6 +15,7 @@ export interface InferenceModelCR {
     parallel?: number
     kvCacheType?: string
     cpuMoELayers?: number
+    threads?: number
     reasoningBudget?: number
     reasoningBudgetMessage?: string
   }
@@ -28,13 +29,13 @@ export interface InferenceModel extends ModelSettings {
 
 export const EMPTY_SETTINGS: ModelSettings = {
   weightsMiB: '', layers: '', kvHeads: '', headDim: '', hostMemoryMiB: '', contextLength: '', parallel: '',
-  kvCacheType: '', cpuMoELayers: '', reasoningBudget: '', reasoningBudgetMessage: '',
+  kvCacheType: '', cpuMoELayers: '', threads: '', reasoningBudget: '', reasoningBudgetMessage: '',
 }
 
 export const KV_CACHE_TYPES = ['f16', 'q8_0', 'q4_0']
 
 const REQUIRED = ['weightsMiB', 'layers', 'kvHeads', 'headDim'] as const
-const OPTIONAL = ['hostMemoryMiB', 'contextLength', 'parallel', 'cpuMoELayers'] as const
+const OPTIONAL = ['hostMemoryMiB', 'contextLength', 'parallel', 'cpuMoELayers', 'threads'] as const
 
 export function toInferenceModel(cr: InferenceModelCR): InferenceModel {
   const out: InferenceModel = { ...EMPTY_SETTINGS, name: cr.metadata.name }
@@ -42,13 +43,14 @@ export function toInferenceModel(cr: InferenceModelCR): InferenceModel {
   return out
 }
 
-/** The CRD's bounds, so a bad value is caught before the apiserver's message. */
+/** The form's mistakes, before the apiserver's message. Its maximums stay the apiserver's. */
 export function settingsProblem(s: ModelSettings): string | null {
   for (const key of REQUIRED) if (!/^[1-9][0-9]*$/.test(s[key])) return `${key}: a positive whole number.`
   for (const key of OPTIONAL) if (s[key] && !/^[1-9][0-9]*$/.test(s[key])) return `${key}: a positive whole number, or empty.`
   if (s.kvCacheType && !KV_CACHE_TYPES.includes(s.kvCacheType)) return `kvCacheType: one of ${KV_CACHE_TYPES.join(', ')}, or empty.`
   if (s.reasoningBudget && !/^(-1|0|[1-9][0-9]*)$/.test(s.reasoningBudget)) return 'reasoningBudget: -1, 0 or a number of tokens.'
   if (s.reasoningBudgetMessage && !s.reasoningBudget) return 'reasoningBudgetMessage needs reasoningBudget.'
+  if (s.cpuMoELayers && !s.hostMemoryMiB) return 'cpuMoELayers needs hostMemoryMiB: the experts live there.'
   return null
 }
 
@@ -69,6 +71,7 @@ export function toSpec(s: ModelSettings): Record<string, number | string | null>
     parallel: num(s.parallel),
     kvCacheType: s.kvCacheType || null,
     cpuMoELayers: num(s.cpuMoELayers),
+    threads: num(s.threads),
     reasoningBudget: num(s.reasoningBudget),
     reasoningBudgetMessage: s.reasoningBudgetMessage || null,
   }

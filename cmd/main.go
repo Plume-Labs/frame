@@ -523,12 +523,13 @@ func main() {
 
 	// Before the first reconcile, so an instance never meets an empty catalog.
 	// Direct reads and writes: the caches have not started, and no webhook
-	// guards creating a model, so nothing here waits on this manager.
+	// guards creating a model, so nothing here waits on this manager. A failure
+	// costs inference alone, which reports it; it must not take every other
+	// controller down with it.
 	seedCtx, seedDone := context.WithTimeout(context.Background(), time.Minute)
 	defer seedDone()
 	if err := inference.SeedCatalog(seedCtx, mgr.GetClient(), mgr.GetAPIReader()); err != nil {
 		setupLog.Error(err, "Failed to seed the inference catalog")
-		os.Exit(1)
 	}
 
 	// mgr.GetEventRecorderFor is deprecated in favour of GetEventRecorder, but

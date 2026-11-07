@@ -35,6 +35,7 @@ const FIELDS: { key: keyof ModelSettings; label: string; hint?: string }[] = [
   { key: 'parallel', label: 'Parallel slots', hint: "llama.cpp's choice" },
   { key: 'kvCacheType', label: 'KV cache type', hint: KV_CACHE_TYPES.join(', ') },
   { key: 'cpuMoELayers', label: 'Layers with experts on the CPU', hint: 'none' },
+  { key: 'threads', label: 'Threads and pod CPUs', hint: '4' },
   { key: 'reasoningBudget', label: 'Reasoning budget', hint: '-1, 0 or tokens' },
   { key: 'reasoningBudgetMessage', label: 'Budget message' },
 ]
@@ -100,7 +101,7 @@ function ModelCard({ model, onSaved }: { model: InferenceModel; onSaved: () => v
             <AlertDialogDescription>
               {confirm === 'delete'
                 ? 'Refused while an instance serves it. The weights stay on the model cache.'
-                : 'Every instance of this model restarts within ten minutes, on the new settings.'}
+                : 'A change to a llama.cpp option restarts every instance of this model within ten minutes. An instance that no longer fits keeps running and reports SizeRefused.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
