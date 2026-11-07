@@ -18,6 +18,7 @@ package agent
 
 import (
 	"path/filepath"
+	"strconv"
 	"time"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
@@ -77,12 +78,33 @@ func (w *trafficWindows) annotate(n *framev1beta1.MachineNetwork, now time.Time)
 	}
 }
 
-func (w *trafficWindows) observe(name string, capacity *int32, now time.Time) *framev1beta1.LinkTraffic {
-	stat := func(counter string) int64 { return number(filepath.Join(w.base, name, "statistics", counter)) }
+// counter is a kernel counter, and false when it could not be read: a failed
+// read is no zero, which would read as a reset and the next value as traffic.
+func counter(path string) (int64, bool) {
+	n, err := strconv.ParseInt(text(path), 10, 64)
+	return n, err == nil
+}
+
+func (w *trafficWindows) sample(name string, now time.Time) (trafficSample, bool) {
+	ok := true
+	stat := func(stat string) int64 {
+		n, read := counter(filepath.Join(w.base, name, "statistics", stat))
+		ok = ok && read
+		return n
+	}
 	s := trafficSample{
 		at: now, rx: stat("rx_bytes"), tx: stat("tx_bytes"),
 		errors: stat("rx_errors") + stat("tx_errors"),
 		drops:  stat("rx_dropped") + stat("tx_dropped"),
+	}
+	return s, ok
+}
+
+func (w *trafficWindows) observe(name string, capacity *int32, now time.Time) *framev1beta1.LinkTraffic {
+	s, ok := w.sample(name, now)
+	// The history stays as it was: the next good reading spans the gap.
+	if !ok {
+		return nil
 	}
 	h := w.history[name]
 	// A counter going back is a driver reloaded: what came before says nothing
@@ -98,15 +120,16 @@ func (w *trafficWindows) observe(name string, capacity *int32, now time.Time) *f
 	return trafficOf(h, capacity)
 }
 
-// since is the oldest reading no further back than window.
+// since is the newest reading that covers window, or the oldest there is. A gap
+// in the readings stretches the interval, and the average over it is still true.
 func since(h []trafficSample, window time.Duration) trafficSample {
 	last := h[len(h)-1]
-	for _, s := range h {
-		if last.at.Sub(s.at) <= window+windowSlack {
-			return s
+	for i := len(h) - 2; i >= 0; i-- {
+		if last.at.Sub(h[i].at) >= window-windowSlack {
+			return h[i]
 		}
 	}
-	return last
+	return h[0]
 }
 
 func perSecond(from, to int64, d time.Duration) int64 {

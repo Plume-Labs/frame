@@ -85,7 +85,7 @@ type NetworkInterface struct {
 // counters over a sliding window. A driver that resets its counters starts the
 // window again.
 type LinkTraffic struct {
-	// HistorySeconds is how far back the readings go, 900 at most.
+	// HistorySeconds is how far back the readings go, some 15 minutes at most.
 	HistorySeconds int32 `json:"historySeconds"`
 	// RxBytesPerSecond and TxBytesPerSecond are over the last minute.
 	RxBytesPerSecond int64 `json:"rxBytesPerSecond"`

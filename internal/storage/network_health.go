@@ -53,6 +53,10 @@ const (
 // clear, so that a link hovering at it does not page on every crossing.
 const saturationHysteresis = 5
 
+// fullHistorySeconds is the history under which a low figure proves nothing: the
+// agent's own five-minute window less its slack.
+const fullHistorySeconds = 285
+
 // NetExpectations is the NetworkHealthPolicy as it applies to one node.
 type NetExpectations struct {
 	MinSpeedMbps     int32
@@ -162,7 +166,7 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 	// verdict on a link that must be up, but the speed it shows still counts.
 	carrying := i.OperState == "up" || i.OperState == "unknown"
 	key := Key{CheckLinkSlow, i.Name}
-	a.assessTraffic(i.Name, i.Traffic, carrying, e, open)
+	a.assessTraffic(i.Name, i.Traffic, carrying, i.OperState == "up", e, open)
 	switch {
 	case i.OperState == "":
 		why := fmt.Sprintf("link %s gives no state", i.Name)
@@ -198,7 +202,10 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 
 // assessTraffic judges a link on what it carried. No figure closes anything: a
 // link that is down, or an agent that just restarted, says nothing of the load.
-func (a *Assessment) assessTraffic(name string, t *framev1beta1.LinkTraffic, carrying bool, e NetExpectations, open Open) {
+//
+// up separates a link that is up from one at the kernel's unknown, which carries
+// but owes no speed, as for LinkSpeedLow.
+func (a *Assessment) assessTraffic(name string, t *framev1beta1.LinkTraffic, carrying, up bool, e NetExpectations, open Open) {
 	saturated, errs := Key{CheckSaturated, name}, Key{CheckLinkErrors, name}
 	hold := func(k Key) {
 		if open.has(k) {
@@ -218,33 +225,40 @@ func (a *Assessment) assessTraffic(name string, t *framev1beta1.LinkTraffic, car
 		return
 	}
 
-	if t.ErrorsPerMinute >= int64(e.ErrorsPerMinute) {
-		a.add(CheckLinkErrors, name, ScopeNet, severityWarning,
-			fmt.Sprintf("link %s counts %d error(s) a minute", name, t.ErrorsPerMinute))
+	switch {
+	case t.ErrorsPerMinute >= int64(e.ErrorsPerMinute):
+		// Figures stay out of the message: it is the alert's text, written on change.
+		a.add(CheckLinkErrors, name, ScopeNet, severityWarning, fmt.Sprintf("link %s is counting errors", name))
+	case t.HistorySeconds < fullHistorySeconds:
+		// An agent that just restarted saw no error: that clears nothing.
+		hold(errs)
+		a.Cut[scopeNetTraffic] = fmt.Sprintf("link %s has under five minutes of readings", name)
 	}
 
 	switch {
 	case t.CapacityMbps == nil:
 		hold(saturated)
-		a.CapacityUnreported++
+		if up {
+			a.CapacityUnreported++
+		}
 	case t.SustainedUtilizationPercent == nil:
 		hold(saturated)
 		a.Cut[scopeNetSustained] = fmt.Sprintf("link %s has under five minutes of readings", name)
 	default:
 		limit := e.SaturatedPercent
 		if open.has(saturated) {
-			limit -= saturationHysteresis
+			limit = max(1, limit-saturationHysteresis)
 		}
 		if *t.SustainedUtilizationPercent >= limit {
 			a.add(CheckSaturated, name, ScopeNet, severityWarning,
-				fmt.Sprintf("link %s averages %d %% of %d Mb/s over five minutes", name, *t.SustainedUtilizationPercent, *t.CapacityMbps))
+				fmt.Sprintf("link %s averages over %d %% of its speed over five minutes", name, e.SaturatedPercent))
 		}
 	}
 }
 
 func (a *Assessment) assessBond(b *framev1beta1.NetworkBond, e NetExpectations, open Open) {
 	key := Key{CheckNetDegraded, b.Name}
-	a.assessTraffic(b.Name, b.Traffic, b.MIIStatus == "up", e, open)
+	a.assessTraffic(b.Name, b.Traffic, b.MIIStatus == "up", b.MIIStatus == "up", e, open)
 	// Loading the bonding module makes a bond0 that nobody brought up and that has
 	// no member: like an unused port, it counts only if the policy names it. A bond
 	// that was brought up and lost its members is a real loss, however empty.

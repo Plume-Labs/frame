@@ -105,8 +105,9 @@ branch on it:
 > `ScrubErrors`, `StorageCapacityHigh` and `DiskWearHigh`. Reason `Detected`
 > or `LastReadHeld` when `True`, `Healthy` when `False`, `ReadUnavailable` or
 > `WearNotReported` when `Unknown`. `Unknown` means not read, never healthy.
-> See [storage.md](storage.md#storage-health-alerts). `NetworkDegraded` and
-> `LinkSpeedLow` follow the same vocabulary, see [network.md](network.md).
+> See [storage.md](storage.md#storage-health-alerts). `NetworkDegraded`,
+> `LinkSpeedLow`, `LinkSaturated` and `LinkErrorsRising` follow the same vocabulary,
+> see [network.md](network.md).
 
 > **FrameMachine writes a condition, but not this one.** Its controller
 > writes `Reachable`, not `Ready` — a deliberate choice (`conditionReachable`

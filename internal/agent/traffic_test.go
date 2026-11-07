@@ -26,7 +26,7 @@ import (
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
-// link writes a port's counters into a sysfs tree.
+// writeCounters writes a port's counters into a sysfs tree.
 func writeCounters(t *testing.T, base, name string, rx, errs, drops int64) {
 	t.Helper()
 	dir := filepath.Join(base, name, "statistics")
@@ -188,5 +188,127 @@ func TestAnnotateCoversBondsAndForgetsWhatLeft(t *testing.T) {
 	w.annotate(&framev1beta1.MachineNetwork{}, time.Unix(60, 0))
 	if len(w.history) != 0 {
 		t.Fatalf("a link that left stays in memory: %v", w.history)
+	}
+}
+
+func at(seconds int) time.Time { return time.Unix(int64(seconds), 0) }
+
+// A failed read is no zero: a reset would follow, and the true counter would
+// then read as terabytes of traffic and thousands of errors.
+func TestAFailedReadIsSkippedAndNotTakenForAReset(t *testing.T) {
+	for _, gone := range []string{"rx_bytes", "tx_bytes", "rx_errors", "tx_errors", "rx_dropped", "tx_dropped"} {
+		t.Run(gone, func(t *testing.T) {
+			w := newTrafficWindows(t.TempDir())
+			const total = int64(5_000_000_000_000)
+			writeCounters(t, w.base, "eno1", total, 4000, 0)
+			w.observe("eno1", gigabit(), at(0))
+			writeCounters(t, w.base, "eno1", total+30_000, 4000, 0)
+			w.observe("eno1", gigabit(), at(30))
+
+			path := filepath.Join(w.base, "eno1", "statistics", gone)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if got := w.observe("eno1", gigabit(), at(60)); got != nil {
+				t.Fatalf("a failed read gave figures: %+v", got)
+			}
+
+			writeCounters(t, w.base, "eno1", total+90_000, 4000, 0)
+			got := w.observe("eno1", gigabit(), at(90))
+			if got.RxBytesPerSecond != 1000 || got.PeakRxBytesPerSecond != 1000 || got.ErrorsPerMinute != 0 {
+				t.Fatalf("%+v", got)
+			}
+		})
+	}
+}
+
+// A control plane away for a while stops the ticks: the next reading spans the
+// gap and gives its true average, never a zero.
+func TestAGapInTheReadingsGivesTheAverageOverIt(t *testing.T) {
+	for _, gap := range []int{90, 330} {
+		w := newTrafficWindows(t.TempDir())
+		writeCounters(t, w.base, "eno1", 0, 0, 0)
+		w.observe("eno1", gigabit(), at(0))
+		writeCounters(t, w.base, "eno1", 100_000_000*int64(gap), int64(gap)/60*10, 0)
+		got := w.observe("eno1", gigabit(), at(gap))
+		if got.RxBytesPerSecond != 100_000_000 || *got.UtilizationPercent != 80 {
+			t.Fatalf("gap %d: %+v", gap, got)
+		}
+		if got.ErrorsPerMinute == 0 {
+			t.Fatalf("gap %d lost the errors: %+v", gap, got)
+		}
+	}
+}
+
+func TestOneMissedTickLeavesTheFiveMinutesStanding(t *testing.T) {
+	h := []trafficSample{}
+	for s := 0; s <= 330; s += 30 {
+		if s != 30 {
+			h = append(h, trafficSample{at: at(s), rx: int64(s) * 1000})
+		}
+	}
+	if got := trafficOf(h, gigabit()); got.SustainedUtilizationPercent == nil {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// Full duplex: either direction can be the full one.
+func TestTheBusierDirectionIsTheOneMeasured(t *testing.T) {
+	h := []trafficSample{}
+	for s := 0; s <= 300; s += 30 {
+		h = append(h, trafficSample{at: at(s), tx: int64(s) * 100_000_000, rx: int64(s)})
+	}
+	got := trafficOf(h, gigabit())
+	if *got.UtilizationPercent != 80 || *got.SustainedUtilizationPercent != 80 || *got.PeakUtilizationPercent != 80 {
+		t.Fatalf("%+v", got)
+	}
+	if got.PeakTxBytesPerSecond != 100_000_000 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAResetOnAnyCounterStartsAgain(t *testing.T) {
+	for name, s := range map[string]trafficSample{
+		"tx":     {tx: 1},
+		"errors": {errors: 1},
+		"drops":  {drops: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := t.TempDir()
+			w := newTrafficWindows(base)
+			w.history["eno1"] = []trafficSample{{at: at(0), rx: 1, tx: s.tx + 5, errors: s.errors + 5, drops: s.drops + 5}}
+			writeCounters(t, base, "eno1", 2, 0, 0)
+			if got := w.observe("eno1", gigabit(), at(30)); got != nil {
+				t.Fatalf("%+v", got)
+			}
+		})
+	}
+}
+
+func TestSustainedNeedsNearlyFiveMinutes(t *testing.T) {
+	short := []trafficSample{{at: at(0)}, {at: at(270), rx: 1}}
+	if got := trafficOf(short, gigabit()); got.SustainedUtilizationPercent != nil {
+		t.Fatalf("%+v", got)
+	}
+	enough := []trafficSample{{at: at(0)}, {at: at(285), rx: 1}}
+	if got := trafficOf(enough, gigabit()); got.SustainedUtilizationPercent == nil {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestABondThatGivesNoSpeedHasNoPercent(t *testing.T) {
+	for _, speed := range []string{"-1", "4294967295"} {
+		base := t.TempDir()
+		w := newTrafficWindows(base)
+		writeCounters(t, base, "bond0", 0, 0, 0)
+		if err := os.WriteFile(filepath.Join(base, "bond0", "speed"), []byte(speed), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		n := &framev1beta1.MachineNetwork{Bonds: []framev1beta1.NetworkBond{{Name: "bond0"}}}
+		w.annotate(n, at(0))
+		w.annotate(n, at(30))
+		if got := n.Bonds[0].Traffic; got == nil || got.CapacityMbps != nil {
+			t.Fatalf("%s: %+v", speed, got)
+		}
 	}
 }

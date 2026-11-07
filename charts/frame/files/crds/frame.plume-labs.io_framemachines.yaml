@@ -647,7 +647,7 @@ spec:
                               type: integer
                             historySeconds:
                               description: HistorySeconds is how far back the readings
-                                go, 900 at most.
+                                go, some 15 minutes at most.
                               format: int32
                               type: integer
                             peakRxBytesPerSecond:
@@ -763,7 +763,7 @@ spec:
                               type: integer
                             historySeconds:
                               description: HistorySeconds is how far back the readings
-                                go, 900 at most.
+                                go, some 15 minutes at most.
                               format: int32
                               type: integer
                             peakRxBytesPerSecond:

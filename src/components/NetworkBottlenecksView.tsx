@@ -8,7 +8,7 @@ import { percentLabel, PodTraffic, rankLinks, rateLabel } from '@/lib/network-bo
 const frame = createFrameClient()
 
 function LinksCard({ machines }: { machines: Machine[] }) {
-  const rows = rankLinks(machines)
+  const rows = rankLinks(machines, Date.now())
   return (
     <Card>
       <CardHeader>
@@ -16,7 +16,7 @@ function LinksCard({ machines }: { machines: Machine[] }) {
       </CardHeader>
       <CardContent className="overflow-x-auto">
         {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No rates yet: agents need two readings, a minute at most.</p>
+          <p className="text-sm text-muted-foreground">No rates: an agent reports them from its second reading, and an older agent never does.</p>
         ) : (
           <table className="w-full text-xs font-mono">
             <thead className="text-left text-muted-foreground">
@@ -33,10 +33,11 @@ function LinksCard({ machines }: { machines: Machine[] }) {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={`${r.node}/${r.name}`} className="border-t border-border">
+                <tr key={`${r.node}/${r.name}`} className={`border-t border-border ${r.stale ? 'text-muted-foreground' : ''}`}>
                   <td className="pr-4 py-1">
                     {r.node} {r.name}
                     {r.kind === 'member' && <span className="text-muted-foreground"> (member)</span>}
+                    {r.stale && <span className="text-warning"> (agent silent)</span>}
                   </td>
                   <td className="pr-4">{percentLabel(r.traffic.utilizationPercent)}</td>
                   <td className="pr-4">{percentLabel(r.traffic.sustainedUtilizationPercent)}</td>
@@ -58,14 +59,15 @@ function LinksCard({ machines }: { machines: Machine[] }) {
   )
 }
 
-function PodList({ title, pods }: { title: string; pods: PodTraffic[] }) {
+function PodList({ title, pods }: { title: string; pods: PodTraffic[] | null }) {
   return (
     <div className="space-y-1">
       <h3 className="text-sm font-medium">{title}</h3>
-      {pods.map((p) => (
+      {pods === null && <p className="text-xs text-warning">The query failed.</p>}
+      {pods?.map((p) => (
         <div key={`${p.namespace}/${p.pod}`} className="flex justify-between gap-4 text-xs font-mono">
           <span className="truncate">
-            {p.namespace}/{p.pod}
+            {p.namespace}/{p.pod} <span className="text-muted-foreground">on {p.node}</span>
           </span>
           <span>{rateLabel(p.bytesPerSecond)}</span>
         </div>

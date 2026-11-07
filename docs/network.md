@@ -15,7 +15,7 @@ stacks: 32 ports, 8 bonds, 16 members per bond, with `*Omitted` counters.
 | `NetworkDegraded` | warning | a bond member is down, or sits outside the LACP aggregator the bond uses (it has link and carries nothing) |
 | `LinkSpeedLow` | warning | a physical link that is up, or at the kernel's `unknown`, runs below its expected speed |
 | `LinkSaturated` | warning | a link or bond averages `linkSaturatedPercent` of its speed over five minutes, in its busier direction (default 80 %) |
-| `LinkErrorsRising` | warning | a link or bond counts `linkErrorsPerMinute` errors a minute over five minutes (default 1) |
+| `LinkErrorsRising` | warning | a link or bond counts `linkErrorsPerMinute` errors a minute over five minutes, rounded up (at the default of 1, a single error raises it for five minutes) |
 
 A bond member's alert is on `<bond>/<member>`, the others on the interface. A port
 that is down and not named in the policy raises nothing: machines carry unused
@@ -61,15 +61,20 @@ speed or the bond's total, in the busier direction. The history dies with the
 agent and starts over when a driver resets its counters.
 
 A link with no rates yet, or under five minutes of history, makes `LinkSaturated`
-`Unknown`, reason `ReadUnavailable`, and keeps what was open; the rates are nil for
-the first reading. A link that gives no speed, the case of every virtio NIC, has
-its bytes but no percentages: `SpeedNotReported`, the same `Unknown`. An open
-`LinkSaturated` clears five points under the threshold. Saturation of a bond's
+and `LinkErrorsRising` `Unknown`, reason `ReadUnavailable`, and keeps what was open,
+so an agent restart closes nothing; a counter that cannot be read costs that reading
+alone, and the next one spans the gap. A link that gives no speed, the case of every
+virtio NIC, has its bytes but no percentages: `SpeedNotReported`, the same `Unknown`.
+One at the kernel's `unknown` owes none, as for `LinkSpeedLow`. A link that goes down
+keeps both alerts open, having nothing to read, until it comes back or "Removed on
+purpose" closes them. An open `LinkSaturated` clears five points under the threshold. Saturation of a bond's
 member with the bond itself far from full is a hash that does not spread.
 
 The manager publishes `frame_link_utilization_percent`,
 `frame_link_bytes_per_second{direction}` and `frame_link_errors_per_minute`, by
-node and interface. Network → Bottlenecks ranks the links by their 15-minute peak,
+machine and interface, updated at each pass over the machine, about a minute, and
+dropped when the agent goes silent. Prometheus needs
+`metrics.serviceMonitor.enabled` to see them. Network → Bottlenecks ranks the links by their 15-minute peak,
 and lists the pods sending and receiving the most from Prometheus' cAdvisor
 counters (`container_network_*_bytes_total`). Pods on the host network are left
 out, since cAdvisor gives them the node's interfaces. Nothing here limits anything.

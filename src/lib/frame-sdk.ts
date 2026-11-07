@@ -1736,7 +1736,7 @@ class ClusterClient {
   }
 
   /** The pods moving the most, from cAdvisor's counters. Null when Prometheus does not answer. */
-  async podTraffic(): Promise<{ tx: PodTraffic[]; rx: PodTraffic[] } | null> {
+  async podTraffic(): Promise<{ tx: PodTraffic[] | null; rx: PodTraffic[] | null } | null> {
     const res = await this.promInstant(POD_TRAFFIC_QUERIES)
     return res && { tx: toPodTraffic(res.tx), rx: toPodTraffic(res.rx) }
   }

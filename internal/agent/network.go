@@ -66,9 +66,9 @@ type NetworkCollector struct {
 func NewNetworkCollector(root string) *NetworkCollector {
 	windows := newTrafficWindows(filepath.Join(root, sysClassNet))
 	return &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
-		now := time.Now()
-		n := ObserveNetwork(root, now)
-		windows.annotate(n, now)
+		n := ObserveNetwork(root, time.Now())
+		// Its own time: a slow driver above must not read as a long interval.
+		windows.annotate(n, time.Now())
 		return n
 	}}
 }
