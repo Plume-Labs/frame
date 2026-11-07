@@ -1,6 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", ":timezone(Europe/Paris)"],
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 1,
   "packageRules": [
     {
       "description": "Major updates only open a PR once approved from the Dependency Dashboard (#16)",
