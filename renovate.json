@@ -1,6 +1,31 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ]
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "Major updates only open a PR once approved from the Dependency Dashboard (#16)",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "k8s.io libraries and controller-runtime must move together, or the controller stops compiling",
+      "matchDatasources": ["go"],
+      "matchPackageNames": [
+        "k8s.io/api",
+        "k8s.io/apiextensions-apiserver",
+        "k8s.io/apimachinery",
+        "k8s.io/client-go",
+        "sigs.k8s.io/controller-runtime"
+      ],
+      "groupName": "kubernetes go libraries"
+    },
+    {
+      "description": "Kubebuilder placeholder image in config/manager, not a real registry",
+      "matchPackageNames": ["example.com/frame"],
+      "enabled": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "dependencyDashboardApproval": false
+  }
 }
