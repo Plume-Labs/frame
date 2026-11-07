@@ -6,6 +6,20 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — console navigation
+
+- A new **Services** group holds what a workload binds to: Inference (moved
+  from Tuning), Databases and Caches & Queues (both moved off Storage's tabs).
+- Storage keeps where bytes land: Ceph, Entries, Disks, Health, and the Burst
+  Buffer (the NVMe scratch tier, moved from Node Tuning).
+- Node Tuning (MPS, PTP, KSM) moves into Compute; the Tuning group is gone.
+- Tabs say what they show: Storage › Ceph, Network › Throughput.
+- Operations keeps Capacity and Security; Tasks, Accounts and Settings move to
+  a new **Administration** group.
+- Placement becomes a tab of Nodes instead of a one-tab screen.
+- Inference drops its Speculative and Pipeline PP tabs, which only said that
+  Frame does not set those up.
+
 ### Added — `cache` FrameService provider
 
 - `spec.type: cache` runs one Valkey server. `profile: cache` evicts with LRU and
