@@ -6,6 +6,13 @@ on:
 
 permissions: {}
 
+# One run per workflow, event and ref: a new push to a PR branch (Renovate
+# rebases included) cancels the run it supersedes. main and release tags are
+# never cancelled, so every commit there keeps its full result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   test-e2e:
     permissions:
