@@ -276,21 +276,32 @@ func (r *FrameMachineReconciler) setCondition(fm *framev1beta1.FrameMachine, sta
 	})
 }
 
+// Reachable condition reasons for a failed probe (docs/runbook.md lists what
+// each one means and what to do).
+const (
+	reasonTLSError          = "TLSError"
+	reasonAuthFailed        = "AuthFailed"
+	reasonUnsupported       = "Unsupported"
+	reasonTimeout           = "Timeout"
+	reasonConnectionRefused = "ConnectionRefused"
+	reasonProbeFailed       = "ProbeFailed"
+)
+
 // probeFailureReason maps a Probe error to a Reachable condition reason.
 func probeFailureReason(err error) string {
 	switch {
 	case errors.Is(err, redfish.ErrTLS):
-		return "TLSError"
+		return reasonTLSError
 	case errors.Is(err, redfish.ErrAuth):
-		return "AuthFailed"
+		return reasonAuthFailed
 	case errors.Is(err, redfish.ErrUnsupported):
-		return "Unsupported"
+		return reasonUnsupported
 	case errors.Is(err, context.DeadlineExceeded):
-		return "Timeout"
+		return reasonTimeout
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "Timeout"
+		return reasonTimeout
 	}
 	// A refused connection is, almost always, the BMC's own network stack
 	// answering with a RST: the address is right and routed, but nothing
@@ -301,9 +312,9 @@ func probeFailureReason(err error) string {
 	// failures — a supervisor reading Reachable needs to tell "the BMC is
 	// down" from "Frame cannot parse it".
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return "ConnectionRefused"
+		return reasonConnectionRefused
 	}
-	return "ProbeFailed"
+	return reasonProbeFailed
 }
 
 // applySnapshot maps a Redfish Snapshot onto FrameMachineStatus, field by
