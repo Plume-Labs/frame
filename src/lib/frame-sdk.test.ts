@@ -14,6 +14,7 @@ import {
 } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
+import type { Cache } from './caches'
 import type { Database } from './databases'
 import type { Machine } from './machines'
 // Raw source, for the structural guard at the bottom of this file.
@@ -1706,5 +1707,23 @@ describe('DatabaseClient', () => {
     expect(calls[0].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/b-db')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { parameters: { instances: '2', volumeSize: '8Gi', nodes: null } } })
     expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set database b-db')
+  })
+
+  it('lists only caches, and patches one in its own namespace', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response(JSON.stringify({ items: [
+        { metadata: { name: 'jobs', namespace: 'x' }, spec: { type: 'cache' } },
+        { metadata: { name: 'b-db', namespace: 'x' }, spec: { type: 'postgres' } },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const list = await createFrameClient().caches.list()
+    expect(list.map((c) => c.name)).toEqual(['jobs'])
+    await createFrameClient().caches.save({ name: 'jobs', namespace: 'x', profile: 'cache' } as Cache, { maxMemory: '1Gi', volumeSize: '' })
+    expect(calls[1].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/jobs')
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ spec: { parameters: { maxMemory: '1Gi' } } })
+    expect((calls[1].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set cache jobs')
   })
 })

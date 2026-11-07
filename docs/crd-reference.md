@@ -994,6 +994,51 @@ Secret and the manager needs no access to Secrets there, for consumers that read
 the operator's Secret themselves. Other Ready reasons: `Provisioning`,
 `ClusterNotRunning`, `OperatorMissing`, `InvalidName`.
 
+---
+
+### The `cache` provider (`internal/services/provider/cache/`)
+
+One [Valkey](https://valkey.io) server, run by Frame as a single-replica
+StatefulSet with a Service of the same name, placed by `serviceClass`. No
+operator: see [the design](superpowers/specs/2026-11-07-frameservice-cache-valkey-design.md).
+There is **no replica and no automatic failover**: the server is back when the
+kubelet or the scheduler brings it back.
+
+| Parameter | Required | After creation | Meaning |
+|---|---|---|---|
+| `profile` | yes | fixed | `cache`: `allkeys-lru`, nothing persisted, a restart empties it. `queue`: `noeviction`, AOF with `appendfsync everysec`, for BullMQ. |
+| `maxMemory` | yes | moves | Dataset ceiling, e.g. `512Mi`. Moving it restarts the server. The pod's memory is 1.25× this for a cache, 2× for a queue (an AOF rewrite forks), plus 64 Mi. |
+| `volumeSize` | queue only | grows | At least twice `maxMemory`. A smaller value than the volume degrades with `VolumeShrinkRefused`. Growing needs a StorageClass with `allowVolumeExpansion`. |
+| `storageClass` | no, queue only | fixed | Empty is the cluster default. |
+
+`fixed` means compared: a different value degrades with `SpecDrift` and writes
+nothing.
+
+**Nothing is taken over.** A StatefulSet, Service or `<name>-valkey-auth` Secret
+this FrameService does not control, or a `data-<name>-0` volume without the label
+`services.plume-labs.io/frameservice: <name>`, degrades with `NotOwned` before
+any write. This provider adopts nothing.
+
+**A queue is not restarted empty.** One that has served and lost its volume
+degrades with `InstanceLost`. This check runs in Frame: if the volume goes while
+the StatefulSet is still there and its pod is gone, the StatefulSet controller
+makes a new empty claim on its own, and Frame only finds out afterwards.
+
+**`deletionPolicy` never reaches the volume.** It carries no owner reference and
+is not in `status.provisioned`, and the manager has no `delete` verb on volumes,
+so `Delete` behaves as `Retain`. A FrameService recreated under the same name
+mounts it again. Removing the data is a deliberate `kubectl delete pvc`.
+
+The password is generated into `<name>-valkey-auth`, and reaches the server as
+an included config file: it is in no argument and no pod spec. The binding Secret
+carries `host`, `port`, `password` and `url` (`redis://:<password>@<host>:6379`).
+Both need `frame-manager-secret-writer` in the namespace; without it the instance
+degrades with `SecretAccessForbidden`. Replacing the auth Secret restarts the
+server on the new password. Other Ready reasons: `Provisioning`, `Running`.
+
+The image is fixed per Frame release (`valkey/valkey:9.1.3-alpine`): upgrading
+Frame across an image change restarts every instance.
+
 ## Webhooks
 
 FrameNode and FrameJob have **defaulting + validation**; the other four —

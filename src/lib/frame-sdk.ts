@@ -42,6 +42,7 @@ import { podLogPath, type PodLogQuery } from './pod-logs'
 import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifest-diff'
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
 import { parametersPatch, toDatabase, type Database, type DatabaseSettings, type FrameServiceCR } from './databases'
+import { parametersPatch as cacheParametersPatch, toCache, type Cache, type CacheSettings } from './caches'
 import {
   DEFAULT_NETWORK_EXPECTATIONS,
   NETWORK_HEALTH_POLICY_NAME,
@@ -3895,6 +3896,32 @@ class DatabaseClient {
   }
 }
 
+/** FrameService instances of type cache, in every namespace. Same writes as databases. */
+class CacheClient {
+  private readonly path = crdListPath('services.plume-labs.io', 'v1beta1', 'frameservices')
+
+  async list(): Promise<Cache[]> {
+    const res = await k8sFetch<ListResponse<FrameServiceCR>>(this.path)
+    return (res.items ?? [])
+      .filter((cr) => cr.spec?.type === 'cache')
+      .map(toCache)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  watchPath(): string {
+    return this.path
+  }
+
+  async save(cache: Cache, next: CacheSettings): Promise<void> {
+    await k8sFetch<undefined>(crdListPath('services.plume-labs.io', 'v1beta1', 'frameservices', cache.namespace) + `/${cache.name}`, {
+      action: `set cache ${cache.name}`,
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: cacheParametersPatch(cache, next),
+    })
+  }
+}
+
 /**
  * Reads and writes the one StorageHealthPolicy. No object is not an error: the
  * controller then runs on the defaults, and the first save creates it. Both
@@ -4104,6 +4131,7 @@ export class FrameClient {
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
   public readonly databases: DatabaseClient
+  public readonly caches: CacheClient
 
   public readonly storageHealthPolicy: StorageHealthPolicyClient
   public readonly networkHealthPolicy: NetworkHealthPolicyClient
@@ -4123,6 +4151,7 @@ export class FrameClient {
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
     this.databases = new DatabaseClient()
+    this.caches = new CacheClient()
 
     this.storageHealthPolicy = new StorageHealthPolicyClient()
     this.networkHealthPolicy = new NetworkHealthPolicyClient()
