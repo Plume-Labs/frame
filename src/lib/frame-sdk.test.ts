@@ -1393,39 +1393,78 @@ describe('powerPatchBody', () => {
   })
 })
 
-describe('DatabaseClient', () => {
+describe('StorageHealthPolicyClient', () => {
   afterEach(() => { vi.unstubAllGlobals() })
+  const path = '/apis/frame.plume-labs.io/v1beta1/storagehealthpolicies'
+  const json = (status: number, body: unknown = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
-  it('lists only postgres services, across namespaces', async () => {
+  it('reads the defaults when no policy exists', async () => {
     stubBrowser()
-    const urls: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      urls.push(String(input))
-      return new Response(JSON.stringify({ items: [
-        { metadata: { name: 'b-db', namespace: 'x' }, spec: { type: 'postgres' } },
-        { metadata: { name: 'llm', namespace: 'x' }, spec: { type: 'inference' } },
-      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-    }))
-    const list = await createFrameClient().databases.list()
-    expect(urls).toEqual(['/apis/services.plume-labs.io/v1beta1/frameservices'])
-    expect(list.map((d) => d.name)).toEqual(['b-db'])
+    vi.stubGlobal('fetch', vi.fn(async () => json(404)))
+    expect(await createFrameClient().storageHealthPolicy.get()).toEqual({ zfsCapacityPercent: 80, ssdWearPercent: 80 })
   })
 
-  it('patches the three settings in the instance own namespace, with the action the proxy traces', async () => {
+  it('does not read a refused GET as the defaults', async () => {
+    stubBrowser()
+    vi.stubGlobal('fetch', vi.fn(async () => json(403)))
+    await expect(createFrameClient().storageHealthPolicy.get()).rejects.toThrow()
+  })
+
+  it('creates the policy on the first save, with the action the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return json(init?.method === 'POST' ? 201 : 404)
+    }))
+
+    await createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+
+    // A write that 404s would leave a Failed FrameTask: only the POST is a write.
+    expect(calls.map((c) => [c.init?.method ?? 'GET', c.url])).toEqual([['GET', `${path}/default`], ['POST', path]])
+    const body = JSON.parse(String(calls[1].init?.body)) as { metadata: { name: string }; spec: unknown }
+    expect(body.metadata.name).toBe('default')
+    expect(body.spec).toEqual({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+    expect((calls[1].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set storage health thresholds')
+  })
+
+  it('patches a policy that exists', async () => {
+    stubBrowser()
+    const methods: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET')
+      return json(200)
+    }))
+    await createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+    expect(methods).toEqual(['GET', 'PATCH'])
+  })
+
+  it('does not create over a refused save', async () => {
+    stubBrowser()
+    const fetchMock = vi.fn(async () => json(403))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })).rejects.toThrow()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MachineClient', () => {
+  it('declares a device removed as a merge-patch the proxy traces', async () => {
     stubBrowser()
     const calls: Array<{ url: string; init?: RequestInit }> = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: String(input), init })
       return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
     }))
-    await createFrameClient().databases.save({ name: 'b-db', namespace: 'x' } as Database, { instances: '2', volumeSize: '8Gi', nodes: '' })
-    expect(calls[0].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/b-db')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { parameters: { instances: '2', volumeSize: '8Gi', nodes: null } } })
-    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set database b-db')
+    await createFrameClient().machines.releaseAlert({ name: 'm', namespace: 'default' } as Machine, 'tank')
+    vi.unstubAllGlobals()
+    expect(calls[0].url).toBe('/apis/frame.plume-labs.io/v1beta1/namespaces/default/framemachines/m')
+    expect(calls[0].init?.method).toBe('PATCH')
+    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('device removed: tank on m')
+    expect(JSON.parse(String(calls[0].init?.body)).spec.alertRelease.device).toBe('tank')
   })
-})
 
-describe('MachineClient', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('lists machines mapped through toMachine, sorted by name', async () => {
@@ -1604,5 +1643,37 @@ describe('ClusterClient.inference() speeds', () => {
     stub(() => null)
     const empty = await createFrameClient().cluster.inference()
     expect(empty!.predictedTokensPerSec).toBeNull()
+  })
+})
+
+describe('DatabaseClient', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('lists only postgres services, across namespaces', async () => {
+    stubBrowser()
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response(JSON.stringify({ items: [
+        { metadata: { name: 'b-db', namespace: 'x' }, spec: { type: 'postgres' } },
+        { metadata: { name: 'llm', namespace: 'x' }, spec: { type: 'inference' } },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const list = await createFrameClient().databases.list()
+    expect(urls).toEqual(['/apis/services.plume-labs.io/v1beta1/frameservices'])
+    expect(list.map((d) => d.name)).toEqual(['b-db'])
+  })
+
+  it('patches the three settings in the instance own namespace, with the action the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    await createFrameClient().databases.save({ name: 'b-db', namespace: 'x' } as Database, { instances: '2', volumeSize: '8Gi', nodes: '' })
+    expect(calls[0].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/b-db')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { parameters: { instances: '2', volumeSize: '8Gi', nodes: null } } })
+    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set database b-db')
   })
 })

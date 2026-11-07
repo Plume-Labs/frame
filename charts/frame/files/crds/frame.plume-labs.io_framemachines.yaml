@@ -60,6 +60,25 @@ spec:
           spec:
             description: FrameMachineSpec defines the desired state of FrameMachine.
             properties:
+              alertRelease:
+                description: |-
+                  AlertRelease closes the storage alerts held open on a device someone
+                  removed on purpose. Like powerRequest it is an action stamped with its
+                  moment, acted on once, and reached by the same admin-only patch.
+                properties:
+                  device:
+                    description: 'Device is the alert''s device: an md array, a pool,
+                      a disk''s serial.'
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  requestedAt:
+                    format: date-time
+                    type: string
+                required:
+                - device
+                - requestedAt
+                type: object
               bmc:
                 description: BMCSpec locates the machine's baseboard management controller.
                 properties:
@@ -491,6 +510,16 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              lastAlertRelease:
+                description: LastAlertRelease says what the last alertRelease did.
+                maxLength: 256
+                type: string
+              lastAlertReleaseAt:
+                description: |-
+                  LastAlertReleaseAt is the guard: an alertRelease is acted on only when
+                  its requestedAt is strictly later than this.
+                format: date-time
+                type: string
               lastPowerAction:
                 type: string
               lastPowerActionAt:

@@ -164,4 +164,7 @@ thing. `make helm-parity` compares them, including this label.
 - roleBase: services-frameservice
   apiGroup: services.plume-labs.io
   resource: frameservices
+- roleBase: storagehealthpolicy
+  apiGroup: frame.plume-labs.io
+  resource: storagehealthpolicies
 {{- end -}}

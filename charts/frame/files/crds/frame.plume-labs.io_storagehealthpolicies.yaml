@@ -1,0 +1,85 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: storagehealthpolicies.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: StorageHealthPolicy
+    listKind: StorageHealthPolicyList
+    plural: storagehealthpolicies
+    singular: storagehealthpolicy
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.zfsCapacityPercent
+      name: ZFS capacity %
+      type: integer
+    - jsonPath: .spec.ssdWearPercent
+      name: SSD wear %
+      type: integer
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          StorageHealthPolicy holds the thresholds behind FrameMachine's storage
+          conditions and alerts. Its absence means the defaults above. It has no
+          status: nothing reconciles it, the machine controller reads it on each pass.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              StorageHealthPolicySpec is what the machine controller compares a machine's
+              storage against. Only numbers: what counts as degraded (a failed md member,
+              a pool that is not ONLINE, a vdev with errors) is not a setting.
+            properties:
+              ssdWearPercent:
+                default: 80
+                description: |-
+                  SSDWearPercent raises DiskWearHigh when a drive's BMC-reported
+                  endurance use reaches it. A drive whose BMC reports no endurance never
+                  raises it: the condition then says Unknown, not False.
+                format: int32
+                maximum: 100
+                minimum: 1
+                type: integer
+              zfsCapacityPercent:
+                default: 80
+                description: |-
+                  ZFSCapacityPercent raises StorageCapacityHigh when a pool's capacity
+                  reaches it. ZFS slows down well before a pool is full, and a pool that
+                  fills cannot always free space. It clears two points below, so a pool
+                  sitting on the threshold does not alert every minute.
+                format: int32
+                maximum: 100
+                minimum: 1
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: the policy is a singleton named default
+          rule: self.metadata.name == 'default'
+    served: true
+    storage: true
+    subresources: {}

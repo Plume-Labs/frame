@@ -7,4 +7,5 @@ resources:
 - frame_v1beta1_frameuser.yaml
 - services_v1beta1_frameservice.yaml
 - frame_v1beta1_framemachine.yaml
+- frame_v1beta1_storagehealthpolicy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -43,6 +43,14 @@ import { changedFieldPaths, editActionLabel, MAX_ACTION_LENGTH } from './manifes
 import { toMachine, powerActionLabel, type Machine, type MachineCR } from './machines'
 import { parametersPatch, toDatabase, type Database, type DatabaseSettings, type FrameServiceCR } from './databases'
 import {
+  alertReleaseBody,
+  DEFAULT_STORAGE_THRESHOLDS,
+  STORAGE_HEALTH_POLICY_NAME,
+  toThresholds,
+  type StorageHealthPolicyCR,
+  type StorageThresholds,
+} from './storage-health'
+import {
   installObjectName, randomNameSuffix, toInstall,
   type Install, type InstallCR, type InstallCreateSpec,
 } from './installs'
@@ -822,6 +830,11 @@ export function installsPath(ns?: string): string {
 /** The list endpoint for FrameStorage CRs — cluster-scoped, see `frameClusterListPath`. */
 export function storageEntriesPath(): string {
   return frameClusterListPath('framestorages')
+}
+
+/** The list endpoint for StorageHealthPolicy CRs — cluster-scoped, see `frameClusterListPath`. */
+export function storageHealthPolicyPath(): string {
+  return frameClusterListPath('storagehealthpolicies')
 }
 
 /** The list endpoint for FrameDiskClaim CRs, for callers that want to watch it. */
@@ -3617,6 +3630,16 @@ class MachineClient {
     return machinesPath(this.ns)
   }
 
+  /** Admin only, like power: the same patch on the same object. */
+  async releaseAlert(machine: Machine, device: string): Promise<void> {
+    await k8sFetch<undefined>(`${machinesPath(machine.namespace)}/${machine.name}`, {
+      action: `device removed: ${device} on ${machine.name}`.slice(0, MAX_ACTION_LENGTH),
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: alertReleaseBody(device),
+    })
+  }
+
   async power(machine: Machine, action: string): Promise<void> {
     await k8sFetch<undefined>(`${machinesPath(machine.namespace)}/${machine.name}`, {
       action: powerActionLabel(action, machine.name),
@@ -3860,6 +3883,60 @@ class DatabaseClient {
   }
 }
 
+/**
+ * Reads and writes the one StorageHealthPolicy. No object is not an error: the
+ * controller then runs on the defaults, and the first save creates it. Both
+ * writes go through the UI proxy, which records them as FrameTasks like any
+ * other mutation.
+ */
+class StorageHealthPolicyClient {
+  private readonly path = `${storageHealthPolicyPath()}/${STORAGE_HEALTH_POLICY_NAME}`
+
+  async get(): Promise<StorageThresholds> {
+    try {
+      return toThresholds(await k8sFetch<StorageHealthPolicyCR>(this.path))
+    } catch (e) {
+      if (e instanceof FrameAPIError && e.statusCode === 404) return DEFAULT_STORAGE_THRESHOLDS
+      throw e
+    }
+  }
+
+  watchPath(): string {
+    return storageHealthPolicyPath()
+  }
+
+  /**
+   * Reads first rather than trying the PATCH: a 404 through the proxy would
+   * leave a Failed FrameTask beside the create that follows.
+   */
+  async save(thresholds: StorageThresholds): Promise<void> {
+    const action = 'set storage health thresholds'
+    let exists = true
+    try {
+      await k8sFetch<StorageHealthPolicyCR>(this.path)
+    } catch (e) {
+      if (!(e instanceof FrameAPIError && e.statusCode === 404)) throw e
+      exists = false
+    }
+    if (exists) {
+      await k8sFetch<undefined>(this.path, {
+        action, method: 'PATCH', contentType: 'application/merge-patch+json', body: { spec: thresholds },
+      })
+      return
+    }
+    await k8sFetch<undefined>(storageHealthPolicyPath(), {
+      action,
+      method: 'POST',
+      body: {
+        apiVersion: `${GROUP}/${VERSION}`,
+        kind: 'StorageHealthPolicy',
+        metadata: { name: STORAGE_HEALTH_POLICY_NAME },
+        spec: thresholds,
+      },
+    })
+  }
+}
+
 /** Reads FrameDiskClaim objects — namespaced, mirroring `MachineClient`/`InstallClient` above. */
 class DiskClaimClient {
   constructor(private readonly ns?: string) {}
@@ -3972,6 +4049,8 @@ export class FrameClient {
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
   public readonly databases: DatabaseClient
+
+  public readonly storageHealthPolicy: StorageHealthPolicyClient
   public readonly inference: InferenceServiceClient
 
   constructor(opts: FrameClientOptions = {}) {
@@ -3988,6 +4067,8 @@ export class FrameClient {
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
     this.databases = new DatabaseClient()
+
+    this.storageHealthPolicy = new StorageHealthPolicyClient()
     this.inference = new InferenceServiceClient()
   }
 

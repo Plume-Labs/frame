@@ -101,6 +101,12 @@ branch on it:
 | FrameUser | none — it has no controller. |
 | FrameTask | not applicable — it has no `Ready` condition at all; read `status.phase` (`Running`, `Succeeded`, `Failed`) instead, see below. |
 
+> **FrameMachine also writes four storage conditions:** `StorageDegraded`,
+> `ScrubErrors`, `StorageCapacityHigh` and `DiskWearHigh`. Reason `Detected`
+> or `LastReadHeld` when `True`, `Healthy` when `False`, `ReadUnavailable` or
+> `WearNotReported` when `Unknown`. `Unknown` means not read, never healthy.
+> See [storage.md](storage.md#storage-health-alerts).
+
 > **FrameMachine writes a condition, but not this one.** Its controller
 > writes `Reachable`, not `Ready` — a deliberate choice (`conditionReachable`
 > in `internal/controller/frame/framemachine_controller.go`): a chassis can
@@ -571,6 +577,22 @@ BMC" and "The check that has never once been run end to end", for the
 prerequisites and the unexecuted verification sequence.
 
 ---
+
+## StorageHealthPolicy
+
+`frame.plume-labs.io/v1beta1`, cluster-scoped. The thresholds behind
+FrameMachine's storage conditions and alerts. A singleton: the apiserver
+refuses any name but `default`. It has no status and no controller of its own;
+the FrameMachine controller reads it on each pass, and the absence of the
+object means the defaults below.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `spec.zfsCapacityPercent` | integer, 1–100 | 80 | Raises `StorageCapacityHigh`; clears two points below. |
+| `spec.ssdWearPercent` | integer, 1–100 | 80 | Raises `DiskWearHigh`. |
+
+RBAC follows the three tiers, like SchedulingPolicy: an editor can move a
+threshold, a viewer only reads it. See [storage.md](storage.md#storage-health-alerts).
 
 ## FrameUser
 
