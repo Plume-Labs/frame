@@ -1014,8 +1014,9 @@ kubelet or the scheduler brings it back.
 
 `fixed` means compared: a different value degrades with `SpecDrift` and writes
 nothing. Lowering a queue's `maxMemory` under the data it holds gets the server
-killed replaying its AOF, until the value goes back up. The name must be a DNS
-label of at most 52 characters, or the instance degrades with `InvalidName`.
+killed replaying its AOF, until the value goes back up. The name must be a
+DNS-1035 label, starting with a letter, of at most 52 characters, or the instance
+degrades with `InvalidName`.
 
 **Nothing is taken over.** A StatefulSet, Service or `<name>-valkey-auth` Secret
 this FrameService does not control, or a `data-<name>-0` volume without the label
@@ -1029,9 +1030,11 @@ controller makes a new empty claim under the same name and label on its own, and
 the server starts on it. So the volume's UID is recorded on the StatefulSet
 (`services.plume-labs.io/volume-uid`), and a different UID degrades with
 `InstanceLost` and stays there, the message naming both. Consumers may reach the
-server meanwhile. To go on, restore the data, or set `restoredVolumeUID` to the
-UID in the message. The record goes with the StatefulSet: if that is deleted as
-well, a replaced volume is taken for the original.
+server meanwhile, and it takes their jobs. To go on, restore what is needed and set
+`restoredVolumeUID` to the volume's UID: a restored claim has a new one, so nothing
+else clears it. With no volume at all, restore one under `data-<name>-0` with the
+label above. The record goes with the StatefulSet: deleting it forgets the alarm,
+and a replaced volume is taken for the original.
 
 **`deletionPolicy` never reaches the volume.** It carries no owner reference and
 is not in `status.provisioned`, and the manager has no `delete` verb on volumes,
@@ -1044,11 +1047,16 @@ a config file from that Secret: it is in no argument and no pod spec. The bindin
 carries `host`, `port`, `password` and `url` (`redis://:<password>@<host>:6379`).
 Both need `frame-manager-secret-writer` in the namespace; without it the instance
 degrades with `SecretAccessForbidden`. To rotate, delete that Secret or edit its
-`password`: Frame rewrites the config and restarts the server. A Secret left with
-no `password` degrades with `AuthSecretInvalid`. A pod the apiserver refuses, for
-a quota, degrades with `PodRefused`. `replicas` is held at 1; other edits to the
-StatefulSet stay until the next change of settings. Other Ready reasons:
-`Provisioning`, `Running`. A growing volume does not hold `Ready` back.
+`password`: Frame rewrites the config and restarts the server, within ten minutes
+since it does not watch Secrets. A pod that restarts in between fails its probe
+until then. A Secret left with no `password` degrades with `AuthSecretInvalid`.
+
+The pod asks for 100m of CPU and is limited to 2, which is what a quota with
+`maxCPU` counts. A pod the apiserver refuses stays at `Provisioning`: the
+StatefulSet records it only as a `FailedCreate` event, in `kubectl describe
+statefulset`. `replicas` is held at 1; other edits to the StatefulSet stay until
+the next change of settings. A claim not bound yet is not grown, and a growing
+volume does not hold `Ready` back. Other Ready reasons: `Provisioning`, `Running`.
 
 The image is fixed per Frame release (`valkey/valkey:9.1.3-alpine`): upgrading
 Frame across an image change restarts every instance.

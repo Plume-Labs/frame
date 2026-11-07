@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -117,6 +118,7 @@ func ownedVolume(size string) *corev1.PersistentVolumeClaim {
 		Spec: corev1.PersistentVolumeClaimSpec{Resources: corev1.VolumeResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)},
 		}},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
 	}
 }
 
@@ -131,6 +133,7 @@ func TestSize(t *testing.T) {
 		{name: "queue needs a volume", params: map[string]string{"profile": "queue", "maxMemory": "1Gi"}, refused: "needs volumeSize"},
 		{name: "a volume under three times the dataset", params: map[string]string{"profile": "queue", "maxMemory": "1Gi", "volumeSize": "2Gi"}, refused: "three times"},
 		{name: "cache with a volume", params: map[string]string{"profile": "cache", "maxMemory": "1Gi", "volumeSize": "2Gi"}, refused: "no volume"},
+		{name: "cache with a restored volume", params: map[string]string{"profile": "cache", "maxMemory": "1Gi", "restoredVolumeUID": "x"}, refused: "no volume"},
 		{name: "cache with a class", params: map[string]string{"profile": "cache", "maxMemory": "1Gi", "storageClass": "fast"}, refused: "no volume"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,24 +256,6 @@ func TestReadyNeedsTheWholeRollout(t *testing.T) {
 				t.Fatalf("%+v", res)
 			}
 		})
-	}
-}
-
-// A quota refusal leaves no pod: the StatefulSet's condition is the only trace.
-func TestARefusedPodIsNamed(t *testing.T) {
-	var w writes
-	p, c := newProvider(t, &w)
-	svc := lru()
-	reconcileOK(t, p, svc)
-	sts := statefulSet(t, c)
-	sts.Status.Conditions = []appsv1.StatefulSetCondition{{
-		Type: "ReplicaFailure", Status: corev1.ConditionTrue, Message: "exceeded quota",
-	}}
-	if err := c.Status().Update(context.Background(), sts); err != nil {
-		t.Fatal(err)
-	}
-	if res := reconcileOK(t, p, svc); res.Reason != ReasonPodRefused || !strings.Contains(res.Message, "exceeded quota") {
-		t.Fatalf("%+v", res)
 	}
 }
 
@@ -473,6 +458,48 @@ func TestALostRaceIsNoFailure(t *testing.T) {
 	}
 }
 
+func TestAConflictIsNoFailure(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	reconcileOK(t, p, lru())
+	moved := instance(map[string]framev1beta1.ParameterValue{"profile": ProfileCache, "maxMemory": "1Gi"})
+	raced := New(interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{
+		Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+			return apierrors.NewConflict(schema.GroupResource{Resource: "statefulsets"}, "jobs", errors.New("stale"))
+		},
+	}), c)
+	if res := reconcileOK(t, raced, moved); res.Reason != ReasonProvisioning {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestAnEditedPasswordCannotBreakTheURL(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := lru()
+	reconcileOK(t, p, svc)
+	ctx := context.Background()
+	var secret corev1.Secret
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "jobs-valkey-auth"}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	secret.Data[passwordKey] = []byte("p@ss/w#rd")
+	if err := c.Update(ctx, &secret); err != nil {
+		t.Fatal(err)
+	}
+	b, err := p.Bind(ctx, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(string(b.Data["url"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := u.User.Password(); got != "p@ss/w#rd" || u.Host != "jobs.shop.svc:6379" {
+		t.Fatalf("%q: %q", u.Host, got)
+	}
+}
+
 func TestForeignObjectsAreLeftAlone(t *testing.T) {
 	foreign := metav1.ObjectMeta{Name: "jobs", Namespace: ns}
 	for name, obj := range map[string]client.Object{
@@ -654,6 +681,38 @@ func TestARefusedGrowthDegradesBeforeTheTemplateMoves(t *testing.T) {
 	}
 	if statefulSet(t, c).Annotations[templateHashAnnotation] != before {
 		t.Fatal("the server restarted for an edit that was refused")
+	}
+}
+
+// A claim waiting for its pod cannot grow, and the pod may be waiting on the
+// template of this same edit.
+func TestAnUnboundVolumeDoesNotHoldTheTemplateBack(t *testing.T) {
+	var w writes
+	unbound := ownedVolume("2Gi")
+	unbound.Status.Phase = corev1.ClaimPending
+	p, c := newProvider(t, &w, unbound)
+	svc := queue()
+	reconcileOK(t, p, svc)
+	before := statefulSet(t, c).Annotations[templateHashAnnotation]
+	w.patchErr = apierrors.NewInvalid(schema.GroupKind{Kind: "PersistentVolumeClaim"}, "data-jobs-0", nil)
+	both := instance(map[string]framev1beta1.ParameterValue{
+		"profile": ProfileQueue, "maxMemory": "256Mi", "volumeSize": "8Gi", "storageClass": "fast",
+	})
+	reconcileOK(t, p, both)
+	if statefulSet(t, c).Annotations[templateHashAnnotation] == before {
+		t.Fatal("the template stayed behind a claim that cannot grow yet")
+	}
+}
+
+func TestARefusalTheStorageCallsInvalidDegradesToo(t *testing.T) {
+	var w writes
+	p, _ := newProvider(t, &w, ownedVolume("2Gi"))
+	w.patchErr = apierrors.NewInvalid(schema.GroupKind{Kind: "PersistentVolumeClaim"}, "data-jobs-0", nil)
+	grown := instance(map[string]framev1beta1.ParameterValue{
+		"profile": ProfileQueue, "maxMemory": "512Mi", "volumeSize": "8Gi", "storageClass": "fast",
+	})
+	if res := reconcileOK(t, p, grown); res.Reason != ReasonVolumeGrow {
+		t.Fatalf("%+v", res)
 	}
 }
 

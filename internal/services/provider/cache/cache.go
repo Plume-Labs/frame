@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -118,7 +119,6 @@ const (
 	ReasonVolumeShrink = "VolumeShrinkRefused"
 	ReasonVolumeGrow   = "VolumeGrowRefused"
 	ReasonAuthInvalid  = "AuthSecretInvalid"
-	ReasonPodRefused   = "PodRefused"
 	ReasonProvisioning = "Provisioning"
 	ReasonRunning      = "Running"
 )
@@ -319,17 +319,12 @@ func (p *Provider) rollOut(
 }
 
 // readiness reads the StatefulSet. A pod the apiserver refuses, for a quota say,
-// never appears, and only this condition says why.
+// leaves only a FailedCreate event: the StatefulSet writes no condition for it.
 func readiness(sts *appsv1.StatefulSet, svc *servicesv1beta1.FrameService, params map[string]string) provider.Result {
 	if sts.Status.ObservedGeneration >= sts.Generation && sts.Status.ReadyReplicas >= 1 && sts.Status.UpdatedReplicas >= 1 {
 		return provider.Result{Ready: true, Reason: ReasonRunning, Message: fmt.Sprintf("%s running, profile %s", svc.Name, params["profile"])}
 	}
-	for _, c := range sts.Status.Conditions {
-		if c.Type == appsv1.StatefulSetConditionType("ReplicaFailure") && c.Status == corev1.ConditionTrue {
-			return degraded(ReasonPodRefused, "the pod of %s was refused: %s", svc.Name, c.Message)
-		}
-	}
-	return degraded(ReasonProvisioning, "waiting for the pod of %s", svc.Name)
+	return degraded(ReasonProvisioning, "waiting for the pod of %s; if none appears, kubectl describe statefulset says why", svc.Name)
 }
 
 // findOwned reads the object named after the instance, and stops on one this
@@ -379,8 +374,9 @@ func (p *Provider) checkVolume(
 	if apierrors.IsNotFound(err) {
 		if svc.Status.Binding.Endpoint != "" {
 			return nil, degraded(ReasonInstanceLost,
-				"queue %s was serving and its volume %s has disappeared: not started on an empty one; restore it",
-				svc.Name, volumeName(svc.Name)), true, nil
+				"queue %s was serving and its volume %s has disappeared: not started on an empty one; "+
+					"restore it under that name, labelled %s=%s",
+				svc.Name, volumeName(svc.Name), OwnerLabel, svc.Name), true, nil
 		}
 		return nil, provider.Result{}, false, nil
 	}
@@ -417,8 +413,9 @@ func (p *Provider) checkVolumeIdentity(
 	case recorded != "" && params["restoredVolumeUID"] != uid:
 		return degraded(ReasonInstanceLost,
 			"the volume of queue %s is no longer the one it ran on (UID %s, now %s): its data may be gone; "+
-				"restore it, or set restoredVolumeUID to %s to go on with this volume",
-			sts.Name, recorded, uid, uid), true, nil
+				"restore what is needed, then set restoredVolumeUID to the volume's UID. "+
+				"Deleting the StatefulSet would forget this record",
+			sts.Name, recorded, uid), true, nil
 	}
 	sts.Annotations[volumeUIDAnnotation] = uid
 	if err := p.client.Update(ctx, sts); err != nil {
@@ -431,7 +428,9 @@ func (p *Provider) checkVolumeIdentity(
 // that cannot expand answers Forbidden, and an error would leave status as it was.
 func (p *Provider) growVolume(ctx context.Context, pvc *corev1.PersistentVolumeClaim, size string) (provider.Result, bool, error) {
 	want := resource.MustParse(size)
-	if want.Cmp(pvc.Spec.Resources.Requests[corev1.ResourceStorage]) == 0 {
+	// A claim not bound yet cannot be resized, and its pod may be waiting on the
+	// other half of this very edit.
+	if want.Cmp(pvc.Spec.Resources.Requests[corev1.ResourceStorage]) == 0 || pvc.Status.Phase != corev1.ClaimBound {
 		return provider.Result{}, false, nil
 	}
 	body, err := json.Marshal(map[string]any{"spec": map[string]any{
@@ -718,6 +717,7 @@ func (p *Provider) Bind(ctx context.Context, svc *servicesv1beta1.FrameService) 
 	if len(password) == 0 {
 		return provider.Binding{}, fmt.Errorf("secret %s has no %q key", key, passwordKey)
 	}
+	// Escaped: a password edited by hand can hold what a URL gives a meaning to.
 	host := strings.Join([]string{svc.Name, svc.Namespace, "svc"}, ".")
 	endpoint := fmt.Sprintf("%s:%d", host, port)
 	return provider.Binding{
@@ -726,7 +726,7 @@ func (p *Provider) Bind(ctx context.Context, svc *servicesv1beta1.FrameService) 
 			"host":     []byte(host),
 			"port":     []byte(strconv.Itoa(port)),
 			"password": password,
-			"url":      fmt.Appendf(nil, "redis://:%s@%s", password, endpoint),
+			"url":      []byte((&url.URL{Scheme: "redis", User: url.UserPassword("", string(password)), Host: endpoint}).String()),
 		},
 	}, nil
 }

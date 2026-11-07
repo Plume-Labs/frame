@@ -14,10 +14,11 @@ release tags follow [Semantic Versioning](https://semver.org/).
 - Frame runs it as a single-replica StatefulSet rather than through an operator;
   the reasons are in `docs/superpowers/specs/2026-11-07-frameservice-cache-valkey-design.md`.
   There is no automatic failover.
-- The manager gains `get`, `list`, `watch`, `create`, `update`, `patch` on
-  `statefulsets` and `patch` on `persistentvolumeclaims`, with no `delete` on
-  either: a queue's volume survives its FrameService whatever `deletionPolicy`
-  says.
+- The manager gains `get`, `list`, `watch`, `create`, `update` on `statefulsets`
+  and `patch` on `persistentvolumeclaims`, with no `delete` on either: a queue's
+  volume survives its FrameService whatever `deletionPolicy` says.
+- A queue whose volume is replaced degrades with `InstanceLost`, until
+  `restoredVolumeUID` names the new one.
 - The console gains Storage → Caches, with `maxMemory` and `volumeSize` editable.
 
 ### Added — SMART reading of solid-state disks
