@@ -483,7 +483,7 @@ jobs:
       # string, so nothing evaluates it. Git also forbids *, ?, [ and \ in ref
       # names, so it cannot glob into something unintended either.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: cluster-control-${{ github.ref_name }}.yaml
           generate_release_notes: true
