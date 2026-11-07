@@ -23,7 +23,7 @@
 # "Delegation to tuned", and the header of
 # deploy/kubernetes/base/node-tuning-agent/daemonset.yaml, which says so where
 # an operator will see it before applying anything.
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
