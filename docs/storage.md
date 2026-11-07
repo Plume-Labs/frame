@@ -404,7 +404,7 @@ a real resolution, and records the outcome in `status.lastAlertRelease`. It clos
 only what a read is holding: an alert the current read confirms stays open.
 
 A list known to be partial gives `Unknown`, reason `ReadUnavailable`, when nothing
-is wrong in what it shows: the agent's lists past their limit, a vdev tree cut, a
+is wrong in what it shows: the agent's lists past their limit, its 64 disks, a vdev tree cut, a
 BMC inventory at its 32 drives. Drives past that limit are not assessed.
 
 **Wear comes from the BMC, then from the disk.** Where the BMC gives no figure
@@ -412,7 +412,8 @@ BMC inventory at its 32 drives. Drives past that limit are not assessed.
 agent reads the disk's own SMART data, in `status.storage.observed[].smart`,
 every disk not known to spin, every six hours, when the agent starts and, for a
 disk whose read gave no self-assessment, every thirty minutes, with `smartctl`
-from its image. An NVMe gives `percentage_used`. A SATA disk gives the standard
+from its image. An NVMe gives `percentage_used`, a SAS disk its solid state media
+log page. A SATA disk gives the standard
 "Percentage Used Endurance Indicator" of its device statistics, or failing that
 the normalized value of a life attribute, chosen by the name smartctl gives it
 (`Media_Wearout_Indicator`, `SSD_Life_Left`, `Percent_Lifetime_Remain`,
@@ -429,7 +430,9 @@ to spin, not read yet or whose read fails or gives no self-assessment, makes
 what that disk had open. So does one `smartctl` cannot reach, such as a logical
 volume behind a RAID controller if the kernel does not call it rotational, and one
 that is not `/dev/sdX` or `/dev/nvmeXnY`, which is refused: such a machine stays
-`Unknown` on this condition, and a real fault still raises it. A new disk waits up
+`Unknown` on this condition, and a real fault still raises it. So does a disk the
+kernel calls rotational and the BMC an SSD: it is not read. A drive only the BMC
+lists is not presented to the node and owes no read. A new disk waits up
 to thirty minutes for its first read. So the conditions also go `Unknown` for a
 moment when the agent restarts, without touching what is open. Wear does not need the agent where the BMC gives a figure:
 with the agent silent, `DiskWearHigh` stays what the BMC says, and `Unknown` if a

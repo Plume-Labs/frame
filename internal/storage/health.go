@@ -80,6 +80,10 @@ const (
 	// MachineInventory.Drives: a list that long may have been cut.
 	MaxInventoryDrives = 32
 
+	// MaxObservedDisks mirrors the MaxItems marker on MachineStorage.Observed:
+	// the agent stops there, so a full list may be missing disks.
+	MaxObservedDisks = 64
+
 	// AgentSilentAfter is how long a report may age before the node's stacks
 	// count as unread. The agent reports every 30 s; this leaves a node room
 	// to restart its pod.
@@ -420,9 +424,11 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		d := &s.Observed[i]
 		listed = append(listed, d.SerialNumber)
 		wear, health := Key{CheckWearHigh, d.SerialNumber}, Key{CheckDegraded, d.SerialNumber}
+		bmc := bmcDrive(inv, d.SerialNumber)
 		// A disk the reader owes a read to, or one that gave nothing. A disk known
-		// to spin is not read: no block, and nothing owed.
-		owed := d.SMART != nil || maybeSolidState(d)
+		// to spin is not read: no block, and nothing owed. The kernel's word is
+		// not enough against a BMC that calls it an SSD: nobody read that disk.
+		owed := d.SMART != nil || maybeSolidState(d) || (bmc != nil && bmc.MediaType == "SSD")
 		if owed && (d.SMART == nil || d.SMART.Passed == nil) {
 			a.SMARTSilent = append(a.SMARTSilent, d.SerialNumber)
 		}
@@ -435,7 +441,6 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 			a.add(CheckDegraded, d.SerialNumber, ScopeSMART, severityCritical,
 				fmt.Sprintf("disk %s (%s, %s) reports a failing SMART self-assessment", d.SerialNumber, d.Path, d.Model))
 		}
-		bmc := bmcDrive(inv, d.SerialNumber)
 		switch {
 		case bmc != nil && bmc.SSDEnduranceUsedPercent != nil:
 		case d.SMART == nil || d.SMART.WearUsedPercent == nil:
@@ -451,6 +456,9 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		}
 	}
 	a.holdUnlisted(open, ScopeSMART, listed)
+	if len(s.Observed) >= MaxObservedDisks {
+		a.Cut[ScopeSMART] = fmt.Sprintf("the agent lists %d disks at most", MaxObservedDisks)
+	}
 }
 
 // Verdict is one condition's value.

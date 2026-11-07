@@ -14,7 +14,8 @@ release tags follow [Semantic Versioning](https://semver.org/).
   self-assessment raises `StorageDegraded`. A read that fails or gives no
   self-assessment makes `StorageDegraded` `Unknown`.
   Options are fixed at compile time and no self-test is ever started; see
-  SECURITY.md. The agent image now carries smartmontools.
+  SECURITY.md. The agent image now carries smartmontools, and the agent mounts
+  the host's `/dev`: its own copy goes stale when a disk is swapped.
 
 ### Added — `postgres` FrameService provider
 

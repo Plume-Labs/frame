@@ -123,6 +123,8 @@ func TestWearReadsTheStandardFieldFirst(t *testing.T) {
 		{"nvme past its rating", `{"nvme_smart_health_information_log":{"percentage_used":130}}`, new(int32(100))},
 		{"ata statistics beat attributes", `{"ata_device_statistics":{"pages":[{"table":[{"name":"Percentage Used Endurance Indicator","value":12}]}]},
 			"ata_smart_attributes":{"table":[{"id":233,"name":"Media_Wearout_Indicator","value":10}]}}`, new(int32(12))},
+		{"a SAS disk's own page", `{"smart_status":{"passed":true},"scsi_percentage_used_endurance_indicator":9}`, new(int32(9))},
+		{"a SAS disk past its rating", `{"scsi_percentage_used_endurance_indicator":130}`, new(int32(100))},
 		{"an NVMe reading below nothing", `{"nvme_smart_health_information_log":{"percentage_used":-1}}`, new(int32(0))},
 		{"Media_Wearout_Indicator counts down", `{"ata_smart_attributes":{"table":[{"id":233,"name":"Media_Wearout_Indicator","value":97}]}}`, new(int32(3))},
 		{"attribute order", `{"ata_smart_attributes":{"table":[{"id":177,"name":"Wear_Leveling_Count","value":50},{"id":231,"name":"SSD_Life_Left","value":90}]}}`, new(int32(10))},

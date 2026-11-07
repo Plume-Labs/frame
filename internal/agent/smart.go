@@ -204,7 +204,9 @@ type smartJSON struct {
 		PercentageUsed  *int32 `json:"percentage_used"`
 		CriticalWarning *int   `json:"critical_warning"`
 	} `json:"nvme_smart_health_information_log"`
-	DeviceStatistics struct {
+	// A SAS disk's solid state media log page, already a percentage used.
+	SCSIPercentageUsed *int32 `json:"scsi_percentage_used_endurance_indicator"`
+	DeviceStatistics   struct {
 		Pages []struct {
 			Table []struct {
 				Name string `json:"name"`
@@ -273,6 +275,9 @@ func parseSMART(stdout string) (*framev1beta1.DiskSMART, error) {
 func wearOf(j *smartJSON) *int32 {
 	if j.NVMe != nil && j.NVMe.PercentageUsed != nil {
 		return percent(*j.NVMe.PercentageUsed)
+	}
+	if j.SCSIPercentageUsed != nil {
+		return percent(*j.SCSIPercentageUsed)
 	}
 	for _, page := range j.DeviceStatistics.Pages {
 		for _, row := range page.Table {

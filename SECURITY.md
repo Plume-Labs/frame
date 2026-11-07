@@ -91,7 +91,7 @@ controller perform a restart without the per-node, per-generation approval
 annotation.
 
 The agent also runs one command from its own image, without `nsenter`:
-`smartctl`, in read-only form. Its options are a compile-time constant, and the
+`smartctl`, in read-only form, under `timeout`. Its options are a compile-time constant, and the
 one variable is a device path that came from the node's own `lsblk` and matches
 a strict pattern, in `internal/agent/smart.go`. No CRD field or annotation reaches
 it. **A way to make the agent run `smartctl` with another option, on another path,

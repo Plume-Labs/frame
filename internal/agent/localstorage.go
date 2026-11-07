@@ -73,8 +73,8 @@ const (
 	storageKillAfterSeconds = 2
 )
 
-// timeoutPrefix is prepended to every storage command: the host's GNU
-// timeout, in the foreground (so the command stays in the agent's process
+// timeoutPrefix is prepended to every storage command: GNU timeout, the host's
+// or for smartctl the image's, in the foreground (so the command stays in the agent's process
 // group, where the busy check can see it), killing after the grace period.
 var timeoutPrefix = []string{"timeout", "--foreground", "-k", fmt.Sprint(storageKillAfterSeconds), fmt.Sprint(storageTimeoutSeconds)}
 

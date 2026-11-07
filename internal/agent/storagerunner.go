@@ -71,8 +71,8 @@ func NewHostStorageExecutor() *HostStorageExecutor {
 
 // NewImageStorageExecutor runs a command from the agent's own image, with no
 // nsenter: for smartctl, which talks to the disk through an ioctl and has no
-// kernel module to agree with, unlike zpool. The pod is privileged, so it sees
-// the host's block devices, and a node needs nothing installed.
+// kernel module to agree with, unlike zpool. The pod is privileged and mounts the
+// host's /dev, so it sees its block devices, and a node needs nothing installed.
 func NewImageStorageExecutor() *HostStorageExecutor {
 	return &HostStorageExecutor{
 		HardDeadline: time.Duration(storageTimeoutSeconds+storageKillAfterSeconds+3) * time.Second,

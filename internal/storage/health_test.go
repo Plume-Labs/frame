@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -552,6 +553,31 @@ func TestADiskNotKnownToSpinWithoutAReadIsNeverHealthy(t *testing.T) {
 	}
 }
 
+// The kernel says it spins, the BMC says SSD: the reader skips it, so nothing
+// was read and False would claim otherwise.
+func TestABMCSSDTheKernelCallsRotationalIsNeverHealthy(t *testing.T) {
+	st := healthyStatus()
+	st.Storage.Observed = []framev1beta1.ObservedDisk{{SerialNumber: "S-A", Rotational: new(true)}}
+	if v := Assess(st, defaults, true, nil, now).Verdict(CheckDegraded, nil); v.Status != "Unknown" {
+		t.Fatalf("%+v", v)
+	}
+}
+
+// A list at its limit may be missing disks, however healthy what it shows.
+func TestAFullDiskListIsNotHealthy(t *testing.T) {
+	st := healthyStatus()
+	for i := range MaxObservedDisks {
+		st.Storage.Observed = append(st.Storage.Observed, smartDisk(fmt.Sprintf("D-%d", i), new(int32(1)), new(true)))
+	}
+	if v := Assess(st, defaults, true, nil, now).Verdict(CheckDegraded, nil); v.Status != "Unknown" {
+		t.Fatalf("full: %+v", v)
+	}
+	st.Storage.Observed = st.Storage.Observed[:MaxObservedDisks-1]
+	if v := Assess(st, defaults, true, nil, now).Verdict(CheckDegraded, nil); v.Status != "False" {
+		t.Fatalf("one under: %+v", v)
+	}
+}
+
 // The kernel says solid state, the BMC says spinning and gives no figure: the
 // disk still owes one, and the BMC's list did not count it.
 func TestADriveTheBMCTakesForAnHDDStillOwesWear(t *testing.T) {
@@ -666,7 +692,8 @@ func TestSilentAgentMakesSMARTUnread(t *testing.T) {
 }
 
 func TestNoSMARTReadIsNotAnUnknownStorageVerdict(t *testing.T) {
-	// A node without SMART data must not turn every StorageDegraded Unknown.
+	// A drive only the BMC lists is not presented to the node, so no read can be
+	// owed for it: a machine behind a RAID controller must not stay Unknown.
 	if v := func() Verdict {
 		a := Assess(healthyStatus(), defaults, true, nil, now)
 		return a.Verdict(CheckDegraded, nil)
