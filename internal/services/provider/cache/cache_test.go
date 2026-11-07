@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -41,8 +42,12 @@ func lru() *servicesv1beta1.FrameService {
 	return instance(map[string]framev1beta1.ParameterValue{"profile": ProfileCache, "maxMemory": "512Mi"})
 }
 
-// writes counts what a provider sent the apiserver.
-type writes struct{ n int }
+// writes counts what a provider sent the apiserver, and whether any was a delete.
+type writes struct {
+	n        int
+	deleted  bool
+	patchErr error
+}
 
 func newProvider(t *testing.T, w *writes, objs ...client.Object) (*Provider, client.Client) {
 	t.Helper()
@@ -65,7 +70,14 @@ func newProvider(t *testing.T, w *writes, objs ...client.Object) (*Provider, cli
 			},
 			Patch: func(ctx context.Context, c client.WithWatch, o client.Object, p client.Patch, opts ...client.PatchOption) error {
 				w.n++
+				if w.patchErr != nil {
+					return w.patchErr
+				}
 				return c.Patch(ctx, o, p, opts...)
+			},
+			Delete: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.DeleteOption) error {
+				w.deleted = true
+				return c.Delete(ctx, o, opts...)
 			},
 		}).Build()
 	return New(c, c), c
@@ -115,9 +127,9 @@ func TestSize(t *testing.T) {
 		params                map[string]string
 	}{
 		{name: "cache", params: map[string]string{"profile": "cache", "maxMemory": "1Gi"}, memory: "1344Mi"},
-		{name: "queue doubles for the fork", params: map[string]string{"profile": "queue", "maxMemory": "1Gi", "volumeSize": "2Gi"}, memory: "2112Mi"},
+		{name: "queue doubles for the fork", params: map[string]string{"profile": "queue", "maxMemory": "1Gi", "volumeSize": "3Gi"}, memory: "2112Mi"},
 		{name: "queue needs a volume", params: map[string]string{"profile": "queue", "maxMemory": "1Gi"}, refused: "needs volumeSize"},
-		{name: "a volume under twice the dataset", params: map[string]string{"profile": "queue", "maxMemory": "1Gi", "volumeSize": "1Gi"}, refused: "twice"},
+		{name: "a volume under three times the dataset", params: map[string]string{"profile": "queue", "maxMemory": "1Gi", "volumeSize": "2Gi"}, refused: "three times"},
 		{name: "cache with a volume", params: map[string]string{"profile": "cache", "maxMemory": "1Gi", "volumeSize": "2Gi"}, refused: "no volume"},
 		{name: "cache with a class", params: map[string]string{"profile": "cache", "maxMemory": "1Gi", "storageClass": "fast"}, refused: "no volume"},
 	} {
@@ -146,7 +158,7 @@ func TestProfilesConfigureTheServer(t *testing.T) {
 	reconcileOK(t, p, queue())
 	spec := statefulSet(t, c).Spec
 	args := spec.Template.Spec.Containers[0].Args
-	for _, want := range [][]string{{"--maxmemory-policy", "noeviction"}, {"--appendonly", "yes"}, {"--maxmemory", "536870912"}} {
+	for _, want := range [][]string{{"--maxmemory-policy", "noeviction"}, {"--appendonly", "yes"}, {"--appendfsync", "everysec"}, {"--maxmemory", "536870912"}} {
 		if i := slices.Index(args, want[0]); i < 0 || args[i+1] != want[1] {
 			t.Errorf("queue args %v lack %v", args, want)
 		}
@@ -220,18 +232,98 @@ func TestSecondPassWritesNothingAndReportsReady(t *testing.T) {
 	}
 }
 
-func TestNotReadyUntilTheNewTemplateRolledOut(t *testing.T) {
+func TestReadyNeedsTheWholeRollout(t *testing.T) {
+	for name, spoil := range map[string]func(*appsv1.StatefulSetStatus, int64){
+		"unobserved generation": func(st *appsv1.StatefulSetStatus, gen int64) { st.ObservedGeneration = gen - 1 },
+		"no ready pod":          func(st *appsv1.StatefulSetStatus, _ int64) { st.ReadyReplicas = 0 },
+		"no updated pod":        func(st *appsv1.StatefulSetStatus, _ int64) { st.UpdatedReplicas = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var w writes
+			p, c := newProvider(t, &w)
+			svc := lru()
+			reconcileOK(t, p, svc)
+			sts := statefulSet(t, c)
+			sts.Status.ReadyReplicas, sts.Status.UpdatedReplicas, sts.Status.ObservedGeneration = 1, 1, sts.Generation
+			spoil(&sts.Status, sts.Generation)
+			if err := c.Status().Update(context.Background(), sts); err != nil {
+				t.Fatal(err)
+			}
+			if res := reconcileOK(t, p, svc); res.Ready {
+				t.Fatalf("%+v", res)
+			}
+		})
+	}
+}
+
+// A quota refusal leaves no pod: the StatefulSet's condition is the only trace.
+func TestARefusedPodIsNamed(t *testing.T) {
 	var w writes
 	p, c := newProvider(t, &w)
 	svc := lru()
 	reconcileOK(t, p, svc)
 	sts := statefulSet(t, c)
-	sts.Status.ReadyReplicas, sts.Status.UpdatedReplicas, sts.Status.ObservedGeneration = 1, 1, sts.Generation-1
+	sts.Status.Conditions = []appsv1.StatefulSetCondition{{
+		Type: "ReplicaFailure", Status: corev1.ConditionTrue, Message: "exceeded quota",
+	}}
 	if err := c.Status().Update(context.Background(), sts); err != nil {
 		t.Fatal(err)
 	}
-	if res := reconcileOK(t, p, svc); res.Ready {
-		t.Fatalf("an unobserved generation read as ready: %+v", res)
+	if res := reconcileOK(t, p, svc); res.Reason != ReasonPodRefused || !strings.Contains(res.Message, "exceeded quota") {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// What the probes, the Service and the hardening rest on, read off the object.
+func TestThePodSpec(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := queue()
+	reconcileOK(t, p, svc)
+	sts := statefulSet(t, c)
+	pod := sts.Spec.Template.Spec
+	ctr := pod.Containers[0]
+
+	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+		t.Error("the token must stay out of the pod")
+	}
+	sc := pod.SecurityContext
+	if sc == nil || sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot || sc.RunAsUser == nil || *sc.RunAsUser != runAsUser ||
+		sc.FSGroup == nil || *sc.FSGroup != runAsGroup || sc.SeccompProfile == nil {
+		t.Errorf("pod security: %+v", sc)
+	}
+	cs := ctr.SecurityContext
+	if cs == nil || cs.ReadOnlyRootFilesystem == nil || !*cs.ReadOnlyRootFilesystem ||
+		cs.AllowPrivilegeEscalation == nil || *cs.AllowPrivilegeEscalation || cs.Capabilities == nil || len(cs.Capabilities.Drop) != 1 {
+		t.Errorf("container security: %+v", cs)
+	}
+	if len(ctr.Env) != 1 || ctr.Env[0].Name != "REDISCLI_AUTH" || ctr.Env[0].ValueFrom.SecretKeyRef.Key != passwordKey {
+		t.Errorf("the readiness probe's valkey-cli reads REDISCLI_AUTH: %+v", ctr.Env)
+	}
+	if ctr.LivenessProbe.TCPSocket == nil {
+		t.Error("liveness must not run a command")
+	}
+	if _, limited := ctr.Resources.Limits[corev1.ResourceCPU]; !limited {
+		t.Error("a FrameResourceQuota with maxCPU refuses a pod with no CPU limit")
+	}
+	if pod.NodeSelector[serviceClassLabel] != "MEDIUM" {
+		t.Errorf("selector: %v", pod.NodeSelector)
+	}
+	if sts.Spec.PodManagementPolicy != appsv1.ParallelPodManagement {
+		t.Error("OrderedReady can leave a rollout stuck")
+	}
+
+	var service corev1.Service
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(svc), &service); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range service.Spec.Selector {
+		if sts.Spec.Template.Labels[k] != v {
+			t.Errorf("the Service selects %s=%s, the pod has %v", k, v, sts.Spec.Template.Labels)
+		}
+	}
+	if len(service.Spec.Selector) == 0 {
+		t.Error("the Service selects nothing")
 	}
 }
 
@@ -271,6 +363,113 @@ func TestNewPasswordRollsThePod(t *testing.T) {
 	reconcileOK(t, p, svc)
 	if statefulSet(t, c).Annotations[templateHashAnnotation] == before {
 		t.Error("a new password left the template alone")
+	}
+}
+
+// A password edited by hand: the server has to follow, or the probe never passes.
+func TestAnEditedPasswordReachesTheServer(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := lru()
+	reconcileOK(t, p, svc)
+	before := statefulSet(t, c).Annotations[templateHashAnnotation]
+	ctx := context.Background()
+	var secret corev1.Secret
+	key := client.ObjectKey{Namespace: ns, Name: "jobs-valkey-auth"}
+	if err := c.Get(ctx, key, &secret); err != nil {
+		t.Fatal(err)
+	}
+	secret.Data[passwordKey] = []byte("rotated")
+	if err := c.Update(ctx, &secret); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOK(t, p, svc)
+	if err := c.Get(ctx, key, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(secret.Data[authConfKey]), "rotated") {
+		t.Fatalf("auth.conf: %s", secret.Data[authConfKey])
+	}
+	if statefulSet(t, c).Annotations[templateHashAnnotation] == before {
+		t.Error("the pod must roll onto the new auth.conf")
+	}
+}
+
+func TestASecretWithNoPasswordDegrades(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := lru()
+	reconcileOK(t, p, svc)
+	ctx := context.Background()
+	var secret corev1.Secret
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "jobs-valkey-auth"}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	delete(secret.Data, passwordKey)
+	if err := c.Update(ctx, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if res := reconcileOK(t, p, svc); res.Reason != ReasonAuthInvalid {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestANameThePodsCannotCarryIsRefusedBeforeAnyWrite(t *testing.T) {
+	for _, name := range []string{"a.b", "1jobs", strings.Repeat("a", 53)} {
+		var w writes
+		p, _ := newProvider(t, &w)
+		svc := lru()
+		svc.Name = name
+		if res := reconcileOK(t, p, svc); res.Reason != ReasonInvalidName {
+			t.Fatalf("%q: %+v", name, res)
+		}
+		if w.n != 0 {
+			t.Fatalf("%q: %d writes", name, w.n)
+		}
+	}
+	var w writes
+	p, _ := newProvider(t, &w)
+	svc := lru()
+	svc.Name = strings.Repeat("a", 52)
+	if res := reconcileOK(t, p, svc); res.Reason == ReasonInvalidName {
+		t.Fatalf("the longest name that fits: %+v", res)
+	}
+}
+
+func TestReplicasStayAtOne(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w)
+	svc := lru()
+	reconcileOK(t, p, svc)
+	sts := statefulSet(t, c)
+	sts.Spec.Replicas = new(int32(2))
+	if err := c.Update(context.Background(), sts); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOK(t, p, svc)
+	if got := *statefulSet(t, c).Spec.Replicas; got != 1 {
+		t.Fatalf("two servers behind one Service, %d replicas", got)
+	}
+}
+
+// A write that lost to a stale cache is the next pass's business, not an error.
+func TestALostRaceIsNoFailure(t *testing.T) {
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, servicesv1beta1.AddToScheme} {
+		if err := add(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
+			if _, ok := o.(*appsv1.StatefulSet); ok {
+				return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "statefulsets"}, o.GetName())
+			}
+			return c.Create(ctx, o, opts...)
+		},
+	}).Build()
+	if res := reconcileOK(t, New(c, c), lru()); res.Reason != ReasonProvisioning {
+		t.Fatalf("%+v", res)
 	}
 }
 
@@ -331,20 +530,88 @@ func TestAQueueThatServedIsNotRestartedEmpty(t *testing.T) {
 	}
 }
 
-// A FrameService deleted under Retain leaves its volume: the same name finds it.
+// What the StatefulSet controller does with a lost claim: a new one, same name,
+// same label, empty. Only the UID gives it away, and it must stay degraded.
+func TestAReplacedVolumeIsNoticedAndStaysSo(t *testing.T) {
+	ctx := context.Background()
+	var w writes
+	first := ownedVolume("2Gi")
+	first.UID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	p, c := newProvider(t, &w, first)
+	svc := queue()
+	reconcileOK(t, p, svc) // creates the StatefulSet
+	reconcileOK(t, p, svc) // records the volume
+	if got := statefulSet(t, c).Annotations[volumeUIDAnnotation]; got != string(first.UID) {
+		t.Fatalf("recorded %q", got)
+	}
+	markReady(t, c)
+	if res := reconcileOK(t, p, svc); !res.Ready {
+		t.Fatalf("%+v", res)
+	}
+
+	if err := c.Delete(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := ownedVolume("2Gi")
+	second.ResourceVersion = ""
+	second.UID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	if err := c.Create(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		res := reconcileOK(t, p, svc)
+		if res.Ready || res.Reason != ReasonInstanceLost || !strings.Contains(res.Message, string(second.UID)) {
+			t.Fatalf("%+v", res)
+		}
+	}
+
+	// A person says this volume is the one wanted, and only this one.
+	accepted := queue()
+	accepted.Spec.Parameters["restoredVolumeUID"] = framev1beta1.ParameterValue(second.UID)
+	if res := reconcileOK(t, p, accepted); !res.Ready {
+		t.Fatalf("%+v", res)
+	}
+	if got := statefulSet(t, c).Annotations[volumeUIDAnnotation]; got != string(second.UID) {
+		t.Fatalf("recorded %q", got)
+	}
+	other := queue()
+	other.Spec.Parameters["restoredVolumeUID"] = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if res := reconcileOK(t, p, other); !res.Ready {
+		t.Fatalf("the recorded volume is still the live one: %+v", res)
+	}
+}
+
+// A FrameService deleted under Retain leaves its volume, and the claim template
+// of the same name is what mounts it again.
 func TestARecreatedQueueKeepsItsVolume(t *testing.T) {
 	var w writes
 	p, c := newProvider(t, &w, ownedVolume("2Gi"))
 	if res := reconcileOK(t, p, queue()); res.Reason != ReasonProvisioning {
 		t.Fatalf("%+v", res)
 	}
-	statefulSet(t, c)
+	sts := statefulSet(t, c)
+	if got := sts.Spec.VolumeClaimTemplates[0].Name + "-" + sts.Name + "-0"; got != "data-jobs-0" {
+		t.Fatalf("the claim would be %s", got)
+	}
+}
+
+func TestARetainedVolumeOfAnotherClassIsDrift(t *testing.T) {
+	var w writes
+	old := ownedVolume("2Gi")
+	class := "slow"
+	old.Spec.StorageClassName = &class
+	p, _ := newProvider(t, &w, old)
+	if res := reconcileOK(t, p, queue()); res.Reason != ReasonSpecDrift {
+		t.Fatalf("%+v", res)
+	}
+	if w.n != 0 {
+		t.Fatal("a drift wrote")
+	}
 }
 
 func TestVolumeGrowsAndNeverShrinks(t *testing.T) {
 	var w writes
 	p, c := newProvider(t, &w, ownedVolume("4Gi"))
-	reconcileOK(t, p, queue())
 	before := w.n
 	if res := reconcileOK(t, p, queue()); res.Reason != ReasonVolumeShrink {
 		t.Fatalf("%+v", res)
@@ -356,14 +623,37 @@ func TestVolumeGrowsAndNeverShrinks(t *testing.T) {
 	grown := instance(map[string]framev1beta1.ParameterValue{
 		"profile": ProfileQueue, "maxMemory": "512Mi", "volumeSize": "8Gi", "storageClass": "fast",
 	})
-	reconcileOK(t, p, grown) // creates the StatefulSet
-	reconcileOK(t, p, grown)
+	if res := reconcileOK(t, p, grown); res.Reason != ReasonProvisioning {
+		t.Fatalf("%+v", res)
+	}
 	var pvc corev1.PersistentVolumeClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "data-jobs-0"}, &pvc); err != nil {
 		t.Fatal(err)
 	}
 	if got := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; got.Cmp(resource.MustParse("8Gi")) != 0 {
 		t.Fatalf("volume is %s", got.String())
+	}
+}
+
+// A class with no expansion: the status has to say so, and the other half of
+// the same edit must not restart the server for nothing.
+func TestARefusedGrowthDegradesBeforeTheTemplateMoves(t *testing.T) {
+	var w writes
+	p, c := newProvider(t, &w, ownedVolume("2Gi"))
+	svc := queue()
+	reconcileOK(t, p, svc)
+	reconcileOK(t, p, svc)
+	before := statefulSet(t, c).Annotations[templateHashAnnotation]
+	w.patchErr = apierrors.NewForbidden(schema.GroupResource{Resource: "persistentvolumeclaims"}, "data-jobs-0",
+		errors.New("the storageclass does not support resize"))
+	both := instance(map[string]framev1beta1.ParameterValue{
+		"profile": ProfileQueue, "maxMemory": "1Gi", "volumeSize": "8Gi", "storageClass": "fast",
+	})
+	if res := reconcileOK(t, p, both); res.Reason != ReasonVolumeGrow {
+		t.Fatalf("%+v", res)
+	}
+	if statefulSet(t, c).Annotations[templateHashAnnotation] != before {
+		t.Fatal("the server restarted for an edit that was refused")
 	}
 }
 
@@ -382,8 +672,16 @@ func TestOwnership(t *testing.T) {
 	if sts.Spec.PersistentVolumeClaimRetentionPolicy != nil {
 		t.Error("the volume outlives the StatefulSet: the default retention is the contract")
 	}
-	if res := reconcileOK(t, p, svc); len(res.Provisioned) != 0 {
+	markReady(t, c)
+	res := reconcileOK(t, p, svc)
+	if !res.Ready {
+		t.Fatalf("%+v", res)
+	}
+	if len(res.Provisioned) != 0 {
 		t.Errorf("status.provisioned is what deletionPolicy: Delete removes, and the manager cannot: %+v", res.Provisioned)
+	}
+	if w.deleted {
+		t.Error("the manager holds no delete on what it wrote")
 	}
 }
 

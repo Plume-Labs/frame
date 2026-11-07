@@ -291,8 +291,8 @@ func readyCondition(svc *servicesv1beta1.FrameService) metav1.Condition {
 	return metav1.Condition{}
 }
 
-// The cache provider against a real apiserver: what the fake client cannot show
-// is the defaulting, which must not read as a difference on the second pass.
+// The cache provider against a real apiserver: it accepts the objects as written,
+// and an unchanged instance sees no write.
 var _ = Describe("FrameService of type cache", func() {
 	const name = "cache-queue"
 	const ns = "default"
@@ -343,10 +343,11 @@ var _ = Describe("FrameService of type cache", func() {
 		pass()
 		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
 		Expect(sts.Generation).To(Equal(generation))
-		Expect(sts.ResourceVersion).To(Equal(version), "a defaulted field read as a difference")
+		Expect(sts.ResourceVersion).To(Equal(version), "an unchanged instance was written")
 
 		// envtest runs no StatefulSet controller: this is what it would report,
-		// and the claim it would make.
+		// and the claim it would make, labelled with the selector as the real one
+		// does (read off a cluster's claims).
 		sts.Status.Replicas, sts.Status.ReadyReplicas, sts.Status.UpdatedReplicas = 1, 1, 1
 		sts.Status.ObservedGeneration = sts.Generation
 		Expect(k8sClient.Status().Update(ctx, &sts)).To(Succeed())

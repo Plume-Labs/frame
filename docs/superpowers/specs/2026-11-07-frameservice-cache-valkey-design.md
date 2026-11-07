@@ -42,10 +42,10 @@ release cycle to follow, for a topology we would not use.
 
 The server is one pod. A restart is a few seconds plus the AOF replay. A node
 that dies takes longer: a StatefulSet pod on an unreachable node is not replaced
-until the node is confirmed gone, by design. `appendfsync everysec` loses at most
-the last second, and on a slow disk the AOF stalls writes, as Redis did on Ceph
-in September; liveness is a TCP check so that a stall does not get the server
-killed.
+until the node is confirmed gone, by design. `appendfsync everysec` loses a second
+or two of writes, more on a disk that stalls, and on a slow disk the AOF holds
+writes up, as Redis did on Ceph in September; liveness is a TCP check so that a
+stall does not get the server killed.
 
 Revisit when the official operator leaves alpha and a consumer needs a replica.
 The FrameService contract (`profile`, `maxMemory`, the binding Secret) does not

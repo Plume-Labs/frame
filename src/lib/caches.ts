@@ -51,7 +51,7 @@ export function settingsProblem(c: Cache, s: CacheSettings): string | null {
   if (!/^[1-9][0-9]{0,6}(Mi|Gi)$/.test(s.maxMemory)) return 'Max memory: for example 512Mi.'
   if (c.profile !== 'queue') return null
   if (!/^[1-9][0-9]{0,6}(Mi|Gi|Ti)$/.test(s.volumeSize)) return 'Volume size: for example 2Gi.'
-  if (mebibytes(s.volumeSize) < 2 * mebibytes(s.maxMemory)) return 'Volume size: at least twice max memory, an AOF rewrite holds both files.'
+  if (mebibytes(s.volumeSize) < 3 * mebibytes(s.maxMemory)) return 'Volume size: at least three times max memory, for an AOF rewrite.'
   return null
 }
 
@@ -64,6 +64,9 @@ export function changeWarnings(c: Cache, next: CacheSettings): string[] {
         ? 'The server restarts and replays its AOF: consumers lose the connection meanwhile.'
         : 'The server restarts, and a cache comes back empty.',
     )
+  }
+  if (c.profile === 'queue' && mebibytes(next.maxMemory) < mebibytes(c.maxMemory)) {
+    out.push('Below the data held, the server is killed replaying its AOF and stays down until this goes back up.')
   }
   if (mebibytes(next.volumeSize) < mebibytes(c.volumeSize)) out.push('A volume cannot shrink: the provider will refuse this.')
   else if (next.volumeSize !== c.volumeSize) out.push(`The volume grows to ${next.volumeSize}. This cannot be undone.`)

@@ -24,16 +24,16 @@ describe('toCache', () => {
 
 describe('settingsProblem', () => {
   it('passes valid settings', () => {
-    expect(settingsProblem(queue, { maxMemory: '1Gi', volumeSize: '2Gi' })).toBeNull()
+    expect(settingsProblem(queue, { maxMemory: '1Gi', volumeSize: '3Gi' })).toBeNull()
     expect(settingsProblem(lru, { maxMemory: '64Mi', volumeSize: '' })).toBeNull()
   })
 
-  it('refuses a queue volume under twice the dataset, as the provider does', () => {
-    expect(settingsProblem(queue, { maxMemory: '2Gi', volumeSize: '2Gi' })).toMatch(/twice/)
+  it('refuses a queue volume under three times the dataset, as the provider does', () => {
+    expect(settingsProblem(queue, { maxMemory: '1Gi', volumeSize: '2Gi' })).toMatch(/three times/)
   })
 
   it('refuses a malformed size', () => {
-    expect(settingsProblem(queue, { maxMemory: '1G', volumeSize: '2Gi' })).toMatch(/Max memory/)
+    expect(settingsProblem(queue, { maxMemory: '1G', volumeSize: '3Gi' })).toMatch(/Max memory/)
     expect(settingsProblem(queue, { maxMemory: '1Gi', volumeSize: 'lots' })).toMatch(/Volume size/)
   })
 })
@@ -42,6 +42,11 @@ describe('changeWarnings', () => {
   it('warns that a cache comes back empty and a queue replays', () => {
     expect(changeWarnings(lru, { maxMemory: '1Gi', volumeSize: '' })[0]).toMatch(/empty/)
     expect(changeWarnings(queue, { maxMemory: '1Gi', volumeSize: '2Gi' })[0]).toMatch(/AOF/)
+  })
+
+  it('warns that lowering a queue under its data keeps it down', () => {
+    expect(changeWarnings(queue, { maxMemory: '256Mi', volumeSize: '2Gi' }).join(' ')).toMatch(/stays down/)
+    expect(changeWarnings(lru, { maxMemory: '256Mi', volumeSize: '' }).join(' ')).not.toMatch(/stays down/)
   })
 
   it('tells growth from a shrink the provider refuses', () => {

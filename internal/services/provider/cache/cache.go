@@ -6,15 +6,19 @@
 //
 //   - cache: evicts with LRU and persists nothing. A restart empties it.
 //   - queue: AOF on a volume, noeviction. What BullMQ needs: a job is never
-//     evicted, and a restart loses at most the last second.
+//     evicted, and a restart loses a second or two of writes, more on a disk
+//     that stalls.
 //
 // The rules follow from a queue being data:
 //
 //   - Nothing is taken over. A StatefulSet, Service, Secret or volume under
 //     these names that this FrameService did not create degrades with
 //     NotOwned, and nothing is written.
-//   - A queue that served and lost its volume is not started on an empty one:
-//     consumers would find no jobs at the address they know (InstanceLost).
+//   - A queue that lost its volume says so, and stays degraded until a person
+//     does (InstanceLost). Frame cannot always prevent the empty start: with its
+//     pod gone, the StatefulSet controller makes a new claim under the same name
+//     on its own. So the volume's UID is recorded on the StatefulSet, and a
+//     different one is what gives it away.
 //   - The volume carries no owner reference and is not in status.provisioned,
 //     and the manager has no delete verb on volumes or StatefulSets, so
 //     deletionPolicy never reaches it. A FrameService recreated under the same
@@ -22,6 +26,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -39,6 +44,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -49,8 +55,9 @@ import (
 
 // No delete on statefulsets: garbage collection removes them through the owner
 // reference, and a grant cannot tell Frame's from anyone else's.
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch
-// patch grows a queue's volume, and only ever one labelled as this instance's.
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update
+// patch grows a queue's volume. Only this code keeps that to volumes labelled as
+// the instance's: the grant itself is cluster-wide.
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;patch
 
 const (
@@ -63,6 +70,8 @@ const (
 	OwnerLabel = "services.plume-labs.io/frameservice"
 	// profileAnnotation records the profile a StatefulSet was created with.
 	profileAnnotation = "services.plume-labs.io/cache-profile"
+	// volumeUIDAnnotation is the UID of the volume a queue first ran on.
+	volumeUIDAnnotation = "services.plume-labs.io/volume-uid"
 	// templateHashAnnotation is the hash of the pod template this provider
 	// last wrote. Comparing it rather than the live template is what keeps a
 	// field the apiserver defaulted from reading as a difference on every pass.
@@ -93,14 +102,23 @@ const (
 	// Memory a server needs besides its dataset: clients, buffers, the process.
 	overheadMiB = 64
 	cpuRequest  = "100m"
+	// A FrameResourceQuota with maxCPU refuses a pod without a CPU limit. Two
+	// cores never throttle a server whose commands run on one thread.
+	cpuLimit = "2"
+	// The controller-revision-hash label is the pod's name and 11 characters more.
+	maxNameLength = 52
 )
 
 // Degrade reasons.
 const (
+	ReasonInvalidName  = "InvalidName"
 	ReasonNotOwned     = "NotOwned"
 	ReasonSpecDrift    = "SpecDrift"
 	ReasonInstanceLost = "InstanceLost"
 	ReasonVolumeShrink = "VolumeShrinkRefused"
+	ReasonVolumeGrow   = "VolumeGrowRefused"
+	ReasonAuthInvalid  = "AuthSecretInvalid"
+	ReasonPodRefused   = "PodRefused"
 	ReasonProvisioning = "Provisioning"
 	ReasonRunning      = "Running"
 )
@@ -140,13 +158,19 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 			},
 			"volumeSize": {
 				Type:        "string",
-				Description: "Size of a queue's volume, at least twice maxMemory. Required for queue, refused for cache. Can grow, never shrink.",
+				Description: "Size of a queue's volume, at least three times maxMemory. Required for queue, refused for cache. Can grow, never shrink.",
 				Pattern:     `^[1-9][0-9]{0,6}(Mi|Gi|Ti)$`,
 			},
 			"storageClass": {
 				Type:        "string",
 				Description: "StorageClass of a queue's volume. Fixed once the instance exists; empty is the cluster default.",
 				Pattern:     `^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`,
+			},
+			"restoredVolumeUID": {
+				Type: "string",
+				Description: "UID of the volume a queue now runs on, after InstanceLost: says the data on it is the " +
+					"data wanted. Compared on every pass, so it answers for that volume and no other.",
+				Pattern: `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
 			},
 		},
 	}
@@ -169,15 +193,15 @@ func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 		if err != nil {
 			return provider.Sizing{}, fmt.Errorf("volumeSize: %w", err)
 		}
-		if volume.Value() < 2*maxMemory.Value() {
+		if volume.Value() < 3*maxMemory.Value() {
 			return provider.Sizing{}, fmt.Errorf(
-				"volumeSize %s is under twice maxMemory %s: an AOF rewrite holds both files at once",
+				"volumeSize %s is under three times maxMemory %s: an AOF rewrite holds the old base, its log and the new base at once",
 				params["volumeSize"], params["maxMemory"])
 		}
 		return provider.Sizing{CPU: cpuRequest, Memory: fmt.Sprintf("%dMi", 2*mib+overheadMiB)}, nil
 	}
-	if params["volumeSize"] != "" || params["storageClass"] != "" {
-		return provider.Sizing{}, errors.New("volumeSize and storageClass belong to the queue profile: a cache has no volume")
+	if params["volumeSize"] != "" || params["storageClass"] != "" || params["restoredVolumeUID"] != "" {
+		return provider.Sizing{}, errors.New("volumeSize, storageClass and restoredVolumeUID belong to the queue profile: a cache has no volume")
 	}
 	return provider.Sizing{CPU: cpuRequest, Memory: fmt.Sprintf("%dMi", mib+mib/4+overheadMiB)}, nil
 }
@@ -191,9 +215,22 @@ func authSecretName(svc string) string { return svc + authSecretSuffix }
 // volumeName is the claim the StatefulSet controller makes for its one pod.
 func volumeName(svc string) string { return dataVolume + "-" + svc + "-0" }
 
-// Reconcile converges the instance, or says why it will not. Every refusal
-// comes before the first write.
+// Reconcile converges the instance, or says why it will not. A write that lost
+// to the cached read it was based on is no failure: the next pass reads again.
 func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameService) (provider.Result, error) {
+	res, err := p.converge(ctx, svc)
+	if apierrors.IsAlreadyExists(err) || apierrors.IsConflict(err) {
+		return degraded(ReasonProvisioning, "%s changed during this pass, reading it again", svc.Name), nil
+	}
+	return res, err
+}
+
+func (p *Provider) converge(ctx context.Context, svc *servicesv1beta1.FrameService) (provider.Result, error) {
+	// The Service needs a DNS-1035 label, which a FrameService's name need not be.
+	if errs := validation.IsDNS1035Label(svc.Name); len(errs) > 0 || len(svc.Name) > maxNameLength {
+		return degraded(ReasonInvalidName, "%q cannot name this instance: at most %d characters, a DNS label starting with a letter",
+			svc.Name, maxNameLength), nil
+	}
 	params := provider.Params(svc.Spec.Parameters)
 	sizing, err := p.Size(params)
 	if err != nil {
@@ -220,6 +257,11 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		if volume, res, stop, err = p.checkVolume(ctx, svc, params); stop || err != nil {
 			return res, err
 		}
+		if volume != nil && exists {
+			if res, stop, err := p.checkVolumeIdentity(ctx, &sts, volume, params); stop || err != nil {
+				return res, err
+			}
+		}
 	}
 
 	password, res, stop, err := p.ensureAuth(ctx, svc)
@@ -230,6 +272,14 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 	if !serviceExists {
 		if err := p.createService(ctx, svc); err != nil {
 			return provider.Result{}, err
+		}
+	}
+
+	// Before the template: a refused growth must not restart the server for the
+	// other half of the same edit.
+	if volume != nil {
+		if res, stop, err := p.growVolume(ctx, volume, params["volumeSize"]); stop || err != nil {
+			return res, err
 		}
 	}
 
@@ -247,30 +297,39 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		}
 		return degraded(ReasonProvisioning, "StatefulSet %s created, waiting for its pod", svc.Name), nil
 	}
-	if sts.Annotations[templateHashAnnotation] != hash {
-		sts.Spec.Template = template
-		sts.Annotations[templateHashAnnotation] = hash
-		if err := p.client.Update(ctx, &sts); err != nil {
-			return provider.Result{}, fmt.Errorf("updating the StatefulSet: %w", err)
-		}
-		return degraded(ReasonProvisioning, "StatefulSet %s updated, the server restarts", svc.Name), nil
-	}
+	return p.rollOut(ctx, &sts, svc, params, template, hash)
+}
 
-	if volume != nil {
-		grown, err := p.growVolume(ctx, volume, params["volumeSize"])
-		if err != nil {
-			return provider.Result{}, err
-		}
-		if grown {
-			return degraded(ReasonProvisioning, "volume %s growing to %s", volume.Name, params["volumeSize"]), nil
-		}
+// rollOut writes a template that moved, or a replica count someone moved, and
+// otherwise reads where the instance stands.
+func (p *Provider) rollOut(
+	ctx context.Context, sts *appsv1.StatefulSet, svc *servicesv1beta1.FrameService, params map[string]string,
+	template corev1.PodTemplateSpec, hash string,
+) (provider.Result, error) {
+	if sts.Annotations[templateHashAnnotation] == hash && sts.Spec.Replicas != nil && *sts.Spec.Replicas == 1 {
+		return readiness(sts, svc, params), nil
 	}
+	sts.Spec.Template = template
+	sts.Spec.Replicas = new(int32(1))
+	sts.Annotations[templateHashAnnotation] = hash
+	if err := p.client.Update(ctx, sts); err != nil {
+		return provider.Result{}, fmt.Errorf("updating the StatefulSet: %w", err)
+	}
+	return degraded(ReasonProvisioning, "StatefulSet %s updated, the server restarts", svc.Name), nil
+}
 
-	if sts.Status.ObservedGeneration < sts.Generation || sts.Status.ReadyReplicas < 1 ||
-		sts.Status.UpdatedReplicas < 1 {
-		return degraded(ReasonProvisioning, "waiting for the pod of %s", svc.Name), nil
+// readiness reads the StatefulSet. A pod the apiserver refuses, for a quota say,
+// never appears, and only this condition says why.
+func readiness(sts *appsv1.StatefulSet, svc *servicesv1beta1.FrameService, params map[string]string) provider.Result {
+	if sts.Status.ObservedGeneration >= sts.Generation && sts.Status.ReadyReplicas >= 1 && sts.Status.UpdatedReplicas >= 1 {
+		return provider.Result{Ready: true, Reason: ReasonRunning, Message: fmt.Sprintf("%s running, profile %s", svc.Name, params["profile"])}
 	}
-	return provider.Result{Ready: true, Reason: ReasonRunning, Message: fmt.Sprintf("%s running, profile %s", svc.Name, params["profile"])}, nil
+	for _, c := range sts.Status.Conditions {
+		if c.Type == appsv1.StatefulSetConditionType("ReplicaFailure") && c.Status == corev1.ConditionTrue {
+			return degraded(ReasonPodRefused, "the pod of %s was refused: %s", svc.Name, c.Message)
+		}
+	}
+	return degraded(ReasonProvisioning, "waiting for the pod of %s", svc.Name)
 }
 
 // findOwned reads the object named after the instance, and stops on one this
@@ -331,6 +390,11 @@ func (p *Provider) checkVolume(
 	if pvc.Labels[OwnerLabel] != svc.Name {
 		return nil, degraded(ReasonNotOwned, "a volume %s exists and is not labelled as this FrameService's: nothing written", pvc.Name), true, nil
 	}
+	// A retained volume is not rewritten: the template's class would say otherwise.
+	if want := params["storageClass"]; want != "" && pvc.Spec.StorageClassName != nil && want != *pvc.Spec.StorageClassName {
+		return nil, degraded(ReasonSpecDrift, "nothing written: storageClass is %q, the volume %s has %q",
+			want, pvc.Name, *pvc.Spec.StorageClassName), true, nil
+	}
 	live := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	if want := resource.MustParse(params["volumeSize"]); want.Cmp(live) < 0 {
 		return nil, degraded(ReasonVolumeShrink, "volumeSize %s is under the volume's %s: a volume cannot shrink",
@@ -339,21 +403,51 @@ func (p *Provider) checkVolume(
 	return &pvc, provider.Result{}, false, nil
 }
 
-func (p *Provider) growVolume(ctx context.Context, pvc *corev1.PersistentVolumeClaim, size string) (bool, error) {
+// checkVolumeIdentity notices a volume that is not the one the queue ran on. The
+// StatefulSet controller replaces a lost claim by itself, under the same name and
+// the same label: only the UID differs.
+func (p *Provider) checkVolumeIdentity(
+	ctx context.Context, sts *appsv1.StatefulSet, volume *corev1.PersistentVolumeClaim, params map[string]string,
+) (provider.Result, bool, error) {
+	uid := string(volume.UID)
+	recorded := sts.Annotations[volumeUIDAnnotation]
+	switch {
+	case recorded == uid:
+		return provider.Result{}, false, nil
+	case recorded != "" && params["restoredVolumeUID"] != uid:
+		return degraded(ReasonInstanceLost,
+			"the volume of queue %s is no longer the one it ran on (UID %s, now %s): its data may be gone; "+
+				"restore it, or set restoredVolumeUID to %s to go on with this volume",
+			sts.Name, recorded, uid, uid), true, nil
+	}
+	sts.Annotations[volumeUIDAnnotation] = uid
+	if err := p.client.Update(ctx, sts); err != nil {
+		return provider.Result{}, false, fmt.Errorf("recording the volume's UID: %w", err)
+	}
+	return provider.Result{}, false, nil
+}
+
+// growVolume stops the pass while a growth is under way, or refused: a class
+// that cannot expand answers Forbidden, and an error would leave status as it was.
+func (p *Provider) growVolume(ctx context.Context, pvc *corev1.PersistentVolumeClaim, size string) (provider.Result, bool, error) {
 	want := resource.MustParse(size)
 	if want.Cmp(pvc.Spec.Resources.Requests[corev1.ResourceStorage]) == 0 {
-		return false, nil
+		return provider.Result{}, false, nil
 	}
 	body, err := json.Marshal(map[string]any{"spec": map[string]any{
 		"resources": map[string]any{"requests": map[string]any{"storage": size}},
 	}})
 	if err != nil {
-		return false, err
+		return provider.Result{}, false, err
 	}
-	if err := p.client.Patch(ctx, pvc, client.RawPatch("application/merge-patch+json", body)); err != nil {
-		return false, fmt.Errorf("growing the volume: %w", err)
+	err = p.client.Patch(ctx, pvc, client.RawPatch("application/merge-patch+json", body))
+	switch {
+	case apierrors.IsForbidden(err) || apierrors.IsInvalid(err):
+		return degraded(ReasonVolumeGrow, "volume %s cannot grow to %s: %v", pvc.Name, size, err), true, nil
+	case err != nil:
+		return provider.Result{}, false, fmt.Errorf("growing the volume: %w", err)
 	}
-	return true, nil
+	return degraded(ReasonProvisioning, "volume %s growing to %s", pvc.Name, size), true, nil
 }
 
 // ensureAuth returns the instance's password, generating it on the first pass.
@@ -377,10 +471,22 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 		if !metav1.IsControlledBy(&secret, svc) {
 			return "", degraded(ReasonNotOwned, "a Secret %s exists and this FrameService did not create it: nothing written", name), true, nil
 		}
-		if len(secret.Data[passwordKey]) == 0 {
-			return "", provider.Result{}, false, fmt.Errorf("secret %s/%s has no %q key", svc.Namespace, name, passwordKey)
+		password := string(secret.Data[passwordKey])
+		if password == "" {
+			return "", degraded(ReasonAuthInvalid, "Secret %s has no %q key: delete it for a new password", name, passwordKey), true, nil
 		}
-		return string(secret.Data[passwordKey]), provider.Result{}, false, nil
+		// A password edited by hand: the server reads auth.conf, the probe and
+		// consumers read password, and the two must not part.
+		if conf := authConf(password); !bytes.Equal(secret.Data[authConfKey], conf) {
+			secret.Data[authConfKey] = conf
+			if err := p.client.Update(ctx, &secret); err != nil {
+				if apierrors.IsForbidden(err) {
+					return forbidden("write")
+				}
+				return "", provider.Result{}, false, fmt.Errorf("updating the auth Secret: %w", err)
+			}
+		}
+		return password, provider.Result{}, false, nil
 	case apierrors.IsForbidden(err):
 		return forbidden("read")
 	case !apierrors.IsNotFound(err):
@@ -396,7 +502,7 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: svc.Namespace},
 		Data: map[string][]byte{
 			passwordKey: []byte(password),
-			authConfKey: fmt.Appendf(nil, "requirepass %q\n", password),
+			authConfKey: authConf(password),
 		},
 	}
 	if err := controllerutil.SetControllerReference(svc, &secret, p.client.Scheme()); err != nil {
@@ -410,6 +516,8 @@ func (p *Provider) ensureAuth(ctx context.Context, svc *servicesv1beta1.FrameSer
 	}
 	return password, provider.Result{}, false, nil
 }
+
+func authConf(password string) []byte { return fmt.Appendf(nil, "requirepass %q\n", password) }
 
 func (p *Provider) createService(ctx context.Context, svc *servicesv1beta1.FrameService) error {
 	service := corev1.Service{
@@ -553,7 +661,10 @@ func podTemplate(
 						corev1.ResourceCPU:    resource.MustParse(sizing.CPU),
 						corev1.ResourceMemory: memory,
 					},
-					Limits: corev1.ResourceList{corev1.ResourceMemory: memory},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse(cpuLimit),
+						corev1.ResourceMemory: memory,
+					},
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: authVolume, MountPath: authPath, ReadOnly: true},
