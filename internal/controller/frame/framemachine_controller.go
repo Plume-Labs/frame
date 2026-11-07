@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
+	"github.com/Plume-Labs/frame/internal/alerting"
 	"github.com/Plume-Labs/frame/internal/redfish"
 )
 
@@ -64,6 +65,12 @@ type FrameMachineReconciler struct {
 	// ProbeInterval is the delay between two successful probes. Zero means
 	// DefaultProbeInterval; anything under MinProbeInterval is raised to it.
 	ProbeInterval time.Duration
+	// Alerts records what assessStorage raises and resolves. Nil means
+	// conditions only.
+	Alerts *alerting.Receiver
+	// PolicyReader reads the StorageHealthPolicy: mgr.GetAPIReader() in
+	// production, see assessStorage.
+	PolicyReader client.Reader
 
 	machines machineClients
 }
@@ -75,6 +82,7 @@ type FrameMachineReconciler struct {
 // ClusterRole bound where FrameMachines live (docs/deployment.md, "Manager
 // access to Secrets"); nothing on Secrets cluster-wide.
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=storagehealthpolicies,verbs=get;list;watch
 
 // Reconcile polls the machine's BMC and records what it read.
 //
@@ -91,8 +99,10 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			// The machine is gone: end its session rather than leave it open
 			// on the BMC until the idle timeout.
 			r.forget(ctx, req.NamespacedName)
+			// An error here requeues, so a failed write is retried.
+			return ctrl.Result{}, r.resolveStorageAlerts(ctx, req.NamespacedName)
 		}
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
 	fresh, err := r.NewClient(ctx, r.Client, fm.Namespace, fm.Spec.BMC)
@@ -100,6 +110,7 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		r.forget(ctx, req.NamespacedName)
 		patch := client.MergeFrom(fm.DeepCopy())
 		r.setCondition(&fm, metav1.ConditionFalse, "CredentialsUnavailable", err.Error())
+		r.assessStorage(ctx, &fm, false)
 		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
 			return ctrl.Result{}, perr
 		}
@@ -126,6 +137,7 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		reason := probeFailureReason(err)
 		r.setCondition(&fm, metav1.ConditionFalse, reason, err.Error())
+		r.assessStorage(ctx, &fm, false)
 		if perr := r.Status().Patch(ctx, &fm, patch); perr != nil {
 			return ctrl.Result{}, perr
 		}
@@ -137,6 +149,7 @@ func (r *FrameMachineReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	applySnapshot(&fm.Status, snap)
 	fm.Status.ObservedGeneration = fm.Generation
 	r.setCondition(&fm, metav1.ConditionTrue, "Probed", "")
+	r.assessStorage(ctx, &fm, true)
 	if err := r.Status().Patch(ctx, &fm, patch); err != nil {
 		return ctrl.Result{}, err
 	}

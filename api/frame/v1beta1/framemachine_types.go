@@ -104,6 +104,16 @@ type PowerRequestSpec struct {
 	RequestedAt metav1.Time `json:"requestedAt"`
 }
 
+// AlertReleaseRequest names a device no read mentions any more.
+type AlertReleaseRequest struct {
+	// Device is the alert's device: an md array, a pool, a disk's serial.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Device string `json:"device"`
+	// +kubebuilder:validation:Required
+	RequestedAt metav1.Time `json:"requestedAt"`
+}
+
 // FrameMachineSpec defines the desired state of FrameMachine.
 type FrameMachineSpec struct {
 	// +kubebuilder:validation:Required
@@ -111,6 +121,12 @@ type FrameMachineSpec struct {
 
 	// +optional
 	PowerRequest *PowerRequestSpec `json:"powerRequest,omitempty"`
+
+	// AlertRelease closes the storage alerts held open on a device someone
+	// removed on purpose. Like powerRequest it is an action stamped with its
+	// moment, acted on once, and reached by the same admin-only patch.
+	// +optional
+	AlertRelease *AlertReleaseRequest `json:"alertRelease,omitempty"`
 
 	// NodeRef names the Kubernetes node this chassis carries, when it carries
 	// one. It names a Kubernetes node and not a FrameNode deliberately: a
@@ -586,6 +602,16 @@ type FrameMachineStatus struct {
 
 	// +optional
 	LastPowerAction string `json:"lastPowerAction,omitempty"`
+
+	// LastAlertReleaseAt is the guard: an alertRelease is acted on only when
+	// its requestedAt is strictly later than this.
+	// +optional
+	LastAlertReleaseAt *metav1.Time `json:"lastAlertReleaseAt,omitempty"`
+
+	// LastAlertRelease says what the last alertRelease did.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	LastAlertRelease string `json:"lastAlertRelease,omitempty"`
 
 	// LastPowerActionAt is the guard: a powerRequest is executed only when its
 	// requestedAt is strictly later than this.

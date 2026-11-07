@@ -357,6 +357,71 @@ building the previous lot:
 
 ---
 
+## Storage health alerts
+
+The node agent reads md, ZFS and LVM into `status.storage.local`, and the BMC
+reports endurance in `status.inventory.drives`. On each pass the FrameMachine
+controller turns that into four conditions and, for each thing wrong, a
+FrameAlert. The relay then delivers it to subscriptions like any Alertmanager
+alert; the console's Storage → Health tab shows it per machine and per mirror.
+
+| Condition and alert | Severity | True when |
+|---|---|---|
+| `StorageDegraded` | critical | an md array is degraded (missing or failed member, inactive), any level; a pool's health is not `ONLINE`; a vdev is `DEGRADED`, `FAULTED`, `OFFLINE`, `UNAVAIL` or `REMOVED`, or has read, write or checksum errors |
+| `ScrubErrors` | critical | the last completed scrub of a pool found errors |
+| `StorageCapacityHigh` | warning | a pool's capacity reaches `zfsCapacityPercent`; clears two points below |
+| `DiskWearHigh` | warning | a drive's BMC-reported endurance use reaches `ssdWearPercent` |
+
+There is one alert per device: `StorageDegraded` on `md0` and on `tank` are two
+alerts, and an alert stays one object from firing to resolution and through a
+relapse. A vdev's error counters only go back to zero with `zpool clear`, so
+the alert stays until someone does it. An array in resync stays degraded, and
+the alert open, until the resync ends. LVM is not assessed.
+
+**Only a complete read changes anything.** A stack in `error` or `busy`, an
+agent silent for ten minutes, or a BMC that missed the last probe neither
+raises an alert nor clears one, whatever the last lists said:
+
+- an alert already open stays open, and its condition stays `True` with reason
+  `LastReadHeld`;
+- with nothing open the condition is `Unknown`, reason `ReadUnavailable`. It is
+  never `False`, which would claim a read nobody made.
+
+**A read that says nothing about a device clears nothing.** A pool a reboot did
+not import reads the same as a pool destroyed on purpose, and a disk the BMC
+failed to return the same as one pulled. So an alert stays open, `LastReadHeld`,
+when its device is missing from the list (a stack gone `absent` included), when
+the field it rests on is empty, or when a new scrub leaves no error count.
+Deleting the machine resolves its alerts, even if the manager was down at the
+time.
+
+To close the alert of a device removed on purpose, an admin uses "Removed on
+purpose" in Storage → Health, after a confirmation. That writes
+`spec.alertRelease` on the FrameMachine, the admin-only patch that carries power
+actions, and leaves a FrameTask. The controller acts on it once, sends subscribers
+a real resolution, and records the outcome in `status.lastAlertRelease`. It closes
+only what a read is holding: an alert the current read confirms stays open.
+
+A list known to be partial gives `Unknown`, reason `ReadUnavailable`, when nothing
+is wrong in what it shows: the agent's lists past their limit, a vdev tree cut, a
+BMC inventory at its 32 drives. Drives past that limit are not assessed.
+
+**`DiskWearHigh` needs a BMC that reports endurance.** An SSD whose BMC sends
+nothing makes the condition `Unknown`, reason `WearNotReported`. iLO 4 sends
+`SSDEnduranceUtilizationPercentage: null` for third-party SSDs.
+
+The assessment runs with the BMC probe, every minute, including when the BMC
+does not answer. A BMC that stays down stretches the probe's backoff, so a
+storage alert can then take up to 30 minutes.
+
+### Thresholds
+
+The two thresholds live in the cluster-scoped singleton
+[`StorageHealthPolicy`](crd-reference.md#storagehealthpolicy), edited from the
+Health tab: the write goes through `frame-uiproxy` and leaves a FrameTask like
+any console mutation. Without the object, both thresholds are 80 %. A change
+reaches each machine at its next pass.
+
 ## What is not delivered
 
 - **The real `Wiper`.** This build ships `FrameDiskClaim`'s guards only; the

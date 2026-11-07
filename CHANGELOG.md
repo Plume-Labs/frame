@@ -6,6 +6,25 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — storage health alerts
+
+- The FrameMachine controller now judges what the agent and the BMC report:
+  four conditions (`StorageDegraded`, `ScrubErrors`, `StorageCapacityHigh`,
+  `DiskWearHigh`) and one FrameAlert per device, delivered by the existing
+  relay to every subscription whose filter takes them. A stack in `error` or
+  `busy`, a silent agent or a stale inventory neither raises nor clears
+  anything: an open alert stays, otherwise the condition is `Unknown`. A device
+  missing from a read keeps its alert too, until it reads healthy or an admin
+  declares it removed on purpose (`spec.alertRelease`), which sends subscribers
+  a real resolution.
+- New cluster-scoped singleton `StorageHealthPolicy` (`default`) holds the
+  thresholds, 80 % for ZFS capacity and SSD wear unless set, with the three
+  RBAC tiers. **Upgrade:** the CRD and the manager's role ship with the chart;
+  without either, the controller logs an error each pass and writes no storage
+  condition. The probe and power actions are unaffected.
+- Storage → Health tab in the console: state per machine and per mirror,
+  threshold editing traced by FrameTask.
+
 ### Security — dependencies and base image
 
 - Go 1.26.10 (`go.mod`), `golang.org/x/net` 0.62.0, `google.golang.org/grpc`

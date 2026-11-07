@@ -355,14 +355,16 @@ separate `services.plume-labs.io/v1beta1` group (see
 deprecated `v1alpha1` — except `NodeTuning`, which postdates the freeze and is
 `v1beta1` only.
 
-All are namespaced except `NodeTuning`, which is **cluster-scoped**: its URL
-has no `/namespaces/<ns>` segment, and a namespaced list will never return it.
+All are namespaced except `NodeTuning` and `StorageHealthPolicy`, which are
+**cluster-scoped**: their URL has no `/namespaces/<ns>` segment, and a namespaced
+list will never return them.
 
 | Resource | Group | Plural | Shortname | Scope |
 |---|---|---|---|---|
 | FrameJob | `frame.plume-labs.io` | `framejobs` | `fj` | namespaced |
 | FrameNode | `frame.plume-labs.io` | `framenodes` | `fn` | namespaced |
 | SchedulingPolicy | `frame.plume-labs.io` | `schedulingpolicies` | `sp` | namespaced |
+| StorageHealthPolicy | `frame.plume-labs.io` | `storagehealthpolicies` | — | **cluster** |
 | FrameResourceQuota | `frame.plume-labs.io` | `frameresourcequotas` | `frq` | namespaced |
 | FrameUser | `frame.plume-labs.io` | `frameusers` | — | namespaced |
 | NodeTuning | `frame.plume-labs.io` | `nodetunings` | — | **cluster** |

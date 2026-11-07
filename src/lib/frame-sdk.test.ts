@@ -1392,7 +1392,78 @@ describe('powerPatchBody', () => {
   })
 })
 
+describe('StorageHealthPolicyClient', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+  const path = '/apis/frame.plume-labs.io/v1beta1/storagehealthpolicies'
+  const json = (status: number, body: unknown = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+  it('reads the defaults when no policy exists', async () => {
+    stubBrowser()
+    vi.stubGlobal('fetch', vi.fn(async () => json(404)))
+    expect(await createFrameClient().storageHealthPolicy.get()).toEqual({ zfsCapacityPercent: 80, ssdWearPercent: 80 })
+  })
+
+  it('does not read a refused GET as the defaults', async () => {
+    stubBrowser()
+    vi.stubGlobal('fetch', vi.fn(async () => json(403)))
+    await expect(createFrameClient().storageHealthPolicy.get()).rejects.toThrow()
+  })
+
+  it('creates the policy on the first save, with the action the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return json(init?.method === 'POST' ? 201 : 404)
+    }))
+
+    await createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+
+    // A write that 404s would leave a Failed FrameTask: only the POST is a write.
+    expect(calls.map((c) => [c.init?.method ?? 'GET', c.url])).toEqual([['GET', `${path}/default`], ['POST', path]])
+    const body = JSON.parse(String(calls[1].init?.body)) as { metadata: { name: string }; spec: unknown }
+    expect(body.metadata.name).toBe('default')
+    expect(body.spec).toEqual({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+    expect((calls[1].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set storage health thresholds')
+  })
+
+  it('patches a policy that exists', async () => {
+    stubBrowser()
+    const methods: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_: RequestInfo | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET')
+      return json(200)
+    }))
+    await createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })
+    expect(methods).toEqual(['GET', 'PATCH'])
+  })
+
+  it('does not create over a refused save', async () => {
+    stubBrowser()
+    const fetchMock = vi.fn(async () => json(403))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(createFrameClient().storageHealthPolicy.save({ zfsCapacityPercent: 70, ssdWearPercent: 85 })).rejects.toThrow()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('MachineClient', () => {
+  it('declares a device removed as a merge-patch the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    await createFrameClient().machines.releaseAlert({ name: 'm', namespace: 'default' } as Machine, 'tank')
+    vi.unstubAllGlobals()
+    expect(calls[0].url).toBe('/apis/frame.plume-labs.io/v1beta1/namespaces/default/framemachines/m')
+    expect(calls[0].init?.method).toBe('PATCH')
+    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('device removed: tank on m')
+    expect(JSON.parse(String(calls[0].init?.body)).spec.alertRelease.device).toBe('tank')
+  })
+
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('lists machines mapped through toMachine, sorted by name', async () => {

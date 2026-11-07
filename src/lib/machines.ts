@@ -248,6 +248,8 @@ export interface Machine {
   sensorsValidAt: string | null
   inventory: MachineInventory | null
   storage: MachineStorage | null
+  /** The controller's verdicts on that storage, by condition type (`src/lib/storage-health.ts`). */
+  storageConditions: MachineCondition[]
   sensors: MachineSensors | null
   eventLog: MachineEvent[]
   eventLogCounts: Record<string, number>
@@ -263,7 +265,7 @@ export interface Machine {
   lastPowerActionError: string
 }
 
-interface MachineCondition {
+export interface MachineCondition {
   type: string
   status: string
   reason?: string
@@ -327,6 +329,7 @@ export function toMachine(cr: MachineCR): Machine {
           local: status.storage.local ?? null,
         }
       : null,
+    storageConditions: conditions.filter((c) => c.type !== 'Reachable'),
     sensors: status.sensors ?? null,
     eventLog: status.eventLog ?? [],
     eventLogCounts: status.eventLogCounts ?? {},
