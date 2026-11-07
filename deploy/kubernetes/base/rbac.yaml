@@ -88,6 +88,11 @@ rules:
   - apiGroups: [velero.io]
     resources: [backups, schedules, backupstoragelocations]
     verbs: [get, list, watch]
+  # The Databases screen: FrameService instances of type postgres, in every
+  # namespace. Call site: the DatabaseClient in src/lib/frame-sdk.ts.
+  - apiGroups: ["services.plume-labs.io"]
+    resources: ["frameservices"]
+    verbs: ["get", "list", "watch"]
   # Lot 1. The Hardware screen reads a chassis's inventory, sensors and event
   # log; all three live in FrameMachine's status, which the operator fills by
   # polling the BMC. Call sites: src/components/hardware/HardwareView.tsx and
@@ -328,6 +333,12 @@ rules:
   - apiGroups: [frame.plume-labs.io]
     resources: [frameresourcequotas, storagehealthpolicies, networkhealthpolicies]
     verbs: [get, list, watch, create, patch]
+  # The Databases screen writes spec.parameters. No create and no delete: an
+  # instance is declared in a manifest, and a data-bearing one is not removed
+  # from a form.
+  - apiGroups: ["services.plume-labs.io"]
+    resources: ["frameservices"]
+    verbs: [get, list, watch, patch]
   #
   # REMOVED 2026-08-10 — same audit as the viewer role above:
   #   core `services`, `namespaces`, `resourcequotas`   — no call site

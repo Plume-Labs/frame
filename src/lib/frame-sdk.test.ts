@@ -14,6 +14,7 @@ import {
 } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
+import type { Database } from './databases'
 import type { Machine } from './machines'
 // Raw source, for the structural guard at the bottom of this file.
 import frameSdkSource from './frame-sdk.ts?raw'
@@ -1673,5 +1674,37 @@ describe('ClusterClient.inference() speeds', () => {
     stub(() => null)
     const empty = await createFrameClient().cluster.inference()
     expect(empty!.predictedTokensPerSec).toBeNull()
+  })
+})
+
+describe('DatabaseClient', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('lists only postgres services, across namespaces', async () => {
+    stubBrowser()
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input))
+      return new Response(JSON.stringify({ items: [
+        { metadata: { name: 'b-db', namespace: 'x' }, spec: { type: 'postgres' } },
+        { metadata: { name: 'llm', namespace: 'x' }, spec: { type: 'inference' } },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const list = await createFrameClient().databases.list()
+    expect(urls).toEqual(['/apis/services.plume-labs.io/v1beta1/frameservices'])
+    expect(list.map((d) => d.name)).toEqual(['b-db'])
+  })
+
+  it('patches the three settings in the instance own namespace, with the action the proxy traces', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    await createFrameClient().databases.save({ name: 'b-db', namespace: 'x' } as Database, { instances: '2', volumeSize: '8Gi', nodes: '' })
+    expect(calls[0].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/b-db')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ spec: { parameters: { instances: '2', volumeSize: '8Gi', nodes: null } } })
+    expect((calls[0].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set database b-db')
   })
 })

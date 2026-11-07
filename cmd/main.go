@@ -57,6 +57,7 @@ import (
 	"github.com/Plume-Labs/frame/internal/provision"
 	"github.com/Plume-Labs/frame/internal/services/provider"
 	"github.com/Plume-Labs/frame/internal/services/provider/inference"
+	"github.com/Plume-Labs/frame/internal/services/provider/postgres"
 	webhookcorev1 "github.com/Plume-Labs/frame/internal/webhook/core/v1"
 	webhookv1beta1 "github.com/Plume-Labs/frame/internal/webhook/frame/v1beta1"
 	webhookservicesv1beta1 "github.com/Plume-Labs/frame/internal/webhook/services/v1beta1"
@@ -515,7 +516,10 @@ func main() {
 	// every reconcile, and the webhook (when enabled) validates admission
 	// against the same set, so the two can never disagree on what a valid
 	// type is.
-	serviceRegistry := provider.NewRegistry(inference.New(inferenceGPUMemoryMiB, mgr.GetClient(), mgr.GetAPIReader()))
+	serviceRegistry := provider.NewRegistry(
+		inference.New(inferenceGPUMemoryMiB, mgr.GetClient(), mgr.GetAPIReader()),
+		postgres.New(mgr.GetClient()),
+	)
 
 	// mgr.GetEventRecorderFor is deprecated in favour of GetEventRecorder, but
 	// that method returns the newer events/v1 events.EventRecorder, whose

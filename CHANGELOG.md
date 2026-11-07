@@ -18,6 +18,18 @@ release tags follow [Semantic Versioning](https://semver.org/).
   1000 Mb/s unless set, and named links with their speed and bond members.
 - Network → Links tab in the console.
 
+### Added — `postgres` FrameService provider
+
+- `spec.type: postgres` creates a Zalando postgres-operator cluster with its
+  WAL-G archive when told to, or adopts an existing one by UID without moving
+  its spec. A cluster is never recreated, parameters that disagree with the live cluster
+  write nothing, and `deletionPolicy` never reaches the data.
+- The manager gains `get`, `create`, `patch` on `postgresqls` and
+  `objectbucketclaims`, and no `delete`.
+- Storage → Databases tab in the console: state and the settings that can move
+  (instances, volume size, nodes), traced by FrameTask. Console tiers read
+  FrameServices, and the operator tier may patch them.
+
 ### Added — storage health alerts
 
 - The FrameMachine controller now judges what the agent and the BMC report:
@@ -36,6 +48,32 @@ release tags follow [Semantic Versioning](https://semver.org/).
   condition. The probe and power actions are unaffected.
 - Storage → Health tab in the console: state per machine and per mirror,
   threshold editing traced by FrameTask.
+
+### Security — dependencies and base image
+
+- Go 1.26.10 (`go.mod`), `golang.org/x/net` 0.62.0, `google.golang.org/grpc`
+  1.83.2, `go-jose/v4` 4.1.6 and OpenTelemetry 1.45.0 clear the findings
+  `make vuln` and the image scan blocked on (GO-2026-6505, -6599 to -6617,
+  -6809; CVE-2026-78661, -78669, -84445, -116587).
+- The UI image moves to the 2026-11-06 rebuild of `nginx:1.31.8-alpine`
+  (brotli-libs 1.2.1-r0, CVE-2026-111497).
+
+### Fixed — CI
+
+- The chart's manager memory (limit 512Mi, request 128Mi) matches
+  `config/manager/manager.yaml` again, which `make helm-parity` refused. A
+  chart install kept the 128Mi limit that OOMKills the manager on a cluster
+  with thousands of FrameAlerts.
+- The kind integration job deploys what the UI pod needs today: the uiproxy
+  image, authd's Service and a throwaway `frame-auth-tls` CA.
+- The e2e inference spec binds `frame-manager-secret-writer` in its
+  namespace, the grant `docs/deployment.md` asks of an operator.
+### Fixed — Redfish inventory on iDRAC 7
+
+- `MemorySummary.TotalSystemMemoryGiB` is decoded as a number and rounded.
+  iDRAC 7 (firmware 2.65) reports a fraction such as `59.6046720`; the integer
+  field made the whole system document fail to decode, so the FrameMachine
+  stayed `Reachable=False`. No migration: `status` keeps its integer field.
 
 ### Removed — authd password sign-in (breaking)
 

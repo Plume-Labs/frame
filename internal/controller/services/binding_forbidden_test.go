@@ -146,3 +146,38 @@ func TestForbiddenProjectionDeleteKeepsTheFinalizer(t *testing.T) {
 		t.Fatalf("Ready condition %+v, want SecretAccessForbidden naming the Secret, the ClusterRole and the kept finalizer", cond)
 	}
 }
+
+// A provider with nothing to bind is Ready without touching a Secret: the
+// namespace may have granted the manager none.
+func TestBindingNoneIsReadyWithoutASecret(t *testing.T) {
+	svc := &servicesv1beta1.FrameService{
+		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "apps", Finalizers: []string{frameServiceFinalizer}},
+		Spec:       servicesv1beta1.FrameServiceSpec{Type: "stub"},
+	}
+	r, c := forbiddenFixture(t, svc, interceptor.Funcs{
+		Get: func(ctx context.Context, w client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*corev1.Secret); ok {
+				t.Fatal("read a Secret")
+			}
+			return w.Get(ctx, key, obj, opts...)
+		},
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			t.Fatalf("created %T", obj)
+			return nil
+		},
+	})
+	r.Registry = provider.NewRegistry(noBindingProvisioner{})
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(svc)}); err != nil {
+		t.Fatal(err)
+	}
+	cond, got := fetchReady(t, c, client.ObjectKeyFromObject(svc))
+	if cond == nil || cond.Status != metav1.ConditionTrue || got.Status.Binding.Endpoint != "db:5432" || got.Status.Binding.SecretRef != nil {
+		t.Fatalf("%+v %+v", cond, got.Status.Binding)
+	}
+}
+
+type noBindingProvisioner struct{ stubProvisioner }
+
+func (noBindingProvisioner) Bind(context.Context, *servicesv1beta1.FrameService) (provider.Binding, error) {
+	return provider.Binding{Endpoint: "db:5432", None: true}, nil
+}

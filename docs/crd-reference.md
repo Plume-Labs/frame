@@ -935,6 +935,65 @@ requests (including `nvidia.com/gpu`) and a node selector derived from
 
 ---
 
+### The `postgres` provider (`internal/services/provider/postgres/`)
+
+A cluster of the [Zalando postgres-operator](https://github.com/zalando/postgres-operator),
+which must be installed: Frame writes the `postgresql` CR and the operator does
+the rest. The instance's name has the operator's form, `<team>-<cluster>`.
+
+| Parameter | Required | After creation | Meaning |
+|---|---|---|---|
+| `instances` | yes | moves | Pods, primary included. Above one, a topology spread keeps them on different nodes. |
+| `volumeSize` | yes | grows | Size of each volume, e.g. `20Gi`. A smaller value degrades with `VolumeShrinkRefused`. |
+| `nodes` | no | moves | Comma-separated node names, replacing any node affinity. Absent leaves placement alone. |
+| `storageClass` | no | fixed | Empty is the cluster default. |
+| `postgresVersion` | no | fixed | Default `18`. |
+| `database`, `owner` | no | fixed | Default: the team. The binding carries `owner`'s credentials. |
+| `walBucketClaim`, `walEndpoint` | no | fixed | WAL-G archive to that ObjectBucketClaim, created if absent. Empty means no archiving. |
+| `walRetentionDays` | no | fixed | Default `14`. |
+| `create` | no | stays | `true` lets the provider create the cluster. Excludes `adoptUID`. |
+| `adoptUID` | no | stays | UID of an existing cluster to take over, compared on every pass. |
+| `binding` | no | fixed | `none` publishes no credentials Secret. Set it from the start: changing it later leaves an earlier Secret behind, no longer updated. |
+
+`fixed` means compared, not applied: a parameter that differs from the live
+cluster degrades with `SpecDrift` and writes nothing at all. Changing `nodes`,
+or going above one instance, changes the pod template, so the operator restarts
+the pods.
+
+**A cluster is never recreated.** One is created only with `create: "true"`, by a
+FrameService that never served, on a name with no `pgdata-<name>-0` volume left.
+Otherwise a missing cluster degrades with `AdoptionTargetMissing`,
+`ClusterMissing` or `InstanceLost` and waits for a restore: a new CR under the
+same name would come up without its users or settings, or empty.
+
+**A cluster is adopted only by UID, and that UID is checked on every pass.** An
+existing cluster this FrameService does not claim degrades with
+`ClusterNotOwned`, the message giving its UID. The label alone is not enough: the
+claim records the UID it was made on (`services.plume-labs.io/claimed-uid`), so a
+CR restored from a backup, which keeps both under a new UID, counts as unclaimed.
+Frame leaves it alone until `adoptUID` names it, and that pass compares
+`instances`, `volumeSize` and `nodes` too, whichever way the cluster came.
+
+With `adoptUID` matching and no drift, including on `instances`, `volumeSize` and
+`nodes`, the provider writes the label `services.plume-labs.io/frameservice` and
+the annotations `helm.sh/resource-policy: keep` and `claimed-uid` on the CR, label
+and `keep` on the bucket claim, and nothing else: the spec and `metadata.generation` do not move. It leaves a chart's
+own labels in place; retiring the chart is a separate step, and the CR survives
+it only through that annotation. A bucket claim labelled for another FrameService
+is refused.
+
+**`deletionPolicy` never reaches the data.** The CR and the bucket claim carry
+no owner reference and are not in `status.provisioned`, and the manager has no
+`delete` verb on either, so `Delete` behaves as `Retain` for them. Removing a
+database is a deliberate `kubectl delete` with the operator's delete annotations.
+
+The binding Secret carries `host`, `port`, `database`, `username` and
+`password`, copied from the operator's credentials Secret: the manager needs
+`frame-manager-secret-writer` in the namespace. With `binding: none` there is no
+Secret and the manager needs no access to Secrets there, for consumers that read
+the operator's Secret themselves. Other Ready reasons: `Provisioning`,
+`ClusterNotRunning`, `OperatorMissing`, `InvalidName`.
+
 ## Webhooks
 
 FrameNode and FrameJob have **defaulting + validation**; the other four —
