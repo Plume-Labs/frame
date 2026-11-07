@@ -569,12 +569,16 @@ func TestAFullDiskListIsNotHealthy(t *testing.T) {
 	for i := range MaxObservedDisks {
 		st.Storage.Observed = append(st.Storage.Observed, smartDisk(fmt.Sprintf("D-%d", i), new(int32(1)), new(true)))
 	}
-	if v := Assess(st, defaults, true, nil, now).Verdict(CheckDegraded, nil); v.Status != "Unknown" {
-		t.Fatalf("full: %+v", v)
+	for _, check := range []string{CheckDegraded, CheckWearHigh} {
+		if v := Assess(st, defaults, true, nil, now).Verdict(check, nil); v.Status != "Unknown" {
+			t.Fatalf("%s full: %+v", check, v)
+		}
 	}
 	st.Storage.Observed = st.Storage.Observed[:MaxObservedDisks-1]
-	if v := Assess(st, defaults, true, nil, now).Verdict(CheckDegraded, nil); v.Status != "False" {
-		t.Fatalf("one under: %+v", v)
+	for _, check := range []string{CheckDegraded, CheckWearHigh} {
+		if v := Assess(st, defaults, true, nil, now).Verdict(check, nil); v.Status != "False" {
+			t.Fatalf("%s one under: %+v", check, v)
+		}
 	}
 }
 

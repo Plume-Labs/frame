@@ -84,6 +84,9 @@ const (
 	// the agent stops there, so a full list may be missing disks.
 	MaxObservedDisks = 64
 
+	// mediaSSD is DriveInfo.MediaType for a solid-state drive.
+	mediaSSD = "SSD"
+
 	// AgentSilentAfter is how long a report may age before the node's stacks
 	// count as unread. The agent reports every 30 s; this leaves a node room
 	// to restart its pod.
@@ -353,7 +356,7 @@ func (a *Assessment) assessDrives(inv *framev1beta1.MachineInventory, s *framev1
 			if key := (Key{CheckWearHigh, device}); open.has(key) && !reported {
 				a.Held[key] = true
 			}
-			if d.MediaType == "SSD" && !reported {
+			if d.MediaType == mediaSSD && !reported {
 				a.WearUnreported++
 			}
 		}
@@ -389,7 +392,7 @@ func maybeSolidState(d *framev1beta1.ObservedDisk) bool {
 // wearOwed says a solid-state disk needs its own figure and assessDrives, which
 // counts the SSDs it lists, has not counted it.
 func wearOwed(bmc *framev1beta1.DriveInfo) bool {
-	return bmc == nil || (bmc.SSDEnduranceUsedPercent == nil && bmc.MediaType != "SSD")
+	return bmc == nil || (bmc.SSDEnduranceUsedPercent == nil && bmc.MediaType != mediaSSD)
 }
 
 func bmcDrive(inv *framev1beta1.MachineInventory, serial string) *framev1beta1.DriveInfo {
@@ -428,7 +431,7 @@ func (a *Assessment) assessSMART(s *framev1beta1.MachineStorage, inv *framev1bet
 		// A disk the reader owes a read to, or one that gave nothing. A disk known
 		// to spin is not read: no block, and nothing owed. The kernel's word is
 		// not enough against a BMC that calls it an SSD: nobody read that disk.
-		owed := d.SMART != nil || maybeSolidState(d) || (bmc != nil && bmc.MediaType == "SSD")
+		owed := d.SMART != nil || maybeSolidState(d) || (bmc != nil && bmc.MediaType == mediaSSD)
 		if owed && (d.SMART == nil || d.SMART.Passed == nil) {
 			a.SMARTSilent = append(a.SMARTSilent, d.SerialNumber)
 		}
@@ -511,6 +514,10 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 	}
 	if len(unread) > 0 {
 		return Verdict{"Unknown", "ReadUnavailable", clipRunes(strings.Join(unread, "; "), maxConditionMessage)}
+	}
+	// Not through checkScopes: a silent agent must leave the BMC's figures standing.
+	if why, cut := a.Cut[ScopeSMART]; check == CheckWearHigh && cut {
+		return Verdict{"Unknown", "ReadUnavailable", fmt.Sprintf("%s: %s", ScopeSMART, why)}
 	}
 	if check == CheckWearHigh && a.WearUnreported > 0 {
 		return Verdict{"Unknown", "WearNotReported", fmt.Sprintf("no current endurance figure for %d SSD(s)", a.WearUnreported)}
