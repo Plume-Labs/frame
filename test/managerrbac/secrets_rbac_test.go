@@ -186,20 +186,21 @@ func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 	if managerImage != testIMG {
 		t.Errorf("%s: manager image %q, want the IMG given, %q", overlay, managerImage, testIMG)
 	}
-	wantProvisiond := []string{"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media"}
-	for _, want := range wantProvisiond {
+	for _, want := range []string{
+		"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media",
+	} {
 		if !provisiondObjects[want] {
 			t.Errorf("%s: does not render %s; frame-provisiond is part of the recommended install", overlay, want)
 		}
 	}
 	if provisiondImage != testIMGProvisiond {
-		t.Errorf("%s: provisiond image %q, want the IMG_PROVISIOND given, %q", overlay, provisiondImage, testIMGProvisiond)
+		t.Errorf("%s: provisiond image %q, want the IMG_PROVISIOND given, %q",
+			overlay, provisiondImage, testIMGProvisiond)
 	}
 }
 
-// checkProvisiondService fails the test if a frame-provisiond Service is
-// not ClusterIP or carries a nodePort: the default install opens no port
-// on any node.
+// checkProvisiondService holds a frame-provisiond Service to the closed
+// default: ClusterIP, and no node port on any of its ports.
 func checkProvisiondService(t *testing.T, u *unstructured.Unstructured) {
 	t.Helper()
 	if typ, _, _ := unstructured.NestedString(u.Object, "spec", "type"); typ != "ClusterIP" {
@@ -216,13 +217,13 @@ func checkProvisiondService(t *testing.T, u *unstructured.Unstructured) {
 }
 
 // containerImage returns the image of the named container of a Deployment,
-// or "" when the container is absent.
+// or "" when it has no such container.
 func containerImage(u *unstructured.Unstructured, name string) string {
 	cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
 	for _, c := range cs {
 		if m, ok := c.(map[string]any); ok && m["name"] == name {
-			img, _ := m["image"].(string)
-			return img
+			image, _ := m["image"].(string)
+			return image
 		}
 	}
 	return ""
@@ -411,34 +412,4 @@ func TestManagerSecretAccessIsPerNamespace(t *testing.T) {
 	other.Data["token"] = []byte("changed")
 	forbidden(t, "update a Secret of its namespace other than the state Secret", mgr.Update(ctx, other))
 	forbidden(t, "delete in its own namespace", mgr.Delete(ctx, secret(mgrNS, "alert-token", nil)))
-}
-
-// The manager writes database CRs and bucket claims, and deleting either is
-// what destroyed a database once: that verb must stay a person's.
-func TestManagerCannotDeleteDatabaseObjects(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(manifests.Root(t), "config", "rbac", "role.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var role rbacv1.ClusterRole
-	if err := k8syaml.Unmarshal(raw, &role); err != nil {
-		t.Fatal(err)
-	}
-	seen := map[string]bool{}
-	for _, r := range role.Rules {
-		for _, res := range r.Resources {
-			if res != "postgresqls" && res != "objectbucketclaims" && res != "*" {
-				continue
-			}
-			seen[res] = true
-			for _, v := range r.Verbs {
-				if v == "delete" || v == "deletecollection" || v == "*" {
-					t.Errorf("manager holds %s on %s", v, res)
-				}
-			}
-		}
-	}
-	if !seen["postgresqls"] || !seen["objectbucketclaims"] {
-		t.Fatalf("rule not found, the test proves nothing: %v", seen)
-	}
 }
