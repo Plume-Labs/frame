@@ -99,6 +99,14 @@ or to start a self-test, is a vulnerability.** `smartctl` parses what a disk's
 firmware answers, as root and unconfined: a memory bug in it, reachable from a
 hostile disk, would give the node.
 
+The agent's one storage command that writes is `zpool scrub <pool>`, run
+through `nsenter` under the host's `timeout` (`internal/agent/zfsscrub.go`).
+The argv is exactly that, with no option; the pool name comes from the agent's
+own `zpool list` read of its node and must match ZFS's pool name grammar; the
+controller's request (a Node annotation) is a timestamp and names no pool.
+**A way to make the agent run another `zpool` verb or option, on a pool it did
+not read itself, is a vulnerability.**
+
 Note also that **enabling KSM is a security trade-off, not just a performance
 one**: merged pages make writes take a measurable copy-on-write fault, which
 lets one container probe whether another holds a given page. That is why

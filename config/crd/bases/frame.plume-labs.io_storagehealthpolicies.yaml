@@ -52,6 +52,97 @@ spec:
               storage against. Only numbers: what counts as degraded (a failed md member,
               a pool that is not ONLINE, a vdev with errors) is not a setting.
             properties:
+              scrub:
+                description: |-
+                  Scrub plans the ZFS scrub of the nodes' pools. Nil means Frame starts
+                  none: the distribution's own cron (zfsutils-linux), if any, stays the
+                  only one. It is a maintenance setting rather than a threshold, but it
+                  lives here because its result is what ScrubErrors judges, and a single
+                  cluster-wide object leaves nothing to merge or to order.
+                properties:
+                  intervalDays:
+                    default: 30
+                    description: IntervalDays is the time between two completed scrubs
+                      of a node.
+                    format: int32
+                    maximum: 365
+                    minimum: 1
+                    type: integer
+                  nodeSelector:
+                    description: |-
+                      NodeSelector picks the nodes. Nil matches none, like NodeTuning's: a
+                      schedule written without one is inert, not fleet-wide by accident. A
+                      node is scrubbed only when its FrameMachine reports ZFS present with at
+                      least one pool.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  timeZone:
+                    default: UTC
+                    description: |-
+                      TimeZone is the IANA zone WindowStart is read in ("Europe/Paris").
+                      The controller embeds the zone database, so the node's own does not
+                      matter.
+                    maxLength: 64
+                    type: string
+                  windowHours:
+                    default: 4
+                    description: |-
+                      WindowHours is how long the start window stays open after WindowStart.
+                      24 means any time of day.
+                    format: int32
+                    maximum: 24
+                    minimum: 1
+                    type: integer
+                  windowStart:
+                    default: "02:00"
+                    description: |-
+                      WindowStart is the time of day ("HH:MM", 24-hour, in TimeZone) from
+                      which a scrub may start.
+                    pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                    type: string
+                type: object
               ssdWearPercent:
                 default: 80
                 description: |-

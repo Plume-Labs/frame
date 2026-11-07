@@ -36,7 +36,8 @@ import (
 // complete list of argv, each a listing or status verb, plus one probe
 // (timeoutProbe); runStorage refuses anything else. Nothing here takes an
 // argument from the cluster or the CR; a pool or VG name never reaches an
-// argv. localstorage_test.go fails if an entry is added to the list without
+// argv. (Starting a scrub writes, so it is not here: zfsscrub.go keeps its own
+// boundary.) localstorage_test.go fails if an entry is added to the list without
 // being added to its copy there, and if any entry carries a verb that writes.
 //
 // Privileges: none beyond what the agent already has (privileged, hostPID,
