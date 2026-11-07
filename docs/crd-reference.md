@@ -892,8 +892,8 @@ provider behind the same `type`, not an API change.
 
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
-| `model` | string | yes | Enum, closed to the provider's model catalog (currently `llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) |
-| `contextLength` | string | no | Pattern `^[0-9]+$`; defaults to 4096. Sized against the GPU — too large is refused here, not left to crash-loop |
+| `model` | string | yes | Name of an [InferenceModel](#inferencemodel). One that does not exist is refused, naming those that do |
+| `contextLength` | string | no | Pattern `^[0-9]+$`; defaults to the model's `contextLength`, then 4096. Sized against the GPU — too large is refused here, not left to crash-loop |
 | `modelCache` | string | no | Name of a PersistentVolumeClaim, already present in the namespace, holding cached GGUF weights. Defaults to `model-cache-pvc` |
 
 Only a deliberately narrow slice of JSON Schema is enforced, on purpose: on
@@ -932,6 +932,37 @@ the instance is recreated.
 **What it creates:** a Deployment running llama.cpp with the sized resource
 requests (including `nvidia.com/gpu`) and a node selector derived from
 `serviceClass`, a Service in front of it, and the two Secrets above.
+
+---
+
+### InferenceModel
+
+Cluster-scoped: `services.plume-labs.io/v1beta1`, plural `inferencemodels`. One
+entry of the catalog, with no status: nothing reconciles it, the `inference`
+provider reads it on each pass. The name is the file: `/models/<name>.gguf` on the
+instance's model cache.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `weightsMiB` | yes | Weights on the GPU, CPU offload already taken off. |
+| `layers`, `kvHeads`, `headDim` | yes | KV cache per token. `layers` counts those holding a growing cache: a hybrid model's linear-attention layers do not. |
+| `hostMemoryMiB` | no | The pod's memory. Default twice `weightsMiB`. A model offloading to the CPU must set it. |
+| `contextLength` | no | Default context of an instance that states none. Passed as `-c`. Slots share it. |
+| `parallel` | no | `--parallel`. Absent leaves llama.cpp's choice. |
+| `kvCacheType` | no | `f16`, `q8_0` or `q4_0`: `--cache-type-k` and `--cache-type-v`. Sizing follows it. A quantised V needs flash attention, which llama.cpp decides: a card that cannot do it fails at startup. |
+| `cpuMoELayers` | no | `--n-cpu-moe N`, with `-ngl 99`: the experts of the first N layers stay in host memory. |
+| `reasoningBudget` | no | `--reasoning-budget`: tokens, `-1` no limit, `0` none. |
+| `reasoningBudgetMessage` | no | `--reasoning-budget-message`. Needs `reasoningBudget`. |
+
+An option left out adds no flag. The manager creates the three defaults
+(`llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) when it
+starts on a cluster with no InferenceModel at all, so a default deleted from a
+catalog that has anything else in it stays deleted.
+
+An edit reaches instances on their next pass, within ten minutes, and changing a
+flag restarts them. If an instance no longer fits, it degrades with `SizeRefused`
+and its Deployment is left as it was. Deleting a model an instance serves is
+refused at admission; with webhooks off, that instance degrades the same way.
 
 ---
 

@@ -156,6 +156,9 @@ var _ = BeforeSuite(func() {
 	err = SetupFrameServiceWebhookWithManager(mgr, provider.NewRegistry(inference.New(7680, nil, nil)))
 	Expect(err).NotTo(HaveOccurred())
 
+	err = SetupInferenceModelWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:webhook
 
 	go func() {

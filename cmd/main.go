@@ -521,6 +521,16 @@ func main() {
 		postgres.New(mgr.GetClient()),
 	)
 
+	// Before the first reconcile, so an instance never meets an empty catalog.
+	// Direct reads and writes: the caches have not started, and no webhook
+	// guards creating a model, so nothing here waits on this manager.
+	seedCtx, seedDone := context.WithTimeout(context.Background(), time.Minute)
+	defer seedDone()
+	if err := inference.SeedCatalog(seedCtx, mgr.GetClient(), mgr.GetAPIReader()); err != nil {
+		setupLog.Error(err, "Failed to seed the inference catalog")
+		os.Exit(1)
+	}
+
 	// mgr.GetEventRecorderFor is deprecated in favour of GetEventRecorder, but
 	// that method returns the newer events/v1 events.EventRecorder, whose
 	// Eventf(regarding, related, eventtype, reason, action, note, args...)
@@ -715,6 +725,10 @@ func main() {
 		os.Exit(1)
 	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
+		if err := webhookservicesv1beta1.SetupInferenceModelWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "InferenceModel")
+			os.Exit(1)
+		}
 		if err := webhookservicesv1beta1.SetupFrameServiceWebhookWithManager(mgr, serviceRegistry); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameService")
 			os.Exit(1)

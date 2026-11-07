@@ -19,7 +19,7 @@
 # copy, which `make helm-parity` compares position-by-position (jq -S
 # sorts object keys, not array order).
 #
-# /webhooks/6 is `vpersistentvolumeclaim.kb.io`'s current index — manifests.yaml
+# /webhooks/7 is `vpersistentvolumeclaim.kb.io`'s current index — manifests.yaml
 # is controller-gen's alphabetical-by-name ordering of all ValidatingWebhookConfiguration
 # entries: framejob(0) framenode(1) frameresourcequota(2) frameservice(3)
 # framestorage(4) frameuser(5) persistentvolumeclaim(6) schedulingpolicy(7).
@@ -31,7 +31,7 @@
 # its properties), which is what forces this comment to be re-read rather
 # than the drift going unnoticed.
 - op: add
-  path: /webhooks/6/objectSelector
+  path: /webhooks/7/objectSelector
   value:
     matchExpressions:
     - key: frame.plume-labs.io/usage

@@ -265,6 +265,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - services.plume-labs.io
+  resources:
+  - inferencemodels
+  verbs:
+  - create
+  - get
+  - list
+- apiGroups:
   - storage.k8s.io
   resources:
   - storageclasses

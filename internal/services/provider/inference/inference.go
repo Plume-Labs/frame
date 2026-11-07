@@ -207,15 +207,15 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 		Properties: map[string]apiextensionsv1.JSONSchemaProps{
 			"model": {
 				Type:        "string",
-				Description: "Model to serve. Must be one of: " + strings.Join(knownModels(), ", "),
-				Enum:        enumOf(knownModels()),
+				Description: "Model to serve: the name of an InferenceModel.",
+				Pattern:     `^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`,
 			},
 			"contextLength": {
 				Type: "string",
 				Description: fmt.Sprintf(
-					"Context window in tokens, as a string. Defaults to %d. Sized against the "+
-						"GPU: an oversized window is refused here rather than exhausting the KV "+
-						"cache at runtime.", defaultContextLength),
+					"Context window in tokens, as a string. Defaults to the model's, or %d. Sized "+
+						"against the GPU: an oversized window is refused here rather than exhausting "+
+						"the KV cache at runtime.", defaultContextLength),
 				Pattern: `^[0-9]+$`,
 			},
 			"modelCache": {
@@ -229,26 +229,16 @@ func (p *Provider) ParameterSchema() *provider.Schema {
 	}
 }
 
-func enumOf(values []string) []apiextensionsv1.JSON {
-	out := make([]apiextensionsv1.JSON, 0, len(values))
-	for _, v := range values {
-		out = append(out, apiextensionsv1.JSON{Raw: []byte(strconv.Quote(v))})
-	}
-	return out
-}
-
 // Size derives the footprint from the model and the requested context window,
 // and refuses anything that will not fit the card.
 func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 	name := params["model"]
-	m, ok := catalog[name]
-	if !ok {
-		return provider.Sizing{}, fmt.Errorf(
-			"parameters.model %q is not a model this provider serves: known models are %s",
-			name, strings.Join(knownModels(), ", "))
+	m, err := p.lookup(name)
+	if err != nil {
+		return provider.Sizing{}, err
 	}
 
-	ctx, err := resolveContextLength(params)
+	ctx, err := resolveContextLength(params, m)
 	if err != nil {
 		return provider.Sizing{}, err
 	}
@@ -298,17 +288,28 @@ func (p *Provider) Size(params map[string]string) (provider.Sizing, error) {
 		GPUMemory: fmt.Sprintf("%dMi", totalMiB),
 		// Host resources scale off the model rather than being guessed: llama.cpp
 		// needs enough RAM to load and mmap the weights before they reach the GPU.
+		// A model offloading to the CPU states its own.
 		CPU:    "4",
-		Memory: fmt.Sprintf("%dMi", m.WeightsMiB*2),
+		Memory: fmt.Sprintf("%dMi", hostMemoryMiB(m)),
 	}, nil
+}
+
+func hostMemoryMiB(m model) int64 {
+	if m.HostMemoryMiB > 0 {
+		return m.HostMemoryMiB
+	}
+	return m.WeightsMiB * 2
 }
 
 // resolveContextLength parses parameters.contextLength the same way Size
 // does — same default, same validation — so Reconcile starts llama.cpp with
 // exactly the context window Size costed. Deriving it twice, independently,
 // would risk the two silently drifting apart the next time either is edited.
-func resolveContextLength(params map[string]string) (int64, error) {
+func resolveContextLength(params map[string]string, m model) (int64, error) {
 	ctx := int64(defaultContextLength)
+	if m.ContextLength > 0 {
+		ctx = m.ContextLength
+	}
 	if raw, set := params["contextLength"]; set && raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || parsed <= 0 {
@@ -476,7 +477,11 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 	if err != nil {
 		return provider.Result{}, err
 	}
-	contextLength, err := resolveContextLength(params)
+	m, err := p.lookup(params["model"])
+	if err != nil {
+		return provider.Result{}, err
+	}
+	contextLength, err := resolveContextLength(params, m)
 	if err != nil {
 		return provider.Result{}, err
 	}
@@ -598,6 +603,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 			"-m", modelPath(params["model"]),
 			"-c", strconv.FormatInt(contextLength, 10),
 		}
+		args = append(args, modelArgs(m)...)
 		// The API key reaches llama.cpp through the environment, sourced
 		// from the Secret ensureAPIKey just converged — never as a --api-key
 		// argument, which kubectl describe pod and Events would expose to
@@ -722,6 +728,30 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		Message:     "Deployment and Service created",
 		Provisioned: provisioned,
 	}, nil
+}
+
+// modelArgs turns a model's options into llama.cpp flags, and an option left
+// unset into no flag at all: a model with none keeps the exact pod template it
+// had, so bringing the catalog out of the code restarts nothing.
+func modelArgs(m model) []string {
+	var args []string
+	if m.Parallel > 0 {
+		args = append(args, "--parallel", strconv.Itoa(int(m.Parallel)))
+	}
+	if m.KVCacheType != "" {
+		args = append(args, "--cache-type-k", m.KVCacheType, "--cache-type-v", m.KVCacheType)
+	}
+	if m.CPUMoELayers > 0 {
+		// -ngl 99 keeps every other tensor on the GPU, which --n-cpu-moe assumes.
+		args = append(args, "-ngl", "99", "--n-cpu-moe", strconv.Itoa(int(m.CPUMoELayers)))
+	}
+	if m.ReasoningBudget != nil {
+		args = append(args, "--reasoning-budget", strconv.Itoa(int(*m.ReasoningBudget)))
+	}
+	if m.ReasoningBudgetMessage != "" {
+		args = append(args, "--reasoning-budget-message", m.ReasoningBudgetMessage)
+	}
+	return args
 }
 
 // blockedWaitingReasons are the pod waiting reasons that mean "this container

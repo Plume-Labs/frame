@@ -48,6 +48,14 @@ func argsContain(args []string, flag, value string) bool {
 	return false
 }
 
+// llama8B is the catalog entry every fixture serves.
+func llama8B() *servicesv1beta1.InferenceModel {
+	return &servicesv1beta1.InferenceModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama-3.1-8b-instruct"},
+		Spec:       servicesv1beta1.InferenceModelSpec{WeightsMiB: 4696, Layers: 32, KVHeads: 8, HeadDim: 128},
+	}
+}
+
 // newFixture builds a fake client seeded with the schemes Reconcile and Bind
 // touch, the provider under test, and the FrameService every test in this
 // file reconciles against. seedModelCache controls whether the default model
@@ -61,7 +69,7 @@ func newFixture(t *testing.T, seedModelCache bool) (*inference.Provider, client.
 	_ = appsv1.AddToScheme(scheme)
 	_ = servicesv1beta1.AddToScheme(scheme)
 
-	builder := fake.NewClientBuilder().WithScheme(scheme)
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(llama8B())
 	if seedModelCache {
 		builder = builder.WithObjects(&corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: defaultModelCachePVC, Namespace: "research"},
@@ -465,7 +473,7 @@ func TestReconcileDegradesWhenModelCacheCheckFails(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = servicesv1beta1.AddToScheme(scheme)
 
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(llama8B()).Build()
 	// Only the PVC lookup is intercepted: everything else — the Deployment
 	// and Service CreateOrUpdate calls Reconcile would reach next, if this
 	// branch failed to stop it from getting there — goes through the real
@@ -1230,5 +1238,32 @@ func TestReconcileOmitsPriorityClassForAnUnrecognisedServiceClass(t *testing.T) 
 	}
 	if got := d.Spec.Template.Spec.PriorityClassName; got != "" {
 		t.Fatalf("priorityClassName = %q, want empty for an unrecognised serviceClass", got)
+	}
+}
+
+// The model's options reach the server, after the flags every instance gets.
+func TestReconcilePassesTheModelsOptionsToLlamaCpp(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+
+	model := llama8B()
+	if err := c.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
+		t.Fatal(err)
+	}
+	model.Spec.KVCacheType = "q8_0"
+	if err := c.Update(ctx, model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+
+	var deployment appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(deployment.Spec.Template.Spec.Containers[0].Args, " ")
+	if !strings.HasSuffix(args, "-c 8192 --cache-type-k q8_0 --cache-type-v q8_0") {
+		t.Fatalf("args: %s", args)
 	}
 }

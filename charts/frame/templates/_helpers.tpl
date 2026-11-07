@@ -167,6 +167,9 @@ thing. `make helm-parity` compares them, including this label.
 - roleBase: services-frameservice
   apiGroup: services.plume-labs.io
   resource: frameservices
+- roleBase: inferencemodel
+  apiGroup: services.plume-labs.io
+  resource: inferencemodels
 - roleBase: storagehealthpolicy
   apiGroup: frame.plume-labs.io
   resource: storagehealthpolicies

@@ -1,0 +1,16 @@
+apiVersion: services.plume-labs.io/v1beta1
+kind: InferenceModel
+metadata:
+  name: qwen3-30b-a3b
+spec:
+  # On the GPU, once the experts of the first 36 layers are in host memory.
+  weightsMiB: 6000
+  hostMemoryMiB: 24000
+  layers: 48
+  kvHeads: 4
+  headDim: 128
+  contextLength: 16384
+  parallel: 1
+  kvCacheType: q8_0
+  cpuMoELayers: 36
+  reasoningBudget: 1024

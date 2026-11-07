@@ -91,7 +91,7 @@ rules:
   # The Databases screen: FrameService instances of type postgres, in every
   # namespace. Call site: the DatabaseClient in src/lib/frame-sdk.ts.
   - apiGroups: ["services.plume-labs.io"]
-    resources: ["frameservices"]
+    resources: ["frameservices", "inferencemodels"]
     verbs: ["get", "list", "watch"]
   # Lot 1. The Hardware screen reads a chassis's inventory, sensors and event
   # log; all three live in FrameMachine's status, which the operator fills by
@@ -339,6 +339,9 @@ rules:
   - apiGroups: ["services.plume-labs.io"]
     resources: ["frameservices"]
     verbs: [get, list, watch, patch]
+  - apiGroups: ["services.plume-labs.io"]
+    resources: ["inferencemodels"]
+    verbs: [get, list, watch, create, patch, delete]
   #
   # REMOVED 2026-08-10 — same audit as the viewer role above:
   #   core `services`, `namespaces`, `resourcequotas`   — no call site

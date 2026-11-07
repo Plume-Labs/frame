@@ -167,7 +167,8 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	sizing, err := prov.Size(provider.Params(svc.Spec.Parameters))
 	if err != nil {
-		return ctrl.Result{}, r.setStatus(ctx, &svc, metav1.ConditionFalse,
+		// Requeued: the catalog can move under an instance with no event on it.
+		return ctrl.Result{RequeueAfter: degradedRequeue}, r.setStatus(ctx, &svc, metav1.ConditionFalse,
 			"SizeRefused", err.Error(), nil, nil)
 	}
 

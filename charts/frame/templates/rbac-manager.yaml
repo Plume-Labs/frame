@@ -307,6 +307,14 @@ rules:
 # entry that owns one. No delete here either, for the same reason as
 # framestorages above.
 - apiGroups:
+  - services.plume-labs.io
+  resources:
+  - inferencemodels
+  verbs:
+  - create
+  - get
+  - list
+- apiGroups:
   - storage.k8s.io
   resources:
   - storageclasses

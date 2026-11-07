@@ -26,6 +26,9 @@ resources:
 - networkhealthpolicy_admin_role.yaml
 - networkhealthpolicy_editor_role.yaml
 - networkhealthpolicy_viewer_role.yaml
+- inferencemodel_admin_role.yaml
+- inferencemodel_editor_role.yaml
+- inferencemodel_viewer_role.yaml
 - storagehealthpolicy_admin_role.yaml
 - storagehealthpolicy_editor_role.yaml
 - storagehealthpolicy_viewer_role.yaml

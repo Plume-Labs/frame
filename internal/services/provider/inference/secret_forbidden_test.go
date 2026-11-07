@@ -32,7 +32,7 @@ func TestForbiddenAPIKeySecretDegrades(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
 	_ = servicesv1beta1.AddToScheme(scheme)
-	inner := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.PersistentVolumeClaim{
+	inner := fake.NewClientBuilder().WithScheme(scheme).WithObjects(llama8B(), &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: defaultModelCachePVC, Namespace: "research"},
 	}).Build()
 	forbid := func(name string) error {

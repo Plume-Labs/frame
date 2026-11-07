@@ -355,8 +355,8 @@ separate `services.plume-labs.io/v1beta1` group (see
 deprecated `v1alpha1` — except `NodeTuning`, which postdates the freeze and is
 `v1beta1` only.
 
-All are namespaced except `NodeTuning`, `StorageHealthPolicy` and
-`NetworkHealthPolicy`, which are
+All are namespaced except `NodeTuning`, `StorageHealthPolicy`,
+`NetworkHealthPolicy` and `InferenceModel`, which are
 **cluster-scoped**: their URL has no `/namespaces/<ns>` segment, and a namespaced
 list will never return them.
 
@@ -370,6 +370,7 @@ list will never return them.
 | FrameResourceQuota | `frame.plume-labs.io` | `frameresourcequotas` | `frq` | namespaced |
 | FrameUser | `frame.plume-labs.io` | `frameusers` | — | namespaced |
 | NodeTuning | `frame.plume-labs.io` | `nodetunings` | — | **cluster** |
+| InferenceModel | `services.plume-labs.io` | `inferencemodels` | — | **cluster** |
 | FrameService | `services.plume-labs.io` | `frameservices` | — | namespaced |
 
 Direct API path pattern:

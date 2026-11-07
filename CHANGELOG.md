@@ -6,6 +6,22 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `InferenceModel`: the inference catalog leaves the code
+
+- The cluster-scoped `InferenceModel` replaces the three models compiled into the
+  `inference` provider. It holds the sizing figures and llama.cpp's options:
+  `contextLength`, `parallel`, `kvCacheType`, `cpuMoELayers`, `reasoningBudget`.
+  `spec.parameters.model` of a FrameService names one.
+- The manager writes the three defaults into a cluster with no model at all, so an
+  upgrade changes nothing: they set no option, which adds no flag, and running
+  instances keep their pod template.
+- Editing a model restarts the instances serving it within ten minutes. Deleting
+  one an instance serves is refused.
+- A FrameService refused for its size is now retried every two minutes, because
+  the catalog can move under it.
+- The manager gains `get`, `list`, `create` on `inferencemodels`.
+- The console gains Inference → Models: add, edit, delete.
+
 ### Added — SMART reading of solid-state disks
 
 - The agent reads wear and health from SSD and NVMe disks with `smartctl`, every
