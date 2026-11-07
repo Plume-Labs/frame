@@ -14,6 +14,7 @@ import {
 } from './frame-sdk'
 import { __resetForTests as resetAuthForTests, currentSession } from './auth'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
+import type { Cache } from './caches'
 import type { Database } from './databases'
 import { EMPTY_SETTINGS } from './inference-models'
 import type { Machine } from './machines'
@@ -1726,5 +1727,23 @@ describe('DatabaseClient', () => {
     expect(JSON.parse(String(calls[0].init?.body)).spec).toEqual({ weightsMiB: 1, layers: 2, kvHeads: 3, headDim: 4 })
     expect(JSON.parse(String(calls[1].init?.body)).spec.parallel).toBeNull()
     expect((calls[2].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('delete inference model m')
+  })
+
+  it('lists only caches, and patches one in its own namespace', async () => {
+    stubBrowser()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return new Response(JSON.stringify({ items: [
+        { metadata: { name: 'jobs', namespace: 'x' }, spec: { type: 'cache' } },
+        { metadata: { name: 'b-db', namespace: 'x' }, spec: { type: 'postgres' } },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const list = await createFrameClient().caches.list()
+    expect(list.map((c) => c.name)).toEqual(['jobs'])
+    await createFrameClient().caches.save({ name: 'jobs', namespace: 'x', profile: 'cache' } as Cache, { maxMemory: '1Gi', volumeSize: '' })
+    expect(calls[1].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/jobs')
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ spec: { parameters: { maxMemory: '1Gi' } } })
+    expect((calls[1].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set cache jobs')
   })
 })

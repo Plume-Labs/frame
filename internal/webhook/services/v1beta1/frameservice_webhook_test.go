@@ -24,6 +24,7 @@ import (
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 	"github.com/Plume-Labs/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider/cache"
 	"github.com/Plume-Labs/frame/internal/services/provider/inference"
 )
 
@@ -97,7 +98,7 @@ var _ = Describe("FrameService Webhook", func() {
 			// nil client, nil apiReader: the validator only calls Size and
 			// ParameterSchema, never Reconcile or Bind, so nothing here
 			// dereferences either.
-			Registry: provider.NewRegistry(inference.New(7680, nil, nil)),
+			Registry: provider.NewRegistry(inference.New(7680, nil, nil), cache.New(nil, nil)),
 		}
 	})
 
@@ -111,6 +112,17 @@ var _ = Describe("FrameService Webhook", func() {
 			ServiceClass: "HIGH",
 		}
 	}
+
+	It("refuses a binding Secret that collides with the cache provider's auth Secret", func() {
+		obj.Name = "jobs"
+		obj.Spec = servicesv1beta1.FrameServiceSpec{
+			Type:       "cache",
+			Parameters: map[string]framev1beta1.ParameterValue{"profile": "cache", "maxMemory": "64Mi"},
+			Binding:    servicesv1beta1.BindingSpec{SecretName: "jobs-valkey-auth"},
+		}
+		_, err := validator.ValidateCreate(ctx, obj)
+		Expect(err).To(MatchError(ContainSubstring("collides")))
+	})
 
 	It("does not size again what nobody is resizing", func() {
 		// 70B cannot fit: a model edited under a running instance looks like this.

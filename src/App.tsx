@@ -30,6 +30,7 @@ const GpuView = lazy(() => import('@/components/GpuView').then((m) => ({ default
 const ClusterStorageView = lazy(() => import('@/components/ClusterStorageView').then((m) => ({ default: m.ClusterStorageView })))
 const FrameStorageView = lazy(() => import('@/components/FrameStorageView').then((m) => ({ default: m.FrameStorageView })))
 const DatabasesView = lazy(() => import('@/components/DatabasesView').then((m) => ({ default: m.DatabasesView })))
+const CachesView = lazy(() => import('@/components/CachesView').then((m) => ({ default: m.CachesView })))
 
 const StorageHealthView = lazy(() => import('@/components/StorageHealthView').then((m) => ({ default: m.StorageHealthView })))
 const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
@@ -132,6 +133,7 @@ type TabId =
   | 'storage-entries'
   | 'disks'
   | 'databases'
+  | 'caches'
 
   | 'storage-health'
   | 'network'
@@ -275,6 +277,7 @@ const NAV: NavGroup[] = [
           { id: 'storage-entries', label: 'Entries' },
           { id: 'disks', label: 'Disks' },
           { id: 'databases', label: 'Databases' },
+          { id: 'caches', label: 'Caches' },
 
           { id: 'storage-health', label: 'Health' },
         ],
@@ -581,6 +584,8 @@ function App() {
         return <MachineDisksPanel />
       case 'databases':
         return <DatabasesView />
+      case 'caches':
+        return <CachesView />
 
       case 'storage-health':
         return <StorageHealthView />

@@ -48,6 +48,10 @@ import (
 // being refused here.
 const inferenceAPIKeySecretSuffix = "-inference-key"
 
+// cacheAuthSecretSuffix mirrors authSecretSuffix in
+// internal/services/provider/cache/cache.go, for the same reason.
+const cacheAuthSecretSuffix = "-valkey-auth"
+
 // nolint:unused
 // log is for logging in this package.
 var frameservicelog = logf.Log.WithName("frameservice-resource")
@@ -154,6 +158,12 @@ func (v *FrameServiceCustomValidator) validate(svc *servicesv1beta1.FrameService
 		if svc.Spec.Type == "inference" && name == svc.Name+inferenceAPIKeySecretSuffix {
 			return fmt.Errorf(
 				"spec.binding.secretName %q collides with the inference provider's own API-key Secret "+
+					"for this FrameService; choose a different name",
+				name)
+		}
+		if svc.Spec.Type == "cache" && name == svc.Name+cacheAuthSecretSuffix {
+			return fmt.Errorf(
+				"spec.binding.secretName %q collides with the cache provider's own auth Secret "+
 					"for this FrameService; choose a different name",
 				name)
 		}

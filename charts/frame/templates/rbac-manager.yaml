@@ -31,7 +31,6 @@ rules:
   resources:
   - configmaps
   - namespaces
-  - persistentvolumeclaims
   - pods
   verbs:
   - get
@@ -53,6 +52,15 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - get
+  - list
+  - patch
   - watch
 - apiGroups:
   - ""
@@ -96,6 +104,16 @@ rules:
   - get
   - list
   - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - get
+  - list
   - update
   - watch
 - apiGroups:

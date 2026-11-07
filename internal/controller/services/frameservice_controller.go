@@ -127,6 +127,7 @@ type FrameServiceReconciler struct {
 // cluster-scoped List+Watch informer over every PersistentVolumeClaim in the
 // cluster to serve one named lookup.
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get
+// The cache provider's marker adds patch, for growing a queue's volume.
 
 func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -367,6 +368,7 @@ func (r *FrameServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&servicesv1beta1.FrameService{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		// Deliberately no Owns(&corev1.Secret{}). An Owns watch is a
 		// cluster-wide informer over the type, which is list+watch on Secrets

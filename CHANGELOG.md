@@ -6,6 +6,21 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `cache` FrameService provider
+
+- `spec.type: cache` runs one Valkey server. `profile: cache` evicts with LRU and
+  persists nothing; `profile: queue` keeps an AOF on a volume and never evicts,
+  for BullMQ. The binding Secret carries `host`, `port`, `password` and `url`.
+- Frame runs it as a single-replica StatefulSet rather than through an operator;
+  the reasons are in `docs/superpowers/specs/2026-11-07-frameservice-cache-valkey-design.md`.
+  There is no automatic failover.
+- The manager gains `get`, `list`, `watch`, `create`, `update` on `statefulsets`
+  and `patch` on `persistentvolumeclaims`, with no `delete` on either: a queue's
+  volume survives its FrameService whatever `deletionPolicy` says.
+- A queue whose volume is replaced degrades with `InstanceLost`, until
+  `restoredVolumeUID` names the new one.
+- The console gains Storage → Caches, with `maxMemory` and `volumeSize` editable.
+
 ### Added — link load and bottlenecks
 
 - The agent works out each link's traffic from the kernel's counters over a sliding

@@ -58,6 +58,7 @@ import (
 	servicescontroller "github.com/Plume-Labs/frame/internal/controller/services"
 	"github.com/Plume-Labs/frame/internal/provision"
 	"github.com/Plume-Labs/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider/cache"
 	"github.com/Plume-Labs/frame/internal/services/provider/inference"
 	"github.com/Plume-Labs/frame/internal/services/provider/postgres"
 	webhookcorev1 "github.com/Plume-Labs/frame/internal/webhook/core/v1"
@@ -521,6 +522,7 @@ func main() {
 	serviceRegistry := provider.NewRegistry(
 		inference.New(inferenceGPUMemoryMiB, mgr.GetClient(), mgr.GetAPIReader()),
 		postgres.New(mgr.GetClient()),
+		cache.New(mgr.GetClient(), mgr.GetAPIReader()),
 	)
 
 	// Before the first reconcile, so an instance never meets an empty catalog.

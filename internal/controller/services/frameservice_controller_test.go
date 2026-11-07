@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,8 +33,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	servicesv1beta1 "github.com/Plume-Labs/frame/api/services/v1beta1"
 	"github.com/Plume-Labs/frame/internal/services/provider"
+	"github.com/Plume-Labs/frame/internal/services/provider/cache"
 )
 
 // fakeProvisioner records what the controller asked of it, so the tests assert
@@ -313,3 +316,83 @@ func readyCondition(svc *servicesv1beta1.FrameService) metav1.Condition {
 	}
 	return metav1.Condition{}
 }
+
+// The cache provider against a real apiserver: it accepts the objects as written,
+// and an unchanged instance sees no write.
+var _ = Describe("FrameService of type cache", func() {
+	const name = "cache-queue"
+	const ns = "default"
+	key := types.NamespacedName{Name: name, Namespace: ns}
+	ctx := context.Background()
+
+	AfterEach(func() {
+		fresh := &servicesv1beta1.FrameService{}
+		if err := k8sClient.Get(ctx, key, fresh); err == nil {
+			fresh.Finalizers = nil
+			_ = k8sClient.Update(ctx, fresh)
+			_ = k8sClient.Delete(ctx, fresh)
+		}
+		_ = k8sClient.Delete(ctx, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
+		_ = k8sClient.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
+		_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
+		_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-valkey-auth", Namespace: ns}})
+	})
+
+	It("creates a StatefulSet the apiserver accepts, leaves it alone, then binds", func() {
+		Expect(k8sClient.Create(ctx, &servicesv1beta1.FrameService{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: servicesv1beta1.FrameServiceSpec{
+				Type: "cache", DeletionPolicy: "Retain", ServiceClass: "MEDIUM",
+				Parameters: map[string]framev1beta1.ParameterValue{
+					"profile": "queue", "maxMemory": "64Mi", "volumeSize": "1Gi",
+				},
+			},
+		})).To(Succeed())
+		r := &FrameServiceReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
+			Registry: provider.NewRegistry(cache.New(k8sClient, k8sClient)),
+		}
+		req := reconcile.Request{NamespacedName: key}
+		pass := func() {
+			_, err := r.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		pass() // finalizer
+		pass() // creates
+
+		var sts appsv1.StatefulSet
+		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+		generation, version := sts.Generation, sts.ResourceVersion
+
+		pass()
+		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+		Expect(sts.Generation).To(Equal(generation))
+		Expect(sts.ResourceVersion).To(Equal(version), "an unchanged instance was written")
+
+		// envtest runs no StatefulSet controller: this is what it would report,
+		// and the claim it would make, labelled with the selector as the real one
+		// does (read off a cluster's claims).
+		sts.Status.Replicas, sts.Status.ReadyReplicas, sts.Status.UpdatedReplicas = 1, 1, 1
+		sts.Status.ObservedGeneration = sts.Generation
+		Expect(k8sClient.Status().Update(ctx, &sts)).To(Succeed())
+		claim := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "data-" + name + "-0", Namespace: ns,
+				Labels: sts.Spec.Selector.MatchLabels,
+			},
+			Spec: sts.Spec.VolumeClaimTemplates[0].Spec,
+		}
+		Expect(k8sClient.Create(ctx, claim)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(ctx, claim) })
+
+		pass()
+		var fresh servicesv1beta1.FrameService
+		Expect(k8sClient.Get(ctx, key, &fresh)).To(Succeed())
+		Expect(fresh.Status.Binding.Endpoint).To(Equal(name + ".default.svc:6379"))
+		var binding corev1.Secret
+		Expect(k8sClient.Get(ctx, key, &binding)).To(Succeed())
+		Expect(binding.Data).To(HaveKey("url"))
+	})
+})
