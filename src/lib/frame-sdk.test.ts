@@ -1454,12 +1454,12 @@ describe('NetworkHealthPolicyClient', () => {
   const path = '/apis/frame.plume-labs.io/v1beta1/networkhealthpolicies'
   const json = (status: number, body: unknown = {}) =>
     new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
-  const expected = { minLinkSpeedMbps: 1000, links: [{ node: 'a', interface: 'bond0', members: 2 }] }
+  const expected = { minLinkSpeedMbps: 1000, linkSaturatedPercent: 80, linkErrorsPerMinute: 1, links: [{ node: 'a', interface: 'bond0', members: 2 }] }
 
   it('reads the default when no policy exists, but not a refusal', async () => {
     stubBrowser()
     vi.stubGlobal('fetch', vi.fn(async () => json(404)))
-    expect(await createFrameClient().networkHealthPolicy.get()).toEqual({ minLinkSpeedMbps: 1000, links: [] })
+    expect(await createFrameClient().networkHealthPolicy.get()).toEqual({ minLinkSpeedMbps: 1000, linkSaturatedPercent: 80, linkErrorsPerMinute: 1, links: [] })
     vi.stubGlobal('fetch', vi.fn(async () => json(403)))
     await expect(createFrameClient().networkHealthPolicy.get()).rejects.toThrow()
   })

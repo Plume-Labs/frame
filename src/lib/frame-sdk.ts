@@ -64,6 +64,7 @@ import {
 import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './storage'
 import type { CephPlacement } from './ceph-placement'
 import { DECODE_RATE_QUERY, PROMPT_RATE_QUERY, rateFromSamples } from './inference-rates'
+import { POD_TRAFFIC_QUERIES, toPodTraffic, type PodTraffic } from './network-bottlenecks'
 import { CEPH_DIAG_QUERIES, promAnswered, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
 import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
 
@@ -1732,6 +1733,12 @@ class ClusterClient {
       }),
     )
     return promAnswered(out)
+  }
+
+  /** The pods moving the most, from cAdvisor's counters. Null when Prometheus does not answer. */
+  async podTraffic(): Promise<{ tx: PodTraffic[]; rx: PodTraffic[] } | null> {
+    const res = await this.promInstant(POD_TRAFFIC_QUERIES)
+    return res && { tx: toPodTraffic(res.tx), rx: toPodTraffic(res.rx) }
   }
 
   /**

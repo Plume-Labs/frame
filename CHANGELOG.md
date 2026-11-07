@@ -6,6 +6,19 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — link load and bottlenecks
+
+- The agent works out each link's traffic from the kernel's counters over a sliding
+  window, into `status.network`: rates, utilisation against the speed, a 15-minute
+  peak, errors and drops a minute. Files only, no new command.
+- `LinkSaturated` and `LinkErrorsRising`, with `linkSaturatedPercent` (80) and
+  `linkErrorsPerMinute` (1) in NetworkHealthPolicy. A link that gives no speed makes
+  the first `Unknown`.
+- The manager publishes `frame_link_utilization_percent`,
+  `frame_link_bytes_per_second` and `frame_link_errors_per_minute`.
+- The console gains Network → Bottlenecks: links by peak, and the pods moving the
+  most from Prometheus. It measures: no bandwidth limit is set anywhere.
+
 ### Added — SMART reading of solid-state disks
 
 - The agent reads wear and health from SSD and NVMe disks with `smartctl`, every

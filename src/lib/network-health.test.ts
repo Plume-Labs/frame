@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { expectationsProblem, lacpLine, memberLine, networkNotes, speedLabel, toExpectations } from './network-health'
+import { DEFAULT_NETWORK_EXPECTATIONS, expectationsProblem, lacpLine, memberLine, networkNotes, speedLabel, toExpectations } from './network-health'
 import { toMachine, type NetworkBond } from './machines'
 
 const bond = (over: Partial<NetworkBond> = {}): NetworkBond => ({
@@ -77,12 +77,14 @@ describe('networkNotes des bonds', () => {
 })
 
 describe('expectationsProblem', () => {
-  const ok = { minLinkSpeedMbps: 1000, links: [{ node: 'a', interface: 'bond0', members: 2 }] }
+  const ok = { ...DEFAULT_NETWORK_EXPECTATIONS, links: [{ node: 'a', interface: 'bond0', members: 2 }] }
   it('accepte une attente valide', () => {
     expect(expectationsProblem(ok)).toBeNull()
   })
   it('refuse ce que le CRD refuserait', () => {
     expect(expectationsProblem({ ...ok, minLinkSpeedMbps: 0 })).not.toBeNull()
+    expect(expectationsProblem({ ...ok, linkSaturatedPercent: 101 })).toMatch(/Saturation/)
+    expect(expectationsProblem({ ...ok, linkErrorsPerMinute: 0 })).toMatch(/Errors/)
     expect(expectationsProblem({ ...ok, links: [{ node: '', interface: 'x' }] })).not.toBeNull()
     expect(expectationsProblem({ ...ok, links: [{ node: 'a', interface: 'x', members: 17 }] })).not.toBeNull()
     expect(expectationsProblem({ ...ok, links: [{ node: 'a', interface: 'a-name-of-16-char' }] })).not.toBeNull()

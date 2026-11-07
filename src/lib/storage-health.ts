@@ -44,6 +44,8 @@ export const STORAGE_CHECKS = [
 export const NETWORK_CHECKS = [
   { type: 'NetworkDegraded', label: 'Bonds and links' },
   { type: 'LinkSpeedLow', label: 'Link speed' },
+  { type: 'LinkSaturated', label: 'Link load' },
+  { type: 'LinkErrorsRising', label: 'Link errors' },
 ] as const
 
 export interface CheckVerdict {

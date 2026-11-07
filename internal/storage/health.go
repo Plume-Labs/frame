@@ -47,10 +47,12 @@ const (
 	CheckWearHigh     = "DiskWearHigh"
 	CheckNetDegraded  = "NetworkDegraded"
 	CheckLinkSlow     = "LinkSpeedLow"
+	CheckSaturated    = "LinkSaturated"
+	CheckLinkErrors   = "LinkErrorsRising"
 )
 
 // Checks lists them in the order the conditions are written.
-var Checks = []string{CheckDegraded, CheckScrubErrors, CheckCapacityHigh, CheckWearHigh, CheckNetDegraded, CheckLinkSlow}
+var Checks = []string{CheckDegraded, CheckScrubErrors, CheckCapacityHigh, CheckWearHigh, CheckNetDegraded, CheckLinkSlow, CheckSaturated, CheckLinkErrors}
 
 // Scope is the reading a check rests on.
 type Scope string
@@ -71,6 +73,8 @@ var checkScopes = map[string][]Scope{
 	CheckWearHigh:     {ScopeDrives},
 	CheckNetDegraded:  {ScopeNet, scopeNetState},
 	CheckLinkSlow:     {ScopeNet},
+	CheckSaturated:    {ScopeNet, scopeNetSustained},
+	CheckLinkErrors:   {ScopeNet, scopeNetTraffic},
 }
 
 const (
@@ -141,6 +145,9 @@ type Assessment struct {
 	SMARTSilent []string
 	// SpeedUnreported counts the links that are up and give no speed.
 	SpeedUnreported int
+	// CapacityUnreported counts the links carrying traffic with nothing to
+	// measure it against.
+	CapacityUnreported int
 }
 
 // Thresholds are StorageHealthPolicySpec with its zero values resolved.
@@ -532,6 +539,9 @@ func (a Assessment) Verdict(check string, open Open) Verdict {
 	}
 	if check == CheckLinkSlow && a.SpeedUnreported > 0 {
 		return Verdict{"Unknown", "SpeedNotReported", fmt.Sprintf("%d link(s) up give no speed", a.SpeedUnreported)}
+	}
+	if check == CheckSaturated && a.CapacityUnreported > 0 {
+		return Verdict{"Unknown", "SpeedNotReported", fmt.Sprintf("%d link(s) up give no speed", a.CapacityUnreported)}
 	}
 	return Verdict{"False", "Healthy", ""}
 }

@@ -14,6 +14,8 @@ stacks: 32 ports, 8 bonds, 16 members per bond, with `*Omitted` counters.
 | `NetworkDegraded` | critical | a bond is down, unless nobody brought it up, it has no member and the policy does not name it (the `bond0` the module makes when it loads); a bond holds fewer members than `members`; a link named in the policy is down or absent |
 | `NetworkDegraded` | warning | a bond member is down, or sits outside the LACP aggregator the bond uses (it has link and carries nothing) |
 | `LinkSpeedLow` | warning | a physical link that is up, or at the kernel's `unknown`, runs below its expected speed |
+| `LinkSaturated` | warning | a link or bond averages `linkSaturatedPercent` of its speed over five minutes, in its busier direction (default 80 %) |
+| `LinkErrorsRising` | warning | a link or bond counts `linkErrorsPerMinute` errors a minute over five minutes (default 1) |
 
 A bond member's alert is on `<bond>/<member>`, the others on the interface. A port
 that is down and not named in the policy raises nothing: machines carry unused
@@ -46,8 +48,31 @@ raised on a named link whose driver then stays at `unknown` needs it to close.
 
 A member that left a bond altogether is in no list, so only `members` in the
 [`NetworkHealthPolicy`](crd-reference.md#networkhealthpolicy) can notice it. Error
-and drop counters are reported and shown, not alerted on: they accumulate since
-the driver loaded, and a threshold on a total says nothing about now.
+and drop counters are totals since the driver loaded, which is why `LinkErrorsRising`
+reads their rate and not them. Drops are shown and not alerted on: `rx_dropped`
+counts frames nobody wanted as well as frames lost.
+
+## Traffic
+
+The agent keeps each link's counters in memory for 15 minutes, read every 30
+seconds, and writes `traffic` beside the port or bond: bytes a second over the last
+minute, the busiest interval of the last 15, and utilisation against the link's
+speed or the bond's total, in the busier direction. The history dies with the
+agent and starts over when a driver resets its counters.
+
+A link with no rates yet, or under five minutes of history, makes `LinkSaturated`
+`Unknown`, reason `ReadUnavailable`, and keeps what was open; the rates are nil for
+the first reading. A link that gives no speed, the case of every virtio NIC, has
+its bytes but no percentages: `SpeedNotReported`, the same `Unknown`. An open
+`LinkSaturated` clears five points under the threshold. Saturation of a bond's
+member with the bond itself far from full is a hash that does not spread.
+
+The manager publishes `frame_link_utilization_percent`,
+`frame_link_bytes_per_second{direction}` and `frame_link_errors_per_minute`, by
+node and interface. Network → Bottlenecks ranks the links by their 15-minute peak,
+and lists the pods sending and receiving the most from Prometheus' cAdvisor
+counters (`container_network_*_bytes_total`). Pods on the host network are left
+out, since cAdvisor gives them the node's interfaces. Nothing here limits anything.
 
 Expectations are edited in Network → Links, through `frame-uiproxy`, and reach each
 machine at its next pass.

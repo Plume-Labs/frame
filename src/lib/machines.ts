@@ -113,8 +113,23 @@ export interface MachineStorage {
   local: LocalStorage | null
 }
 
+export interface LinkTraffic {
+  historySeconds: number
+  rxBytesPerSecond: number
+  txBytesPerSecond: number
+  peakRxBytesPerSecond: number
+  peakTxBytesPerSecond: number
+  capacityMbps?: number
+  utilizationPercent?: number
+  sustainedUtilizationPercent?: number
+  peakUtilizationPercent?: number
+  errorsPerMinute: number
+  dropsPerMinute: number
+}
+
 export interface NetworkInterface {
   name: string
+  traffic?: LinkTraffic
   operState?: string
   speedMbps?: number
   duplex?: string
@@ -136,6 +151,7 @@ export interface BondMember {
 
 export interface NetworkBond {
   name: string
+  traffic?: LinkTraffic
   mode?: string
   miiStatus?: string
   mtu?: number

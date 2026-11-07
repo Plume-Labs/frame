@@ -64,7 +64,13 @@ type NetworkCollector struct {
 
 // NewNetworkCollector reads root's links.
 func NewNetworkCollector(root string) *NetworkCollector {
-	return &NetworkCollector{read: func() *framev1beta1.MachineNetwork { return ObserveNetwork(root, time.Now()) }}
+	windows := newTrafficWindows(filepath.Join(root, sysClassNet))
+	return &NetworkCollector{read: func() *framev1beta1.MachineNetwork {
+		now := time.Now()
+		n := ObserveNetwork(root, now)
+		windows.annotate(n, now)
+		return n
+	}}
 }
 
 // Latest returns the newest report, waiting at most wait for a read started now

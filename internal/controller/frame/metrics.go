@@ -3,6 +3,8 @@ package controller
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
 var (
@@ -35,7 +37,51 @@ var (
 		Name: "frame_schedulingpolicy_refused_total",
 		Help: "Total number of SchedulingPolicy reconciles that refused to act on a cluster-scoped PriorityClass or Queue, by reason.",
 	}, []string{"reason"})
+
+	// What the agents report of each link, for graphing beside node_exporter's
+	// raw counters, which know nothing of Frame's window or of a bond's capacity.
+	linkUtilization = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "frame_link_utilization_percent",
+		Help: "Last minute's utilisation of a link, in its busier direction. Absent when the link gives no speed.",
+	}, []string{"node", "interface"})
+	linkBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "frame_link_bytes_per_second",
+		Help: "Bytes a second a link carried over the last minute.",
+	}, []string{"node", "interface", "direction"})
+	linkErrors = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "frame_link_errors_per_minute",
+		Help: "Errors a minute on a link, over the last five minutes.",
+	}, []string{"node", "interface"})
 )
+
+// recordLinkMetrics replaces a node's series: a link that left must not stay at
+// its last value.
+func recordLinkMetrics(node string, n *framev1beta1.MachineNetwork) {
+	match := prometheus.Labels{"node": node}
+	linkUtilization.DeletePartialMatch(match)
+	linkBytes.DeletePartialMatch(match)
+	linkErrors.DeletePartialMatch(match)
+	if n == nil {
+		return
+	}
+	record := func(name string, t *framev1beta1.LinkTraffic) {
+		if t == nil {
+			return
+		}
+		if t.UtilizationPercent != nil {
+			linkUtilization.WithLabelValues(node, name).Set(float64(*t.UtilizationPercent))
+		}
+		linkBytes.WithLabelValues(node, name, "rx").Set(float64(t.RxBytesPerSecond))
+		linkBytes.WithLabelValues(node, name, "tx").Set(float64(t.TxBytesPerSecond))
+		linkErrors.WithLabelValues(node, name).Set(float64(t.ErrorsPerMinute))
+	}
+	for i := range n.Interfaces {
+		record(n.Interfaces[i].Name, n.Interfaces[i].Traffic)
+	}
+	for i := range n.Bonds {
+		record(n.Bonds[i].Name, n.Bonds[i].Traffic)
+	}
+}
 
 func init() {
 	metrics.Registry.MustRegister(
@@ -43,5 +89,8 @@ func init() {
 		frameJobFailed,
 		schedulingPolicyApplied,
 		schedulingPolicyRefused,
+		linkUtilization,
+		linkBytes,
+		linkErrors,
 	)
 }

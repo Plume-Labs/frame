@@ -87,6 +87,31 @@ function ExpectationsCard() {
               />
               <p className="text-xs text-muted-foreground">For every physical link that is up. A link named below is also required.</p>
             </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+              <div className="space-y-1">
+                <Label htmlFor="saturated">Saturated at (%)</Label>
+                <Input
+                  id="saturated"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={Number.isNaN(draft.linkSaturatedPercent) ? '' : draft.linkSaturatedPercent}
+                  onChange={(e) => setDraft({ ...draft, linkSaturatedPercent: e.target.valueAsNumber })}
+                />
+                <p className="text-xs text-muted-foreground">Averaged over five minutes, in the busier direction.</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="errors">Errors a minute</Label>
+                <Input
+                  id="errors"
+                  type="number"
+                  min={1}
+                  value={Number.isNaN(draft.linkErrorsPerMinute) ? '' : draft.linkErrorsPerMinute}
+                  onChange={(e) => setDraft({ ...draft, linkErrorsPerMinute: e.target.valueAsNumber })}
+                />
+                <p className="text-xs text-muted-foreground">Over five minutes. Drops are shown, not alerted on.</p>
+              </div>
+            </div>
             {draft.links.map((l, i) => (
               <div key={i} className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
                 <div className="space-y-1">

@@ -95,6 +95,8 @@ func (r *FrameMachineReconciler) assessStorage(ctx context.Context, fm *framev1b
 		open[k] = storage.Scope(fa.Spec.Labels[labelStack])
 	}
 
+	recordLinkMetrics(fm.Spec.NodeRef, fm.Status.Network)
+
 	now := time.Now()
 	expectations := storage.NetExpectationsFrom(netPolicy, fm.Spec.NodeRef)
 	expectations.Unread = netUnread

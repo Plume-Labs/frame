@@ -3,10 +3,13 @@ package controller
 import (
 	"context"
 	"errors"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -673,3 +676,29 @@ var _ = Describe("FrameMachine storage health", func() {
 		}
 	})
 })
+
+// A link that left must not stay on the graph at its last value.
+func TestLinkMetricsFollowTheReport(t *testing.T) {
+	report := &framev1beta1.MachineNetwork{
+		Interfaces: []framev1beta1.NetworkInterface{{
+			Name:    "eno1",
+			Traffic: &framev1beta1.LinkTraffic{RxBytesPerSecond: 7, UtilizationPercent: new(int32(42))},
+		}, {Name: "eno2"}},
+		Bonds: []framev1beta1.NetworkBond{{Name: "bond0", Traffic: &framev1beta1.LinkTraffic{TxBytesPerSecond: 9, ErrorsPerMinute: 3}}},
+	}
+	recordLinkMetrics("metrics-node", report)
+	if got := testutil.ToFloat64(linkUtilization.WithLabelValues("metrics-node", "eno1")); got != 42 {
+		t.Fatalf("utilisation %v", got)
+	}
+	if got := testutil.ToFloat64(linkBytes.WithLabelValues("metrics-node", "bond0", "tx")); got != 9 {
+		t.Fatalf("bytes %v", got)
+	}
+	if got := testutil.ToFloat64(linkErrors.WithLabelValues("metrics-node", "bond0")); got != 3 {
+		t.Fatalf("errors %v", got)
+	}
+
+	recordLinkMetrics("metrics-node", nil)
+	if n := linkBytes.DeletePartialMatch(prometheus.Labels{"node": "metrics-node"}); n != 0 {
+		t.Fatalf("%d series outlived the report", n)
+	}
+}
