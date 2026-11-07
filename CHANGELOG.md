@@ -13,14 +13,18 @@ release tags follow [Semantic Versioning](https://semver.org/).
   `contextLength`, `parallel`, `kvCacheType`, `cpuMoELayers`, `threads`,
   `reasoningBudget`.
   `spec.parameters.model` of a FrameService names one.
-- The manager writes the three defaults into a cluster with no model at all, so an
+- The manager writes the three defaults into a cluster with no model at all, and
+  any default an instance names into one that lacks it, so an
   upgrade changes nothing: they set no option, which adds no flag, and running
   instances keep their pod template.
-- Editing a model's flags restarts the instances serving it within ten minutes.
+- Editing a model's flags or resources restarts the instances serving it within
+  ten minutes.
   Deleting one an instance serves is refused.
 - Inference Deployments move to the `Recreate` strategy: on one card the surge pod
   waited for the GPU forever while the instance read Ready on its old settings.
-  Readiness now waits for the rollout. Running pods are not restarted by this.
+  Readiness now waits for the rollout, and a pod that fits no node reports
+  `Unschedulable`. A healthy pod is not restarted by the move, though its instance
+  reads `RolloutInProgress` for a moment; a rollout already stuck goes through.
 - A FrameService refused for its size is now retried every two minutes, because
   the catalog can move under it.
 - The manager gains `get`, `list`, `create` on `inferencemodels`.

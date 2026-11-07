@@ -167,6 +167,8 @@ func (r *FrameServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	sizing, err := prov.Size(provider.Params(svc.Spec.Parameters))
 	if errors.Is(err, provider.ErrSizeUnread) {
+		// Not in status: a read that failed says nothing against a serving instance.
+		r.Recorder.Event(&svc, corev1.EventTypeWarning, "SizeUnread", err.Error())
 		return ctrl.Result{}, err
 	}
 	if err != nil {

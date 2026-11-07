@@ -101,7 +101,7 @@ function ModelCard({ model, onSaved }: { model: InferenceModel; onSaved: () => v
             <AlertDialogDescription>
               {confirm === 'delete'
                 ? 'Refused while an instance serves it. The weights stay on the model cache.'
-                : 'A change to a llama.cpp option restarts every instance of this model within ten minutes. An instance that no longer fits keeps running and reports SizeRefused.'}
+                : 'A change to a llama.cpp option or the pod resources restarts every instance of this model within ten minutes, the old pod first. An instance that no longer fits keeps running and reports SizeRefused.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

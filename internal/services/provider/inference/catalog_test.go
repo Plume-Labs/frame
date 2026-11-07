@@ -99,6 +99,23 @@ func TestSeedFinishesForAnInstanceAndLeavesDeletedDefaultsDeleted(t *testing.T) 
 	}
 }
 
+// An empty catalog is seeded before this manager serves the conversion webhook
+// that listing FrameServices can need.
+func TestAnEmptyCatalogIsSeededWithoutListingFrameServices(t *testing.T) {
+	inner := catalogClient(t)
+	c := interceptor.NewClient(inner, interceptor.Funcs{
+		List: func(ctx context.Context, w client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*servicesv1beta1.FrameServiceList); ok {
+				return apierrors.NewServiceUnavailable("conversion webhook: connection refused")
+			}
+			return w.List(ctx, list, opts...)
+		},
+	})
+	if err := SeedCatalog(context.Background(), c, c); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Two managers starting together: the slower one finds the object there.
 func TestSeedToleratesAnotherManagerGettingThereFirst(t *testing.T) {
 	inner := catalogClient(t)
@@ -123,6 +140,14 @@ func TestAFailedCatalogReadIsNoRefusal(t *testing.T) {
 	})
 	_, err := New(7680, c, c).Size(map[string]string{"model": "m"})
 	if !errors.Is(err, provider.ErrSizeUnread) {
+		t.Fatalf("got %v", err)
+	}
+	listless := interceptor.NewClient(inner, interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return apierrors.NewServiceUnavailable("etcd is away")
+		},
+	})
+	if _, err := New(7680, listless, listless).Size(map[string]string{"model": "gone"}); !errors.Is(err, provider.ErrSizeUnread) {
 		t.Fatalf("got %v", err)
 	}
 	_, err = New(7680, inner, inner).Size(map[string]string{"model": "gone"})

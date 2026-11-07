@@ -1275,7 +1275,7 @@ func TestAnUnfinishedRolloutIsNotProvisioned(t *testing.T) {
 			}
 			d.Status.ReadyReplicas, d.Status.UpdatedReplicas, d.Status.ObservedGeneration = 1, 1, d.Generation
 			spoil(&d.Status, d.Generation)
-			if err := c.Update(ctx, &d); err != nil {
+			if err := c.Status().Update(ctx, &d); err != nil {
 				t.Fatal(err)
 			}
 			res, err := p.Reconcile(ctx, svc)
@@ -1286,6 +1286,57 @@ func TestAnUnfinishedRolloutIsNotProvisioned(t *testing.T) {
 				t.Fatalf("%+v", res)
 			}
 		})
+	}
+}
+
+// The surge strategy a server defaulted: a type left beside it is refused.
+func TestTheDefaultedRollingUpdateGoesWithTheStrategy(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	var d appsv1.Deployment
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+		t.Fatal(err)
+	}
+	d.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{}}
+	if err := c.Update(ctx, &d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(svc), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("%+v", d.Spec.Strategy)
+	}
+}
+
+// Recreate stops the old pod first: a new one with nowhere to go has to be named.
+func TestAPodThatFitsNowhereIsNamed(t *testing.T) {
+	p, c, svc := newFixture(t, true)
+	ctx := context.Background()
+	if _, err := p.Reconcile(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "llama-0", Namespace: svc.Namespace, Labels: map[string]string{"app": svc.Name}},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: "insufficient cpu",
+		}}},
+	}
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	res, err := p.Reconcile(ctx, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Reason != corev1.PodReasonUnschedulable || !strings.Contains(res.Message, "insufficient cpu") {
+		t.Fatalf("%+v", res)
 	}
 }
 

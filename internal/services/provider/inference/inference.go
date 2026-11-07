@@ -721,6 +721,17 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 			return provider.Result{}, fmt.Errorf("listing pods for %s/%s: %w", svc.Namespace, svc.Name, err)
 		}
 		for i := range pods.Items {
+			// Recreate has already stopped the old pod: a new one that fits
+			// nowhere is an outage, and it has no container status to explain it.
+			for _, c := range pods.Items[i].Status.Conditions {
+				if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+					return provider.Result{
+						Reason:      corev1.PodReasonUnschedulable,
+						Message:     fmt.Sprintf("Pod %s fits no node: %s", pods.Items[i].Name, c.Message),
+						Provisioned: provisioned,
+					}, nil
+				}
+			}
 			for _, cs := range pods.Items[i].Status.ContainerStatuses {
 				if cs.State.Waiting == nil || !blockedWaitingReasons[cs.State.Waiting.Reason] {
 					continue
@@ -736,9 +747,10 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		}
 
 		return provider.Result{
-			Ready:       false,
-			Reason:      "RolloutInProgress",
-			Message:     fmt.Sprintf("Deployment %s has %d/%d ready replicas", deployment.Name, deployment.Status.ReadyReplicas, desiredReplicas),
+			Ready:  false,
+			Reason: "RolloutInProgress",
+			Message: fmt.Sprintf("Deployment %s has %d/%d ready replicas, %d on the latest template",
+				deployment.Name, deployment.Status.ReadyReplicas, desiredReplicas, deployment.Status.UpdatedReplicas),
 			Provisioned: provisioned,
 		}, nil
 	}

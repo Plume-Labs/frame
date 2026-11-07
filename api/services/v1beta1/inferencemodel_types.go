@@ -114,7 +114,8 @@ type InferenceModelSpec struct {
 
 // InferenceModel is one entry of the catalog FrameServices of type inference
 // choose from. It has no status: nothing reconciles it, the provider reads it on
-// each pass, so an edit that moves a flag restarts the instances on their next one.
+// each pass, so an edit that moves a flag or the pod's resources restarts the
+// instances on their next one.
 type InferenceModel struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

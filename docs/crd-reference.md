@@ -959,12 +959,15 @@ An option left out adds no flag. The manager creates the three defaults
 (`llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) when it
 starts on a cluster with no InferenceModel at all, so a default deleted from a
 catalog that has anything else in it stays deleted, unless an instance still names
-it. A seed that fails is logged and the manager carries on; it is retried at the
-next start.
+it. A seed that fails is logged and the manager carries on, retrying every 30
+seconds. Until it passes, inference instances report `SizeRefused`, or an event
+when the catalog cannot be read at all, and their Deployments stay as they are.
 
 An edit reaches instances on their next pass, within ten minutes, and changing a
-flag restarts them: an instance runs one pod under `Recreate`, so a flag llama.cpp
-refuses takes it down, with the reason in its status. If an instance no longer
+flag or the pod's resources restarts them. An instance runs one pod under
+`Recreate`, so the old pod goes first: a flag llama.cpp refuses takes it down, with
+the exit code in its status and the reason in the pod's log, and resources no node
+has leave it `Unschedulable`. If an instance no longer
 fits, it degrades with `SizeRefused` and its Deployment is left as it was.
 Deleting a model an instance serves is refused at admission; with webhooks off,
 that instance degrades the same way. A FrameService update that leaves

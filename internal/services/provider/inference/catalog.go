@@ -63,14 +63,19 @@ func SeedCatalog(ctx context.Context, c client.Client, r client.Reader) error {
 	if err := r.List(ctx, &models); err != nil {
 		return fmt.Errorf("listing the inference models: %w", err)
 	}
-	var services servicesv1beta1.FrameServiceList
-	if err := r.List(ctx, &services); err != nil {
-		return fmt.Errorf("listing the FrameServices: %w", err)
-	}
+	// Only for a catalog with something in it: this list goes through the
+	// conversion webhook, which this manager serves, and an empty catalog is
+	// seeded before it does.
 	named := map[string]bool{}
-	for i := range services.Items {
-		if s := &services.Items[i]; s.Spec.Type == "inference" {
-			named[string(s.Spec.Parameters["model"])] = true
+	if len(models.Items) > 0 {
+		var services servicesv1beta1.FrameServiceList
+		if err := r.List(ctx, &services); err != nil {
+			return fmt.Errorf("listing the FrameServices: %w", err)
+		}
+		for i := range services.Items {
+			if s := &services.Items[i]; s.Spec.Type == "inference" {
+				named[string(s.Spec.Parameters["model"])] = true
+			}
 		}
 	}
 	present := map[string]bool{}
