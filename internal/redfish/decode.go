@@ -61,7 +61,8 @@ type computerSystemJSON struct {
 	IndicatorLED  string `json:"IndicatorLED"`
 	BiosVersion   string `json:"BiosVersion"`
 	MemorySummary struct {
-		TotalSystemMemoryGiB int32 `json:"TotalSystemMemoryGiB"`
+		// float64: iDRAC 7 reports a fraction (59.6046720), not an integer.
+		TotalSystemMemoryGiB float64 `json:"TotalSystemMemoryGiB"`
 	} `json:"MemorySummary"`
 	ProcessorSummary struct {
 		Count int32  `json:"Count"`

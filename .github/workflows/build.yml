@@ -366,22 +366,39 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build image for kind
-        run: docker build -t cluster-control:ci .
+      # The pod runs two containers: the UI and the uiproxy sidecar, whose
+      # manifest image is frame-uiproxy:latest with IfNotPresent, so it has to
+      # be in the node's image store under that name.
+      - name: Build images for kind
+        run: |
+          docker build -t cluster-control:ci .
+          docker build -f Dockerfile.uiproxy -t frame-uiproxy:latest .
 
       - name: Create kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           cluster_name: cluster-control-ci
 
-      - name: Load image into cluster
-        run: kind load docker-image cluster-control:ci --name cluster-control-ci
+      - name: Load images into cluster
+        run: kind load docker-image cluster-control:ci frame-uiproxy:latest --name cluster-control-ci
 
       - name: Deploy manifests
         run: |
           kubectl apply -f deploy/kubernetes/base/namespace.yaml
           kubectl apply -f deploy/kubernetes/base/rbac.yaml
           kubectl apply -f deploy/kubernetes/base/service.yaml
+          # What the UI pod needs from authd's Stage 1 before it can start,
+          # without running authd, which this smoke test does not reach. The
+          # Service object: nginx resolves it when it loads its config, and
+          # refuses to start otherwise. The frame-auth-tls Secret, which
+          # cert-manager issues on a cluster: nginx and uiproxy both load its
+          # ca.crt at start, so it has to be a real certificate. This one is
+          # throwaway and signs nothing.
+          kubectl apply -f deploy/kubernetes/authd/service.yaml
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=frame-auth-ci \
+            -keyout "${RUNNER_TEMP}/ca.key" -out "${RUNNER_TEMP}/ca.crt"
+          kubectl -n cluster-control create secret generic frame-auth-tls \
+            --from-file=ca.crt="${RUNNER_TEMP}/ca.crt"
           kubectl create --dry-run=client -f deploy/kubernetes/base/deployment.yaml -o yaml \
             | kubectl set image --local -f - ui=cluster-control:ci -o yaml \
             | kubectl apply -f -

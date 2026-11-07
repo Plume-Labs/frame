@@ -186,20 +186,21 @@ func TestProductionRenderImagesAndProvisiond(t *testing.T) {
 	if managerImage != testIMG {
 		t.Errorf("%s: manager image %q, want the IMG given, %q", overlay, managerImage, testIMG)
 	}
-	wantProvisiond := []string{"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media"}
-	for _, want := range wantProvisiond {
+	for _, want := range []string{
+		"Deployment/frame-provisiond", "Service/frame-provisiond", "Service/frame-provisiond-media",
+	} {
 		if !provisiondObjects[want] {
 			t.Errorf("%s: does not render %s; frame-provisiond is part of the recommended install", overlay, want)
 		}
 	}
 	if provisiondImage != testIMGProvisiond {
-		t.Errorf("%s: provisiond image %q, want the IMG_PROVISIOND given, %q", overlay, provisiondImage, testIMGProvisiond)
+		t.Errorf("%s: provisiond image %q, want the IMG_PROVISIOND given, %q",
+			overlay, provisiondImage, testIMGProvisiond)
 	}
 }
 
-// checkProvisiondService fails the test if a frame-provisiond Service is
-// not ClusterIP or carries a nodePort: the default install opens no port
-// on any node.
+// checkProvisiondService holds a frame-provisiond Service to the closed
+// default: ClusterIP, and no node port on any of its ports.
 func checkProvisiondService(t *testing.T, u *unstructured.Unstructured) {
 	t.Helper()
 	if typ, _, _ := unstructured.NestedString(u.Object, "spec", "type"); typ != "ClusterIP" {
@@ -216,13 +217,13 @@ func checkProvisiondService(t *testing.T, u *unstructured.Unstructured) {
 }
 
 // containerImage returns the image of the named container of a Deployment,
-// or "" when the container is absent.
+// or "" when it has no such container.
 func containerImage(u *unstructured.Unstructured, name string) string {
 	cs, _, _ := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
 	for _, c := range cs {
 		if m, ok := c.(map[string]any); ok && m["name"] == name {
-			img, _ := m["image"].(string)
-			return img
+			image, _ := m["image"].(string)
+			return image
 		}
 	}
 	return ""
