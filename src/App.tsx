@@ -84,7 +84,9 @@ import {
   Fingerprint,
   Gauge,
   Gear,
+  HardDrive,
   HardDrives,
+  Lightning,
   ListChecks,
   Network,
   Package,
@@ -100,9 +102,16 @@ import {
  * Navigation model.
  *
  * Two levels. The sidebar carries screens grouped by the question each answers —
- * what runs (Workloads), what it runs on (Compute), what it consumes
- * (Resources), how it is tuned (Tuning), and how it is behaving (Operations).
- * Within a screen, panels that answer the *same* question sit on tabs.
+ * what runs (Workloads), what Frame serves to it (Services: inference,
+ * databases, caches and queues, the FrameService providers), what it runs on
+ * (Compute, node tuning included), what it consumes (Resources), and how it is
+ * behaving (Operations). Within a screen, panels that answer the *same*
+ * question sit on tabs.
+ *
+ * Databases and Caches sat on Storage's tab strip and Inference under Tuning;
+ * they are services a workload binds to, not where its bytes land or how a
+ * node is set up, so they have their own group. The burst buffer is the NVMe
+ * scratch tier — storage, not a node knob — so it moved to Storage.
  *
  * The sidebar was 28 flat entries, most of them one-card panels (MPS, KSM, PTP,
  * burst buffer) or capabilities Frame does not set up (speculative decoding,
@@ -134,7 +143,6 @@ type TabId =
   | 'disks'
   | 'databases'
   | 'caches'
-
   | 'storage-health'
   | 'network'
   | 'network-links'
@@ -232,6 +240,38 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    label: 'Services',
+    items: [
+      {
+        id: 'inference',
+        label: 'Inference',
+        icon: <ChartBar />,
+        description: 'Served models, KV-cache pressure and the decode strategies in play',
+        tabs: [
+          { id: 'inference', label: 'Overview' },
+          { id: 'inference-models', label: 'Models' },
+          { id: 'kv-cache', label: 'KV-Cache' },
+          { id: 'speculative', label: 'Speculative' },
+          { id: 'pipeline-pp', label: 'Pipeline PP' },
+        ],
+      },
+      {
+        id: 'databases',
+        label: 'Databases',
+        icon: <Database />,
+        description: 'PostgreSQL clusters Frame provisions or has adopted',
+        tabs: [{ id: 'databases', label: 'Databases' }],
+      },
+      {
+        id: 'caches',
+        label: 'Caches & Queues',
+        icon: <Lightning />,
+        description: 'Valkey instances — LRU caches and durable job queues',
+        tabs: [{ id: 'caches', label: 'Caches & Queues' }],
+      },
+    ],
+  },
+  {
     label: 'Compute',
     items: [
       {
@@ -255,6 +295,17 @@ const NAV: NavGroup[] = [
           { id: 'installs', label: 'Installs' },
         ],
       },
+      {
+        id: 'node-tuning',
+        label: 'Node Tuning',
+        icon: <Gauge />,
+        description: 'Per-node knobs — GPU sharing, clock sync, page merging',
+        tabs: [
+          { id: 'mps', label: 'MPS' },
+          { id: 'ptp', label: 'PTP Sync' },
+          { id: 'ksm', label: 'KSM' },
+        ],
+      },
     ],
   },
   {
@@ -270,15 +321,13 @@ const NAV: NavGroup[] = [
       {
         id: 'storage',
         label: 'Storage',
-        icon: <Database />,
-        description: 'Live Ceph health, OSDs, capacity and pools',
+        icon: <HardDrive />,
+        description: 'Ceph, declared storage entries, disks and the NVMe scratch tier — and whether they are healthy',
         tabs: [
-          { id: 'storage', label: 'Storage' },
+          { id: 'storage', label: 'Ceph' },
           { id: 'storage-entries', label: 'Entries' },
           { id: 'disks', label: 'Disks' },
-          { id: 'databases', label: 'Databases' },
-          { id: 'caches', label: 'Caches' },
-
+          { id: 'burst-buffer', label: 'Burst Buffer' },
           { id: 'storage-health', label: 'Health' },
         ],
       },
@@ -286,9 +335,9 @@ const NAV: NavGroup[] = [
         id: 'network',
         label: 'Network',
         icon: <Network />,
-        description: 'Live per-node NIC throughput',
+        description: 'NIC throughput, link state and where the traffic chokes',
         tabs: [
-          { id: 'network', label: 'Network' },
+          { id: 'network', label: 'Throughput' },
           { id: 'network-links', label: 'Links' },
           { id: 'network-bottlenecks', label: 'Bottlenecks' },
         ],
@@ -299,36 +348,6 @@ const NAV: NavGroup[] = [
         icon: <HardDrives />,
         description: 'Live pod-to-node workload placement',
         tabs: [{ id: 'data-locality', label: 'Placement' }],
-      },
-    ],
-  },
-  {
-    label: 'Tuning',
-    items: [
-      {
-        id: 'inference',
-        label: 'Inference',
-        icon: <ChartBar />,
-        description: 'Serving status, KV-cache pressure and the decode strategies in play',
-        tabs: [
-          { id: 'inference', label: 'Overview' },
-          { id: 'inference-models', label: 'Models' },
-          { id: 'kv-cache', label: 'KV-Cache' },
-          { id: 'speculative', label: 'Speculative' },
-          { id: 'pipeline-pp', label: 'Pipeline PP' },
-        ],
-      },
-      {
-        id: 'node-tuning',
-        label: 'Node Tuning',
-        icon: <Gauge />,
-        description: 'Per-node knobs — GPU sharing, clock sync, scratch tier, page merging',
-        tabs: [
-          { id: 'mps', label: 'MPS' },
-          { id: 'ptp', label: 'PTP Sync' },
-          { id: 'burst-buffer', label: 'Burst Buffer' },
-          { id: 'ksm', label: 'KSM' },
-        ],
       },
     ],
   },
