@@ -14,9 +14,11 @@ release tags follow [Semantic Versioning](https://semver.org/).
   `reasoningBudget`.
   `spec.parameters.model` of a FrameService names one.
 - The manager writes the three defaults into a cluster with no model at all, and
-  any default an instance names into one that lacks it, so an
-  upgrade changes nothing: they set no option, which adds no flag, and running
-  instances keep their pod template.
+  any default an instance names into one that lacks it. They set no option, which
+  adds no flag, so an instance keeps its arguments and sizing.
+- The llama.cpp image is pinned to `server-cuda-b11277`, by digest: the tag it used
+  moves, and an older build refuses flags a model can set. This changes the pod
+  template, so upgrading restarts every inference instance once.
 - Editing a model's flags or resources restarts the instances serving it within
   ten minutes.
   Deleting one an instance serves is refused.

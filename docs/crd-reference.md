@@ -955,7 +955,9 @@ instance's model cache.
 | `reasoningBudget` | no | `--reasoning-budget`: tokens, `-1` no limit, `0` none. |
 | `reasoningBudgetMessage` | no | `--reasoning-budget-message`. Needs `reasoningBudget`. |
 
-An option left out adds no flag. The manager creates the three defaults
+An option left out adds no flag. The image is fixed per Frame release, by digest
+(`server-cuda-b11277`, the build served on a Tesla P4): moving it means checking the
+flags above on the new build, and restarts every instance. The manager creates the three defaults
 (`llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) when it
 starts on a cluster with no InferenceModel at all, so a default deleted from a
 catalog that has anything else in it stays deleted, unless an instance still names

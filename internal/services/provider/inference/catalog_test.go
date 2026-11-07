@@ -214,6 +214,13 @@ func TestHostMemoryAndCPUFollowTheModel(t *testing.T) {
 	}
 }
 
+// A moving tag is what let a node run a build older than the flags it was given.
+func TestTheImageIsPinnedByDigest(t *testing.T) {
+	if !strings.Contains(image, "@sha256:") {
+		t.Fatal(image)
+	}
+}
+
 func TestModelArgs(t *testing.T) {
 	if got := modelArgs(catalog["llama-3.1-8b-instruct"]); len(got) != 0 {
 		t.Fatalf("a default model must add no flag, or the upgrade restarts it: %v", got)

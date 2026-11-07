@@ -35,6 +35,11 @@ import (
 )
 
 const (
+	// image is pinned: the tag server-cuda moves, a node keeps whichever one it
+	// pulled first, and an older build refuses flags an InferenceModel can set.
+	// b11277 is the build that serves on this project's P4, with q8_0 KV, slots,
+	// threads and the reasoning budget; its README lists every flag of modelArgs.
+	image = "ghcr.io/ggml-org/llama.cpp:server-cuda-b11277@sha256:7149a45c80596644320de1d565db1b3b8e70b22c66fed612e69b73f6b1e0d746"
 	// defaultCPUs is the pod's CPU when the model names none.
 	defaultCPUs = 4
 	// defaultContextLength is what llama.cpp itself defaults to.
@@ -646,7 +651,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 		// than being recomputed here, so the resources a pod actually gets
 		// are the ones the operator's request was costed against.
 		setContainer(&deployment.Spec.Template.Spec, containerName,
-			"ghcr.io/ggml-org/llama.cpp:server-cuda", args, containerPort, mounts, env, sizing)
+			image, args, containerPort, mounts, env, sizing)
 		return controllerutil.SetControllerReference(svc, deployment, p.client.Scheme())
 	}); err != nil {
 		return provider.Result{}, fmt.Errorf("reconciling Deployment %s/%s: %w", svc.Namespace, svc.Name, err)
@@ -764,8 +769,7 @@ func (p *Provider) Reconcile(ctx context.Context, svc *servicesv1beta1.FrameServ
 }
 
 // modelArgs turns a model's options into llama.cpp flags, and an option left
-// unset into no flag at all: a model with none keeps the exact pod template it
-// had, so bringing the catalog out of the code restarts nothing.
+// unset into no flag at all: a model with none keeps the arguments it had.
 func modelArgs(m model) []string {
 	var args []string
 	if m.Parallel > 0 {
