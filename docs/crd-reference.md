@@ -105,8 +105,9 @@ branch on it:
 > `ScrubErrors`, `StorageCapacityHigh` and `DiskWearHigh`. Reason `Detected`
 > or `LastReadHeld` when `True`, `Healthy` when `False`, `ReadUnavailable` or
 > `WearNotReported` when `Unknown`. `Unknown` means not read, never healthy.
-> See [storage.md](storage.md#storage-health-alerts). `NetworkDegraded` and
-> `LinkSpeedLow` follow the same vocabulary, see [network.md](network.md).
+> See [storage.md](storage.md#storage-health-alerts). `NetworkDegraded`,
+> `LinkSpeedLow`, `LinkSaturated` and `LinkErrorsRising` follow the same vocabulary,
+> see [network.md](network.md).
 
 > **FrameMachine writes a condition, but not this one.** Its controller
 > writes `Reachable`, not `Ready` — a deliberate choice (`conditionReachable`
@@ -598,12 +599,14 @@ threshold, a viewer only reads it. See [storage.md](storage.md#storage-health-al
 ## NetworkHealthPolicy
 
 `frame.plume-labs.io/v1beta1`, cluster-scoped singleton named `default`, like
-StorageHealthPolicy, with the same three RBAC tiers. Its absence means a
-1000 Mb/s minimum and no named link.
+StorageHealthPolicy, with the same three RBAC tiers. Its absence means the
+defaults below and no named link.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `spec.minLinkSpeedMbps` | integer, at least 1 | 1000 | Raises `LinkSpeedLow` on a physical link that is up below it. |
+| `spec.linkSaturatedPercent` | integer, 1–100 | 80 | Raises `LinkSaturated` on a link or bond averaging this over five minutes. |
+| `spec.linkErrorsPerMinute` | integer, at least 1 | 1 | Raises `LinkErrorsRising` at this many errors a minute over five minutes. |
 | `spec.links[]` | at most 64 | | Named links, which become required. |
 | `spec.links[].node`, `.interface` | string | | The machine's `spec.nodeRef`, the kernel name. |
 | `spec.links[].speedMbps` | integer | | Replaces the minimum for this link. |

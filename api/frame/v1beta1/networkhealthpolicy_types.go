@@ -27,6 +27,14 @@ const NetworkHealthPolicyName = "default"
 // or no expectation for it.
 const DefaultMinLinkSpeedMbps int32 = 1000
 
+// DefaultLinkSaturatedPercent is the five-minute average that raises
+// LinkSaturated, with no policy.
+const DefaultLinkSaturatedPercent int32 = 80
+
+// DefaultLinkErrorsPerMinute is the rate that raises LinkErrorsRising, with no
+// policy.
+const DefaultLinkErrorsPerMinute int32 = 1
+
 // ExpectedLink is what one node's interface should be. Naming a link makes it
 // required: it raises NetworkDegraded when absent or down, which an unused port
 // on a machine with no expectation never does.
@@ -60,6 +68,21 @@ type NetworkHealthPolicySpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	MinLinkSpeedMbps int32 `json:"minLinkSpeedMbps,omitempty"`
+
+	// LinkSaturatedPercent raises LinkSaturated on a link or bond whose busier
+	// direction averages at least this over five minutes.
+	// +kubebuilder:default=80
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	LinkSaturatedPercent int32 `json:"linkSaturatedPercent,omitempty"`
+
+	// LinkErrorsPerMinute raises LinkErrorsRising on a link or bond counting at
+	// least this many errors a minute, over five minutes.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	LinkErrorsPerMinute int32 `json:"linkErrorsPerMinute,omitempty"`
 
 	// Links are the expectations for named links.
 	// +listType=map

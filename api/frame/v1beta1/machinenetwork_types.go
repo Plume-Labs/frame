@@ -76,6 +76,44 @@ type NetworkInterface struct {
 	RxDropped int64 `json:"rxDropped,omitempty"`
 	// +optional
 	TxDropped int64 `json:"txDropped,omitempty"`
+	// Traffic is nil until the agent has two readings of the port.
+	// +optional
+	Traffic *LinkTraffic `json:"traffic,omitempty"`
+}
+
+// LinkTraffic is what a link carried, worked out by the agent from the kernel's
+// counters over a sliding window. A driver that resets its counters starts the
+// window again.
+type LinkTraffic struct {
+	// HistorySeconds is how far back the readings go, some 15 minutes at most.
+	HistorySeconds int32 `json:"historySeconds"`
+	// RxBytesPerSecond and TxBytesPerSecond are over the last minute.
+	RxBytesPerSecond int64 `json:"rxBytesPerSecond"`
+	TxBytesPerSecond int64 `json:"txBytesPerSecond"`
+	// PeakRxBytesPerSecond and PeakTxBytesPerSecond are the busiest interval
+	// between two readings in the last 15 minutes.
+	PeakRxBytesPerSecond int64 `json:"peakRxBytesPerSecond"`
+	PeakTxBytesPerSecond int64 `json:"peakTxBytesPerSecond"`
+	// CapacityMbps is what utilisation is measured against: the link's speed, or
+	// a bond's total. nil when the kernel gives none, as on virtio, and the
+	// percentages below are nil with it.
+	// +optional
+	CapacityMbps *int32 `json:"capacityMbps,omitempty"`
+	// UtilizationPercent is the last minute's, in the busier direction: a link
+	// is full duplex, and either way can be the one that is full.
+	// +optional
+	UtilizationPercent *int32 `json:"utilizationPercent,omitempty"`
+	// SustainedUtilizationPercent is the average over the last five minutes, and
+	// nil until the readings go back that far. It is what LinkSaturated judges.
+	// +optional
+	SustainedUtilizationPercent *int32 `json:"sustainedUtilizationPercent,omitempty"`
+	// PeakUtilizationPercent goes with the peaks above.
+	// +optional
+	PeakUtilizationPercent *int32 `json:"peakUtilizationPercent,omitempty"`
+	// ErrorsPerMinute and DropsPerMinute are over the last five minutes, or what
+	// there is of them, rounded up: one error stays visible.
+	ErrorsPerMinute int64 `json:"errorsPerMinute"`
+	DropsPerMinute  int64 `json:"dropsPerMinute"`
 }
 
 // NetworkBond is one bonding device.
@@ -97,6 +135,10 @@ type NetworkBond struct {
 	// PortsInAggregator is how many ports LACP has in it.
 	// +optional
 	PortsInAggregator int32 `json:"portsInAggregator,omitempty"`
+	// Traffic counts the bond as a whole; its ports have their own, which is
+	// what shows a hash putting everything on one of them.
+	// +optional
+	Traffic *LinkTraffic `json:"traffic,omitempty"`
 	// PartnerMAC is the switch's LACP system id; all zeros means no partner.
 	// +optional
 	// +kubebuilder:validation:MaxLength=32

@@ -3,10 +3,12 @@ package controller
 import (
 	"context"
 	"errors"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -673,3 +675,42 @@ var _ = Describe("FrameMachine storage health", func() {
 		}
 	})
 })
+
+// A link that left, or a report gone stale, must not stay on the graph.
+func TestLinkMetricsFollowTheReport(t *testing.T) {
+	now := time.Now()
+	fresh := metav1.NewTime(now)
+	report := &framev1beta1.MachineNetwork{
+		ObservedAt: &fresh,
+		Interfaces: []framev1beta1.NetworkInterface{{
+			Name:    "eno1",
+			Traffic: &framev1beta1.LinkTraffic{RxBytesPerSecond: 7, UtilizationPercent: new(int32(42))},
+		}, {Name: "eno2"}},
+		Bonds: []framev1beta1.NetworkBond{{Name: "bond0", Traffic: &framev1beta1.LinkTraffic{TxBytesPerSecond: 9, ErrorsPerMinute: 3}}},
+	}
+	series := func() int {
+		return testutil.CollectAndCount(linkBytes) + testutil.CollectAndCount(linkUtilization) + testutil.CollectAndCount(linkErrors)
+	}
+	base := series()
+	recordLinkMetrics("metrics-machine", report, now)
+	if got := testutil.ToFloat64(linkUtilization.WithLabelValues("metrics-machine", "eno1")); got != 42 {
+		t.Fatalf("utilisation %v", got)
+	}
+	if got := testutil.ToFloat64(linkBytes.WithLabelValues("metrics-machine", "bond0", "tx")); got != 9 {
+		t.Fatalf("bytes %v", got)
+	}
+	if got := testutil.ToFloat64(linkErrors.WithLabelValues("metrics-machine", "bond0")); got != 3 {
+		t.Fatalf("errors %v", got)
+	}
+
+	recordLinkMetrics("metrics-machine", report, now.Add(storage.AgentSilentAfter+time.Second))
+	if got := series(); got != base {
+		t.Fatalf("a silent agent's figures stayed: %d series, %d before", got, base)
+	}
+
+	recordLinkMetrics("metrics-machine", report, now)
+	recordLinkMetrics("metrics-machine", nil, now)
+	if got := series(); got != base {
+		t.Fatalf("%d series outlived the report, %d before", got, base)
+	}
+}
