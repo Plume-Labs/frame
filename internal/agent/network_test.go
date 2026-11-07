@@ -273,6 +273,20 @@ func TestEveryCounterAndStateIsRead(t *testing.T) {
 	}
 }
 
+func TestABondSaysWhetherAnyoneBroughtItUp(t *testing.T) {
+	for flags, want := range map[string]bool{"0x1002": true, "0x1003": false, "": false, "garbage": false} {
+		root := t.TempDir()
+		files := map[string]string{"sys/class/net/bonding_masters": "bond0", "sys/class/net/bond0/bonding/slaves": ""}
+		if flags != "" {
+			files["sys/class/net/bond0/flags"] = flags
+		}
+		write(t, root, files)
+		if got := ObserveNetwork(root, time.Now()).Bonds[0].AdminDown; got != want {
+			t.Errorf("flags %q: %v", flags, got)
+		}
+	}
+}
+
 func TestAHungReadDoesNotHoldTheCaller(t *testing.T) {
 	release := make(chan struct{})
 	var inFlight, overlaps atomic.Int32

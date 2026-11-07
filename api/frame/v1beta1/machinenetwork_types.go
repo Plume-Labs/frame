@@ -110,6 +110,10 @@ type NetworkBond struct {
 	// then says nothing.
 	// +optional
 	MembersUnread bool `json:"membersUnread,omitempty"`
+	// AdminDown says the bond was read and nobody brought it up, as with the
+	// bond the module makes when it loads. False says nothing if the read failed.
+	// +optional
+	AdminDown bool `json:"adminDown,omitempty"`
 }
 
 // BondMember is one port of a bond, as the bond sees it.

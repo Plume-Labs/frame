@@ -135,6 +135,7 @@ export interface NetworkBond {
   members?: BondMember[]
   membersOmitted?: number
   membersUnread?: boolean
+  adminDown?: boolean
 }
 
 export interface MachineNetwork {

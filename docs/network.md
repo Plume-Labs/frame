@@ -11,7 +11,7 @@ stacks: 32 ports, 8 bonds, 16 members per bond, with `*Omitted` counters.
 
 | Condition and alert | Severity | True when |
 |---|---|---|
-| `NetworkDegraded` | critical | a bond is down, unless it has no member and the policy does not name it; a bond holds fewer members than `members`; a link named in the policy is down or absent |
+| `NetworkDegraded` | critical | a bond is down, unless nobody brought it up, it has no member and the policy does not name it (the `bond0` the module makes when it loads); a bond holds fewer members than `members`; a link named in the policy is down or absent |
 | `NetworkDegraded` | warning | a bond member is down, or sits outside the LACP aggregator the bond uses (it has link and carries nothing) |
 | `LinkSpeedLow` | warning | a physical link that is up, or at the kernel's `unknown`, runs below its expected speed |
 

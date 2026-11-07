@@ -320,12 +320,12 @@ func TestABondDownAndShortIsOneFinding(t *testing.T) {
 }
 
 // The bond the module makes when it loads must not raise a critical nothing can
-// silence; the same bond named, or holding a member, stays a fault.
+// silence; the same bond named, holding a member, or brought up stays a fault.
 func TestAnUnusedBondCountsOnlyIfNamed(t *testing.T) {
 	bond9 := Key{CheckNetDegraded, "bond9"}
 	empty := func() *framev1beta1.MachineNetwork {
 		n := healthyNet()
-		n.Bonds = append(n.Bonds, framev1beta1.NetworkBond{Name: "bond9", Mode: "balance-rr", MIIStatus: "down"})
+		n.Bonds = append(n.Bonds, framev1beta1.NetworkBond{Name: "bond9", Mode: "balance-rr", MIIStatus: "down", AdminDown: true})
 		return n
 	}
 	if a := assessNet(empty(), noNet, nil); keys(a)[bond9] || a.Verdict(CheckNetDegraded, nil).Status != "False" {
@@ -335,6 +335,11 @@ func TestAnUnusedBondCountsOnlyIfNamed(t *testing.T) {
 		t.Fatal("named bond down: not raised")
 	}
 	n := empty()
+	n.Bonds[1].AdminDown = false
+	if !keys(assessNet(n, noNet, nil))[bond9] {
+		t.Fatal("bond brought up that lost all its members: not raised")
+	}
+	n = empty()
 	n.Bonds[1].MembersUnread = true
 	if keys(assessNet(n, noNet, nil))[bond9] != true {
 		t.Fatal("bond whose members could not be read: not raised")

@@ -554,6 +554,11 @@ spec:
                     items:
                       description: NetworkBond is one bonding device.
                       properties:
+                        adminDown:
+                          description: |-
+                            AdminDown says the bond was read and nobody brought it up, as with the
+                            bond the module makes when it loads. False says nothing if the read failed.
+                          type: boolean
                         aggregatorID:
                           description: AggregatorID is the active LACP aggregator;
                             zero outside 802.3ad.

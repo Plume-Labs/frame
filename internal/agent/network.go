@@ -223,6 +223,9 @@ func readBond(base, name string) framev1beta1.NetworkBond {
 		PortsInAggregator: int32At(attr("ad_num_ports")),
 		PartnerMAC:        clipRunes(text(attr("ad_partner_mac")), 32),
 	}
+	if flags, err := strconv.ParseUint(text(filepath.Join(dir, "flags")), 0, 64); err == nil {
+		bond.AdminDown = flags&syscall.IFF_UP == 0
+	}
 	slaves, err := os.ReadFile(attr("slaves"))
 	bond.MembersUnread = err != nil
 	for member := range strings.FieldsSeq(string(slaves)) {
