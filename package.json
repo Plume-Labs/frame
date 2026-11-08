@@ -70,13 +70,11 @@
         "why": "Every entry in `overrides` below must say what it pins and why, so a future reader knows when it is safe to drop. An override with no recorded reason gets kept forever out of fear, or removed blind.",
         "picomatch": "Exact-pins the 4.x that tinyglobby, vite and vitest all request as ^4.0.3, so the three resolve to one copy instead of drifting apart on separate installs. Reproducibility, not an advisory.",
         "path-to-regexp": "Defensive floor against the ReDoS advisories affecting <8.0.0 (GHSA-9wv6-86v2-598j, GHSA-rhx6-c78j-4q9w). Nothing in the current tree depends on path-to-regexp at all, so this pins nothing today; it exists to stop a transitive re-entry below 8.x. Safe to drop once something enforces that floor.",
-        "@typescript-eslint/typescript-estree.minimatch": "Scoped exact-pin of the ^9.0.4 that typescript-estree requests, keeping it off the root's minimatch 3.1.2 and on one 9.x copy."
+        "minimatch": "Exact-pin above GHSA-g3hv-75wg-m249 (globparts amplification DoS, fixed in 11.0.1). eslint 10 and @eslint/config-array ask for ^10.2.x and typescript-estree for ^9.0.4, all inside the vulnerable 7.0.0 - 11.0.0 range, so the whole tree is held on one patched copy. Safe to drop once every dependent asks for >=11.0.1 on its own."
     },
     "overrides": {
         "picomatch": "4.0.7",
         "path-to-regexp": "8.4.0",
-        "@typescript-eslint/typescript-estree": {
-            "minimatch": "11.0.1"
-        }
+        "minimatch": "11.0.1"
     }
 }
