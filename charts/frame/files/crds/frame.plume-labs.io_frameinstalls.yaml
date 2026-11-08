@@ -178,6 +178,37 @@ spec:
                     x-kubernetes-validations:
                     - message: address must be a CIDR, e.g. 192.0.2.210/24
                       rule: isCIDR(self)
+                  bond:
+                    description: |-
+                      Bond aggregates ports into one LACP (802.3ad) link. The address goes
+                      on the bond, or on the VLAN when there is one. The switch ports must
+                      be in an LACP group already: the installer needs the link to reach
+                      the gateway.
+                    properties:
+                      members:
+                        description: |-
+                          Members are the ports' MAC addresses. An install whose machine lacks
+                          one is refused before any disk is touched.
+                        items:
+                          description: MACAddress is a port's MAC address, six hexadecimal
+                            pairs.
+                          maxLength: 17
+                          pattern: ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$
+                          type: string
+                          x-kubernetes-validations:
+                          - message: the all-zero MAC names no port
+                            rule: self != '00:00:00:00:00:00'
+                        maxItems: 8
+                        minItems: 2
+                        type: array
+                        x-kubernetes-list-type: set
+                    required:
+                    - members
+                    type: object
+                    x-kubernetes-validations:
+                    - message: a bond member is named twice
+                      rule: self.members.all(m, self.members.filter(x, x.lowerAscii()
+                        == m.lowerAscii()).size() == 1)
                   dns:
                     description: |-
                       DNS resolvers, as IP addresses. At least one is required, and the
@@ -186,13 +217,11 @@ spec:
                       installer cannot reach the archive it fetches security updates
                       from. The console's own happy path once produced exactly that.
 
-                      There is no vlan or bond here on
-                      purpose: both were declared, validated by the apiserver, and then
-                      dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
-                      tagged VLAN installed untagged, silently. Task 1 removed them from
-                      provision.Network for exactly that reason and they survived one layer
-                      up, where the operator types. Bonding is not something to
-                      implement blind; add them back when a machine needs one.
+                      Bond and VLAN, when set, are rendered for both the installer and the
+                      installed system, and read back by the provision tests. They were once
+                      declared here and dropped on the way to the installer (a tagged VLAN
+                      installed untagged); internal/provision/links.go says how that is
+                      kept from happening again.
                     items:
                       type: string
                     maxItems: 3
@@ -204,11 +233,40 @@ spec:
                     x-kubernetes-validations:
                     - message: gateway must be an IP address
                       rule: isIP(self)
+                  vlan:
+                    description: |-
+                      VLAN tags the address's traffic. Its parent is the bond when there is
+                      one, otherwise the port named by parentMAC. The switch port must carry
+                      the VLAN tagged.
+                    properties:
+                      id:
+                        format: int32
+                        maximum: 4094
+                        minimum: 1
+                        type: integer
+                      parentMAC:
+                        description: |-
+                          ParentMAC names the port the VLAN is tagged on when there is no bond.
+                          It must be empty with a bond: the VLAN then rides on the bond.
+                        maxLength: 17
+                        pattern: ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: the all-zero MAC names no port
+                          rule: self != '00:00:00:00:00:00'
+                    required:
+                    - id
+                    type: object
                 required:
                 - address
                 - dns
                 - gateway
                 type: object
+                x-kubernetes-validations:
+                - message: a VLAN rides on the bond when there is one (leave parentMAC
+                    empty), and needs parentMAC to name its port when there is none
+                  rule: '!has(self.vlan) || (has(self.bond) != (has(self.vlan.parentMAC)
+                    && self.vlan.parentMAC != ''''))'
               sshKeyRef:
                 description: |-
                   SSHKeyRef names a Secret holding "id" (private) and "id.pub" (public).

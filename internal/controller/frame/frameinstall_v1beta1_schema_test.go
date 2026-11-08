@@ -179,6 +179,53 @@ var _ = Describe("FrameInstall v1beta1 schema", func() {
 				fi.Spec.Network.Gateway = "not-an-ip"
 			}, "gateway must be an IP address"),
 
+		Entry("accepts a VLAN on an LACP bond", "bond-vlan",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.Bond = &framev1beta1.InstallBond{Members: []framev1beta1.MACAddress{"52:54:00:AA:00:01", "52:54:00:aa:00:02"}}
+				fi.Spec.Network.VLAN = &framev1beta1.InstallVLAN{ID: 20}
+			}, ""),
+
+		Entry("accepts a VLAN on a named port", "vlan-port",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.VLAN = &framev1beta1.InstallVLAN{ID: 4094, ParentMAC: "52:54:00:aa:00:01"}
+			}, ""),
+
+		Entry("rejects a VLAN with no bond and no parentMAC", "vlan-no-parent",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.VLAN = &framev1beta1.InstallVLAN{ID: 20}
+			}, "a VLAN rides on the bond"),
+
+		Entry("rejects a VLAN with both a bond and a parentMAC", "vlan-both-parents",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.Bond = &framev1beta1.InstallBond{Members: []framev1beta1.MACAddress{"52:54:00:aa:00:01", "52:54:00:aa:00:02"}}
+				fi.Spec.Network.VLAN = &framev1beta1.InstallVLAN{ID: 20, ParentMAC: "52:54:00:aa:00:01"}
+			}, "a VLAN rides on the bond"),
+
+		Entry("rejects VLAN 4095", "vlan-4095",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.VLAN = &framev1beta1.InstallVLAN{ID: 4095, ParentMAC: "52:54:00:aa:00:01"}
+			}, "spec.network.vlan.id"),
+
+		Entry("rejects a one-port bond", "bond-one-port",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.Bond = &framev1beta1.InstallBond{Members: []framev1beta1.MACAddress{"52:54:00:aa:00:01"}}
+			}, "spec.network.bond.members"),
+
+		Entry("rejects a bond member named twice in two cases", "bond-twice",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.Bond = &framev1beta1.InstallBond{Members: []framev1beta1.MACAddress{"52:54:00:aa:00:01", "52:54:00:AA:00:01"}}
+			}, "a bond member is named twice"),
+
+		Entry("rejects a member that is not a MAC", "bond-not-mac",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.Bond = &framev1beta1.InstallBond{Members: []framev1beta1.MACAddress{"52:54:00:aa:00:01", "eno1"}}
+			}, "spec.network.bond.members"),
+
+		Entry("rejects the all-zero MAC", "bond-zero-mac",
+			func(fi *framev1beta1.FrameInstall) {
+				fi.Spec.Network.Bond = &framev1beta1.InstallBond{Members: []framev1beta1.MACAddress{"52:54:00:aa:00:01", "00:00:00:00:00:00"}}
+			}, "the all-zero MAC names no port"),
+
 		Entry("rejects an empty confirmSerial", "empty-confirm-serial",
 			func(fi *framev1beta1.FrameInstall) {
 				fi.Spec.ConfirmSerial = ""

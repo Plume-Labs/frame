@@ -58,6 +58,8 @@ type FrameInstallSpec struct {
 }
 
 // InstallNetwork is the static network configuration the installer writes.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.vlan) || (has(self.bond) != (has(self.vlan.parentMAC) && self.vlan.parentMAC != ''))",message="a VLAN rides on the bond when there is one (leave parentMAC empty), and needs parentMAC to name its port when there is none"
 type InstallNetwork struct {
 	// +kubebuilder:validation:MaxLength=43
 	// +kubebuilder:validation:XValidation:rule="isCIDR(self)",message="address must be a CIDR, e.g. 192.0.2.210/24"
@@ -71,17 +73,59 @@ type InstallNetwork struct {
 	// installer cannot reach the archive it fetches security updates
 	// from. The console's own happy path once produced exactly that.
 	//
-	// There is no vlan or bond here on
-	// purpose: both were declared, validated by the apiserver, and then
-	// dropped on the floor by toProvisionSpec -- a FrameInstall asking for a
-	// tagged VLAN installed untagged, silently. Task 1 removed them from
-	// provision.Network for exactly that reason and they survived one layer
-	// up, where the operator types. Bonding is not something to
-	// implement blind; add them back when a machine needs one.
+	//
+	// Bond and VLAN, when set, are rendered for both the installer and the
+	// installed system, and read back by the provision tests. They were once
+	// declared here and dropped on the way to the installer (a tagged VLAN
+	// installed untagged); internal/provision/links.go says how that is
+	// kept from happening again.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=3
 	DNS []string `json:"dns"`
+
+	// Bond aggregates ports into one LACP (802.3ad) link. The address goes
+	// on the bond, or on the VLAN when there is one. The switch ports must
+	// be in an LACP group already: the installer needs the link to reach
+	// the gateway.
+	// +optional
+	Bond *InstallBond `json:"bond,omitempty"`
+
+	// VLAN tags the address's traffic. Its parent is the bond when there is
+	// one, otherwise the port named by parentMAC. The switch port must carry
+	// the VLAN tagged.
+	// +optional
+	VLAN *InstallVLAN `json:"vlan,omitempty"`
 }
+
+// InstallBond is an LACP bond over ports named by permanent MAC address.
+// The mode is not a field: LACP is what the switch side is set up for.
+//
+// +kubebuilder:validation:XValidation:rule="self.members.all(m, self.members.filter(x, x.lowerAscii() == m.lowerAscii()).size() == 1)",message="a bond member is named twice"
+type InstallBond struct {
+	// Members are the ports' MAC addresses. An install whose machine lacks
+	// one is refused before any disk is touched.
+	// +kubebuilder:validation:MinItems=2
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=set
+	Members []MACAddress `json:"members"`
+}
+
+// InstallVLAN is the tagged VLAN the address lives on.
+type InstallVLAN struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4094
+	ID int32 `json:"id"`
+	// ParentMAC names the port the VLAN is tagged on when there is no bond.
+	// It must be empty with a bond: the VLAN then rides on the bond.
+	// +optional
+	ParentMAC MACAddress `json:"parentMAC,omitempty"`
+}
+
+// MACAddress is a port's MAC address, six hexadecimal pairs.
+// +kubebuilder:validation:Pattern=`^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$`
+// +kubebuilder:validation:MaxLength=17
+// +kubebuilder:validation:XValidation:rule="self != '00:00:00:00:00:00'",message="the all-zero MAC names no port"
+type MACAddress string
 
 // InstallLayout is the disk layout recipe.
 //

@@ -5,6 +5,7 @@ import {
   installObjectName, isStalledInPhase, isTerminal, machineOptionLabel, phaseIndex, phaseTone,
   randomNameSuffix,
   mapInstallPhase, textsMentioning, toInstall, type MachineChoice,
+  installLinks,
 } from './installs'
 
 describe('phases', () => {
@@ -269,5 +270,28 @@ describe('randomNameSuffix', () => {
     // 50 draws from 16.7M: a duplicate is possible but a generator that
     // returns a constant is what this catches.
     expect(seen.size).toBeGreaterThan(45)
+  })
+})
+
+describe('installLinks', () => {
+  const a = 'aa:bb:cc:00:00:01'
+  const b = 'aa:bb:cc:00:00:02'
+  it('is empty when nothing is typed', () => {
+    expect(installLinks('', '', '')).toEqual({})
+  })
+  it('puts a VLAN on the bond', () => {
+    expect(installLinks(`${a}, ${b}`, '20', '')).toEqual({ bond: { members: [a, b] }, vlan: { id: 20 } })
+  })
+  it('tags a VLAN on a named port without a bond', () => {
+    expect(installLinks('', '4094', a)).toEqual({ vlan: { id: 4094, parentMAC: a } })
+  })
+  it('refuses what the CRD refuses', () => {
+    expect(installLinks(a, '', '').error).toBeDefined()
+    expect(installLinks(`${a} ${a.toUpperCase()}`, '', '').error).toBeDefined()
+    expect(installLinks(`${a} eno1`, '', '').error).toBeDefined()
+    expect(installLinks('', '20', '').error).toBeDefined()
+    expect(installLinks(`${a} ${b}`, '20', a).error).toBeDefined()
+    expect(installLinks('', '4095', a).error).toBeDefined()
+    expect(installLinks('', '', a).error).toBeDefined()
   })
 })

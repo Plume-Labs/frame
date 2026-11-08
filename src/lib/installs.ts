@@ -317,6 +317,12 @@ export interface InstallCreateSpec {
     // netcfg/get_nameservers against a mirror named deb.debian.org and the
     // install halts after partman has already wiped every named disk.
     dns: string[]
+    // An LACP (802.3ad) bond over ports named by MAC; the address goes on
+    // the bond, or on the VLAN when there is one.
+    bond?: { members: string[] }
+    // A tagged VLAN. parentMAC names its port when there is no bond, and
+    // must be absent with one (the CRD refuses both shapes otherwise).
+    vlan?: { id: number; parentMAC?: string }
   }
   layout: {
     kind: 'single-disk' | 'mirror'
@@ -363,4 +369,48 @@ export function randomNameSuffix(): string {
   const b = new Uint8Array(3)
   crypto.getRandomValues(b)
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+}
+
+/** A MAC as the CRD accepts it: six hexadecimal pairs. */
+export const MAC_SHAPE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/
+
+/** Splits a list of MACs typed with commas or spaces. */
+export function parseMACs(text: string): string[] {
+  return text.split(/[\s,]+/).filter((m) => m !== '')
+}
+
+/**
+ * The bond and VLAN of an install, from what the dialog holds, or an error
+ * that says what is wrong. Empty fields mean neither. It mirrors the CRD's
+ * rules so the dialog refuses what the apiserver would.
+ */
+export function installLinks(
+  bondText: string,
+  vlanText: string,
+  vlanPortMAC: string,
+): { bond?: { members: string[] }; vlan?: { id: number; parentMAC?: string }; error?: string } {
+  const members = parseMACs(bondText)
+  const out: { bond?: { members: string[] }; vlan?: { id: number; parentMAC?: string }; error?: string } = {}
+  if (members.length > 0) {
+    if (members.length < 2 || members.length > 8) return { error: 'A bond needs 2 to 8 ports.' }
+    if (!members.every((m) => MAC_SHAPE.test(m))) return { error: 'Bond ports are MAC addresses (aa:bb:cc:dd:ee:ff).' }
+    if (new Set(members.map((m) => m.toLowerCase())).size !== members.length) return { error: 'A bond port is named twice.' }
+    out.bond = { members }
+  }
+  const vlan = vlanText.trim()
+  const port = vlanPortMAC.trim()
+  if (vlan === '') {
+    if (port !== '') return { error: 'A VLAN port without a VLAN ID.' }
+    return out
+  }
+  const id = Number(vlan)
+  if (!Number.isInteger(id) || id < 1 || id > 4094) return { error: 'The VLAN ID is 1 to 4094.' }
+  if (out.bond) {
+    if (port !== '') return { error: 'With a bond, the VLAN rides on it: leave its port empty.' }
+    out.vlan = { id }
+    return out
+  }
+  if (!MAC_SHAPE.test(port)) return { error: 'Without a bond, name the VLAN\'s port by its MAC.' }
+  out.vlan = { id, parentMAC: port }
+  return out
 }

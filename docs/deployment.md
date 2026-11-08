@@ -1552,6 +1552,31 @@ apiserver refuses a `FrameInstall` without one, `provision.ValidateSpec`
 refuses it again before the BMC is read, and the console's dialog asks for
 it.
 
+**Bond and VLAN** (optional) are declared in the same place, and configure the
+installer's own network as well as the installed system's — with ports in an
+LACP group or a tagged-only switch port, the installer could not reach the
+gateway otherwise:
+
+```yaml
+  network:
+    address: 192.0.2.213/24
+    gateway: 192.0.2.1
+    dns: [192.0.2.1]
+    bond:                       # 802.3ad (LACP), fast rate, layer3+4 hash
+      members: ["aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02"]
+    vlan:
+      id: 20                    # rides on the bond; without one, set parentMAC
+```
+
+Ports are named by MAC, never by kernel name or glob. The address, route and
+resolvers go on the top interface (`vlan<id>`, else `bond0`); the ports carry
+none. An install whose machine lacks a declared MAC stops in an early-command,
+before any disk is touched. Without `bond` and `vlan`, nothing changes: the
+installer takes the address on the cabled `en*` port and the installed system
+pins it by MAC. After the first boot, Network → Links (from
+`FrameMachine.status.network`) shows the bond, its LACP partner and the VLAN.
+Unproven on hardware until the first R730 installation.
+
 `bootMode` decides the disk layout the image carries: an EFI System
 Partition on each disk for `UEFI`, a `bios_grub` partition on each disk for
 `Legacy`. It is never inherited from the machine.
