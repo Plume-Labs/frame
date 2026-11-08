@@ -2156,7 +2156,7 @@ class ClusterClient {
       >(ALL_PODS_CACHED),
     ])
 
-    let ceph: CephStatus | null = null
+    let ceph: CephStatus | null
     try {
       ceph = await this.ceph()
     } catch {
