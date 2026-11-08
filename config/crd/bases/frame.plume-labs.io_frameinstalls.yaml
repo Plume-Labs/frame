@@ -266,7 +266,7 @@ spec:
                 - message: a VLAN rides on the bond when there is one (leave parentMAC
                     empty), and needs parentMAC to name its port when there is none
                   rule: '!has(self.vlan) || (has(self.bond) != (has(self.vlan.parentMAC)
-                    && self.vlan.parentMAC != ''''))'
+                    && size(self.vlan.parentMAC) > 0))'
               sshKeyRef:
                 description: |-
                   SSHKeyRef names a Secret holding "id" (private) and "id.pub" (public).

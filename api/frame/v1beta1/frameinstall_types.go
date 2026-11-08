@@ -59,7 +59,7 @@ type FrameInstallSpec struct {
 
 // InstallNetwork is the static network configuration the installer writes.
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.vlan) || (has(self.bond) != (has(self.vlan.parentMAC) && self.vlan.parentMAC != ''))",message="a VLAN rides on the bond when there is one (leave parentMAC empty), and needs parentMAC to name its port when there is none"
+// +kubebuilder:validation:XValidation:rule="!has(self.vlan) || (has(self.bond) != (has(self.vlan.parentMAC) && size(self.vlan.parentMAC) > 0))",message="a VLAN rides on the bond when there is one (leave parentMAC empty), and needs parentMAC to name its port when there is none"
 type InstallNetwork struct {
 	// +kubebuilder:validation:MaxLength=43
 	// +kubebuilder:validation:XValidation:rule="isCIDR(self)",message="address must be a CIDR, e.g. 192.0.2.210/24"
