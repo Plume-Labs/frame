@@ -1,7 +1,10 @@
 package provision
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,6 +36,7 @@ type readNetplan struct {
 	Ethernets map[string]struct {
 		Match     map[string]string `yaml:"match"`
 		Addresses []string          `yaml:"addresses"`
+		Optional  bool              `yaml:"optional"`
 	} `yaml:"ethernets"`
 	Bonds map[string]struct {
 		Interfaces []string            `yaml:"interfaces"`
@@ -113,8 +117,9 @@ func TestBondAndVLANReachBothTheInstallerAndTheInstalledSystem(t *testing.T) {
 			if !ok {
 				t.Fatalf("no bond0: %+v", np)
 			}
-			if bond.Parameters["mode"] != "802.3ad" || bond.Parameters["lacp-rate"] != "fast" {
-				t.Errorf("bond parameters %v, want LACP", bond.Parameters)
+			want := map[string]string{"mode": "802.3ad", "lacp-rate": "fast", "mii-monitor-interval": "100", "transmit-hash-policy": "layer3+4"}
+			if !maps.Equal(bond.Parameters, want) {
+				t.Errorf("bond parameters %v, want %v", bond.Parameters, want)
 			}
 			if len(bond.Addresses) != 0 {
 				t.Errorf("the bond carries %v; with a VLAN the address is on the VLAN", bond.Addresses)
@@ -125,8 +130,8 @@ func TestBondAndVLANReachBothTheInstallerAndTheInstalledSystem(t *testing.T) {
 				if !ok {
 					t.Fatalf("bond member %s has no ethernet stanza", m)
 				}
-				if len(p.Addresses) != 0 || p.Match["name"] != "" {
-					t.Errorf("member %s: %+v; a member is matched by MAC and carries no address", m, p)
+				if len(p.Addresses) != 0 || p.Match["name"] != "" || !p.Optional {
+					t.Errorf("member %s: %+v; a member is matched by MAC, optional, and carries no address", m, p)
 				}
 				macs = append(macs, p.Match["macaddress"])
 			}
@@ -166,13 +171,14 @@ func TestABondAloneCarriesTheAddress(t *testing.T) {
 func TestAVLANWithoutBondIsTaggedOnTheNamedPort(t *testing.T) {
 	s := goodSpec()
 	s.Network.VLAN = &VLAN{ID: 4094, ParentMAC: macA}
-	np := installedOf(t, s)
-	v, ok := np.VLANs["vlan4094"]
-	if !ok || v.Link != "frame-p0" || np.Ethernets["frame-p0"].Match["macaddress"] != macA {
-		t.Fatalf("netplan = %+v, want vlan4094 on frame-p0 matched by %s", np, macA)
-	}
-	if len(np.Bonds) != 0 {
-		t.Fatalf("bonds = %+v, want none", np.Bonds)
+	for name, np := range map[string]readNetplan{"live": liveOf(t, s), "installed": installedOf(t, s)} {
+		v, ok := np.VLANs["vlan4094"]
+		if !ok || v.Link != "frame-p0" || np.Ethernets["frame-p0"].Match["macaddress"] != macA || len(v.Addresses) != 1 {
+			t.Fatalf("%s: netplan = %+v, want vlan4094 with the address on frame-p0 matched by %s", name, np, macA)
+		}
+		if len(np.Bonds) != 0 || np.Ethernets["frame-p0"].Optional {
+			t.Fatalf("%s: netplan = %+v, want no bond and the one port required", name, np)
+		}
 	}
 }
 
@@ -235,10 +241,23 @@ func TestMACGuardRefusesAMissingPortWhenRun(t *testing.T) {
 		t.Errorf("missing MAC exited %d, want 1", code)
 	}
 	// In the rendered document it comes after the disk guards and before
-	// the early beacon.
+	// the early beacon: found by content, ordered against both.
 	early := commands(t, parsed(t, bondVLANSpec(), testBeaconBase), "early-commands")
-	if !strings.Contains(early[2], "no port has MAC "+macA) || !strings.Contains(early[2], "no port has MAC "+macB) {
-		t.Fatalf("third early-command is not the MAC guard:\n%s", early[2])
+	guard, beacon, lastDisk := -1, -1, -1
+	for i, c := range early {
+		switch {
+		case strings.Contains(c, "no port has MAC "+macA) && strings.Contains(c, "no port has MAC "+macB):
+			guard = i
+		case strings.Contains(c, testBeaconBase):
+			if beacon < 0 {
+				beacon = i
+			}
+		case strings.Contains(c, "/dev/disk/by-id"):
+			lastDisk = i
+		}
+	}
+	if guard < 0 || lastDisk < 0 || beacon < 0 || guard < lastDisk || guard > beacon {
+		t.Fatalf("guard at %d, last disk guard at %d, beacon at %d; want disks < guard < beacon:\n%s", guard, lastDisk, beacon, strings.Join(early, "\n---\n"))
 	}
 }
 
@@ -253,5 +272,36 @@ func TestMACsAreQuotedInTheDocument(t *testing.T) {
 	b, _ := base64.StdEncoding.DecodeString(m[1])
 	if !strings.Contains(string(b), `"`+macA+`"`) {
 		t.Fatalf("MAC not double-quoted:\n%s", b)
+	}
+}
+
+// provisiond receives the Spec as JSON (HTTPImageStore.Build, then
+// BuildHandler): a bond or VLAN lost on that leg installs the machine
+// untagged with every other test green.
+func TestBondAndVLANSurviveTheJSONLegToProvisiond(t *testing.T) {
+	b, err := json.Marshal(bondVLANSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Spec
+	if err := json.NewDecoder(bytes.NewReader(b)).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	np := liveOf(t, got)
+	if _, ok := np.Bonds["bond0"]; !ok {
+		t.Fatalf("no bond after the JSON leg (%s)", b)
+	}
+	if v, ok := np.VLANs["vlan20"]; !ok || v.Link != "bond0" {
+		t.Fatalf("no vlan20 on bond0 after the JSON leg (%s)", b)
+	}
+	vs := goodSpec()
+	vs.Network.VLAN = &VLAN{ID: 30, ParentMAC: macA}
+	b, _ = json.Marshal(vs)
+	got = Spec{}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Network.VLAN == nil || *got.Network.VLAN != *vs.Network.VLAN {
+		t.Fatalf("VLAN after the JSON leg = %+v, want %+v (%s)", got.Network.VLAN, vs.Network.VLAN, b)
 	}
 }

@@ -316,7 +316,13 @@ export function InstallDialog({
               <Input
                 id="install-bond"
                 value={bondPorts}
-                onChange={(e) => setBondPorts(e.target.value)}
+                onChange={(e) => {
+                  setBondPorts(e.target.value)
+                  // The VLAN port field greys out under a bond; a value typed
+                  // there first would block the dialog from a field the user
+                  // can no longer edit.
+                  if (parseMACs(e.target.value).length > 0) setVlanPort('')
+                }}
                 placeholder="aa:bb:cc:00:00:01, aa:bb:cc:00:00:02"
                 className="font-mono text-xs"
               />

@@ -384,6 +384,8 @@ export function parseMACs(text: string): string[] {
  * that says what is wrong. Empty fields mean neither. It mirrors the CRD's
  * rules so the dialog refuses what the apiserver would.
  */
+const isZeroMAC = (m: string): boolean => m.replace(/[:0]/g, '') === ''
+
 export function installLinks(
   bondText: string,
   vlanText: string,
@@ -394,6 +396,7 @@ export function installLinks(
   if (members.length > 0) {
     if (members.length < 2 || members.length > 8) return { error: 'A bond needs 2 to 8 ports.' }
     if (!members.every((m) => MAC_SHAPE.test(m))) return { error: 'Bond ports are MAC addresses (aa:bb:cc:dd:ee:ff).' }
+    if (members.some(isZeroMAC)) return { error: 'The all-zero MAC names no port.' }
     if (new Set(members.map((m) => m.toLowerCase())).size !== members.length) return { error: 'A bond port is named twice.' }
     out.bond = { members }
   }
@@ -411,6 +414,7 @@ export function installLinks(
     return out
   }
   if (!MAC_SHAPE.test(port)) return { error: 'Without a bond, name the VLAN\'s port by its MAC.' }
+  if (isZeroMAC(port)) return { error: 'The all-zero MAC names no port.' }
   out.vlan = { id, parentMAC: port }
   return out
 }

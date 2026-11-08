@@ -1575,7 +1575,12 @@ before any disk is touched. Without `bond` and `vlan`, nothing changes: the
 installer takes the address on the cabled `en*` port and the installed system
 pins it by MAC. After the first boot, Network → Links (from
 `FrameMachine.status.network`) shows the bond, its LACP partner and the VLAN.
-Unproven on hardware until the first R730 installation.
+Bond members are `optional`: one uncabled port does not hold boot on
+`systemd-networkd-wait-online`; the bond itself stays required.
+Unproven on hardware until the first R730 installation; the acceptance run
+checks that subiquity brings the bond and VLAN up before it looks for the
+route, and that a second `netplan apply` still finds every member by its
+permanent MAC once the bond has given them all the same one.
 
 `bootMode` decides the disk layout the image carries: an EFI System
 Partition on each disk for `UEFI`, a `bios_grub` partition on each disk for

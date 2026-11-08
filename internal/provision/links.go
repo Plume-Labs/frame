@@ -94,6 +94,10 @@ func declaresLinks(n Network) bool { return n.Bond != nil || n.VLAN != nil }
 type portStanza struct {
 	Match map[string]quoted `yaml:"match"`
 	DHCP4 bool              `yaml:"dhcp4"`
+	// Optional is set on bond members: one port without a cable must not
+	// hold systemd-networkd-wait-online to its timeout at every boot. The
+	// bond itself stays required.
+	Optional bool `yaml:"optional,omitempty"`
 }
 
 type ipStanza struct {
@@ -142,7 +146,7 @@ func declaredNetwork(v validated, s Spec) netplan {
 		members := make([]string, 0, len(v.macs))
 		for i, mac := range v.macs {
 			name := fmt.Sprintf("frame-m%d", i)
-			doc.Ethernets[name] = portStanza{Match: map[string]quoted{"macaddress": quoted(mac)}}
+			doc.Ethernets[name] = portStanza{Match: map[string]quoted{"macaddress": quoted(mac)}, Optional: true}
 			members = append(members, name)
 		}
 		bond := bondStanza{Interfaces: members, Parameters: bondParameters}

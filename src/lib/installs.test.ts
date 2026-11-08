@@ -288,6 +288,8 @@ describe('installLinks', () => {
   it('refuses what the CRD refuses', () => {
     expect(installLinks(a, '', '').error).toBeDefined()
     expect(installLinks(`${a} ${a.toUpperCase()}`, '', '').error).toBeDefined()
+    expect(installLinks(`${a}, 00:00:00:00:00:00`, '', '').error).toBeDefined()
+    expect(installLinks('', '20', '00:00:00:00:00:00').error).toBeDefined()
     expect(installLinks(`${a} eno1`, '', '').error).toBeDefined()
     expect(installLinks('', '20', '').error).toBeDefined()
     expect(installLinks(`${a} ${b}`, '20', a).error).toBeDefined()
