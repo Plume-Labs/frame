@@ -6,6 +6,16 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — planned ZFS scrubs, one node at a time
+
+- `StorageHealthPolicy.spec.scrub` (node selector, interval in days, start
+  window in a time zone) has Frame scrub the selected nodes' ZFS pools instead
+  of the distribution's cron. One node scrubs at a time cluster-wide: nothing
+  starts while any pool reports a scrub or resilver in progress.
+- The node agent runs `zpool scrub <pool>` on the pools it reads itself, on a
+  request timestamp the new `zfsscrub` controller writes on the Node; the
+  result is the existing `ScrubErrors` check. See docs/storage.md.
+
 ### Added — a refused BMC connection has its own reason
 
 - `FrameMachine` `Reachable=False` now says `ConnectionRefused` when the

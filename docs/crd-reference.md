@@ -585,14 +585,23 @@ prerequisites and the unexecuted verification sequence.
 
 `frame.plume-labs.io/v1beta1`, cluster-scoped. The thresholds behind
 FrameMachine's storage conditions and alerts. A singleton: the apiserver
-refuses any name but `default`. It has no status and no controller of its own;
-the FrameMachine controller reads it on each pass, and the absence of the
+refuses any name but `default`. It has no status. The FrameMachine controller reads its thresholds on each pass, and the
+`zfsscrub` controller its `spec.scrub`, and the absence of the
 object means the defaults below.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `spec.zfsCapacityPercent` | integer, 1–100 | 80 | Raises `StorageCapacityHigh`; clears two points below. |
 | `spec.ssdWearPercent` | integer, 1–100 | 80 | Raises `DiskWearHigh`. |
+| `spec.scrub.nodeSelector` | label selector | none | Nodes whose ZFS pools Frame scrubs. Nil matches none. |
+| `spec.scrub.intervalDays` | integer, 1–365 | 30 | Time between two completed scrubs of a node. |
+| `spec.scrub.windowStart` | `HH:MM` | `02:00` | From when a scrub may start, in `timeZone`. |
+| `spec.scrub.windowHours` | integer, 1–24 | 4 | How long the start window stays open. |
+| `spec.scrub.timeZone` | IANA name | `UTC` | The zone `windowStart` is read in. |
+
+`spec.scrub` absent means Frame starts no scrub. The scrub is planned by its
+own controller (`zfsscrub`), one node at a time — see
+[storage.md](storage.md#planned-zfs-scrubs).
 
 RBAC follows the three tiers, like SchedulingPolicy: an editor can move a
 threshold, a viewer only reads it. See [storage.md](storage.md#storage-health-alerts).
