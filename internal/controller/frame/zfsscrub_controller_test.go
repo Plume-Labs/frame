@@ -305,3 +305,59 @@ func TestPlanScrubsKeepsTheLockAfterAFailureUntilAFreshRead(t *testing.T) {
 		t.Fatalf("step = %+v, want b requested", s)
 	}
 }
+
+// A node that stopped reporting before any request (powered off, agent
+// down, its FrameMachine still holding the last read) is not asked: the
+// request would fail with nobody to read the outcome, and the lock that
+// failure takes would stop the whole plan until the node came back.
+func TestPlanScrubsSkipsANodeThatStoppedReporting(t *testing.T) {
+	silent := pool("none requested")
+	old := metav1.NewTime(scrubNow.Add(-3 * 24 * time.Hour))
+	silent.ReadAt = &old
+	capped := pool("none requested")
+	capped.PoolsOmitted = 2
+	unread := pool("none requested")
+	unread.ReadAt = nil
+	done := map[string]string{framev1beta1.ZFSScrubCompletedAnnotation: stamp(scrubNow.Add(-40 * 24 * time.Hour))}
+	s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{
+		zfsNode("a", nil, silent), // never scrubbed: would come first
+		zfsNode("c", nil, capped), // pools left out of the read
+		zfsNode("d", nil, unread),
+		zfsNode("b", done, pool("none requested")),
+	}, scrubNow))
+	if s.Node != "b" || s.Reason != reasonScrubRequested {
+		t.Fatalf("step = %+v, want b requested", s)
+	}
+}
+
+// The failure's lock: a failure with no read at all records "none", which
+// holds until a read arrives; a read dated before the one recorded (the
+// agent's clock set back) is still a new read and releases it.
+func TestPlanScrubsSettlesOnAnyNewRead(t *testing.T) {
+	b := zfsNode("b", nil, pool("none requested"))
+	ann := map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: stamp(scrubNow.Add(-zfsScrubAckTimeout - time.Minute))}
+	s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", ann, nil), b}, scrubNow))
+	if s.Node != "a" || s.Reason != reasonScrubFailed || s.Set[framev1beta1.ZFSScrubUnsettledAnnotation] != "none" {
+		t.Fatalf("step = %+v, want a failure recording no read", s)
+	}
+	none := map[string]string{
+		framev1beta1.ZFSScrubFailedAnnotation:    stamp(scrubNow),
+		framev1beta1.ZFSScrubUnsettledAnnotation: "none",
+	}
+	if steps, err := planScrubs(schedule(), []scrubNode{zfsNode("a", none, nil), b}, scrubNow); err != nil || len(steps) != 0 {
+		t.Fatalf("no read yet: steps %+v, err %v; want the lock held", steps, err)
+	}
+	s = onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", none, pool("none requested")), b}, scrubNow))
+	if s.Node != "a" || s.Reason != reasonScrubSettled {
+		t.Fatalf("first read: step = %+v, want a settled", s)
+	}
+
+	back := map[string]string{
+		framev1beta1.ZFSScrubFailedAnnotation:    stamp(scrubNow),
+		framev1beta1.ZFSScrubUnsettledAnnotation: stamp(scrubNow.Add(time.Hour)), // recorded ahead
+	}
+	s = onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", back, pool("none requested")), b}, scrubNow))
+	if s.Node != "a" || s.Reason != reasonScrubSettled {
+		t.Fatalf("clock set back: step = %+v, want a settled", s)
+	}
+}

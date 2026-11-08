@@ -106,6 +106,11 @@ own `zpool list` read of its node and must match ZFS's pool name grammar; the
 controller's request (a Node annotation) is a timestamp and names no pool.
 **A way to make the agent run another `zpool` verb or option, on a pool it did
 not read itself, is a vulnerability.**
+Known limit: the agent's ClusterRole already allows `patch` on every Node, so
+a compromised agent can write the request annotation on all of them and have
+every node scrub its own pools at once. It is still only `zpool scrub` on
+local pools; the one-node-at-a-time rule holds against a faulty controller,
+not against a compromised agent.
 
 Note also that **enabling KSM is a security trade-off, not just a performance
 one**: merged pages make writes take a measurable copy-on-write fault, which

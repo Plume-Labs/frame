@@ -126,8 +126,10 @@ type ZFSScrubSchedule struct {
 // already running is stopped on the node (`zpool scrub -s <pool>`); the
 // controller then records it failed (not completed: the interval does not
 // restart on a scrub that never finished). The agent ignores a request older
-// than its acknowledgement timeout, so one left behind (policy deleted,
-// agent down) does not fire later, outside the window.
+// than 20 minutes (twice the controller's 10-minute acknowledgement
+// timeout), so one left behind (policy deleted, agent down) does not fire
+// later, outside the window. Only a node whose agent published a complete
+// ZFS read in the last 10 minutes is picked.
 const (
 	// ZFSScrubRequestedAnnotation is when the controller asked this node to
 	// scrub (RFC3339Nano). Its presence is the cluster-wide lock: one node at

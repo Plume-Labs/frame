@@ -79,6 +79,13 @@ const (
 	// zfsScrubRetryAfterFailure is how long a node whose request failed is
 	// left alone.
 	zfsScrubRetryAfterFailure = 24 * time.Hour
+	// zfsScrubFreshRead is how old a node's ZFS read may be for the node to
+	// be picked. The agent reads every 30 s; a read older than this is a
+	// node that stopped reporting (powered off, agent down) before any
+	// request, and asking it would only fail and lock the plan on a node
+	// nobody hears from. It also absorbs some skew between the agent's
+	// clock, which dates the read, and the controller's.
+	zfsScrubFreshRead = 10 * time.Minute
 )
 
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=storagehealthpolicies,verbs=get;list;watch
@@ -262,7 +269,10 @@ func unsettled(n scrubNode) bool {
 	if n.ZFS == nil || n.ZFS.State != framev1beta1.StackPresent || n.ZFS.ReadAt == nil {
 		return true
 	}
-	if seen, ok := parseStamp(raw); ok && !n.ZFS.ReadAt.After(seen) {
+	// Equal, not After: a busy read keeps the ReadAt it had, and any other
+	// read is newer. After would hold the lock until the agent's clock
+	// caught up with a stamp recorded before NTP set it back.
+	if seen, ok := parseStamp(raw); ok && n.ZFS.ReadAt.Equal(&metav1.Time{Time: seen}) {
 		return true
 	}
 	return scanning(n.ZFS)
@@ -284,9 +294,13 @@ func finished(zfs *framev1beta1.ZFSStatus) bool {
 	return found
 }
 
-// scrubbable reports whether the agent would find a pool to scrub.
-func scrubbable(zfs *framev1beta1.ZFSStatus) bool {
+// scrubbable reports whether the agent would find a pool to scrub, on a
+// node that is reporting now: a recent complete read (no pool left out of
+// the list, which the agent would not scrub).
+func scrubbable(zfs *framev1beta1.ZFSStatus, now time.Time) bool {
 	return zfs != nil && zfs.State == framev1beta1.StackPresent &&
+		zfs.ReadAt != nil && now.Sub(zfs.ReadAt.Time) < zfsScrubFreshRead &&
+		zfs.PoolsOmitted == 0 &&
 		slices.ContainsFunc(zfs.Pools, func(p framev1beta1.ZPool) bool {
 			return p.Health == poolOnline || p.Health == poolDegraded
 		})
@@ -445,7 +459,7 @@ func concludeScrub(n scrubNode, now time.Time) (scrubStep, bool) {
 	return scrubStep{}, false
 }
 
-// nextScrub picks the due node: selected, with a pool to scrub, not failed
+// nextScrub picks the due node: selected, reporting, with a pool to scrub, not failed
 // in the last day, its last completed scrub older than the interval. Never
 // scrubbed by Frame comes first, then the oldest, then by name.
 func nextScrub(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Time) (scrubNode, bool, error) {
@@ -464,7 +478,7 @@ func nextScrub(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Tim
 	}
 	var due []candidate
 	for _, n := range nodes {
-		if !sel.Matches(labels.Set(n.Labels)) || !scrubbable(n.ZFS) {
+		if !sel.Matches(labels.Set(n.Labels)) || !scrubbable(n.ZFS, now) {
 			continue
 		}
 		if failed, ok := parseStamp(n.Annotations[framev1beta1.ZFSScrubFailedAnnotation]); ok && now.Sub(failed) < zfsScrubRetryAfterFailure {

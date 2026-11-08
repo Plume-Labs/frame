@@ -486,6 +486,11 @@ spec:
 - **The order**: a node Frame never scrubbed, then the oldest completed scrub,
   then by name. A node is eligible when its FrameMachine reports ZFS present
   with an `ONLINE` or `DEGRADED` pool; a suspended or faulted pool is skipped.
+  The read must be under 10 minutes old (the agent reads every 30 s) and
+  complete (`poolsOmitted` 0): a node that stopped reporting, powered off or
+  with its agent down, is never asked, since its failure would hold the lock
+  until it came back. An agent clock more than 10 minutes behind the
+  controller's makes its node look silent too.
 - **The protocol lives on the Node** (annotations `frame.plume-labs.io/zfs-scrub-*`).
   The controller writes `requested`; the agent runs `zpool scrub <pool>` on the
   pools it reads itself and writes back `acknowledged` and `started-at`; the

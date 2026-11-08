@@ -106,6 +106,12 @@ func ScrubPools(x StorageExecutor, zfs *framev1beta1.ZFSStatus) ([]string, error
 		}
 		return nil, fmt.Errorf("ZFS is %s on this node", state)
 	}
+	if zfs.PoolsOmitted > 0 {
+		// The read is capped; pools past the cap would go unscrubbed while
+		// the node is recorded as scrubbed. The controller does not pick
+		// such a node; this is the agent's own refusal.
+		return nil, fmt.Errorf("the ZFS read left %d pool(s) out; refusing a partial scrub", zfs.PoolsOmitted)
+	}
 	var started []string
 	var errs []error
 	for _, p := range zfs.Pools {

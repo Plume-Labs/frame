@@ -118,6 +118,10 @@ func TestScrubPoolsFailsWhenNothingCanScrub(t *testing.T) {
 		"busy":        {State: framev1beta1.StackBusy},
 		"no pool":     present(),
 		"all faulted": present(framev1beta1.ZPool{Name: "tank", Health: "FAULTED"}),
+		// Pools past the read's cap would go unscrubbed while the node is
+		// recorded as scrubbed: nothing starts at all.
+		"capped read": {State: framev1beta1.StackPresent, PoolsOmitted: 1,
+			Pools: []framev1beta1.ZPool{{Name: "tank", Health: "ONLINE"}}},
 	}
 	for name, zfs := range cases {
 		x := &scrubExec{}
