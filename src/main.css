@@ -7,6 +7,12 @@
   ---break---
 */
 @custom-variant dark (&:is(.dark *));
+/* Variantes média : en v4 un écran « raw » de tailwind.config.js finit dans les
+   points de rupture de .container (@media (width >= (pointer: coarse))), que
+   lightningcss refuse depuis tailwindcss 4.3. */
+@custom-variant coarse (@media (pointer: coarse));
+@custom-variant fine (@media (pointer: fine));
+@custom-variant pwa (@media (display-mode: standalone));
 
 @config '../tailwind.config.js';
 
