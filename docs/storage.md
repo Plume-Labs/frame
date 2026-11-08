@@ -452,6 +452,68 @@ Health tab: the write goes through `frame-uiproxy` and leaves a FrameTask like
 any console mutation. Without the object, both thresholds are 80 %. A change
 reaches each machine at its next pass.
 
+## Planned ZFS scrubs
+
+`StorageHealthPolicy.spec.scrub` has Frame start the ZFS scrubs, one node at a
+time, instead of the distribution's cron. The result lands where T-1 already
+judges it: the pool's scan line and `ScrubErrors` on the node's FrameMachine,
+and the Storage → Health tab.
+
+```yaml
+apiVersion: frame.plume-labs.io/v1beta1
+kind: StorageHealthPolicy
+metadata:
+  name: default
+spec:
+  scrub:
+    nodeSelector:
+      matchLabels:
+        frame.plume-labs.io/zfs: "true"
+    intervalDays: 30      # between two completed scrubs of a node
+    windowStart: "02:00"  # a scrub may start from here…
+    windowHours: 4        # …for four hours
+    timeZone: Europe/Paris
+```
+
+- **One at a time, whoever started it.** No node is asked to scrub while any
+  pool of any node reports a scrub or a resilver in progress (a cron's
+  included), while a node's ZFS read is in `error` (its lists are empty, so a
+  resilver there would not show), or while a failed request is unsettled
+  (below). The window bounds when a scrub starts, not how long it runs.
+- **Disable the distribution's cron** on the selected nodes (Ubuntu:
+  `/etc/cron.d/zfsutils-linux`): Frame never starts beside it, but cannot stop
+  it from starting beside Frame.
+- **The order**: a node Frame never scrubbed, then the oldest completed scrub,
+  then by name. A node is eligible when its FrameMachine reports ZFS present
+  with an `ONLINE` or `DEGRADED` pool; a suspended or faulted pool is skipped.
+  The read must be under 10 minutes old (the agent reads every 30 s) and
+  complete (`poolsOmitted` 0): a node that stopped reporting, powered off or
+  with its agent down, is never asked, since its failure would hold the lock
+  until it came back. An agent clock more than 10 minutes behind the
+  controller's makes its node look silent too.
+- **The protocol lives on the Node** (annotations `frame.plume-labs.io/zfs-scrub-*`).
+  The controller writes `requested`; the agent runs `zpool scrub <pool>` on the
+  pools it reads itself and writes back `acknowledged` and `started-at`; the
+  controller records `completed` once a storage read dated after the start
+  shows every pool's scrub finished ("scrub repaired …"). The agent ignores a
+  request more than twenty minutes old, so a leftover never fires later.
+- **Failures** (event `ScrubFailed` on the policy, node left alone for a day):
+  the agent did not take the request in ten minutes, no read came in the
+  forty minutes after the request, or the scrub ended without completing
+  (stopped, paused). A failure does not restart the interval. It does not
+  release the lock either: a scrub may be running all the same, so
+  `zfs-scrub-unsettled` holds every other node until that node publishes a
+  newer complete read with nothing scanning (event `ScrubSettled`). An agent
+  that stays silent therefore stops the plan — on purpose. To release it by
+  hand, once you have checked `zpool status` on the node, remove that
+  annotation.
+- **To stop**: remove `zfs-scrub-requested` from the node before the agent
+  takes it; a scrub already running is stopped on the node with
+  `zpool scrub -s <pool>`, which Frame records as failed. Removing
+  `spec.scrub` starts nothing new; a request in flight is still concluded.
+
+---
+
 ## What is not delivered
 
 - **The real `Wiper`.** This build ships `FrameDiskClaim`'s guards only; the

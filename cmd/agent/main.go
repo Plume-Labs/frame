@@ -128,6 +128,9 @@ func run() error {
 	smart := agent.NewNodeSMARTReader()
 	// The links too: a read goes through the driver, which can hang.
 	network := agent.NewNetworkCollector(root)
+	// The ZFS scrub start runs the host's zpool, like the reads, but on an
+	// executor of its own: its busy record must not mix with theirs.
+	scrub := agent.NewHostStorageExecutor()
 
 	ctx := ctrl.SetupSignalHandler()
 	slog.Info("frame-agent starting", "node", nodeName, "root", root, "interval", observeInterval)
@@ -136,7 +139,7 @@ func run() error {
 	// freshly (re)started agent reports current state right away instead of
 	// leaving status.nodes stale — and so a restart request that arrived
 	// while it was down is serviced now rather than in 30 seconds.
-	tick(ctx, kc, nodeName, root, runner, local, smart, network)
+	tick(ctx, kc, nodeName, root, runner, local, smart, network, scrub)
 
 	ticker := time.NewTicker(observeInterval)
 	defer ticker.Stop()
@@ -145,7 +148,7 @@ func run() error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			tick(ctx, kc, nodeName, root, runner, local, smart, network)
+			tick(ctx, kc, nodeName, root, runner, local, smart, network, scrub)
 		}
 	}
 }
@@ -163,7 +166,7 @@ const localStorageWait = 5 * time.Second
 func tick(
 	ctx context.Context, kc client.Client, nodeName, root string,
 	runner agent.CommandRunner, localStorage *agent.LocalCollector, smart *agent.SMARTReader,
-	network *agent.NetworkCollector,
+	network *agent.NetworkCollector, scrub agent.StorageExecutor,
 ) {
 	var node corev1.Node
 	if err := kc.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
@@ -245,6 +248,16 @@ func tick(
 		smart.Annotate(disks)
 		if err := agent.PatchObservedStorage(ctx, kc, nodeName, disks, local, network.Latest(localStorageWait)); err != nil {
 			slog.Error("publishing node disks", "node", nodeName, "error", err)
+		}
+
+		// 7. the ZFS scrub the controller asked for, if any, on the pools
+		//    this read just found. After the publish, so the read dated
+		//    before the scrub's start is already out: the controller only
+		//    trusts a read dated after the acknowledgement.
+		if local != nil {
+			if err := agent.ServiceScrubRequest(ctx, kc, nodeName, &local.ZFS, scrub, time.Now); err != nil {
+				slog.Error("servicing the ZFS scrub request", "node", nodeName, "error", err)
+			}
 		}
 	}
 }

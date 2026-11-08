@@ -615,6 +615,15 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "framemachine")
 		os.Exit(1)
 	}
+	if err := (&controller.ZFSScrubReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("zfsscrub"), //nolint:staticcheck
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "zfsscrub")
+		os.Exit(1)
+	}
 	// provisiondImages is both the ImageStore that builds/removes install
 	// media and the ProgressReader that asks provisiond what an installation
 	// has reported -- one HTTP client against frame-provisiond's build
