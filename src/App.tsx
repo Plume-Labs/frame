@@ -31,6 +31,7 @@ const FrameStorageView = lazy(() => import('@/components/FrameStorageView').then
 const DatabasesView = lazy(() => import('@/components/DatabasesView').then((m) => ({ default: m.DatabasesView })))
 const CachesView = lazy(() => import('@/components/CachesView').then((m) => ({ default: m.CachesView })))
 
+const StorageLoadView = lazy(() => import('@/components/StorageLoadView').then((m) => ({ default: m.StorageLoadView })))
 const StorageHealthView = lazy(() => import('@/components/StorageHealthView').then((m) => ({ default: m.StorageHealthView })))
 const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
 const NetworkBottlenecksView = lazy(() => import('@/components/NetworkBottlenecksView').then((m) => ({ default: m.NetworkBottlenecksView })))
@@ -138,6 +139,7 @@ type TabId =
   | 'gpu'
   | 'storage'
   | 'storage-entries'
+  | 'storage-load'
   | 'disks'
   | 'databases'
   | 'caches'
@@ -317,10 +319,11 @@ const NAV: NavGroup[] = [
         id: 'storage',
         label: 'Storage',
         icon: <HardDrive />,
-        description: 'Ceph, declared storage entries, disks and the NVMe scratch tier — and whether they are healthy',
+        description: 'Ceph, declared storage entries, which volume writes where, disks and the NVMe scratch tier — and whether they are healthy',
         tabs: [
           { id: 'storage', label: 'Ceph' },
           { id: 'storage-entries', label: 'Entries' },
+          { id: 'storage-load', label: 'Volumes' },
           { id: 'disks', label: 'Disks' },
           { id: 'burst-buffer', label: 'Burst Buffer' },
           { id: 'storage-health', label: 'Health' },
@@ -592,6 +595,8 @@ function App() {
         return <ClusterStorageView />
       case 'storage-entries':
         return <FrameStorageView />
+      case 'storage-load':
+        return <StorageLoadView />
       case 'disks':
         return <MachineDisksPanel />
       case 'databases':

@@ -67,6 +67,25 @@ import type { ClaimCounts as StorageClaimCounts, StorageCapacity } from './stora
 import type { CephPlacement } from './ceph-placement'
 import { DECODE_RATE_QUERY, PROMPT_RATE_QUERY, rateFromSamples } from './inference-rates'
 import { POD_TRAFFIC_QUERIES, toPodTraffic, type PodTraffic } from './network-bottlenecks'
+import {
+  VOLUME_LOAD_QUERIES,
+  toAttachmentInfo,
+  toBlockPoolInfo,
+  toPodClaimInfo,
+  toPvInfo,
+  toPvcInfo,
+  toStorageClassInfo,
+  type BlockPoolCR,
+  type PodClaimInfo,
+  type PodVolumesCR,
+  type PvCR,
+  type PvcCR,
+  type StorageClassCR,
+  type VolumeAttachmentCR,
+  type VolumeAttachmentInfo,
+  type VolumeLoadRaw,
+  type VolumeLoadSnapshot,
+} from './volume-load'
 import { CEPH_DIAG_QUERIES, promAnswered, toOsdPod, type OsdPod, type OsdPodCR, type PromSample, type PromSnapshot } from './ceph-diagnostic'
 import { projectAlerts, projectSubscriptions, type RegistryAlert, type AlertSubscriptionHealth } from './alert-registry'
 
@@ -1774,6 +1793,56 @@ class ClusterClient {
     }
   }
 
+
+  /**
+   * Everything Storage → Volumes reads besides the Ceph diagnostic: claims,
+   * volumes, StorageClasses, the Rook pools' declared device class, the pods
+   * mounting each claim (and the ReplicaSet hop to their Deployment), CSI
+   * attachments, and the kubelet fill figures. Read-only; every judgement is
+   * in volume-load.ts.
+   *
+   * The CephBlockPool and VolumeAttachment lists are optional: a cluster
+   * without Rook (or without a CSI driver) has neither, and the rest of the
+   * screen still stands.
+   */
+  async volumeLoad(): Promise<VolumeLoadRaw> {
+    const cfg = config()
+    const empty = { items: [] }
+    const [prom, pvcs, pvs, scs, pools, pods, rs, vas] = await Promise.all([
+      this.promInstant(VOLUME_LOAD_QUERIES).catch(() => null),
+      k8sFetch<ListResponse<PvcCR>>(coreListPath('persistentvolumeclaims')),
+      k8sFetch<ListResponse<PvCR>>(coreListPath('persistentvolumes')),
+      k8sFetch<ListResponse<StorageClassCR>>('/apis/storage.k8s.io/v1/storageclasses'),
+      k8sFetch<ListResponse<BlockPoolCR>>(crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cfg.namespaces.ceph)).catch(
+        () => empty as ListResponse<BlockPoolCR>,
+      ),
+      k8sFetch<ListResponse<PodVolumesCR>>(ALL_PODS_CACHED),
+      k8sFetch<ListResponse<{ metadata: MetaCR }>>('/apis/apps/v1/replicasets'),
+      k8sFetch<ListResponse<VolumeAttachmentCR>>('/apis/storage.k8s.io/v1/volumeattachments').catch(
+        () => empty as ListResponse<VolumeAttachmentCR>,
+      ),
+    ])
+    const replicaSetOwners = new Map<string, OwnerRef>()
+    for (const r of rs.items ?? []) {
+      const owner = controllerOwner(r.metadata)
+      if (owner) replicaSetOwners.set(`${r.metadata.namespace}/${r.metadata.name}`, owner)
+    }
+    return {
+      prom: prom as VolumeLoadSnapshot | null,
+      pvcs: (pvcs.items ?? []).map(toPvcInfo),
+      pvs: (pvs.items ?? []).map(toPvInfo),
+      storageClasses: (scs.items ?? []).map(toStorageClassInfo),
+      blockPools: (pools.items ?? []).map(toBlockPoolInfo),
+      pods: (pods.items ?? []).map(toPodClaimInfo).filter((p): p is PodClaimInfo => p !== null),
+      replicaSetOwners,
+      attachments: (vas.items ?? []).map(toAttachmentInfo).filter((a): a is VolumeAttachmentInfo => a !== null),
+    }
+  }
+
+  /** Just the kubelet fill figures, for the Overview's findings. Null when Prometheus does not answer. */
+  async volumeFill(): Promise<Pick<VolumeLoadSnapshot, 'volUsed' | 'volCapacity'> | null> {
+    return this.promInstant({ volUsed: VOLUME_LOAD_QUERIES.volUsed, volCapacity: VOLUME_LOAD_QUERIES.volCapacity })
+  }
 
   /**
    * Workload placement: every non-system pod grouped by the node running it —

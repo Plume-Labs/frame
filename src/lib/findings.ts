@@ -9,6 +9,7 @@ import type { Database } from './databases'
 import type { Machine } from './machines'
 import { NETWORK_CHECKS, STORAGE_CHECKS } from './storage-health'
 import { Tone, formatAge } from './thresholds'
+import type { VolumeFillFinding } from './volume-load'
 
 /**
  * What the Overview screen calls a problem, and where it sends you about it.
@@ -44,6 +45,8 @@ export function collectFindings(
     machines?: Pick<Machine, 'name' | 'storageConditions'>[]
     caches?: Pick<Cache, 'name' | 'namespace' | 'ready' | 'reason' | 'message'>[]
     databases?: Pick<Database, 'name' | 'namespace' | 'ready' | 'reason' | 'message'>[]
+    /** Volumes at or past the fill thresholds (volume-load.ts), worst first. */
+    volumes?: VolumeFillFinding[]
   },
   now: number = Date.now(),
 ): Finding[] {
@@ -94,6 +97,17 @@ export function collectFindings(
       label: `Ceph ${input.ceph.health.replace('HEALTH_', '')}`,
       detail: `${input.ceph.osds} OSDs · ${input.ceph.mons} mons`,
       screen: 'storage',
+    })
+  }
+
+  for (const v of input.volumes ?? []) {
+    findings.push({
+      key: `volume-fill-${v.key}`,
+      tone: v.severity === 'critical' ? 'destructive' : 'warning',
+      label: `Volume ${v.usePct.toFixed(0)} % full`,
+      detail: v.key,
+      screen: 'storage',
+      tab: 'storage-load',
     })
   }
 

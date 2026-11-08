@@ -59,6 +59,18 @@ rules:
   - apiGroups: [ceph.rook.io]
     resources: [cephclusters, cephblockpools]
     verbs: [get, list, watch]
+  # Storage → Volumes (StorageLoadView, ClusterClient.volumeLoad() in
+  # frame-sdk.ts): which workload uses which claim, the volume behind it, its
+  # StorageClass's pool and the node a CSI volume is attached to. Read-only on
+  # purpose: growing a claim (lot 4) gets its own narrow grant, and deleting a
+  # claim or a volume is never offered by the console. `watch` is not granted:
+  # the screen polls with the Ceph diagnostic, it does not stream these.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, persistentvolumes]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, volumeattachments]
+    verbs: [get, list]
   # frame-sdk.ts:1430 (queue read), :1378 (podgroups) — VolcanoPoolsView
   - apiGroups: [scheduling.volcano.sh]
     resources: [queues, podgroups]

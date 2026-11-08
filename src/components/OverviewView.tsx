@@ -22,6 +22,7 @@ import { TONE_TEXT, formatAge, inverseScoreTone } from '@/lib/thresholds'
 import { Finding, collectFindings } from '@/lib/findings'
 import type { Cache } from '@/lib/caches'
 import type { Database } from '@/lib/databases'
+import { volumeFillFindings, type VolumeLoadSnapshot } from '@/lib/volume-load'
 import type { Machine } from '@/lib/machines'
 import { cn } from '@/lib/utils'
 import {
@@ -88,6 +89,12 @@ export function OverviewView() {
   const machines = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
   const caches = useLiveResource<Cache[]>(() => frame.caches.list(), [], [frame.caches.watchPath()])
   const databases = useLiveResource<Database[]>(() => frame.databases.list(), [], [frame.databases.watchPath()])
+  const volumeFill = useLiveResource<Pick<VolumeLoadSnapshot, 'volUsed' | 'volCapacity'> | null>(
+    () => frame.cluster.volumeFill(),
+    [],
+    [],
+    60_000,
+  )
   const inference = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
   const posture = useLiveResource<PostureStatus | null>(() => frame.cluster.posture(), [], [
     crdListPath('aquasecurity.github.io', 'v1alpha1', 'vulnerabilityreports'),
@@ -125,6 +132,7 @@ export function OverviewView() {
         machines={machines.state}
         caches={caches.state}
         databases={databases.state}
+        volumeFill={volumeFill.state}
       />
 
       <TrendCard state={trendState.state} />
@@ -162,6 +170,7 @@ function AttentionCard({
   machines,
   caches,
   databases,
+  volumeFill,
 }: {
   nodes: ReturnType<typeof useLiveResource<ClusterNodeInfo[]>>['state']
   alerts: ReturnType<typeof useLiveResource<AlertsStatus | null>>['state']
@@ -170,6 +179,7 @@ function AttentionCard({
   machines: ReturnType<typeof useLiveResource<Machine[]>>['state']
   caches: ReturnType<typeof useLiveResource<Cache[]>>['state']
   databases: ReturnType<typeof useLiveResource<Database[]>>['state']
+  volumeFill: ReturnType<typeof useLiveResource<Pick<VolumeLoadSnapshot, 'volUsed' | 'volCapacity'> | null>>['state']
 }) {
   const findings = collectFindings({
     nodes: nodes.phase === 'ready' ? nodes.data : undefined,
@@ -179,6 +189,7 @@ function AttentionCard({
     machines: machines.phase === 'ready' ? machines.data : undefined,
     caches: caches.phase === 'ready' ? caches.data : undefined,
     databases: databases.phase === 'ready' ? databases.data : undefined,
+    volumes: volumeFill.phase === 'ready' && volumeFill.data ? volumeFillFindings(volumeFill.data) : undefined,
   })
 
   return (

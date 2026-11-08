@@ -144,6 +144,12 @@ const QUANTITY_SUFFIX: Record<string, number> = {
  * read as a 10-digit number of kibibytes. An unparseable string is returned
  * unchanged, an empty one stays empty.
  */
+/** A Kubernetes quantity in bytes ("10Gi" → 10737418240), or null when it does not parse. */
+export function quantityBytes(q: string | undefined | null): number | null {
+  const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?\s*$/.exec(q ?? '')
+  return m ? Number(m[1]) * QUANTITY_SUFFIX[m[2] ?? ''] : null
+}
+
 export function humanizeQuantity(q: string): string {
   const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?\s*$/.exec(q)
   if (!m) return q

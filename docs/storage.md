@@ -514,6 +514,39 @@ spec:
 
 ---
 
+## Storage → Volumes: the physical path of each claim
+
+Read-only. One row per PersistentVolumeClaim, fullest first:
+
+- **Used by**: the controller of each pod mounting the claim (a Deployment is
+  found through its ReplicaSet), and the nodes they run on. A claim no pod
+  mounts shows "unused" and, for a CSI volume, the node its VolumeAttachment
+  names.
+- **Used / size**: `kubelet_volume_stats_used_bytes` over
+  `kubelet_volume_stats_capacity_bytes`. A claim the kubelet does not report
+  is shown `?`, never 0 %. At 85 % it is flagged, at 95 % it is critical; both
+  also appear in the Overview's "Needs attention".
+- **Physical path**: for ceph-csi, the pool the PV was created in
+  (`volumeAttributes.pool`, else the StorageClass's `pool`), its CRUSH rule
+  from the ceph-mgr read, and the OSDs it may place copies on: those of the
+  CephBlockPool's `deviceClass` (every class when unset) that are up and in.
+  A pool no CephBlockPool declares lists every OSD and says so. For
+  local-path, the node the PV is pinned to and its directory.
+- **Write**: the slowest commit latency (`ceph_osd_commit_latency_ms`) among
+  those OSDs now, and the worst 5-minute average of any of them over 24 h.
+  It is the worst copy, not an average: a replicated write is acknowledged
+  only once every copy is committed.
+
+The banner names an OSD that is **on every write** of a pool: the pool's
+failure domain is `host`, it has as many eligible hosts as copies (so each
+placement group has one copy per host), and the OSD is its host's only
+eligible one. Above 50 ms, every write of every volume in that pool waits for
+it. On the cluster this was written for, that is the zvol OSD on cp.
+
+Nothing on this screen writes. The viewer tier reads PVCs, PVs,
+StorageClasses and VolumeAttachments; no tier may create, change or delete
+them (`TestVolumeGraphIsReadableAndNeverWritable`).
+
 ## What is not delivered
 
 - **The real `Wiper`.** This build ships `FrameDiskClaim`'s guards only; the
