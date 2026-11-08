@@ -6,6 +6,13 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — a refused BMC connection has its own reason
+
+- `FrameMachine` `Reachable=False` now says `ConnectionRefused` when the
+  Redfish port refuses the TCP connection (BMC web service down, management
+  port disabled, BMC mid-reset, or a firewall that rejects), instead of
+  folding it into `ProbeFailed` with the responses Frame could not read.
+
 ### Added — Overview reports storage, network and service problems
 
 - Needs attention now lists every failing storage check (degraded mirror, scrub
