@@ -392,3 +392,37 @@ func TestAlertRegistryTiers(t *testing.T) {
 		}
 	}
 }
+
+// Storage → Volumes (lot 1 of the OSD and volume management spec) reads the
+// claim → volume → StorageClass graph for every Frame user, and no tier may
+// write any of it: growing a claim comes later with its own narrow grant, and
+// the console never deletes a claim or a volume.
+func TestVolumeGraphIsReadableAndNeverWritable(t *testing.T) {
+	roles := ClusterRoles(t, tierRoleFiles(t)...)
+	viewer := AggregatedRules(roles, "viewer")
+	kinds := []Access{
+		{Group: "", Resource: "persistentvolumeclaims"},
+		{Group: "", Resource: "persistentvolumes"},
+		{Group: "storage.k8s.io", Resource: "storageclasses"},
+		{Group: "storage.k8s.io", Resource: "volumeattachments"},
+	}
+	for _, k := range kinds {
+		for _, verb := range []string{"get", "list"} {
+			a := Access{Group: k.Group, Resource: k.Resource, Verb: verb}
+			if !Grants(viewer, a) {
+				t.Errorf("frame-viewer does not aggregate %s — Storage → Volumes cannot load", a)
+			}
+		}
+	}
+	for _, tier := range []string{"viewer", "editor", "admin"} {
+		rules := AggregatedRules(roles, tier)
+		for _, k := range kinds {
+			for _, verb := range []string{"create", "update", "patch", "delete", "deletecollection"} {
+				a := Access{Group: k.Group, Resource: k.Resource, Verb: verb}
+				if Grants(rules, a) {
+					t.Errorf("frame-%s aggregates %s: the console must not write the volume graph", tier, a)
+				}
+			}
+		}
+	}
+}

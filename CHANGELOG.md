@@ -6,6 +6,21 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Storage → Volumes: which workload writes where
+
+- A read-only tab lists every PersistentVolumeClaim with the workload and
+  nodes using it, its fill from `kubelet_volume_stats`, its StorageClass and
+  the physical path every write takes: Ceph pool → CRUSH rule → OSDs → disks
+  → hosts, or the local disk of the node for local-path volumes. Each row
+  shows the slowest OSD's commit latency now and the worst 5 minutes of the
+  last 24 h.
+- A banner names an OSD that takes part in every write of a pool (the only
+  OSD of a host when the pool has as many hosts as copies) once it commits
+  slower than 50 ms. Volumes at 85 % and 95 % are flagged here and on the
+  Overview.
+- The viewer tier gains `get`/`list` on PVCs, PVs, StorageClasses and
+  VolumeAttachments; no tier may write them (pinned by a manifest test).
+
 ### Added — bond and VLAN declared at installation
 
 - `FrameInstall.spec.network.bond` (LACP over 2 to 8 ports named by MAC) and
