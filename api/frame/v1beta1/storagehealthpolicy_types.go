@@ -109,6 +109,7 @@ type ZFSScrubSchedule struct {
 	// matter.
 	// +kubebuilder:default="UTC"
 	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`
 	// +optional
 	TimeZone string `json:"timeZone,omitempty"`
 }
@@ -117,13 +118,16 @@ type ZFSScrubSchedule struct {
 // (nodetuning_types.go): per-node facts that survive a controller restart and
 // that a human can read and clear with kubectl on the node alone.
 //
-// The controller writes Requested, Completed and Failed; the agent writes
+// The controller writes Requested, Completed, Failed and Unsettled; the agent writes
 // Acknowledged and StartedAt. The request carries no pool name: the agent
 // scrubs the pools it reads itself (internal/agent/zfsscrub.go).
 //
 // To stop a request the agent has not taken yet, remove Requested. A scrub
 // already running is stopped on the node (`zpool scrub -s <pool>`); the
-// controller then records it complete at its next pass.
+// controller then records it failed (not completed: the interval does not
+// restart on a scrub that never finished). The agent ignores a request older
+// than its acknowledgement timeout, so one left behind (policy deleted,
+// agent down) does not fire later, outside the window.
 const (
 	// ZFSScrubRequestedAnnotation is when the controller asked this node to
 	// scrub (RFC3339Nano). Its presence is the cluster-wide lock: one node at
@@ -139,9 +143,17 @@ const (
 	// ZFSScrubCompletedAnnotation is when the controller last saw this
 	// node's requested scrub finish (RFC3339Nano). IntervalDays counts from it.
 	ZFSScrubCompletedAnnotation = "frame.plume-labs.io/zfs-scrub-completed"
-	// ZFSScrubFailedAnnotation is when a request was given up because the
-	// agent never took it (RFC3339Nano). The node is not asked again for a day.
+	// ZFSScrubFailedAnnotation is when a request was given up (RFC3339Nano):
+	// the agent never took it, its node stopped reporting after the start,
+	// or the scrub ended without completing. The node is not asked again
+	// for a day.
 	ZFSScrubFailedAnnotation = "frame.plume-labs.io/zfs-scrub-failed"
+	// ZFSScrubUnsettledAnnotation keeps the cluster-wide lock after a
+	// failure, since a scrub can be running all the same. Its value is the
+	// node's last storage read date at the failure ("none" without one); the
+	// controller removes it once a complete read dated after it shows no
+	// scan. Removing it by hand releases the lock.
+	ZFSScrubUnsettledAnnotation = "frame.plume-labs.io/zfs-scrub-unsettled"
 )
 
 // +kubebuilder:object:root=true

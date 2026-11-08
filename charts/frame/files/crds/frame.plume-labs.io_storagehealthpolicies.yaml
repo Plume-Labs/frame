@@ -125,6 +125,7 @@ spec:
                       The controller embeds the zone database, so the node's own does not
                       matter.
                     maxLength: 64
+                    pattern: ^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$
                     type: string
                   windowHours:
                     default: 4

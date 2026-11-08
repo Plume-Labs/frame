@@ -57,6 +57,11 @@ type ZFSScrubReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	// APIReader reads the Nodes straight from the API server. The plan's one
+	// guarantee is that no two nodes hold a request, and a cache that has not
+	// yet seen the request it wrote two minutes ago would hand out a second
+	// one. nil falls back to Client (tests whose client is not cached).
+	APIReader client.Reader
 	// Now is the clock (tests); nil means time.Now.
 	Now func() time.Time
 }
@@ -81,6 +86,13 @@ const (
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
+func (r *ZFSScrubReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
 func (r *ZFSScrubReconciler) now() time.Time {
 	if r.Now != nil {
 		return r.Now()
@@ -101,7 +113,7 @@ func (r *ZFSScrubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	var nodes corev1.NodeList
-	if err := r.List(ctx, &nodes); err != nil {
+	if err := r.reader().List(ctx, &nodes); err != nil {
 		return ctrl.Result{}, fmt.Errorf("listing nodes: %w", err)
 	}
 	var machines framev1beta1.FrameMachineList
@@ -144,12 +156,13 @@ func (r *ZFSScrubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 func (r *ZFSScrubReconciler) patchNode(ctx context.Context, s scrubStep) error {
 	var node corev1.Node
-	if err := r.Get(ctx, types.NamespacedName{Name: s.Node}, &node); err != nil {
+	if err := r.reader().Get(ctx, types.NamespacedName{Name: s.Node}, &node); err != nil {
 		return err
 	}
 	// The plan was made from the annotations it read; a node whose scrub
 	// annotations moved since (the agent acknowledged, a human cleared one)
-	// is left for the next pass, which reads the new ones.
+	// is left for the next pass, which reads the new ones. Read from the API
+	// server, like the plan's list, then written under its resourceVersion.
 	for _, k := range scrubAnnotations {
 		if node.Annotations[k] != s.Seen[k] {
 			return apierrors.NewConflict(corev1.Resource("nodes"), s.Node, fmt.Errorf("annotation %s moved", k))
@@ -182,6 +195,7 @@ const (
 	reasonScrubRequested = "ScrubRequested"
 	reasonScrubCompleted = "ScrubCompleted"
 	reasonScrubFailed    = "ScrubFailed"
+	reasonScrubSettled   = "ScrubSettled"
 )
 
 // scrubAnnotations is every annotation of the protocol.
@@ -191,6 +205,7 @@ var scrubAnnotations = []string{
 	framev1beta1.ZFSScrubStartedAtAnnotation,
 	framev1beta1.ZFSScrubCompletedAnnotation,
 	framev1beta1.ZFSScrubFailedAnnotation,
+	framev1beta1.ZFSScrubUnsettledAnnotation,
 }
 
 // scrubNode is what the plan knows of one node.
@@ -223,6 +238,50 @@ func scanning(zfs *framev1beta1.ZFSStatus) bool {
 	return slices.ContainsFunc(zfs.Pools, func(p framev1beta1.ZPool) bool {
 		return strings.Contains(p.Scan, "in progress")
 	})
+}
+
+// blocking reports whether a node keeps every other node from being asked:
+// a pool scanning, a ZFS read that failed (its lists are empty, so a
+// resilver there would not show), or a failed request not yet settled.
+func blocking(n scrubNode) bool {
+	if scanning(n.ZFS) || (n.ZFS != nil && n.ZFS.State == framev1beta1.StackError) {
+		return true
+	}
+	return unsettled(n)
+}
+
+// unsettled reports whether a failed request may still have a scrub running
+// on the node: the failure released the request, not the pools. It holds
+// until the agent publishes a complete read dated after the last read seen
+// at the failure (the same clock, the agent's) that shows no scan.
+func unsettled(n scrubNode) bool {
+	raw, ok := n.Annotations[framev1beta1.ZFSScrubUnsettledAnnotation]
+	if !ok {
+		return false
+	}
+	if n.ZFS == nil || n.ZFS.State != framev1beta1.StackPresent || n.ZFS.ReadAt == nil {
+		return true
+	}
+	if seen, ok := parseStamp(raw); ok && !n.ZFS.ReadAt.After(seen) {
+		return true
+	}
+	return scanning(n.ZFS)
+}
+
+// finished reports whether every scrubbable pool's scan line is a completed
+// scrub ("scrub repaired … with N errors on …").
+func finished(zfs *framev1beta1.ZFSStatus) bool {
+	found := false
+	for _, p := range zfs.Pools {
+		if p.Health != poolOnline && p.Health != poolDegraded {
+			continue
+		}
+		if !strings.Contains(p.Scan, "scrub repaired") {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // scrubbable reports whether the agent would find a pool to scrub.
@@ -287,6 +346,14 @@ func planScrubs(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Ti
 	var steps []scrubStep
 	locked := false
 	for _, n := range nodes {
+		if _, ok := n.Annotations[framev1beta1.ZFSScrubUnsettledAnnotation]; ok && !unsettled(n) {
+			steps = append(steps, scrubStep{
+				Node: n.Name, Seen: seenOf(n), Remove: []string{framev1beta1.ZFSScrubUnsettledAnnotation},
+				EventType: corev1.EventTypeNormal, Reason: reasonScrubSettled,
+				Event: fmt.Sprintf("node %s: a fresh read shows no scrub left running after the failure", n.Name),
+			})
+			continue
+		}
 		if n.Annotations[framev1beta1.ZFSScrubRequestedAnnotation] == "" {
 			continue
 		}
@@ -299,7 +366,7 @@ func planScrubs(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Ti
 	// A node concluded in this pass is not asked again in the same pass: the
 	// next one, minutes later, plans from the annotations just written.
 	if s == nil || locked || len(steps) > 0 ||
-		slices.ContainsFunc(nodes, func(n scrubNode) bool { return scanning(n.ZFS) }) {
+		slices.ContainsFunc(nodes, blocking) {
 		return steps, nil
 	}
 	open, err := inScrubWindow(s, now)
@@ -324,9 +391,16 @@ func planScrubs(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Ti
 func concludeScrub(n scrubNode, now time.Time) (scrubStep, bool) {
 	clear := []string{framev1beta1.ZFSScrubRequestedAnnotation, framev1beta1.ZFSScrubAcknowledgedAnnotation, framev1beta1.ZFSScrubStartedAtAnnotation}
 	fail := func(why string) (scrubStep, bool) {
+		set := map[string]string{framev1beta1.ZFSScrubFailedAnnotation: now.UTC().Format(time.RFC3339Nano)}
+		// The scrub may be running all the same (started, then the agent
+		// went silent): the cluster-wide lock stays until a read after this
+		// one says otherwise. "none" when there was no read at all.
+		set[framev1beta1.ZFSScrubUnsettledAnnotation] = "none"
+		if n.ZFS != nil && n.ZFS.ReadAt != nil {
+			set[framev1beta1.ZFSScrubUnsettledAnnotation] = n.ZFS.ReadAt.UTC().Format(time.RFC3339Nano)
+		}
 		return scrubStep{
-			Node: n.Name, Seen: seenOf(n), Remove: clear,
-			Set:       map[string]string{framev1beta1.ZFSScrubFailedAnnotation: now.UTC().Format(time.RFC3339Nano)},
+			Node: n.Name, Seen: seenOf(n), Remove: clear, Set: set,
 			EventType: corev1.EventTypeWarning, Reason: reasonScrubFailed,
 			Event: fmt.Sprintf("node %s: %s; not asked again for %s", n.Name, why, zfsScrubRetryAfterFailure),
 		}, true
@@ -351,6 +425,11 @@ func concludeScrub(n scrubNode, now time.Time) (scrubStep, bool) {
 	fresh := n.ZFS != nil && n.ZFS.State == framev1beta1.StackPresent &&
 		n.ZFS.ReadAt != nil && n.ZFS.ReadAt.After(startedAt)
 	switch {
+	case fresh && !scanning(n.ZFS) && !finished(n.ZFS):
+		// Stopped (`zpool scrub -s`), paused, or no scrub at all: recorded
+		// as a failure, so the interval does not restart on a scrub that
+		// never ran to the end.
+		return fail("the scrub ended without completing on every pool (stopped or paused?)")
 	case fresh && !scanning(n.ZFS):
 		return scrubStep{
 			Node: n.Name, Seen: seenOf(n), Remove: clear,
@@ -358,8 +437,10 @@ func concludeScrub(n scrubNode, now time.Time) (scrubStep, bool) {
 			EventType: corev1.EventTypeNormal, Reason: reasonScrubCompleted,
 			Event: fmt.Sprintf("node %s: scrub finished; ScrubErrors on its FrameMachine carries the result", n.Name),
 		}, true
-	case !fresh && now.Sub(startedAt) > zfsScrubReadTimeout:
-		return fail(fmt.Sprintf("no storage read since the scrub started %s ago", now.Sub(startedAt).Round(time.Minute)))
+	case !fresh && now.Sub(requested) > zfsScrubAckTimeout+zfsScrubReadTimeout:
+		// Measured from the request, the controller's own clock: the start
+		// is the agent's, and a skew between the two must not fail it early.
+		return fail(fmt.Sprintf("no storage read since the scrub started (requested %s ago)", now.Sub(requested).Round(time.Minute)))
 	}
 	return scrubStep{}, false
 }
@@ -372,7 +453,11 @@ func nextScrub(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Tim
 	if err != nil {
 		return scrubNode{}, false, fmt.Errorf("scrub nodeSelector: %w", err)
 	}
-	interval := time.Duration(max(s.IntervalDays, 1)) * 24 * time.Hour
+	days := s.IntervalDays
+	if days <= 0 {
+		days = 30 // the CRD's default, for an object written before it
+	}
+	interval := time.Duration(days) * 24 * time.Hour
 	type candidate struct {
 		node scrubNode
 		last time.Time // zero when never completed

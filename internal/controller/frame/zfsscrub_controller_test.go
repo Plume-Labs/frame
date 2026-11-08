@@ -91,6 +91,10 @@ func TestPlanScrubsStartsNothingBesideAScrubInProgress(t *testing.T) {
 		"a resilver": {
 			zfsNode("a", nil, pool("resilver in progress since Sun Nov  8 01:00:00 2026")),
 		},
+		"a node whose ZFS read failed": {
+			zfsNode("a", nil, pool("none requested")),
+			{Name: "x", ZFS: &framev1beta1.ZFSStatus{State: framev1beta1.StackError}},
+		},
 		"a request not yet taken": {
 			zfsNode("a", nil, pool("none requested")),
 			zfsNode("b", map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: stamp(scrubNow.Add(-time.Minute))}, pool("none requested")),
@@ -158,6 +162,14 @@ func TestPlanScrubsConcludesARequest(t *testing.T) {
 			t.Fatalf("step = %+v", s)
 		}
 	})
+	t.Run("stopped or paused is a failure, not a completion", func(t *testing.T) {
+		for _, scan := range []string{"scrub canceled on Sun Nov  8 02:30:00 2026", "scrub paused since Sun Nov  8 02:30:00 2026", "none requested"} {
+			s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", acked, pool(scan))}, scrubNow))
+			if s.Reason != reasonScrubFailed || s.Set[framev1beta1.ZFSScrubCompletedAnnotation] != "" {
+				t.Errorf("%q: step = %+v, want a failure", scan, s)
+			}
+		}
+	})
 	t.Run("still scrubbing holds the lock", func(t *testing.T) {
 		steps, err := planScrubs(schedule(), []scrubNode{
 			zfsNode("a", acked, pool("scrub in progress since …")),
@@ -188,7 +200,7 @@ func TestPlanScrubsConcludesARequest(t *testing.T) {
 		z := pool("none requested")
 		old := metav1.NewTime(started.Add(-time.Second))
 		z.ReadAt = &old
-		s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", acked, z)}, started.Add(zfsScrubReadTimeout+time.Minute)))
+		s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", acked, z)}, scrubNow.Add(-2*time.Hour+zfsScrubAckTimeout+zfsScrubReadTimeout+time.Minute)))
 		if s.Reason != "ScrubFailed" {
 			t.Fatalf("step = %+v", s)
 		}
@@ -246,5 +258,50 @@ func TestZFSScrubReconcilerWritesTheRequestOnTheNode(t *testing.T) {
 	}
 	if n.Annotations[framev1beta1.ZFSScrubRequestedAnnotation] != stamp(scrubNow) {
 		t.Fatalf("annotations = %v", n.Annotations)
+	}
+}
+
+// A failed request releases the request, not the pools: the scrub may be
+// running all the same. No other node is asked until the failed one shows,
+// in a read dated after the failure's, that nothing is scanning.
+func TestPlanScrubsKeepsTheLockAfterAFailureUntilAFreshRead(t *testing.T) {
+	ann := map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: stamp(scrubNow.Add(-zfsScrubAckTimeout - time.Minute))}
+	stale := pool("none requested") // read before the agent started anything
+	s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", ann, stale), zfsNode("b", nil, pool("none requested"))}, scrubNow))
+	if s.Node != "a" || s.Reason != reasonScrubFailed || s.Set[framev1beta1.ZFSScrubUnsettledAnnotation] != stamp(stale.ReadAt.Time) {
+		t.Fatalf("step = %+v, want a failure on a recording the read it saw", s)
+	}
+
+	failed := map[string]string{
+		framev1beta1.ZFSScrubFailedAnnotation:    stamp(scrubNow),
+		framev1beta1.ZFSScrubUnsettledAnnotation: s.Set[framev1beta1.ZFSScrubUnsettledAnnotation],
+	}
+	b := zfsNode("b", nil, pool("none requested"))
+	later := scrubNow.Add(5 * time.Minute)
+
+	// The same read, or a read showing the scrub after all: still locked.
+	for name, z := range map[string]*framev1beta1.ZFSStatus{"same read": stale, "no read": nil, "scrubbing": pool("scrub in progress since …")} {
+		if z != nil && name == "scrubbing" {
+			at := metav1.NewTime(later)
+			z.ReadAt = &at
+		}
+		steps, err := planScrubs(schedule(), []scrubNode{zfsNode("a", failed, z), b}, later)
+		if err != nil || len(steps) != 0 {
+			t.Errorf("%s: steps %+v, err %v; want the lock held", name, steps, err)
+		}
+	}
+
+	// A fresh read with nothing scanning settles it; the next pass asks b.
+	fresh := pool("scrub repaired 0B in 00:01:00 with 0 errors on …")
+	at := metav1.NewTime(later)
+	fresh.ReadAt = &at
+	s = onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", failed, fresh), b}, later))
+	if s.Node != "a" || s.Reason != reasonScrubSettled || s.Remove[0] != framev1beta1.ZFSScrubUnsettledAnnotation {
+		t.Fatalf("step = %+v, want a settled", s)
+	}
+	delete(failed, framev1beta1.ZFSScrubUnsettledAnnotation)
+	s = onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", failed, fresh), b}, later))
+	if s.Node != "b" || s.Reason != reasonScrubRequested {
+		t.Fatalf("step = %+v, want b requested", s)
 	}
 }

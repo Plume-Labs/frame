@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
@@ -72,7 +73,7 @@ func TestScrubPoolsStartsEachHealthyPoolUnderTimeout(t *testing.T) {
 // A name that could read as an option, or carry anything but a pool name,
 // never reaches the executor — whatever a hostile host printed in zpool list.
 func TestScrubPoolsRefusesANameThatIsNotAPool(t *testing.T) {
-	for _, name := range []string{"-s", "--help", "tank pool", "tank;reboot", "", "1tank", "tank/ds", strings.Repeat("a", 129)} {
+	for _, name := range []string{"-s", "--help", "tank;reboot", "", "1tank", "tank/ds", strings.Repeat("a", 256)} {
 		x := &scrubExec{}
 		_, err := ScrubPools(x, present(framev1beta1.ZPool{Name: name, Health: "ONLINE"}))
 		if err == nil {
@@ -196,7 +197,7 @@ func TestServiceScrubRequestDoesNothingWithoutARequestOrARead(t *testing.T) {
 		zfs *framev1beta1.ZFSStatus
 	}{
 		"no request":  {nil, zfs},
-		"no read yet": {map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: "t1"}, nil},
+		"no read yet": {map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: "2026-11-08T01:59:00Z"}, nil},
 	} {
 		c := scrubNode(t, tc.ann)
 		x := &scrubExec{}
@@ -215,7 +216,7 @@ func TestServiceScrubRequestDoesNothingWithoutARequestOrARead(t *testing.T) {
 // A failed start is not acknowledged: the controller must not record a scrub
 // that never ran.
 func TestServiceScrubRequestLeavesAFailedStartUnacknowledged(t *testing.T) {
-	c := scrubNode(t, map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: "t1"})
+	c := scrubNode(t, map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: "2026-11-08T01:59:00Z"})
 	x := &scrubExec{fail: map[string]error{"rpool": errors.New("exit status 1")}}
 	err := ServiceScrubRequest(context.Background(), c, "n1",
 		present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), x, scrubClock)
@@ -224,5 +225,67 @@ func TestServiceScrubRequestLeavesAFailedStartUnacknowledged(t *testing.T) {
 	}
 	if _, ok := nodeAnnotations(t, c)[framev1beta1.ZFSScrubAcknowledgedAnnotation]; ok {
 		t.Fatal("a failed start was acknowledged")
+	}
+}
+
+// A request older than the agent takes, or not a timestamp, never runs: a
+// leftover must not scrub outside the window, beside another node.
+func TestServiceScrubRequestIgnoresAStaleRequest(t *testing.T) {
+	for _, req := range []string{"2026-11-08T01:00:00Z", "now"} {
+		c := scrubNode(t, map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: req})
+		x := &scrubExec{}
+		if err := ServiceScrubRequest(context.Background(), c, "n1",
+			present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), x, scrubClock); err == nil {
+			t.Errorf("%s: no error", req)
+		}
+		if len(x.calls) != 0 {
+			t.Errorf("%s: zpool ran", req)
+		}
+	}
+}
+
+// A pool name with a space is one argument, never split.
+func TestScrubPoolsPassesASpacedNameAsOneArgument(t *testing.T) {
+	x := &scrubExec{}
+	if _, err := ScrubPools(x, present(framev1beta1.ZPool{Name: "data pool", Health: "ONLINE"})); err != nil {
+		t.Fatal(err)
+	}
+	if got := x.calls[0][len(x.calls[0])-1]; got != "data pool" {
+		t.Fatalf("last argument %q", got)
+	}
+}
+
+// The acknowledgement is written under the node's resourceVersion: a request
+// re-issued between the read and the write is not acknowledged under the
+// old value.
+func TestServiceScrubRequestDoesNotAcknowledgeAMovedRequest(t *testing.T) {
+	const req = "2026-11-08T01:59:00Z"
+	base := fake.NewClientBuilder().WithScheme(newDiskStatusScheme(t)).
+		WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1", Annotations: map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: req}}})
+	var c client.Client
+	moved := false
+	c = base.WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
+			if !moved {
+				moved = true
+				var n corev1.Node
+				if err := cl.Get(ctx, client.ObjectKey{Name: "n1"}, &n); err != nil {
+					return err
+				}
+				n.Annotations[framev1beta1.ZFSScrubRequestedAnnotation] = "2026-11-08T02:00:00Z"
+				if err := cl.Update(ctx, &n); err != nil {
+					return err
+				}
+			}
+			return cl.Patch(ctx, obj, p, opts...)
+		},
+	}).Build()
+	err := ServiceScrubRequest(context.Background(), c, "n1",
+		present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), &scrubExec{}, scrubClock)
+	if err == nil {
+		t.Fatal("no error: the acknowledgement went through a moved request")
+	}
+	if _, ok := nodeAnnotations(t, c)[framev1beta1.ZFSScrubAcknowledgedAnnotation]; ok {
+		t.Fatal("acknowledged under the old value")
 	}
 }

@@ -476,8 +476,10 @@ spec:
 ```
 
 - **One at a time, whoever started it.** No node is asked to scrub while any
-  pool of any node reports a scrub or a resilver in progress, a cron's
-  included. The window bounds when a scrub starts, not how long it runs.
+  pool of any node reports a scrub or a resilver in progress (a cron's
+  included), while a node's ZFS read is in `error` (its lists are empty, so a
+  resilver there would not show), or while a failed request is unsettled
+  (below). The window bounds when a scrub starts, not how long it runs.
 - **Disable the distribution's cron** on the selected nodes (Ubuntu:
   `/etc/cron.d/zfsutils-linux`): Frame never starts beside it, but cannot stop
   it from starting beside Frame.
@@ -488,14 +490,22 @@ spec:
   The controller writes `requested`; the agent runs `zpool scrub <pool>` on the
   pools it reads itself and writes back `acknowledged` and `started-at`; the
   controller records `completed` once a storage read dated after the start
-  shows no scrub running. A request the agent does not take in ten minutes,
-  or a node silent for thirty minutes after the start, is recorded `failed`
-  (event `ScrubFailed` on the policy) and that node is left alone for a day.
+  shows every pool's scrub finished ("scrub repaired …"). The agent ignores a
+  request more than twenty minutes old, so a leftover never fires later.
+- **Failures** (event `ScrubFailed` on the policy, node left alone for a day):
+  the agent did not take the request in ten minutes, no read came in the
+  forty minutes after the request, or the scrub ended without completing
+  (stopped, paused). A failure does not restart the interval. It does not
+  release the lock either: a scrub may be running all the same, so
+  `zfs-scrub-unsettled` holds every other node until that node publishes a
+  newer complete read with nothing scanning (event `ScrubSettled`). An agent
+  that stays silent therefore stops the plan — on purpose. To release it by
+  hand, once you have checked `zpool status` on the node, remove that
+  annotation.
 - **To stop**: remove `zfs-scrub-requested` from the node before the agent
   takes it; a scrub already running is stopped on the node with
-  `zpool scrub -s <pool>`, and Frame records it complete at its next pass.
-  Removing `spec.scrub` starts nothing new; a request in flight is still
-  concluded.
+  `zpool scrub -s <pool>`, which Frame records as failed. Removing
+  `spec.scrub` starts nothing new; a request in flight is still concluded.
 
 ---
 

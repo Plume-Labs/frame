@@ -50,8 +50,18 @@ import (
 // the kernel. A pool that is not ONLINE or DEGRADED is skipped: a scrub on a
 // suspended or faulted pool proves nothing and can hang the command.
 
-// zpoolName is a pool name as zpool accepts one (zpool create(8)).
-var zpoolName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]{0,127}$`)
+// zpoolName is a pool name as zpool accepts one (zpool create(8)): a letter,
+// then letters, digits, '_', '-', '.', ':' or a space, up to ZFS's 255.
+// The argv reaches no shell, so a space is one argument; the leading letter
+// keeps it from reading as an option.
+var zpoolName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.: -]{0,254}$`)
+
+// scrubRequestMaxAge is how old a request the agent still takes. The
+// controller gives one up after ten minutes; past this one, it is a leftover
+// (the policy deleted, the agent down for hours) or not the controller's,
+// and starting it would scrub outside the window and beside another node.
+// Wider than the controller's timeout for clock skew between the two.
+const scrubRequestMaxAge = 20 * time.Minute
 
 // scrubArgvPrefix is the fixed part of the one command this file runs.
 var scrubArgvPrefix = []string{"zpool", "scrub"}
@@ -157,6 +167,13 @@ func ServiceScrubRequest(
 	}
 	if zfs == nil {
 		return nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, requested)
+	if err != nil {
+		return fmt.Errorf("scrub request %q is not a timestamp; ignored", requested)
+	}
+	if age := now().Sub(at); age > scrubRequestMaxAge {
+		return fmt.Errorf("scrub request %s is %s old; ignored (a leftover, or not the controller's)", requested, age.Round(time.Minute))
 	}
 	startedAt := now()
 	if _, err := ScrubPools(x, zfs); err != nil {
