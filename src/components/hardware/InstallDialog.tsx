@@ -18,7 +18,9 @@ import {
   CONFIRM_SERIAL_HINT,
   CONFIRM_SERIAL_LABEL,
   confirmationMatches,
+  installLinks,
   machineOptionLabel,
+  parseMACs,
   type InstallCreateSpec,
 } from '@/lib/installs'
 import type { Machine } from '@/lib/machines'
@@ -92,6 +94,9 @@ export function InstallDialog({
   const [address, setAddress] = useState('')
   const [gateway, setGateway] = useState('')
   const [dns, setDns] = useState('')
+  const [bondPorts, setBondPorts] = useState('')
+  const [vlanID, setVlanID] = useState('')
+  const [vlanPort, setVlanPort] = useState('')
   const [layoutKind, setLayoutKind] = useState<LayoutKind>('single-disk')
   const [disks, setDisks] = useState<DiskField[]>([EMPTY_DISK])
   const [clusterMode, setClusterMode] = useState<ClusterMode>('init')
@@ -113,6 +118,9 @@ export function InstallDialog({
     setAddress('')
     setGateway('')
     setDns('')
+    setBondPorts('')
+    setVlanID('')
+    setVlanPort('')
     setLayoutKind('single-disk')
     setDisks([EMPTY_DISK])
     setClusterMode('init')
@@ -157,6 +165,8 @@ export function InstallDialog({
   // the sixty-minute Installing timeout.
   const dnsValid = parsedDNS.length >= 1 && parsedDNS.length <= 3
 
+  const links = installLinks(bondPorts, vlanID, vlanPort)
+
   const joinValid = clusterMode === 'init' || (serverURL.trim() !== '' && joinTokenRef.trim() !== '')
 
   const canSubmit =
@@ -165,6 +175,7 @@ export function InstallDialog({
     address.trim() !== '' &&
     gateway.trim() !== '' &&
     dnsValid &&
+    !links.error &&
     sshKeyRef.trim() !== '' &&
     k3sVersion.trim() !== '' &&
     disksValid &&
@@ -180,7 +191,13 @@ export function InstallDialog({
         machineRef: selectedMachine.name,
         confirmSerial: confirmSerial.trim(),
         hostname: hostname.trim(),
-        network: { address: address.trim(), gateway: gateway.trim(), dns: parsedDNS },
+        network: {
+          address: address.trim(),
+          gateway: gateway.trim(),
+          dns: parsedDNS,
+          ...(links.bond ? { bond: links.bond } : {}),
+          ...(links.vlan ? { vlan: links.vlan } : {}),
+        },
         layout: { kind: layoutKind, disks: parsedDisks },
         cluster:
           clusterMode === 'init'
@@ -290,6 +307,44 @@ export function InstallDialog({
               At least one, up to three. The installer resolves deb.debian.org with these — with
               none it halts asking for a mirror it cannot look up, after the disks are already
               erased.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5 sm:col-span-3">
+              <Label htmlFor="install-bond">LACP bond ports (optional)</Label>
+              <Input
+                id="install-bond"
+                value={bondPorts}
+                onChange={(e) => {
+                  setBondPorts(e.target.value)
+                  // The VLAN port field greys out under a bond; a value typed
+                  // there first would block the dialog from a field the user
+                  // can no longer edit.
+                  if (parseMACs(e.target.value).length > 0) setVlanPort('')
+                }}
+                placeholder="aa:bb:cc:00:00:01, aa:bb:cc:00:00:02"
+                className="font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="install-vlan">VLAN ID (optional)</Label>
+              <Input id="install-vlan" value={vlanID} onChange={(e) => setVlanID(e.target.value)} placeholder="20" inputMode="numeric" />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="install-vlan-port">VLAN port MAC (without a bond)</Label>
+              <Input
+                id="install-vlan-port"
+                value={vlanPort}
+                onChange={(e) => setVlanPort(e.target.value)}
+                placeholder="aa:bb:cc:00:00:01"
+                className="font-mono text-xs"
+                disabled={parseMACs(bondPorts).length > 0}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground sm:col-span-3">
+              {links.error ??
+                'Ports are named by MAC. The switch must still give one port the untagged DHCP install network (the seed is fetched before the bond or VLAN exists): a VLAN port is hybrid, an LACP group passes a lone port\'s traffic before negotiating. A MAC missing from the machine stops the install before any disk is touched.'}
             </p>
           </div>
 

@@ -6,6 +6,14 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — bond and VLAN declared at installation
+
+- `FrameInstall.spec.network.bond` (LACP over 2 to 8 ports named by MAC) and
+  `spec.network.vlan` (id, on the bond or on a port named by MAC) are rendered
+  into the netplan of both the installer and the installed system, and read
+  back by the tests. A declared MAC missing from the machine stops the install
+  before any disk is touched. The console's install dialog asks for them.
+
 ### Added — planned ZFS scrubs, one node at a time
 
 - `StorageHealthPolicy.spec.scrub` (node selector, interval in days, start

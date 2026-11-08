@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -432,5 +433,60 @@ func TestLoadConfigAcceptsAMediaBaseURLOnTheListenersOwnPort(t *testing.T) {
 	}))
 	if _, err := LoadConfig(p); err != nil {
 		t.Fatalf("the listener's own port was refused: %v", err)
+	}
+}
+
+// The keys an operator writes by hand for a bond and a VLAN, spelled out
+// here rather than produced by yaml.Marshal: marshalling the same struct
+// would follow a renamed tag and prove nothing about the documented file.
+func TestLoadConfigReadsTheBondAndVLANAsDocumented(t *testing.T) {
+	b, err := yaml.Marshal(validConfig(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var links map[string]any
+	if err := yaml.Unmarshal([]byte(`
+bond:
+  members: ["52:54:00:aa:00:01", "52:54:00:aa:00:02"]
+vlan:
+  id: 20
+`), &links); err != nil {
+		t.Fatal(err)
+	}
+	network := doc["network"].(map[string]any)
+	maps.Copy(network, links)
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v\n%s", err, out)
+	}
+	n := got.Network
+	if n.Bond == nil || len(n.Bond.Members) != 2 || n.VLAN == nil || n.VLAN.ID != 20 {
+		t.Fatalf("network = %+v, want the bond and VLAN 20 read from:\n%s", got.Network, out)
+	}
+
+	// parentMAC, the one camel-cased key, on a VLAN without a bond.
+	delete(network, "bond")
+	network["vlan"] = map[string]any{"id": 30, "parentMAC": "52:54:00:aa:00:01"}
+	out, _ = yaml.Marshal(doc)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = LoadConfig(path); err != nil {
+		t.Fatalf("LoadConfig: %v\n%s", err, out)
+	}
+	if got.Network.VLAN == nil || got.Network.VLAN.ParentMAC != "52:54:00:aa:00:01" {
+		t.Fatalf("vlan = %+v, want parentMAC read from:\n%s", got.Network.VLAN, out)
 	}
 }

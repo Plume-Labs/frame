@@ -1467,8 +1467,8 @@ curl -sf http://192.0.2.10:30581/healthz && echo "media listener reachable"
   "Not yet executed").
 - **The address lands on whichever `en*` port has carrier.** The rendered
   netplan has one stanza matching every `en*` interface, `optional: true`;
-  networkd configures only a link with carrier. Two cabled ports (bonding)
-  are not supported by this and need a MAC field first.
+  networkd configures only a link with carrier. Two cabled ports in a bond,
+  or a VLAN, are declared by MAC instead (see "Bond and VLAN" below).
 - **A restart mid-install is a failed install, never a resumed one.** If the
   manager restarts while a `FrameInstall` is between `Preparing` and
   `Ready`, the controller marks it `Failed` on the next reconcile rather
@@ -1551,6 +1551,46 @@ dialog asks for them as free text rather than offering a picker.
 apiserver refuses a `FrameInstall` without one, `provision.ValidateSpec`
 refuses it again before the BMC is read, and the console's dialog asks for
 it.
+
+**Bond and VLAN** (optional) are declared in the same place, and configure the
+installer's own network as well as the installed system's. **The switch must
+still offer the untagged, DHCP install network on one port**: the seed is
+fetched with `ip=dhcp` before its `network:` section applies (see "The
+install network must offer DHCP" above). So:
+
+- a VLAN port is hybrid: the install network native (untagged, with DHCP),
+  the VLAN tagged. A tagged-only port never fetches the seed and the install
+  ends on the Installing timeout, no disk touched;
+- an LACP group must pass a single port's traffic before LACP negotiates
+  (LACP fallback / no `suspend-individual`), for the same reason;
+- provisiond's media listener must be reachable from both networks: the
+  early beacon leaves from the DHCP address, the later ones from the bond or
+  VLAN.
+
+```yaml
+  network:
+    address: 192.0.2.213/24
+    gateway: 192.0.2.1
+    dns: [192.0.2.1]
+    bond:                       # 802.3ad (LACP), fast rate, layer3+4 hash
+      members: ["aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02"]
+    vlan:
+      id: 20                    # rides on the bond; without one, set parentMAC
+```
+
+Ports are named by MAC, never by kernel name or glob. The address, route and
+resolvers go on the top interface (`vlan<id>`, else `bond0`); the ports carry
+none. An install whose machine lacks a declared MAC stops in an early-command,
+before any disk is touched. Without `bond` and `vlan`, nothing changes: the
+installer takes the address on the cabled `en*` port and the installed system
+pins it by MAC. After the first boot, Network → Links (from
+`FrameMachine.status.network`) shows the bond, its LACP partner and the VLAN.
+Bond members are `optional`: one uncabled port does not hold boot on
+`systemd-networkd-wait-online`; the bond itself stays required.
+Unproven on hardware until the first R730 installation; the acceptance run
+checks that subiquity brings the bond and VLAN up before it looks for the
+route, and that a second `netplan apply` still finds every member by its
+permanent MAC once the bond has given them all the same one.
 
 `bootMode` decides the disk layout the image carries: an EFI System
 Partition on each disk for `UEFI`, a `bios_grub` partition on each disk for
