@@ -78,6 +78,9 @@ func ValidateSpec(s Spec) error {
 // parses the address a second time and, eventually, differently.
 type validated struct {
 	cidr string
+	// macs are the bond members, or the VLAN's parent port, normalized to
+	// lower case; empty when the network declares neither.
+	macs []string
 }
 
 func validate(s Spec) (validated, error) {
@@ -127,6 +130,10 @@ func validate(s Spec) (validated, error) {
 			return validated{}, fmt.Errorf("network DNS %q is not an IP address", dns)
 		}
 	}
+	macs, err := validateLinks(s.Network)
+	if err != nil {
+		return validated{}, err
+	}
 
 	want := map[LayoutKind]int{LayoutSingleDisk: 1, LayoutMirror: 2}[s.Layout.Kind]
 	if want == 0 {
@@ -140,7 +147,7 @@ func validate(s Spec) (validated, error) {
 	}
 
 	ones, _ := ipnet.Mask.Size()
-	return validated{cidr: fmt.Sprintf("%s/%d", addr, ones)}, nil
+	return validated{cidr: fmt.Sprintf("%s/%d", addr, ones), macs: macs}, nil
 }
 
 // The document, as Go types. Marshalled, never templated: no value a spec
@@ -168,8 +175,10 @@ type autoinstall struct {
 }
 
 type netplan struct {
-	Version   int                 `yaml:"version"`
-	Ethernets map[string]ethernet `yaml:"ethernets"`
+	Version   int            `yaml:"version"`
+	Ethernets map[string]any `yaml:"ethernets"`
+	Bonds     map[string]any `yaml:"bonds,omitempty"`
+	VLANs     map[string]any `yaml:"vlans,omitempty"`
 }
 
 type ethernet struct {
@@ -225,6 +234,9 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 			diskSizeAssertion(s.Layout)),
 		diskResolution(s.Layout),
 	}
+	if len(v.macs) > 0 {
+		early = append(early, macGuard(v.macs, "/sys/class/net"))
+	}
 	late := []string{
 		"echo 'frame ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/frame && chmod 440 /target/etc/sudoers.d/frame",
 		fmt.Sprintf("echo '%s' > /target%s && chmod 444 /target%s", s.UID, markerPath, markerPath),
@@ -233,7 +245,7 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		// machine's own name every sudo prints "unable to resolve host".
 		fmt.Sprintf("echo '%[1]s' > /target/etc/hostname && (grep -qx '127.0.1.1 %[1]s' /target/etc/hosts || echo '127.0.1.1 %[1]s' >> /target/etc/hosts)", s.Hostname),
 		"curtin in-target --target=/target -- passwd -l frame",
-		netplanPin(v, s, targetRoot, "/sys/class/net"),
+		installedNetwork(v, s, targetRoot),
 		relockCommand(targetRoot),
 	}
 	errs := []string{}
@@ -256,26 +268,7 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		Apt:      map[string]string{"fallback": "offline-install"},
 		Locale:   "en_US.UTF-8",
 		Keyboard: map[string]string{"layout": "us"},
-		Network: netplan{Version: 2, Ethernets: map[string]ethernet{
-			// The LIVE system's network only: one stanza over every en* port.
-			// networkd only configures a link with carrier, so on a machine
-			// with four ports and one cable the address lands on the cabled
-			// one without Frame knowing its name or MAC. UNPROVEN ON
-			// HARDWARE -- recette step 1.
-			//
-			// Not the installed system's: subiquity would copy this stanza to
-			// /target, where every en* port that later gains a carrier takes
-			// the same address. netplanPin replaces it there with one stanza
-			// matched by MAC.
-			"frame0": {
-				Match:       map[string]string{"name": "en*"},
-				Optional:    true,
-				DHCP4:       false,
-				Addresses:   []string{v.cidr},
-				Routes:      []map[string]string{{"to": "default", "via": s.Network.Gateway}},
-				Nameservers: map[string][]string{"addresses": s.Network.DNS},
-			},
-		}},
+		Network:  liveNetwork(v, s),
 		Storage: storage{
 			// No swap: the node runs kubelet.
 			Swap:   map[string]int{"size": 0},

@@ -1203,6 +1203,8 @@ func toProvisionSpec(fi *framev1beta1.FrameInstall, installUID, sshPublicKey, jo
 			Address: fi.Spec.Network.Address,
 			Gateway: fi.Spec.Network.Gateway,
 			DNS:     fi.Spec.Network.DNS,
+			Bond:    toProvisionBond(fi.Spec.Network.Bond),
+			VLAN:    toProvisionVLAN(fi.Spec.Network.VLAN),
 		},
 		Layout: provision.Layout{
 			Kind:  provision.LayoutKind(fi.Spec.Layout.Kind),
@@ -1368,4 +1370,26 @@ func (r *FrameInstallReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&framev1beta1.FrameInstall{}).
 		Named("frameinstall").
 		Complete(r)
+}
+
+// toProvisionBond carries the bond to the renderer. It exists so that a
+// field added to InstallBond fails to reach provision visibly, here, rather
+// than vanishing the way the first vlan and bond fields did.
+func toProvisionBond(b *framev1beta1.InstallBond) *provision.Bond {
+	if b == nil {
+		return nil
+	}
+	members := make([]string, 0, len(b.Members))
+	for _, m := range b.Members {
+		members = append(members, string(m))
+	}
+	return &provision.Bond{Members: members}
+}
+
+// toProvisionVLAN carries the VLAN to the renderer.
+func toProvisionVLAN(v *framev1beta1.InstallVLAN) *provision.VLAN {
+	if v == nil {
+		return nil
+	}
+	return &provision.VLAN{ID: v.ID, ParentMAC: string(v.ParentMAC)}
 }

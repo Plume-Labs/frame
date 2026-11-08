@@ -36,6 +36,26 @@ type Network struct {
 	Address string   `yaml:"address"` // CIDR, e.g. "192.0.2.210/24"
 	Gateway string   `yaml:"gateway"`
 	DNS     []string `yaml:"dns"`
+	// Bond aggregates ports into one LACP link (802.3ad). Nil: no bond.
+	Bond *Bond `yaml:"bond,omitempty"`
+	// VLAN tags the address's traffic. Nil: untagged.
+	VLAN *VLAN `yaml:"vlan,omitempty"`
+}
+
+// Bond is an 802.3ad (LACP) bond over ports named by MAC address. The mode
+// is not a choice: LACP is what the switch side is configured for, and a
+// bond that silently fell back to another mode would pass every check here
+// and halve the link on the wire.
+type Bond struct {
+	// Members are the ports' permanent MAC addresses, at least two.
+	Members []string `yaml:"members"`
+}
+
+// VLAN carries the address on a tagged VLAN. Its parent is the bond when
+// there is one, otherwise the port named by ParentMAC.
+type VLAN struct {
+	ID        int32  `yaml:"id"`
+	ParentMAC string `yaml:"parentMAC,omitempty"`
 }
 
 type LayoutKind string
