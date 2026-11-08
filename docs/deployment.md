@@ -1467,8 +1467,8 @@ curl -sf http://192.0.2.10:30581/healthz && echo "media listener reachable"
   "Not yet executed").
 - **The address lands on whichever `en*` port has carrier.** The rendered
   netplan has one stanza matching every `en*` interface, `optional: true`;
-  networkd configures only a link with carrier. Two cabled ports (bonding)
-  are not supported by this and need a MAC field first.
+  networkd configures only a link with carrier. Two cabled ports in a bond,
+  or a VLAN, are declared by MAC instead (see "Bond and VLAN" below).
 - **A restart mid-install is a failed install, never a resumed one.** If the
   manager restarts while a `FrameInstall` is between `Preparing` and
   `Ready`, the controller marks it `Failed` on the next reconcile rather
@@ -1553,9 +1553,19 @@ refuses it again before the BMC is read, and the console's dialog asks for
 it.
 
 **Bond and VLAN** (optional) are declared in the same place, and configure the
-installer's own network as well as the installed system's — with ports in an
-LACP group or a tagged-only switch port, the installer could not reach the
-gateway otherwise:
+installer's own network as well as the installed system's. **The switch must
+still offer the untagged, DHCP install network on one port**: the seed is
+fetched with `ip=dhcp` before its `network:` section applies (see "The
+install network must offer DHCP" above). So:
+
+- a VLAN port is hybrid: the install network native (untagged, with DHCP),
+  the VLAN tagged. A tagged-only port never fetches the seed and the install
+  ends on the Installing timeout, no disk touched;
+- an LACP group must pass a single port's traffic before LACP negotiates
+  (LACP fallback / no `suspend-individual`), for the same reason;
+- provisiond's media listener must be reachable from both networks: the
+  early beacon leaves from the DHCP address, the later ones from the bond or
+  VLAN.
 
 ```yaml
   network:

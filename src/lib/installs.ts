@@ -374,6 +374,9 @@ export function randomNameSuffix(): string {
 /** A MAC as the CRD accepts it: six hexadecimal pairs. */
 export const MAC_SHAPE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/
 
+/** True for the all-zero MAC, which the CRD refuses: it names no port. */
+const isZeroMAC = (m: string): boolean => m.replace(/[:0]/g, '') === ''
+
 /** Splits a list of MACs typed with commas or spaces. */
 export function parseMACs(text: string): string[] {
   return text.split(/[\s,]+/).filter((m) => m !== '')
@@ -384,8 +387,6 @@ export function parseMACs(text: string): string[] {
  * that says what is wrong. Empty fields mean neither. It mirrors the CRD's
  * rules so the dialog refuses what the apiserver would.
  */
-const isZeroMAC = (m: string): boolean => m.replace(/[:0]/g, '') === ''
-
 export function installLinks(
   bondText: string,
   vlanText: string,

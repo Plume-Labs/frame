@@ -72,27 +72,25 @@ type InstallNetwork struct {
 	// later: with none, the installed system has no resolver and the
 	// installer cannot reach the archive it fetches security updates
 	// from. The console's own happy path once produced exactly that.
-	//
-	//
-	// Bond and VLAN, when set, are rendered for both the installer and the
-	// installed system, and read back by the provision tests. They were once
-	// declared here and dropped on the way to the installer (a tagged VLAN
-	// installed untagged); internal/provision/links.go says how that is
-	// kept from happening again.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=3
 	DNS []string `json:"dns"`
 
+	// Bond and VLAN, when set, are rendered for both the installer and the
+	// installed system, and read back by the provision tests: they were once
+	// declared here and dropped on the way to the installer.
+
 	// Bond aggregates ports into one LACP (802.3ad) link. The address goes
-	// on the bond, or on the VLAN when there is one. The switch ports must
-	// be in an LACP group already: the installer needs the link to reach
-	// the gateway.
+	// on the bond, or on the VLAN when there is one. The installer still
+	// fetches its seed by untagged DHCP on one port first, so the LACP group
+	// must pass a lone port's traffic before negotiating (LACP fallback).
 	// +optional
 	Bond *InstallBond `json:"bond,omitempty"`
 
 	// VLAN tags the address's traffic. Its parent is the bond when there is
-	// one, otherwise the port named by parentMAC. The switch port must carry
-	// the VLAN tagged.
+	// one, otherwise the port named by parentMAC. The switch port must be
+	// hybrid: the VLAN tagged, and the install network untagged with DHCP,
+	// which the installer fetches its seed over before the VLAN exists.
 	// +optional
 	VLAN *InstallVLAN `json:"vlan,omitempty"`
 }

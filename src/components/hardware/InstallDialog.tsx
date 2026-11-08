@@ -344,7 +344,7 @@ export function InstallDialog({
             </div>
             <p className="text-[10px] text-muted-foreground sm:col-span-3">
               {links.error ??
-                'Ports are named by MAC. The switch must already have them in an LACP group, or the VLAN tagged: the installer needs that link to reach the gateway. A MAC missing from the machine stops the install before any disk is touched.'}
+                'Ports are named by MAC. The switch must still give one port the untagged DHCP install network (the seed is fetched before the bond or VLAN exists): a VLAN port is hybrid, an LACP group passes a lone port\'s traffic before negotiating. A MAC missing from the machine stops the install before any disk is touched.'}
             </p>
           </div>
 

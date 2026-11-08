@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -203,7 +204,7 @@ func TestNoLinksKeepsTheEnStanzaAndThePin(t *testing.T) {
 func TestValidateLinksRefuses(t *testing.T) {
 	for name, n := range map[string]Network{
 		"one member":          {Bond: &Bond{Members: []string{macA}}},
-		"nine members":        {Bond: &Bond{Members: strings.Split(strings.Repeat(macA+",", 9)[:9*18-1], ",")}},
+		"nine members":        {Bond: &Bond{Members: nineMACs()}},
 		"twice the same MAC":  {Bond: &Bond{Members: []string{macA, strings.ToUpper(macA)}}},
 		"not a MAC":           {Bond: &Bond{Members: []string{macA, "52:54:00:aa:00"}}},
 		"a shell word":        {Bond: &Bond{Members: []string{macA, "'; reboot; '"}}},
@@ -226,7 +227,9 @@ func TestValidateLinksRefuses(t *testing.T) {
 // port, and refuses -- before any disk is touched -- one that lacks one.
 func TestMACGuardRefusesAMissingPortWhenRun(t *testing.T) {
 	sys := t.TempDir()
-	for dev, mac := range map[string]string{"eno1": "52:54:00:AA:00:01", "eno2": "52:54:00:bb:00:09", "lo": "00:00:00:00:00:00"} {
+	// eno3's address contains macB without being it: the guard matches
+	// whole lines only.
+	for dev, mac := range map[string]string{"eno1": "52:54:00:AA:00:01", "eno2": "52:54:00:bb:00:09", "eno3": macB + "0", "lo": "00:00:00:00:00:00"} {
 		if err := os.MkdirAll(filepath.Join(sys, dev), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -304,4 +307,14 @@ func TestBondAndVLANSurviveTheJSONLegToProvisiond(t *testing.T) {
 	if got.Network.VLAN == nil || *got.Network.VLAN != *vs.Network.VLAN {
 		t.Fatalf("VLAN after the JSON leg = %+v, want %+v (%s)", got.Network.VLAN, vs.Network.VLAN, b)
 	}
+}
+
+// nineMACs is nine distinct MACs: one past the bond's bound, and no
+// duplicate for the other rule to refuse it on instead.
+func nineMACs() []string {
+	out := make([]string, 9)
+	for i := range out {
+		out[i] = fmt.Sprintf("52:54:00:cc:00:%02x", i+1)
+	}
+	return out
 }
