@@ -114,8 +114,9 @@ branch on it:
 > in `internal/controller/frame/framemachine_controller.go`): a chassis can
 > answer its BMC while powered off, which is not a state any other
 > controller in this table would call `Ready`. `Reachable.reason` is
-> `Probed` on success; `TLSError`, `AuthFailed`, `Timeout`, `Unsupported`,
-> `CredentialsUnavailable` or `ProbeFailed` otherwise — see FrameMachine's
+> `Probed` on success; `TLSError`, `AuthFailed`, `Timeout`,
+> `ConnectionRefused`, `Unsupported`, `CredentialsUnavailable` or
+> `ProbeFailed` otherwise — see FrameMachine's
 > own section below and [runbook.md](runbook.md) for what each means.
 
 > **Enum members no controller ever wrote (R6).** `v1alpha1`'s `phase` enums
@@ -519,8 +520,8 @@ six states the console's `sensorAvailability` distinguishes and why a
 *stale* (as opposed to untrustworthy) reading is shown, not hidden.
 
 **Conditions:** `Reachable` only, with reason `Probed` on success and one of
-`TLSError`, `AuthFailed`, `Timeout`, `Unsupported`, `CredentialsUnavailable`,
-`ProbeFailed` otherwise — full vocabulary and remediation in
+`TLSError`, `AuthFailed`, `Timeout`, `ConnectionRefused`, `Unsupported`,
+`CredentialsUnavailable`, `ProbeFailed` otherwise — full vocabulary and remediation in
 [runbook.md](runbook.md).
 
 **Printer columns:** `Address`, `Power`, `Reachable`, `Model`, `Node`, `Age`.
