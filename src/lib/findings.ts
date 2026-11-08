@@ -104,7 +104,7 @@ export function collectFindings(
     findings.push({
       key: `volume-fill-${v.key}`,
       tone: v.severity === 'critical' ? 'destructive' : 'warning',
-      label: `Volume ${v.usePct.toFixed(0)} % full`,
+      label: `Volume ${v.usePct.toFixed(1)} % full`,
       detail: v.key,
       screen: 'storage',
       tab: 'storage-load',

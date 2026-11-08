@@ -1817,7 +1817,7 @@ class ClusterClient {
         () => empty as ListResponse<BlockPoolCR>,
       ),
       k8sFetch<ListResponse<PodVolumesCR>>(ALL_PODS_CACHED),
-      k8sFetch<ListResponse<{ metadata: MetaCR }>>('/apis/apps/v1/replicasets'),
+      k8sFetch<ListResponse<{ metadata: MetaCR }>>('/apis/apps/v1/replicasets?resourceVersion=0'),
       k8sFetch<ListResponse<VolumeAttachmentCR>>('/apis/storage.k8s.io/v1/volumeattachments').catch(
         () => empty as ListResponse<VolumeAttachmentCR>,
       ),

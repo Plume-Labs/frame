@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { StorageEntry, createFrameClient } from '@/lib/frame-sdk'
-import { placementOf, poolPlacement } from '@/lib/ceph-placement'
+import { placementOf } from '@/lib/ceph-placement'
 import { formatIec, NOT_COLLECTED } from '@/lib/storage'
 import {
   FILL_CRITICAL_PCT,
@@ -44,12 +44,17 @@ export function StorageLoadView() {
   const [open, setOpen] = useState<string | null>(null)
 
   const raw = state.phase === 'ready' ? state.data : null
+  // Until the Ceph diagnostic answers, the OSD list is unknown, not empty:
+  // the rows say so and the banner says it could not be evaluated.
+  const osdsKnown = diag.promAvailable
   const rows = useMemo(() => {
     if (!raw) return []
-    const rules = new Map<string, string | null>()
-    for (const [pool, p] of poolPlacement(placementOf(entries ?? []))) rules.set(pool, p.crushRule)
-    return buildVolumeRows({ ...raw, osds: diag.osds, crushRules: rules })
-  }, [raw, diag.osds, entries])
+    const mgrPools = new Map<string, { crushRule: string | null; size: number | null }>()
+    for (const p of placementOf(entries ?? [])?.pools ?? []) {
+      mgrPools.set(p.name, { crushRule: p.crushRule || null, size: p.size ?? null })
+    }
+    return buildVolumeRows({ ...raw, osds: diag.osds, osdsKnown, mgrPools })
+  }, [raw, diag.osds, osdsKnown, entries])
   const shared = useMemo(() => slowSharedOsds(rows), [rows])
   const fillAlerts = rows.filter((r) => r.fill === 'warning' || r.fill === 'critical')
   const statsMissing = raw !== null && rows.length > 0 && rows.every((r) => r.usePct === null)
@@ -116,7 +121,7 @@ export function StorageLoadView() {
                   <th className="pr-3 text-right">used / size</th>
                   <th className="pr-3">class</th>
                   <th className="pr-3">physical path</th>
-                  <th className="pr-3 text-right" title="Slowest OSD commit latency on the path, right now">
+                  <th className="pr-3 text-right" title="Commit latency of the slowest OSD that may hold a copy, right now">
                     write
                   </th>
                   <th className="text-right" title="Worst 5-minute commit latency of any OSD on the path, last 24 h">
@@ -130,6 +135,12 @@ export function StorageLoadView() {
                 ))}
               </tbody>
             </table>
+          )}
+          {!osdsKnown && (
+            <p className="mt-2 text-xs text-warning font-mono">
+              OSD figures not collected{diag.error ? ` (${diag.error})` : diag.loading ? ' yet' : ' (Prometheus unreachable)'}: the
+              write path, its latency and the slow-OSD banner cannot be evaluated.
+            </p>
           )}
           <p className="mt-2 text-[10px] text-muted-foreground font-mono">
             Fill from kubelet_volume_stats ({statsMissing ? `${NOT_COLLECTED} on this cluster` : 'kubelet'}); flagged at{' '}
@@ -147,10 +158,12 @@ function VolumeLine({ row: r, open, onToggle }: { row: VolumeRow; open: boolean;
   const users = r.consumers.map((c) => c.workload)
   return (
     <>
-      <tr className="border-t border-border cursor-pointer hover:bg-muted/40" onClick={onToggle}>
+      <tr className="border-t border-border hover:bg-muted/40">
         <td className="py-1 pr-3">
-          <span className="text-muted-foreground">{r.namespace}/</span>
-          <span className="font-bold">{r.name}</span>
+          <button type="button" className="text-left hover:underline" aria-expanded={open} onClick={onToggle}>
+            <span className="text-muted-foreground">{r.namespace}/</span>
+            <span className="font-bold">{r.name}</span>
+          </button>
           {r.phase !== 'Bound' && <span className="ml-1 text-warning">{r.phase}</span>}
         </td>
         <td className="pr-3">{users.length ? users.join(', ') : <span className="text-muted-foreground">unused</span>}</td>
@@ -160,7 +173,7 @@ function VolumeLine({ row: r, open, onToggle }: { row: VolumeRow; open: boolean;
             <span className="text-muted-foreground">? / {formatIec(r.sizeBytes)}</span>
           ) : (
             <>
-              {formatIec(r.usedBytes)} / {formatIec(r.sizeBytes)} ({r.usePct.toFixed(0)} %)
+              {formatIec(r.usedBytes)} / {formatIec(r.sizeBytes)} ({r.usePct.toFixed(1)} %)
             </>
           )}
         </td>

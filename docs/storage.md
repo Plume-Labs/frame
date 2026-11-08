@@ -520,7 +520,7 @@ Read-only. One row per PersistentVolumeClaim, fullest first:
 
 - **Used by**: the controller of each pod mounting the claim (a Deployment is
   found through its ReplicaSet), and the nodes they run on. A claim no pod
-  mounts shows "unused" and, for a CSI volume, the node its VolumeAttachment
+  mounts (finished Job pods do not count) shows "unused" and, for a CSI volume, the node its VolumeAttachment
   names.
 - **Used / size**: `kubelet_volume_stats_used_bytes` over
   `kubelet_volume_stats_capacity_bytes`. A claim the kubelet does not report
@@ -530,7 +530,11 @@ Read-only. One row per PersistentVolumeClaim, fullest first:
   (`volumeAttributes.pool`, else the StorageClass's `pool`), its CRUSH rule
   from the ceph-mgr read, and the OSDs it may place copies on: those of the
   CephBlockPool's `deviceClass` (every class when unset) that are up and in.
-  A pool no CephBlockPool declares lists every OSD and says so. For
+  A pool no CephBlockPool declares (a CephFilesystem data pool) lists every
+  OSD and says so. An RBD image on an erasure-coded pool is followed to its
+  `dataPool`, where its data is written. The pool size is the one the mgr
+  reports, else the CephBlockPool's. Until the Ceph diagnostic answers, the
+  path says "OSDs not collected" rather than showing an empty set. For
   local-path, the node the PV is pinned to and its directory.
 - **Write**: the slowest commit latency (`ceph_osd_commit_latency_ms`) among
   those OSDs now, and the worst 5-minute average of any of them over 24 h.

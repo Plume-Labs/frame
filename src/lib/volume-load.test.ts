@@ -119,7 +119,8 @@ function inputs(over: Partial<VolumeLoadInputs> = {}): VolumeLoadInputs {
     replicaSetOwners: new Map([['monitoring/prom-abc', { kind: 'Deployment', name: 'prometheus' }]]),
     attachments: [],
     osds: OSDS,
-    crushRules: new Map([['replicapool', '1 hote_x3']]),
+    mgrPools: new Map([['replicapool', { crushRule: '1 hote_x3', size: 3 }]]),
+    osdsKnown: true,
     prom: {
       volUsed: [
         sample({ namespace: 'monitoring', persistentvolumeclaim: 'prometheus-data' }, 16 * 0.97 * 2 ** 30),
@@ -199,6 +200,42 @@ describe('buildVolumeRows', () => {
   })
 })
 
+describe('unknowns and special pools', () => {
+  it('says the OSDs are not collected rather than showing an empty path', () => {
+    const r = row(buildVolumeRows(inputs({ osds: [], osdsKnown: false })), 'neura/pgdata-neura-db-0')
+    expect(pathLine(r.path)).toContain('OSDs not collected')
+    expect(pathLine(r.path)).not.toContain('0 OSD')
+  })
+
+  it('follows the dataPool of an erasure-coded RBD image', () => {
+    const r = row(
+      buildVolumeRows(
+        inputs({
+          pvs: [
+            toPvInfo({
+              metadata: { name: 'pv-db' },
+              spec: { csi: { driver: 'rook-ceph.rbd.csi.ceph.com', volumeAttributes: { pool: 'replicapool', dataPool: 'ec-data' } } },
+            }),
+          ],
+        }),
+      ),
+      'neura/pgdata-neura-db-0',
+    )
+    expect(r.path.kind === 'ceph' && r.path.pool).toBe('ec-data')
+    expect(pathLine(r.path)).toContain('rbd EC')
+  })
+
+  it('ignores a finished pod as a consumer', () => {
+    expect(
+      toPodClaimInfo({
+        metadata: { name: 'job-x', namespace: 'n' },
+        spec: { volumes: [{ persistentVolumeClaim: { claimName: 'c' } }] },
+        status: { phase: 'Succeeded' },
+      }),
+    ).toBeNull()
+  })
+})
+
 describe('poolOsds', () => {
   it('marks the only OSD of a host as on every write when copies = hosts', () => {
     const { osds } = poolOsds(OSDS, { deviceClass: null, failureDomain: 'host', size: 3 }, new Map())
@@ -227,8 +264,36 @@ describe('poolOsds', () => {
 describe('slowSharedOsds', () => {
   it('raises the slow OSD every write waits for, with its pools and volume count', () => {
     expect(slowSharedOsds(buildVolumeRows(inputs()))).toEqual([
-      { osd: 0, host: 'cp', commitMs: 106, pools: ['replicapool'], volumes: 2 },
+      { osd: 0, host: 'cp', commitMs: 106, pools: ['replicapool'], volumes: 1 },
     ])
+  })
+
+  it('does not count a claim with no volume yet', () => {
+    const p = row(buildVolumeRows(inputs()), 'neura/pending')
+    expect(p.bound).toBe(false)
+    expect(p.likelyWrite).toBeNull()
+  })
+
+  it('takes the size from the mgr, so an undeclared CephFS data pool still raises the banner', () => {
+    const rows = buildVolumeRows(
+      inputs({
+        pvcs: [toPvcInfo({ metadata: { name: 'shared', namespace: 'apps' }, spec: { storageClassName: 'cephfs', volumeName: 'pv-fs' }, status: { phase: 'Bound' } })],
+        pvs: [
+          toPvInfo({
+            metadata: { name: 'pv-fs' },
+            spec: { csi: { driver: 'rook-ceph.cephfs.csi.ceph.com', volumeAttributes: { pool: 'ceph-filesystem-replicated' } } },
+          }),
+        ],
+        mgrPools: new Map([['ceph-filesystem-replicated', { crushRule: '2 fs_rule', size: 3 }]]),
+      }),
+    )
+    expect(rows[0]!.path.kind === 'ceph' && rows[0]!.path.declared).toBe(false)
+    expect(slowSharedOsds(rows).map((s) => [s.osd, s.pools])).toEqual([[0, ['ceph-filesystem-replicated']]])
+  })
+
+  it('a host whose other OSD is out leaves the remaining one on every write', () => {
+    const outOne = OSDS.map((o) => (o.id === 3 ? osd(3, 'g9', 9, { in: false }) : o.id === 1 ? osd(1, 'g9', 70) : o))
+    expect(slowSharedOsds(buildVolumeRows(inputs({ osds: outOne }))).map((s) => s.osd)).toEqual([0, 1])
   })
 
   it('stays quiet when that OSD is fast', () => {

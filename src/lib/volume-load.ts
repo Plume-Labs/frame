@@ -26,9 +26,12 @@ import { quantityBytes } from './storage'
  * scrape spike does not read as "the worst five minutes of the day".
  */
 export const VOLUME_LOAD_QUERIES = {
-  volUsed: 'kubelet_volume_stats_used_bytes',
-  volCapacity: 'kubelet_volume_stats_capacity_bytes',
-  osdCommitWorst24h: 'max_over_time(avg_over_time(ceph_osd_commit_latency_ms[5m])[24h:5m])',
+  // A ReadWriteMany claim mounted on several nodes is reported once per
+  // kubelet; a mgr failover can split one OSD's series over 24 h. The max
+  // keeps one value per claim / OSD, and the worst one.
+  volUsed: 'max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes)',
+  volCapacity: 'max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes)',
+  osdCommitWorst24h: 'max by (ceph_daemon) (max_over_time(avg_over_time(ceph_osd_commit_latency_ms[5m])[24h:5m]))',
 } as const
 
 export type VolumeLoadQueryKey = keyof typeof VOLUME_LOAD_QUERIES
@@ -65,6 +68,8 @@ export interface PvInfo {
   csiDriver: string | null
   /** spec.csi.volumeAttributes.pool — the pool the volume was actually created in. */
   csiPool: string | null
+  /** spec.csi.volumeAttributes.dataPool — set for an RBD image whose data lives in an erasure-coded pool. */
+  csiDataPool: string | null
   /** spec.local.path or spec.hostPath.path. */
   localPath: string | null
   /** The single node a node-affinity pins the volume to (kubernetes.io/hostname). */
@@ -76,6 +81,8 @@ export interface StorageClassInfo {
   provisioner: string
   /** parameters.pool (ceph-csi RBD and CephFS). */
   pool: string | null
+  /** parameters.dataPool (ceph-csi RBD on an erasure-coded pool). */
+  dataPool: string | null
 }
 
 export interface BlockPoolInfo {
@@ -122,8 +129,15 @@ export interface VolumeLoadInputs {
   replicaSetOwners: ReadonlyMap<string, OwnerRef>
   attachments: VolumeAttachmentInfo[]
   osds: OsdRow[]
-  /** Pool name → CRUSH rule, from the ceph-mgr read (status.cephPlacement). */
-  crushRules: ReadonlyMap<string, string | null>
+  /**
+   * Pool name → CRUSH rule and size as Ceph runs them, from the ceph-mgr read
+   * (status.cephPlacement). The size here wins over the CephBlockPool's
+   * spec, and is the only size known for a pool no CephBlockPool declares
+   * (a CephFilesystem's data pool).
+   */
+  mgrPools: ReadonlyMap<string, { crushRule: string | null; size: number | null }>
+  /** False while the Ceph diagnostic has not answered: the OSD list is then unknown, not empty. */
+  osdsKnown: boolean
   /** Null when Prometheus could not be read at all. */
   prom: VolumeLoadSnapshot | null
 }
@@ -151,6 +165,10 @@ export type VolumePath =
       /** Null: the pool is not declared by a CephBlockPool, so every OSD is listed. */
       deviceClass: string | null
       declared: boolean
+      /** The data lives in an erasure-coded dataPool. */
+      erasure: boolean
+      /** False: the Ceph diagnostic has not answered, the OSD list is unknown. */
+      osdsKnown: boolean
       size: number | null
       osds: PathOsd[]
       hosts: string[]
@@ -180,6 +198,8 @@ export interface VolumeRow {
   usePct: number | null
   fill: 'ok' | 'warning' | 'critical' | null
   path: VolumePath
+  /** A PV backs the claim. An unbound claim's path is the one its StorageClass will give it. */
+  bound: boolean
   /** The slowest OSD on the path right now, or null when none was measured. */
   likelyWrite: { osd: number; ms: number } | null
   /** The worst 5 minutes of any OSD on the path over 24 h (may be another OSD than likelyWrite). */
@@ -241,7 +261,7 @@ export function fillLevel(pct: number | null): VolumeRow['fill'] {
 export function writeTone(ms: number | null): Tone {
   if (ms === null) return 'muted'
   if (ms <= WRITE_OK_MS) return 'accent'
-  if (ms <= WRITE_SLOW_MS) return 'warning'
+  if (ms < WRITE_SLOW_MS) return 'warning'
   return 'destructive'
 }
 
@@ -317,18 +337,30 @@ function pathOf(
   const driver = pv?.csiDriver ?? sc?.provisioner ?? null
   if (!pv && !sc) return { kind: 'unbound' }
   if (driver && (CEPH_RBD_DRIVERS.includes(driver) || CEPH_FS_DRIVERS.includes(driver))) {
-    const pool = pv?.csiPool ?? sc?.pool ?? ''
+    // Data writes of an RBD image on an erasure-coded pool go to its dataPool;
+    // `pool` then only holds the image's metadata.
+    const dataPool = pv ? pv.csiDataPool : (sc?.dataPool ?? null)
+    const pool = dataPool ?? pv?.csiPool ?? sc?.pool ?? ''
     const declared = inputs.blockPools.find((p) => p.poolName === pool)
-    const spec = declared ?? { deviceClass: null, failureDomain: 'host', size: null }
+    const mgr = inputs.mgrPools.get(pool)
+    const size = mgr?.size ?? declared?.size ?? null
+    // A pool no CephBlockPool declares (a CephFilesystem data pool): its
+    // device class is not read (cephfilesystems is not granted to the
+    // console), so every class is listed; failure domain `host` is Rook's
+    // default. crushRoot, replicasPerFailureDomain and stretch clusters are
+    // not modelled.
+    const spec = { deviceClass: declared?.deviceClass ?? null, failureDomain: declared?.failureDomain ?? 'host', size }
     const { osds, hosts } = poolOsds(inputs.osds, spec, worst24h)
     return {
       kind: 'ceph',
       flavour: CEPH_RBD_DRIVERS.includes(driver) ? 'rbd' : 'cephfs',
       pool,
-      crushRule: inputs.crushRules.get(pool) ?? null,
+      crushRule: mgr?.crushRule ?? null,
+      erasure: !!dataPool,
+      osdsKnown: inputs.osdsKnown,
       deviceClass: declared?.deviceClass ?? null,
       declared: !!declared,
-      size: declared?.size ?? null,
+      size,
       osds,
       hosts,
     }
@@ -379,7 +411,11 @@ export function buildVolumeRows(inputs: VolumeLoadInputs): VolumeRow[] {
       const capBytes = capacity.get(key) ?? null
       const usePct = usedBytes !== null && capBytes ? (usedBytes / capBytes) * 100 : null
       const osds = path.kind === 'ceph' ? path.osds : []
-      const likely = slowest(osds, (o) => o.commitMs)
+      // A claim with no volume yet writes nowhere: its path is the one it
+      // will get, shown for reading, but it has no latency and is not
+      // counted among the volumes waiting on an OSD.
+      const bound = !!pv
+      const likely = bound ? slowest(osds, (o) => o.commitMs) : null
       return {
         key,
         namespace: pvc.namespace,
@@ -395,7 +431,8 @@ export function buildVolumeRows(inputs: VolumeLoadInputs): VolumeRow[] {
         fill: fillLevel(usePct),
         path,
         likelyWrite: likely,
-        worst24h: slowest(osds, (o) => o.worst24hMs),
+        worst24h: bound ? slowest(osds, (o) => o.worst24hMs) : null,
+        bound,
       }
     })
     .sort((a, b) => (b.usePct ?? -1) - (a.usePct ?? -1) || a.key.localeCompare(b.key))
@@ -409,7 +446,7 @@ export function buildVolumeRows(inputs: VolumeLoadInputs): VolumeRow[] {
 export function slowSharedOsds(rows: VolumeRow[], slowMs: number = WRITE_SLOW_MS): SlowSharedOsd[] {
   const out = new Map<number, SlowSharedOsd>()
   for (const r of rows) {
-    if (r.path.kind !== 'ceph') continue
+    if (r.path.kind !== 'ceph' || !r.bound) continue
     for (const o of r.path.osds) {
       if (!o.onEveryWrite || o.commitMs === null || o.commitMs < slowMs) continue
       const e = out.get(o.id) ?? { osd: o.id, host: o.host, commitMs: o.commitMs, pools: [], volumes: 0 }
@@ -446,7 +483,10 @@ export function pathLine(p: VolumePath): string {
   switch (p.kind) {
     case 'ceph': {
       const cls = p.declared ? (p.deviceClass ?? 'any class') : 'pool not declared by a CephBlockPool: every OSD listed'
-      return `ceph ${p.flavour} · pool ${p.pool || '?'} · rule ${p.crushRule ?? 'not collected'} · ${cls} · ${p.osds.length} OSD on ${p.hosts.length} host${p.hosts.length > 1 ? 's' : ''}`
+      const osds = p.osdsKnown
+        ? `${p.osds.length} OSD on ${p.hosts.length} host${p.hosts.length > 1 ? 's' : ''}`
+        : 'OSDs not collected'
+      return `ceph ${p.flavour}${p.erasure ? ' EC' : ''} · pool ${p.pool || '?'} · rule ${p.crushRule ?? 'not collected'} · ${cls} · ${osds}`
     }
     case 'local':
       return `local disk of ${p.node ?? 'unknown node'}${p.path ? ` · ${p.path}` : ''}`
@@ -542,13 +582,19 @@ export function toPvInfo(cr: PvCR): PvInfo {
     reclaimPolicy: cr.spec?.persistentVolumeReclaimPolicy || null,
     csiDriver: cr.spec?.csi?.driver || null,
     csiPool: cr.spec?.csi?.volumeAttributes?.pool || null,
+    csiDataPool: cr.spec?.csi?.volumeAttributes?.dataPool || null,
     localPath: cr.spec?.local?.path || cr.spec?.hostPath?.path || null,
     pinnedNode: pinnedNode(cr),
   }
 }
 
 export function toStorageClassInfo(cr: StorageClassCR): StorageClassInfo {
-  return { name: cr.metadata.name, provisioner: cr.provisioner ?? '', pool: cr.parameters?.pool || null }
+  return {
+    name: cr.metadata.name,
+    provisioner: cr.provisioner ?? '',
+    pool: cr.parameters?.pool || null,
+    dataPool: cr.parameters?.dataPool || null,
+  }
 }
 
 export function toBlockPoolInfo(cr: BlockPoolCR): BlockPoolInfo {
@@ -563,12 +609,14 @@ export function toBlockPoolInfo(cr: BlockPoolCR): BlockPoolInfo {
 
 export function toPodClaimInfo(cr: PodVolumesCR): PodClaimInfo | null {
   const claims = (cr.spec?.volumes ?? []).map((v) => v.persistentVolumeClaim?.claimName).filter((c): c is string => !!c)
-  if (claims.length === 0) return null
+  // A finished pod (a completed Job's) no longer uses the claim.
+  const phase = cr.status?.phase ?? 'Unknown'
+  if (claims.length === 0 || phase === 'Succeeded' || phase === 'Failed') return null
   return {
     namespace: cr.metadata.namespace ?? '',
     name: cr.metadata.name,
     node: cr.spec?.nodeName ?? '',
-    phase: cr.status?.phase ?? 'Unknown',
+    phase,
     owner: controllerRef(cr.metadata),
     claims,
   }
