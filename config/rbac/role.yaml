@@ -130,6 +130,7 @@ rules:
   resources:
   - cephclusters
   verbs:
+  - get
   - patch
 - apiGroups:
   - frame.plume-labs.io

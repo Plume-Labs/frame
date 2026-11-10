@@ -48,6 +48,8 @@ export interface OSDReplacement {
   newDisk: ReplacementDisk | null
   pgs: string
   purgeRequested: boolean
+  /** The step waiting for an approval has cleared any earlier one: an approval typed now counts. */
+  approvalArmed: boolean
   events: ReplacementEvent[]
 }
 
@@ -74,6 +76,7 @@ export interface FrameOSDReplacementCR {
     newDisk?: RawDisk
     pgs?: string
     purgeRequestedAt?: string
+    approvalArmedGeneration?: number
     events?: { at?: string; phase?: string; message?: string }[]
   }
 }
@@ -126,6 +129,7 @@ export function crToReplacement(cr: FrameOSDReplacementCR): OSDReplacement {
     newDisk: toDisk(s.newDisk),
     pgs: s.pgs ?? '',
     purgeRequested: !!s.purgeRequestedAt,
+    approvalArmed: (s.approvalArmedGeneration ?? 0) > 0,
     events: (s.events ?? []).map((e) => ({ at: e.at ?? '', phase: e.phase ?? '', message: e.message ?? '' })),
   }
 }
@@ -186,8 +190,8 @@ export interface ReplacementActions {
 export function availableActions(r: OSDReplacement): ReplacementActions {
   const live = !isTerminal(r.phase) && !r.cancel
   return {
-    approvePurge: live && r.phase === 'AwaitingPurgeApproval',
-    approveWipe: live && r.phase === 'AwaitingWipeApproval',
+    approvePurge: live && r.approvalArmed && r.phase === 'AwaitingPurgeApproval',
+    approveWipe: live && r.approvalArmed && r.phase === 'AwaitingWipeApproval',
     resume: live && r.phase === 'Paused' && r.resume <= r.observedResume,
     cancel: live,
     cancelUndoes: !r.purgeRequested,

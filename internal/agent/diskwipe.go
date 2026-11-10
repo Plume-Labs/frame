@@ -29,6 +29,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -48,7 +49,8 @@ import (
 //     host's), to the kernel device lsblk reported;
 //   - each request id is acted on at most once: the id is written to the
 //     host before the first command runs, and a request whose id is already
-//     there is answered "already acted" without touching the disk;
+//     there is answered "already acted" without touching the disk (Ran is
+//     then true: the earlier attempt may have run, its answer lost);
 //   - a request older than wipeRequestMaxAge, or dated in the future, is
 //     refused;
 //   - the commands are fixed: `wipefs -a`, then 100 MiB of zeros with dd,
@@ -59,9 +61,11 @@ import (
 // Whatever happens, the answer is written to the Node
 // (DiskWipeResultAnnotation) with Ran saying whether any command started.
 
-// wipeRequestMaxAge: the controller waits ten minutes for an answer; a
-// request older than this is a leftover and is refused.
-const wipeRequestMaxAge = 20 * time.Minute
+// wipeRequestMaxAge: a request older than this is a leftover and is
+// refused. It is shorter than the ten minutes the controller waits for an
+// answer, so that a request the controller gave up on (paused, then maybe
+// cancelled) can no longer be acted on.
+const wipeRequestMaxAge = 8 * time.Minute
 
 // wipeRecordPath is the host file holding every request id acted on.
 const wipeRecordPath = "var/lib/frame-agent/disk-wipe-acted"
@@ -139,11 +143,27 @@ func ServiceWipeRequest(ctx context.Context, c client.Client, nodeName string,
 	res.ID = req.ID
 	res.At = metav1.NewTime(env.Now())
 	out, _ := json.Marshal(res)
-	base := node.DeepCopy()
-	node.Annotations[framev1beta1.DiskWipeResultAnnotation] = string(out)
 	// Optimistic lock: a request replaced between the read and this write
-	// must not get this answer.
-	if err := c.Patch(ctx, &node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+	// must not get this answer. A wipe takes seconds and the Node moves
+	// meanwhile (kubelet), so a conflict is retried while the request is
+	// still the same id; the answer is the only record of what ran.
+	var err error
+	for range 5 {
+		base := node.DeepCopy()
+		node.Annotations[framev1beta1.DiskWipeResultAnnotation] = string(out)
+		if err = c.Patch(ctx, &node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); !apierrors.IsConflict(err) {
+			break
+		}
+		if gerr := c.Get(ctx, client.ObjectKey{Name: nodeName}, &node); gerr != nil {
+			err = gerr
+			break
+		}
+		var cur framev1beta1.DiskWipeRequest
+		if json.Unmarshal([]byte(node.Annotations[framev1beta1.DiskWipeRequestAnnotation]), &cur) != nil || cur.ID != req.ID {
+			return fmt.Errorf("disk wipe request %s on %s was withdrawn or replaced before its answer (ran: %t, ok: %t)", req.ID, nodeName, res.Ran, res.OK)
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("answering the disk wipe request %s on %s (ran: %t, ok: %t): %w", req.ID, nodeName, res.Ran, res.OK, err)
 	}
 	return nil
@@ -172,7 +192,7 @@ func wipe(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, x
 		return refused("cannot read the record of past wipes: %v", err)
 	}
 	if slices.Contains(acted, req.ID) {
-		return framev1beta1.DiskWipeResult{Message: "refused: request " + req.ID + " was already acted on by this node; its outcome is unknown, inspect the disk"}
+		return framev1beta1.DiskWipeResult{Ran: true, Message: "refused: request " + req.ID + " was already acted on by this node; its outcome is unknown, inspect the disk"}
 	}
 
 	var match []framev1beta1.ObservedDisk

@@ -31,6 +31,7 @@ import (
 // mean, never by a click.
 //
 // +kubebuilder:validation:XValidation:rule="self.osdID == oldSelf.osdID && self.serial == oldSelf.serial",message="osdID and serial are fixed at creation"
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || (!has(self.purgeApproval) && !has(self.wipeApproval))",message="approvals cannot be given at creation",optionalOldSelf=true
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cancel) || !oldSelf.cancel || (has(self.cancel) && self.cancel)",message="cancel cannot be taken back"
 type FrameOSDReplacementSpec struct {
 	// OSDID is the Ceph OSD to replace (7 for osd.7).
@@ -48,14 +49,18 @@ type FrameOSDReplacementSpec struct {
 	// PurgeApproval is approval no. 1: the old disk's serial, retyped once
 	// the OSD is drained and safe-to-destroy. The purge is irreversible.
 	// A serial that does not match is ignored and may be retyped; the one
-	// accepted is dated in status.purgeApprovedAt, and only an approval
-	// given while the replacement waits for it counts.
+	// accepted is dated in status.purgeApprovedAt. Only an approval given
+	// while the replacement waits for it counts: on entering that step
+	// (again, after a resume) the controller clears this field and arms
+	// status.approvalArmedGeneration; an approval counts only from a later
+	// generation. It cannot be set at creation.
 	// +optional
 	PurgeApproval *SerialApproval `json:"purgeApproval,omitempty"`
 
 	// WipeApproval is approval no. 2: the new disk's serial, read on its
 	// label and retyped once Frame shows the disk it found. The wipe is
-	// irreversible.
+	// irreversible. Armed like PurgeApproval: an approval written before
+	// the step is cleared, and it cannot be set at creation.
 	// +optional
 	WipeApproval *SerialApproval `json:"wipeApproval,omitempty"`
 
@@ -183,8 +188,8 @@ type FrameOSDReplacementStatus struct {
 	// +optional
 	DeviceIndex *int32 `json:"deviceIndex,omitempty"`
 
-	// DisksBefore lists the by-id paths of every disk the host had before
-	// the purge: the new disk must be absent from it.
+	// DisksBefore lists the by-id paths of every disk the host had when the
+	// checks ran: the new disk must be absent from it.
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -194,6 +199,12 @@ type FrameOSDReplacementStatus struct {
 	// up when it has as many again.
 	// +optional
 	HostOSDsBefore int32 `json:"hostOSDsBefore,omitempty"`
+
+	// ApprovalArmedGeneration is the object's generation when the step now
+	// waiting for an approval was entered and any earlier approval cleared;
+	// 0 when not armed. An approval counts only from a later generation.
+	// +optional
+	ApprovalArmedGeneration int64 `json:"approvalArmedGeneration,omitempty"`
 
 	// Write-ahead records: each is written before the call it names, so
 	// that a restart can tell "never sent" from "sent, outcome unknown".

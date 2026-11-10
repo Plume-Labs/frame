@@ -146,6 +146,7 @@ func TestWipeRefusals(t *testing.T) {
 		{"absent", nil, func() []framev1beta1.ObservedDisk { return nil }, nil, "0 disks"},
 		{"two at the path", nil, func() []framev1beta1.ObservedDisk { return []framev1beta1.ObservedDisk{freeDisk(), freeDisk()} }, nil, "2 disks"},
 		{"old request", func(r *framev1beta1.DiskWipeRequest) { r.RequestedAt = metav1.NewTime(wipeNow.Add(-time.Hour)) }, nil, nil, "window"},
+		{"request the controller gave up on", func(r *framev1beta1.DiskWipeRequest) { r.RequestedAt = metav1.NewTime(wipeNow.Add(-9 * time.Minute)) }, nil, nil, "window"},
 		{"future request", func(r *framev1beta1.DiskWipeRequest) { r.RequestedAt = metav1.NewTime(wipeNow.Add(time.Hour)) }, nil, nil, "window"},
 		{"sdX path", func(r *framev1beta1.DiskWipeRequest) { r.ByIDPath = "/dev/sdc" }, nil, nil, "not a /dev/disk/by-id"},
 		{"by-id of another kind", func(r *framev1beta1.DiskWipeRequest) { r.ByIDPath = "/dev/disk/by-id/ata-ST500_Z2AW5NWA" }, nil, nil, "not a /dev/disk/by-id"},
@@ -190,7 +191,7 @@ func TestWipeOncePerRequestID(t *testing.T) {
 	if err := ServiceWipeRequest(context.Background(), c, "r320", []framev1beta1.ObservedDisk{freeDisk()}, x, env); err != nil {
 		t.Fatal(err)
 	}
-	if res := wipeResult(t, c); res.OK || res.Ran || !strings.Contains(res.Message, "already acted") {
+	if res := wipeResult(t, c); res.OK || !res.Ran || !strings.Contains(res.Message, "already acted") {
 		t.Fatalf("result = %+v", res)
 	}
 	if len(x.argvs) != 0 {

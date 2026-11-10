@@ -43,13 +43,18 @@ describe('osd replacement projection', () => {
   })
 
   it('offers each approval only at its own step', () => {
-    const purge = availableActions(crToReplacement(cr({ phase: 'AwaitingPurgeApproval' })))
+    const purge = availableActions(crToReplacement(cr({ phase: 'AwaitingPurgeApproval', approvalArmedGeneration: 3 })))
     expect(purge.approvePurge).toBe(true)
     expect(purge.approveWipe).toBe(false)
-    const wipe = availableActions(crToReplacement(cr({ phase: 'AwaitingWipeApproval', purgeRequestedAt: 'x' })))
+    const wipe = availableActions(crToReplacement(cr({ phase: 'AwaitingWipeApproval', purgeRequestedAt: 'x', approvalArmedGeneration: 5 })))
     expect(wipe.approveWipe).toBe(true)
     expect(wipe.approvePurge).toBe(false)
     expect(wipe.cancelUndoes).toBe(false)
+  })
+
+  it('waits until the step has cleared any approval given in advance', () => {
+    expect(availableActions(crToReplacement(cr({ phase: 'AwaitingPurgeApproval' }))).approvePurge).toBe(false)
+    expect(availableActions(crToReplacement(cr({ phase: 'AwaitingWipeApproval' }))).approveWipe).toBe(false)
   })
 
   it('offers resume only while paused and not already asked', () => {
@@ -63,7 +68,7 @@ describe('osd replacement projection', () => {
       const a = availableActions(crToReplacement(cr({ phase })))
       expect(a.cancel || a.resume || a.approvePurge || a.approveWipe).toBe(false)
     }
-    expect(availableActions(crToReplacement(cr({ phase: 'AwaitingPurgeApproval' }, { cancel: true }))).approvePurge).toBe(false)
+    expect(availableActions(crToReplacement(cr({ phase: 'AwaitingPurgeApproval', approvalArmedGeneration: 2 }, { cancel: true }))).approvePurge).toBe(false)
   })
 
   it('validates the form', () => {

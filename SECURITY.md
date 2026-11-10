@@ -133,9 +133,13 @@ in, purge of one OSD, and reads. What a stolen copy of that account allows is
 what the role allows: mark OSDs out or in, purge, destroy or reweight them,
 set cluster OSD flags, scrub — enough to lose data if two hosts' OSDs are
 purged. It is kept in a Secret only the manager reads; no console tier can
-read Secrets of the manager's namespace. A purge needs two serials retyped by
-an admin and Ceph's `safe-to-destroy`; **a path by which the manager purges an
-OSD, or the agent wipes a disk, without the matching retyped serial is a
+read Secrets of the manager's namespace. A purge needs the old disk's serial
+typed at creation and retyped by an admin once the replacement waits for
+approval no. 1, plus Ceph's `safe-to-destroy`; a wipe needs the new disk's
+serial, which the console never shows before approval no. 2, retyped from the
+label. An approval written before its step is cleared when the step starts
+and does not count. **A path by which the manager purges an OSD, or the agent
+wipes a disk, without the matching serial retyped at its step is a
 vulnerability.**
 
 Note also that **enabling KSM is a security trade-off, not just a performance

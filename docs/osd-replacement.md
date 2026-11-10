@@ -17,11 +17,11 @@ The object behind it is a `FrameOSDReplacement`
 | Start | admin | types the OSD number and the serial of its disk, read on the label |
 | Checks | Frame | read-only, see below; any refusal pauses with the reason |
 | Drain | Frame | `ceph osd out N`, waits until every PG is active+clean, then `safe-to-destroy` |
-| **Approval 1** | admin | retypes the old disk's serial: the purge cannot be undone |
+| **Approval 1** | admin | retypes the old disk's serial: the purge cannot be undone. Only an approval given at this step counts: one written earlier (or left from before a pause) is cleared when the step starts |
 | Purge | Frame | deployment `rook-ceph-osd-N` to 0, OSD down, `safe-to-destroy` again, `osd purge` (sent once), deployment deleted |
 | Swap | person | removes the disk with that serial, inserts the new one (Non-RAID on a PERC/H310) |
-| New disk | Frame | exactly one disk must appear that was not on the host before the purge, is unknown to Ceph, whole and free, with 512- or 4096-byte sectors, SMART not failed |
-| **Approval 2** | admin | reads the new disk's serial on its label and retypes it: the wipe cannot be undone |
+| New disk | Frame | exactly one disk must appear that was not on the host when the checks ran, is not declared in the CephCluster, is unknown to Ceph, whole and free, with 512- or 4096-byte sectors, SMART not failed |
+| **Approval 2** | admin | reads the new disk's serial on its label and retypes it: the wipe cannot be undone. The console shows the disk's path, model and size, never its serial, until this approval is given |
 | Wipe | the node's agent | `wipefs -a`, 100 MiB of zeros, `sgdisk --zap-all`, on the by-id path, after its own checks |
 | Declare | Frame | JSON patch of the CephCluster: `test` that entry *i* of `spec.storage.devices` is the old disk, `replace` its name by the new one. Never an apply: nothing else of the spec is touched |
 | New OSD | Frame | waits until the host has as many OSDs up and in as before; restarts the Rook operator once after 10 min; pauses after 20 |
@@ -38,7 +38,8 @@ keep the old disk labelled for a week.
 - Ceph is `HEALTH_OK`, or `HEALTH_WARN` with only `BLUESTORE_SLOW_OP_ALERT`
   (osd.0's slow BlueStore operations, known). Anything else pauses.
 - Every PG is active+clean, every OSD up and in, no `noout`, `norebalance`,
-  `nobackfill`, `norecover`, `noup`, `nodown`, `noin` or `pause` flag.
+  `nobackfill`, `norecover`, `noup`, `nodown`, `noin`, `pause`, `pauserd`
+  or `pausewr` flag.
 - Every pool has `min_size <= size - 1`.
 - **ok-to-stop.** The dashboard has no `ok-to-stop` route. The replacement
   uses the three conditions just above instead, which are strictly
@@ -53,8 +54,9 @@ keep the old disk labelled for a week.
 - That disk's `/dev/disk/by-id/wwn-…` path is in the CephCluster's
   `spec.storage.devices`, once; and so is the disk of every other OSD of the
   host (otherwise a disk Rook did not get from the list could pass for the
-  new one). Per-node lists (`spec.storage.nodes`) and `useAllDevices` are
-  refused.
+  new one). Per-node lists (`spec.storage.nodes`), `useAllDevices`,
+  `deviceFilter` and `devicePathFilter` are refused: with them Rook could
+  take a new disk on its own.
 
 ### Pauses, resume, cancel
 
@@ -63,6 +65,10 @@ retries the step it paused in; it never sends again a purge whose outcome is
 unknown: if the purge was sent and the OSD still exists, check `ceph osd
 tree`, purge by hand if needed, then resume. A failed wipe is retried on
 resume under a new request id; the agent checks the disk again from scratch.
+
+A pause before the purge was sent (in the purge step itself) brings the
+replacement back to approval 1 on resume: the cluster moved, so the earlier
+approval no longer counts.
 
 **Cancel** before the purge marks the OSD in again (and scales its
 deployment back to 1 if it was stopped). After the purge it undoes nothing:
@@ -146,10 +152,13 @@ The node's agent (`internal/agent/diskwipe.go`) wipes only when its own
 `lsblk` of the same pass shows exactly one disk at that path, with that
 serial, whole and free (no filesystem or other signature, no partition, no
 mount, no md or ZFS membership), with no holder in `/sys/block/<disk>/holders`,
-and the path resolves to that disk. The request must be less than 20
-minutes old. Each request id is written to the host
+and the path resolves to that disk. The request must be less than 8
+minutes old: shorter than the 10 minutes the manager waits for an answer,
+so that a request it gave up on cannot be acted on later. The manager also
+withdraws its request when it pauses at the wipe or is cancelled. Each request id is written to the host
 (`/var/lib/frame-agent/disk-wipe-acted`) before the first command runs,
-and an id already there is never acted on again. The answer goes back in
+and an id already there is never acted on again (the answer then says a
+command may have run). The answer goes back in
 `frame.plume-labs.io/disk-wipe-result`, saying whether any command ran.
 
 A new disk with partitions or a signature is not wiped by the console: the

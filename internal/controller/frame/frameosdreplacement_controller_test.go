@@ -190,7 +190,7 @@ func newOSDHarness(t *testing.T) *osdHarness {
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-osd-8", Namespace: "rook-ceph"}, Spec: appsv1.DeploymentSpec{Replicas: &one}}
 	opdep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-operator", Namespace: "rook-ceph"}}
 	repl := &framev1beta1.FrameOSDReplacement{
-		ObjectMeta: metav1.ObjectMeta{Name: "osd-8", Namespace: "frame-system", UID: "0a1b2c3d-0000-0000-0000-000000000008", CreationTimestamp: at},
+		ObjectMeta: metav1.ObjectMeta{Name: "osd-8", Namespace: "frame-system", UID: "0a1b2c3d-0000-0000-0000-000000000008", CreationTimestamp: at, Generation: 1},
 		Spec:       framev1beta1.FrameOSDReplacementSpec{OSDID: 8, Serial: "Z2AW5NWA"},
 	}
 	h.c = fake.NewClientBuilder().WithScheme(scheme).
@@ -236,6 +236,7 @@ func (h *osdHarness) patchSpec(f func(*framev1beta1.FrameOSDReplacement)) {
 	o := h.get()
 	base := o.DeepCopy()
 	f(o)
+	o.Generation++ // what the apiserver does on a spec change; the fake client does not
 	if err := h.c.Patch(context.Background(), o, client.MergeFrom(base)); err != nil {
 		h.t.Fatal(err)
 	}
@@ -305,6 +306,10 @@ func (h *osdHarness) driveToPurgeApproval() {
 	h.advance(10 * time.Minute)
 	h.reconcile()
 	h.expectPhase(framev1beta1.OSDReplacementAwaitingPurgeApproval)
+	h.reconcile() // arms approval no. 1
+	if h.get().Status.ApprovalArmedGeneration == 0 {
+		h.t.Fatal("approval no. 1 not armed")
+	}
 }
 
 func TestOSDReplacementHappyPath(t *testing.T) {
@@ -367,6 +372,13 @@ func TestOSDReplacementHappyPath(t *testing.T) {
 	}
 	if n := h.node(); n.Annotations[framev1beta1.DiskWipeRequestAnnotation] != "" {
 		t.Fatal("wipe requested without approval")
+	}
+	h.reconcile() // arms approval no. 2
+	// The new disk's serial is read on its label, never on the screen.
+	if o := h.get(); strings.Contains(o.Status.Message, "SAS600NEW") || slices.ContainsFunc(o.Status.Events, func(e framev1beta1.OSDReplacementEvent) bool {
+		return strings.Contains(e.Message, "SAS600NEW")
+	}) {
+		t.Fatalf("the new disk's serial is shown before approval no. 2: %q / %+v", o.Status.Message, o.Status.Events)
 	}
 	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
 		o.Spec.WipeApproval = &framev1beta1.SerialApproval{Serial: "SAS600NEW"}
@@ -571,6 +583,7 @@ func TestOSDReplacementNewDiskGuards(t *testing.T) {
 		toDisk(h)
 		h.setDisks(r320Disks(false, true))
 		h.reconcile()
+		h.reconcile() // arms approval no. 2
 		h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
 			o.Spec.WipeApproval = &framev1beta1.SerialApproval{Serial: "nope"}
 		})
@@ -596,4 +609,90 @@ func TestOSDReplacementNewDiskGuards(t *testing.T) {
 			t.Fatal("declared without a wipe")
 		}
 	})
+}
+
+func TestOSDReplacementApprovalGivenInAdvanceDoesNotCount(t *testing.T) {
+	h := newOSDHarness(t)
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.PurgeApproval = &framev1beta1.SerialApproval{Serial: "Z2AW5NWA"}
+		o.Spec.WipeApproval = &framev1beta1.SerialApproval{Serial: "SAS600NEW"}
+	})
+	h.driveToPurgeApproval()
+	h.ceph.osd(8).Up = false
+	h.reconcile()
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementAwaitingPurgeApproval)
+	if o := h.get(); o.Spec.PurgeApproval != nil || h.ceph.count("purge") != 0 {
+		t.Fatalf("approval given in advance: spec %+v, calls %v", o.Spec.PurgeApproval, h.ceph.calls)
+	}
+	// Given now, it counts; the wipe approval written in advance does not.
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.PurgeApproval = &framev1beta1.SerialApproval{Serial: "Z2AW5NWA"}
+	})
+	h.reconcile()
+	h.reconcile()
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementAwaitingDisk)
+	h.advance(time.Minute)
+	h.setDisks(r320Disks(false, true))
+	h.reconcile()
+	h.reconcile()
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementAwaitingWipeApproval)
+	if o := h.get(); o.Spec.WipeApproval != nil || h.node().Annotations[framev1beta1.DiskWipeRequestAnnotation] != "" {
+		t.Fatal("wipe approval given in advance was not cleared")
+	}
+}
+
+func TestOSDReplacementPauseBeforePurgeAsksApprovalAgain(t *testing.T) {
+	h := newOSDHarness(t)
+	h.driveToPurgeApproval()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.PurgeApproval = &framev1beta1.SerialApproval{Serial: "Z2AW5NWA"}
+	})
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementPurging)
+	h.ceph.osd(8).Up, h.ceph.osd(8).In = false, true // someone marked it in
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementPaused)
+	h.ceph.osd(8).In = false
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Resume = 1 })
+	h.reconcile()
+	h.reconcile()
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementAwaitingPurgeApproval)
+	if o := h.get(); o.Spec.PurgeApproval != nil || h.ceph.count("purge") != 0 {
+		t.Fatalf("stale approval kept: spec %+v, calls %v", o.Spec.PurgeApproval, h.ceph.calls)
+	}
+}
+
+func TestOSDReplacementCancelWithdrawsTheWipeRequest(t *testing.T) {
+	h := newOSDHarness(t)
+	h.driveToPurgeApproval()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.PurgeApproval = &framev1beta1.SerialApproval{Serial: "Z2AW5NWA"}
+	})
+	h.reconcile()
+	h.ceph.osd(8).Up = false
+	h.reconcile()
+	h.reconcile()
+	h.advance(time.Minute)
+	h.setDisks(r320Disks(false, true))
+	h.reconcile()
+	h.reconcile()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.WipeApproval = &framev1beta1.SerialApproval{Serial: "SAS600NEW"}
+	})
+	h.reconcile()
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementWiping)
+	if h.node().Annotations[framev1beta1.DiskWipeRequestAnnotation] == "" {
+		t.Fatal("no wipe request")
+	}
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Cancel = true })
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementCancelled)
+	if h.node().Annotations[framev1beta1.DiskWipeRequestAnnotation] != "" {
+		t.Fatal("the wipe request outlived the cancel")
+	}
 }
