@@ -11,6 +11,7 @@ import { capacityLine, cephWarningReasons, formatIec, humanizeCapacity } from '@
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { AttentionBanner } from '@/components/storage/AttentionBanner'
 import { OsdTable } from '@/components/storage/OsdTable'
+import { LiveActiveFlags } from '@/components/CephActionsView'
 import { CapacityByClass, PoolsTable } from '@/components/storage/PoolsTable'
 import { pgLine } from '@/lib/storage-labels'
 import { cephCapacityEntry } from '@/lib/ceph-placement'
@@ -240,6 +241,7 @@ export function ClusterStorageView() {
       )}
 
       <LiveStates state={state} emptyLabel="Rook-Ceph is not installed on this cluster." />
+      {c && <LiveActiveFlags />}
 
       {c && (
         <>

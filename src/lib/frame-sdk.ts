@@ -37,6 +37,14 @@ import {
   type OSDReplacement,
 } from './osd-replacement'
 import {
+  crToCephAction,
+  newActionBody,
+  type CephAction,
+  type CephActionKind,
+  type FrameCephActionCR,
+  type SettableFlag,
+} from './ceph-action'
+import {
   buildWorkloadTree,
   type EditableKind,
   type NamespaceNode,
@@ -3971,6 +3979,43 @@ class OSDReplacementClient {
   }
 }
 
+/** FrameCephAction: one everyday Ceph gesture per object (Storage → Ceph actions). */
+class CephActionClient {
+  constructor(private readonly ns?: string) {}
+
+  private path(name?: string): string {
+    const base = frameListPath('framecephactions', this.ns)
+    return name ? `${base}/${encodeURIComponent(name)}` : base
+  }
+
+  watchPath(): string {
+    return this.path()
+  }
+
+  async list(): Promise<CephAction[]> {
+    const res = await k8sFetch<ListResponse<FrameCephActionCR>>(this.path())
+    return (res.items ?? []).map(crToCephAction).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  async create(action: CephActionKind, osd: number | null, flag: SettableFlag | '', minutes: number): Promise<void> {
+    const what = action === 'SetFlag' ? `${flag} for ${minutes} min` : `osd.${osd}`
+    await k8sFetch<unknown>(this.path(), {
+      action: boundedActionLabel(`ceph ${action} ${what}`),
+      method: 'POST',
+      body: newActionBody(frameNs(this.ns), action, osd, flag, minutes, new Date()),
+    })
+  }
+
+  async release(a: CephAction): Promise<void> {
+    await k8sFetch<unknown>(this.path(a.name), {
+      action: boundedActionLabel(`release ${a.flag}`),
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec: { release: true } },
+    })
+  }
+}
+
 /** A FrameDiskClaim CR as the apiserver returns it. */
 export interface FrameDiskClaimCR {
   metadata: { name: string; namespace: string }
@@ -4317,6 +4362,7 @@ export class FrameClient {
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
   public readonly osdReplacements: OSDReplacementClient
+  public readonly cephActions: CephActionClient
   public readonly databases: DatabaseClient
   public readonly caches: CacheClient
 
@@ -4339,6 +4385,7 @@ export class FrameClient {
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
     this.osdReplacements = new OSDReplacementClient(opts.namespace)
+    this.cephActions = new CephActionClient(opts.namespace)
     this.databases = new DatabaseClient()
     this.caches = new CacheClient()
 

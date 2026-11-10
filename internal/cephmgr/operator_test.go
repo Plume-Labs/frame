@@ -79,7 +79,7 @@ func newOpDashboard(t *testing.T) *opDashboard {
 			_, _ = w.Write([]byte(`{"safe_to_destroy":[],"active":[],"missing_stats":[],"stored_pgs":[7],"is_safe_to_destroy":false}`))
 		case "GET /api/pool":
 			_, _ = w.Write([]byte(`[{"pool_name":"replicapool","size":3,"min_size":2,"crush_rule":"hote_x3"}]`))
-		case "PUT /api/osd/8/mark", "POST /api/osd/8/purge":
+		case "PUT /api/osd/8/mark", "POST /api/osd/8/purge", "POST /api/osd/8/scrub", "PUT /api/osd/flags":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`null`))
 		default:
@@ -127,6 +127,13 @@ func TestOperatorSendsExactlyTheListedRequests(t *testing.T) {
 		{func() error { return op.MarkOut(ctx, 8) }, `PUT /api/osd/8/mark application/vnd.ceph.api.v1.0+json {"action":"out"}`},
 		{func() error { return op.MarkIn(ctx, 8) }, `PUT /api/osd/8/mark application/vnd.ceph.api.v1.0+json {"action":"in"}`},
 		{func() error { return op.Purge(ctx, 8) }, `POST /api/osd/8/purge application/vnd.ceph.api.v1.0+json {}`},
+		{func() error { return op.Scrub(ctx, 8, true) }, `POST /api/osd/8/scrub?deep=true application/vnd.ceph.api.v1.0+json {}`},
+		{func() error { return op.Scrub(ctx, 8, false) }, `POST /api/osd/8/scrub?deep=false application/vnd.ceph.api.v1.0+json {}`},
+		// The list read, with only this flag added or removed.
+		{func() error { _, err := op.SetFlag(ctx, "noscrub", true); return err },
+			`PUT /api/osd/flags application/vnd.ceph.api.v1.0+json {"flags":["sortbitwise","recovery_deletes","noout","noscrub"]}`},
+		{func() error { _, err := op.SetFlag(ctx, "noout", false); return err },
+			`PUT /api/osd/flags application/vnd.ceph.api.v1.0+json {"flags":["sortbitwise","recovery_deletes"]}`},
 	}
 	for _, tc := range cases {
 		if err := tc.call(); err != nil {
@@ -230,6 +237,28 @@ func TestOKToStopVerdict(t *testing.T) {
 	} {
 		if ok, _ := OKToStopVerdict(tc.st, tc.osds, tc.pools); ok {
 			t.Fatalf("%s: accepted", name)
+		}
+	}
+}
+
+func TestOperatorSetFlagSendsNothingWhenAlreadyThereOrNotSettable(t *testing.T) {
+	d := newOpDashboard(t)
+	op := d.operator(t)
+	ctx := context.Background()
+	was, err := op.SetFlag(ctx, "noout", true)
+	if err != nil || !was {
+		t.Fatalf("noout already set: was %t, err %v", was, err)
+	}
+	for _, f := range []string{"pause", "noup", "sortbitwise", "noout,pause"} {
+		if _, err := op.SetFlag(ctx, f, true); err == nil {
+			t.Fatalf("flag %q accepted", f)
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, r := range d.reqs {
+		if strings.HasPrefix(r, "PUT") {
+			t.Fatalf("sent %q", r)
 		}
 	}
 }

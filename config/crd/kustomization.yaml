@@ -16,6 +16,7 @@ resources:
 - bases/frame.plume-labs.io_framestorages.yaml
 - bases/frame.plume-labs.io_framediskclaims.yaml
 - bases/frame.plume-labs.io_frameosdreplacements.yaml
+- bases/frame.plume-labs.io_framecephactions.yaml
 - bases/frame.plume-labs.io_framealerts.yaml
 - bases/frame.plume-labs.io_framealertsubscriptions.yaml
 - bases/frame.plume-labs.io_storagehealthpolicies.yaml

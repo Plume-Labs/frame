@@ -344,6 +344,45 @@ func (o *Operator) Purge(ctx context.Context, id int32) error {
 	return o.c.send(ctx, http.MethodPost, p, "", "1.0", []byte("{}"), nil)
 }
 
+// Scrub sends `ceph osd scrub <id>`, or `ceph osd deep-scrub <id>`.
+func (o *Operator) Scrub(ctx context.Context, id int32, deep bool) error {
+	p, err := osdPath(id, "scrub")
+	if err != nil {
+		return err
+	}
+	return o.c.send(ctx, http.MethodPost, p, "deep="+strconv.FormatBool(deep), "1.0", []byte("{}"), nil)
+}
+
+// SettableFlags are the cluster flags the console sets and unsets, each
+// for a while (FrameCephAction). pause, noup, nodown, noin and the others
+// are left to the command line.
+var SettableFlags = []string{"noout", "norebalance", "nobackfill", "norecover", "noscrub", "nodeep-scrub"}
+
+// SetFlag sets (on) or unsets one cluster flag. The dashboard's PUT
+// /api/osd/flags takes the whole list and sends `osd set`/`osd unset` for
+// what differs from the cluster's: the list sent is the one just read with
+// only this flag added or removed, so nothing else changes. It returns
+// whether the flag was set before.
+func (o *Operator) SetFlag(ctx context.Context, flag string, on bool) (bool, error) {
+	if !slices.Contains(SettableFlags, flag) {
+		return false, fmt.Errorf("refusing flag %q", flag)
+	}
+	cur, err := o.Flags(ctx)
+	if err != nil {
+		return false, err
+	}
+	was := slices.Contains(cur, flag)
+	if was == on {
+		return was, nil
+	}
+	next := slices.DeleteFunc(slices.Clone(cur), func(f string) bool { return f == flag })
+	if on {
+		next = append(next, flag)
+	}
+	body, _ := json.Marshal(map[string][]string{"flags": next})
+	return was, o.c.send(ctx, http.MethodPut, "/api/osd/flags", "", "1.0", body, nil)
+}
+
 // OKToStopVerdict is the replacement's stand-in for `ceph osd ok-to-stop`,
 // which the dashboard does not expose. It is stricter than Ceph's: it
 // answers yes only when every PG is active+clean, every OSD is up and in,

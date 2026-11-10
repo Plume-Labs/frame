@@ -1,0 +1,170 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: framecephactions.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: FrameCephAction
+    listKind: FrameCephActionList
+    plural: framecephactions
+    shortNames:
+    - fca
+    singular: framecephaction
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.action
+      name: Action
+      type: string
+    - jsonPath: .spec.osdID
+      name: OSD
+      type: integer
+    - jsonPath: .spec.flag
+      name: Flag
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.expiresAt
+      name: Expires
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameCephAction is the Schema for the framecephactions API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              FrameCephActionSpec is one everyday Ceph gesture from the console: mark
+              an OSD in or out, restart it, scrub or deep-scrub it, or set a cluster
+              flag for a while. Every gesture is reversible and none destroys data;
+              the manager sends it through the Ceph operator account
+              (docs/ceph-actions.md). Like FrameOSDReplacement it is a one-shot object:
+              doing it again means a new one.
+            properties:
+              action:
+                description: Action is the gesture.
+                enum:
+                - OSDIn
+                - OSDOut
+                - OSDRestart
+                - OSDScrub
+                - OSDDeepScrub
+                - SetFlag
+                type: string
+              durationMinutes:
+                description: |-
+                  DurationMinutes is how long the flag stays set (SetFlag only; 120
+                  when left out).
+                format: int32
+                maximum: 1440
+                minimum: 5
+                type: integer
+              flag:
+                description: |-
+                  Flag is the cluster flag set by SetFlag. It is unset by the manager
+                  when the duration has passed, or on release, unless another active
+                  FrameCephAction still holds it, or it was already set before this one.
+                enum:
+                - noout
+                - norebalance
+                - nobackfill
+                - norecover
+                - noscrub
+                - nodeep-scrub
+                type: string
+              osdID:
+                description: OSDID is the OSD acted on (every action but SetFlag).
+                format: int32
+                maximum: 65535
+                minimum: 0
+                type: integer
+              release:
+                description: |-
+                  Release unsets a SetFlag's flag before its time (same rule as at the
+                  end of the duration).
+                type: boolean
+            required:
+            - action
+            type: object
+            x-kubernetes-validations:
+            - message: the gesture is fixed at creation; only release may change
+              rule: self.action == oldSelf.action && has(self.osdID) == has(oldSelf.osdID)
+                && (!has(self.osdID) || self.osdID == oldSelf.osdID) && has(self.flag)
+                == has(oldSelf.flag) && (!has(self.flag) || self.flag == oldSelf.flag)
+                && has(self.durationMinutes) == has(oldSelf.durationMinutes) && (!has(self.durationMinutes)
+                || self.durationMinutes == oldSelf.durationMinutes)
+            - message: SetFlag takes a flag (and a duration); every other action takes
+                an osdID
+              rule: 'self.action == ''SetFlag'' ? (has(self.flag) && !has(self.osdID))
+                : (has(self.osdID) && !has(self.flag) && !has(self.durationMinutes))'
+            - message: release cannot be taken back
+              rule: '!has(oldSelf.release) || !oldSelf.release || (has(self.release)
+                && self.release)'
+          status:
+            description: FrameCephActionStatus is what the manager did.
+            properties:
+              doneAt:
+                description: DoneAt is when the gesture was confirmed.
+                format: date-time
+                type: string
+              expiresAt:
+                description: ExpiresAt is when a SetFlag's flag is unset.
+                format: date-time
+                type: string
+              flagWasSet:
+                description: |-
+                  FlagWasSet: the flag was already set when this SetFlag started; it is
+                  then left set at the end (it was not this object's).
+                type: boolean
+              message:
+                maxLength: 1024
+                type: string
+              phase:
+                enum:
+                - Pending
+                - Active
+                - Done
+                - Refused
+                - Failed
+                type: string
+              sentAt:
+                description: |-
+                  SentAt is written before the gesture is sent: once it is there the
+                  gesture is never sent again by this object.
+                format: date-time
+                type: string
+              unsetSentAt:
+                description: UnsetSentAt is written before the flag is unset.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

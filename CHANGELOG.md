@@ -6,6 +6,17 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Storage → Ceph actions
+
+- `FrameCephAction`: one reversible Ceph gesture per object — mark an OSD in
+  or out, restart it, scrub or deep-scrub it, or set `noout`,
+  `norebalance`, `nobackfill`, `norecover`, `noscrub` or `nodeep-scrub` for
+  5 min to 24 h (unset by the manager at the end, or on release; a flag set
+  by hand before is left set). Out and restart are refused unless every PG
+  is active+clean and every OSD up and in. Each gesture is sent once.
+  Admin tier writes, viewer reads; a banner shows active flags on the Ceph
+  screens. docs/ceph-actions.md.
+
 ### Added — Storage → Replace OSD
 
 - `FrameOSDReplacement` replaces one OSD's disk end to end, one OSD at a

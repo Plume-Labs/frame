@@ -98,6 +98,11 @@ What the manager sends with this account is fixed in
 | `GET /api/pool` | — | pool read |
 | `PUT /api/osd/<id>/mark` `{"action":"out"\|"in"}` | `osd out` / `osd in` | osd update |
 | `POST /api/osd/<id>/purge` | `osd purge-actual` | osd create |
+| `POST /api/osd/<id>/scrub?deep=<bool>` | `osd scrub` / `osd deep-scrub` | osd update |
+| `PUT /api/osd/flags` `{"flags":[…]}` | `osd set` / `osd unset` of one flag of a fixed list | osd update |
+
+The last two serve the everyday gestures (docs/ceph-actions.md), with the
+same account.
 
 The id is an integer rendered by the code; no string from the cluster or a
 CR reaches a URL. The role below holds `read`, `update` and `create` on the

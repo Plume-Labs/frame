@@ -346,20 +346,24 @@ func hostOSDs(osds []cephmgr.OSDState, host string) []cephmgr.OSDState {
 	return out
 }
 
+// defaultRookName is Rook's default: the namespace of the operator and
+// of the OSD deployments, and the CephCluster's name.
+const defaultRookName = "rook-ceph"
+
 var cephClusterGVK = schema.GroupVersionKind{Group: "ceph.rook.io", Version: "v1", Kind: "CephCluster"}
 
 func (r *FrameOSDReplacementReconciler) rookNamespace() string {
 	if r.RookNamespace != "" {
 		return r.RookNamespace
 	}
-	return "rook-ceph"
+	return defaultRookName
 }
 
 func (r *FrameOSDReplacementReconciler) clusterName() string {
 	if r.CephClusterName != "" {
 		return r.CephClusterName
 	}
-	return "rook-ceph"
+	return defaultRookName
 }
 
 // deviceNames reads the CephCluster's spec.storage.devices names. It refuses

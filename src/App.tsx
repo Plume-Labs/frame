@@ -32,6 +32,7 @@ const DatabasesView = lazy(() => import('@/components/DatabasesView').then((m) =
 const CachesView = lazy(() => import('@/components/CachesView').then((m) => ({ default: m.CachesView })))
 
 const StorageLoadView = lazy(() => import('@/components/StorageLoadView').then((m) => ({ default: m.StorageLoadView })))
+const CephActionsView = lazy(() => import('@/components/CephActionsView').then((m) => ({ default: m.CephActionsView })))
 const OSDReplacementView = lazy(() => import('@/components/OSDReplacementView').then((m) => ({ default: m.OSDReplacementView })))
 const StorageHealthView = lazy(() => import('@/components/StorageHealthView').then((m) => ({ default: m.StorageHealthView })))
 const MachineDisksPanel = lazy(() => import('@/components/MachineDisksPanel').then((m) => ({ default: m.MachineDisksPanel })))
@@ -142,6 +143,7 @@ type TabId =
   | 'storage-entries'
   | 'storage-load'
   | 'storage-osd-replacement'
+  | 'storage-ceph-actions'
   | 'disks'
   | 'databases'
   | 'caches'
@@ -326,6 +328,7 @@ const NAV: NavGroup[] = [
           { id: 'storage', label: 'Ceph' },
           { id: 'storage-entries', label: 'Entries' },
           { id: 'storage-load', label: 'Volumes' },
+          { id: 'storage-ceph-actions', label: 'Ceph actions' },
           { id: 'storage-osd-replacement', label: 'Replace OSD' },
           { id: 'disks', label: 'Disks' },
           { id: 'burst-buffer', label: 'Burst Buffer' },
@@ -602,6 +605,8 @@ function App() {
         return <StorageLoadView />
       case 'storage-osd-replacement':
         return <OSDReplacementView />
+      case 'storage-ceph-actions':
+        return <CephActionsView />
       case 'disks':
         return <MachineDisksPanel />
       case 'databases':

@@ -175,6 +175,7 @@ rules:
   resources:
   - framealerts/status
   - framealertsubscriptions/status
+  - framecephactions/status
   - framediskclaims/status
   - frameinstalls/status
   - framejobs/status
@@ -194,6 +195,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framealertsubscriptions
+  - framecephactions
   - frameusers
   - networkhealthpolicies
   - storagehealthpolicies

@@ -140,7 +140,12 @@ serial, which the console never shows before approval no. 2, retyped from the
 label. An approval written before its step is cleared when the step starts
 and does not count. **A path by which the manager purges an OSD, or the agent
 wipes a disk, without the matching serial retyped at its step is a
-vulnerability.**
+vulnerability.** The same account sends the everyday gestures of
+`FrameCephAction` (in, out, restart, scrub, a flag for a while): out and
+restart only when every PG is active+clean and every OSD up and in, and a
+flag is unset at the end of its duration; **an out or a restart sent while
+that check fails, or a flag left set past its end by Frame, is a bug to
+report.**
 
 Note also that **enabling KSM is a security trade-off, not just a performance
 one**: merged pages make writes take a measurable copy-on-write fault, which
