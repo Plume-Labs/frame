@@ -34,7 +34,10 @@ host is degraded. It also refuses:
   effect yet), so two of them never overlap.
 
 While an OSD replacement is running (any phase but Succeeded, Cancelled or
-Failed, Paused included), every gesture but a scrub is refused.
+Failed, Paused included), every gesture but a scrub is refused. The other
+way round, a replacement waits in Checking while an in, out or restart has
+been sent and its outcome is not known. A sent out or restart that ended
+Failed holds back the next one for 10 minutes too (it may have acted).
 
 Each gesture is sent **once**: `status.sentAt` is written before it is sent,
 and an object with `sentAt` never sends it again. A gesture whose answer is
@@ -58,6 +61,13 @@ others (`pause`, `noup`, `nodown`, `noin`…) are left to the command line.
   refused while the first is active.
 - Deleting an action that holds a flag unsets it first (a finalizer,
   `frame.plume-labs.io/ceph-action-flag`, keeps the object until then).
+  If Ceph keeps refusing the unset (or the operator account is not
+  usable), the object stays Terminating and Frame retries; to end it by
+  hand, `ceph osd unset F`, then
+  `kubectl -n frame-system patch fca NAME --type=json -p '[{"op":"remove","path":"/metadata/finalizers"}]'`.
+  An action already holding a flag when this version was deployed has no
+  finalizer: release it rather than delete it.
+- `release` applies to SetFlag only (the apiserver refuses it elsewhere).
 - A flag Ceph has not unset at its end shows in red on the banner: Frame
   keeps retrying, and `ceph osd unset F` by hand ends it too.
 - The dashboard's `PUT /api/osd/flags` takes the whole list: Frame sends the

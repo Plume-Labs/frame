@@ -29,6 +29,7 @@ import (
 //
 // +kubebuilder:validation:XValidation:rule="self.action == oldSelf.action && has(self.osdID) == has(oldSelf.osdID) && (!has(self.osdID) || self.osdID == oldSelf.osdID) && has(self.flag) == has(oldSelf.flag) && (!has(self.flag) || self.flag == oldSelf.flag) && has(self.durationMinutes) == has(oldSelf.durationMinutes) && (!has(self.durationMinutes) || self.durationMinutes == oldSelf.durationMinutes)",message="the gesture is fixed at creation; only release may change"
 // +kubebuilder:validation:XValidation:rule="self.action == 'SetFlag' ? (has(self.flag) && !has(self.osdID)) : (has(self.osdID) && !has(self.flag) && !has(self.durationMinutes))",message="SetFlag takes a flag (and a duration); every other action takes an osdID"
+// +kubebuilder:validation:XValidation:rule="!has(self.release) || !self.release || self.action == 'SetFlag'",message="release applies to SetFlag only"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.release) || !oldSelf.release || (has(self.release) && self.release)",message="release cannot be taken back"
 type FrameCephActionSpec struct {
 	// Action is the gesture.

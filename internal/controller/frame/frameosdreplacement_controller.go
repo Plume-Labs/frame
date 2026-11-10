@@ -479,6 +479,16 @@ func (r *FrameOSDReplacementReconciler) notMyTurn(ctx context.Context, o *framev
 			return fmt.Sprintf("waiting: replacement %s/%s (osd.%d) is in progress; one at a time", p.Namespace, p.Name, p.Spec.OSDID), nil
 		}
 	}
+	// A Ceph action sent from Storage → Ceph actions (out, in, restart)
+	// whose outcome is not known yet: the checks would read a cluster
+	// about to change.
+	var acts framev1beta1.FrameCephActionList
+	if err := r.List(ctx, &acts); err != nil {
+		return "", err
+	}
+	if what := cephGestureInFlight(acts.Items); what != "" {
+		return "waiting: the Ceph action " + what + " is in progress", nil
+	}
 	return "", nil
 }
 

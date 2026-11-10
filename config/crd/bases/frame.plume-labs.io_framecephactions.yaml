@@ -118,6 +118,8 @@ spec:
                 an osdID
               rule: 'self.action == ''SetFlag'' ? (has(self.flag) && !has(self.osdID))
                 : (has(self.osdID) && !has(self.flag) && !has(self.durationMinutes))'
+            - message: release applies to SetFlag only
+              rule: '!has(self.release) || !self.release || self.action == ''SetFlag'''
             - message: release cannot be taken back
               rule: '!has(oldSelf.release) || !oldSelf.release || (has(self.release)
                 && self.release)'

@@ -92,6 +92,7 @@ var _ = Describe("FrameCephAction and FrameOSDReplacement v1beta1 schema", func(
 		Entry("refuses an out without an OSD", "out-no-osd", framev1beta1.FrameCephActionSpec{Action: "OSDOut"}, "every other action takes an osdID"),
 		Entry("refuses a flag with an OSD", "flag-osd", framev1beta1.FrameCephActionSpec{Action: "SetFlag", Flag: "noout", OSDID: osd(8)}, "every other action takes an osdID"),
 		Entry("refuses a scrub with a duration", "scrub-duration", framev1beta1.FrameCephActionSpec{Action: "OSDScrub", OSDID: osd(8), DurationMinutes: 30}, "every other action takes an osdID"),
+		Entry("refuses release on anything but a flag", "release-in", framev1beta1.FrameCephActionSpec{Action: "OSDIn", OSDID: osd(8), Release: true}, "release applies to SetFlag only"),
 		Entry("refuses a flag left to the command line", "flag-pause", framev1beta1.FrameCephActionSpec{Action: "SetFlag", Flag: "pause"}, "Unsupported value"),
 	)
 

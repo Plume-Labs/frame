@@ -227,7 +227,7 @@ func (s *cephActionStep) run(ctx context.Context) (ctrl.Result, error) {
 		return s.wait(fmt.Sprintf("the Ceph operator account is not usable: %v", err))
 	}
 	s.ceph = op
-	if a.Status.SentAt == nil && !a.Spec.Release {
+	if a.Status.SentAt == nil && (a.Spec.Action != framev1beta1.CephActionSetFlag || !a.Spec.Release) {
 		why, err := s.othersRefusal(ctx)
 		if err != nil {
 			return s.wait(err.Error())
@@ -319,11 +319,46 @@ func (s *cephActionStep) othersRefusal(ctx context.Context) (string, error) {
 		switch {
 		case !cephActionTerminal(o.Status.Phase):
 			return fmt.Sprintf("%s/%s (%s) is still in progress", o.Namespace, o.Name, o.Spec.Action), nil
-		case o.Status.Phase == framev1beta1.CephActionDone && o.Status.DoneAt != nil && since(o.Status.DoneAt, now) < cephActionSettle:
+		case settleFrom(o) != nil && since(settleFrom(o), now) < cephActionSettle:
 			return fmt.Sprintf("%s/%s (%s) ended less than %s ago: let the cluster settle", o.Namespace, o.Name, o.Spec.Action, cephActionSettle), nil
 		}
 	}
 	return "", nil
+}
+
+// settleFrom is when a finished out or restart stopped being in flight:
+// its doneAt, or for one that failed after it was sent, its sentAt (it may
+// have acted all the same). Nil for one never sent or refused.
+func settleFrom(o *framev1beta1.FrameCephAction) *metav1.Time {
+	switch {
+	case o.Status.Phase == framev1beta1.CephActionDone && o.Status.DoneAt != nil:
+		return o.Status.DoneAt
+	case o.Status.Phase == framev1beta1.CephActionFailed && o.Status.SentAt != nil:
+		return o.Status.SentAt
+	}
+	return nil
+}
+
+// cephGestureInFlight names a sent OSD gesture (in, out, restart) whose
+// outcome is not known yet, or "": the OSD replacement waits for it.
+func cephGestureInFlight(items []framev1beta1.FrameCephAction) string {
+	for i := range items {
+		o := &items[i]
+		switch o.Spec.Action {
+		case framev1beta1.CephActionOSDIn, framev1beta1.CephActionOSDOut, framev1beta1.CephActionOSDRestart:
+			if o.Status.SentAt != nil && !cephActionTerminal(o.Status.Phase) {
+				return fmt.Sprintf("%s/%s (%s osd.%d)", o.Namespace, o.Name, o.Spec.Action, ptrOr(o.Spec.OSDID))
+			}
+		}
+	}
+	return ""
+}
+
+func ptrOr(p *int32) int32 {
+	if p == nil {
+		return -1
+	}
+	return *p
 }
 
 func orUnknown(s string) string {
@@ -421,6 +456,9 @@ func (s *cephActionStep) restart(ctx context.Context) (ctrl.Result, error) {
 	var d appsv1.Deployment
 	if err := s.r.Get(ctx, key, &d); err != nil {
 		if apierrors.IsNotFound(err) {
+			if a.Status.SentAt != nil {
+				return s.end(framev1beta1.CephActionFailed, fmt.Sprintf("%s disappeared after the restart was sent: check osd.%d with `ceph osd tree`", key.Name, id))
+			}
 			return s.end(framev1beta1.CephActionRefused, fmt.Sprintf("no deployment %s", key.Name))
 		}
 		return s.wait(fmt.Sprintf("reading %s: %v", key.Name, err))

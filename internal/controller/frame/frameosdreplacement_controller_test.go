@@ -498,6 +498,27 @@ func TestOSDReplacementOneAtATime(t *testing.T) {
 	}
 }
 
+func TestOSDReplacementWaitsForACephActionInFlight(t *testing.T) {
+	h := newOSDHarness(t)
+	at := metav1.NewTime(h.now)
+	id := int32(1)
+	act := &framev1beta1.FrameCephAction{
+		ObjectMeta: metav1.ObjectMeta{Name: "restart-1", Namespace: "frame-system"},
+		Spec:       framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDRestart, OSDID: &id},
+		Status:     framev1beta1.FrameCephActionStatus{Phase: framev1beta1.CephActionPending, SentAt: &at},
+	}
+	if err := h.c.Create(context.Background(), act); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile()
+	if p := h.get(); p.Status.Phase != framev1beta1.OSDReplacementChecking || !strings.Contains(p.Status.Message, "restart-1") {
+		t.Fatalf("phase %s message %s", p.Status.Phase, p.Status.Message)
+	}
+	if len(h.ceph.calls) != 0 {
+		t.Fatal("acted while a Ceph action is in flight")
+	}
+}
+
 func TestOSDReplacementPurgeNeverResent(t *testing.T) {
 	h := newOSDHarness(t)
 	h.driveToPurgeApproval()

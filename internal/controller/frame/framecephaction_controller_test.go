@@ -466,3 +466,28 @@ func TestCephActionFlagSetByOtherMeanwhileIsLeftSet(t *testing.T) {
 		t.Fatal("unset a flag someone else set")
 	}
 }
+
+func TestCephActionFailedRestartStillHoldsBackAnOut(t *testing.T) {
+	ctx := context.Background()
+	h := newActHarness(t)
+	k := h.create("restart", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDRestart, OSDID: osdRef(8)})
+	h.reconcile(k)
+	// Rook rewrites the deployment: the restart ends Failed, yet it acted.
+	var d appsv1.Deployment
+	if err := h.c.Get(ctx, types.NamespacedName{Namespace: "rook-ceph", Name: "rook-ceph-osd-8"}, &d); err != nil {
+		t.Fatal(err)
+	}
+	d.Spec.Template.Annotations = nil
+	if err := h.c.Update(ctx, &d); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile(k)
+	h.expect(k, framev1beta1.CephActionFailed)
+	h.now = h.now.Add(time.Minute)
+	ko := h.create("out", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDOut, OSDID: osdRef(2)})
+	h.reconcile(ko)
+	h.expect(ko, framev1beta1.CephActionRefused)
+	if slices.Contains(h.ceph.calls, "out 2") {
+		t.Fatal("out sent right after a failed restart")
+	}
+}
