@@ -63,8 +63,11 @@ keep the old disk labelled for a week.
 A refusal pauses the replacement (phase `Paused`) with its reason. **Resume**
 retries the step it paused in; it never sends again a purge whose outcome is
 unknown: if the purge was sent and the OSD still exists, check `ceph osd
-tree`, purge by hand if needed, then resume. A failed wipe is retried on
-resume under a new request id; the agent checks the disk again from scratch.
+tree`, purge by hand if needed, then resume. A wipe that failed, or got
+no answer, goes back to approval 2 on resume: the serial is retyped, and the
+new attempt is a new request id; the agent checks the disk again from
+scratch. After a pause with no answer, inspect the disk first: the agent may
+have been mid-wipe, and its answer, read by request id, still comes.
 
 A pause before the purge was sent (in the purge step itself) brings the
 replacement back to approval 1 on resume: the cluster moved, so the earlier
@@ -73,7 +76,8 @@ approval no longer counts.
 **Cancel** before the purge marks the OSD in again (and scales its
 deployment back to 1 if it was stopped). After the purge it undoes nothing:
 the replacement stops and says where things stand (purged, new disk,
-wiped, declared), to finish by hand with the fiche.
+wiped — from the agent's answer when it came after the request, "outcome
+unknown" when there is none — declared), to finish by hand with the fiche.
 
 ## The operator account (to create before the first use)
 
@@ -152,9 +156,11 @@ The node's agent (`internal/agent/diskwipe.go`) wipes only when its own
 `lsblk` of the same pass shows exactly one disk at that path, with that
 serial, whole and free (no filesystem or other signature, no partition, no
 mount, no md or ZFS membership), with no holder in `/sys/block/<disk>/holders`,
-and the path resolves to that disk. The request must be less than 8
-minutes old: shorter than the 10 minutes the manager waits for an answer,
-so that a request it gave up on cannot be acted on later. The manager also
+and the path resolves to that disk. The request must be less than 5
+minutes old (and at most 2 minutes in the future, for clock skew): well
+short of the 10 minutes the manager waits for an answer, so that a request
+it gave up on cannot be acted on later. The answer is written even if the
+request was withdrawn meanwhile: it is the only record of what ran. The manager also
 withdraws its request when it pauses at the wipe or is cancelled. Each request id is written to the host
 (`/var/lib/frame-agent/disk-wipe-acted`) before the first command runs,
 and an id already there is never acted on again (the answer then says a
@@ -184,3 +190,6 @@ replacement pauses and says to clear it by hand (fiche B3.4), then resume.
 - Grown-defect counts are not read: look at SMART in iDRAC before approval 2
   if in doubt. A disk whose SMART self-assessment fails is refused.
 - Whoever gave an approval is in the FrameTask trail, not in the object.
+- The rule refusing approvals at creation (CEL with `optionalOldSelf`)
+  needs Kubernetes 1.30 or later; on an older API server the manager still
+  clears any approval written before its step.

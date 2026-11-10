@@ -512,7 +512,8 @@ func TestOSDReplacementPurgeNeverResent(t *testing.T) {
 	// A resume while the OSD still exists does not send the purge again.
 	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Resume = 1 })
 	h.advance(5 * time.Minute)
-	h.reconcile()
+	h.reconcile() // resumed
+	h.reconcile() // the step
 	h.expectPhase(framev1beta1.OSDReplacementPaused)
 	if h.ceph.count("purge") != 1 {
 		t.Fatalf("purge sent %d times", h.ceph.count("purge"))
@@ -520,6 +521,7 @@ func TestOSDReplacementPurgeNeverResent(t *testing.T) {
 	// Purged by hand, then resumed: the replacement goes on.
 	h.ceph.osds = slices.DeleteFunc(h.ceph.osds, func(o cephmgr.OSDState) bool { return o.ID == 8 })
 	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Resume = 2 })
+	h.reconcile()
 	h.reconcile()
 	h.expectPhase(framev1beta1.OSDReplacementAwaitingDisk)
 	if h.ceph.count("purge") != 1 {
@@ -597,11 +599,24 @@ func TestOSDReplacementNewDiskGuards(t *testing.T) {
 		h.agentAnswers(false, false, "refused: held")
 		h.reconcile()
 		h.expectPhase(framev1beta1.OSDReplacementPaused)
+		if h.node().Annotations[framev1beta1.DiskWipeRequestAnnotation] != "" {
+			t.Fatal("the refused request was not withdrawn")
+		}
 		first := h.get().Status.WipeRequestID
-		// Resume: a new request id.
+		// Resume: back to approval no. 2; the old approval does not count.
 		h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Resume = 1 })
 		h.reconcile()
+		h.reconcile() // arms
+		h.expectPhase(framev1beta1.OSDReplacementAwaitingWipeApproval)
+		if h.get().Spec.WipeApproval != nil {
+			t.Fatal("the approval given before the pause was kept")
+		}
+		h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+			o.Spec.WipeApproval = &framev1beta1.SerialApproval{Serial: "SAS600NEW"}
+		})
 		h.reconcile()
+		h.reconcile()
+		// A new request id.
 		if id := h.get().Status.WipeRequestID; id == first || id == "" {
 			t.Fatalf("request id after resume = %q (first %q)", id, first)
 		}
@@ -694,5 +709,47 @@ func TestOSDReplacementCancelWithdrawsTheWipeRequest(t *testing.T) {
 	h.expectPhase(framev1beta1.OSDReplacementCancelled)
 	if h.node().Annotations[framev1beta1.DiskWipeRequestAnnotation] != "" {
 		t.Fatal("the wipe request outlived the cancel")
+	}
+}
+
+func TestOSDReplacementCancelWhenTheOSDIsGone(t *testing.T) {
+	h := newOSDHarness(t)
+	h.driveToPurgeApproval()
+	h.ceph.osds = slices.DeleteFunc(h.ceph.osds, func(o cephmgr.OSDState) bool { return o.ID == 8 })
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Cancel = true })
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementCancelled)
+	if h.ceph.count("in") != 0 || !strings.Contains(h.get().Status.Message, "no longer exists") {
+		t.Fatalf("calls %v, message %q", h.ceph.calls, h.get().Status.Message)
+	}
+}
+
+func TestOSDReplacementCancelReportsALateWipeAnswer(t *testing.T) {
+	h := newOSDHarness(t)
+	h.driveToPurgeApproval()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.PurgeApproval = &framev1beta1.SerialApproval{Serial: "Z2AW5NWA"}
+	})
+	h.reconcile()
+	h.ceph.osd(8).Up = false
+	h.reconcile()
+	h.reconcile()
+	h.advance(time.Minute)
+	h.setDisks(r320Disks(false, true))
+	h.reconcile()
+	h.reconcile()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.WipeApproval = &framev1beta1.SerialApproval{Serial: "SAS600NEW"}
+	})
+	h.reconcile()
+	h.reconcile()
+	// The agent wiped and answered; the cancel comes before the controller
+	// read the answer.
+	h.agentAnswers(true, true, "wiped")
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Cancel = true })
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementCancelled)
+	if msg := h.get().Status.Message; !strings.Contains(msg, "wiped (the agent's answer came after the request)") {
+		t.Fatalf("message %q", msg)
 	}
 }

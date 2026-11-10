@@ -29,6 +29,8 @@ export interface ReplacementEvent {
 
 export interface OSDReplacement {
   name: string
+  /** The version the screen shows: an approval is sent conditional on it. */
+  resourceVersion: string
   namespace: string
   createdAt: string
   osdID: number
@@ -55,7 +57,7 @@ export interface OSDReplacement {
 
 /** The CR as the apiserver returns it. */
 export interface FrameOSDReplacementCR {
-  metadata: { name: string; namespace: string; creationTimestamp?: string }
+  metadata: { name: string; namespace: string; creationTimestamp?: string; resourceVersion?: string }
   spec?: {
     osdID?: number
     serial?: string
@@ -110,6 +112,7 @@ export function crToReplacement(cr: FrameOSDReplacementCR): OSDReplacement {
   const s = cr.status ?? {}
   return {
     name: cr.metadata.name,
+    resourceVersion: cr.metadata.resourceVersion ?? '',
     namespace: cr.metadata.namespace,
     createdAt: cr.metadata.creationTimestamp ?? '',
     osdID: cr.spec?.osdID ?? -1,
@@ -196,6 +199,20 @@ export function availableActions(r: OSDReplacement): ReplacementActions {
     cancel: live,
     cancelUndoes: !r.purgeRequested,
   }
+}
+
+/**
+ * A by-id path as shown before approval no. 2. An NVMe path of the
+ * nvme-nvme.<vendor>-<hex serial>-<hex model>-<ns> form carries the serial
+ * (in hex), so only its prefix is shown; wwn- and nvme-eui. paths are shown
+ * whole. Same rule as the controller's shownPath.
+ */
+export function shownPath(p: string): string {
+  const nvme = '/dev/disk/by-id/nvme-nvme.'
+  if (!p.startsWith(nvme)) return p
+  const rest = p.slice(nvme.length)
+  const i = rest.indexOf('-')
+  return nvme + (i >= 0 ? rest.slice(0, i) : rest) + '-…'
 }
 
 /** A serial as typed: spaces around it are not part of it, nothing else is changed. */

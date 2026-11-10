@@ -144,6 +144,10 @@ type osdStep struct {
 	r    *FrameOSDReplacementReconciler
 	o    *framev1beta1.FrameOSDReplacement
 	ceph CephOperator
+	// base is the object as last stored: every status patch (the
+	// write-ahead saves and Reconcile's final one) is computed from it and
+	// carries its resourceVersion, then base moves forward.
+	base *framev1beta1.FrameOSDReplacement
 }
 
 func (r *FrameOSDReplacementReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -154,10 +158,12 @@ func (r *FrameOSDReplacementReconciler) Reconcile(ctx context.Context, req ctrl.
 	if osdTerminal(o.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
-	base := o.DeepCopy()
-	res, err := r.reconcile(ctx, &o)
-	if !statusEqual(base, &o) {
-		if perr := r.Status().Patch(ctx, &o, client.MergeFrom(base)); perr != nil {
+	s := &osdStep{r: r, o: &o, base: o.DeepCopy()}
+	res, err := s.reconcile(ctx)
+	if !statusEqual(s.base, &o) {
+		// Optimistic: a reconcile working from a stale copy must not
+		// replace what a newer one stored (the journal included).
+		if perr := r.Status().Patch(ctx, &o, client.MergeFromWithOptions(s.base, client.MergeFromWithOptimisticLock{})); perr != nil {
 			return ctrl.Result{}, errors.Join(err, perr)
 		}
 	}
@@ -171,22 +177,22 @@ func statusEqual(a, b *framev1beta1.FrameOSDReplacement) bool {
 }
 
 // save writes the status now: a write-ahead record before a call that
-// changes Ceph or a disk. Reconcile's own save is then a no-op or a delta.
-//
-// The patch carries the resourceVersion read: a reconcile working from a
-// stale copy cannot pass the guards and record (then send) a call twice.
-// On failure the in-memory status goes back to base, so that Reconcile's
-// final patch does not record a call that was never sent.
-func (s *osdStep) save(ctx context.Context, base *framev1beta1.FrameOSDReplacement) error {
-	if err := s.r.Status().Patch(ctx, s.o, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-		base.Status.DeepCopyInto(&s.o.Status)
+// changes Ceph or a disk. It carries every change made in memory so far,
+// and the resourceVersion of the object as last stored: a reconcile
+// working from a stale copy cannot pass the guards and record (then send)
+// a call twice. On failure the in-memory status goes back to what is
+// stored, so that nothing records a call that was never sent.
+func (s *osdStep) save(ctx context.Context) error {
+	if err := s.r.Status().Patch(ctx, s.o, client.MergeFromWithOptions(s.base, client.MergeFromWithOptimisticLock{})); err != nil {
+		s.base.Status.DeepCopyInto(&s.o.Status)
 		return err
 	}
+	s.base = s.o.DeepCopy()
 	return nil
 }
 
-func (r *FrameOSDReplacementReconciler) reconcile(ctx context.Context, o *framev1beta1.FrameOSDReplacement) (ctrl.Result, error) {
-	s := &osdStep{r: r, o: o}
+func (s *osdStep) reconcile(ctx context.Context) (ctrl.Result, error) {
+	r, o := s.r, s.o
 	if o.Status.Phase == "" {
 		s.enter(framev1beta1.OSDReplacementChecking, fmt.Sprintf("replacement of osd.%d requested", o.Spec.OSDID))
 	}
@@ -197,20 +203,34 @@ func (r *FrameOSDReplacementReconciler) reconcile(ctx context.Context, o *framev
 		if o.Spec.Resume <= o.Status.ObservedResume {
 			return ctrl.Result{}, nil
 		}
-		o.Status.ObservedResume = o.Spec.Resume
 		phase := o.Status.PausedPhase
 		if phase == framev1beta1.OSDReplacementWiping && o.Status.WipedAt == nil {
-			// A new attempt is a new request id (the agent wipes each id
-			// once); the agent revalidates the disk from scratch.
-			o.Status.WipeRequestID, o.Status.WipeRequestedAt = "", nil
+			// Back to approval no. 2, like the purge: a new attempt is a
+			// new approval and a new request id (the agent wipes each id
+			// once, and checks the disk again from scratch).
+			o.Status.WipeRequestID, o.Status.WipeRequestedAt, o.Status.WipeApprovedAt = "", nil, nil
+			phase = framev1beta1.OSDReplacementAwaitingWipeApproval
 		}
 		if phase == framev1beta1.OSDReplacementPurging && o.Status.PurgeRequestedAt == nil {
 			// The cluster moved enough to pause before the purge was sent:
-			// the approval given before that does not count any more.
+			// the approval given before that does not count any more. The
+			// OSD goes back up (still out) until the next approval.
+			if o.Status.ScaledDownAt != nil {
+				if err := s.scaleOSD(ctx, 1); err != nil && !apierrors.IsNotFound(err) {
+					return s.wait(fmt.Sprintf("resuming: scaling %s back to 1: %v", s.osdDeployment().Name, err))
+				}
+				o.Status.ScaledDownAt = nil
+			}
+			o.Status.PurgeApprovedAt = nil
 			phase = framev1beta1.OSDReplacementAwaitingPurgeApproval
 		}
+		// Counted only now: a resume that had to wait above is retried.
+		o.Status.ObservedResume = o.Spec.Resume
 		o.Status.PausedPhase = ""
 		s.enter(phase, "resumed by a person")
+		// The step runs on the next read, where the phase is stored: an
+		// approval step then arms on a generation read after it.
+		return ctrl.Result{Requeue: true}, nil
 	}
 	op, err := r.Ceph(ctx)
 	if err != nil {
@@ -616,10 +636,9 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 func (s *osdStep) drain(ctx context.Context) (ctrl.Result, error) {
 	o, id, now := s.o, s.o.Spec.OSDID, s.r.now()
 	if o.Status.MarkedOutAt == nil {
-		base := o.DeepCopy()
 		o.Status.MarkedOutAt = s.nowTime()
 		o.Status.SawUnclean = false
-		if err := s.save(ctx, base); err != nil {
+		if err := s.save(ctx); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := s.ceph.MarkOut(ctx, id); err != nil {
@@ -695,6 +714,10 @@ func (s *osdStep) armApproval(ctx context.Context, field func(*framev1beta1.Fram
 		}
 		*field(&o.Spec) = nil
 		o.Generation, o.ResourceVersion = cp.Generation, cp.ResourceVersion
+		// The status is unchanged by a spec patch: the stored object is
+		// base with the new spec and version.
+		*field(&s.base.Spec) = nil
+		s.base.Generation, s.base.ResourceVersion = cp.Generation, cp.ResourceVersion
 		s.event("an approval written before this step was cleared: it must be given now")
 	}
 	o.Status.ApprovalArmedGeneration = o.Generation
@@ -769,9 +792,8 @@ func (s *osdStep) purge(ctx context.Context) (ctrl.Result, error) {
 	if o.Status.PurgedAt == nil {
 		if o.Status.PurgeRequestedAt == nil {
 			if o.Status.ScaledDownAt == nil {
-				base := o.DeepCopy()
 				o.Status.ScaledDownAt = s.nowTime()
-				if err := s.save(ctx, base); err != nil {
+				if err := s.save(ctx); err != nil {
 					return ctrl.Result{}, err
 				}
 				s.event(fmt.Sprintf("deployment %s scaled to 0", s.osdDeployment().Name))
@@ -809,9 +831,8 @@ func (s *osdStep) purge(ctx context.Context) (ctrl.Result, error) {
 			}
 			// Write-ahead: once this is recorded the purge is never sent
 			// again by this object, whatever happens next.
-			base := o.DeepCopy()
 			o.Status.PurgeRequestedAt = s.nowTime()
-			if err := s.save(ctx, base); err != nil {
+			if err := s.save(ctx); err != nil {
 				return ctrl.Result{}, err
 			}
 			if err := s.ceph.Purge(ctx, id); err != nil {
@@ -897,28 +918,28 @@ func (s *osdStep) awaitDisk(ctx context.Context) (ctrl.Result, error) {
 		// no. 2, which the person reads on the label.
 		var names []string
 		for _, c := range cand {
-			names = append(names, c.ByIDPath)
+			names = append(names, shownPath(c.ByIDPath))
 		}
 		return s.pause(fmt.Sprintf("%d disks appeared since the purge (%s); exactly one is expected", len(cand), strings.Join(names, ", ")))
 	}
 	d := cand[0]
 	if d.Occupancy != "free" {
-		return s.pause(fmt.Sprintf("the new disk %s is %s: the console only wipes a disk with no partition and no signature; clear it by hand (fiche B3.4), then resume", d.ByIDPath, d.Occupancy))
+		return s.pause(fmt.Sprintf("the new disk %s is %s: the console only wipes a disk with no partition and no signature; clear it by hand (fiche B3.4), then resume", shownPath(d.ByIDPath), d.Occupancy))
 	}
 	switch d.LogicalSectorBytes {
 	case 512, 4096:
 	case 0:
-		return s.pause(fmt.Sprintf("the new disk %s does not report its sector size (frame-agent too old?)", d.ByIDPath))
+		return s.pause(fmt.Sprintf("the new disk %s does not report its sector size (frame-agent too old?)", shownPath(d.ByIDPath)))
 	default:
-		return s.pause(fmt.Sprintf("the new disk %s has %d-byte sectors: it needs a low-level format (sg_format) before use", d.ByIDPath, d.LogicalSectorBytes))
+		return s.pause(fmt.Sprintf("the new disk %s has %d-byte sectors: it needs a low-level format (sg_format) before use", shownPath(d.ByIDPath), d.LogicalSectorBytes))
 	}
 	if d.SMART != nil && d.SMART.Passed != nil && !*d.SMART.Passed {
-		return s.pause(fmt.Sprintf("the new disk %s fails its SMART self-assessment", d.ByIDPath))
+		return s.pause(fmt.Sprintf("the new disk %s fails its SMART self-assessment", shownPath(d.ByIDPath)))
 	}
 	o.Status.NewDisk = replaced(d)
 	s.enter(framev1beta1.OSDReplacementAwaitingWipeApproval, fmt.Sprintf(
 		"new disk found: %s, %s, %d GB. Approval no. 2: read the serial on its LABEL and retype it to wipe this disk — this cannot be undone",
-		d.ByIDPath, d.Model, d.SizeGB))
+		shownPath(d.ByIDPath), d.Model, d.SizeGB))
 	return ctrl.Result{}, nil
 }
 
@@ -936,7 +957,7 @@ func (s *osdStep) awaitWipeApproval(ctx context.Context) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 	if a.Serial != o.Status.NewDisk.Serial {
-		o.Status.Message = clipString(fmt.Sprintf("the serial typed (%s) is not the new disk's; nothing done. Retype the serial on the label of %s", a.Serial, o.Status.NewDisk.ByIDPath), 1024)
+		o.Status.Message = clipString(fmt.Sprintf("the serial typed (%s) is not the new disk's; nothing done. Retype the serial on the label of %s", a.Serial, shownPath(o.Status.NewDisk.ByIDPath)), 1024)
 		return ctrl.Result{}, nil
 	}
 	o.Status.WipeApprovedAt = s.nowTime()
@@ -950,10 +971,9 @@ func (s *osdStep) awaitWipeApproval(ctx context.Context) (ctrl.Result, error) {
 func (s *osdStep) wipe(ctx context.Context) (ctrl.Result, error) {
 	o, now := s.o, s.r.now()
 	if o.Status.WipeRequestedAt == nil {
-		base := o.DeepCopy()
 		o.Status.WipeRequestID = fmt.Sprintf("%s-%d", strings.ToLower(string(o.UID)), o.Status.ObservedResume)
 		o.Status.WipeRequestedAt = s.nowTime()
-		if err := s.save(ctx, base); err != nil {
+		if err := s.save(ctx); err != nil {
 			return ctrl.Result{}, err
 		}
 		s.event(fmt.Sprintf("wipe of %s requested (%s)", o.Status.NewDisk.ByIDPath, o.Status.WipeRequestID))
@@ -999,9 +1019,37 @@ func (s *osdStep) wipe(ctx context.Context) (ctrl.Result, error) {
 		if err := s.clearWipeRequest(ctx); err != nil {
 			return s.wait(fmt.Sprintf("no answer from frame-agent; withdrawing the wipe request on %s: %v", o.Status.Host, err))
 		}
-		return s.pause(fmt.Sprintf("no answer from frame-agent on %s after %s (is it running?)", o.Status.Host, osdWipeAnswerTimeout))
+		return s.pause(fmt.Sprintf("no answer from frame-agent on %s after %s (is it running?); the request is withdrawn. If the agent was mid-wipe its answer still comes: outcome unknown, inspect the disk before resuming", o.Status.Host, osdWipeAnswerTimeout))
 	}
 	return s.wait(fmt.Sprintf("waiting for frame-agent on %s to wipe %s", o.Status.Host, o.Status.NewDisk.ByIDPath))
+}
+
+// wipeState says what is known of the wipe, for a cancel: the agent's
+// answer is read by request id, since it may have come after the request
+// was withdrawn.
+func (s *osdStep) wipeState(ctx context.Context) string {
+	o := s.o
+	switch {
+	case o.Status.WipedAt != nil:
+		return "wiped"
+	case o.Status.WipeRequestedAt == nil:
+		return "not wiped"
+	}
+	var node corev1.Node
+	if err := s.r.Get(ctx, types.NamespacedName{Name: o.Status.Host}, &node); err == nil {
+		var res framev1beta1.DiskWipeResult
+		if raw := node.Annotations[framev1beta1.DiskWipeResultAnnotation]; raw != "" && json.Unmarshal([]byte(raw), &res) == nil && res.ID == o.Status.WipeRequestID {
+			switch {
+			case res.OK:
+				return "wiped (the agent's answer came after the request)"
+			case !res.Ran:
+				return "not wiped (the agent refused: " + clipString(res.Message, 200) + ")"
+			default:
+				return "wipe outcome unknown (a command had started) — inspect the disk"
+			}
+		}
+	}
+	return fmt.Sprintf("wipe requested at %s with no answer: outcome unknown — inspect the disk", o.Status.WipeRequestedAt.UTC().Format(time.RFC3339))
 }
 
 // clearWipeRequest withdraws this replacement's wipe request from the
@@ -1149,8 +1197,8 @@ func (s *osdStep) cancel(ctx context.Context) (ctrl.Result, error) {
 			}
 		}
 		s.enter(framev1beta1.OSDReplacementCancelled, fmt.Sprintf(
-			"cancelled after the purge of osd.%d; nothing undone. Where things stand: purged %t, new disk %s, wiped %t, declared %t. Finish by hand with the fiche (B3–B5)",
-			id, o.Status.PurgedAt != nil, diskName(o.Status.NewDisk), o.Status.WipedAt != nil, o.Status.DeclaredAt != nil))
+			"cancelled after the purge of osd.%d; nothing undone. Where things stand: purged %t, new disk %s, %s, declared %t. Finish by hand with the fiche (B3–B5)",
+			id, o.Status.PurgedAt != nil, diskName(o.Status.NewDisk, o.Status.WipeApprovedAt != nil), s.wipeState(ctx), o.Status.DeclaredAt != nil))
 		return ctrl.Result{}, nil
 	}
 	if o.Status.ScaledDownAt != nil {
@@ -1163,7 +1211,15 @@ func (s *osdStep) cancel(ctx context.Context) (ctrl.Result, error) {
 		if err != nil {
 			return s.wait(fmt.Sprintf("cancelling: the Ceph operator account is not usable: %v", err))
 		}
-		if err := op.MarkIn(ctx, id); err != nil && !errors.Is(err, cephmgr.ErrOSDNotFound) {
+		osds, err := op.OSDs(ctx)
+		if err != nil {
+			return s.wait(fmt.Sprintf("cancelling: reading the OSD list: %v", err))
+		}
+		if findOSD(osds, id) == nil {
+			s.enter(framev1beta1.OSDReplacementCancelled, fmt.Sprintf("cancelled: osd.%d no longer exists in Ceph (removed by hand?); nothing to mark in. Check `ceph osd tree`", id))
+			return ctrl.Result{}, nil
+		}
+		if err := op.MarkIn(ctx, id); err != nil {
 			return s.wait(fmt.Sprintf("cancelling: ceph osd in %d failed, retrying: %v", id, err))
 		}
 		s.enter(framev1beta1.OSDReplacementCancelled, fmt.Sprintf("cancelled: osd.%d marked in again; Ceph moves its data back", id))
@@ -1175,11 +1231,30 @@ func (s *osdStep) cancel(ctx context.Context) (ctrl.Result, error) {
 
 // diskName names the new disk without its serial, which is shown only
 // once approval no. 2 has been given.
-func diskName(d *framev1beta1.ReplacedDisk) string {
+func diskName(d *framev1beta1.ReplacedDisk, approved bool) string {
 	if d == nil {
 		return "no disk"
 	}
-	return d.ByIDPath
+	if approved {
+		return d.ByIDPath
+	}
+	return shownPath(d.ByIDPath)
+}
+
+// shownPath is a by-id path as shown before approval no. 2. An NVMe path
+// of the nvme-nvme.<vendor>-<hex serial>-<hex model>-<ns> form carries the
+// serial (in hex): only its prefix is shown. wwn- and nvme-eui. paths do
+// not, and are shown whole.
+func shownPath(p string) string {
+	const nvme = "/dev/disk/by-id/nvme-nvme."
+	if strings.HasPrefix(p, nvme) {
+		rest := p[len(nvme):]
+		if i := strings.IndexByte(rest, '-'); i >= 0 {
+			rest = rest[:i]
+		}
+		return nvme + rest + "-…"
+	}
+	return p
 }
 
 func clipString(s string, n int) string {

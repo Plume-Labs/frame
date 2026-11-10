@@ -12,6 +12,7 @@ import {
   type OSDReplacement,
   type ReplacementDisk,
   type StepState,
+  shownPath,
 } from '@/lib/osd-replacement'
 import {
   AlertDialog,
@@ -75,11 +76,12 @@ function Steps({ r }: { r: OSDReplacement }) {
   )
 }
 
+/** A disk as found. The new disk's path goes through shownPath: an NVMe path can carry its serial. */
 function DiskFacts({ title, d }: { title: string; d: ReplacementDisk }) {
   return (
     <div className="rounded-md border p-3 text-xs space-y-1">
       <div className="font-semibold">{title}</div>
-      <div className="font-mono break-all">{d.byIdPath}</div>
+      <div className="font-mono break-all">{shownPath(d.byIdPath)}</div>
       <div>
         {d.model || 'model unknown'}
         {d.sizeGB > 0 && <> · {d.sizeGB} GB</>}
@@ -212,7 +214,7 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
         {admin && acts.approveWipe && r.newDisk && (
           <SerialApproval
             title="Approval 2 — wipe the new disk"
-            explain={`Wiping erases the start of ${r.newDisk.byIdPath} and its partition tables. Read the serial on the NEW disk's label and retype it.`}
+            explain={`Wiping erases the start of ${shownPath(r.newDisk.byIdPath)} and its partition tables. Read the serial on the NEW disk's label and retype it.`}
             confirmLabel="Wipe the new disk"
             onApprove={(s) => frame.osdReplacements.approveWipe(r, s)}
           />

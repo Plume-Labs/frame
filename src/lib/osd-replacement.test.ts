@@ -6,6 +6,7 @@ import {
   newReplacementBody,
   newReplacementError,
   REPLACEMENT_STEPS,
+  shownPath,
   stepStates,
   type FrameOSDReplacementCR,
 } from './osd-replacement'
@@ -69,6 +70,12 @@ describe('osd replacement projection', () => {
       expect(a.cancel || a.resume || a.approvePurge || a.approveWipe).toBe(false)
     }
     expect(availableActions(crToReplacement(cr({ phase: 'AwaitingPurgeApproval', approvalArmedGeneration: 2 }, { cancel: true }))).approvePurge).toBe(false)
+  })
+
+  it('masks an NVMe path that carries the serial', () => {
+    expect(shownPath('/dev/disk/by-id/nvme-nvme.144d-53333452-53616d73-00000001')).toBe('/dev/disk/by-id/nvme-nvme.144d-…')
+    expect(shownPath('/dev/disk/by-id/wwn-0x5000c500a1b2c3d4')).toBe('/dev/disk/by-id/wwn-0x5000c500a1b2c3d4')
+    expect(shownPath('/dev/disk/by-id/nvme-eui.0025385b71b0a1b2')).toBe('/dev/disk/by-id/nvme-eui.0025385b71b0a1b2')
   })
 
   it('validates the form', () => {

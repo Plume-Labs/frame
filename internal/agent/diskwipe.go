@@ -62,10 +62,11 @@ import (
 // (DiskWipeResultAnnotation) with Ran saying whether any command started.
 
 // wipeRequestMaxAge: a request older than this is a leftover and is
-// refused. It is shorter than the ten minutes the controller waits for an
-// answer, so that a request the controller gave up on (paused, then maybe
-// cancelled) can no longer be acted on.
-const wipeRequestMaxAge = 8 * time.Minute
+// refused. With the two minutes of clock skew tolerated below and a 30 s
+// tick on each side, it stays well short of the ten minutes the controller
+// waits for an answer, so that a request the controller gave up on
+// (paused, then maybe cancelled) can no longer be acted on.
+const wipeRequestMaxAge = 5 * time.Minute
 
 // wipeRecordPath is the host file holding every request id acted on.
 const wipeRecordPath = "var/lib/frame-agent/disk-wipe-acted"
@@ -143,13 +144,17 @@ func ServiceWipeRequest(ctx context.Context, c client.Client, nodeName string,
 	res.ID = req.ID
 	res.At = metav1.NewTime(env.Now())
 	out, _ := json.Marshal(res)
-	// Optimistic lock: a request replaced between the read and this write
-	// must not get this answer. A wipe takes seconds and the Node moves
-	// meanwhile (kubelet), so a conflict is retried while the request is
-	// still the same id; the answer is the only record of what ran.
+	// The answer carries the request's id, so it is written even when the
+	// request was withdrawn or replaced meanwhile: it is the only record of
+	// what ran, and the controller reads it by id. A wipe takes seconds and
+	// the Node moves meanwhile (kubelet): a conflict is retried on a fresh
+	// read, so that no other annotation is overwritten.
 	var err error
 	for range 5 {
 		base := node.DeepCopy()
+		if node.Annotations == nil {
+			node.Annotations = map[string]string{}
+		}
 		node.Annotations[framev1beta1.DiskWipeResultAnnotation] = string(out)
 		if err = c.Patch(ctx, &node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); !apierrors.IsConflict(err) {
 			break
@@ -157,10 +162,6 @@ func ServiceWipeRequest(ctx context.Context, c client.Client, nodeName string,
 		if gerr := c.Get(ctx, client.ObjectKey{Name: nodeName}, &node); gerr != nil {
 			err = gerr
 			break
-		}
-		var cur framev1beta1.DiskWipeRequest
-		if json.Unmarshal([]byte(node.Annotations[framev1beta1.DiskWipeRequestAnnotation]), &cur) != nil || cur.ID != req.ID {
-			return fmt.Errorf("disk wipe request %s on %s was withdrawn or replaced before its answer (ran: %t, ok: %t)", req.ID, nodeName, res.Ran, res.OK)
 		}
 	}
 	if err != nil {

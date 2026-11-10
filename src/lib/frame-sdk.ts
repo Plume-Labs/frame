@@ -3940,21 +3940,26 @@ class OSDReplacementClient {
     })
   }
 
-  private async patchSpec(name: string, action: string, spec: Record<string, unknown>): Promise<void> {
+  /**
+   * `resourceVersion`, when given, makes the patch conditional: an approval
+   * typed on a screen older than the object (the step re-armed, or moved
+   * on) is refused with a conflict instead of counting.
+   */
+  private async patchSpec(name: string, action: string, spec: Record<string, unknown>, resourceVersion?: string): Promise<void> {
     await k8sFetch<unknown>(this.path(name), {
       action: boundedActionLabel(action),
       method: 'PATCH',
       contentType: 'application/merge-patch+json',
-      body: { spec },
+      body: resourceVersion ? { metadata: { resourceVersion }, spec } : { spec },
     })
   }
 
   approvePurge(r: OSDReplacement, serial: string): Promise<void> {
-    return this.patchSpec(r.name, `approve purge of osd.${r.osdID}`, { purgeApproval: { serial: normalizeSerial(serial) } })
+    return this.patchSpec(r.name, `approve purge of osd.${r.osdID}`, { purgeApproval: { serial: normalizeSerial(serial) } }, r.resourceVersion)
   }
 
   approveWipe(r: OSDReplacement, serial: string): Promise<void> {
-    return this.patchSpec(r.name, `approve wipe for osd.${r.osdID}`, { wipeApproval: { serial: normalizeSerial(serial) } })
+    return this.patchSpec(r.name, `approve wipe for osd.${r.osdID}`, { wipeApproval: { serial: normalizeSerial(serial) } }, r.resourceVersion)
   }
 
   resume(r: OSDReplacement): Promise<void> {
