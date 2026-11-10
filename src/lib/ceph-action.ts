@@ -28,13 +28,15 @@ export interface CephAction {
   message: string
   expiresAt: string | null
   flagWasSet: boolean
+  /** When the gesture went out (null: not sent yet). */
+  sentAt: string | null
 }
 
 /** The CR as the apiserver returns it. */
 export interface FrameCephActionCR {
   metadata: { name: string; namespace: string; creationTimestamp?: string }
   spec?: { action?: string; osdID?: number; flag?: string; durationMinutes?: number; release?: boolean }
-  status?: { phase?: string; message?: string; expiresAt?: string; flagWasSet?: boolean }
+  status?: { phase?: string; message?: string; expiresAt?: string; flagWasSet?: boolean; sentAt?: string }
 }
 
 export function crToCephAction(cr: FrameCephActionCR): CephAction {
@@ -52,11 +54,31 @@ export function crToCephAction(cr: FrameCephActionCR): CephAction {
     message: s.message ?? '',
     expiresAt: s.expiresAt ?? null,
     flagWasSet: s.flagWasSet === true,
+    sentAt: s.sentAt ?? null,
   }
 }
 
 export function isTerminalAction(phase: string): boolean {
   return phase === 'Done' || phase === 'Refused' || phase === 'Failed'
+}
+
+/**
+ * What the list shows for a gesture: "Pending" only while nothing went out;
+ * a sent gesture still waiting for its outcome (a restart rolling) is "In
+ * progress", so nobody takes it for one that can still be withdrawn.
+ */
+export function actionLabel(a: CephAction): string {
+  if (a.phase === 'Pending' && a.sentAt) return 'In progress'
+  return a.phase
+}
+
+/** Grace after a flag's end before the banner calls it overdue. */
+export const OVERDUE_GRACE_MS = 2 * 60_000
+
+/** A held flag whose time is up but that Frame has not unset yet. */
+export function isOverdue(a: CephAction, now: Date): boolean {
+  if (a.phase !== 'Active' || a.flagWasSet || !a.expiresAt) return false
+  return new Date(a.expiresAt).getTime() + OVERDUE_GRACE_MS < now.getTime()
 }
 
 /** The flags held now, for the banner: one per active SetFlag not yet released. */
@@ -73,9 +95,9 @@ export function describeAction(action: CephActionKind, osd: number | null, flag:
     case 'OSDIn':
       return `Mark ${o} in: Ceph moves data back onto it.`
     case 'OSDOut':
-      return `Mark ${o} out: Ceph copies its data to the other OSDs (one copy fewer meanwhile). Refused unless every PG is active+clean and every other OSD up and in. Undo: mark it in.`
+      return `Mark ${o} out: Ceph copies its data to the other OSDs (one copy fewer meanwhile). Refused unless every PG is active+clean and every other OSD up and in, no other out or restart is under way (or ended less than 10 minutes ago), no OSD replacement is running, and no flag such as norecover or pause is set. Undo: mark it in.`
     case 'OSDRestart':
-      return `Restart ${o} (its pod is replaced). Its PGs run on one copy fewer for a minute or two. Refused unless every PG is active+clean and every other OSD up and in.`
+      return `Restart ${o} (its pod is replaced). Its PGs run on one copy fewer for a minute or two. Refused on the same conditions as an out.`
     case 'OSDScrub':
       return `Ask Ceph to scrub ${o} (light check of its PGs). Ceph runs it when its scrub schedule allows.`
     case 'OSDDeepScrub':

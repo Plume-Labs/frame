@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeFlags, crToCephAction, describeAction, newActionBody, newActionError, type FrameCephActionCR } from './ceph-action'
+import { actionLabel, activeFlags, crToCephAction, isOverdue, describeAction, newActionBody, newActionError, type FrameCephActionCR } from './ceph-action'
 
 function cr(spec: FrameCephActionCR['spec'], status?: FrameCephActionCR['status']): FrameCephActionCR {
   return { metadata: { name: 'x', namespace: 'frame-system' }, spec, status }
@@ -44,5 +44,21 @@ describe('ceph actions', () => {
   it('says what out and restart cost', () => {
     expect(describeAction('OSDOut', 8, '', 0)).toContain('active+clean')
     expect(describeAction('SetFlag', null, 'noout', 120)).toContain('120 minutes')
+  })
+
+  it('tells a sent gesture from one not sent yet', () => {
+    expect(actionLabel(crToCephAction(cr({ action: 'OSDRestart', osdID: 8 }, { phase: 'Pending' })))).toBe('Pending')
+    expect(
+      actionLabel(crToCephAction(cr({ action: 'OSDRestart', osdID: 8 }, { phase: 'Pending', sentAt: '2026-11-13T18:00:00Z' }))),
+    ).toBe('In progress')
+  })
+
+  it('calls a flag overdue once its end has passed with a grace, unless it was set by hand', () => {
+    const now = new Date('2026-11-13T20:05:00Z')
+    const held = (status: FrameCephActionCR['status']) => crToCephAction(cr({ action: 'SetFlag', flag: 'noout' }, status))
+    expect(isOverdue(held({ phase: 'Active', expiresAt: '2026-11-13T20:00:00Z' }), now)).toBe(true)
+    expect(isOverdue(held({ phase: 'Active', expiresAt: '2026-11-13T20:04:00Z' }), now)).toBe(false)
+    expect(isOverdue(held({ phase: 'Active', expiresAt: '2026-11-13T20:00:00Z', flagWasSet: true }), now)).toBe(false)
+    expect(isOverdue(held({ phase: 'Done', expiresAt: '2026-11-13T20:00:00Z' }), now)).toBe(false)
   })
 })

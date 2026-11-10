@@ -19,8 +19,8 @@
 # It is provided to allow the cluster admin to help manage permissions for users.
 #
 # Grants edit access to FrameCephAction resources including creation, modification, and
-# deletion. This role is intended for operators who manage OSD replacement lifecycle without
-# administrative capabilities like bulk deletion.
+# deletion: everyday Ceph gestures (OSD in/out, restart, scrub, flags for a while),
+# without administrative capabilities like bulk deletion.
 #
 # Bind it deliberately if you want it, to a group, never to a user.
 

@@ -41,9 +41,10 @@ type FrameCephActionSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	OSDID *int32 `json:"osdID,omitempty"`
 
-	// Flag is the cluster flag set by SetFlag. It is unset by the manager
-	// when the duration has passed, or on release, unless another active
-	// FrameCephAction still holds it, or it was already set before this one.
+	// Flag is the cluster flag set by SetFlag. The manager unsets it when
+	// the duration has passed, on release, or if the object is deleted,
+	// unless it was already set before this action (then it is left set).
+	// One active FrameCephAction holds a flag at a time.
 	// +optional
 	// +kubebuilder:validation:Enum=noout;norebalance;nobackfill;norecover;noscrub;nodeep-scrub
 	Flag string `json:"flag,omitempty"`
@@ -116,7 +117,8 @@ type FrameCephActionStatus struct {
 	// +optional
 	FlagWasSet bool `json:"flagWasSet,omitempty"`
 
-	// UnsetSentAt is written before the flag is unset.
+	// UnsetSentAt is when the manager first tried to unset the flag; it
+	// retries until Ceph accepts it.
 	// +optional
 	UnsetSentAt *metav1.Time `json:"unsetSentAt,omitempty"`
 }
@@ -136,8 +138,9 @@ type FrameCephAction struct {
 	metav1.TypeMeta `json:",inline"`
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	// +optional
-	Spec FrameCephActionSpec `json:"spec,omitempty"`
+	// Spec is required: a missing spec would skip its validation rules.
+	// +required
+	Spec FrameCephActionSpec `json:"spec"`
 	// +optional
 	Status FrameCephActionStatus `json:"status,omitempty"`
 }

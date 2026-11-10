@@ -267,8 +267,9 @@ type FrameOSDReplacement struct {
 	metav1.TypeMeta `json:",inline"`
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	// +optional
-	Spec FrameOSDReplacementSpec `json:"spec,omitempty"`
+	// Spec is required: a missing spec would skip its validation rules.
+	// +required
+	Spec FrameOSDReplacementSpec `json:"spec"`
 	// +optional
 	Status FrameOSDReplacementStatus `json:"status,omitempty"`
 }

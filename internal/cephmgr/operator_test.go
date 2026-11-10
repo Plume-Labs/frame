@@ -18,7 +18,9 @@ package cephmgr
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +36,10 @@ type opDashboard struct {
 	srv  *httptest.Server
 	mu   sync.Mutex
 	reqs []string
+	// flags is the cluster's flag list: GET returns it, PUT replaces it.
+	flags []string
+	// afterPut, when set, changes flags after a PUT (someone else's write).
+	afterPut func([]string) []string
 }
 
 const (
@@ -45,7 +51,7 @@ const (
 )
 
 func newOpDashboard(t *testing.T) *opDashboard {
-	d := &opDashboard{}
+	d := &opDashboard{flags: []string{"sortbitwise", "recovery_deletes", "noout"}}
 	d.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		d.mu.Lock()
@@ -70,7 +76,20 @@ func newOpDashboard(t *testing.T) *opDashboard {
 		case "GET /api/osd/8":
 			_, _ = w.Write([]byte(osdGetBody))
 		case "GET /api/osd/flags":
-			_, _ = w.Write([]byte(`["sortbitwise","recovery_deletes","noout"]`))
+			d.mu.Lock()
+			body, _ := json.Marshal(d.flags)
+			d.mu.Unlock()
+			_, _ = w.Write(body)
+		case "PUT /api/osd/flags":
+			var in struct{ Flags []string }
+			_ = json.Unmarshal(b, &in)
+			d.mu.Lock()
+			d.flags = in.Flags
+			if d.afterPut != nil {
+				d.flags = d.afterPut(d.flags)
+			}
+			d.mu.Unlock()
+			_, _ = w.Write([]byte(`null`))
 		case "GET /api/osd/safe_to_destroy":
 			if r.URL.Query().Get("ids") == "8" {
 				_, _ = w.Write([]byte(`{"safe_to_destroy":[8],"active":[],"missing_stats":[],"stored_pgs":[],"is_safe_to_destroy":true}`))
@@ -79,7 +98,7 @@ func newOpDashboard(t *testing.T) *opDashboard {
 			_, _ = w.Write([]byte(`{"safe_to_destroy":[],"active":[],"missing_stats":[],"stored_pgs":[7],"is_safe_to_destroy":false}`))
 		case "GET /api/pool":
 			_, _ = w.Write([]byte(`[{"pool_name":"replicapool","size":3,"min_size":2,"crush_rule":"hote_x3"}]`))
-		case "PUT /api/osd/8/mark", "POST /api/osd/8/purge", "POST /api/osd/8/scrub", "PUT /api/osd/flags":
+		case "PUT /api/osd/8/mark", "POST /api/osd/8/purge", "POST /api/osd/8/scrub":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`null`))
 		default:
@@ -99,6 +118,18 @@ func (d *opDashboard) operator(t *testing.T) *Operator {
 		t.Fatal(err)
 	}
 	return op
+}
+
+// lastPut is the last PUT sent (SetFlag reads the flags back after it).
+func (d *opDashboard) lastPut() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := len(d.reqs) - 1; i >= 0; i-- {
+		if strings.HasPrefix(d.reqs[i], "PUT") {
+			return d.reqs[i]
+		}
+	}
+	return ""
 }
 
 func (d *opDashboard) last() string {
@@ -133,13 +164,17 @@ func TestOperatorSendsExactlyTheListedRequests(t *testing.T) {
 		{func() error { _, err := op.SetFlag(ctx, "noscrub", true); return err },
 			`PUT /api/osd/flags application/vnd.ceph.api.v1.0+json {"flags":["sortbitwise","recovery_deletes","noout","noscrub"]}`},
 		{func() error { _, err := op.SetFlag(ctx, "noout", false); return err },
-			`PUT /api/osd/flags application/vnd.ceph.api.v1.0+json {"flags":["sortbitwise","recovery_deletes"]}`},
+			`PUT /api/osd/flags application/vnd.ceph.api.v1.0+json {"flags":["sortbitwise","recovery_deletes","noscrub"]}`},
 	}
 	for _, tc := range cases {
 		if err := tc.call(); err != nil {
 			t.Fatalf("%s: %v", tc.want, err)
 		}
-		if got := d.last(); got != tc.want {
+		got := d.last()
+		if strings.HasPrefix(tc.want, "PUT /api/osd/flags") {
+			got = d.lastPut()
+		}
+		if got != tc.want {
 			t.Fatalf("sent %q, want %q", got, tc.want)
 		}
 	}
@@ -260,5 +295,24 @@ func TestOperatorSetFlagSendsNothingWhenAlreadyThereOrNotSettable(t *testing.T) 
 		if strings.HasPrefix(r, "PUT") {
 			t.Fatalf("sent %q", r)
 		}
+	}
+}
+
+func TestOperatorSetFlagReportsOtherFlagsThatMoved(t *testing.T) {
+	d := newOpDashboard(t)
+	op := d.operator(t)
+	// Someone sets norecover between Frame's read and its write.
+	d.afterPut = func(f []string) []string { return append(f, "norecover") }
+	_, err := op.SetFlag(context.Background(), "noscrub", true)
+	var drift *FlagDriftError
+	if !errors.As(err, &drift) || len(drift.Changed) != 1 || drift.Changed[0] != "+norecover" {
+		t.Fatalf("err = %v", err)
+	}
+	// A PUT that Ceph accepts but does not apply is an error.
+	d.afterPut = func(f []string) []string {
+		return slices.DeleteFunc(f, func(x string) bool { return x == "nodeep-scrub" })
+	}
+	if _, err := op.SetFlag(context.Background(), "nodeep-scrub", true); err == nil || errors.As(err, &drift) {
+		t.Fatalf("err = %v", err)
 	}
 }

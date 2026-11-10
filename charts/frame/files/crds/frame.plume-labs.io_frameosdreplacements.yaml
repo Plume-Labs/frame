@@ -56,16 +56,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              FrameOSDReplacementSpec replaces one Ceph OSD's disk by a new one, end to
-              end: drain, purge, physical swap, wipe of the new disk, declaration to
-              Rook, backfill. Like FrameDiskClaim it is a one-shot act with terminal
-              phases; running it again means a new object.
-
-              Two steps cannot be undone, and each waits for a human: the purge of the
-              OSD (purgeApproval) and the wipe of the new disk (wipeApproval). Each is
-              confirmed by retyping a serial number the person reads off the disk they
-              mean, never by a click.
+            description: 'Spec is required: a missing spec would skip its validation
+              rules.'
             properties:
               cancel:
                 description: |-
@@ -407,6 +399,8 @@ spec:
                 format: date-time
                 type: string
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

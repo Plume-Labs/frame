@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 	"github.com/Plume-Labs/frame/internal/cephmgr"
@@ -52,7 +54,19 @@ const (
 	cephActionPoll           = 30 * time.Second
 	cephActionRestartTimeout = 15 * time.Minute
 	cephActionDefaultMinutes = 120
+	// cephActionSettle is how long an out or a restart that ended Done
+	// still holds back the next out or restart: peering and recovery after
+	// it may not show in the PG states yet.
+	cephActionSettle = 10 * time.Minute
+	// cephActionFinalizer keeps a SetFlag's object until the flag it set is
+	// unset: deleting the object must not leave the flag set for good.
+	cephActionFinalizer = "frame.plume-labs.io/ceph-action-flag"
 )
+
+// stopBlockingFlags are the cluster flags under which an out or a restart
+// is refused: with them set Ceph does not bring the OSD back, or does not
+// move the data it held, so the cluster stays degraded.
+var stopBlockingFlags = []string{"noup", "norecover", "nobackfill", "norebalance", "pause", "pauserd", "pausewr"}
 
 // FrameCephActionReconciler sends one everyday Ceph gesture per object.
 //
@@ -64,10 +78,14 @@ const (
 //     when every PG is active+clean, every OSD up and in and every pool
 //     keeps min_size with one copy fewer (cephmgr.OKToStopVerdict, the
 //     stand-in for `ceph osd ok-to-stop`), so never while another host is
-//     degraded; reconciles are serial, so two outs cannot both pass;
+//     degraded, nor while another out or restart is in flight or ended less
+//     than cephActionSettle ago, nor under a flag that keeps the data from
+//     moving (stopBlockingFlags);
+//   - while an OSD replacement is running, only scrubs are sent;
 //   - a flag is set for a while and unset at its end or on release, unless
 //     it was set before (by hand); a second object for a flag already held
-//     is refused, so one object owns each flag.
+//     is refused, so one object owns each flag; a finalizer unsets it if
+//     the object is deleted while it holds it.
 type FrameCephActionReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -80,7 +98,8 @@ type FrameCephActionReconciler struct {
 	Now           func() time.Time
 }
 
-// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framecephactions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framecephactions,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framecephactions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=frame.plume-labs.io,resources=framecephactions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;patch
 
@@ -109,6 +128,9 @@ type cephActionStep struct {
 	// base is the object as last stored: every status patch is computed
 	// from it, carries its resourceVersion, then base moves forward.
 	base *framev1beta1.FrameCephAction
+	// sent: this reconcile wrote sentAt, so its outcome must be recorded
+	// even if the object changed meanwhile.
+	sent bool
 }
 
 func (r *FrameCephActionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -116,17 +138,77 @@ func (r *FrameCephActionReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Get(ctx, req.NamespacedName, &a); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if !a.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalize(ctx, &a)
+	}
 	if cephActionTerminal(a.Status.Phase) {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.dropFinalizer(ctx, &a)
+	}
+	if a.Spec.Action == framev1beta1.CephActionSetFlag && a.Status.SentAt == nil && !controllerutil.ContainsFinalizer(&a, cephActionFinalizer) {
+		base := a.DeepCopy()
+		controllerutil.AddFinalizer(&a, cephActionFinalizer)
+		if err := r.Patch(ctx, &a, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	s := &cephActionStep{r: r, a: &a, base: a.DeepCopy()}
 	res, err := s.run(ctx)
 	if !cephActionStatusEqual(s.base, &a) {
-		if perr := r.Status().Patch(ctx, &a, client.MergeFromWithOptions(s.base, client.MergeFromWithOptimisticLock{})); perr != nil {
+		perr := r.Status().Patch(ctx, &a, client.MergeFromWithOptions(s.base, client.MergeFromWithOptimisticLock{}))
+		if perr != nil && s.sent && apierrors.IsConflict(perr) {
+			// The gesture went out in this reconcile: its outcome is
+			// recorded whatever changed meanwhile (a release, a label).
+			perr = r.Status().Patch(ctx, &a, client.MergeFrom(s.base))
+		}
+		if perr != nil {
 			return ctrl.Result{}, errors.Join(err, perr)
 		}
 	}
+	if cephActionTerminal(a.Status.Phase) {
+		if ferr := r.dropFinalizer(ctx, &a); ferr != nil {
+			return ctrl.Result{}, errors.Join(err, ferr)
+		}
+	}
 	return res, err
+}
+
+// finalize runs when the object is deleted: a flag this object set and
+// still holds is unset first (retried until Ceph accepts it).
+func (r *FrameCephActionReconciler) finalize(ctx context.Context, a *framev1beta1.FrameCephAction) error {
+	if !controllerutil.ContainsFinalizer(a, cephActionFinalizer) {
+		return nil
+	}
+	if a.Spec.Action == framev1beta1.CephActionSetFlag && a.Status.SentAt != nil && !a.Status.FlagWasSet && a.Status.Phase == framev1beta1.CephActionActive {
+		op, err := r.Ceph(ctx)
+		if err != nil {
+			return fmt.Errorf("%s deleted while holding %s: the Ceph operator account is not usable: %w", a.Name, a.Spec.Flag, err)
+		}
+		if _, err := op.SetFlag(ctx, a.Spec.Flag, false); err != nil && !isFlagDrift(err) {
+			return fmt.Errorf("%s deleted while holding %s: unsetting it: %w", a.Name, a.Spec.Flag, err)
+		}
+	}
+	return r.dropFinalizer(ctx, a)
+}
+
+func (r *FrameCephActionReconciler) dropFinalizer(ctx context.Context, a *framev1beta1.FrameCephAction) error {
+	if !controllerutil.ContainsFinalizer(a, cephActionFinalizer) {
+		return nil
+	}
+	base := a.DeepCopy()
+	controllerutil.RemoveFinalizer(a, cephActionFinalizer)
+	return client.IgnoreNotFound(r.Patch(ctx, a, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})))
+}
+
+func isFlagDrift(err error) bool {
+	var d *cephmgr.FlagDriftError
+	return errors.As(err, &d)
+}
+
+func (r *FrameCephActionReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 func cephActionStatusEqual(a, b *framev1beta1.FrameCephAction) bool {
@@ -145,6 +227,15 @@ func (s *cephActionStep) run(ctx context.Context) (ctrl.Result, error) {
 		return s.wait(fmt.Sprintf("the Ceph operator account is not usable: %v", err))
 	}
 	s.ceph = op
+	if a.Status.SentAt == nil && !a.Spec.Release {
+		why, err := s.othersRefusal(ctx)
+		if err != nil {
+			return s.wait(err.Error())
+		}
+		if why != "" {
+			return s.end(framev1beta1.CephActionRefused, why+"; nothing sent")
+		}
+	}
 	switch a.Spec.Action {
 	case framev1beta1.CephActionOSDIn, framev1beta1.CephActionOSDScrub, framev1beta1.CephActionOSDDeepScrub, framev1beta1.CephActionOSDOut:
 		return s.oneShot(ctx)
@@ -191,11 +282,68 @@ func (s *cephActionStep) markSent(ctx context.Context, also func(*framev1beta1.F
 		return err
 	}
 	s.base = s.a.DeepCopy()
+	s.sent = true
 	return nil
+}
+
+// othersRefusal says why this gesture must not go out because of other
+// objects: a running OSD replacement (every gesture but a scrub), or, for
+// an out or a restart, another out or restart still in flight or ended
+// less than cephActionSettle ago.
+func (s *cephActionStep) othersRefusal(ctx context.Context) (string, error) {
+	a := s.a
+	if a.Spec.Action != framev1beta1.CephActionOSDScrub && a.Spec.Action != framev1beta1.CephActionOSDDeepScrub {
+		var reps framev1beta1.FrameOSDReplacementList
+		if err := s.r.reader().List(ctx, &reps); err != nil {
+			return "", fmt.Errorf("listing OSD replacements: %w", err)
+		}
+		for i := range reps.Items {
+			if p := &reps.Items[i]; !osdTerminal(p.Status.Phase) {
+				return fmt.Sprintf("the OSD replacement %s/%s is running (%s): only scrubs are sent meanwhile", p.Namespace, p.Name, orUnknown(p.Status.Phase)), nil
+			}
+		}
+	}
+	if a.Spec.Action != framev1beta1.CephActionOSDOut && a.Spec.Action != framev1beta1.CephActionOSDRestart {
+		return "", nil
+	}
+	var all framev1beta1.FrameCephActionList
+	if err := s.r.reader().List(ctx, &all); err != nil {
+		return "", fmt.Errorf("listing actions: %w", err)
+	}
+	now := s.r.now()
+	for i := range all.Items {
+		o := &all.Items[i]
+		if o.UID == a.UID || (o.Spec.Action != framev1beta1.CephActionOSDOut && o.Spec.Action != framev1beta1.CephActionOSDRestart) || o.Status.SentAt == nil {
+			continue
+		}
+		switch {
+		case !cephActionTerminal(o.Status.Phase):
+			return fmt.Sprintf("%s/%s (%s) is still in progress", o.Namespace, o.Name, o.Spec.Action), nil
+		case o.Status.Phase == framev1beta1.CephActionDone && o.Status.DoneAt != nil && since(o.Status.DoneAt, now) < cephActionSettle:
+			return fmt.Sprintf("%s/%s (%s) ended less than %s ago: let the cluster settle", o.Namespace, o.Name, o.Spec.Action, cephActionSettle), nil
+		}
+	}
+	return "", nil
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "not started"
+	}
+	return s
 }
 
 // stopVerdict says whether one OSD may stop holding its data now.
 func (s *cephActionStep) stopVerdict(ctx context.Context, osds []cephmgr.OSDState) (string, error) {
+	flags, err := s.ceph.Flags(ctx)
+	if err != nil {
+		return "", fmt.Errorf("reading the OSD flags: %w", err)
+	}
+	for _, f := range flags {
+		if slices.Contains(stopBlockingFlags, f) {
+			return fmt.Sprintf("the %s flag is set (Ceph would not recover the data)", f), nil
+		}
+	}
 	st, err := s.ceph.Status(ctx)
 	if err != nil {
 		return "", fmt.Errorf("reading ceph status: %w", err)
@@ -309,7 +457,7 @@ func (s *cephActionStep) restart(ctx context.Context) (ctrl.Result, error) {
 		return s.wait(fmt.Sprintf("osd.%d restarting", id))
 	}
 	if d.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] != a.Status.SentAt.UTC().Format(time.RFC3339) {
-		return s.end(framev1beta1.CephActionFailed, fmt.Sprintf("the restart of osd.%d was recorded but %s does not carry it (interrupted?); not retried: create a new restart", id, key.Name))
+		return s.end(framev1beta1.CephActionFailed, fmt.Sprintf("the restart of osd.%d was recorded but %s no longer carries its mark: Rook rewrote the deployment or the restart was interrupted; check the pod's age before creating a new restart (not retried)", id, key.Name))
 	}
 	rolled := d.Status.ObservedGeneration >= d.Generation && d.Spec.Replicas != nil &&
 		d.Status.UpdatedReplicas == *d.Spec.Replicas && d.Status.AvailableReplicas == *d.Spec.Replicas
@@ -329,11 +477,7 @@ func (s *cephActionStep) flag(ctx context.Context) (ctrl.Result, error) {
 	flag := a.Spec.Flag
 	if a.Status.SentAt == nil {
 		var all framev1beta1.FrameCephActionList
-		reader := s.r.APIReader
-		if reader == nil {
-			reader = s.r.Client
-		}
-		if err := reader.List(ctx, &all); err != nil {
+		if err := s.r.reader().List(ctx, &all); err != nil {
 			return s.wait(fmt.Sprintf("listing actions: %v", err))
 		}
 		for i := range all.Items {
@@ -369,12 +513,19 @@ func (s *cephActionStep) flag(ctx context.Context) (ctrl.Result, error) {
 			a.Status.Message = fmt.Sprintf("%s was already set; it stays set until %s, and is left set then (it was set before)", flag, timeOrUnknown(a.Status.ExpiresAt))
 			return ctrl.Result{RequeueAfter: time.Until(exp.Time)}, nil
 		}
-		if _, err := s.ceph.SetFlag(ctx, flag, true); err != nil {
+		was, err = s.ceph.SetFlag(ctx, flag, true)
+		if was {
+			// Set by someone else between the two reads: not ours to unset.
+			a.Status.FlagWasSet = true
+			a.Status.Message = fmt.Sprintf("%s was set by someone else just before; it stays set until %s, and is left set then", flag, timeOrUnknown(a.Status.ExpiresAt))
+			return ctrl.Result{RequeueAfter: cephActionPoll}, nil
+		}
+		if err != nil && !isFlagDrift(err) {
 			// Outcome unknown: the end of the duration still unsets it.
 			a.Status.Message = clipString(fmt.Sprintf("setting %s failed or its answer was lost (%v); it is unset at %s in any case", flag, err, timeOrUnknown(a.Status.ExpiresAt)), 1024)
 			return ctrl.Result{RequeueAfter: cephActionPoll}, nil
 		}
-		a.Status.Message = fmt.Sprintf("%s set until %s", flag, timeOrUnknown(a.Status.ExpiresAt))
+		a.Status.Message = clipString(fmt.Sprintf("%s set until %s%s", flag, timeOrUnknown(a.Status.ExpiresAt), driftNote(err)), 1024)
 		return ctrl.Result{RequeueAfter: cephActionPoll}, nil
 	}
 	// Active.
@@ -393,10 +544,19 @@ func (s *cephActionStep) flag(ctx context.Context) (ctrl.Result, error) {
 		a.Status.UnsetSentAt = s.nowTime()
 	}
 	// Unsetting is safe to resend: retried until Ceph says it is done.
-	if _, err := s.ceph.SetFlag(ctx, flag, false); err != nil {
+	_, err := s.ceph.SetFlag(ctx, flag, false)
+	if err != nil && !isFlagDrift(err) {
 		return s.wait(fmt.Sprintf("%s: unsetting %s failed, retrying: %v", why, flag, err))
 	}
-	return s.end(framev1beta1.CephActionDone, fmt.Sprintf("%s: %s unset", why, flag))
+	return s.end(framev1beta1.CephActionDone, fmt.Sprintf("%s: %s unset%s", why, flag, driftNote(err)))
+}
+
+// driftNote reports other flags that moved during a SetFlag ("" if none).
+func driftNote(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "; but " + err.Error()
 }
 
 func timeOrUnknown(t *metav1.Time) string {

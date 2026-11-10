@@ -45,6 +45,8 @@ type actCeph struct {
 	flags   []string
 	calls   []string
 	sendErr error
+	// raceFlag is set by "someone else" just before Frame's SetFlag.
+	raceFlag string
 }
 
 func newActCeph() *actCeph {
@@ -90,6 +92,9 @@ func (f *actCeph) Scrub(_ context.Context, id int32, deep bool) error {
 	return f.record(fmt.Sprintf("scrub %d %t", id, deep))
 }
 func (f *actCeph) SetFlag(_ context.Context, flag string, on bool) (bool, error) {
+	if f.raceFlag == flag && !slices.Contains(f.flags, flag) {
+		f.flags = append(f.flags, flag)
+	}
 	was := slices.Contains(f.flags, flag)
 	if err := f.record(fmt.Sprintf("flag %s %t", flag, on)); err != nil {
 		return was, err
@@ -174,6 +179,8 @@ func TestCephActionOutRefusedUnlessOKToStop(t *testing.T) {
 		"PGs not clean":           func(c *actCeph) { c.clean = 97 },
 		"another host degraded":   func(c *actCeph) { findOSD(c.osds, 1).Up = false },
 		"another OSD already out": func(c *actCeph) { findOSD(c.osds, 2).In = false },
+		"norecover set":           func(c *actCeph) { c.flags = append(c.flags, "norecover") },
+		"pause set":               func(c *actCeph) { c.flags = append(c.flags, "pauserd") },
 	}
 	for name, mut := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -350,5 +357,112 @@ func TestCephActionFlagUnsetIsRetried(t *testing.T) {
 	h.expect(k, framev1beta1.CephActionDone)
 	if slices.Contains(h.ceph.flags, "noout") {
 		t.Fatal("noout still set")
+	}
+}
+
+func TestCephActionWaitsForOtherWork(t *testing.T) {
+	ctx := context.Background()
+	h := newActHarness(t)
+	// A running replacement: only scrubs go out.
+	rep := &framev1beta1.FrameOSDReplacement{ObjectMeta: metav1.ObjectMeta{Name: "osd-2", Namespace: "frame-system"},
+		Status: framev1beta1.FrameOSDReplacementStatus{Phase: framev1beta1.OSDReplacementPaused}}
+	if err := h.c.Create(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range []string{framev1beta1.CephActionOSDOut, framev1beta1.CephActionOSDIn, framev1beta1.CephActionOSDRestart} {
+		k := h.create("during-"+strings.ToLower(act), framev1beta1.FrameCephActionSpec{Action: act, OSDID: osdRef(8)})
+		h.reconcile(k)
+		if a := h.expect(k, framev1beta1.CephActionRefused); !strings.Contains(a.Status.Message, "replacement") {
+			t.Fatalf("%s: %q", act, a.Status.Message)
+		}
+	}
+	kf := h.create("during-flag", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionSetFlag, Flag: "noout"})
+	h.reconcile(kf)
+	h.expect(kf, framev1beta1.CephActionRefused)
+	ks := h.create("during-scrub", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDScrub, OSDID: osdRef(8)})
+	h.reconcile(ks)
+	h.expect(ks, framev1beta1.CephActionDone)
+	if !slices.Equal(h.ceph.calls, []string{"scrub 8 false"}) {
+		t.Fatalf("calls %v", h.ceph.calls)
+	}
+	rep.Status.Phase = framev1beta1.OSDReplacementSucceeded
+	if err := h.c.Update(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+
+	// A restart in flight holds back an out, and so does one that ended
+	// less than cephActionSettle ago, even with every PG clean.
+	kr := h.create("restart", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDRestart, OSDID: osdRef(8)})
+	h.reconcile(kr)
+	h.expect(kr, framev1beta1.CephActionPending)
+	ko := h.create("out-in-flight", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDOut, OSDID: osdRef(2)})
+	h.reconcile(ko)
+	if a := h.expect(ko, framev1beta1.CephActionRefused); !strings.Contains(a.Status.Message, "in progress") {
+		t.Fatalf("message %q", a.Status.Message)
+	}
+	h.reconcile(kr) // rolled (the fake deployment does not move) and up: done
+	h.expect(kr, framev1beta1.CephActionDone)
+	h.now = h.now.Add(5 * time.Minute)
+	ko2 := h.create("out-too-soon", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDOut, OSDID: osdRef(2)})
+	h.reconcile(ko2)
+	if a := h.expect(ko2, framev1beta1.CephActionRefused); !strings.Contains(a.Status.Message, "settle") {
+		t.Fatalf("message %q", a.Status.Message)
+	}
+	h.now = h.now.Add(6 * time.Minute)
+	ko3 := h.create("out-later", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionOSDOut, OSDID: osdRef(2)})
+	h.reconcile(ko3)
+	h.expect(ko3, framev1beta1.CephActionDone)
+}
+
+func TestCephActionFlagFinalizer(t *testing.T) {
+	ctx := context.Background()
+	h := newActHarness(t)
+	k := h.create("noout", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionSetFlag, Flag: "noout"})
+	h.reconcile(k)
+	a := h.expect(k, framev1beta1.CephActionActive)
+	if !slices.Contains(a.Finalizers, cephActionFinalizer) {
+		t.Fatalf("finalizers %v", a.Finalizers)
+	}
+	// Deleted while holding noout: unset, then gone.
+	if err := h.c.Delete(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	h.ceph.sendErr = errors.New("timeout")
+	if _, err := h.r.Reconcile(ctx, ctrl.Request{NamespacedName: k}); err == nil {
+		t.Fatal("finalizer dropped although the unset failed")
+	}
+	h.get(k)
+	h.ceph.sendErr = nil
+	h.reconcile(k)
+	if slices.Contains(h.ceph.flags, "noout") {
+		t.Fatal("noout left set by a deleted action")
+	}
+	if err := h.c.Get(ctx, k, &framev1beta1.FrameCephAction{}); err == nil {
+		t.Fatal("object still there")
+	}
+
+	// Ended normally: the finalizer goes with it.
+	k2 := h.create("noscrub", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionSetFlag, Flag: "noscrub", DurationMinutes: 5})
+	h.reconcile(k2)
+	h.now = h.now.Add(6 * time.Minute)
+	h.reconcile(k2)
+	if a2 := h.expect(k2, framev1beta1.CephActionDone); len(a2.Finalizers) != 0 {
+		t.Fatalf("finalizers %v", a2.Finalizers)
+	}
+}
+
+func TestCephActionFlagSetByOtherMeanwhileIsLeftSet(t *testing.T) {
+	h := newActHarness(t)
+	h.ceph.raceFlag = "norebalance"
+	k := h.create("norebalance", framev1beta1.FrameCephActionSpec{Action: framev1beta1.CephActionSetFlag, Flag: "norebalance", DurationMinutes: 5})
+	h.reconcile(k)
+	if a := h.expect(k, framev1beta1.CephActionActive); !a.Status.FlagWasSet {
+		t.Fatalf("status %+v", a.Status)
+	}
+	h.now = h.now.Add(6 * time.Minute)
+	h.reconcile(k)
+	h.expect(k, framev1beta1.CephActionDone)
+	if !slices.Contains(h.ceph.flags, "norebalance") {
+		t.Fatal("unset a flag someone else set")
 	}
 }

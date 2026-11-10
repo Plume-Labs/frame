@@ -380,7 +380,48 @@ func (o *Operator) SetFlag(ctx context.Context, flag string, on bool) (bool, err
 		next = append(next, flag)
 	}
 	body, _ := json.Marshal(map[string][]string{"flags": next})
-	return was, o.c.send(ctx, http.MethodPut, "/api/osd/flags", "", "1.0", body, nil)
+	if err := o.c.send(ctx, http.MethodPut, "/api/osd/flags", "", "1.0", body, nil); err != nil {
+		return was, err
+	}
+	// The PUT takes the whole list: a flag someone else set or unset
+	// between the read and the PUT was overwritten. Read back and say so.
+	after, err := o.Flags(ctx)
+	if err != nil {
+		return was, nil //nolint:nilerr // the PUT was accepted; the check is best effort
+	}
+	if slices.Contains(after, flag) != on {
+		return was, fmt.Errorf("ceph accepted the change but %s is still %s", flag, map[bool]string{true: "unset", false: "set"}[on])
+	}
+	if d := flagDrift(next, after, flag); len(d) > 0 {
+		return was, &FlagDriftError{Changed: d}
+	}
+	return was, nil
+}
+
+// FlagDriftError says that SetFlag did its job but other flags differ from
+// what it sent: they changed between its read and its write, and its write
+// may have undone that change.
+type FlagDriftError struct{ Changed []string }
+
+func (e *FlagDriftError) Error() string {
+	return fmt.Sprintf("other flags changed at the same time (%s): check `ceph osd dump | grep flags`", strings.Join(e.Changed, ", "))
+}
+
+// flagDrift lists the flags, other than the one changed, that are in only
+// one of sent and now (as +flag or -flag).
+func flagDrift(sent, now []string, flag string) []string {
+	var d []string
+	for _, f := range now {
+		if f != flag && !slices.Contains(sent, f) {
+			d = append(d, "+"+f)
+		}
+	}
+	for _, f := range sent {
+		if f != flag && !slices.Contains(now, f) {
+			d = append(d, "-"+f)
+		}
+	}
+	return d
 }
 
 // OKToStopVerdict is the replacement's stand-in for `ceph osd ok-to-stop`,

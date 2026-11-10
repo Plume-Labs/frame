@@ -58,13 +58,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: |-
-              FrameCephActionSpec is one everyday Ceph gesture from the console: mark
-              an OSD in or out, restart it, scrub or deep-scrub it, or set a cluster
-              flag for a while. Every gesture is reversible and none destroys data;
-              the manager sends it through the Ceph operator account
-              (docs/ceph-actions.md). Like FrameOSDReplacement it is a one-shot object:
-              doing it again means a new one.
+            description: 'Spec is required: a missing spec would skip its validation
+              rules.'
             properties:
               action:
                 description: Action is the gesture.
@@ -86,9 +81,10 @@ spec:
                 type: integer
               flag:
                 description: |-
-                  Flag is the cluster flag set by SetFlag. It is unset by the manager
-                  when the duration has passed, or on release, unless another active
-                  FrameCephAction still holds it, or it was already set before this one.
+                  Flag is the cluster flag set by SetFlag. The manager unsets it when
+                  the duration has passed, on release, or if the object is deleted,
+                  unless it was already set before this action (then it is left set).
+                  One active FrameCephAction holds a flag at a time.
                 enum:
                 - noout
                 - norebalance
@@ -159,10 +155,14 @@ spec:
                 format: date-time
                 type: string
               unsetSentAt:
-                description: UnsetSentAt is written before the flag is unset.
+                description: |-
+                  UnsetSentAt is when the manager first tried to unset the flag; it
+                  retries until Ceph accepts it.
                 format: date-time
                 type: string
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

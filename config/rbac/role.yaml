@@ -168,7 +168,6 @@ rules:
   - frame.plume-labs.io
   resources:
   - framealertsubscriptions
-  - framecephactions
   - frameusers
   - networkhealthpolicies
   - storagehealthpolicies
@@ -179,6 +178,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framecephactions
   - framediskclaims
   - frameinstalls
   - framemachines
@@ -192,6 +192,7 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framecephactions/finalizers
   - framediskclaims/finalizers
   - frameinstalls/finalizers
   - framejobs/finalizers

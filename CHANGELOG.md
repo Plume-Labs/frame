@@ -13,9 +13,15 @@ release tags follow [Semantic Versioning](https://semver.org/).
   `norebalance`, `nobackfill`, `norecover`, `noscrub` or `nodeep-scrub` for
   5 min to 24 h (unset by the manager at the end, or on release; a flag set
   by hand before is left set). Out and restart are refused unless every PG
-  is active+clean and every OSD up and in. Each gesture is sent once.
+  is active+clean and every OSD up and in, no blocking flag (`noup`,
+  `norecover`, `nobackfill`, `norebalance`, `pause*`) is set and no other
+  out or restart is under way or ended less than 10 minutes ago. While an
+  OSD replacement runs, only scrubs go out. Each gesture is sent once.
+  Deleting an action that holds a flag unsets it first (finalizer).
   Admin tier writes, viewer reads; a banner shows active flags on the Ceph
-  screens. docs/ceph-actions.md.
+  screens, in red once one is overdue. docs/ceph-actions.md.
+- `spec` is now required on `FrameCephAction` and `FrameOSDReplacement`: a
+  null spec skipped their validation rules.
 
 ### Added — Storage → Replace OSD
 

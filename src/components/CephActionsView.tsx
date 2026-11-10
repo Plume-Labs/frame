@@ -3,9 +3,11 @@ import { toast } from 'sonner'
 import { isAdminToken } from '@/lib/auth'
 import { createFrameClient } from '@/lib/frame-sdk'
 import {
+  actionLabel,
   activeFlags,
   DEFAULT_FLAG_MINUTES,
   describeAction,
+  isOverdue,
   isTerminalAction,
   newActionError,
   SETTABLE_FLAGS,
@@ -58,11 +60,12 @@ function when(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : '—'
 }
 
-function phaseBadge(phase: string) {
+function phaseBadge(a: CephAction) {
+  const phase = a.phase
   if (phase === 'Done') return <Badge variant="secondary">Done</Badge>
   if (phase === 'Refused' || phase === 'Failed') return <Badge variant="destructive">{phase}</Badge>
   if (phase === 'Active') return <Badge>Active</Badge>
-  return <Badge variant="outline">{phase}</Badge>
+  return <Badge variant="outline">{actionLabel(a)}</Badge>
 }
 
 /**
@@ -72,16 +75,32 @@ function phaseBadge(phase: string) {
 export function ActiveFlagsBanner({ items, admin }: { items: CephAction[]; admin: boolean }) {
   const flags = activeFlags(items)
   if (flags.length === 0) return null
+  const now = new Date()
+  const late = flags.some((a) => isOverdue(a, now))
   return (
-    <div role="status" className="rounded-md border border-warning/50 bg-warning/10 p-3 text-sm space-y-1">
+    <div
+      role={late ? 'alert' : 'status'}
+      className={
+        late
+          ? 'rounded-md border border-destructive/60 bg-destructive/10 p-3 text-sm space-y-1'
+          : 'rounded-md border border-warning/50 bg-warning/10 p-3 text-sm space-y-1'
+      }
+    >
       {flags.map((a) => (
         <div key={a.name} className="flex flex-wrap items-center gap-2">
-          <Flag className="text-warning" />
+          <Flag className={isOverdue(a, now) ? 'text-destructive' : 'text-warning'} />
           <span className="font-mono font-semibold">{a.flag}</span>
-          <span>
-            set until {when(a.expiresAt)}
-            {a.flagWasSet && ' (it was already set: Frame leaves it set at the end)'}
-          </span>
+          {isOverdue(a, now) ? (
+            <span className="text-destructive font-medium">
+              its time ended at {when(a.expiresAt)} but Frame could not unset it yet ({a.message || 'no answer from Ceph'}
+              ); it keeps retrying, or run <code>ceph osd unset {a.flag}</code>
+            </span>
+          ) : (
+            <span>
+              set until {when(a.expiresAt)}
+              {a.flagWasSet && ' (it was already set: Frame leaves it set at the end)'}
+            </span>
+          )}
           {admin && !a.release && (
             <Button
               size="sm"
@@ -221,7 +240,7 @@ function ActionRow({ a }: { a: CephAction }) {
   return (
     <li className="border-t border-border py-2 text-sm space-y-0.5">
       <div className="flex flex-wrap items-center gap-2">
-        {phaseBadge(a.phase)}
+        {phaseBadge(a)}
         <span className="font-semibold">{a.action}</span>
         <span className="font-mono">{what}</span>
         <span className="text-xs text-muted-foreground">{when(a.createdAt)}</span>
@@ -241,7 +260,8 @@ export function CephActionsView() {
   )
   const admin = isAdmin()
   const items = state.phase === 'ready' ? state.data : []
-  const pending = items.filter((a) => !isTerminalAction(a.phase) && a.phase !== 'Active')
+  const pending = items.filter((a) => !isTerminalAction(a.phase) && a.phase !== 'Active' && !a.sentAt)
+  const running = items.filter((a) => a.phase === 'Pending' && a.sentAt)
   return (
     <div className="space-y-4">
       <ActiveFlagsBanner items={items} admin={admin} />
@@ -251,6 +271,7 @@ export function CephActionsView() {
         <p className="text-sm text-muted-foreground">Only an admin can send a Ceph gesture.</p>
       )}
       {pending.length > 0 && <p className="text-sm">{pending.length} gesture(s) waiting to be sent.</p>}
+      {running.length > 0 && <p className="text-sm">{running.length} gesture(s) sent, outcome not known yet.</p>}
       <LiveStates state={state} emptyLabel="No Ceph gesture yet." />
       {items.length > 0 && (
         <Card>
