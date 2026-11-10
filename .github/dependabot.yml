@@ -1,11 +1,17 @@
+# Les montées de version sont confiées à Renovate (renovate.json) : Dependabot
+# ne fait plus que les alertes et les correctifs de sécurité.
+# open-pull-requests-limit: 0 coupe les PR de montée de version sans couper
+# les PR de sécurité (décision du 10/11/2026).
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "devcontainers"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
