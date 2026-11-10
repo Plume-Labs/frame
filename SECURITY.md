@@ -112,6 +112,32 @@ every node scrub its own pools at once. It is still only `zpool scrub` on
 local pools; the one-node-at-a-time rule holds against a faulty controller,
 not against a compromised agent.
 
+The agent's one destructive command set is the wipe of a new disk for an OSD
+replacement (`internal/agent/diskwipe.go`): `wipefs -a`, `dd` of 100 MiB of
+zeros and `sgdisk --zap-all`, fixed argv, on a `/dev/disk/by-id/wwn-…` or
+`nvme-…` path, through `nsenter` under the host's `timeout`. The request is a
+Node annotation naming a path, a serial and an id; the agent acts only when
+its own `lsblk` of the same pass shows exactly one whole, free disk (no
+signature, partition, mount, membership or holder) at that path with that
+serial, and only once per id (recorded on the host before acting). **A way to
+make the agent wipe a disk that carries data, a partition or a mount, a disk
+it did not see itself, or the same request twice, is a vulnerability.** Known
+limit: a compromised agent, or anyone who can patch Nodes, can ask any node to
+wipe its free disks.
+
+**Ceph.** The manager holds a second dashboard account, used only by the OSD
+replacement (`frame-ceph-operator` Secret, docs/osd-replacement.md), with
+`read`, `update` and `create` on the dashboard's `osd` scope and `read` on
+`pool`. The routes it sends are fixed in `internal/cephmgr/operator.go`: out,
+in, purge of one OSD, and reads. What a stolen copy of that account allows is
+what the role allows: mark OSDs out or in, purge, destroy or reweight them,
+set cluster OSD flags, scrub — enough to lose data if two hosts' OSDs are
+purged. It is kept in a Secret only the manager reads; no console tier can
+read Secrets of the manager's namespace. A purge needs two serials retyped by
+an admin and Ceph's `safe-to-destroy`; **a path by which the manager purges an
+OSD, or the agent wipes a disk, without the matching retyped serial is a
+vulnerability.**
+
 Note also that **enabling KSM is a security trade-off, not just a performance
 one**: merged pages make writes take a measurable copy-on-write fault, which
 lets one container probe whether another holds a given page. That is why

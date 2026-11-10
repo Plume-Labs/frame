@@ -6,6 +6,21 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Storage → Replace OSD
+
+- `FrameOSDReplacement` replaces one OSD's disk end to end, one OSD at a
+  time: checks (health, PGs, flags, ok-to-stop, the retyped serial, every
+  OSD of the host declared), drain, safe-to-destroy, approval 1 (old serial
+  retyped), purge sent once, swap, exactly one new free disk, approval 2
+  (new serial retyped), wipe by the node's agent, JSON patch test+replace of
+  that one CephCluster entry, new OSD, backfill. Refusals pause with their
+  reason; resume and cancel from the console. See docs/osd-replacement.md.
+- Ceph is written through a second dashboard account held by the manager
+  only (`frame-ceph-operator`), with a fixed list of routes. The console's
+  read account is unchanged.
+- The agent can wipe a new disk on request, after its own checks, once per
+  request. Disks now report their logical sector size (`logicalSectorBytes`).
+
 ### Added — Storage → Volumes: which workload writes where
 
 - A read-only tab lists every PersistentVolumeClaim with the workload and

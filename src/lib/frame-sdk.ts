@@ -30,6 +30,13 @@ import {
 } from './inference-services'
 import { currentSession } from './auth'
 import {
+  crToReplacement,
+  newReplacementBody,
+  normalizeSerial,
+  type FrameOSDReplacementCR,
+  type OSDReplacement,
+} from './osd-replacement'
+import {
   buildWorkloadTree,
   type EditableKind,
   type NamespaceNode,
@@ -3902,6 +3909,63 @@ class StorageClient {
   }
 }
 
+/**
+ * FrameOSDReplacement objects: the "Replace an OSD" screen. Every write is a
+ * merge patch of one spec field (an approval, cancel, resume) or the creation
+ * of a new object; the controller does all the work and all the checks, and
+ * the apiserver lets only the admin tier write these objects.
+ */
+class OSDReplacementClient {
+  constructor(private readonly ns?: string) {}
+
+  private path(name?: string): string {
+    const base = frameListPath('frameosdreplacements', this.ns)
+    return name ? `${base}/${encodeURIComponent(name)}` : base
+  }
+
+  watchPath(): string {
+    return this.path()
+  }
+
+  async list(): Promise<OSDReplacement[]> {
+    const res = await k8sFetch<ListResponse<FrameOSDReplacementCR>>(this.path())
+    return (res.items ?? []).map(crToReplacement).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  async create(osdID: number, serial: string): Promise<void> {
+    await k8sFetch<unknown>(this.path(), {
+      action: boundedActionLabel(`replace osd.${osdID}`),
+      method: 'POST',
+      body: newReplacementBody(frameNs(this.ns), osdID, serial, new Date()),
+    })
+  }
+
+  private async patchSpec(name: string, action: string, spec: Record<string, unknown>): Promise<void> {
+    await k8sFetch<unknown>(this.path(name), {
+      action: boundedActionLabel(action),
+      method: 'PATCH',
+      contentType: 'application/merge-patch+json',
+      body: { spec },
+    })
+  }
+
+  approvePurge(r: OSDReplacement, serial: string): Promise<void> {
+    return this.patchSpec(r.name, `approve purge of osd.${r.osdID}`, { purgeApproval: { serial: normalizeSerial(serial) } })
+  }
+
+  approveWipe(r: OSDReplacement, serial: string): Promise<void> {
+    return this.patchSpec(r.name, `approve wipe for osd.${r.osdID}`, { wipeApproval: { serial: normalizeSerial(serial) } })
+  }
+
+  resume(r: OSDReplacement): Promise<void> {
+    return this.patchSpec(r.name, `resume replacement of osd.${r.osdID}`, { resume: r.observedResume + 1 })
+  }
+
+  cancel(r: OSDReplacement): Promise<void> {
+    return this.patchSpec(r.name, `cancel replacement of osd.${r.osdID}`, { cancel: true })
+  }
+}
+
 /** A FrameDiskClaim CR as the apiserver returns it. */
 export interface FrameDiskClaimCR {
   metadata: { name: string; namespace: string }
@@ -4247,6 +4311,7 @@ export class FrameClient {
   public readonly installs: InstallClient
   public readonly storage: StorageClient
   public readonly diskClaims: DiskClaimClient
+  public readonly osdReplacements: OSDReplacementClient
   public readonly databases: DatabaseClient
   public readonly caches: CacheClient
 
@@ -4268,6 +4333,7 @@ export class FrameClient {
     this.installs  = new InstallClient(opts.namespace)
     this.storage   = new StorageClient()
     this.diskClaims = new DiskClaimClient(opts.namespace)
+    this.osdReplacements = new OSDReplacementClient(opts.namespace)
     this.databases = new DatabaseClient()
     this.caches = new CacheClient()
 
