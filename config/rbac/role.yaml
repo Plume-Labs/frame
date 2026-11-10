@@ -124,6 +124,15 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ceph.rook.io
+  resourceNames:
+  - rook-ceph
+  resources:
+  - cephclusters
+  verbs:
+  - get
+  - patch
+- apiGroups:
   - frame.plume-labs.io
   resources:
   - framealerts
@@ -139,11 +148,13 @@ rules:
   resources:
   - framealerts/status
   - framealertsubscriptions/status
+  - framecephactions/status
   - framediskclaims/status
   - frameinstalls/status
   - framejobs/status
   - framemachines/status
   - framenodes/status
+  - frameosdreplacements/status
   - frameresourcequotas/status
   - framestorages/status
   - frametasks/status
@@ -167,9 +178,11 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framecephactions
   - framediskclaims
   - frameinstalls
   - framemachines
+  - frameosdreplacements
   verbs:
   - get
   - list
@@ -179,11 +192,13 @@ rules:
 - apiGroups:
   - frame.plume-labs.io
   resources:
+  - framecephactions/finalizers
   - framediskclaims/finalizers
   - frameinstalls/finalizers
   - framejobs/finalizers
   - framemachines/finalizers
   - framenodes/finalizers
+  - frameosdreplacements/finalizers
   - frameresourcequotas/finalizers
   - framestorages/finalizers
   - nodetunings/finalizers

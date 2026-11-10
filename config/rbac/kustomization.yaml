@@ -79,4 +79,14 @@ resources:
 - framediskclaim_admin_role.yaml
 - framediskclaim_editor_role.yaml
 - framediskclaim_viewer_role.yaml
+# FrameOSDReplacement: same as FrameDiskClaim (admin and viewer tiers only),
+# it purges an OSD and wipes a disk. See frameosdreplacement_editor_role.yaml.
+- frameosdreplacement_admin_role.yaml
+- frameosdreplacement_editor_role.yaml
+- frameosdreplacement_viewer_role.yaml
+# FrameCephAction: admin and viewer tiers only (out, restart, noout lower
+# redundancy for a while). See framecephaction_editor_role.yaml.
+- framecephaction_admin_role.yaml
+- framecephaction_editor_role.yaml
+- framecephaction_viewer_role.yaml
 
