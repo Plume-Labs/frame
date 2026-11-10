@@ -322,6 +322,10 @@ const occupancyMounted = "mounted"
 // partition.
 const lsblkTypeDisk = "disk"
 
+// OccupancyFree is the occupancy of a whole disk with no signature, no
+// partition and no mount: the only one a wipe accepts.
+const OccupancyFree = "free"
+
 // occupancyOf says what is using the disk, and errs towards "occupied".
 // FrameDiskClaim's third guard fails closed on anything that is not "free",
 // so a signature this function does not recognise must never fall through
@@ -348,7 +352,7 @@ func occupancyOf(dev lsblkDevice) string {
 		if len(dev.Children) > 0 {
 			return "partitioned"
 		}
-		return "free"
+		return OccupancyFree
 	case strings.HasPrefix(fstype, "ceph"):
 		return "ceph-osd"
 	case fstype == "LVM2_member":

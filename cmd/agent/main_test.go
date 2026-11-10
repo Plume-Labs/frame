@@ -367,7 +367,8 @@ func TestTickPublishesSMART(t *testing.T) {
 		`"type":"disk","rota":false,"fstype":null,"mountpoint":null}]}`}
 	smart := agent.NewSMARTReader(smartExec{})
 	for range 100 {
-		tick(context.Background(), kc, "node-1", t.TempDir(), runner, nil, smart, agent.NewNetworkCollector(t.TempDir()), nil, nil)
+		tick(context.Background(), kc, "node-1", t.TempDir(), runner, nil, smart,
+			agent.NewNetworkCollector(t.TempDir()), nil, nil)
 		var got framev1beta1.FrameMachine
 		if err := kc.Get(context.Background(), client.ObjectKeyFromObject(machine), &got); err != nil {
 			t.Fatal(err)

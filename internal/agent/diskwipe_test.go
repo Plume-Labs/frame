@@ -133,8 +133,16 @@ func TestWipeRefusals(t *testing.T) {
 		reason string
 	}{
 		{"serial differs", func(r *framev1beta1.DiskWipeRequest) { r.Serial = "OTHER" }, nil, nil, "has serial"},
-		{"not free", nil, func() []framev1beta1.ObservedDisk { d := freeDisk(); d.Occupancy = "lvm-pv"; return []framev1beta1.ObservedDisk{d} }, nil, "not free"},
-		{"partitioned", nil, func() []framev1beta1.ObservedDisk { d := freeDisk(); d.Occupancy = "partitioned"; return []framev1beta1.ObservedDisk{d} }, nil, "not free"},
+		{"not free", nil, func() []framev1beta1.ObservedDisk {
+			d := freeDisk()
+			d.Occupancy = "lvm-pv"
+			return []framev1beta1.ObservedDisk{d}
+		}, nil, "not free"},
+		{"partitioned", nil, func() []framev1beta1.ObservedDisk {
+			d := freeDisk()
+			d.Occupancy = "partitioned"
+			return []framev1beta1.ObservedDisk{d}
+		}, nil, "not free"},
 		{"absent", nil, func() []framev1beta1.ObservedDisk { return nil }, nil, "0 disks"},
 		{"two at the path", nil, func() []framev1beta1.ObservedDisk { return []framev1beta1.ObservedDisk{freeDisk(), freeDisk()} }, nil, "2 disks"},
 		{"old request", func(r *framev1beta1.DiskWipeRequest) { r.RequestedAt = metav1.NewTime(wipeNow.Add(-time.Hour)) }, nil, nil, "window"},

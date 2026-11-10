@@ -224,8 +224,6 @@ func (h *osdHarness) get() *framev1beta1.FrameOSDReplacement {
 	return &o
 }
 
-func (h *osdHarness) phase() string { return h.get().Status.Phase }
-
 func (h *osdHarness) expectPhase(want string) {
 	h.t.Helper()
 	if o := h.get(); o.Status.Phase != want {

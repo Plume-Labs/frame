@@ -412,16 +412,13 @@ func replaced(d framev1beta1.ObservedDisk) *framev1beta1.ReplacedDisk {
 	}
 }
 
-// ---------------------------------------------------------------- Checking
-
-func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
-	o, id := s.o, s.o.Spec.OSDID
-
-	// One replacement at a time, cluster-wide: the oldest goes first, and
-	// a paused one still holds the turn (it may be mid-way).
+// notMyTurn says why o must wait: one replacement at a time, cluster-wide;
+// the oldest goes first, and a paused one still holds the turn (it may be
+// mid-way).
+func (r *FrameOSDReplacementReconciler) notMyTurn(ctx context.Context, o *framev1beta1.FrameOSDReplacement) (string, error) {
 	var all framev1beta1.FrameOSDReplacementList
-	if err := s.r.List(ctx, &all); err != nil {
-		return s.wait(fmt.Sprintf("listing replacements: %v", err))
+	if err := r.List(ctx, &all); err != nil {
+		return "", err
 	}
 	for i := range all.Items {
 		p := &all.Items[i]
@@ -431,8 +428,66 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 		older := p.CreationTimestamp.Before(&o.CreationTimestamp) ||
 			(p.CreationTimestamp.Equal(&o.CreationTimestamp) && p.Namespace+"/"+p.Name < o.Namespace+"/"+o.Name)
 		if older {
-			return s.wait(fmt.Sprintf("waiting: replacement %s/%s (osd.%d) is in progress; one at a time", p.Namespace, p.Name, p.Spec.OSDID))
+			return fmt.Sprintf("waiting: replacement %s/%s (osd.%d) is in progress; one at a time", p.Namespace, p.Name, p.Spec.OSDID), nil
 		}
+	}
+	return "", nil
+}
+
+const (
+	cephHealthOK   = "HEALTH_OK"
+	cephHealthWarn = "HEALTH_WARN"
+	cephHealthErr  = "HEALTH_ERR"
+)
+
+// deviceIndex is the one entry of devices that is path, or why there is
+// not exactly one.
+func deviceIndex(devices []string, path string) (int, string) {
+	idx := -1
+	for i, n := range devices {
+		if n == path {
+			if idx >= 0 {
+				return -1, "is listed twice in the CephCluster"
+			}
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return -1, "is not in the CephCluster's spec.storage.devices"
+	}
+	return idx, ""
+}
+
+// healthRefusal says why Ceph's health refuses the replacement, or "":
+// HEALTH_OK, or HEALTH_WARN with only tolerated checks.
+func healthRefusal(st *cephmgr.ClusterStatus) string {
+	if st.Health == cephHealthOK {
+		return ""
+	}
+	if st.Health == cephHealthErr {
+		return "Ceph is HEALTH_ERR"
+	}
+	var other []string
+	for _, c := range st.Checks {
+		if !slices.Contains(toleratedHealthChecks, c.Name) {
+			other = append(other, c.Name+" ("+c.Message+")")
+		}
+	}
+	if st.Health != cephHealthWarn || len(other) > 0 {
+		return fmt.Sprintf("Ceph is %s with warnings outside the tolerated list %v: %s", st.Health, toleratedHealthChecks, strings.Join(other, "; "))
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------- Checking
+
+func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
+	o, id := s.o, s.o.Spec.OSDID
+
+	if why, err := s.r.notMyTurn(ctx, o); err != nil {
+		return s.wait(fmt.Sprintf("listing replacements: %v", err))
+	} else if why != "" {
+		return s.wait(why)
 	}
 
 	st, err := s.ceph.Status(ctx)
@@ -440,19 +495,8 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 		return s.wait(fmt.Sprintf("reading ceph status: %v", err))
 	}
 	s.recordPGs(st)
-	if st.Health == "HEALTH_ERR" {
-		return s.pause("Ceph is HEALTH_ERR")
-	}
-	if st.Health != "HEALTH_OK" {
-		var other []string
-		for _, c := range st.Checks {
-			if !slices.Contains(toleratedHealthChecks, c.Name) {
-				other = append(other, c.Name+" ("+c.Message+")")
-			}
-		}
-		if st.Health != "HEALTH_WARN" || len(other) > 0 {
-			return s.pause(fmt.Sprintf("Ceph is %s with warnings outside the tolerated list %v: %s", st.Health, toleratedHealthChecks, strings.Join(other, "; ")))
-		}
+	if why := healthRefusal(st); why != "" {
+		return s.pause(why)
 	}
 	osds, err := s.ceph.OSDs(ctx)
 	if err != nil {
@@ -506,17 +550,9 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 	if err != nil {
 		return s.orPause(err)
 	}
-	idx := -1
-	for i, n := range devices {
-		if n == old[0].ByIDPath {
-			if idx >= 0 {
-				return s.pause(fmt.Sprintf("%s is listed twice in the CephCluster", n))
-			}
-			idx = i
-		}
-	}
-	if idx < 0 {
-		return s.pause(fmt.Sprintf("%s (osd.%d's disk) is not in the CephCluster's spec.storage.devices", old[0].ByIDPath, id))
+	idx, why := deviceIndex(devices, old[0].ByIDPath)
+	if why != "" {
+		return s.pause(fmt.Sprintf("%s (osd.%d's disk) %s", old[0].ByIDPath, id, why))
 	}
 	// Every OSD of the host must be declared: otherwise a disk Rook did
 	// not get from the list could pass for the new one.
@@ -1032,7 +1068,7 @@ func (s *osdStep) cancel(ctx context.Context) (ctrl.Result, error) {
 
 func diskName(d *framev1beta1.ReplacedDisk) string {
 	if d == nil {
-		return "none"
+		return "no disk"
 	}
 	return d.ByIDPath + " (serial " + d.Serial + ")"
 }

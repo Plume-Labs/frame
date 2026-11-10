@@ -188,7 +188,7 @@ func wipe(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, x
 	if d.SerialNumber != req.Serial {
 		return refused("the disk at %s has serial %q, not %q", req.ByIDPath, d.SerialNumber, req.Serial)
 	}
-	if d.Occupancy != "free" {
+	if d.Occupancy != OccupancyFree {
 		return refused("the disk at %s is %s, not free", req.ByIDPath, d.Occupancy)
 	}
 	if d.MountPoint != "" || len(d.Members) > 0 || d.FSType != "" {

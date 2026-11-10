@@ -251,7 +251,7 @@ func (o *Operator) Metadata(ctx context.Context, id int32) (*OSDMetadata, error)
 // last underscore; an entry without one is skipped.
 func SerialsOf(deviceIDs string) []string {
 	var out []string
-	for _, part := range strings.Split(deviceIDs, ",") {
+	for part := range strings.SplitSeq(deviceIDs, ",") {
 		part = strings.TrimSpace(part)
 		if i := strings.IndexByte(part, '='); i >= 0 {
 			part = part[i+1:]
