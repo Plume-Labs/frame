@@ -324,6 +324,14 @@ type ObservedDisk struct {
 	// +optional
 	Rotational *bool `json:"rotational,omitempty"`
 
+	// LogicalSectorBytes is the disk's logical sector size (lsblk LOG-SEC).
+	// Zero means not reported. Ceph wants 512 or 4096; a disk formatted
+	// with 520-byte sectors (taken out of a storage array) is not usable
+	// before a low-level format.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	LogicalSectorBytes int32 `json:"logicalSectorBytes,omitempty"`
+
 	// MountPoint is the first non-empty mountpoint on the disk or on any
 	// device built on it (partition, md array), in lsblk order.
 	// +optional

@@ -700,6 +700,29 @@ func main() {
 		setupLog.Error(err, "Failed to create controller", "controller", "framediskclaim")
 		os.Exit(1)
 	}
+	// The OSD replacement writes to Ceph with the operator account (Secret
+	// frame-ceph-operator in this namespace), never the console's read-only
+	// one; logins of both go through the same write-ahead gate.
+	osdOps := &cephmgr.OperatorProvider{Load: cephmgr.OperatorSecretLoader(mgr.GetAPIReader(), os.Getenv("POD_NAMESPACE"))}
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		osdOps.Gate = &cephmgr.SecretLoginGate{Reader: mgr.GetAPIReader(), Writer: mgr.GetClient(), Namespace: ns}
+	}
+	if err := (&controller.FrameOSDReplacementReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Ceph: func(ctx context.Context) (controller.CephOperator, error) {
+			op, err := osdOps.Get(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return op, nil
+		},
+		RookNamespace:   cephClusterNamespace,
+		CephClusterName: cephClusterName,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "frameosdreplacement")
+		os.Exit(1)
+	}
 	if os.Getenv(enableWebhooksEnv) != webhooksDisabled {
 		if err := webhookv1beta1.SetupFrameNodeWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "FrameNode")

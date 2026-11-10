@@ -19,6 +19,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -33,7 +34,7 @@ import (
 // WWN, MODEL, ROTA and LABEL exist in every util-linux lsblk this agent
 // can meet. ID-LINK is deliberately absent: it is recent, and an lsblk
 // that does not know a column refuses the whole invocation.
-const lsblkColumns = "NAME,PATH,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINT,WWN,MODEL,ROTA,LABEL"
+const lsblkColumns = "NAME,PATH,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINT,WWN,MODEL,ROTA,LABEL,LOG-SEC"
 
 // maxMembers mirrors ObservedDisk.Members' MaxItems. A report over the
 // schema bound would be rejected whole by the apiserver, so the agent
@@ -52,6 +53,7 @@ type lsblkDevice struct {
 	Model      *string       `json:"model"`
 	Rota       lsblkBool     `json:"rota"`
 	Label      *string       `json:"label"`
+	LogSec     lsblkInt      `json:"log-sec"`
 	Children   []lsblkDevice `json:"children"`
 }
 
@@ -212,17 +214,18 @@ func ObserveDisksIndexed(runner CommandRunner) ([]framev1beta1.ObservedDisk, map
 			wwn = ""
 		}
 		disks = append(disks, framev1beta1.ObservedDisk{
-			Path:         dev.Path,
-			SerialNumber: serial,
-			SizeGB:       int32(dev.Size / 1_000_000_000),
-			Occupancy:    occupancyOf(dev),
-			WWN:          wwn,
-			ByIDPath:     byIDPathFromWWN(wwn),
-			Model:        clipRunes(str(dev.Model), maxModelLen),
-			Rotational:   dev.Rota.Value,
-			MountPoint:   clipRunes(firstMountPoint(dev), maxMountPointLen),
-			FSType:       clipRunes(str(dev.FSType), maxFSTypeLen),
-			Members:      membersOf(dev),
+			Path:               dev.Path,
+			SerialNumber:       serial,
+			SizeGB:             int32(dev.Size / 1_000_000_000),
+			Occupancy:          occupancyOf(dev),
+			WWN:                wwn,
+			ByIDPath:           byIDPathFromWWN(wwn),
+			Model:              clipRunes(str(dev.Model), maxModelLen),
+			Rotational:         dev.Rota.Value,
+			LogicalSectorBytes: logicalSector(dev.LogSec),
+			MountPoint:         clipRunes(firstMountPoint(dev), maxMountPointLen),
+			FSType:             clipRunes(str(dev.FSType), maxFSTypeLen),
+			Members:            membersOf(dev),
 		})
 	}
 	return disks, index, nil
@@ -353,4 +356,38 @@ func occupancyOf(dev lsblkDevice) string {
 	default:
 		return "in-use"
 	}
+}
+
+// lsblkInt is a numeric lsblk column: a JSON number in current util-linux,
+// a string in releases before 2.33, null when the kernel says nothing. A
+// value it cannot read is left unset rather than failing the whole report:
+// this column is informative, the disk list is not.
+type lsblkInt struct {
+	Value *int64
+}
+
+func (n *lsblkInt) UnmarshalJSON(data []byte) error {
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	n.Value = nil
+	switch t := v.(type) {
+	case float64:
+		i := int64(t)
+		n.Value = &i
+	case string:
+		if i, err := strconv.ParseInt(strings.TrimSpace(t), 10, 64); err == nil {
+			n.Value = &i
+		}
+	}
+	return nil
+}
+
+// logicalSector is lsblk's LOG-SEC, 0 when absent or implausible.
+func logicalSector(v lsblkInt) int32 {
+	if v.Value == nil || *v.Value <= 0 || *v.Value > 1<<20 {
+		return 0
+	}
+	return int32(*v.Value)
 }

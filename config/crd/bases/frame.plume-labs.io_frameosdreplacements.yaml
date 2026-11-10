@@ -1,0 +1,400 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: frameosdreplacements.frame.plume-labs.io
+spec:
+  group: frame.plume-labs.io
+  names:
+    kind: FrameOSDReplacement
+    listKind: FrameOSDReplacementList
+    plural: frameosdreplacements
+    shortNames:
+    - fosdr
+    singular: frameosdreplacement
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.osdID
+      name: OSD
+      type: integer
+    - jsonPath: .status.host
+      name: Host
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.pgs
+      name: PGs
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: FrameOSDReplacement is the Schema for the frameosdreplacements
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              FrameOSDReplacementSpec replaces one Ceph OSD's disk by a new one, end to
+              end: drain, purge, physical swap, wipe of the new disk, declaration to
+              Rook, backfill. Like FrameDiskClaim it is a one-shot act with terminal
+              phases; running it again means a new object.
+
+              Two steps cannot be undone, and each waits for a human: the purge of the
+              OSD (purgeApproval) and the wipe of the new disk (wipeApproval). Each is
+              confirmed by retyping a serial number the person reads off the disk they
+              mean, never by a click.
+            properties:
+              cancel:
+                description: |-
+                  Cancel stops the replacement. Before the purge, a drained OSD is
+                  marked in again; after it, nothing is undone and the status says
+                  where things stand.
+                type: boolean
+              drainTimeoutMinutes:
+                default: 120
+                description: |-
+                  DrainTimeoutMinutes bounds the wait for all PGs active+clean after
+                  the OSD is marked out, and again after the new OSD is in. Past it the
+                  replacement pauses; nothing is undone.
+                format: int32
+                maximum: 1440
+                minimum: 10
+                type: integer
+              osdID:
+                description: OSDID is the Ceph OSD to replace (7 for osd.7).
+                format: int32
+                maximum: 65535
+                minimum: 0
+                type: integer
+              purgeApproval:
+                description: |-
+                  PurgeApproval is approval no. 1: the old disk's serial, retyped once
+                  the OSD is drained and safe-to-destroy. The purge is irreversible.
+                  A serial that does not match is ignored and may be retyped; the one
+                  accepted is dated in status.purgeApprovedAt, and only an approval
+                  given while the replacement waits for it counts.
+                properties:
+                  serial:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - serial
+                type: object
+              resume:
+                description: |-
+                  Resume is raised by one to retry the current step after a pause
+                  (status.phase Paused). A destructive call whose outcome is unknown is
+                  never sent again by a resume: that step pauses again and says what to
+                  check by hand.
+                format: int32
+                minimum: 0
+                type: integer
+              serial:
+                description: |-
+                  Serial is the serial number of the OSD's current disk, retyped at
+                  launch. It must match the serial Ceph reports for this OSD: the
+                  replacement starts only on the disk the person meant.
+                maxLength: 128
+                minLength: 1
+                type: string
+              wipeApproval:
+                description: |-
+                  WipeApproval is approval no. 2: the new disk's serial, read on its
+                  label and retyped once Frame shows the disk it found. The wipe is
+                  irreversible.
+                properties:
+                  serial:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                required:
+                - serial
+                type: object
+            required:
+            - osdID
+            - serial
+            type: object
+            x-kubernetes-validations:
+            - message: osdID and serial are fixed at creation
+              rule: self.osdID == oldSelf.osdID && self.serial == oldSelf.serial
+            - message: cancel cannot be taken back
+              rule: '!has(oldSelf.cancel) || !oldSelf.cancel || (has(self.cancel)
+                && self.cancel)'
+          status:
+            properties:
+              backfillSince:
+                format: date-time
+                type: string
+              declareRequestedAt:
+                format: date-time
+                type: string
+              declaredAt:
+                format: date-time
+                type: string
+              deviceIndex:
+                description: |-
+                  DeviceIndex is the old disk's entry in the CephCluster's
+                  spec.storage.devices, replaced (and only it) at the declaration.
+                format: int32
+                type: integer
+              disksBefore:
+                description: |-
+                  DisksBefore lists the by-id paths of every disk the host had before
+                  the purge: the new disk must be absent from it.
+                items:
+                  maxLength: 512
+                  type: string
+                maxItems: 64
+                type: array
+              events:
+                description: Events is the replacement's journal, oldest first, the
+                  last 64 kept.
+                items:
+                  description: OSDReplacementEvent is one line of the replacement's
+                    own journal.
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    message:
+                      maxLength: 512
+                      type: string
+                    phase:
+                      maxLength: 32
+                      type: string
+                  required:
+                  - at
+                  - message
+                  - phase
+                  type: object
+                maxItems: 64
+                type: array
+              host:
+                description: Host is the CRUSH host (and Kubernetes node) of the OSD.
+                maxLength: 253
+                type: string
+              hostOSDsBefore:
+                description: |-
+                  HostOSDsBefore is how many OSDs the host had before: the new OSD is
+                  up when it has as many again.
+                format: int32
+                type: integer
+              machineRef:
+                description: MachineRef is the FrameMachine whose agent reports the
+                  host's disks.
+                maxLength: 253
+                type: string
+              markedOutAt:
+                description: |-
+                  Write-ahead records: each is written before the call it names, so
+                  that a restart can tell "never sent" from "sent, outcome unknown".
+                format: date-time
+                type: string
+              message:
+                maxLength: 1024
+                type: string
+              newDisk:
+                description: NewDisk is the disk found after the swap.
+                properties:
+                  byIdPath:
+                    maxLength: 512
+                    type: string
+                  logicalSectorBytes:
+                    format: int32
+                    type: integer
+                  model:
+                    maxLength: 256
+                    type: string
+                  path:
+                    description: |-
+                      Path is the kernel name when it was read (display only: it changes
+                      across boots).
+                    maxLength: 512
+                    type: string
+                  serial:
+                    maxLength: 128
+                    type: string
+                  sizeGB:
+                    format: int32
+                    type: integer
+                  smart:
+                    description: DiskSMART is one read of a disk's own health data,
+                      read-only.
+                    properties:
+                      error:
+                        description: Error says why this read gave nothing.
+                        maxLength: 256
+                        type: string
+                      passed:
+                        description: Passed is the disk's overall self-assessment.
+                          Nil when it gave none.
+                        type: boolean
+                      readAt:
+                        description: ReadAt is when it was read; a read is hours apart,
+                          see the agent.
+                        format: date-time
+                        type: string
+                      wearUsedPercent:
+                        description: |-
+                          WearUsedPercent is endurance used, 0 to 100. Nil when the disk reports
+                          no attribute this reader knows: not the same as unworn.
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                    type: object
+                  wwn:
+                    maxLength: 64
+                    type: string
+                type: object
+              observedResume:
+                description: ObservedResume is the spec.resume last acted on.
+                format: int32
+                type: integer
+              oldDisk:
+                description: OldDisk is the OSD's disk, identified at the check.
+                properties:
+                  byIdPath:
+                    maxLength: 512
+                    type: string
+                  logicalSectorBytes:
+                    format: int32
+                    type: integer
+                  model:
+                    maxLength: 256
+                    type: string
+                  path:
+                    description: |-
+                      Path is the kernel name when it was read (display only: it changes
+                      across boots).
+                    maxLength: 512
+                    type: string
+                  serial:
+                    maxLength: 128
+                    type: string
+                  sizeGB:
+                    format: int32
+                    type: integer
+                  smart:
+                    description: DiskSMART is one read of a disk's own health data,
+                      read-only.
+                    properties:
+                      error:
+                        description: Error says why this read gave nothing.
+                        maxLength: 256
+                        type: string
+                      passed:
+                        description: Passed is the disk's overall self-assessment.
+                          Nil when it gave none.
+                        type: boolean
+                      readAt:
+                        description: ReadAt is when it was read; a read is hours apart,
+                          see the agent.
+                        format: date-time
+                        type: string
+                      wearUsedPercent:
+                        description: |-
+                          WearUsedPercent is endurance used, 0 to 100. Nil when the disk reports
+                          no attribute this reader knows: not the same as unworn.
+                        format: int32
+                        maximum: 100
+                        minimum: 0
+                        type: integer
+                    type: object
+                  wwn:
+                    maxLength: 64
+                    type: string
+                type: object
+              operatorRestartedAt:
+                format: date-time
+                type: string
+              pausedPhase:
+                description: PausedPhase is the phase a pause interrupted, resumed
+                  by spec.resume.
+                maxLength: 32
+                type: string
+              pgs:
+                description: PGs is the last count read, "<active+clean>/<total>".
+                maxLength: 64
+                type: string
+              phase:
+                enum:
+                - Checking
+                - Draining
+                - AwaitingPurgeApproval
+                - Purging
+                - AwaitingDisk
+                - AwaitingWipeApproval
+                - Wiping
+                - Declaring
+                - AwaitingOSD
+                - Backfilling
+                - Succeeded
+                - Paused
+                - Cancelled
+                - Failed
+                type: string
+              phaseSince:
+                format: date-time
+                type: string
+              purgeApprovedAt:
+                format: date-time
+                type: string
+              purgeRequestedAt:
+                format: date-time
+                type: string
+              purgedAt:
+                format: date-time
+                type: string
+              sawUnclean:
+                description: |-
+                  SawUnclean records that, since the last mark, a PG was seen outside
+                  active+clean: data did move.
+                type: boolean
+              scaledDownAt:
+                format: date-time
+                type: string
+              wipeApprovedAt:
+                format: date-time
+                type: string
+              wipeRequestID:
+                description: WipeRequestID names the wipe request handed to the node's
+                  agent.
+                maxLength: 128
+                type: string
+              wipeRequestedAt:
+                format: date-time
+                type: string
+              wipedAt:
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

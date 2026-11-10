@@ -301,6 +301,17 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 		return fmt.Errorf("refusing GET %q: not on the dashboard read list", path)
 	}
 	ep := readEndpoints[i]
+	return c.send(ctx, http.MethodGet, ep.Path, ep.Query, ep.Version, nil, into)
+}
+
+// send is the one place a request other than the login leaves the client.
+// Its callers build path and query from constants and integers only (get
+// above, and the fixed calls of operator.go): nothing from the cluster, a CR
+// or a caller reaches it as a string. It logs in first if needed and once
+// more on a 401 (an expired token). A non-2xx answer is an error; into may
+// be nil when the answer carries nothing to read.
+func (c *Client) send(ctx context.Context, method, path, query, version string, body []byte, into any) error {
+	what := method + " " + path
 	for range 2 {
 		c.mu.Lock()
 		tok := c.token
@@ -323,16 +334,23 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 			c.mu.Unlock()
 		}
 		u := *c.base
-		u.Path, u.RawQuery = ep.Path, ep.Query
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		u.Path, u.RawQuery = path, query
+		var rd io.Reader
+		if body != nil {
+			rd = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, u.String(), rd)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Accept", acceptFor(ep.Version))
+		req.Header.Set("Accept", acceptFor(version))
 		req.Header.Set("Authorization", "Bearer "+tok)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return fmt.Errorf("GET %s: %w", path, err)
+			return fmt.Errorf("%s: %w", what, err)
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 		_ = resp.Body.Close()
@@ -343,18 +361,48 @@ func (c *Client) get(ctx context.Context, path string, into any) error {
 			c.mu.Unlock()
 			continue
 		}
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return &HTTPError{What: what, Status: resp.StatusCode, Detail: dashboardDetail(data)}
 		}
 		if err != nil {
-			return fmt.Errorf("GET %s: %w", path, err)
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		if into == nil {
+			return nil
 		}
 		if err := json.Unmarshal(data, into); err != nil {
-			return fmt.Errorf("GET %s: %w", path, err)
+			return fmt.Errorf("%s: %w", what, err)
 		}
 		return nil
 	}
-	return fmt.Errorf("GET %s: still unauthorized after a fresh login", path)
+	return fmt.Errorf("%s: still unauthorized after a fresh login", what)
+}
+
+// HTTPError is a non-2xx answer of the dashboard. Detail is the dashboard's
+// own one-line reason when it gave one (its JSON "detail"), clipped.
+type HTTPError struct {
+	What   string
+	Status int
+	Detail string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("%s: HTTP %d: %s", e.What, e.Status, e.Detail)
+	}
+	return fmt.Sprintf("%s: HTTP %d", e.What, e.Status)
+}
+
+// dashboardDetail is the "detail" of a dashboard error body, on one line,
+// at most 200 characters; "" when there is none.
+func dashboardDetail(data []byte) string {
+	var e struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal(data, &e) != nil {
+		return ""
+	}
+	return clip(strings.Join(strings.Fields(e.Detail), " "), 200)
 }
 
 // Pool is one pool's placement settings.
