@@ -137,6 +137,12 @@ const QUANTITY_SUFFIX: Record<string, number> = {
   k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18,
 }
 
+/** A Kubernetes quantity in bytes ("10Gi" → 10737418240), or null when it does not parse. */
+export function quantityBytes(q: string | undefined | null): number | null {
+  const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?\s*$/.exec(q ?? '')
+  return m ? Number(m[1]) * QUANTITY_SUFFIX[m[2] ?? ''] : null
+}
+
 /**
  * A Kubernetes quantity ("2782725720Ki", "1.2Ti") in the IEC units the rest
  * of the screen uses ("2.59 TiB"). The controller writes exact quantities,
