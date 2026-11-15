@@ -295,6 +295,11 @@ func (c *client) Probe(ctx context.Context) (*Snapshot, error) {
 	if err := c.readSmartStorage(ctx, sys.Oem.Hp.Links.SmartStorage.Href, snap); err != nil {
 		return nil, fmt.Errorf("redfish: read SmartStorage: %w", err)
 	}
+	// No SmartStorage tree: try the DMTF storage collection instead, which
+	// is how iDRAC and other non-HPE BMCs list their drives.
+	if sys.Oem.Hp.Links.SmartStorage.Href == "" {
+		c.readStandardStorage(ctx, sys.Storage.ODataID, snap)
+	}
 
 	if err := c.readManager(ctx, snap); err != nil {
 		return nil, err

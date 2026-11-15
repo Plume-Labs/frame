@@ -6,6 +6,17 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — console and BMC inventory
+
+- authd: the session is now sliding. Each token refresh re-seals the
+  `frame_session` cookie for a full `SessionTTL` (12 h), so an active user is
+  no longer cut off at a fixed time; an idle one still lapses after 12 h.
+- Login: a passkey prompt that timed out or was closed now says so instead of
+  resetting silently; refused sign-ins are logged at debug level to diagnose
+  the first-attempt failure with a YubiKey.
+- redfish: BMCs without an HPE SmartStorage tree (the R320's iDRAC) now list
+  their drives from the standard `Systems/{id}/Storage` tree.
+
 ### Fixed — Storage → Replace OSD (lived on 14-15/11)
 
 - The replacement stops `rook-ceph-operator` (and waits for its pod to be
