@@ -18,14 +18,35 @@ The object behind it is a `FrameOSDReplacement`
 | Checks | Frame | read-only, see below; any refusal pauses with the reason |
 | Drain | Frame | `ceph osd out N`, waits until every PG is active+clean, then `safe-to-destroy` |
 | **Approval 1** | admin | retypes the old disk's serial: the purge cannot be undone. Only an approval given at this step counts: one written earlier (or left from before a pause) is cleared when the step starts |
-| Purge | Frame | deployment `rook-ceph-osd-N` to 0, OSD down, `safe-to-destroy` again, `osd purge` (sent once), deployment deleted |
+| Purge | Frame | **`rook-ceph-operator` to 0 first** (and its pod gone), then deployment `rook-ceph-osd-N` to 0, OSD down, `safe-to-destroy` again, `osd purge` (sent once), deployment deleted |
 | Swap | person | removes the disk with that serial, inserts the new one (Non-RAID on a PERC/H310) |
 | New disk | Frame | exactly one disk must appear that was not on the host when the checks ran, is not declared in the CephCluster, is unknown to Ceph, whole and free, with 512- or 4096-byte sectors, SMART not failed |
 | **Approval 2** | admin | reads the new disk's serial on its label and retypes it: the wipe cannot be undone. The console shows the disk's path, model and size, never its serial, until this approval is given |
-| Wipe | the node's agent | `wipefs -a`, 100 MiB of zeros, `sgdisk --zap-all`, on the by-id path, after its own checks |
-| Declare | Frame | JSON patch of the CephCluster: `test` that entry *i* of `spec.storage.devices` is the old disk, `replace` its name by the new one. Never an apply: nothing else of the spec is touched |
+| Wipe | the node's agent | `wipefs -a`, zeros at the head (100 MiB), at 1, 10, 100 and 1000 GiB (1 MiB each, where the disk reaches them) and at the tail (100 MiB), `sgdisk --zap-all`, on the by-id path, after its own checks; then it reads 4 KiB at 0, 1, 10, 100 and 1000 GiB and refuses to say "wiped" if a `bluestore block device` label is still there |
+| Declare | Frame | JSON patch of the CephCluster: `test` that entry *i* of `spec.storage.devices` is the old disk, `replace` its name by the new one. Never an apply: nothing else of the spec is touched. **Then `rook-ceph-operator` back to 1** |
 | New OSD | Frame | waits until the host has as many OSDs up and in as before; restarts the Rook operator once after 10 min; pauses after 20 |
 | Backfill | Frame | waits until every PG is active+clean |
+
+### Why the Rook operator is stopped for the purge
+
+On 14-15/11 Rook brought a purged OSD back: the operator reconciles on its
+own, finds the old disk (still in `spec.storage.devices`, and still carrying
+its BlueStore label) and creates the OSD again, or, with a new disk that
+still carried an old label copy, takes it for the OSD it once was (a disk
+was read back as osd.6). So the replacement stops the operator before it
+stops the OSD, waits until its pod is gone, and restarts it only once the
+CephCluster no longer lists the old disk (the declaration). The wipe
+zeroes every offset where BlueStore keeps a label copy (0, 1, 10, 100 and
+1000 GiB) and reads them back, for the same reason.
+
+While the operator is stopped no other Rook reconcile happens (no new OSD
+anywhere, no CephCluster change taken into account). The replacement is
+short, but a **pause or a cancel after the purge leaves the operator at 0
+on purpose**: the message says so and gives the command
+(`kubectl -n rook-ceph scale deploy rook-ceph-operator --replicas=1`) to run
+once the old disk is out of the device list. A pause or a resume that goes
+back before the purge, and a cancel before it, restart it by themselves.
+The operator is assumed to have one replica, Rook's default. Frame sets it to 0 once, at the purge: if a GitOps tool (Argo) resyncs Rook's replicas meanwhile, it can come back before the declaration, so the Rook application must not self-heal that Deployment during a replacement.
 
 After it succeeds, update `k8s/storage/cephcluster.yaml` in the Neura
 repository to the new by-id path (the replacement says which entry), and
@@ -37,7 +58,9 @@ keep the old disk labelled for a week.
   the oldest goes first).
 - Ceph is `HEALTH_OK`, or `HEALTH_WARN` with only `BLUESTORE_SLOW_OP_ALERT`
   (osd.0's slow BlueStore operations, known). Anything else pauses.
-- Every PG is active+clean, every OSD up and in, no `noout`, `norebalance`,
+- Every PG is active+clean, every OSD up and in (**the OSD being replaced
+  may already be out**, down or up: it then holds no PG, nothing is drained
+  for it, `osd out` is not sent again, and a cancel leaves it out), no `noout`, `norebalance`,
   `nobackfill`, `norecover`, `noup`, `nodown`, `noin`, `pause`, `pauserd`
   or `pausewr` flag.
 - Every pool has `min_size <= size - 1`.
@@ -80,6 +103,22 @@ wiped — from the agent's answer when it came after the request, "outcome
 unknown" when there is none — declared), to finish by hand with the fiche.
 
 ## The operator account (to create before the first use)
+
+**Without it nothing starts**: the replacement stays in *Checking* and says
+"the Ceph operator account does not exist yet" (the Secret
+`frame-system/frame-ceph-operator` is missing). A person creates it once,
+from a machine with the cluster's kubeconfig:
+
+```sh
+hack/ceph-operator-account.sh
+```
+
+It creates the dashboard role and account (`frame-osd-operator`, random
+password, never shown) and the Secret, skips what exists, and is rerun with
+`--rotate` to change the password. It needs the console's read-only
+account Secret (`frame-ceph-dashboard`, docs/storage-mgr-account.md): the
+CA of the dashboard comes from it. The replacement notices the Secret
+within a minute. The same steps by hand are below.
 
 The replacement changes Ceph through the dashboard's REST API, with a
 second account held by the manager only. The console's read-only account
@@ -161,7 +200,14 @@ The node's agent (`internal/agent/diskwipe.go`) wipes only when its own
 `lsblk` of the same pass shows exactly one disk at that path, with that
 serial, whole and free (no filesystem or other signature, no partition, no
 mount, no md or ZFS membership), with no holder in `/sys/block/<disk>/holders`,
-and the path resolves to that disk. The request must be less than 5
+and the path resolves to that disk. The commands, all fixed and on the by-id
+path: `blockdev --getsize64` (read-only, before anything is recorded or
+changed); `wipefs -a`; 100 MiB of zeros at the head; 1 MiB of zeros at each
+of 1, 10, 100 and 1000 GiB the disk reaches (BlueStore keeps copies of its
+label there; wiping only the head left a disk that Rook read as osd.6);
+100 MiB at the tail; `sgdisk --zap-all`; then a 4 KiB read at 0, 1, 10, 100
+and 1000 GiB, and the answer is "not wiped" if any of them still holds a
+`bluestore block device` label. The request must be less than 5
 minutes old (and at most 2 minutes in the future, for clock skew): well
 short of the 10 minutes the manager waits for an answer, so that a request
 it gave up on cannot be acted on later. The answer is written even if the

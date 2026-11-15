@@ -188,7 +188,7 @@ func newOSDHarness(t *testing.T) *osdHarness {
 	}}
 	one := int32(1)
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-osd-8", Namespace: "rook-ceph"}, Spec: appsv1.DeploymentSpec{Replicas: &one}}
-	opdep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-operator", Namespace: "rook-ceph"}}
+	opdep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-operator", Namespace: "rook-ceph"}, Spec: appsv1.DeploymentSpec{Replicas: &one}}
 	repl := &framev1beta1.FrameOSDReplacement{
 		ObjectMeta: metav1.ObjectMeta{Name: "osd-8", Namespace: "frame-system", UID: "0a1b2c3d-0000-0000-0000-000000000008", CreationTimestamp: at, Generation: 1},
 		Spec:       framev1beta1.FrameOSDReplacementSpec{OSDID: 8, Serial: "Z2AW5NWA"},
@@ -343,6 +343,9 @@ func TestOSDReplacementHappyPath(t *testing.T) {
 	if h.ceph.count("purge") != 1 {
 		t.Fatalf("calls = %v", h.ceph.calls)
 	}
+	if h.operatorReplicas() != 0 || h.get().Status.OperatorStoppedAt == nil {
+		t.Fatalf("rook-ceph-operator not stopped for the purge: %d", h.operatorReplicas())
+	}
 	var d appsv1.Deployment
 	_ = h.c.Get(context.Background(), types.NamespacedName{Namespace: "rook-ceph", Name: "rook-ceph-osd-8"}, &d)
 	if d.Spec.Replicas == nil || *d.Spec.Replicas != 0 {
@@ -397,6 +400,9 @@ func TestOSDReplacementHappyPath(t *testing.T) {
 	h.reconcile() // → Declaring
 	h.reconcile() // patch
 	h.expectPhase(framev1beta1.OSDReplacementAwaitingOSD)
+	if h.operatorReplicas() != 1 || h.get().Status.OperatorStoppedAt != nil {
+		t.Fatalf("rook-ceph-operator not back after the declaration: %d", h.operatorReplicas())
+	}
 	devs := h.devices()
 	if devs[2] != newByID || slices.Contains(devs, oldByID) || len(devs) != 3 {
 		t.Fatalf("devices = %v", devs)
@@ -772,5 +778,179 @@ func TestOSDReplacementCancelReportsALateWipeAnswer(t *testing.T) {
 	h.expectPhase(framev1beta1.OSDReplacementCancelled)
 	if msg := h.get().Status.Message; !strings.Contains(msg, "wiped (the agent's answer came after the request)") {
 		t.Fatalf("message %q", msg)
+	}
+}
+
+func (h *osdHarness) operatorReplicas() int32 {
+	h.t.Helper()
+	var d appsv1.Deployment
+	if err := h.c.Get(context.Background(), types.NamespacedName{Namespace: "rook-ceph", Name: "rook-ceph-operator"}, &d); err != nil {
+		h.t.Fatal(err)
+	}
+	if d.Spec.Replicas == nil {
+		return -1
+	}
+	return *d.Spec.Replicas
+}
+
+func (h *osdHarness) osdReplicas() int32 {
+	h.t.Helper()
+	var d appsv1.Deployment
+	if err := h.c.Get(context.Background(), types.NamespacedName{Namespace: "rook-ceph", Name: "rook-ceph-osd-8"}, &d); err != nil {
+		h.t.Fatal(err)
+	}
+	return *d.Spec.Replicas
+}
+
+// toPurging approves the purge and stops at the Purging phase.
+func (h *osdHarness) toPurging() {
+	h.t.Helper()
+	h.driveToPurgeApproval()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) {
+		o.Spec.PurgeApproval = &framev1beta1.SerialApproval{Serial: "Z2AW5NWA"}
+	})
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementPurging)
+}
+
+func TestOSDReplacementRookOperatorStopsBeforeTheOSDAndWaitsForItsPods(t *testing.T) {
+	h := newOSDHarness(t)
+	h.toPurging()
+	h.ceph.osd(8).Up = false
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-operator-abc", Namespace: "rook-ceph", Labels: map[string]string{"app": "rook-ceph-operator"}}}
+	if err := h.c.Create(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile()
+	// The operator is told to stop, but its pod is still there: the OSD is
+	// left running, and nothing is purged.
+	if h.operatorReplicas() != 0 || h.osdReplicas() != 1 || h.ceph.count("purge") != 0 {
+		t.Fatalf("operator %d, osd %d, calls %v", h.operatorReplicas(), h.osdReplicas(), h.ceph.calls)
+	}
+	if err := h.c.Delete(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile()
+	if h.osdReplicas() != 0 || h.ceph.count("purge") != 1 {
+		t.Fatalf("osd %d, calls %v", h.osdReplicas(), h.ceph.calls)
+	}
+}
+
+func TestOSDReplacementWithoutRookOperatorPausesBeforeTouchingTheOSD(t *testing.T) {
+	h := newOSDHarness(t)
+	h.toPurging()
+	_ = h.c.Delete(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-operator", Namespace: "rook-ceph"}})
+	h.ceph.osd(8).Up = false
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementPaused)
+	if h.osdReplicas() != 1 || h.ceph.count("purge") != 0 {
+		t.Fatalf("osd %d, calls %v", h.osdReplicas(), h.ceph.calls)
+	}
+}
+
+func TestOSDReplacementResumeBeforeThePurgeRestoresTheOperator(t *testing.T) {
+	h := newOSDHarness(t)
+	h.toPurging()
+	h.ceph.osd(8).Up, h.ceph.osd(8).In = false, true // someone marked it in
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementPaused)
+	if h.operatorReplicas() != 0 {
+		t.Fatalf("operator = %d", h.operatorReplicas())
+	}
+	h.ceph.osd(8).In = false
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Resume = 1 })
+	h.reconcile()
+	if h.operatorReplicas() != 1 || h.osdReplicas() != 1 || h.get().Status.OperatorStoppedAt != nil {
+		t.Fatalf("operator %d, osd %d", h.operatorReplicas(), h.osdReplicas())
+	}
+}
+
+func TestOSDReplacementCancelBeforeThePurgeRestoresTheOperator(t *testing.T) {
+	h := newOSDHarness(t)
+	h.toPurging()
+	h.ceph.osd(8).Up = false
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "rook-ceph-operator-abc", Namespace: "rook-ceph", Labels: map[string]string{"app": "rook-ceph-operator"}}}
+	_ = h.c.Create(context.Background(), pod) // keeps the purge from being sent
+	h.reconcile()
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Cancel = true })
+	h.reconcile()
+	h.expectPhase(framev1beta1.OSDReplacementCancelled)
+	if h.operatorReplicas() != 1 || h.osdReplicas() != 1 || h.ceph.count("purge") != 0 {
+		t.Fatalf("operator %d, osd %d, calls %v", h.operatorReplicas(), h.osdReplicas(), h.ceph.calls)
+	}
+}
+
+func TestOSDReplacementCancelAfterThePurgeKeepsTheOperatorStoppedAndSaysSo(t *testing.T) {
+	h := newOSDHarness(t)
+	h.toPurging()
+	h.ceph.osd(8).Up = false
+	h.reconcile() // purge sent
+	h.reconcile() // → AwaitingDisk
+	h.expectPhase(framev1beta1.OSDReplacementAwaitingDisk)
+	h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Cancel = true })
+	h.reconcile()
+	o := h.get()
+	if o.Status.Phase != framev1beta1.OSDReplacementCancelled || !strings.Contains(o.Status.Message, "STILL AT 0") || !strings.Contains(o.Status.Message, "scale deploy rook-ceph-operator --replicas=1") {
+		t.Fatalf("phase %s message %q", o.Status.Phase, o.Status.Message)
+	}
+	if h.operatorReplicas() != 0 {
+		t.Fatalf("operator = %d: Rook could bring the old OSD back", h.operatorReplicas())
+	}
+}
+
+func TestOSDReplacementAcceptsAnOSDThatIsAlreadyOut(t *testing.T) {
+	for _, down := range []bool{false, true} {
+		h := newOSDHarness(t)
+		h.ceph.osd(8).In = false
+		h.ceph.osd(8).Up = !down
+		h.reconcile() // Checking → Draining
+		h.expectPhase(framev1beta1.OSDReplacementDraining)
+		if !h.get().Status.OSDWasOut {
+			t.Fatal("the OSD's earlier state is not recorded")
+		}
+		h.reconcile() // nothing to mark out
+		h.reconcile() // already clean, no movement to wait for
+		h.expectPhase(framev1beta1.OSDReplacementAwaitingPurgeApproval)
+		if h.ceph.count("out") != 0 {
+			t.Fatalf("an OSD already out was marked out again: %v", h.ceph.calls)
+		}
+		// Cancelling leaves it out.
+		h.patchSpec(func(o *framev1beta1.FrameOSDReplacement) { o.Spec.Cancel = true })
+		h.reconcile()
+		h.expectPhase(framev1beta1.OSDReplacementCancelled)
+		if h.ceph.count("in") != 0 || h.ceph.osd(8).In {
+			t.Fatalf("cancel marked in an OSD that was out from the start: %v", h.ceph.calls)
+		}
+	}
+}
+
+func TestOSDReplacementAnotherOSDDownStillRefusesWhenTheReplacedOneIsOut(t *testing.T) {
+	h := newOSDHarness(t)
+	h.ceph.osd(8).In = false
+	h.ceph.osd(1).Up = false
+	h.reconcile()
+	if o := h.get(); o.Status.Phase != framev1beta1.OSDReplacementPaused || !strings.Contains(o.Status.Message, "osd.1 is down") {
+		t.Fatalf("phase %s message %q", o.Status.Phase, o.Status.Message)
+	}
+}
+
+func TestOSDReplacementSaysWhenTheOperatorAccountWasNeverCreated(t *testing.T) {
+	h := newOSDHarness(t)
+	h.r.Ceph = func(context.Context) (CephOperator, error) { return nil, cephmgr.ErrNotConfigured }
+	h.reconcile()
+	o := h.get()
+	if o.Status.Phase != framev1beta1.OSDReplacementChecking {
+		t.Fatalf("phase %s", o.Status.Phase)
+	}
+	for _, want := range []string{cephmgr.OperatorSecretName, "hack/ceph-operator-account.sh", "does not exist yet"} {
+		if !strings.Contains(o.Status.Message, want) {
+			t.Fatalf("message %q lacks %q", o.Status.Message, want)
+		}
+	}
+	// Any other failure keeps its own words.
+	h.r.Ceph = func(context.Context) (CephOperator, error) { return nil, errors.New("login refused") }
+	h.reconcile()
+	if m := h.get().Status.Message; !strings.Contains(m, "login refused") || strings.Contains(m, "does not exist yet") {
+		t.Fatalf("message %q", m)
 	}
 }

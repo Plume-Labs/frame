@@ -214,6 +214,17 @@ type FrameOSDReplacementStatus struct {
 	PurgeApprovedAt *metav1.Time `json:"purgeApprovedAt,omitempty"`
 	// +optional
 	ScaledDownAt *metav1.Time `json:"scaledDownAt,omitempty"`
+	// OperatorStoppedAt is when rook-ceph-operator was scaled to 0, before
+	// the OSD's deployment: left running, Rook reads the old disk's BlueStore
+	// label again and brings the purged OSD back. It is scaled back to 1
+	// once the old disk is out of the CephCluster's device list (the
+	// declaration), or by a resume/cancel that goes back before the purge.
+	// +optional
+	OperatorStoppedAt *metav1.Time `json:"operatorStoppedAt,omitempty"`
+	// OSDWasOut is set when the OSD was already out when the checks ran: a
+	// cancel then leaves it out instead of marking it in.
+	// +optional
+	OSDWasOut bool `json:"osdWasOut,omitempty"`
 	// +optional
 	PurgeRequestedAt *metav1.Time `json:"purgeRequestedAt,omitempty"`
 	// +optional
