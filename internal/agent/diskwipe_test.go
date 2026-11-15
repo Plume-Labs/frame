@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,9 +62,8 @@ func (w *wipeExec) Exec(argv []string) (string, string, error) {
 	case "dd":
 		for _, a := range argv {
 			if v, ok := strings.CutPrefix(a, "skip="); ok && w.label != nil {
-				var n int64
-				fmt.Sscan(v, &n)
-				if n*4096 == *w.label {
+				n, err := strconv.ParseInt(v, 10, 64)
+				if err == nil && n*4096 == *w.label {
 					return "\x00\x00bluestore block device\n", "", nil
 				}
 			}

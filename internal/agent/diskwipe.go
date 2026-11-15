@@ -139,8 +139,9 @@ func wipeArgv(byID string, size int64) [][]string {
 // wipeVerifyArgvs read 4 KiB at each label offset: stdout is checked for
 // the BlueStore magic.
 func wipeVerifyArgvs(byID string, size int64) [][]string {
-	var out [][]string
-	for _, off := range labelOffsets(size) {
+	offs := labelOffsets(size)
+	out := make([][]string, 0, len(offs))
+	for _, off := range offs {
 		out = append(out, []string{"dd", "if=" + byID, "bs=4096", "count=1", fmt.Sprintf("skip=%d", off/4096), "iflag=direct", "status=none"})
 	}
 	return out
@@ -256,52 +257,15 @@ func wipe(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, x
 		return framev1beta1.DiskWipeResult{Ran: true, Message: "refused: request " + req.ID + " was already acted on by this node; its outcome is unknown, inspect the disk"}
 	}
 
-	var match []framev1beta1.ObservedDisk
-	for _, d := range disks {
-		if d.ByIDPath == req.ByIDPath {
-			match = append(match, d)
-		}
-	}
-	if len(match) != 1 {
-		return refused("%d disks at %s in this read", len(match), req.ByIDPath)
-	}
-	d := match[0]
-	if d.SerialNumber != req.Serial {
-		return refused("the disk at %s has serial %q, not %q", req.ByIDPath, d.SerialNumber, req.Serial)
-	}
-	if d.Occupancy != OccupancyFree {
-		return refused("the disk at %s is %s, not free", req.ByIDPath, d.Occupancy)
-	}
-	if d.MountPoint != "" || len(d.Members) > 0 || d.FSType != "" {
-		return refused("the disk at %s is in use", req.ByIDPath)
-	}
-	target, err := env.Resolve(req.ByIDPath)
-	if err != nil {
-		return refused("%s does not resolve: %v", req.ByIDPath, err)
-	}
-	if target != d.Path {
-		return refused("%s resolves to %s, lsblk reported %s", req.ByIDPath, target, d.Path)
-	}
-	name := strings.TrimPrefix(d.Path, "/dev/")
-	if name == d.Path || name == "" || strings.Contains(name, "/") {
-		return refused("unexpected kernel path %q", d.Path)
-	}
-	holders, err := env.Holders(name)
-	if err != nil {
-		return refused("cannot read the holders of %s: %v", name, err)
-	}
-	if len(holders) > 0 {
-		return refused("%s is held by %v", name, holders)
+	d, why := wipeTarget(req, disks, env)
+	if why != "" {
+		return refused("%s", why)
 	}
 
 	// The size is read before anything changes: a failure here costs no id.
-	stdout, serr, err := x.Exec(append(slices.Clone(timeoutPrefix), wipeSizeArgv(req.ByIDPath)...))
+	size, err := wipeDiskSize(x, req.ByIDPath)
 	if err != nil {
-		return refused("cannot read the size of %s: %v %s", req.ByIDPath, err, strings.TrimSpace(serr))
-	}
-	size, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
-	if err != nil || size < wipeEdgeMiB*mib {
-		return refused("the size of %s reads as %q", req.ByIDPath, strings.TrimSpace(stdout))
+		return refused("%v", err)
 	}
 
 	// Write-ahead: no command runs unless the id is recorded first.
@@ -321,17 +285,8 @@ func wipe(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, x
 		}
 		return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("%s failed: %v %s", argv[0], err, strings.TrimSpace(stderr)), 500)}
 	}
-	// Read back: a BlueStore label left anywhere makes Rook take the disk
-	// for the OSD it was (osd.6 came back from the dead that way).
-	for i, argv := range wipeVerifyArgvs(req.ByIDPath, size) {
-		out, stderr, err := x.Exec(append(slices.Clone(timeoutPrefix), argv...))
-		if err != nil {
-			return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("verification read %d failed: %v %s", i, err, strings.TrimSpace(stderr)), 500)}
-		}
-		if strings.Contains(out, bluestoreMagic) {
-			off := labelOffsets(size)[i]
-			return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("a %q label is still there at offset %d GiB of %s after the wipe: not usable, inspect the disk", bluestoreMagic, off/gib, req.ByIDPath), 500)}
-		}
+	if res, bad := verifyNoBlueStoreLabel(x, req.ByIDPath, size); bad {
+		return res
 	}
 	msg := fmt.Sprintf("%s (%s, serial %s, %d GiB) wiped: wipefs -a, zeros at the head, the tail and the BlueStore label offsets (0, 1, 10, 100, 1000 GiB where present), sgdisk --zap-all; no BlueStore label read back",
 		req.ByIDPath, d.Path, d.SerialNumber, size/gib)
@@ -370,4 +325,77 @@ func recordActed(root, id string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// wipeDiskSize reads the disk's size in bytes (read-only).
+func wipeDiskSize(x StorageExecutor, byID string) (int64, error) {
+	stdout, serr, err := x.Exec(append(slices.Clone(timeoutPrefix), wipeSizeArgv(byID)...))
+	if err != nil {
+		return 0, fmt.Errorf("cannot read the size of %s: %v %s", byID, err, strings.TrimSpace(serr))
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
+	if err != nil || size < wipeEdgeMiB*mib {
+		return 0, fmt.Errorf("the size of %s reads as %q", byID, strings.TrimSpace(stdout))
+	}
+	return size, nil
+}
+
+// verifyNoBlueStoreLabel reads 4 KiB at each label offset: a BlueStore label
+// left anywhere makes Rook take the disk for the OSD it was (osd.6 came back
+// from the dead that way). The result is the answer to give when bad.
+func verifyNoBlueStoreLabel(x StorageExecutor, byID string, size int64) (framev1beta1.DiskWipeResult, bool) {
+	offs := labelOffsets(size)
+	for i, argv := range wipeVerifyArgvs(byID, size) {
+		out, stderr, err := x.Exec(append(slices.Clone(timeoutPrefix), argv...))
+		if err != nil {
+			return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("verification read %d failed: %v %s", i, err, strings.TrimSpace(stderr)), 500)}, true
+		}
+		if strings.Contains(out, bluestoreMagic) {
+			return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("a %q label is still there at offset %d GiB of %s after the wipe: not usable, inspect the disk", bluestoreMagic, offs[i]/gib, byID), 500)}, true
+		}
+	}
+	return framev1beta1.DiskWipeResult{}, false
+}
+
+// wipeTarget checks the disk the request names against this tick's lsblk
+// read and the host: it returns the disk, or why it is refused.
+func wipeTarget(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, env WipeEnv) (d framev1beta1.ObservedDisk, why string) {
+	var match []framev1beta1.ObservedDisk
+	for _, c := range disks {
+		if c.ByIDPath == req.ByIDPath {
+			match = append(match, c)
+		}
+	}
+	if len(match) != 1 {
+		return d, fmt.Sprintf("%d disks at %s in this read", len(match), req.ByIDPath)
+	}
+	d = match[0]
+	if d.SerialNumber != req.Serial {
+		return d, fmt.Sprintf("the disk at %s has serial %q, not %q", req.ByIDPath, d.SerialNumber, req.Serial)
+	}
+	if d.Occupancy != OccupancyFree {
+		return d, fmt.Sprintf("the disk at %s is %s, not free", req.ByIDPath, d.Occupancy)
+	}
+	if d.MountPoint != "" || len(d.Members) > 0 || d.FSType != "" {
+		return d, fmt.Sprintf("the disk at %s is in use", req.ByIDPath)
+	}
+	target, err := env.Resolve(req.ByIDPath)
+	if err != nil {
+		return d, fmt.Sprintf("%s does not resolve: %v", req.ByIDPath, err)
+	}
+	if target != d.Path {
+		return d, fmt.Sprintf("%s resolves to %s, lsblk reported %s", req.ByIDPath, target, d.Path)
+	}
+	name := strings.TrimPrefix(d.Path, "/dev/")
+	if name == d.Path || name == "" || strings.Contains(name, "/") {
+		return d, fmt.Sprintf("unexpected kernel path %q", d.Path)
+	}
+	holders, err := env.Holders(name)
+	if err != nil {
+		return d, fmt.Sprintf("cannot read the holders of %s: %v", name, err)
+	}
+	if len(holders) > 0 {
+		return d, fmt.Sprintf("%s is held by %v", name, holders)
+	}
+	return d, ""
 }

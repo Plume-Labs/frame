@@ -605,18 +605,7 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 	if err != nil {
 		return s.wait(fmt.Sprintf("reading the pools: %v", err))
 	}
-	// An OSD that is already out (it was taken out by hand, or is dead)
-	// holds no PG once they are all active+clean: stopping it removes no
-	// copy, so it is not counted among the OSDs that must be up and in. Every
-	// other OSD still must be.
-	verdictOSDs := osds
-	if !me.In {
-		verdictOSDs = slices.DeleteFunc(slices.Clone(osds), func(o cephmgr.OSDState) bool { return o.ID == id })
-		o.Status.OSDWasOut = true
-	} else {
-		o.Status.OSDWasOut = false
-	}
-	if ok, why := cephmgr.OKToStopVerdict(st, verdictOSDs, pools); !ok {
+	if ok, why := s.okToStop(st, osds, me, pools); !ok {
 		return s.pause("osd." + fmt.Sprint(id) + " is not ok to stop: " + why)
 	}
 	meta, err := s.ceph.Metadata(ctx, id)
@@ -682,6 +671,19 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 	}
 	s.enter(framev1beta1.OSDReplacementDraining, fmt.Sprintf("marking osd.%d out", id))
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// okToStop is cephmgr.OKToStopVerdict, except that an OSD already out (taken
+// out by hand, or dead) holds no PG once they are all active+clean: stopping
+// it removes no copy, so it is not counted among the OSDs that must be up and
+// in. Every other OSD still must be. It records which case it was.
+func (s *osdStep) okToStop(st *cephmgr.ClusterStatus, osds []cephmgr.OSDState, me *cephmgr.OSDState, pools []cephmgr.Pool) (bool, string) {
+	s.o.Status.OSDWasOut = !me.In
+	if me.In {
+		return cephmgr.OKToStopVerdict(st, osds, pools)
+	}
+	others := slices.DeleteFunc(slices.Clone(osds), func(o cephmgr.OSDState) bool { return o.ID == me.ID })
+	return cephmgr.OKToStopVerdict(st, others, pools)
 }
 
 // ---------------------------------------------------------------- Draining
