@@ -1482,6 +1482,10 @@ func (in *FrameOSDReplacementStatus) DeepCopyInto(out *FrameOSDReplacementStatus
 		in, out := &in.ScaledDownAt, &out.ScaledDownAt
 		*out = (*in).DeepCopy()
 	}
+	if in.OperatorStoppedAt != nil {
+		in, out := &in.OperatorStoppedAt, &out.OperatorStoppedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.PurgeRequestedAt != nil {
 		in, out := &in.PurgeRequestedAt, &out.PurgeRequestedAt
 		*out = (*in).DeepCopy()
