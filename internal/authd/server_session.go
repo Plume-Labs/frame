@@ -65,6 +65,15 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Sliding session: the SPA calls this endpoint to renew its token for as
+	// long as the user is working, so re-sealing the cookie here keeps the
+	// session alive while active and lets it lapse only after cfg.SessionTTL of
+	// inactivity, rather than cutting a working user off at a fixed point. The
+	// account was re-read and re-checked by sessionUser above, so a disabled
+	// user is refused before reaching this line and never gets a fresh cookie.
+	if !s.setSession(w, u) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	// Returned in the body, never as a cookie: the browser keeps it in memory
 	// only, so it is never persisted where a later XSS could read it.

@@ -6,6 +6,35 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — console and BMC inventory
+
+- authd: the session is now sliding. Each token refresh re-seals the
+  `frame_session` cookie for a full `SessionTTL` (12 h), so an active user is
+  no longer cut off at a fixed time; an idle one still lapses after 12 h.
+- Login: a passkey prompt that timed out or was closed now says so instead of
+  resetting silently; refused sign-ins are logged at debug level to diagnose
+  the first-attempt failure with a YubiKey.
+- redfish: BMCs without an HPE SmartStorage tree (the R320's iDRAC) now list
+  their drives from the standard `Systems/{id}/Storage` tree.
+
+### Fixed — Storage → Replace OSD (lived on 14-15/11)
+
+- The replacement stops `rook-ceph-operator` (and waits for its pod to be
+  gone) before it stops the OSD, and restarts it only after the CephCluster
+  patch: Rook had brought a purged OSD back (osd.5) by reading the old
+  disk's BlueStore label. A pause or cancel after the purge leaves it at 0
+  and says how to restart it.
+- The agent's wipe zeroes 1 MiB at 1, 10, 100 and 1000 GiB and 100 MiB at
+  the tail, not only the first 100 MiB, then reads 4 KiB at 0, 1, 10, 100
+  and 1000 GiB and refuses to report success if a `bluestore block device`
+  label is left (a disk was recognised as osd.6).
+- An OSD that is already out can be replaced: it is not counted among the
+  OSDs that must be up and in, is not marked out again, and a cancel leaves
+  it out.
+- The replacement says plainly when the operator account was never created
+  (Secret `frame-ceph-operator`), and `hack/ceph-operator-account.sh` creates
+  the dashboard account and the Secret.
+
 ### Added — Storage → Ceph actions
 
 - `FrameCephAction`: one reversible Ceph gesture per object — mark an OSD in
