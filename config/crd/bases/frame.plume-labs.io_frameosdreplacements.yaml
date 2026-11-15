@@ -338,6 +338,20 @@ spec:
               operatorRestartedAt:
                 format: date-time
                 type: string
+              operatorStoppedAt:
+                description: |-
+                  OperatorStoppedAt is when rook-ceph-operator was scaled to 0, before
+                  the OSD's deployment: left running, Rook reads the old disk's BlueStore
+                  label again and brings the purged OSD back. It is scaled back to 1
+                  once the old disk is out of the CephCluster's device list (the
+                  declaration), or by a resume/cancel that goes back before the purge.
+                format: date-time
+                type: string
+              osdWasOut:
+                description: |-
+                  OSDWasOut is set when the OSD was already out when the checks ran: a
+                  cancel then leaves it out instead of marking it in.
+                type: boolean
               pausedPhase:
                 description: PausedPhase is the phase a pause interrupted, resumed
                   by spec.resume.

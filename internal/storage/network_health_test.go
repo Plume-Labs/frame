@@ -202,7 +202,7 @@ func TestAnEmptyFieldNeitherClearsNorRaises(t *testing.T) {
 			n.Bonds[0].Members, n.Bonds[0].MembersUnread = nil, true
 		}, bond},
 		{"operstate", func(n *framev1beta1.MachineNetwork) { n.Interfaces[0].OperState = "" }, port},
-		{"operstate unknown", func(n *framev1beta1.MachineNetwork) { n.Interfaces[0].OperState = "unknown" }, port},
+		{"operstate unknown", func(n *framev1beta1.MachineNetwork) { n.Interfaces[0].OperState = operStateUnknown }, port},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,7 +248,7 @@ func TestAnUnnamedPortWithNoStateIsNotHealthy(t *testing.T) {
 // The speed of a link whose driver tracks no state is still a speed.
 func TestAnUnknownStateStillHasItsSpeedChecked(t *testing.T) {
 	n := healthyNet()
-	n.Interfaces[2].OperState, n.Interfaces[2].SpeedMbps = "unknown", new(int32(100))
+	n.Interfaces[2].OperState, n.Interfaces[2].SpeedMbps = operStateUnknown, new(int32(100))
 	if a := assessNet(n, noNet, nil); !keys(a)[Key{CheckLinkSlow, "eno3"}] {
 		t.Fatalf("%+v", a.Findings)
 	}
@@ -266,7 +266,7 @@ func TestAnUnknownStateStillHasItsSpeedChecked(t *testing.T) {
 // What a silent field costs is NetworkDegraded: the speeds were read.
 func TestASilentFieldLeavesLinkSpeedAlone(t *testing.T) {
 	named := healthyNet()
-	named.Interfaces[0].OperState = "unknown"
+	named.Interfaces[0].OperState = operStateUnknown
 	member := healthyNet()
 	member.Bonds[0].Members[1].AggregatorID = 0
 	for name, tt := range map[string]struct {
@@ -684,12 +684,12 @@ func TestABondThatIsDownIsNotJudgedOnItsLoad(t *testing.T) {
 // A driver at unknown that shows a speed is judged; one that shows none owes none.
 func TestALinkAtUnknownCarriesAndOwesNoSpeed(t *testing.T) {
 	n := withTraffic(loaded(90))
-	n.Interfaces[0].OperState = "unknown"
+	n.Interfaces[0].OperState = operStateUnknown
 	if a := assessNet(n, noNet, nil); !hasFinding(a, CheckSaturated, "eno1") {
 		t.Fatalf("%+v", a.Findings)
 	}
 	n = withTraffic(&framev1beta1.LinkTraffic{HistorySeconds: 600})
-	n.Interfaces[0].OperState = "unknown"
+	n.Interfaces[0].OperState = operStateUnknown
 	if v := assessNet(n, noNet, nil).Verdict(CheckSaturated, nil); v.Status != "False" {
 		t.Fatalf("%+v", v)
 	}

@@ -113,8 +113,10 @@ local pools; the one-node-at-a-time rule holds against a faulty controller,
 not against a compromised agent.
 
 The agent's one destructive command set is the wipe of a new disk for an OSD
-replacement (`internal/agent/diskwipe.go`): `wipefs -a`, `dd` of 100 MiB of
-zeros and `sgdisk --zap-all`, fixed argv, on a `/dev/disk/by-id/wwn-…` or
+replacement (`internal/agent/diskwipe.go`): `wipefs -a`, `dd` of zeros at the
+head, the tail and the BlueStore label offsets (1, 10, 100, 1000 GiB), `sgdisk
+--zap-all`, then `dd` reads of those offsets to check that no BlueStore label
+is left (plus the read-only `blockdev --getsize64`), fixed argv, on a `/dev/disk/by-id/wwn-…` or
 `nvme-…` path, through `nsenter` under the host's `timeout`. The request is a
 Node annotation naming a path, a serial and an id; the agent acts only when
 its own `lsblk` of the same pass shows exactly one whole, free disk (no

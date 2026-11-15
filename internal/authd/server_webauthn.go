@@ -70,6 +70,10 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrUserNotVerified) {
 			slog.Warn("Refused passkey sign-in without user verification", "error", err)
 		}
+		// Debug only: an unauthenticated caller can reach this line, so it must
+		// not be able to fill the default log. Enable it to learn why a key's
+		// first attempt fails (expired challenge, bad signature, unknown key).
+		slog.Debug("passkey sign-in refused", "error", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
