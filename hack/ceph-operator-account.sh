@@ -6,7 +6,7 @@
 # À lancer par une personne, depuis une machine qui a le kubeconfig du cluster
 # (pas par un agent : c'est une écriture dans Ceph et dans le cluster).
 #
-#   hack/ceph-operator-account.sh            crée ce qui manque, ne touche à rien d'existant
+#   hack/ceph-operator-account.sh            crée le compte et le Secret s'ils manquent ; s'arrête si le Secret existe
 #   hack/ceph-operator-account.sh --rotate   change aussi le mot de passe et réécrit le Secret
 #
 # Ce que le script écrit, et rien d'autre :
@@ -40,6 +40,7 @@ die() { echo "⛔ $*" >&2; exit 1; }
 step() { echo; echo "== $* =="; }
 
 command -v kubectl >/dev/null || die "kubectl introuvable"
+command -v openssl >/dev/null || die "openssl introuvable"
 echo "Cluster : $(kubectl config current-context)  (Ctrl-C maintenant si ce n'est pas le bon)"
 
 TOOLS=(kubectl -n "$CEPH_NS" exec deploy/rook-ceph-tools --)
@@ -47,7 +48,11 @@ TOOLS=(kubectl -n "$CEPH_NS" exec deploy/rook-ceph-tools --)
   || die "le toolbox de Ceph ne répond pas (deploy/rook-ceph-tools dans $CEPH_NS) ou le tableau de bord n'est pas activé"
 
 SECRET_EXISTS=0
-kubectl -n "$FRAME_NS" get secret "$SECRET" >/dev/null 2>&1 && SECRET_EXISTS=1
+if OUT=$(kubectl -n "$FRAME_NS" get secret "$SECRET" -o name 2>&1); then
+  SECRET_EXISTS=1
+elif ! grep -q NotFound <<<"$OUT"; then
+  die "lecture du Secret $FRAME_NS/$SECRET impossible : $OUT"
+fi
 if [ "$SECRET_EXISTS" = 1 ] && [ "$ROTATE" = 0 ]; then
   echo "Le Secret $FRAME_NS/$SECRET existe déjà : rien à faire."
   echo "(Il ne marche pas ? --rotate refait le mot de passe ; voir aussi docs/storage-mgr-account.md pour un login refusé.)"
@@ -58,7 +63,7 @@ kubectl -n "$FRAME_NS" get secret "$READ_SECRET" >/dev/null 2>&1 \
   || die "le Secret $FRAME_NS/$READ_SECRET (compte de lecture de l'écran Stockage) manque : le CA du tableau de bord en vient. Voir docs/storage-mgr-account.md"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK"; "${TOOLS[@]}" rm -f /tmp/frame-osd.pass >/dev/null 2>&1 || true' EXIT
 umask 077
 
 step "1. Rôle $ACCOUNT"
@@ -76,10 +81,10 @@ openssl rand -base64 32 | tr -d '\n' >"$WORK/pass"
 kubectl -n "$CEPH_NS" exec -i deploy/rook-ceph-tools -- sh -c 'umask 077; cat >/tmp/frame-osd.pass' <"$WORK/pass"
 if "${TOOLS[@]}" ceph dashboard ac-user-show "$ACCOUNT" >/dev/null 2>&1; then
   echo "le compte existe : nouveau mot de passe"
-  "${TOOLS[@]}" ceph dashboard ac-user-set-password "$ACCOUNT" -i /tmp/frame-osd.pass --force-password
-  "${TOOLS[@]}" ceph dashboard ac-user-set-roles "$ACCOUNT" "$ACCOUNT"
+  "${TOOLS[@]}" ceph dashboard ac-user-set-password "$ACCOUNT" -i /tmp/frame-osd.pass --force-password >/dev/null
+  "${TOOLS[@]}" ceph dashboard ac-user-set-roles "$ACCOUNT" "$ACCOUNT" >/dev/null
 else
-  "${TOOLS[@]}" ceph dashboard ac-user-create "$ACCOUNT" -i /tmp/frame-osd.pass "$ACCOUNT"
+  "${TOOLS[@]}" ceph dashboard ac-user-create "$ACCOUNT" -i /tmp/frame-osd.pass "$ACCOUNT" >/dev/null
 fi
 "${TOOLS[@]}" rm -f /tmp/frame-osd.pass
 

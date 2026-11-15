@@ -46,7 +46,7 @@ on purpose**: the message says so and gives the command
 (`kubectl -n rook-ceph scale deploy rook-ceph-operator --replicas=1`) to run
 once the old disk is out of the device list. A pause or a resume that goes
 back before the purge, and a cancel before it, restart it by themselves.
-The operator is assumed to have one replica, Rook's default.
+The operator is assumed to have one replica, Rook's default. Frame sets it to 0 once, at the purge: if a GitOps tool (Argo) resyncs Rook's replicas meanwhile, it can come back before the declaration, so the Rook application must not self-heal that Deployment during a replacement.
 
 After it succeeds, update `k8s/storage/cephcluster.yaml` in the Neura
 repository to the new by-id path (the replacement says which entry), and

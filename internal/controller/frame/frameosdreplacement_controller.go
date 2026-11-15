@@ -312,6 +312,9 @@ func (s *osdStep) wait(msg string) (ctrl.Result, error) {
 // pause stops the replacement on a refusal until a person resumes it.
 func (s *osdStep) pause(msg string) (ctrl.Result, error) {
 	phase := s.o.Status.Phase
+	if s.o.Status.OperatorStoppedAt != nil {
+		msg += " [" + rookOperatorName + " is at 0 replicas: back to 1 on a resume before the purge, on a cancel before it, or at the declaration]"
+	}
 	s.enter(framev1beta1.OSDReplacementPaused, "paused at "+phase+": "+msg)
 	s.o.Status.PausedPhase = phase
 	return ctrl.Result{}, nil
@@ -878,7 +881,14 @@ func (s *osdStep) purge(ctx context.Context) (ctrl.Result, error) {
 				s.event(fmt.Sprintf("%s, then deployment %s, scaled to 0 (Rook would bring the OSD back from the old disk's label)", rookOperatorName, s.osdDeployment().Name))
 			}
 			// The operator first, and gone before the OSD stops: it would
-			// scale the OSD back up.
+			// scale the OSD back up. Recorded before it is touched, also for
+			// an object whose ScaledDownAt predates this field.
+			if o.Status.OperatorStoppedAt == nil {
+				o.Status.OperatorStoppedAt = s.nowTime()
+				if err := s.save(ctx); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
 			if err := s.scaleDeployment(ctx, s.operatorDeployment(), 0); err != nil {
 				if apierrors.IsNotFound(err) {
 					return s.pause(fmt.Sprintf("deployment %s not found in %s: the replacement does not purge an OSD while it cannot stop Rook", rookOperatorName, s.r.rookNamespace()))

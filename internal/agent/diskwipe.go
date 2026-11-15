@@ -300,7 +300,7 @@ func wipe(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, x
 		return refused("cannot read the size of %s: %v %s", req.ByIDPath, err, strings.TrimSpace(serr))
 	}
 	size, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
-	if err != nil || size < mib {
+	if err != nil || size < wipeEdgeMiB*mib {
 		return refused("the size of %s reads as %q", req.ByIDPath, strings.TrimSpace(stdout))
 	}
 
