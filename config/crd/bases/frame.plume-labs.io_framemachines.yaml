@@ -1393,6 +1393,15 @@ spec:
                             partitions. Empty for a partitioned or blank disk.
                           maxLength: 64
                           type: string
+                        logicalSectorBytes:
+                          description: |-
+                            LogicalSectorBytes is the disk's logical sector size (lsblk LOG-SEC).
+                            Zero means not reported. Ceph wants 512 or 4096; a disk formatted
+                            with 520-byte sectors (taken out of a storage array) is not usable
+                            before a low-level format.
+                          format: int32
+                          minimum: 0
+                          type: integer
                         members:
                           description: |-
                             Members names what the disk belongs to: the md devices built on it

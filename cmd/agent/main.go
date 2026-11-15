@@ -131,6 +131,8 @@ func run() error {
 	// The ZFS scrub start runs the host's zpool, like the reads, but on an
 	// executor of its own: its busy record must not mix with theirs.
 	scrub := agent.NewHostStorageExecutor()
+	// The disk wipe of an OSD replacement: its own executor too.
+	wipe := agent.NewHostStorageExecutor()
 
 	ctx := ctrl.SetupSignalHandler()
 	slog.Info("frame-agent starting", "node", nodeName, "root", root, "interval", observeInterval)
@@ -139,7 +141,7 @@ func run() error {
 	// freshly (re)started agent reports current state right away instead of
 	// leaving status.nodes stale — and so a restart request that arrived
 	// while it was down is serviced now rather than in 30 seconds.
-	tick(ctx, kc, nodeName, root, runner, local, smart, network, scrub)
+	tick(ctx, kc, nodeName, root, runner, local, smart, network, scrub, wipe)
 
 	ticker := time.NewTicker(observeInterval)
 	defer ticker.Stop()
@@ -148,7 +150,7 @@ func run() error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			tick(ctx, kc, nodeName, root, runner, local, smart, network, scrub)
+			tick(ctx, kc, nodeName, root, runner, local, smart, network, scrub, wipe)
 		}
 	}
 }
@@ -166,7 +168,7 @@ const localStorageWait = 5 * time.Second
 func tick(
 	ctx context.Context, kc client.Client, nodeName, root string,
 	runner agent.CommandRunner, localStorage *agent.LocalCollector, smart *agent.SMARTReader,
-	network *agent.NetworkCollector, scrub agent.StorageExecutor,
+	network *agent.NetworkCollector, scrub, wipe agent.StorageExecutor,
 ) {
 	var node corev1.Node
 	if err := kc.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
@@ -257,6 +259,14 @@ func tick(
 		if local != nil {
 			if err := agent.ServiceScrubRequest(ctx, kc, nodeName, &local.ZFS, scrub, time.Now); err != nil {
 				slog.Error("servicing the ZFS scrub request", "node", nodeName, "error", err)
+			}
+		}
+
+		// 8. the wipe of a new disk an OSD replacement asked for, if any,
+		//    checked against this tick's own read of the disks.
+		if wipe != nil {
+			if err := agent.ServiceWipeRequest(ctx, kc, nodeName, disks, wipe, agent.DefaultWipeEnv(root)); err != nil {
+				slog.Error("servicing the disk wipe request", "node", nodeName, "error", err)
 			}
 		}
 	}

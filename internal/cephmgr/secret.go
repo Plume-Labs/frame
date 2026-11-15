@@ -35,16 +35,23 @@ const SecretName = "frame-ceph-dashboard"
 // non-caching reader: the manager must not watch every Secret of the
 // cluster to read one.
 func SecretLoader(r client.Reader, namespace string) func(context.Context) (Config, error) {
+	return secretLoader(r, namespace, SecretName)
+}
+
+// secretReader is the client.Reader a loader needs.
+type secretReader = client.Reader
+
+func secretLoader(r client.Reader, namespace, name string) func(context.Context) (Config, error) {
 	return func(ctx context.Context) (Config, error) {
 		if namespace == "" {
 			return Config{}, ErrNotConfigured
 		}
 		var s corev1.Secret
-		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: SecretName}, &s); err != nil {
+		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &s); err != nil {
 			if apierrors.IsNotFound(err) {
 				return Config{}, ErrNotConfigured
 			}
-			return Config{}, fmt.Errorf("reading Secret %s/%s: %w", namespace, SecretName, err)
+			return Config{}, fmt.Errorf("reading Secret %s/%s: %w", namespace, name, err)
 		}
 		user := strings.TrimSpace(string(s.Data["username"]))
 		pass := strings.TrimRight(string(s.Data["password"]), "\r\n")
@@ -52,7 +59,7 @@ func SecretLoader(r client.Reader, namespace string) func(context.Context) (Conf
 		// (accountMAC): with one inside, two different accounts could
 		// share a MAC, and one's refusal would block, or free, the other.
 		if strings.ContainsRune(user, 0) || strings.ContainsRune(pass, 0) {
-			return Config{}, fmt.Errorf("secret %s/%s: username or password contains a NUL byte; not used", namespace, SecretName)
+			return Config{}, fmt.Errorf("secret %s/%s: username or password contains a NUL byte; not used", namespace, name)
 		}
 		return Config{
 			BaseURL:    strings.TrimSpace(string(s.Data["url"])),

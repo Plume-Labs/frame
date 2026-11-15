@@ -27,11 +27,13 @@ import { Cpu, Fingerprint } from '@phosphor-icons/react'
  */
 export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
   const [error, setError] = useState<string | undefined>(undefined)
+  const [notice, setNotice] = useState<string | undefined>(undefined)
   const [passkeySubmitting, setPasskeySubmitting] = useState(false)
 
   async function handlePasskeySignIn() {
     setPasskeySubmitting(true)
     setError(undefined)
+    setNotice(undefined)
     try {
       await loginWithPasskey()
       // loginWithPasskey only sets the httpOnly cookie; currentSession() is
@@ -45,7 +47,13 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
     } catch (err) {
       // A dismissed/cancelled prompt is not a failure worth alarming the
       // user over — leave the screen quiet so they can just try again.
-      if (!(err instanceof PasskeyCancelledError)) {
+      if (err instanceof PasskeyCancelledError) {
+        // Not an error, but not silent either: the browser reports a key that
+        // timed out or was not touched in time exactly like a dismissed
+        // prompt (NotAllowedError), and a screen that quietly resets looks
+        // like a crash. Say what happened so the retry is an obvious next step.
+        setNotice('Passkey prompt closed or timed out. Try again.')
+      } else {
         setError(err instanceof Error ? err.message : String(err))
       }
     } finally {
@@ -67,6 +75,11 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
           {error && (
             <p role="alert" className="text-xs font-mono text-destructive break-words">
               {error}
+            </p>
+          )}
+          {notice && (
+            <p role="status" className="text-xs font-mono text-muted-foreground">
+              {notice}
             </p>
           )}
           <Button

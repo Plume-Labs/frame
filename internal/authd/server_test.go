@@ -422,8 +422,36 @@ func TestTokenIsBodyOnlyNeverCookie(t *testing.T) {
 		t.Fatalf("expires_in = %d, want > 0", body.ExpiresIn)
 	}
 
-	if got := rec.Header().Values("Set-Cookie"); len(got) != 0 {
-		t.Fatalf("token response set Set-Cookie header(s), want none: %v", got)
+	// The only cookie allowed is the renewed session (sliding session); the
+	// token itself, or anything derived from it, must never travel as a cookie.
+	for _, c := range rec.Result().Cookies() {
+		if c.Name != sessionCookie {
+			t.Fatalf("token response set unexpected cookie %q, want only %q", c.Name, sessionCookie)
+		}
+		if strings.Contains(c.Value, body.IDToken) {
+			t.Fatal("session cookie carries the id_token")
+		}
+	}
+}
+
+// TestTokenRenewsSession guards the sliding session: each /auth/token call
+// (made by the SPA while the user is active) re-seals the session cookie for
+// a full SessionTTL, and the renewed cookie is still a valid session.
+func TestTokenRenewsSession(t *testing.T) {
+	u := fixture("alice", "alice@example.com", framev1beta1.RoleAdmin)
+	srv := testServer(t, u)
+	session := sessionFor(t, srv, u)
+
+	rec := doWithCookie(t, srv, "/auth/token", "", session)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("token = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	renewed := sessionCookieFrom(t, rec)
+	if renewed.MaxAge != int(srv.cfg.SessionTTL.Seconds()) {
+		t.Fatalf("renewed MaxAge = %d, want %d", renewed.MaxAge, int(srv.cfg.SessionTTL.Seconds()))
+	}
+	if again := doWithCookie(t, srv, "/auth/token", "", renewed); again.Code != http.StatusOK {
+		t.Fatalf("token with renewed cookie = %d, want 200", again.Code)
 	}
 }
 

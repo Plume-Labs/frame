@@ -33,6 +33,10 @@ import (
 
 const modeLACP = "802.3ad"
 
+// operStateUnknown is the kernel's operstate for a driver that does not track
+// the link.
+const operStateUnknown = "unknown"
+
 // ScopeNetExpected carries what only the policy asked for: a link named there and
 // missing from the node. Unlike a device that left a read, it ends when the policy
 // stops naming it, or a typo in a name would stay open for good.
@@ -164,7 +168,7 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 	expected, named := e.Links[i.Name]
 	// "unknown" is the kernel's own word for a driver that does not track it: no
 	// verdict on a link that must be up, but the speed it shows still counts.
-	carrying := i.OperState == "up" || i.OperState == "unknown"
+	carrying := i.OperState == "up" || i.OperState == operStateUnknown
 	key := Key{CheckLinkSlow, i.Name}
 	a.assessTraffic(i.Name, i.Traffic, carrying, i.OperState == "up", e, open)
 	switch {
@@ -174,7 +178,7 @@ func (a *Assessment) assessInterface(i *framev1beta1.NetworkInterface, e NetExpe
 		a.unsure(key, open, why)
 		a.Cut[ScopeNet] = why
 		return
-	case named && i.OperState == "unknown":
+	case named && i.OperState == operStateUnknown:
 		a.unsure(Key{CheckNetDegraded, i.Name}, open, fmt.Sprintf("link %s gives no state", i.Name))
 	case named && i.OperState != "up":
 		a.add(CheckNetDegraded, i.Name, ScopeNet, severityCritical, fmt.Sprintf("expected link %s is %s", i.Name, i.OperState))
