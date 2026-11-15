@@ -79,6 +79,9 @@ type computerSystemJSON struct {
 		} `json:"#ComputerSystem.Reset"`
 	} `json:"Actions"`
 	LogServices odataRef `json:"LogServices"`
+	// Storage is the DMTF storage collection, read when there is no HPE
+	// SmartStorage tree (see readStandardStorage).
+	Storage odataRef `json:"Storage"`
 
 	// Oem.Hp.PostState is where an iLO4 reports power-on-self-test progress.
 	// It is the only reliable indicator, together with PowerState, of
