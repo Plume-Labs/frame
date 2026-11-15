@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,10 +54,15 @@ import (
 //     then true: the earlier attempt may have run, its answer lost);
 //   - a request older than wipeRequestMaxAge, or dated in the future, is
 //     refused;
-//   - the commands are fixed: `wipefs -a`, then 100 MiB of zeros with dd,
-//     then `sgdisk --zap-all` when the host has it, each on the by-id path
-//     (the identity checked above, not a kernel name that can move), under
-//     the host's `timeout`, in PID 1's namespaces.
+//   - the commands are fixed: `blockdev --getsize64` (read-only), `wipefs
+//     -a`, 100 MiB of zeros at the head with dd, 1 MiB of zeros at each of
+//     1, 10, 100 and 1000 GiB (where the disk reaches them: BlueStore keeps
+//     copies of its label there, and Rook reads any of them to recognise a
+//     disk as an old OSD), 100 MiB at the tail, then `sgdisk --zap-all` when
+//     the host has it; then one read of 4 KiB at 0, 1, 10, 100 and 1000 GiB
+//     to check that no "bluestore block device" label is left. Each command
+//     is on the by-id path (the identity checked above, not a kernel name
+//     that can move), under the host's `timeout`, in PID 1's namespaces.
 //
 // Whatever happens, the answer is written to the Node
 // (DiskWipeResultAnnotation) with Ran saying whether any command started.
@@ -77,13 +83,67 @@ var wipeByIDPath = regexp.MustCompile(`^/dev/disk/by-id/(wwn-0x[0-9a-fA-F]{8,64}
 // wipeRequestID is the shape of a request id (one line of the record).
 var wipeRequestID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 
-// wipeArgv are the commands run, in order, %s being the by-id path.
-func wipeArgv(byID string) [][]string {
-	return [][]string{
-		{"wipefs", "-a", byID},
-		{"dd", "if=/dev/zero", "of=" + byID, "bs=1M", "count=100", "oflag=direct", "status=none"},
-		{"sgdisk", "--zap-all", byID},
+const (
+	// wipeEdgeMiB is what is zeroed at the head and at the tail of the disk.
+	wipeEdgeMiB = 100
+	// bluestoreMagic opens a BlueStore label; its copies sit at the offsets
+	// below, so a disk that once was an OSD still reads as one (and Rook
+	// re-adopts it) unless each of them is zeroed too.
+	bluestoreMagic = "bluestore block device"
+	mib            = int64(1) << 20
+	gib            = int64(1) << 30
+)
+
+// wipeLabelOffsetsGiB are the offsets, beyond the head, where a BlueStore
+// label copy can be: zeroed (1 MiB each) and then read back.
+var wipeLabelOffsetsGiB = []int64{1, 10, 100, 1000}
+
+// wipeSizeArgv reads the disk's size in bytes (read-only).
+func wipeSizeArgv(byID string) []string { return []string{"blockdev", "--getsize64", byID} }
+
+// labelOffsets are the offsets, in bytes, checked after the wipe: 0 and
+// each copy the disk is big enough to hold.
+func labelOffsets(size int64) []int64 {
+	out := []int64{0}
+	for _, g := range wipeLabelOffsetsGiB {
+		if g*gib+mib <= size {
+			out = append(out, g*gib)
+		}
 	}
+	return out
+}
+
+// wipeArgv are the commands that change the disk, in order, for a disk of
+// size bytes; byID is the by-id path.
+func wipeArgv(byID string, size int64) [][]string {
+	zero := func(count, seekMiB int64) []string {
+		a := []string{"dd", "if=/dev/zero", "of=" + byID, "bs=1M", fmt.Sprintf("count=%d", count), "oflag=direct", "status=none"}
+		if seekMiB > 0 {
+			a = append(a, fmt.Sprintf("seek=%d", seekMiB))
+		}
+		return a
+	}
+	out := [][]string{
+		{"wipefs", "-a", byID},
+		zero(wipeEdgeMiB, 0),
+	}
+	for _, off := range labelOffsets(size)[1:] {
+		out = append(out, zero(1, off/mib))
+	}
+	if size >= 2*wipeEdgeMiB*mib {
+		out = append(out, zero(wipeEdgeMiB, size/mib-wipeEdgeMiB))
+	}
+	return append(out, []string{"sgdisk", "--zap-all", byID})
+}
+
+// wipeVerifyArgvs read 4 KiB at each label offset: stdout is checked for
+// the BlueStore magic.
+func wipeVerifyArgvs(byID string, size int64) [][]string {
+	var out [][]string
+	for _, off := range labelOffsets(size) {
+		out = append(out, []string{"dd", "if=" + byID, "bs=4096", "count=1", fmt.Sprintf("skip=%d", off/4096), "iflag=direct", "status=none"})
+	}
+	return out
 }
 
 // WipeEnv is what ServiceWipeRequest reads from the node.
@@ -234,24 +294,47 @@ func wipe(req framev1beta1.DiskWipeRequest, disks []framev1beta1.ObservedDisk, x
 		return refused("%s is held by %v", name, holders)
 	}
 
+	// The size is read before anything changes: a failure here costs no id.
+	stdout, serr, err := x.Exec(append(slices.Clone(timeoutPrefix), wipeSizeArgv(req.ByIDPath)...))
+	if err != nil {
+		return refused("cannot read the size of %s: %v %s", req.ByIDPath, err, strings.TrimSpace(serr))
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
+	if err != nil || size < mib {
+		return refused("the size of %s reads as %q", req.ByIDPath, strings.TrimSpace(stdout))
+	}
+
 	// Write-ahead: no command runs unless the id is recorded first.
 	if err := recordActed(env.Root, req.ID); err != nil {
 		return refused("cannot record the request before acting: %v", err)
 	}
 	var notes []string
-	for i, argv := range wipeArgv(req.ByIDPath) {
+	for _, argv := range wipeArgv(req.ByIDPath, size) {
 		_, stderr, err := x.Exec(append(slices.Clone(timeoutPrefix), argv...))
 		if err == nil {
 			continue
 		}
 		var ee interface{ ExitCode() int }
-		if i == 2 && errors.As(err, &ee) && ee.ExitCode() == 127 {
+		if argv[0] == "sgdisk" && errors.As(err, &ee) && ee.ExitCode() == 127 {
 			notes = append(notes, "sgdisk not installed on the node, skipped (wipefs -a already cleared both GPT headers)")
 			continue
 		}
 		return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("%s failed: %v %s", argv[0], err, strings.TrimSpace(stderr)), 500)}
 	}
-	msg := fmt.Sprintf("%s (%s, serial %s) wiped: wipefs -a, 100 MiB of zeros, sgdisk --zap-all", req.ByIDPath, d.Path, d.SerialNumber)
+	// Read back: a BlueStore label left anywhere makes Rook take the disk
+	// for the OSD it was (osd.6 came back from the dead that way).
+	for i, argv := range wipeVerifyArgvs(req.ByIDPath, size) {
+		out, stderr, err := x.Exec(append(slices.Clone(timeoutPrefix), argv...))
+		if err != nil {
+			return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("verification read %d failed: %v %s", i, err, strings.TrimSpace(stderr)), 500)}
+		}
+		if strings.Contains(out, bluestoreMagic) {
+			off := labelOffsets(size)[i]
+			return framev1beta1.DiskWipeResult{Ran: true, Message: clipRunes(fmt.Sprintf("a %q label is still there at offset %d GiB of %s after the wipe: not usable, inspect the disk", bluestoreMagic, off/gib, req.ByIDPath), 500)}
+		}
+	}
+	msg := fmt.Sprintf("%s (%s, serial %s, %d GiB) wiped: wipefs -a, zeros at the head, the tail and the BlueStore label offsets (0, 1, 10, 100, 1000 GiB where present), sgdisk --zap-all; no BlueStore label read back",
+		req.ByIDPath, d.Path, d.SerialNumber, size/gib)
 	if len(notes) > 0 {
 		msg += "; " + strings.Join(notes, "; ")
 	}

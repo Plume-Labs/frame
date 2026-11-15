@@ -46,15 +46,18 @@ import (
 //
 //	Checking               read-only: nothing else running, health OK (or
 //	                       only the tolerated warnings), every PG
-//	                       active+clean, every OSD up/in, no blocking flag,
+//	                       active+clean, every OSD up/in (the one replaced
+//	                       may already be out), no blocking flag,
 //	                       ok-to-stop (see cephmgr.OKToStopVerdict), the
 //	                       retyped serial is the OSD's, the old disk and
 //	                       every OSD of the host are declared in the
 //	                       CephCluster
 //	Draining               osd out, wait for active+clean, safe-to-destroy
 //	AwaitingPurgeApproval  approval no. 1: the old disk's serial retyped
-//	Purging                deployment to 0, OSD down, safe-to-destroy again,
-//	                       purge (sent once), deployment deleted
+//	Purging                rook-ceph-operator to 0 (else Rook, reading the old
+//	                       disk's BlueStore label, brings the OSD back),
+//	                       deployment to 0, OSD down, safe-to-destroy
+//	                       again, purge (sent once), deployment deleted
 //	AwaitingDisk           the person swaps the disk; exactly one new disk
 //	                       (absent before the purge, unknown to Ceph,
 //	                       whole and free, 512/4096-byte sectors, SMART not
@@ -62,7 +65,8 @@ import (
 //	AwaitingWipeApproval   approval no. 2: the new disk's serial retyped
 //	Wiping                 the node's agent wipes it (internal/agent)
 //	Declaring              JSON patch test+replace of that one entry of
-//	                       spec.storage.devices — never an apply
+//	                       spec.storage.devices — never an apply — then
+//	                       rook-ceph-operator back to 1
 //	AwaitingOSD            the host has as many OSDs as before, all up
 //	                       (operator restarted once after 10 min)
 //	Backfilling            every PG active+clean again
@@ -79,6 +83,9 @@ var toleratedHealthChecks = []string{"BLUESTORE_SLOW_OP_ALERT"}
 // blockingFlags are the cluster flags under which a replacement does not
 // start: each would stop the drain or the backfill it waits for.
 var blockingFlags = []string{"noout", "noin", "noup", "nodown", "norebalance", "nobackfill", "norecover", "pause", "pauserd", "pausewr"}
+
+// rookOperatorName is Rook's operator Deployment, in the Rook namespace.
+const rookOperatorName = "rook-ceph-operator"
 
 const (
 	osdReplacementPoll      = 30 * time.Second
@@ -219,6 +226,9 @@ func (s *osdStep) reconcile(ctx context.Context) (ctrl.Result, error) {
 				if err := s.scaleOSD(ctx, 1); err != nil && !apierrors.IsNotFound(err) {
 					return s.wait(fmt.Sprintf("resuming: scaling %s back to 1: %v", s.osdDeployment().Name, err))
 				}
+				if err := s.restoreOperator(ctx); err != nil {
+					return s.wait(fmt.Sprintf("resuming: scaling %s back to 1: %v", rookOperatorName, err))
+				}
 				o.Status.ScaledDownAt = nil
 			}
 			o.Status.PurgeApprovedAt = nil
@@ -234,7 +244,7 @@ func (s *osdStep) reconcile(ctx context.Context) (ctrl.Result, error) {
 	}
 	op, err := r.Ceph(ctx)
 	if err != nil {
-		return s.wait(fmt.Sprintf("the Ceph operator account is not usable: %v", err))
+		return s.wait(operatorAccountMessage(err))
 	}
 	s.ceph = op
 	switch o.Status.Phase {
@@ -263,6 +273,18 @@ func (s *osdStep) reconcile(ctx context.Context) (ctrl.Result, error) {
 }
 
 // ---------------------------------------------------------------- helpers
+
+// operatorAccountMessage says why the operator account is not usable. The
+// commonest cause, by far, is that nobody created it yet: that case names
+// the Secret and the guide instead of repeating the client's bare error.
+func operatorAccountMessage(err error) string {
+	if errors.Is(err, cephmgr.ErrNotConfigured) {
+		return fmt.Sprintf("the Ceph operator account does not exist yet: the Secret %q (keys url, username, password, ca.crt, serverName) is missing from the manager's namespace, "+
+			"and so is, most likely, the dashboard account behind it. Create both with hack/ceph-operator-account.sh (docs/osd-replacement.md, \"The operator account\"); "+
+			"this replacement starts again by itself within a minute of the Secret appearing", cephmgr.OperatorSecretName)
+	}
+	return fmt.Sprintf("the Ceph operator account is not usable: %v", err)
+}
 
 func (s *osdStep) event(msg string) {
 	ev := framev1beta1.OSDReplacementEvent{At: metav1.NewTime(s.r.now()), Phase: s.o.Status.Phase, Message: clipString(msg, 512)}
@@ -580,7 +602,18 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 	if err != nil {
 		return s.wait(fmt.Sprintf("reading the pools: %v", err))
 	}
-	if ok, why := cephmgr.OKToStopVerdict(st, osds, pools); !ok {
+	// An OSD that is already out (it was taken out by hand, or is dead)
+	// holds no PG once they are all active+clean: stopping it removes no
+	// copy, so it is not counted among the OSDs that must be up and in. Every
+	// other OSD still must be.
+	verdictOSDs := osds
+	if !me.In {
+		verdictOSDs = slices.DeleteFunc(slices.Clone(osds), func(o cephmgr.OSDState) bool { return o.ID == id })
+		o.Status.OSDWasOut = true
+	} else {
+		o.Status.OSDWasOut = false
+	}
+	if ok, why := cephmgr.OKToStopVerdict(st, verdictOSDs, pools); !ok {
 		return s.pause("osd." + fmt.Sprint(id) + " is not ok to stop: " + why)
 	}
 	meta, err := s.ceph.Metadata(ctx, id)
@@ -641,6 +674,9 @@ func (s *osdStep) check(ctx context.Context) (ctrl.Result, error) {
 		}
 	}
 	s.event(fmt.Sprintf("checks passed: osd.%d on %s is %s (serial %s), entry %d of the CephCluster; %s PGs active+clean", id, me.Host, old[0].ByIDPath, o.Spec.Serial, idx, o.Status.PGs))
+	if o.Status.OSDWasOut {
+		s.event(fmt.Sprintf("osd.%d was already out: nothing to drain, it stays out if this replacement is cancelled", id))
+	}
 	s.enter(framev1beta1.OSDReplacementDraining, fmt.Sprintf("marking osd.%d out", id))
 	return ctrl.Result{Requeue: true}, nil
 }
@@ -651,9 +687,14 @@ func (s *osdStep) drain(ctx context.Context) (ctrl.Result, error) {
 	o, id, now := s.o, s.o.Spec.OSDID, s.r.now()
 	if o.Status.MarkedOutAt == nil {
 		o.Status.MarkedOutAt = s.nowTime()
-		o.Status.SawUnclean = false
+		// An OSD that was out from the start has already moved its data:
+		// no movement is to be waited for.
+		o.Status.SawUnclean = o.Status.OSDWasOut
 		if err := s.save(ctx); err != nil {
 			return ctrl.Result{}, err
+		}
+		if o.Status.OSDWasOut {
+			return s.wait(fmt.Sprintf("osd.%d was already out; waiting for every PG active+clean", id))
 		}
 		if err := s.ceph.MarkOut(ctx, id); err != nil {
 			// Reversible and idempotent: resent below while the OSD
@@ -792,13 +833,36 @@ func (s *osdStep) osdDeployment() types.NamespacedName {
 }
 
 func (s *osdStep) scaleOSD(ctx context.Context, replicas int32) error {
+	return s.scaleDeployment(ctx, s.osdDeployment(), replicas)
+}
+
+func (s *osdStep) operatorDeployment() types.NamespacedName {
+	return types.NamespacedName{Namespace: s.r.rookNamespace(), Name: rookOperatorName}
+}
+
+func (s *osdStep) scaleDeployment(ctx context.Context, key types.NamespacedName, replicas int32) error {
 	var d appsv1.Deployment
-	if err := s.r.Get(ctx, s.osdDeployment(), &d); err != nil {
+	if err := s.r.Get(ctx, key, &d); err != nil {
 		return err
 	}
 	base := d.DeepCopy()
 	d.Spec.Replicas = &replicas
 	return s.r.Patch(ctx, &d, client.MergeFrom(base))
+}
+
+// restoreOperator scales rook-ceph-operator back to 1 if this replacement
+// stopped it. A Deployment that is gone is not an error: nothing to restore.
+func (s *osdStep) restoreOperator(ctx context.Context) error {
+	o := s.o
+	if o.Status.OperatorStoppedAt == nil {
+		return nil
+	}
+	if err := s.scaleDeployment(ctx, s.operatorDeployment(), 1); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	o.Status.OperatorStoppedAt = nil
+	s.event(rookOperatorName + " scaled back to 1")
+	return nil
 }
 
 func (s *osdStep) purge(ctx context.Context) (ctrl.Result, error) {
@@ -807,10 +871,29 @@ func (s *osdStep) purge(ctx context.Context) (ctrl.Result, error) {
 		if o.Status.PurgeRequestedAt == nil {
 			if o.Status.ScaledDownAt == nil {
 				o.Status.ScaledDownAt = s.nowTime()
+				o.Status.OperatorStoppedAt = s.nowTime()
 				if err := s.save(ctx); err != nil {
 					return ctrl.Result{}, err
 				}
-				s.event(fmt.Sprintf("deployment %s scaled to 0", s.osdDeployment().Name))
+				s.event(fmt.Sprintf("%s, then deployment %s, scaled to 0 (Rook would bring the OSD back from the old disk's label)", rookOperatorName, s.osdDeployment().Name))
+			}
+			// The operator first, and gone before the OSD stops: it would
+			// scale the OSD back up.
+			if err := s.scaleDeployment(ctx, s.operatorDeployment(), 0); err != nil {
+				if apierrors.IsNotFound(err) {
+					return s.pause(fmt.Sprintf("deployment %s not found in %s: the replacement does not purge an OSD while it cannot stop Rook", rookOperatorName, s.r.rookNamespace()))
+				}
+				return s.wait(fmt.Sprintf("scaling %s to 0: %v", rookOperatorName, err))
+			}
+			var opPods corev1.PodList
+			if err := s.r.List(ctx, &opPods, client.InNamespace(s.r.rookNamespace()), client.MatchingLabels{"app": rookOperatorName}); err != nil {
+				return s.wait(fmt.Sprintf("listing %s's pods: %v", rookOperatorName, err))
+			}
+			if len(opPods.Items) > 0 {
+				if since(o.Status.ScaledDownAt, now) > osdScaleDownTimeout {
+					return s.pause(fmt.Sprintf("%s still has %d pod(s) %s after scaling to 0", rookOperatorName, len(opPods.Items), osdScaleDownTimeout))
+				}
+				return s.wait("waiting for " + rookOperatorName + " to stop")
 			}
 			if err := s.scaleOSD(ctx, 0); err != nil && !apierrors.IsNotFound(err) {
 				return s.wait(fmt.Sprintf("scaling %s to 0: %v", s.osdDeployment().Name, err))
@@ -1123,6 +1206,11 @@ func (s *osdStep) declare(ctx context.Context) (ctrl.Result, error) {
 			return s.pause(fmt.Sprintf("the CephCluster did not take the new device list: %v", devices))
 		}
 	}
+	// The old disk is out of the device list: Rook may run again, and will
+	// find only the new disk.
+	if err := s.restoreOperator(ctx); err != nil {
+		return s.wait(fmt.Sprintf("scaling %s back to 1: %v", rookOperatorName, err))
+	}
 	o.Status.DeclaredAt = s.nowTime()
 	s.event(fmt.Sprintf("CephCluster entry %d: %s → %s. Update k8s/storage/cephcluster.yaml in the Neura repo to match", *o.Status.DeviceIndex, oldName, newName))
 	s.enter(framev1beta1.OSDReplacementAwaitingOSD, fmt.Sprintf("waiting for Rook to create the new OSD on %s", o.Status.Host))
@@ -1158,7 +1246,7 @@ func (s *osdStep) awaitOSD(ctx context.Context) (ctrl.Result, error) {
 	elapsed := since(o.Status.DeclaredAt, now)
 	if elapsed > osdOperatorRestartAfter && o.Status.OperatorRestartedAt == nil {
 		var d appsv1.Deployment
-		if err := s.r.Get(ctx, types.NamespacedName{Namespace: s.r.rookNamespace(), Name: "rook-ceph-operator"}, &d); err != nil {
+		if err := s.r.Get(ctx, s.operatorDeployment(), &d); err != nil {
 			return s.wait(fmt.Sprintf("reading rook-ceph-operator: %v", err))
 		}
 		base := d.DeepCopy()
@@ -1210,15 +1298,26 @@ func (s *osdStep) cancel(ctx context.Context) (ctrl.Result, error) {
 				return s.wait(fmt.Sprintf("cancelling: withdrawing the wipe request on %s: %v", o.Status.Host, err))
 			}
 		}
-		s.enter(framev1beta1.OSDReplacementCancelled, fmt.Sprintf(
+		msg := fmt.Sprintf(
 			"cancelled after the purge of osd.%d; nothing undone. Where things stand: purged %t, new disk %s, %s, declared %t. Finish by hand with the fiche (B3–B5)",
-			id, o.Status.PurgedAt != nil, diskName(o.Status.NewDisk, o.Status.WipeApprovedAt != nil), s.wipeState(ctx), o.Status.DeclaredAt != nil))
+			id, o.Status.PurgedAt != nil, diskName(o.Status.NewDisk, o.Status.WipeApprovedAt != nil), s.wipeState(ctx), o.Status.DeclaredAt != nil)
+		if o.Status.OperatorStoppedAt != nil {
+			msg += fmt.Sprintf(". %s is STILL AT 0 replicas on purpose (Rook would bring the old OSD back): once the old disk is out of spec.storage.devices, run `kubectl -n %s scale deploy %s --replicas=1`", rookOperatorName, s.r.rookNamespace(), rookOperatorName)
+		}
+		s.enter(framev1beta1.OSDReplacementCancelled, msg)
 		return ctrl.Result{}, nil
 	}
 	if o.Status.ScaledDownAt != nil {
 		if err := s.scaleOSD(ctx, 1); err != nil && !apierrors.IsNotFound(err) {
 			return s.wait(fmt.Sprintf("cancelling: scaling %s back to 1: %v", s.osdDeployment().Name, err))
 		}
+		if err := s.restoreOperator(ctx); err != nil {
+			return s.wait(fmt.Sprintf("cancelling: scaling %s back to 1: %v", rookOperatorName, err))
+		}
+	}
+	if o.Status.OSDWasOut {
+		s.enter(framev1beta1.OSDReplacementCancelled, fmt.Sprintf("cancelled: osd.%d was already out when the replacement started; it stays out", id))
+		return ctrl.Result{}, nil
 	}
 	if o.Status.MarkedOutAt != nil {
 		op, err := s.r.Ceph(ctx)

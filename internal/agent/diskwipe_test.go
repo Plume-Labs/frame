@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +39,11 @@ import (
 type wipeExec struct {
 	argvs [][]string
 	fail  map[string]error // by command name
+	// size is what blockdev answers (a 600 GB disk by default).
+	size int64
+	// label is a "bluestore block device" label the disk still reads at
+	// this offset in bytes (a pointer: nil means none).
+	label *int64
 }
 
 func (w *wipeExec) Exec(argv []string) (string, string, error) {
@@ -45,7 +52,37 @@ func (w *wipeExec) Exec(argv []string) (string, string, error) {
 	if err := w.fail[cmd]; err != nil {
 		return "", "boom", err
 	}
+	switch cmd {
+	case "blockdev":
+		if w.size == 0 {
+			w.size = 600_127_266_816
+		}
+		return fmt.Sprintf("%d\n", w.size), "", nil
+	case "dd":
+		for _, a := range argv {
+			if v, ok := strings.CutPrefix(a, "skip="); ok && w.label != nil {
+				var n int64
+				fmt.Sscan(v, &n)
+				if n*4096 == *w.label {
+					return "\x00\x00bluestore block device\n", "", nil
+				}
+			}
+		}
+	}
 	return "", "", nil
+}
+
+// changing are the argvs that write to the disk (not the size or the read-backs).
+func changing(argvs [][]string) [][]string {
+	var out [][]string
+	for _, a := range argvs {
+		c := a[len(timeoutPrefix):]
+		if c[0] == "blockdev" || (c[0] == "dd" && strings.HasPrefix(c[1], "if=/dev/disk")) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 type exit127 struct{}
@@ -103,23 +140,42 @@ func TestWipeRunsTheFixedCommandsOnTheByIDPath(t *testing.T) {
 	if !res.OK || !res.Ran || res.ID != "0a1b2c3d-0" {
 		t.Fatalf("result = %+v", res)
 	}
-	want := wipeArgv(wipeByID)
-	if len(x.argvs) != len(want) {
+	want := wipeArgv(wipeByID, 600_127_266_816)
+	got := changing(x.argvs)
+	if len(got) != len(want) {
 		t.Fatalf("argvs = %v", x.argvs)
 	}
-	for i, a := range x.argvs {
-		if strings.Join(a, " ") != strings.Join(append(append([]string{}, timeoutPrefix...), want[i]...), " ") {
+	for i, a := range got {
+		if strings.Join(a, " ") != strings.Join(want[i], " ") {
 			t.Fatalf("argv %d = %v", i, a)
 		}
+	}
+	for _, a := range x.argvs {
 		if strings.Contains(strings.Join(a, " "), "/dev/sd") {
 			t.Fatalf("a kernel name reached the command line: %v", a)
 		}
+	}
+	// A 600 GB disk (558 GiB): head, copies at 1, 10 and 100 GiB, tail.
+	var seeks []string
+	for _, a := range got {
+		for _, f := range a {
+			if strings.HasPrefix(f, "seek=") {
+				seeks = append(seeks, f)
+			}
+		}
+	}
+	if strings.Join(seeks, " ") != "seek=1024 seek=10240 seek=102400 seek=572225" {
+		t.Fatalf("seeks = %v", seeks)
 	}
 	// Answered: a second tick does nothing.
 	if err := ServiceWipeRequest(context.Background(), c, "r320", []framev1beta1.ObservedDisk{freeDisk()}, x, env); err != nil {
 		t.Fatal(err)
 	}
-	if len(x.argvs) != 3 {
+	n := len(x.argvs)
+	if err := ServiceWipeRequest(context.Background(), c, "r320", []framev1beta1.ObservedDisk{freeDisk()}, x, env); err != nil {
+		t.Fatal(err)
+	}
+	if len(x.argvs) != n {
 		t.Fatalf("ran again: %v", x.argvs)
 	}
 }
@@ -233,7 +289,7 @@ func TestWipeStopsAtTheFirstFailureButSkipsAMissingSgdisk(t *testing.T) {
 	if err := ServiceWipeRequest(context.Background(), c, "r320", []framev1beta1.ObservedDisk{freeDisk()}, x, env); err != nil {
 		t.Fatal(err)
 	}
-	if res := wipeResult(t, c); res.OK || !res.Ran || len(x.argvs) != 1 {
+	if res := wipeResult(t, c); res.OK || !res.Ran || len(changing(x.argvs)) != 1 {
 		t.Fatalf("result = %+v argvs %v", res, x.argvs)
 	}
 }
@@ -249,5 +305,55 @@ func TestLsblkLogSecIsTolerant(t *testing.T) {
 	_ = json.Unmarshal([]byte(`"4096"`), &n)
 	if logicalSector(n) != 4096 {
 		t.Fatalf("got %d", logicalSector(n))
+	}
+}
+
+func TestWipeZeroesEveryBlueStoreLabelOffsetTheDiskReaches(t *testing.T) {
+	// A 2 TB disk reaches 1000 GiB; a 500 MiB one reaches none of them.
+	if got := labelOffsets(2_000_398_934_016); len(got) != 5 || got[4] != 1000*gib {
+		t.Fatalf("offsets of a 2 TB disk = %v", got)
+	}
+	if got := labelOffsets(500 * mib); len(got) != 1 {
+		t.Fatalf("offsets of a 500 MiB disk = %v", got)
+	}
+	for _, a := range wipeArgv(wipeByID, 500*mib) {
+		if a[0] == "dd" && slices.Contains(a, "seek=1024") {
+			t.Fatalf("a 500 MiB disk is not written at 1 GiB: %v", a)
+		}
+	}
+	// Disks too small for a tail are not written past their end.
+	for _, a := range wipeArgv(wipeByID, 150*mib) {
+		if strings.Contains(strings.Join(a, " "), "seek=") {
+			t.Fatalf("150 MiB disk: %v", a)
+		}
+	}
+}
+
+func TestWipeFailsWhenABlueStoreLabelIsStillReadBack(t *testing.T) {
+	for _, off := range []int64{0, gib, 100 * gib} {
+		c, env := wipeSetup(t, goodRequest())
+		x := &wipeExec{label: &off}
+		if err := ServiceWipeRequest(context.Background(), c, "r320", []framev1beta1.ObservedDisk{freeDisk()}, x, env); err != nil {
+			t.Fatal(err)
+		}
+		res := wipeResult(t, c)
+		if res.OK || !res.Ran || !strings.Contains(res.Message, "bluestore block device") || !strings.Contains(res.Message, fmt.Sprintf("%d GiB", off/gib)) {
+			t.Fatalf("label at %d GiB: %+v", off/gib, res)
+		}
+	}
+}
+
+func TestWipeRefusesBeforeActingWhenTheSizeIsUnreadable(t *testing.T) {
+	c, env := wipeSetup(t, goodRequest())
+	x := &wipeExec{fail: map[string]error{"blockdev": errors.New("exit status 1")}}
+	if err := ServiceWipeRequest(context.Background(), c, "r320", []framev1beta1.ObservedDisk{freeDisk()}, x, env); err != nil {
+		t.Fatal(err)
+	}
+	if res := wipeResult(t, c); res.OK || res.Ran || len(x.argvs) != 1 {
+		t.Fatalf("result = %+v argvs %v", res, x.argvs)
+	}
+	// Nothing was recorded: the same id may run once the size reads.
+	if ids, _ := actedIDs(env.Root); len(ids) != 0 {
+		t.Fatalf("recorded %v", ids)
 	}
 }
