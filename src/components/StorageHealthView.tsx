@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import type { RegistryAlert } from '@/lib/alert-registry'
 import { isAdminToken } from '@/lib/auth'
@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { useNow } from '@/hooks/useNow'
 import { Heartbeat } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -36,14 +37,16 @@ function ThresholdsCard() {
   )
   const saved = state.phase === 'ready' ? state.data : null
   const [draft, setDraft] = useState<StorageThresholds | null>(null)
+  const [draftOf, setDraftOf] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   // By value: a watch event re-reads an identical object, and that must not
-  // wipe what is being typed.
+  // wipe what is being typed. A saved value that differs replaces the draft in
+  // the same render, so the form never shows the old one for a frame.
   const savedKey = saved && `${saved.zfsCapacityPercent}/${saved.ssdWearPercent}`
-  useEffect(() => {
-    if (saved) setDraft(saved)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedKey])
+  if (saved && savedKey !== draftOf) {
+    setDraftOf(savedKey)
+    setDraft(saved)
+  }
 
   const fields = [
     { key: 'zfsCapacityPercent', label: 'ZFS pool capacity (%)', hint: 'Alert at this level, clears two points below.' },
@@ -144,6 +147,7 @@ function ReleaseDevice({ machine, device, checks }: { machine: Machine; device: 
 }
 
 function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alerts: RegistryAlert[]; admin: boolean }) {
+  const now = useNow()
   const rows = mirrorRows(machine)
   const attention = checkVerdicts(machine).filter((v) => v.detail)
   return (
@@ -168,7 +172,7 @@ function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alert
             <span className="text-muted-foreground">{r.detail}</span>
           </div>
         ))}
-        {readingNotes(machine, Date.now()).map((n) => (
+        {readingNotes(machine, now).map((n) => (
           <p key={n} className="text-warning">
             {n}
           </p>

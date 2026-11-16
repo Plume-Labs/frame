@@ -9,6 +9,8 @@ import {
   controllerKeyForPod,
   isInfrastructureNamespace,
   ownershipWarning,
+  resolveSelection,
+  type NamespaceNode,
   type OwnerRef,
   type WorkloadController,
   type WorkloadPod,
@@ -317,5 +319,36 @@ describe('ownershipWarning', () => {
       labels: { 'app.kubernetes.io/instance': 'acme', 'app.kubernetes.io/name': 'api' },
     })).toBeUndefined()
     expect(ownershipWarning({})).toBeUndefined()
+  })
+})
+
+describe('resolveSelection', () => {
+  const node = (over: Partial<NamespaceNode> = {}): NamespaceNode => ({
+    namespace: 'acme',
+    infrastructure: false,
+    controllers: [],
+    barePods: [],
+    podCount: 0,
+    ...over,
+  })
+
+  it('follows the pod and its controller to the latest tree', () => {
+    const clicked = { pod: pod({ restarts: 0 }), controller: controller({ readyReplicas: 2 }) }
+    const fresh = { controller: controller({ readyReplicas: 1 }), pods: [pod({ restarts: 3 })] }
+    const next = resolveSelection(clicked, [node({ controllers: [fresh] })])
+    expect(next.pod.restarts).toBe(3)
+    expect(next.controller?.readyReplicas).toBe(1)
+  })
+
+  it('finds a pod with no controller among the bare pods', () => {
+    const next = resolveSelection({ pod: pod(), controller: controller() }, [node({ barePods: [pod({ restarts: 9 })] })])
+    expect(next.pod.restarts).toBe(9)
+    expect(next.controller).toBeUndefined()
+  })
+
+  it('keeps the previous selection when the tree has not got the pod (not loaded, or deleted)', () => {
+    const prev = { pod: pod(), controller: controller() }
+    expect(resolveSelection(prev, [])).toBe(prev)
+    expect(resolveSelection(prev, [node()])).toBe(prev)
   })
 })
