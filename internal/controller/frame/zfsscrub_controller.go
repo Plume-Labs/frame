@@ -145,6 +145,11 @@ func (r *ZFSScrubReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.Recorder.Event(&policy, corev1.EventTypeWarning, "ScrubScheduleInvalid", err.Error())
 	}
 	for _, s := range steps {
+		if s.Node == "" {
+			// An event with no node patch: a plan that is only waiting.
+			r.Recorder.Event(&policy, s.EventType, s.Reason, s.Event)
+			continue
+		}
 		if err := r.patchNode(ctx, s); err != nil {
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 				// The agent acknowledged in between, or the node left: the
@@ -203,6 +208,7 @@ const (
 	reasonScrubCompleted = "ScrubCompleted"
 	reasonScrubFailed    = "ScrubFailed"
 	reasonScrubSettled   = "ScrubSettled"
+	reasonScrubWaiting   = "ScrubWaiting"
 )
 
 // scrubAnnotations is every annotation of the protocol.
@@ -255,6 +261,26 @@ func blocking(n scrubNode) bool {
 		return true
 	}
 	return unsettled(n)
+}
+
+// stuckBlock says why n keeps every other node from being asked in a way that
+// may never resolve by itself: its ZFS read fails, a failed request is still
+// unsettled, or the scan its last read shows comes from a read too old to be
+// a scan still running (a node switched off mid-scrub). A pool scanning on a
+// recent read is progress, not stuck.
+func stuckBlock(n scrubNode, now time.Time) (string, bool) {
+	live := scanning(n.ZFS) && n.ZFS.ReadAt != nil && now.Sub(n.ZFS.ReadAt.Time) < zfsScrubFreshRead
+	switch {
+	case live:
+		return "", false
+	case n.ZFS != nil && n.ZFS.State == framev1beta1.StackError:
+		return "its ZFS read fails", true
+	case unsettled(n):
+		return "a failed scrub request is not settled by a fresh read", true
+	case scanning(n.ZFS) && (n.ZFS.ReadAt == nil || now.Sub(n.ZFS.ReadAt.Time) >= zfsScrubFreshRead):
+		return "its last read showed a scan, and no read has come since", true
+	}
+	return "", false
 }
 
 // unsettled reports whether a failed request may still have a scrub running
@@ -379,8 +405,24 @@ func planScrubs(s *framev1beta1.ZFSScrubSchedule, nodes []scrubNode, now time.Ti
 	}
 	// A node concluded in this pass is not asked again in the same pass: the
 	// next one, minutes later, plans from the annotations just written.
-	if s == nil || locked || len(steps) > 0 ||
-		slices.ContainsFunc(nodes, blocking) {
+	if s == nil || locked || len(steps) > 0 {
+		return steps, nil
+	}
+	if slices.ContainsFunc(nodes, blocking) {
+		// Held, with no scrub of Frame's own in flight. A pool really
+		// scanning is progress; the other holds can last for ever without a
+		// word, so while the window is open the plan names the node.
+		if open, err := inScrubWindow(s, now); err == nil && open && s.NodeSelector != nil {
+			for _, n := range nodes {
+				if why, stuck := stuckBlock(n, now); stuck {
+					steps = append(steps, scrubStep{
+						EventType: corev1.EventTypeWarning, Reason: reasonScrubWaiting,
+						Event: fmt.Sprintf("node %s holds back every scrub: %s", n.Name, why),
+					})
+					break
+				}
+			}
+		}
 		return steps, nil
 	}
 	open, err := inScrubWindow(s, now)
