@@ -84,7 +84,14 @@ func installedOf(t *testing.T, s Spec) readNetplan {
 		t.Fatalf("no late-command writes the installed network:\n%s", late)
 	}
 	target := pinTarget(t)
-	if code, out := runSh(t, installedNetwork(v, s, target), t.TempDir()); code != 0 {
+	// The installer's route to the gateway leaves by the top link it was given.
+	bin := t.TempDir()
+	top := "bond0"
+	if s.Network.VLAN != nil {
+		top = vlanName(s.Network.VLAN.ID)
+	}
+	fakeTool(t, bin, "ip", "echo '"+s.Network.Gateway+" dev "+top+" src 192.0.2.9 uid 0'")
+	if code, out := runSh(t, installedNetwork(v, s, target), bin); code != 0 {
 		t.Fatalf("late-command exited %d:\n%s", code, out)
 	}
 	for _, gone := range []string{"etc/netplan/00-installer-config.yaml", "etc/netplan/50-cloud-init.yaml", "etc/cloud/cloud.cfg.d/90-installer-network.cfg"} {
@@ -351,4 +358,51 @@ func nineMACs() []string {
 		out[i] = fmt.Sprintf("52:54:00:cc:00:%02x", i+1)
 	}
 	return out
+}
+
+// The route guard, run: the installed network is written only when the
+// installer's route to the gateway leaves by the top link it was given -- the
+// VLAN when there is one, the bond otherwise. Anything else (the DHCP port,
+// the bond under a VLAN, no route) refuses with exit 1.
+func TestRouteGuardNeedsTheRouteOverTheTopLink(t *testing.T) {
+	withVLAN := bondVLANSpec()
+	bondOnly := bondVLANSpec()
+	bondOnly.Network.VLAN = nil
+	gw := withVLAN.Network.Gateway
+	route := func(dev string) string {
+		return gw + " dev " + dev + " src 192.0.2.9 uid 0\\    cache"
+	}
+	for name, tc := range map[string]struct {
+		spec Spec
+		out  string
+		want int
+	}{
+		"vlan carries the route":      {withVLAN, route("vlan20"), 0},
+		"bond under a vlan":           {withVLAN, route("bond0"), 1},
+		"installer's own port":        {withVLAN, route("eno1"), 1},
+		"no route":                    {withVLAN, "", 1},
+		"bond alone carries it":       {bondOnly, route("bond0"), 0},
+		"vlan name does not prefix":   {withVLAN, route("vlan200"), 1},
+		"bond alone, wrong interface": {bondOnly, route("eno2"), 1},
+	} {
+		bin := t.TempDir()
+		fakeTool(t, bin, "ip", "cat <<'EOF'\n"+tc.out+"\nEOF")
+		if code, out := runSh(t, routeGuard(tc.spec, "ip"), bin); code != tc.want {
+			t.Errorf("%s: exit %d, want %d:\n%s", name, code, tc.want, out)
+		}
+	}
+	// It comes before the netplan is written, in the rendered late-commands.
+	late := commands(t, parsed(t, bondVLANSpec(), testBeaconBase), "late-commands")
+	guard, write := -1, -1
+	for i, c := range late {
+		if strings.Contains(c, "route to "+gw+" leaves by") && guard < 0 {
+			guard = i
+		}
+		if strings.Contains(c, "60-frame.yaml") && write < 0 {
+			write = i
+		}
+	}
+	if guard < 0 || write < 0 || guard > write {
+		t.Errorf("route guard at %d, netplan write at %d: want the guard first", guard, write)
+	}
 }

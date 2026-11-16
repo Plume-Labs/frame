@@ -202,7 +202,26 @@ func installedNetwork(v validated, s Spec, target string) string {
 	if err != nil {
 		panic(err) // structs of strings, ints and bools; cannot fail
 	}
-	return writeNetplan(target, b)
+	return routeGuard(s, "ip") + "; " + writeNetplan(target, b)
+}
+
+// routeGuard refuses (exit 1, before the declared netplan is written) unless
+// the installer's own route to the gateway leaves by the top link of the
+// declared network: the VLAN when there is one, the bond otherwise. The
+// installer is given the same document (liveNetwork), so this proves the bond
+// and the VLAN came up and carry the gateway before the installed system is
+// left to depend on them -- netplanPin does the same for the undeclared case.
+// ipBin is the name of the `ip` binary, a parameter for the tests.
+func routeGuard(s Spec, ipBin string) string {
+	top := bondName
+	if s.Network.VLAN != nil {
+		top = vlanName(s.Network.VLAN.ID)
+	}
+	gw := s.Network.Gateway
+	return fmt.Sprintf(
+		"dev=$(%[1]s -o route get '%[2]s' 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p'); "+
+			"[ \"$dev\" = '%[3]s' ] || { echo \"FRAME: the route to %[2]s leaves by '$dev', not %[3]s, refusing\" > /dev/console; exit 1; }",
+		ipBin, gw, top)
 }
 
 // writeNetplan replaces the target's netplan with doc and keeps cloud-init
