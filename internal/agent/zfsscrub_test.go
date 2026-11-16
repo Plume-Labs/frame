@@ -284,12 +284,84 @@ func TestServiceScrubRequestDoesNotAcknowledgeAMovedRequest(t *testing.T) {
 			return cl.Patch(ctx, obj, p, opts...)
 		},
 	}).Build()
+	x := &scrubExec{}
 	err := ServiceScrubRequest(context.Background(), c, "n1",
-		present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), &scrubExec{}, scrubClock)
+		present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), x, scrubClock)
 	if err == nil {
 		t.Fatal("no error: the acknowledgement went through a moved request")
 	}
+	if len(x.calls) != 0 {
+		t.Fatal("zpool ran for a request that was no longer the one read")
+	}
 	if _, ok := nodeAnnotations(t, c)[framev1beta1.ZFSScrubAcknowledgedAnnotation]; ok {
 		t.Fatal("acknowledged under the old value")
+	}
+}
+
+// onExec runs a hook before each zpool call.
+type onExec struct {
+	scrubExec
+	hook func()
+}
+
+func (o *onExec) Exec(argv []string) (string, string, error) {
+	o.hook()
+	return o.scrubExec.Exec(argv)
+}
+
+// The acknowledgement lands before zpool runs: a request re-issued while the
+// scrub starts is then seen as new, instead of being swallowed by an
+// acknowledgement written afterwards.
+func TestServiceScrubRequestAcknowledgesBeforeStarting(t *testing.T) {
+	const req = "2026-11-08T01:59:00Z"
+	c := scrubNode(t, map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: req})
+	var seen string
+	x := &onExec{hook: func() { seen = nodeAnnotations(t, c)[framev1beta1.ZFSScrubAcknowledgedAnnotation] }}
+	if err := ServiceScrubRequest(context.Background(), c, "n1",
+		present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), x, scrubClock); err != nil {
+		t.Fatal(err)
+	}
+	if seen != req {
+		t.Fatalf("acknowledged = %q when zpool ran, want %q", seen, req)
+	}
+}
+
+// One pool started is a scrub that runs: the acknowledgement stays, so the
+// controller does not ask for it again, and the error still surfaces.
+func TestServiceScrubRequestKeepsTheAcknowledgementOnAPartialStart(t *testing.T) {
+	const req = "2026-11-08T01:59:00Z"
+	c := scrubNode(t, map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: req})
+	x := &scrubExec{fail: map[string]error{"tank": errors.New("exit status 1")}}
+	err := ServiceScrubRequest(context.Background(), c, "n1", present(
+		framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"},
+		framev1beta1.ZPool{Name: "tank", Health: "ONLINE"},
+	), x, scrubClock)
+	if err == nil {
+		t.Fatal("no error for the pool that failed to start")
+	}
+	if got := nodeAnnotations(t, c)[framev1beta1.ZFSScrubAcknowledgedAnnotation]; got != req {
+		t.Fatalf("acknowledged = %q, want %q", got, req)
+	}
+}
+
+// When the retraction itself fails the acknowledgement stays, and the error
+// says both things went wrong.
+func TestServiceScrubRequestReportsAFailedRetraction(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(newDiskStatusScheme(t)).
+		WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1", Annotations: map[string]string{
+			framev1beta1.ZFSScrubRequestedAnnotation: "2026-11-08T01:59:00Z"}}}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
+				if _, acked := obj.GetAnnotations()[framev1beta1.ZFSScrubAcknowledgedAnnotation]; !acked {
+					return errors.New("apiserver unavailable")
+				}
+				return cl.Patch(ctx, obj, p, opts...)
+			},
+		}).Build()
+	x := &scrubExec{fail: map[string]error{"rpool": errors.New("exit status 1")}}
+	err := ServiceScrubRequest(context.Background(), c, "n1",
+		present(framev1beta1.ZPool{Name: "rpool", Health: "ONLINE"}), x, scrubClock)
+	if err == nil || !strings.Contains(err.Error(), "retracting") || !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("error = %v, want both the failed start and the failed retraction", err)
 	}
 }

@@ -148,15 +148,31 @@ func ScrubPools(x StorageExecutor, zfs *framev1beta1.ZFSStatus) ([]string, error
 }
 
 // ServiceScrubRequest acts on the node's scrub request, once per request
-// value: it starts the scrub of the pools in zfs (the agent's own read) and
-// acknowledges by writing the request value back with its own clock.
+// value: it acknowledges by writing the request value back with its own
+// clock, THEN starts the scrub of the pools in zfs (the agent's own read).
+//
+// The acknowledgement comes first because the controller gives a request up
+// ten minutes after issuing it unless it is acknowledged, and records the last
+// read it saw so that a later read showing no scan lifts the lock. A failure
+// landing between the agent's read and its `zpool scrub`, with the
+// acknowledgement written only afterwards, could record a read older than the
+// scan about to start, and the next read (taken before the scrub began) would
+// lift the lock on a node that scrubs. Acknowledged first, a start the agent
+// never makes is concluded by the controller as a scrub that ended without
+// completing, which it already knows how to record.
+//
+// A start that fails with no pool started retracts the acknowledgement, so
+// the next tick tries again until the controller gives the request up, as a
+// request never acknowledged always did. Nothing scrubs then, so nothing is
+// left for the lock to protect. If any pool did start, the acknowledgement
+// stays: a scrub is running and the controller waits for it, and for the pool
+// that did not start, it ends as a failure.
 //
 // It compares the request's VALUE with the acknowledgement, never its
 // presence: a request the controller re-issues carries a new timestamp. A
-// start that fails is not acknowledged, so the next tick tries again until
-// the controller gives the request up; a start that succeeded but whose
-// acknowledgement did not land is retried too, and `zpool scrub` on a pool
-// already scrubbing is taken as started.
+// start that succeeded but whose acknowledgement was retracted, or any retry
+// after a start already made, finds `zpool scrub` on a pool already scrubbing
+// and takes it as started.
 //
 // zfs nil (no read yet) defers to the next tick rather than failing.
 func ServiceScrubRequest(
@@ -182,16 +198,30 @@ func ServiceScrubRequest(
 		return fmt.Errorf("scrub request %s is %s old; ignored (a leftover, or not the controller's)", requested, age.Round(time.Minute))
 	}
 	startedAt := now()
-	if _, err := ScrubPools(x, zfs); err != nil {
-		return fmt.Errorf("scrub requested at %s: %w", requested, err)
-	}
 	base := node.DeepCopy()
 	node.Annotations[framev1beta1.ZFSScrubAcknowledgedAnnotation] = requested
 	node.Annotations[framev1beta1.ZFSScrubStartedAtAnnotation] = startedAt.UTC().Format(time.RFC3339Nano)
 	// Optimistic lock: a request withdrawn or re-issued between the read
-	// and this write must not be acknowledged under the old value.
+	// and this write must not be acknowledged under the old value, and no
+	// scrub starts for it.
 	if err := c.Patch(ctx, &node, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("acknowledging the scrub on %s: %w", nodeName, err)
 	}
-	return nil
+	started, err := ScrubPools(x, zfs)
+	if err == nil {
+		return nil
+	}
+	err = fmt.Errorf("scrub requested at %s: %w", requested, err)
+	if len(started) > 0 {
+		return err
+	}
+	acked := node.DeepCopy()
+	delete(node.Annotations, framev1beta1.ZFSScrubAcknowledgedAnnotation)
+	delete(node.Annotations, framev1beta1.ZFSScrubStartedAtAnnotation)
+	if perr := c.Patch(ctx, &node, client.MergeFromWithOptions(acked, client.MergeFromWithOptimisticLock{})); perr != nil {
+		// Left acknowledged: the controller concludes the request as a
+		// failure, which is the safe direction.
+		return errors.Join(err, fmt.Errorf("retracting the acknowledgement on %s: %w", nodeName, perr))
+	}
+	return err
 }
