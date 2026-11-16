@@ -9,7 +9,7 @@ release tags follow [Semantic Versioning](https://semver.org/).
 ### Fixed — ZFS scrub protocol hardening (#101)
 
 - agent: the scrub request is acknowledged before `zpool scrub` runs, not
-  after, so a request re-issued while the scrub starts is no longer swallowed;
+  after, so no `zpool scrub` runs for a request the controller already gave up on;
   if no pool could be started the acknowledgement is taken back. A request too
   old to take is logged once, not every 30 s.
 - controller: a "scrub repaired … on <date>" line dated before the scrub's

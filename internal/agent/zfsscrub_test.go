@@ -364,4 +364,7 @@ func TestServiceScrubRequestReportsAFailedRetraction(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "retracting") || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("error = %v, want both the failed start and the failed retraction", err)
 	}
+	if got := nodeAnnotations(t, c)[framev1beta1.ZFSScrubAcknowledgedAnnotation]; got != "2026-11-08T01:59:00Z" {
+		t.Fatalf("acknowledged = %q, want it left in place", got)
+	}
 }

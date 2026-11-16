@@ -501,11 +501,11 @@ spec:
   until it came back. An agent clock more than 10 minutes behind the
   controller's makes its node look silent too.
 - **The protocol lives on the Node** (annotations `frame.plume-labs.io/zfs-scrub-*`).
-  The controller writes `requested`; the agent runs `zpool scrub <pool>` on the
-  pools it reads itself and writes back `acknowledged` and `started-at`; the
+  The controller writes `requested`; the agent writes back `acknowledged` and
+  `started-at`, then runs `zpool scrub <pool>` on the pools it reads itself; the
   controller records `completed` once a storage read dated after the start
   shows every pool's scrub finished ("scrub repaired … on <date>", the date
-  after the start, with a day of margin for the host's zone: a line left by an
+  after the start, with 13 hours of margin for the host's zone: a line left by an
   earlier scrub does not count). The agent writes `acknowledged` *before* it
   runs `zpool scrub`, so a request re-issued meanwhile is seen as new; when no
   pool could be started it takes the acknowledgement back, and the controller

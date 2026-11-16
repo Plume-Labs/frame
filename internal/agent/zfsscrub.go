@@ -195,7 +195,7 @@ func ServiceScrubRequest(
 		return fmt.Errorf("scrub request %q is not a timestamp; ignored", requested)
 	}
 	if age := now().Sub(at); age > scrubRequestMaxAge {
-		return fmt.Errorf("scrub request %s is %s old; ignored (a leftover, or not the controller's)", requested, age.Round(time.Minute))
+		return fmt.Errorf("scrub request %s is more than %s old (%s); ignored (a leftover, or not the controller's)", requested, scrubRequestMaxAge, age.Truncate(time.Hour))
 	}
 	startedAt := now()
 	base := node.DeepCopy()

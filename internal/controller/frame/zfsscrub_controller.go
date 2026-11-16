@@ -305,9 +305,10 @@ func unsettled(n scrubNode) bool {
 }
 
 // scrubDateSlack absorbs the host's time zone: zpool prints the completion
-// date in local time, without a zone, so it is read as UTC and compared with a
-// day of margin (the zone offsets span a little over a day end to end).
-const scrubDateSlack = 24 * time.Hour
+// date in local time, without a zone, so it is read as UTC and compared with
+// the widest negative offset (UTC-12) plus a margin: only a zone behind UTC
+// can make a finished scrub look older than its start.
+const scrubDateSlack = 13 * time.Hour
 
 // finished reports whether every scrubbable pool's scan line is a completed
 // scrub ("scrub repaired … with N errors on <date>") that ended after
