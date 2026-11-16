@@ -271,10 +271,10 @@ func TestMACGuardRefusesAMissingPortWhenRun(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if code, out := runSh(t, macGuard([]string{macA}, sys), t.TempDir()); code != 0 {
+	if code, out := runSh(t, macGuardWith([]string{macA}, sys, "frame-no-such-ip"), t.TempDir()); code != 0 {
 		t.Errorf("present MAC refused (%d):\n%s", code, out)
 	}
-	if code, _ := runSh(t, macGuard([]string{macA, macB}, sys), t.TempDir()); code != 1 {
+	if code, _ := runSh(t, macGuardWith([]string{macA, macB}, sys, "frame-no-such-ip"), t.TempDir()); code != 1 {
 		t.Errorf("missing MAC exited %d, want 1", code)
 	}
 	// In the rendered document it comes after the disk guards and before
