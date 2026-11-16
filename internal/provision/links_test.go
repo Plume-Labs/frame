@@ -223,6 +223,40 @@ func TestValidateLinksRefuses(t *testing.T) {
 	}
 }
 
+// With `ip` present the guard reads the permanent address, which is what
+// netplan matches on: a port wearing a virtual MAC does not satisfy it, and
+// one whose permanent MAC is the declared one does even if it wears another.
+func TestMACGuardUsesThePermanentAddress(t *testing.T) {
+	sys := t.TempDir() // empty: the sysfs fallback must not be what decides
+	run := func(ipOut string) int {
+		bin := t.TempDir()
+		fakeTool(t, bin, "ip", "cat <<'EOF'\n"+ipOut+"\nEOF")
+		code, _ := runSh(t, macGuard([]string{macA}, sys), bin)
+		return code
+	}
+	plain := "2: eno1: <UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000\\    link/ether " + macA + " brd ff:ff:ff:ff:ff:ff"
+	virtual := plain + " permaddr 52:54:00:cc:00:01"
+	wearing := "2: eno1: <UP> mtu 1500\\    link/ether 52:54:00:dd:00:02 brd ff:ff:ff:ff:ff:ff permaddr " + macA
+	if code := run(plain); code != 0 {
+		t.Errorf("current MAC with no permaddr refused (%d)", code)
+	}
+	if code := run(virtual); code != 1 {
+		t.Errorf("virtual MAC over another permanent one exited %d, want 1", code)
+	}
+	if code := run(wearing); code != 0 {
+		t.Errorf("permanent MAC under a virtual one refused (%d)", code)
+	}
+	// A VLAN stacked on a port wearing a virtual MAC carries that MAC with no
+	// permaddr: it must not stand in for the port.
+	vlan := "3: eno1.20@eno1: <UP> mtu 1500\\    link/ether " + macA + " brd ff:ff:ff:ff:ff:ff"
+	if code := run(virtual + "\n" + vlan); code != 1 {
+		t.Errorf("a VLAN sharing the virtual MAC exited %d, want 1", code)
+	}
+	if code := run(strings.ToUpper(plain)); code != 0 {
+		t.Errorf("upper-case ip output refused (%d)", code)
+	}
+}
+
 // The MAC guard, run: it lets through a machine that has every declared
 // port, and refuses -- before any disk is touched -- one that lacks one.
 func TestMACGuardRefusesAMissingPortWhenRun(t *testing.T) {
@@ -237,10 +271,10 @@ func TestMACGuardRefusesAMissingPortWhenRun(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if code, out := runSh(t, macGuard([]string{macA}, sys), t.TempDir()); code != 0 {
+	if code, out := runSh(t, macGuardWith([]string{macA}, sys, "frame-no-such-ip"), t.TempDir()); code != 0 {
 		t.Errorf("present MAC refused (%d):\n%s", code, out)
 	}
-	if code, _ := runSh(t, macGuard([]string{macA, macB}, sys), t.TempDir()); code != 1 {
+	if code, _ := runSh(t, macGuardWith([]string{macA, macB}, sys, "frame-no-such-ip"), t.TempDir()); code != 1 {
 		t.Errorf("missing MAC exited %d, want 1", code)
 	}
 	// In the rendered document it comes after the disk guards and before

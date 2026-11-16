@@ -219,12 +219,32 @@ func writeNetplan(target string, doc []byte) string {
 // macGuard refuses the install (exit 1, before any disk is touched) unless
 // every declared MAC is a port of this machine. The MACs passed macShape, so
 // they cannot leave the single quotes they sit in.
+//
+// The MAC netplan matches on is the port's permanent one (PermanentMACAddress),
+// not the one the kernel shows now: with a firmware-imposed virtual MAC (iDRAC
+// I/O identity, NPAR) the two differ, and a guard that read only
+// /sys/class/net/*/address would let the install wipe the disks and then
+// leave a machine netplan finds no member on. So where `ip` exists, a port
+// counts when `ip -o link` gives the MAC as its permaddr, or gives it as the
+// current address with no different permaddr (ip prints permaddr only when
+// it differs). Stacked links (`name@parent`: VLAN, macvlan) are skipped, as
+// they wear their parent's MAC and are not ports. Without `ip` the check falls back to the current address.
 func macGuard(macs []string, sysClassNet string) string {
+	return macGuardWith(macs, sysClassNet, "ip")
+}
+
+// macGuardWith is macGuard with the name of the `ip` binary, so that a test can
+// exercise the sysfs fallback on a host that has one.
+func macGuardWith(macs []string, sysClassNet, ipBin string) string {
 	parts := make([]string, 0, len(macs))
 	for _, m := range macs {
 		parts = append(parts, fmt.Sprintf(
-			"cat '%s'/*/address 2>/dev/null | grep -qix '%s' || { echo 'FRAME: no port has MAC %s, refusing' > /dev/console; exit 1; }",
-			sysClassNet, m, m))
+			"{ if command -v %[3]s >/dev/null 2>&1; then "+
+				"{ %[3]s -o link 2>/dev/null | grep -v '@' | grep -qi ' permaddr %[2]s\\( \\|$\\)'; } || "+
+				"{ %[3]s -o link 2>/dev/null | grep -v '@' | grep -i ' link/ether %[2]s ' | grep -qv ' permaddr '; }; "+
+				"else cat '%[1]s'/*/address 2>/dev/null | grep -qix '%[2]s'; fi; } "+
+				"|| { echo 'FRAME: no port has MAC %[2]s, refusing' > /dev/console; exit 1; }",
+			sysClassNet, m, ipBin))
 	}
 	return strings.Join(parts, "; ")
 }
