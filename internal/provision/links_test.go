@@ -223,6 +223,31 @@ func TestValidateLinksRefuses(t *testing.T) {
 	}
 }
 
+// With `ip` present the guard reads the permanent address, which is what
+// netplan matches on: a port wearing a virtual MAC does not satisfy it, and
+// one whose permanent MAC is the declared one does even if it wears another.
+func TestMACGuardUsesThePermanentAddress(t *testing.T) {
+	sys := t.TempDir() // empty: the sysfs fallback must not be what decides
+	run := func(ipOut string) int {
+		bin := t.TempDir()
+		fakeTool(t, bin, "ip", "cat <<'EOF'\n"+ipOut+"\nEOF")
+		code, _ := runSh(t, macGuard([]string{macA}, sys), bin)
+		return code
+	}
+	plain := "2: eno1: <UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000\\    link/ether " + macA + " brd ff:ff:ff:ff:ff:ff"
+	virtual := plain + " permaddr 52:54:00:cc:00:01"
+	wearing := "2: eno1: <UP> mtu 1500\\    link/ether 52:54:00:dd:00:02 brd ff:ff:ff:ff:ff:ff permaddr " + macA
+	if code := run(plain); code != 0 {
+		t.Errorf("current MAC with no permaddr refused (%d)", code)
+	}
+	if code := run(virtual); code != 1 {
+		t.Errorf("virtual MAC over another permanent one exited %d, want 1", code)
+	}
+	if code := run(wearing); code != 0 {
+		t.Errorf("permanent MAC under a virtual one refused (%d)", code)
+	}
+}
+
 // The MAC guard, run: it lets through a machine that has every declared
 // port, and refuses -- before any disk is touched -- one that lacks one.
 func TestMACGuardRefusesAMissingPortWhenRun(t *testing.T) {

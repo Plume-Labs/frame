@@ -6,6 +6,15 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — installer MAC guard
+
+- provision: the install-time MAC guard now checks the port's permanent
+  address (`ip -o link` permaddr), the one netplan matches on, instead of the
+  address the kernel shows now. A firmware-imposed virtual MAC (iDRAC I/O
+  identity, NPAR) used to pass the guard, wipe the disks, and leave a machine
+  netplan found no member on (#103, point 1). Without `ip` it falls back to
+  the current address.
+
 ### Fixed — console and BMC inventory
 
 - authd: the session is now sliding. Each token refresh re-seals the

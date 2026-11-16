@@ -219,12 +219,25 @@ func writeNetplan(target string, doc []byte) string {
 // macGuard refuses the install (exit 1, before any disk is touched) unless
 // every declared MAC is a port of this machine. The MACs passed macShape, so
 // they cannot leave the single quotes they sit in.
+//
+// The MAC netplan matches on is the port's permanent one (PermanentMACAddress),
+// not the one the kernel shows now: with a firmware-imposed virtual MAC (iDRAC
+// I/O identity, NPAR) the two differ, and a guard that read only
+// /sys/class/net/*/address would let the install wipe the disks and then
+// leave a machine netplan finds no member on. So where `ip` exists, a port
+// counts when `ip -o link` gives the MAC as its permaddr, or gives it as the
+// current address with no different permaddr (ip prints permaddr only when
+// it differs). Without `ip` the check falls back to the current address.
 func macGuard(macs []string, sysClassNet string) string {
 	parts := make([]string, 0, len(macs))
 	for _, m := range macs {
 		parts = append(parts, fmt.Sprintf(
-			"cat '%s'/*/address 2>/dev/null | grep -qix '%s' || { echo 'FRAME: no port has MAC %s, refusing' > /dev/console; exit 1; }",
-			sysClassNet, m, m))
+			"{ if command -v ip >/dev/null 2>&1; then "+
+				"{ ip -o link 2>/dev/null | grep -qi ' permaddr %[2]s\\( \\|$\\)'; } || "+
+				"{ ip -o link 2>/dev/null | grep -i ' link/ether %[2]s ' | grep -qv ' permaddr '; }; "+
+				"else cat '%[1]s'/*/address 2>/dev/null | grep -qix '%[2]s'; fi; } "+
+				"|| { echo 'FRAME: no port has MAC %[2]s, refusing' > /dev/console; exit 1; }",
+			sysClassNet, m))
 	}
 	return strings.Join(parts, "; ")
 }
