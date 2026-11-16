@@ -82,6 +82,12 @@ func TestTerraformViewerRoleMatchesTheManifest(t *testing.T) {
 		t.Fatal("cluster-control-viewer is not in deploy/kubernetes/base/rbac.yaml")
 	}
 
+	for _, r := range manifest.Rules {
+		if len(r.ResourceNames) > 0 || len(r.NonResourceURLs) > 0 {
+			t.Fatalf("rbac.yaml's viewer role now uses resourceNames or nonResourceURLs (%v): teach this test to compare them before copying the rule to Terraform", r)
+		}
+	}
+
 	raw, err := os.ReadFile(filepath.Join(root, "deploy", "terraform", "main.tf"))
 	if err != nil {
 		t.Fatal(err)

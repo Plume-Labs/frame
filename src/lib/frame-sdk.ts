@@ -1859,7 +1859,7 @@ class ClusterClient {
       pods: (pods.items ?? []).map(toPodClaimInfo).filter((p): p is PodClaimInfo => p !== null),
       replicaSetOwners,
       attachments: (vas.items ?? []).map(toAttachmentInfo).filter((a): a is VolumeAttachmentInfo => a !== null),
-      unreadable,
+      unreadable: unreadable.sort(),
     }
   }
 
