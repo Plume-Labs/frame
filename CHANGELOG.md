@@ -6,6 +6,16 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — console: React Compiler lint alerts cleared (#100)
+
+- ui: the 21 `react-hooks` / `react-refresh` lint warnings are gone, with the
+  behaviour kept: ages are judged against a `useNow` tick instead of
+  `Date.now()` in render, drafts and dialogs reset while rendering instead of
+  from an effect, `useLiveResource` no longer writes a ref during render, and
+  `useIsMobile` reads the viewport synchronously (no first frame at desktop
+  width on a phone). The screens to look at after the next Frame montée: Jobs,
+  Storage Health, Network Links, Workloads, Inference, the Install dialog.
+
 ### Fixed — Terraform viewer role and Storage → Volumes reads (#108)
 
 - deploy/terraform: the `cluster-control-viewer` ClusterRole was three rules

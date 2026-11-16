@@ -61,6 +61,30 @@ export interface NamespaceNode {
   podCount: number
 }
 
+/** A pod picked in the tree, with the controller it was placed under. */
+export interface TreeSelection {
+  pod: WorkloadPod
+  controller?: WorkloadController
+}
+
+/**
+ * The picked pod as the latest tree resolves it, so what a panel renders
+ * (replica counts, readiness, restarts) follows the cluster instead of what
+ * was captured at the click. A pod the tree does not contain — not loaded yet,
+ * or deleted — keeps the previous value rather than clearing the panel.
+ */
+export function resolveSelection(prev: TreeSelection, tree: NamespaceNode[]): TreeSelection {
+  const ns = tree.find((n) => n.namespace === prev.pod.namespace)
+  if (!ns) return prev
+  for (const c of ns.controllers) {
+    const match = c.pods.find((p) => p.name === prev.pod.name)
+    if (match) return { pod: match, controller: c.controller }
+  }
+  const bare = ns.barePods.find((p) => p.name === prev.pod.name)
+  if (bare) return { pod: bare, controller: undefined }
+  return prev
+}
+
 /**
  * Namespaces the tree folds behind a switch.
  *

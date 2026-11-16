@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
+import { useNow } from '@/hooks/useNow'
 import { ArrowClockwise, HardDrives, Warning } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -61,7 +62,7 @@ export function MachineDisksPanel() {
     [selected, diag.osds, diag.io, diag.cephDevices, machines],
   )
   const vmOsds = osdsWithoutMachine(diag.osds, machines)
-  const now = Date.now()
+  const now = useNow()
 
   return (
     <div className="space-y-6">

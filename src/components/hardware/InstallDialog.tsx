@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -110,27 +110,31 @@ export function InstallDialog({
 
   // A dialog reopened for a second install must not carry the first one's
   // half-typed confirmation forward — that is exactly the state in which
-  // "type the serial to confirm" stops meaning anything.
-  useEffect(() => {
-    if (!open) return
-    setMachineName('')
-    setHostname('')
-    setAddress('')
-    setGateway('')
-    setDns('')
-    setBondPorts('')
-    setVlanID('')
-    setVlanPort('')
-    setLayoutKind('single-disk')
-    setDisks([EMPTY_DISK])
-    setClusterMode('init')
-    setServerURL('')
-    setJoinTokenRef('')
-    setK3sVersion('')
-    setSshKeyRef('')
-    setBootMode('UEFI')
-    setConfirmSerial('')
-  }, [open])
+  // "type the serial to confirm" stops meaning anything. Done in the render
+  // that sees `open` turn true, so the first frame of the dialog is already clean.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setMachineName('')
+      setHostname('')
+      setAddress('')
+      setGateway('')
+      setDns('')
+      setBondPorts('')
+      setVlanID('')
+      setVlanPort('')
+      setLayoutKind('single-disk')
+      setDisks([EMPTY_DISK])
+      setClusterMode('init')
+      setServerURL('')
+      setJoinTokenRef('')
+      setK3sVersion('')
+      setSshKeyRef('')
+      setBootMode('UEFI')
+      setConfirmSerial('')
+    }
+  }
 
   const selectedMachine = inventoried.find((m) => m.name === machineName)
   const serial = selectedMachine?.inventory?.serialNumber ?? ''

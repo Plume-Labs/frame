@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { Plus, ShareNetwork, Trash } from '@phosphor-icons/react'
 
@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useNow } from '@/hooks/useNow'
 
 const frame = createFrameClient()
 
@@ -42,12 +43,14 @@ function ExpectationsCard() {
   const saved = state.phase === 'ready' ? state.data : null
   const savedKey = saved && JSON.stringify(saved)
   const [draft, setDraft] = useState<NetworkExpectations | null>(null)
+  const [draftOf, setDraftOf] = useState<string | null>(null)
   // By value: a watch event re-reads an identical object, and that must not
-  // wipe what is being typed.
-  useEffect(() => {
-    if (saved) setDraft(saved)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedKey])
+  // wipe what is being typed. A saved value that differs replaces the draft in
+  // the same render, so the form never shows the old one for a frame.
+  if (saved && savedKey !== draftOf) {
+    setDraftOf(savedKey)
+    setDraft(saved)
+  }
 
   const problem = draft && expectationsProblem(draft)
   const setLink = (i: number, patch: Partial<ExpectedLink>) =>
@@ -156,6 +159,7 @@ function ExpectationsCard() {
 }
 
 function MachineLinksCard({ machine }: { machine: Machine }) {
+  const now = useNow()
   const n = machine.network
   const verdicts = checkVerdicts(machine, NETWORK_CHECKS)
   return (
@@ -171,7 +175,7 @@ function MachineLinksCard({ machine }: { machine: Machine }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs font-mono">
-        {networkNotes(n, Date.now()).map((note) => (
+        {networkNotes(n, now).map((note) => (
           <p key={note} className="text-warning">
             {note}
           </p>

@@ -82,25 +82,33 @@ export function YamlTab({
   // reach). Reading is not gated at all — see this component's doc comment.
   const writable = canEditManifest(admin, namespace)
 
-  const load = useCallback(async () => {
-    setError(undefined)
-    try {
-      // Sequential, not Promise.all: both are GETs on the same path, and
-      // reading them one after the other keeps the SDK's in-flight
-      // de-duplication out of the question entirely.
-      const object = await frame.workloads.object(kind, namespace, name)
-      const yaml = await frame.workloads.manifest(kind, namespace, name)
-      setBefore(object)
-      setText(yaml)
-      const meta = (object.metadata ?? {}) as {
-        labels?: Record<string, string>
-        annotations?: Record<string, string>
-      }
-      setWarning(ownershipWarning(meta))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-  }, [kind, namespace, name])
+  // A promise chain rather than an async body: the state updates are in
+  // callbacks that run after the reads answer, not while the effect that
+  // starts the load is still running. A failed reload keeps showing its error
+  // until the next one succeeds.
+  const load = useCallback(
+    () =>
+      frame.workloads
+        .object(kind, namespace, name)
+        .then(async (object) => {
+          // Sequential, not Promise.all: both are GETs on the same path, and
+          // reading them one after the other keeps the SDK's in-flight
+          // de-duplication out of the question entirely.
+          const yaml = await frame.workloads.manifest(kind, namespace, name)
+          setBefore(object)
+          setText(yaml)
+          const meta = (object.metadata ?? {}) as {
+            labels?: Record<string, string>
+            annotations?: Record<string, string>
+          }
+          setWarning(ownershipWarning(meta))
+          setError(undefined)
+        })
+        .catch((e: unknown) => {
+          setError(e instanceof Error ? e.message : String(e))
+        }),
+    [kind, namespace, name],
+  )
 
   useEffect(() => {
     void load()

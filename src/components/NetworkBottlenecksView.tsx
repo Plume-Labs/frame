@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useNow } from '@/hooks/useNow'
 import { createFrameClient } from '@/lib/frame-sdk'
 import type { Machine } from '@/lib/machines'
 import { percentLabel, PodTraffic, rankLinks, rateLabel } from '@/lib/network-bottlenecks'
@@ -8,7 +9,8 @@ import { percentLabel, PodTraffic, rankLinks, rateLabel } from '@/lib/network-bo
 const frame = createFrameClient()
 
 function LinksCard({ machines }: { machines: Machine[] }) {
-  const rows = rankLinks(machines, Date.now())
+  const now = useNow()
+  const rows = rankLinks(machines, now)
   return (
     <Card>
       <CardHeader>

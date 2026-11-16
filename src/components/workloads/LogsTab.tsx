@@ -43,12 +43,24 @@ export function LogsTab({ pod }: { pod: WorkloadPod }) {
 
   const key = `${pod.namespace}/${pod.name}/${container}/${follow}/${previous}`
 
-  const read = useCallback(
-    async (signal: AbortSignal) => {
+  // A new stream starts on an empty pane. Cleared in the render that sees the
+  // new key, so the old container's lines are never shown under the new one.
+  const [seenKey, setSeenKey] = useState(key)
+  if (seenKey !== key) {
+    setSeenKey(key)
+    if (container) {
       setLines([])
       setError(undefined)
-      try {
-        const res = await frame.workloads.logs(
+    }
+  }
+
+  // A promise chain rather than an async body: every state update is in a
+  // callback that runs after the request answers, never while the effect that
+  // starts the read is still running.
+  const read = useCallback(
+    (signal: AbortSignal) =>
+      frame.workloads
+        .logs(
           {
             namespace: pod.namespace,
             pod: pod.name,
@@ -59,28 +71,29 @@ export function LogsTab({ pod }: { pod: WorkloadPod }) {
           },
           signal,
         )
-        // A request that lost the race with an abort can still resolve — the
-        // signal reached `fetch` itself, but a response already in flight when
-        // abort fired isn't guaranteed to surface as a rejection everywhere.
-        // Without this guard a superseded request's error overwrites whatever
-        // the pod the user is now looking at is showing.
-        if (signal.aborted) return
-        if (!res.ok) {
-          setError(`${res.status} ${await res.text()}`)
-          return
-        }
-        const body = res.body
-        if (!body) return
-        const reader = body.getReader()
-        signal.addEventListener('abort', () => void reader.cancel().catch(() => {}))
-        await pumpLogLines(reader, (line) => {
+        .then(async (res) => {
+          // A request that lost the race with an abort can still resolve — the
+          // signal reached `fetch` itself, but a response already in flight when
+          // abort fired isn't guaranteed to surface as a rejection everywhere.
+          // Without this guard a superseded request's error overwrites whatever
+          // the pod the user is now looking at is showing.
           if (signal.aborted) return
-          setLines((prev) => (prev.length >= MAX_LINES ? [...prev.slice(1), line] : [...prev, line]))
+          if (!res.ok) {
+            setError(`${res.status} ${await res.text()}`)
+            return
+          }
+          const body = res.body
+          if (!body) return
+          const reader = body.getReader()
+          signal.addEventListener('abort', () => void reader.cancel().catch(() => {}))
+          await pumpLogLines(reader, (line) => {
+            if (signal.aborted) return
+            setLines((prev) => (prev.length >= MAX_LINES ? [...prev.slice(1), line] : [...prev, line]))
+          })
         })
-      } catch (e) {
-        if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
-      }
-    },
+        .catch((e: unknown) => {
+          if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
+        }),
     [pod.namespace, pod.name, container, follow, previous],
   )
 

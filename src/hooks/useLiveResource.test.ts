@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, createElement } from 'react'
+import { act, createElement, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { LiveState } from './useLiveResource'
@@ -68,14 +68,21 @@ function Harness({
   fetcher,
   watch,
   pollMs,
+  deps,
+  onReload,
 }: {
   onState: (s: LiveState<number>) => void
   fetcher: () => Promise<number>
   watch?: string[]
   pollMs?: number
+  deps?: unknown[]
+  onReload?: (reload: () => void) => void
 }) {
-  const { state } = useLiveResource<number>(fetcher, [], watch ?? [], pollMs)
+  const { state, reload } = useLiveResource<number>(fetcher, deps ?? [], watch ?? [], pollMs)
   onState(state)
+  useEffect(() => {
+    onReload?.(reload)
+  }, [onReload, reload])
   return null
 }
 
@@ -119,19 +126,14 @@ describe('useLiveResource', () => {
     let n = 0
     const fetcher = vi.fn(async () => n++)
     const history: LiveState<number>[] = []
-    let doReload: () => void = () => {}
+    const reloads: Array<() => void> = []
 
-    function ReloadHarness() {
-      const { state, reload } = useLiveResource<number>(fetcher)
-      doReload = reload
-      history.push(state)
-      return null
-    }
-
-    await step(() => root.render(createElement(ReloadHarness)))
+    await step(() =>
+      root.render(createElement(Harness, { onState: (s) => history.push(s), fetcher, onReload: (r) => reloads.push(r) })),
+    )
     expect(last(history)).toEqual({ phase: 'ready', data: 0 })
 
-    act(() => doReload())
+    act(() => last(reloads)())
     // Synchronously after a manual reload, the state has already flipped to
     // loading — this is the behaviour a watch/poll-triggered refresh must not
     // have. If it started showing up in the history above, that test would
@@ -140,5 +142,31 @@ describe('useLiveResource', () => {
 
     await step(() => {})
     expect(last(history)).toEqual({ phase: 'ready', data: 1 })
+  })
+
+  it('shows loading in the render that changes deps, then reads again', async () => {
+    let n = 0
+    const fetcher = vi.fn(async () => n++)
+    const history: LiveState<number>[] = []
+    const render = (deps: unknown[]) =>
+      root.render(createElement(Harness, { onState: (s) => history.push(s), fetcher, deps }))
+
+    await step(() => render(['a']))
+    expect(last(history)).toEqual({ phase: 'ready', data: 0 })
+
+    // Same deps, new array: nothing to re-read.
+    await step(() => render(['a']))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    history.length = 0
+    await step(() => render(['b']))
+    // The render that sees the new deps is re-run with loading before the new
+    // read lands, so the new deps are never committed over the old deps' data.
+    const loadingAt = history.findIndex((s) => s.phase === 'loading')
+    const newDataAt = history.findIndex((s) => s.phase === 'ready' && s.data === 1)
+    expect(loadingAt).toBeGreaterThanOrEqual(0)
+    expect(newDataAt).toBeGreaterThan(loadingAt)
+    expect(last(history)).toEqual({ phase: 'ready', data: 1 })
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })

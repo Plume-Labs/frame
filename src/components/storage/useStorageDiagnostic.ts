@@ -20,6 +20,7 @@ import {
 import { buildDiskRows, ioIndex, mdArrays, type DiskIo, type MdArray } from '@/lib/disk-inventory'
 import { attentionItems, undeclaredOsdDiskItems, unreadableDiagnosticItems, type AttentionItem } from '@/lib/storage-attention'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useNow } from '@/hooks/useNow'
 
 const frame = createFrameClient()
 
@@ -58,12 +59,13 @@ export function useStorageDiagnostic(storageEntries: StorageEntry[] | null): Sto
   const { state, reload } = useLiveResource<CephDiagnosticRaw>(() => frame.cluster.cephDiagnostic(), [], [], 30_000)
   const { state: mState } = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
 
+  // Ages and the certificate's remaining life are judged against this; it moves on its own tick, not on a render.
+  const now = useNow(30_000)
   const raw = state.phase === 'ready' ? state.data : null
   const machines = useMemo(() => (mState.phase === 'ready' ? mState.data : []), [mState])
 
   return useMemo(() => {
     const prom = raw?.prom ?? {}
-    const now = Date.now()
     const placement = placementOf(storageEntries ?? [])
     const osds = buildOsdRows({
       prom,
@@ -121,5 +123,5 @@ export function useStorageDiagnostic(storageEntries: StorageEntry[] | null): Sto
       placementLine: placementSourceLine(placement),
       reload,
     }
-  }, [raw, machines, storageEntries, state, reload])
+  }, [raw, machines, storageEntries, state, reload, now])
 }

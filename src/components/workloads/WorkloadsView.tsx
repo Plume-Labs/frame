@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ArrowClockwise,
   CaretDown,
@@ -17,7 +17,7 @@ import { PodDetailPanel, type PodSelection } from '@/components/workloads/PodDet
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { isAdminToken } from '@/lib/auth'
 import { createFrameClient, workloadWatchPaths } from '@/lib/frame-sdk'
-import type { NamespaceNode, WorkloadPod } from '@/lib/workloads'
+import { resolveSelection, type NamespaceNode, type WorkloadPod } from '@/lib/workloads'
 
 const frame = createFrameClient()
 
@@ -46,8 +46,8 @@ export function WorkloadsView() {
     workloadWatchPaths(),
   )
   // Memoized on `state` itself (not derived inline) so its reference is
-  // stable across re-renders that don't carry new data — both the tree
-  // useEffect below and the `visible` useMemo depend on it, and a ternary
+  // stable across re-renders that don't carry new data — both the selection
+  // refresh below and the `visible` useMemo depend on it, and a ternary
   // recomputed inline defeats both.
   const tree = useMemo(() => (state.phase === 'ready' ? state.data : []), [state])
 
@@ -65,27 +65,21 @@ export function WorkloadsView() {
   // renders straight from `selection.controller` (replica counts, readiness,
   // restart counts) goes stale the moment it changes on the cluster.
   //
-  // Deliberately a functional `setSelection` update with `tree` as the only
-  // dependency, so it needs no `selection` in the dependency array and cannot
-  // loop on its own output. When the pod is missing from the refreshed tree —
+  // Keyed on the tree's identity alone, so it cannot loop on its own output
+  // (an unchanged selection is the same object, and setting it is a no-op). When the pod is missing from the refreshed tree —
   // the tree hasn't loaded yet, or the pod genuinely no longer exists — the
   // previous selection is kept rather than cleared, so a delete-in-progress or
   // a not-yet-caught-up watch doesn't yank the panel out from under the user;
   // `onClose` is still how the panel actually goes away.
-  useEffect(() => {
-    setSelection((prev) => {
-      if (!prev) return prev
-      const ns = tree.find((n) => n.namespace === prev.pod.namespace)
-      if (!ns) return prev
-      for (const c of ns.controllers) {
-        const match = c.pods.find((p) => p.name === prev.pod.name)
-        if (match) return { pod: match, controller: c.controller }
-      }
-      const bare = ns.barePods.find((p) => p.name === prev.pod.name)
-      if (bare) return { pod: bare, controller: undefined }
-      return prev
-    })
-  }, [tree])
+  //
+  // Done in the render that first sees a new tree (adjusting state while
+  // rendering, keyed on the tree's identity) rather than in an effect, so the
+  // panel never paints one frame of the previous tree's pod.
+  const [seenTree, setSeenTree] = useState(tree)
+  if (seenTree !== tree) {
+    setSeenTree(tree)
+    if (selection) setSelection(resolveSelection(selection, tree))
+  }
 
   // The admin gate on the terminal tab. A courtesy, not a control: the token
   // is decoded rather than verified, and `create pods/exec` is refused

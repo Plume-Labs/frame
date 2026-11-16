@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { pollInterval, watchPaths } from '@/lib/k8s-watch'
 
@@ -46,43 +46,66 @@ export function useLiveResource<T>(
 ): { state: LiveState<T>; reload: () => void } {
   const [state, setState] = useState<LiveState<T>>({ phase: 'loading' })
 
+  // When the caller's deps change the data on screen belongs to the old deps:
+  // show the loading state in the same render instead of flashing it for a
+  // frame and flipping it from an effect. Storing the previous deps in state
+  // and adjusting during render is React's own pattern for this.
+  const [seenDeps, setSeenDeps] = useState(deps)
+  if (seenDeps.length !== deps.length || seenDeps.some((d, i) => !Object.is(d, deps[i]))) {
+    setSeenDeps(deps)
+    setState({ phase: 'loading' })
+  }
+
   // The fetcher is rebuilt on every render by most callers, so the effects key
   // off `deps` instead and read the current fetcher through a ref. Without this
-  // the watch would be torn down and re-established on each render.
+  // the watch would be torn down and re-established on each render. The ref is
+  // written after the render commits (a layout effect, so before any passive
+  // effect or event handler reads it), never during render.
   const fetcherRef = useRef(fetcher)
-  fetcherRef.current = fetcher
+  useLayoutEffect(() => {
+    fetcherRef.current = fetcher
+  })
 
   const cancelledRef = useRef(false)
 
+  // Stable: it reads the current fetcher through the ref, so what makes the
+  // resource re-read itself when the caller's `deps` change is the effect
+  // below, not this function's identity.
+  const load = useCallback(() => {
+    fetcherRef
+      .current()
+      .then((data) => {
+        if (!cancelledRef.current) setState({ phase: 'ready', data })
+      })
+      .catch((e: unknown) => {
+        if (cancelledRef.current) return
+        setState({
+          phase: 'error',
+          message: e instanceof Error ? e.message : 'Failed to reach the Kubernetes API',
+        })
+      })
+  }, [])
+
+  // A silent refresh keeps what is on screen; a manual one shows loading.
   const run = useCallback(
     (silent: boolean) => {
       if (!silent) setState({ phase: 'loading' })
-      fetcherRef
-        .current()
-        .then((data) => {
-          if (!cancelledRef.current) setState({ phase: 'ready', data })
-        })
-        .catch((e: unknown) => {
-          if (cancelledRef.current) return
-          setState({
-            phase: 'error',
-            message: e instanceof Error ? e.message : 'Failed to reach the Kubernetes API',
-          })
-        })
+      load()
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    deps,
+    [load],
   )
 
   const reload = useCallback(() => run(false), [run])
 
   useEffect(() => {
     cancelledRef.current = false
-    run(false)
+    load()
     return () => {
       cancelledRef.current = true
     }
-  }, [run])
+    // The caller's deps decide when to re-read; their number is fixed per call site.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, ...deps])
 
   // Joined so a caller can build the array inline without re-subscribing on
   // every render.

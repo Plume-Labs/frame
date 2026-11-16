@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Job, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
+import { retryJobName } from '@/lib/job-names'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -64,7 +65,7 @@ export function FrameJobsView() {
   async function doRetry(job: Job) {
     setBusy(job.id)
     try {
-      const retryName = `${job.name}-retry-${Math.random().toString(36).slice(2, 7)}`
+      const retryName = retryJobName(job.name)
       await frame.jobs.submit({
         name: retryName,
         pipeline: job.pipeline,

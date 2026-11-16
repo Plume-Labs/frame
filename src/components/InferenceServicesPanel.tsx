@@ -92,16 +92,10 @@ export function InferenceServicesPanel({ inFlight }: { inFlight?: number }) {
 
 function usePermissions(namespace: string, name: string | undefined): [Permissions, (p: Partial<Permissions>) => void] {
   const [perms, setPerms] = useState<Permissions>({ patch: { state: 'checking' }, scale: { state: 'checking' } })
+  // Decided from the namespace alone, so it is known in the render, not after an effect.
+  const notGranted = !!name && !canOperateWorkloads(namespace)
   useEffect(() => {
-    if (!name) return
-    if (!canOperateWorkloads(namespace)) {
-      const denied: Permission = {
-        state: 'denied',
-        reason: `Restart and scale are not granted in ${namespace}: it is not a namespace enforcing baseline Pod Security.`,
-      }
-      setPerms({ patch: denied, scale: denied })
-      return
-    }
+    if (!name || notGranted) return
     let live = true
     const probe = (what: 'patch' | 'scale', verb: string) =>
       frame.workloads.probeWrite(namespace, name, what).then(
@@ -114,7 +108,14 @@ function usePermissions(namespace: string, name: string | undefined): [Permissio
     return () => {
       live = false
     }
-  }, [namespace, name])
+  }, [namespace, name, notGranted])
+  if (notGranted) {
+    const denied: Permission = {
+      state: 'denied',
+      reason: `Restart and scale are not granted in ${namespace}: it is not a namespace enforcing baseline Pod Security.`,
+    }
+    return [{ patch: denied, scale: denied }, (p) => setPerms((cur) => ({ ...cur, ...p }))]
+  }
   return [perms, (p) => setPerms((cur) => ({ ...cur, ...p }))]
 }
 
