@@ -246,6 +246,15 @@ func TestMACGuardUsesThePermanentAddress(t *testing.T) {
 	if code := run(wearing); code != 0 {
 		t.Errorf("permanent MAC under a virtual one refused (%d)", code)
 	}
+	// A VLAN stacked on a port wearing a virtual MAC carries that MAC with no
+	// permaddr: it must not stand in for the port.
+	vlan := "3: eno1.20@eno1: <UP> mtu 1500\\    link/ether " + macA + " brd ff:ff:ff:ff:ff:ff"
+	if code := run(virtual + "\n" + vlan); code != 1 {
+		t.Errorf("a VLAN sharing the virtual MAC exited %d, want 1", code)
+	}
+	if code := run(strings.ToUpper(plain)); code != 0 {
+		t.Errorf("upper-case ip output refused (%d)", code)
+	}
 }
 
 // The MAC guard, run: it lets through a machine that has every declared

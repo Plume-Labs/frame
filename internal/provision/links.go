@@ -227,14 +227,15 @@ func writeNetplan(target string, doc []byte) string {
 // leave a machine netplan finds no member on. So where `ip` exists, a port
 // counts when `ip -o link` gives the MAC as its permaddr, or gives it as the
 // current address with no different permaddr (ip prints permaddr only when
-// it differs). Without `ip` the check falls back to the current address.
+// it differs). Stacked links (`name@parent`: VLAN, macvlan) are skipped, as
+// they wear their parent's MAC and are not ports. Without `ip` the check falls back to the current address.
 func macGuard(macs []string, sysClassNet string) string {
 	parts := make([]string, 0, len(macs))
 	for _, m := range macs {
 		parts = append(parts, fmt.Sprintf(
 			"{ if command -v ip >/dev/null 2>&1; then "+
-				"{ ip -o link 2>/dev/null | grep -qi ' permaddr %[2]s\\( \\|$\\)'; } || "+
-				"{ ip -o link 2>/dev/null | grep -i ' link/ether %[2]s ' | grep -qv ' permaddr '; }; "+
+				"{ ip -o link 2>/dev/null | grep -v '@' | grep -qi ' permaddr %[2]s\\( \\|$\\)'; } || "+
+				"{ ip -o link 2>/dev/null | grep -v '@' | grep -i ' link/ether %[2]s ' | grep -qv ' permaddr '; }; "+
 				"else cat '%[1]s'/*/address 2>/dev/null | grep -qix '%[2]s'; fi; } "+
 				"|| { echo 'FRAME: no port has MAC %[2]s, refusing' > /dev/console; exit 1; }",
 			sysClassNet, m))
