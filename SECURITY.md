@@ -111,6 +111,9 @@ a compromised agent can write the request annotation on all of them and have
 every node scrub its own pools at once. It is still only `zpool scrub` on
 local pools; the one-node-at-a-time rule holds against a faulty controller,
 not against a compromised agent.
+Whoever may write a `StorageHealthPolicy` (the `editor` role) also decides when
+and how often every selected node reads all its disks for hours: treat that
+right as the right to load the hosts' storage.
 
 The agent's one destructive command set is the wipe of a new disk for an OSD
 replacement (`internal/agent/diskwipe.go`): `wipefs -a`, `dd` of zeros at the

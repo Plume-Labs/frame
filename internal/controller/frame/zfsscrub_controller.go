@@ -304,9 +304,16 @@ func unsettled(n scrubNode) bool {
 	return scanning(n.ZFS)
 }
 
+// scrubDateSlack absorbs the host's time zone: zpool prints the completion
+// date in local time, without a zone, so it is read as UTC and compared with a
+// day of margin (the zone offsets span a little over a day end to end).
+const scrubDateSlack = 24 * time.Hour
+
 // finished reports whether every scrubbable pool's scan line is a completed
-// scrub ("scrub repaired … with N errors on …").
-func finished(zfs *framev1beta1.ZFSStatus) bool {
+// scrub ("scrub repaired … with N errors on <date>") that ended after
+// startedAt: a line left by an earlier scrub is not this one's end. A date
+// that cannot be read is taken as recent, the line being zpool's own.
+func finished(zfs *framev1beta1.ZFSStatus, startedAt time.Time) bool {
 	found := false
 	for _, p := range zfs.Pools {
 		if p.Health != poolOnline && p.Health != poolDegraded {
@@ -315,9 +322,22 @@ func finished(zfs *framev1beta1.ZFSStatus) bool {
 		if !strings.Contains(p.Scan, "scrub repaired") {
 			return false
 		}
+		if done, ok := scrubDoneAt(p.Scan); ok && done.Before(startedAt.Add(-scrubDateSlack)) {
+			return false
+		}
 		found = true
 	}
 	return found
+}
+
+// scrubDoneAt reads the date zpool prints after "errors on", as UTC.
+func scrubDoneAt(scan string) (time.Time, bool) {
+	_, date, ok := strings.Cut(scan, " errors on ")
+	if !ok {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("Mon Jan _2 15:04:05 2006", strings.TrimSpace(strings.SplitN(date, ";", 2)[0]))
+	return t, err == nil
 }
 
 // scrubbable reports whether the agent would find a pool to scrub, on a
@@ -481,7 +501,7 @@ func concludeScrub(n scrubNode, now time.Time) (scrubStep, bool) {
 	fresh := n.ZFS != nil && n.ZFS.State == framev1beta1.StackPresent &&
 		n.ZFS.ReadAt != nil && n.ZFS.ReadAt.After(startedAt)
 	switch {
-	case fresh && !scanning(n.ZFS) && !finished(n.ZFS):
+	case fresh && !scanning(n.ZFS) && !finished(n.ZFS, startedAt):
 		// Stopped (`zpool scrub -s`), paused, or no scrub at all: recorded
 		// as a failure, so the interval does not restart on a scrub that
 		// never ran to the end.

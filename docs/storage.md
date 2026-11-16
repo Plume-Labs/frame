@@ -479,7 +479,16 @@ spec:
   pool of any node reports a scrub or a resilver in progress (a cron's
   included), while a node's ZFS read is in `error` (its lists are empty, so a
   resilver there would not show), or while a failed request is unsettled
-  (below). The window bounds when a scrub starts, not how long it runs.
+  (below). The window bounds when a request is written, not how long the
+  scrub runs: the agent takes a request for up to twenty minutes, so a scrub
+  can start up to about twenty minutes after the window closes.
+- **`timeZone`** is an IANA name (`Europe/Paris`, `UTC`). Do not write
+  `Local`: Go reads it as the zone of the controller's container, which is
+  `UTC` in the shipped image and not what a host's cron would call local.
+- **Who can start heavy host I/O.** A scrub reads every disk of a pool for
+  hours. Whoever may edit a `StorageHealthPolicy` (the `editor` role) decides
+  when and how often that happens on every selected node; grant it as you
+  would a right to run `zpool scrub` there.
 - **Disable the distribution's cron** on the selected nodes (Ubuntu:
   `/etc/cron.d/zfsutils-linux`): Frame never starts beside it, but cannot stop
   it from starting beside Frame.
@@ -495,8 +504,14 @@ spec:
   The controller writes `requested`; the agent runs `zpool scrub <pool>` on the
   pools it reads itself and writes back `acknowledged` and `started-at`; the
   controller records `completed` once a storage read dated after the start
-  shows every pool's scrub finished ("scrub repaired …"). The agent ignores a
-  request more than twenty minutes old, so a leftover never fires later.
+  shows every pool's scrub finished ("scrub repaired … on <date>", the date
+  after the start, with a day of margin for the host's zone: a line left by an
+  earlier scrub does not count). The agent writes `acknowledged` *before* it
+  runs `zpool scrub`, so a request re-issued meanwhile is seen as new; when no
+  pool could be started it takes the acknowledgement back, and the controller
+  fails the request after ten minutes. The agent ignores a request more than
+  twenty minutes old, so a leftover never fires later (it logs that once, not
+  every thirty seconds).
 - **Failures** (event `ScrubFailed` on the policy, node left alone for a day):
   the agent did not take the request in ten minutes, no read came in the
   forty minutes after the request, or the scrub ended without completing

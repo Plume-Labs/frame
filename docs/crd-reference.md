@@ -597,11 +597,12 @@ object means the defaults below.
 | `spec.scrub.intervalDays` | integer, 1–365 | 30 | Time between two completed scrubs of a node. |
 | `spec.scrub.windowStart` | `HH:MM` | `02:00` | From when a scrub may start, in `timeZone`. |
 | `spec.scrub.windowHours` | integer, 1–24 | 4 | How long the start window stays open. |
-| `spec.scrub.timeZone` | IANA name | `UTC` | The zone `windowStart` is read in. |
+| `spec.scrub.timeZone` | IANA name | `UTC` | The zone `windowStart` is read in. Not `Local`: that is the controller container's zone. |
 
 `spec.scrub` absent means Frame starts no scrub. The scrub is planned by its
 own controller (`zfsscrub`), one node at a time — see
-[storage.md](storage.md#planned-zfs-scrubs).
+[storage.md](storage.md#planned-zfs-scrubs). Writing this object is what makes
+every selected node read its disks for hours: the `editor` role decides it.
 
 RBAC follows the three tiers, like SchedulingPolicy: an editor can move a
 threshold, a viewer only reads it. See [storage.md](storage.md#storage-health-alerts).

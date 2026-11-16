@@ -411,3 +411,158 @@ func TestPlanScrubsNamesTheNodeHoldingEveryoneBack(t *testing.T) {
 		}
 	}
 }
+
+// A finished line left by an earlier scrub is not this scrub's end: the
+// request is concluded as a failure, never as a completion.
+func TestPlanScrubsDoesNotTakeAnOlderFinishedLineForThisScrub(t *testing.T) {
+	req := stamp(scrubNow.Add(-2 * time.Hour))
+	acked := map[string]string{
+		framev1beta1.ZFSScrubRequestedAnnotation:    req,
+		framev1beta1.ZFSScrubAcknowledgedAnnotation: req,
+		framev1beta1.ZFSScrubStartedAtAnnotation:    stamp(scrubNow.Add(-2 * time.Hour)),
+	}
+	for scan, want := range map[string]string{
+		"scrub repaired 0B in 01:10:00 with 0 errors on Sun Oct 11 02:40:00 2026":    reasonScrubFailed,
+		"scrub repaired 0B in 01:10:00 with 0 errors on Sun Nov  8 00:30:00 2026":    reasonScrubCompleted,
+		"scrub repaired 0B in 01:10:00 with 0 errors on Sat Nov  7 23:00:00 2026":    reasonScrubCompleted, // zone slack
+		"scrub repaired 0B in 01:10:00 with 0 errors on not a date at all":           reasonScrubCompleted,
+		"scrub repaired 0B in 01:10:00 with 0 errors on Sun Oct 11 02:40:00 2026; x": reasonScrubFailed,
+	} {
+		s := onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", acked, pool(scan))}, scrubNow))
+		if s.Reason != want {
+			t.Errorf("%q: reason %s, want %s", scan, s.Reason, want)
+		}
+	}
+}
+
+// Only the pools the agent would scrub decide whether the scrub finished.
+func TestFinishedLooksOnlyAtScrubbablePools(t *testing.T) {
+	done := "scrub repaired 0B in 00:01:00 with 0 errors on …"
+	z := func(pools ...framev1beta1.ZPool) *framev1beta1.ZFSStatus {
+		return &framev1beta1.ZFSStatus{Pools: pools}
+	}
+	start := scrubNow
+	for name, tc := range map[string]struct {
+		zfs  *framev1beta1.ZFSStatus
+		want bool
+	}{
+		"no pool at all":                {z(), false},
+		"only a pool that cannot scrub": {z(framev1beta1.ZPool{Name: "x", Health: "FAULTED"}), false},
+		"a pool that cannot scrub is ignored": {z(
+			framev1beta1.ZPool{Name: "a", Health: "ONLINE", Scan: done},
+			framev1beta1.ZPool{Name: "x", Health: "FAULTED", Scan: "none requested"}), true},
+		"degraded counts": {z(framev1beta1.ZPool{Name: "a", Health: "DEGRADED", Scan: done}), true},
+		"one still unscrubbed": {z(
+			framev1beta1.ZPool{Name: "a", Health: "ONLINE", Scan: done},
+			framev1beta1.ZPool{Name: "b", Health: "ONLINE", Scan: "none requested"}), false},
+	} {
+		if got := finished(tc.zfs, start); got != tc.want {
+			t.Errorf("%s: finished = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestUnsettledHoldsOnAFailedRead(t *testing.T) {
+	n := scrubNode{
+		Annotations: map[string]string{framev1beta1.ZFSScrubUnsettledAnnotation: stamp(scrubNow.Add(-time.Hour))},
+		ZFS: &framev1beta1.ZFSStatus{
+			State:  framev1beta1.StackError,
+			ReadAt: &metav1.Time{Time: scrubNow},
+		},
+	}
+	if !unsettled(n) {
+		t.Fatal("a failed read settled the lock: its empty pool list proves nothing")
+	}
+	n.ZFS.State = framev1beta1.StackPresent
+	if unsettled(n) {
+		t.Fatal("a complete newer read with no scan did not settle the lock")
+	}
+}
+
+// The boundaries of the clocks: a scrub due exactly one interval after its
+// last, a request failed exactly at its timeout.
+func TestScrubBoundaries(t *testing.T) {
+	interval := 30 * 24 * time.Hour
+	due := func(last time.Duration) bool {
+		_, ok, err := nextScrub(schedule(), []scrubNode{zfsNode("a",
+			map[string]string{framev1beta1.ZFSScrubCompletedAnnotation: stamp(scrubNow.Add(-last))}, pool("none requested"))}, scrubNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if due(interval - time.Second) {
+		t.Error("due before the interval ran out")
+	}
+	if !due(interval) {
+		t.Error("not due once the interval ran out")
+	}
+
+	req := scrubNow.Add(-zfsScrubAckTimeout - zfsScrubReadTimeout)
+	started := req.Add(time.Second)
+	acked := map[string]string{
+		framev1beta1.ZFSScrubRequestedAnnotation:    stamp(req),
+		framev1beta1.ZFSScrubAcknowledgedAnnotation: stamp(req),
+		framev1beta1.ZFSScrubStartedAtAnnotation:    stamp(started),
+	}
+	z := pool("none requested")
+	old := metav1.NewTime(started.Add(-time.Second))
+	z.ReadAt = &old
+	if _, failed := concludeScrub(zfsNode("a", acked, z), scrubNow); failed {
+		t.Error("failed at exactly the read timeout, not after it")
+	}
+	if step, failed := concludeScrub(zfsNode("a", acked, z), scrubNow.Add(time.Nanosecond)); !failed || step.Reason != reasonScrubFailed {
+		t.Error("not failed after the read timeout")
+	}
+
+	ack := map[string]string{framev1beta1.ZFSScrubRequestedAnnotation: stamp(scrubNow.Add(-zfsScrubAckTimeout))}
+	if _, failed := concludeScrub(zfsNode("a", ack, nil), scrubNow); failed {
+		t.Error("failed at exactly the acknowledgement timeout")
+	}
+	// An acknowledgement of another request is no acknowledgement.
+	other := map[string]string{
+		framev1beta1.ZFSScrubRequestedAnnotation:    stamp(scrubNow.Add(-time.Minute)),
+		framev1beta1.ZFSScrubAcknowledgedAnnotation: stamp(scrubNow.Add(-time.Hour)),
+		framev1beta1.ZFSScrubStartedAtAnnotation:    stamp(scrubNow.Add(-time.Hour)),
+	}
+	if _, concluded := concludeScrub(zfsNode("a", other, pool("scrub repaired … on …")), scrubNow); concluded {
+		t.Error("an old acknowledgement concluded a new request")
+	}
+}
+
+// patchNode writes only what the plan read: an annotation that moved, or a
+// node that changed under it, is a conflict left for the next pass.
+func TestPatchNodeRefusesWhatMovedSincePlanned(t *testing.T) {
+	const key = framev1beta1.ZFSScrubRequestedAnnotation
+	build := func() (*ZFSScrubReconciler, client.Client) {
+		c := fake.NewClientBuilder().WithScheme(scrubScheme(t)).
+			WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1", Annotations: map[string]string{key: "old"}}}).Build()
+		return &ZFSScrubReconciler{Client: c}, c
+	}
+	step := func(seen map[string]string) scrubStep {
+		return scrubStep{Node: "n1", Seen: seen, Set: map[string]string{key: "new"}}
+	}
+
+	r, c := build()
+	if err := r.patchNode(context.Background(), step(map[string]string{key: "stale"})); err == nil {
+		t.Fatal("patched a node whose annotation moved")
+	}
+	var n corev1.Node
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "n1"}, &n); err != nil {
+		t.Fatal(err)
+	}
+	if n.Annotations[key] != "old" {
+		t.Fatalf("annotation = %q after a refused patch", n.Annotations[key])
+	}
+
+	r, c = build()
+	if err := r.patchNode(context.Background(), step(map[string]string{key: "old"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "n1"}, &n); err != nil {
+		t.Fatal(err)
+	}
+	if n.Annotations[key] != "new" {
+		t.Fatalf("annotation = %q, want new", n.Annotations[key])
+	}
+}
