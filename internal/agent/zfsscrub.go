@@ -93,24 +93,40 @@ func execScrub(x StorageExecutor, argv []string) (string, error) {
 	return stderr, err
 }
 
+// scrubPreflight refuses, before anything is written or run, a read no scrub
+// can start from: ZFS not present, a capped list, or no pool that can take
+// one. ServiceScrubRequest checks it before acknowledging, so a node that
+// cannot scrub does not write and retract the acknowledgement every tick.
+func scrubPreflight(zfs *framev1beta1.ZFSStatus) error {
+	if zfs == nil || zfs.State != framev1beta1.StackPresent {
+		state := "unread"
+		if zfs != nil {
+			state = string(zfs.State)
+		}
+		return fmt.Errorf("ZFS is %s on this node", state)
+	}
+	if zfs.PoolsOmitted > 0 {
+		// The read is capped; pools past the cap would go unscrubbed while
+		// the node is recorded as scrubbed. The controller does not pick
+		// such a node; this is the agent's own refusal.
+		return fmt.Errorf("the ZFS read left %d pool(s) out; refusing a partial scrub", zfs.PoolsOmitted)
+	}
+	if !slices.ContainsFunc(zfs.Pools, func(p framev1beta1.ZPool) bool {
+		return slices.Contains(scrubbableHealth, p.Health)
+	}) {
+		return errNoScrubbablePool
+	}
+	return nil
+}
+
 // ScrubPools starts a scrub on every pool of zfs that can take one, and
 // returns the pools it started (or found already scrubbing). It fails when
 // ZFS is not read as present, when no pool can take a scrub, or when any
 // start fails: the controller then gives the request up rather than recording
 // a scrub that did not run.
 func ScrubPools(x StorageExecutor, zfs *framev1beta1.ZFSStatus) ([]string, error) {
-	if zfs == nil || zfs.State != framev1beta1.StackPresent {
-		state := "unread"
-		if zfs != nil {
-			state = string(zfs.State)
-		}
-		return nil, fmt.Errorf("ZFS is %s on this node", state)
-	}
-	if zfs.PoolsOmitted > 0 {
-		// The read is capped; pools past the cap would go unscrubbed while
-		// the node is recorded as scrubbed. The controller does not pick
-		// such a node; this is the agent's own refusal.
-		return nil, fmt.Errorf("the ZFS read left %d pool(s) out; refusing a partial scrub", zfs.PoolsOmitted)
+	if err := scrubPreflight(zfs); err != nil {
+		return nil, err
 	}
 	var started []string
 	var errs []error
@@ -196,6 +212,9 @@ func ServiceScrubRequest(
 	}
 	if age := now().Sub(at); age > scrubRequestMaxAge {
 		return fmt.Errorf("scrub request %s is more than %s old (%s); ignored (a leftover, or not the controller's)", requested, scrubRequestMaxAge, age.Truncate(time.Hour))
+	}
+	if err := scrubPreflight(zfs); err != nil {
+		return fmt.Errorf("scrub requested at %s: %w", requested, err)
 	}
 	startedAt := now()
 	base := node.DeepCopy()

@@ -368,3 +368,33 @@ func TestServiceScrubRequestReportsAFailedRetraction(t *testing.T) {
 		t.Fatalf("acknowledged = %q, want it left in place", got)
 	}
 }
+
+// A read no scrub can start from is refused before the acknowledgement: no
+// write to the Node, so no write-and-retract on every tick.
+func TestServiceScrubRequestWritesNothingWhenNoScrubCanStart(t *testing.T) {
+	const req = "2026-11-08T01:59:00Z"
+	for name, zfs := range map[string]*framev1beta1.ZFSStatus{
+		"read failed": {State: framev1beta1.StackError},
+		"busy":        {State: framev1beta1.StackBusy},
+		"omitted":     {State: framev1beta1.StackPresent, PoolsOmitted: 1, Pools: []framev1beta1.ZPool{{Name: "a", Health: "ONLINE"}}},
+		"no pool":     present(framev1beta1.ZPool{Name: "x", Health: "FAULTED"}),
+	} {
+		writes := 0
+		c := fake.NewClientBuilder().WithScheme(newDiskStatusScheme(t)).
+			WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1", Annotations: map[string]string{
+				framev1beta1.ZFSScrubRequestedAnnotation: req}}}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
+					writes++
+					return cl.Patch(ctx, obj, p, opts...)
+				},
+			}).Build()
+		x := &scrubExec{}
+		if err := ServiceScrubRequest(context.Background(), c, "n1", zfs, x, scrubClock); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+		if writes != 0 || len(x.calls) != 0 {
+			t.Errorf("%s: %d Node writes, %d zpool calls, want none", name, writes, len(x.calls))
+		}
+	}
+}
