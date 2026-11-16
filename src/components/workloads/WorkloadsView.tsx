@@ -46,8 +46,8 @@ export function WorkloadsView() {
     workloadWatchPaths(),
   )
   // Memoized on `state` itself (not derived inline) so its reference is
-  // stable across re-renders that don't carry new data — both the tree
-  // useEffect below and the `visible` useMemo depend on it, and a ternary
+  // stable across re-renders that don't carry new data — both the selection
+  // refresh below and the `visible` useMemo depend on it, and a ternary
   // recomputed inline defeats both.
   const tree = useMemo(() => (state.phase === 'ready' ? state.data : []), [state])
 
@@ -65,9 +65,8 @@ export function WorkloadsView() {
   // renders straight from `selection.controller` (replica counts, readiness,
   // restart counts) goes stale the moment it changes on the cluster.
   //
-  // Deliberately a functional `setSelection` update with `tree` as the only
-  // dependency, so it needs no `selection` in the dependency array and cannot
-  // loop on its own output. When the pod is missing from the refreshed tree —
+  // Keyed on the tree's identity alone, so it cannot loop on its own output
+  // (an unchanged selection is the same object, and setting it is a no-op). When the pod is missing from the refreshed tree —
   // the tree hasn't loaded yet, or the pod genuinely no longer exists — the
   // previous selection is kept rather than cleared, so a delete-in-progress or
   // a not-yet-caught-up watch doesn't yank the panel out from under the user;
