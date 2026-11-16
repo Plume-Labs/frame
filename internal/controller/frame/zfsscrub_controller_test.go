@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,18 @@ func pool(scan string) *framev1beta1.ZFSStatus {
 
 func zfsNode(name string, ann map[string]string, zfs *framev1beta1.ZFSStatus) scrubNode {
 	return scrubNode{Name: name, Labels: map[string]string{"zfs": "yes"}, Annotations: ann, ZFS: zfs}
+}
+
+// patches are the steps that change a node: the plan's events with no node
+// (ScrubWaiting) are checked on their own.
+func patches(steps []scrubStep) []scrubStep {
+	var out []scrubStep
+	for _, s := range steps {
+		if s.Node != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func onlyStepOf(t *testing.T) func([]scrubStep, error) scrubStep {
@@ -101,7 +114,7 @@ func TestPlanScrubsStartsNothingBesideAScrubInProgress(t *testing.T) {
 		},
 	} {
 		steps, err := planScrubs(schedule(), nodes, scrubNow)
-		if err != nil || len(steps) != 0 {
+		if err != nil || len(patches(steps)) != 0 {
 			t.Errorf("%s: steps %+v, err %v; want none", name, steps, err)
 		}
 	}
@@ -286,7 +299,7 @@ func TestPlanScrubsKeepsTheLockAfterAFailureUntilAFreshRead(t *testing.T) {
 			z.ReadAt = &at
 		}
 		steps, err := planScrubs(schedule(), []scrubNode{zfsNode("a", failed, z), b}, later)
-		if err != nil || len(steps) != 0 {
+		if err != nil || len(patches(steps)) != 0 {
 			t.Errorf("%s: steps %+v, err %v; want the lock held", name, steps, err)
 		}
 	}
@@ -344,7 +357,7 @@ func TestPlanScrubsSettlesOnAnyNewRead(t *testing.T) {
 		framev1beta1.ZFSScrubFailedAnnotation:    stamp(scrubNow),
 		framev1beta1.ZFSScrubUnsettledAnnotation: "none",
 	}
-	if steps, err := planScrubs(schedule(), []scrubNode{zfsNode("a", none, nil), b}, scrubNow); err != nil || len(steps) != 0 {
+	if steps, err := planScrubs(schedule(), []scrubNode{zfsNode("a", none, nil), b}, scrubNow); err != nil || len(patches(steps)) != 0 {
 		t.Fatalf("no read yet: steps %+v, err %v; want the lock held", steps, err)
 	}
 	s = onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", none, pool("none requested")), b}, scrubNow))
@@ -359,5 +372,42 @@ func TestPlanScrubsSettlesOnAnyNewRead(t *testing.T) {
 	s = onlyStepOf(t)(planScrubs(schedule(), []scrubNode{zfsNode("a", back, pool("none requested")), b}, scrubNow))
 	if s.Node != "a" || s.Reason != reasonScrubSettled {
 		t.Fatalf("clock set back: step = %+v, want a settled", s)
+	}
+}
+
+// A hold that can last for ever without a word is named while the window is
+// open: a failing ZFS read, a failed request no fresh read has settled, a scan
+// shown by a read too old to be one still running. A pool really scanning on
+// a recent read is progress and says nothing; nor does a closed window.
+func TestPlanScrubsNamesTheNodeHoldingEveryoneBack(t *testing.T) {
+	failed := map[string]string{
+		framev1beta1.ZFSScrubFailedAnnotation:    stamp(scrubNow),
+		framev1beta1.ZFSScrubUnsettledAnnotation: "none",
+	}
+	staleScan := pool("scrub in progress since Sun Nov  8 01:00:00 2026")
+	old := metav1.NewTime(scrubNow.Add(-2 * zfsScrubFreshRead))
+	staleScan.ReadAt = &old
+	b := zfsNode("b", nil, pool("none requested"))
+	for name, held := range map[string]scrubNode{
+		"read fails":       {Name: "x", ZFS: &framev1beta1.ZFSStatus{State: framev1beta1.StackError}},
+		"unsettled":        zfsNode("x", failed, nil),
+		"scan, stale read": {Name: "x", ZFS: staleScan},
+	} {
+		steps, err := planScrubs(schedule(), []scrubNode{held, b}, scrubNow)
+		if err != nil || len(steps) != 1 || steps[0].Node != "" || steps[0].Reason != reasonScrubWaiting ||
+			steps[0].EventType != corev1.EventTypeWarning || !strings.Contains(steps[0].Event, "node x") {
+			t.Errorf("%s: steps %+v, err %v; want one ScrubWaiting event naming x", name, steps, err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		held scrubNode
+		now  time.Time
+	}{
+		"scan on a recent read": {scrubNode{Name: "x", ZFS: pool("scrub in progress since …")}, scrubNow},
+		"window closed":         {scrubNode{Name: "x", ZFS: &framev1beta1.ZFSStatus{State: framev1beta1.StackError}}, scrubNow.Add(8 * time.Hour)},
+	} {
+		if steps, err := planScrubs(schedule(), []scrubNode{tc.held, b}, tc.now); err != nil || len(steps) != 0 {
+			t.Errorf("%s: steps %+v, err %v; want silence", name, steps, err)
+		}
 	}
 }

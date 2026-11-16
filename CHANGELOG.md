@@ -6,6 +6,14 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — scrub plan blockage signal
+
+- storage: the ZFS scrub plan now emits a `ScrubWaiting` warning event on the
+  policy, while the start window is open, naming the node that holds every
+  other node back with no scrub of Frame's own in flight (failing ZFS read,
+  unsettled failure, or a scan shown by a stale read). Until now it stopped
+  without a word (#101, point 2).
+
 ### Fixed — installer route guard
 
 - provision: with a declared bond or VLAN, the late-command that writes the

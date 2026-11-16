@@ -506,7 +506,12 @@ spec:
   newer complete read with nothing scanning (event `ScrubSettled`). An agent
   that stays silent therefore stops the plan — on purpose. To release it by
   hand, once you have checked `zpool status` on the node, remove that
-  annotation.
+  annotation. While the start window is open, a node holding the plan back
+  with no scrub of Frame's own in flight — its ZFS read fails, an unsettled
+  failure, or a scan shown only by a read too old to be one still running —
+  is named by a warning event `ScrubWaiting` on the policy, repeated on every
+  pass (the event recorder folds the repeats into one with a count). A pool
+  really scanning on a recent read is progress and says nothing.
 - **To stop**: remove `zfs-scrub-requested` from the node before the agent
   takes it; a scrub already running is stopped on the node with
   `zpool scrub -s <pool>`, which Frame records as failed. Removing
