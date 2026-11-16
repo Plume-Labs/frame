@@ -6,6 +6,15 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — installer route guard
+
+- provision: with a declared bond or VLAN, the late-command that writes the
+  installed netplan now first checks that the installer's route to the gateway
+  leaves by the top link (the VLAN, or the bond alone) and refuses otherwise,
+  as the undeclared case already did. A bond or VLAN that did not come up used
+  to leave an installed machine nobody could reach (#103, point 2). Still to
+  observe on a real R730 (#103, point 4).
+
 ### Fixed — installer MAC guard
 
 - provision: the install-time MAC guard now checks the port's permanent
