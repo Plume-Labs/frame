@@ -6,6 +6,19 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — ZFS scrub protocol hardening (#101)
+
+- agent: the scrub request is acknowledged before `zpool scrub` runs, not
+  after, so no `zpool scrub` runs for a request the controller already gave up on;
+  if no pool could be started the acknowledgement is taken back. A request too
+  old to take is logged once, not every 30 s.
+- controller: a "scrub repaired … on <date>" line dated before the scrub's
+  start is not taken as its end. Tests now pin the interval, timeout and
+  lock boundaries.
+- docs: the window bounds when a request is written (a scrub can start about
+  twenty minutes after it closes); `timeZone: Local` is the container's zone;
+  the `editor` role on `StorageHealthPolicy` decides heavy host I/O.
+
 ### Changed — console: React Compiler lint alerts cleared (#100)
 
 - ui: the 21 `react-hooks` / `react-refresh` lint warnings are gone, with the

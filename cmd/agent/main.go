@@ -257,9 +257,8 @@ func tick(
 		//    before the scrub's start is already out: the controller only
 		//    trusts a read dated after the acknowledgement.
 		if local != nil {
-			if err := agent.ServiceScrubRequest(ctx, kc, nodeName, &local.ZFS, scrub, time.Now); err != nil {
-				slog.Error("servicing the ZFS scrub request", "node", nodeName, "error", err)
-			}
+			err := agent.ServiceScrubRequest(ctx, kc, nodeName, &local.ZFS, scrub, time.Now)
+			reportScrubError(nodeName, err)
 		}
 
 		// 8. the wipe of a new disk an OSD replacement asked for, if any,
@@ -270,6 +269,24 @@ func tick(
 			}
 		}
 	}
+}
+
+// lastScrubError is the scrub error already logged. A request too old to take
+// stays on the node until the controller concludes it or a human removes it,
+// and the tick runs every 30 s: the same error is logged once, not every tick.
+// The tick runs on one goroutine, so no lock.
+var lastScrubError string
+
+func reportScrubError(nodeName string, err error) {
+	if err == nil {
+		lastScrubError = ""
+		return
+	}
+	if err.Error() == lastScrubError {
+		return
+	}
+	lastScrubError = err.Error()
+	slog.Error("servicing the ZFS scrub request", "node", nodeName, "error", err)
 }
 
 // selecting returns the NodeTunings whose spec.nodeSelector matches this
