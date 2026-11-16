@@ -63,6 +63,15 @@ export function StorageLoadView() {
 
   return (
     <div className="space-y-6">
+      {raw.unreadable.length > 0 && (
+        <Card className="border-warning">
+          <CardContent className="pt-6 text-xs font-mono text-warning">
+            The API refused or did not answer the list of {raw.unreadable.join(', ')} (missing permission on the console's role?). Pools
+            and attachments below may read as "not declared" when they are not.
+          </CardContent>
+        </Card>
+      )}
+
       {(shared.length > 0 || fillAlerts.length > 0) && (
         <Card className={shared.length > 0 || fillAlerts.some((r) => r.fill === 'critical') ? 'border-destructive' : undefined}>
           <CardHeader>

@@ -86,11 +86,13 @@ import {
   VOLUME_LOAD_QUERIES,
   toAttachmentInfo,
   toBlockPoolInfo,
+  toFilesystemPoolInfos,
   toPodClaimInfo,
   toPvInfo,
   toPvcInfo,
   toStorageClassInfo,
   type BlockPoolCR,
+  type CephFilesystemCR,
   type PodClaimInfo,
   type PodVolumesCR,
   type PvCR,
@@ -1816,26 +1818,32 @@ class ClusterClient {
    * attachments, and the kubelet fill figures. Read-only; every judgement is
    * in volume-load.ts.
    *
-   * The CephBlockPool and VolumeAttachment lists are optional: a cluster
-   * without Rook (or without a CSI driver) has neither, and the rest of the
-   * screen still stands.
+   * The CephBlockPool, CephFilesystem and VolumeAttachment lists are optional:
+   * a cluster without Rook (or without a CSI driver) answers 404 for them, and
+   * the rest of the screen still stands. Any other failure (a 403 above all)
+   * is reported in `unreadable`, never taken for "nothing declared".
    */
   async volumeLoad(): Promise<VolumeLoadRaw> {
     const cfg = config()
-    const empty = { items: [] }
-    const [prom, pvcs, pvs, scs, pools, pods, rs, vas] = await Promise.all([
+    const unreadable: string[] = []
+    const optional = <T,>(what: string, list: Promise<ListResponse<T>>): Promise<ListResponse<T>> =>
+      list.catch((e: unknown) => {
+        if (!(e instanceof FrameAPIError && e.statusCode === 404)) unreadable.push(what)
+        return { items: [] } as ListResponse<T>
+      })
+    const [prom, pvcs, pvs, scs, pools, filesystems, pods, rs, vas] = await Promise.all([
       this.promInstant(VOLUME_LOAD_QUERIES).catch(() => null),
       k8sFetch<ListResponse<PvcCR>>(coreListPath('persistentvolumeclaims')),
       k8sFetch<ListResponse<PvCR>>(coreListPath('persistentvolumes')),
       k8sFetch<ListResponse<StorageClassCR>>('/apis/storage.k8s.io/v1/storageclasses'),
-      k8sFetch<ListResponse<BlockPoolCR>>(crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cfg.namespaces.ceph)).catch(
-        () => empty as ListResponse<BlockPoolCR>,
+      optional('CephBlockPools', k8sFetch<ListResponse<BlockPoolCR>>(crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cfg.namespaces.ceph))),
+      optional(
+        'CephFilesystems',
+        k8sFetch<ListResponse<CephFilesystemCR>>(crdListPath('ceph.rook.io', 'v1', 'cephfilesystems', cfg.namespaces.ceph)),
       ),
       k8sFetch<ListResponse<PodVolumesCR>>(ALL_PODS_CACHED),
       k8sFetch<ListResponse<{ metadata: MetaCR }>>('/apis/apps/v1/replicasets?resourceVersion=0'),
-      k8sFetch<ListResponse<VolumeAttachmentCR>>('/apis/storage.k8s.io/v1/volumeattachments').catch(
-        () => empty as ListResponse<VolumeAttachmentCR>,
-      ),
+      optional('VolumeAttachments', k8sFetch<ListResponse<VolumeAttachmentCR>>('/apis/storage.k8s.io/v1/volumeattachments')),
     ])
     const replicaSetOwners = new Map<string, OwnerRef>()
     for (const r of rs.items ?? []) {
@@ -1847,10 +1855,11 @@ class ClusterClient {
       pvcs: (pvcs.items ?? []).map(toPvcInfo),
       pvs: (pvs.items ?? []).map(toPvInfo),
       storageClasses: (scs.items ?? []).map(toStorageClassInfo),
-      blockPools: (pools.items ?? []).map(toBlockPoolInfo),
+      blockPools: [...(pools.items ?? []).map(toBlockPoolInfo), ...(filesystems.items ?? []).flatMap(toFilesystemPoolInfos)],
       pods: (pods.items ?? []).map(toPodClaimInfo).filter((p): p is PodClaimInfo => p !== null),
       replicaSetOwners,
       attachments: (vas.items ?? []).map(toAttachmentInfo).filter((a): a is VolumeAttachmentInfo => a !== null),
+      unreadable,
     }
   }
 

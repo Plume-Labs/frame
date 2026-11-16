@@ -55,7 +55,7 @@ terraform apply \
 
 - `kubernetes_namespace` — `cluster-control`
 - `kubernetes_service_account` — `cluster-control-ui`
-- `kubernetes_cluster_role` — `cluster-control-viewer` (read-only access to nodes, pods, deployments, metrics)
+- `kubernetes_cluster_role` — `cluster-control-viewer`: the same read-only rules as `deploy/kubernetes/base/rbac.yaml` (the source of truth, copied rule for rule; `go test ./test/manifests` fails when the two drift)
 - `kubernetes_cluster_role_binding` — binds the service account to the role
 - `kubernetes_deployment` — UI pods with liveness/readiness probes and non-root security context
 - `kubernetes_service` — ClusterIP service on port 80 → 8080

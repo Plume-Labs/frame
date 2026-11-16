@@ -57,7 +57,7 @@ rules:
     verbs: [get, list, watch]
   # frame-sdk.ts:1123, :1125 — ClusterStorageView / OverviewView / ResilienceView
   - apiGroups: [ceph.rook.io]
-    resources: [cephclusters, cephblockpools]
+    resources: [cephclusters, cephblockpools, cephfilesystems]
     verbs: [get, list, watch]
   # Storage → Volumes (StorageLoadView, ClusterClient.volumeLoad() in
   # frame-sdk.ts): which workload uses which claim, the volume behind it, its
@@ -300,7 +300,7 @@ rules:
     resources: [jobs]
     verbs: [get, list, watch]
   - apiGroups: [ceph.rook.io]
-    resources: [cephclusters, cephblockpools]
+    resources: [cephclusters, cephblockpools, cephfilesystems]
     verbs: [get, list, watch]
   - apiGroups: [scheduling.volcano.sh]
     resources: [podgroups]

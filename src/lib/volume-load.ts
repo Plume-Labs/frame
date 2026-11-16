@@ -10,8 +10,8 @@
 //     scraped would hide the very volume that is about to fill up.
 //  2. The pool → OSD set is read from what Rook declares (CephBlockPool
 //     spec.deviceClass) and the OSDs Prometheus reports, never guessed from a
-//     rule name. When the pool is not declared by a CephBlockPool, every OSD
-//     is listed and the row says so.
+//     rule name. When the pool is declared by neither a CephBlockPool nor a
+//     CephFilesystem, every OSD is listed and the row says so.
 
 import type { OsdRow, PromSample } from './ceph-diagnostic'
 import type { OwnerRef } from './workloads'
@@ -113,11 +113,19 @@ export interface VolumeLoadRaw {
   pvcs: PvcInfo[]
   pvs: PvInfo[]
   storageClasses: StorageClassInfo[]
+  /** CephBlockPools and the pools of every CephFilesystem (metadata and data). */
   blockPools: BlockPoolInfo[]
   pods: PodClaimInfo[]
   replicaSetOwners: Map<string, OwnerRef>
   attachments: VolumeAttachmentInfo[]
   prom: VolumeLoadSnapshot | null
+  /**
+   * Optional lists the API refused or failed to answer, named by what they
+   * hold. A cluster without Rook answers 404 and is not listed: the screen
+   * stands without it. A 403 is listed, because the rows below would then say
+   * "pool not declared" about pools that are.
+   */
+  unreadable: string[]
 }
 
 export interface VolumeLoadInputs {
@@ -344,11 +352,11 @@ function pathOf(
     const declared = inputs.blockPools.find((p) => p.poolName === pool)
     const mgr = inputs.mgrPools.get(pool)
     const size = mgr?.size ?? declared?.size ?? null
-    // A pool no CephBlockPool declares (a CephFilesystem data pool): its
-    // device class is not read (cephfilesystems is not granted to the
-    // console), so every class is listed; failure domain `host` is Rook's
-    // default. crushRoot, replicasPerFailureDomain and stretch clusters are
-    // not modelled.
+    // A pool neither a CephBlockPool nor a CephFilesystem declares: every
+    // class is listed; failure domain `host` is Rook's default. crushRoot,
+    // replicasPerFailureDomain and stretch clusters are not modelled: a pool
+    // pinned to a non-default CRUSH root lists OSDs it does not use, and the
+    // CRUSH rule shown (from the mgr) is the authority.
     const spec = { deviceClass: declared?.deviceClass ?? null, failureDomain: declared?.failureDomain ?? 'host', size }
     const { osds, hosts } = poolOsds(inputs.osds, spec, worst24h)
     return {
@@ -482,7 +490,7 @@ export function volumeFillFindings(prom: Pick<VolumeLoadSnapshot, 'volUsed' | 'v
 export function pathLine(p: VolumePath): string {
   switch (p.kind) {
     case 'ceph': {
-      const cls = p.declared ? (p.deviceClass ?? 'any class') : 'pool not declared by a CephBlockPool: every OSD listed'
+      const cls = p.declared ? (p.deviceClass ?? 'any class') : 'pool not declared by a CephBlockPool or CephFilesystem: every OSD listed'
       const osds = p.osdsKnown
         ? `${p.osds.length} OSD on ${p.hosts.length} host${p.hosts.length > 1 ? 's' : ''}`
         : 'OSDs not collected'
@@ -536,9 +544,30 @@ export interface BlockPoolCR {
   spec?: { name?: string; deviceClass?: string; failureDomain?: string; replicated?: { size?: number } }
 }
 
+/**
+ * A CephFilesystem's pools. Rook names them `<fs>-metadata` and, for the data
+ * pools, `<fs>-<name>` or `<fs>-data<index>` when the entry has no name.
+ */
+export interface CephFilesystemCR {
+  metadata: Meta
+  spec?: {
+    metadataPool?: PoolSpec
+    dataPools?: Array<PoolSpec & { name?: string }>
+  }
+}
+
+interface PoolSpec {
+  deviceClass?: string
+  failureDomain?: string
+  replicated?: { size?: number }
+}
+
 export interface PodVolumesCR {
   metadata: Meta
-  spec?: { nodeName?: string; volumes?: Array<{ persistentVolumeClaim?: { claimName?: string } }> }
+  spec?: {
+    nodeName?: string
+    volumes?: Array<{ name?: string; persistentVolumeClaim?: { claimName?: string }; ephemeral?: object }>
+  }
   status?: { phase?: string }
 }
 
@@ -607,8 +636,26 @@ export function toBlockPoolInfo(cr: BlockPoolCR): BlockPoolInfo {
   }
 }
 
+export function toFilesystemPoolInfos(cr: CephFilesystemCR): BlockPoolInfo[] {
+  const fs = cr.metadata.name
+  const info = (poolName: string, p: PoolSpec | undefined): BlockPoolInfo => ({
+    poolName,
+    deviceClass: p?.deviceClass || null,
+    failureDomain: p?.failureDomain || 'host',
+    size: p?.replicated?.size ?? null,
+  })
+  return [
+    info(`${fs}-metadata`, cr.spec?.metadataPool),
+    ...(cr.spec?.dataPools ?? []).map((p, i) => info(`${fs}-${p.name || `data${i}`}`, p)),
+  ]
+}
+
 export function toPodClaimInfo(cr: PodVolumesCR): PodClaimInfo | null {
-  const claims = (cr.spec?.volumes ?? []).map((v) => v.persistentVolumeClaim?.claimName).filter((c): c is string => !!c)
+  // A generic ephemeral volume's claim is created by the pod controller,
+  // named `<pod>-<volume>` and owned by the pod: it is used by that pod.
+  const claims = (cr.spec?.volumes ?? [])
+    .map((v) => v.persistentVolumeClaim?.claimName ?? (v.ephemeral && v.name ? `${cr.metadata.name}-${v.name}` : undefined))
+    .filter((c): c is string => !!c)
   // A finished pod (a completed Job's) no longer uses the claim.
   const phase = cr.status?.phase ?? 'Unknown'
   if (claims.length === 0 || phase === 'Succeeded' || phase === 'Failed') return null

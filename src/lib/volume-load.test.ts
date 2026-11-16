@@ -11,6 +11,7 @@ import {
   slowSharedOsds,
   toAttachmentInfo,
   toBlockPoolInfo,
+  toFilesystemPoolInfos,
   toPodClaimInfo,
   toPvInfo,
   toPvcInfo,
@@ -328,6 +329,28 @@ describe('converters', () => {
   it('reads a CephBlockPool with Rook defaults', () => {
     expect(toBlockPoolInfo({ metadata: { name: 'p' } })).toEqual({ poolName: 'p', deviceClass: null, failureDomain: 'host', size: null })
     expect(toBlockPoolInfo({ metadata: { name: 'cr' }, spec: { name: 'real', deviceClass: 'ssd' } }).poolName).toBe('real')
+  })
+
+  it('names a CephFilesystem\'s pools the way Rook does and keeps their device class', () => {
+    expect(
+      toFilesystemPoolInfos({
+        metadata: { name: 'myfs' },
+        spec: { metadataPool: { replicated: { size: 3 } }, dataPools: [{ deviceClass: 'hdd', replicated: { size: 2 } }, { name: 'ssd', deviceClass: 'ssd' }] },
+      }),
+    ).toEqual([
+      { poolName: 'myfs-metadata', deviceClass: null, failureDomain: 'host', size: 3 },
+      { poolName: 'myfs-data0', deviceClass: 'hdd', failureDomain: 'host', size: 2 },
+      { poolName: 'myfs-ssd', deviceClass: 'ssd', failureDomain: 'host', size: null },
+    ])
+  })
+
+  it('counts a generic ephemeral volume\'s claim as used by its pod', () => {
+    const pod = toPodClaimInfo({
+      metadata: { name: 'job-1', namespace: 'n' },
+      spec: { nodeName: 'g9', volumes: [{ name: 'scratch', ephemeral: {} }, { name: 'cfg' }] },
+      status: { phase: 'Running' },
+    })
+    expect(pod?.claims).toEqual(['job-1-scratch'])
   })
 
   it('ignores pods without claims and attachments without a PV', () => {
