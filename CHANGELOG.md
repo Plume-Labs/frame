@@ -6,6 +6,20 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Terraform viewer role and Storage → Volumes reads (#108)
+
+- deploy/terraform: the `cluster-control-viewer` ClusterRole was three rules
+  long; it now carries every rule of `deploy/kubernetes/base/rbac.yaml` and the
+  tier label. `test/manifests` compares the two in both directions, so the next
+  rule added to the manifest cannot be forgotten in Terraform.
+- rbac: the viewer tiers may read `cephfilesystems`, so a CephFS data pool's
+  device class is read instead of listing every OSD.
+- console: Storage → Volumes no longer marks a generic ephemeral volume's claim
+  (`<pod>-<volume>`) "unused", and says so when the API refuses the
+  CephBlockPool, CephFilesystem or VolumeAttachment list instead of reading the
+  refusal as "pool not declared". A pool pinned to a non-default CRUSH root is
+  still not modelled (the CRUSH rule shown comes from the mgr).
+
 ### Added — scrub plan blockage signal
 
 - storage: the ZFS scrub plan now emits a `ScrubWaiting` warning event on the

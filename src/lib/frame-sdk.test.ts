@@ -913,6 +913,31 @@ describe('ClusterClient.ceph()', () => {
   })
 })
 
+describe('ClusterClient.volumeLoad() optional lists', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    resetAuthForTests()
+  })
+
+  it('reports a refused list instead of reading it as "nothing declared"; a missing CRD stays silent', async () => {
+    vi.stubGlobal('window', globalThis)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const json = (status: number, body: unknown) =>
+          new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+        if (url.includes('/cephblockpools')) return json(403, { kind: 'Status', code: 403, message: 'forbidden' })
+        if (url.includes('/cephfilesystems')) return json(404, { kind: 'Status', code: 404, message: 'not found' })
+        return json(200, { items: [] })
+      }),
+    )
+    const raw = await createFrameClient().cluster.volumeLoad()
+    expect(raw.unreadable).toEqual(['CephBlockPools'])
+    expect(raw.blockPools).toEqual([])
+  })
+})
+
 // Carried in from lot 0c's whole-branch review. `frame-uiproxy` creates every
 // FrameTask in TASK_NAMESPACE — `frame-system`, from cmd/uiproxy/main.go and
 // deploy/kubernetes/base/deployment.yaml — while this client built the path

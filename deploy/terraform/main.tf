@@ -39,24 +39,77 @@ resource "kubernetes_service_account" "ui" {
   }
 }
 
+# Mirror of the cluster-control-viewer ClusterRole in
+# deploy/kubernetes/base/rbac.yaml, the source of truth. A test
+# (test/manifests/terraform_rbac_test.go) fails when the two drift: change the
+# rules in rbac.yaml first, then copy them here, rule for rule.
 resource "kubernetes_cluster_role" "viewer" {
   metadata {
     name = "cluster-control-viewer"
     labels = {
-      "app.kubernetes.io/name"      = "cluster-control"
-      "app.kubernetes.io/component" = "ui"
+      "app.kubernetes.io/name"        = "cluster-control"
+      "app.kubernetes.io/component"   = "ui"
+      "rbac.frame.plume-labs.io/tier" = "viewer"
     }
   }
 
   rule {
     api_groups = [""]
-    resources  = ["nodes", "pods", "services", "namespaces"]
+    resources  = ["nodes", "pods", "events"]
     verbs      = ["get", "list", "watch"]
   }
 
   rule {
     api_groups = ["apps"]
-    resources  = ["deployments", "daemonsets", "statefulsets"]
+    resources  = ["deployments", "statefulsets"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["apps"]
+    resources  = ["daemonsets", "replicasets"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["ceph.rook.io"]
+    resources  = ["cephclusters", "cephblockpools", "cephfilesystems"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["persistentvolumeclaims", "persistentvolumes"]
+    verbs      = ["get", "list"]
+  }
+
+  rule {
+    api_groups = ["storage.k8s.io"]
+    resources  = ["storageclasses", "volumeattachments"]
+    verbs      = ["get", "list"]
+  }
+
+  rule {
+    api_groups = ["scheduling.volcano.sh"]
+    resources  = ["queues", "podgroups"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["argoproj.io"]
+    resources  = ["workflows"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["policy"]
+    resources  = ["poddisruptionbudgets"]
     verbs      = ["get", "list", "watch"]
   }
 
@@ -64,6 +117,36 @@ resource "kubernetes_cluster_role" "viewer" {
     api_groups = ["metrics.k8s.io"]
     resources  = ["nodes", "pods"]
     verbs      = ["get", "list"]
+  }
+
+  rule {
+    api_groups = ["frame.plume-labs.io"]
+    resources  = ["framejobs", "framenodes", "schedulingpolicies", "frameresourcequotas", "storagehealthpolicies", "networkhealthpolicies"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["aquasecurity.github.io"]
+    resources  = ["vulnerabilityreports", "configauditreports"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["velero.io"]
+    resources  = ["backups", "schedules", "backupstoragelocations"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["services.plume-labs.io"]
+    resources  = ["frameservices", "inferencemodels"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = ["frame.plume-labs.io"]
+    resources  = ["framemachines"]
+    verbs      = ["get", "list", "watch"]
   }
 }
 
