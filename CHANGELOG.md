@@ -6,6 +6,13 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — scrub request no longer written and retracted every tick (#101)
+
+- agent: a read no scrub can start from (ZFS in `error` or `busy`, a capped
+  pool list, no `ONLINE`/`DEGRADED` pool) is refused before the
+  acknowledgement is written, so the Node is not patched twice every 30 s
+  while the controller waits out its ten minutes.
+
 ### Fixed — ZFS scrub protocol hardening (#101)
 
 - agent: the scrub request is acknowledged before `zpool scrub` runs, not
