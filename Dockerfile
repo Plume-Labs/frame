@@ -14,7 +14,7 @@ RUN npm run build
 # -93479, -95101, -97205, -97629; fixed from 1.31.7 / 1.30.6). The digest is the
 # 2026-11-06 rebuild on Alpine 3.24.4, which carries brotli-libs 1.2.1-r0
 # (CVE-2026-111497). Renovate keeps tag and digest current.
-FROM nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
+FROM nginx:1.31.8-alpine@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72
 
 # La base épinglée embarque les paquets Alpine du jour de sa publication : on
 # applique les correctifs publiés depuis (ex. libxslt 1.1.43-r4, CVE-2026-87636
