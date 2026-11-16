@@ -33,8 +33,9 @@ func tfStrings(t *testing.T, block, attr string) []string {
 	if m == nil {
 		t.Fatalf("terraform rule has no %s: %q", attr, block)
 	}
-	var out []string
-	for _, q := range tfQuoted.FindAllStringSubmatch(m[1], -1) {
+	quoted := tfQuoted.FindAllStringSubmatch(m[1], -1)
+	out := make([]string, 0, len(quoted))
+	for _, q := range quoted {
 		out = append(out, q[1])
 	}
 	return out
@@ -77,14 +78,16 @@ func diff(a, b []string) []string {
 
 func TestTerraformViewerRoleMatchesTheManifest(t *testing.T) {
 	root := Root(t)
-	manifest, ok := ClusterRoles(t, filepath.Join(root, "deploy", "kubernetes", "base", "rbac.yaml"))["cluster-control-viewer"]
+	rbacPath := filepath.Join(root, "deploy", "kubernetes", "base", "rbac.yaml")
+	manifest, ok := ClusterRoles(t, rbacPath)["cluster-control-viewer"]
 	if !ok {
 		t.Fatal("cluster-control-viewer is not in deploy/kubernetes/base/rbac.yaml")
 	}
 
 	for _, r := range manifest.Rules {
 		if len(r.ResourceNames) > 0 || len(r.NonResourceURLs) > 0 {
-			t.Fatalf("rbac.yaml's viewer role now uses resourceNames or nonResourceURLs (%v): teach this test to compare them before copying the rule to Terraform", r)
+			t.Fatalf("rbac.yaml's viewer role now uses resourceNames or nonResourceURLs (%v): "+
+				"teach this test to compare them before copying the rule to Terraform", r)
 		}
 	}
 
@@ -100,8 +103,9 @@ func TestTerraformViewerRoleMatchesTheManifest(t *testing.T) {
 	}
 	section := src[start:end]
 
-	var tf []rbacv1.PolicyRule
-	for _, m := range tfRuleBlock.FindAllStringSubmatch(section, -1) {
+	blocks := tfRuleBlock.FindAllStringSubmatch(section, -1)
+	tf := make([]rbacv1.PolicyRule, 0, len(blocks))
+	for _, m := range blocks {
 		tf = append(tf, rbacv1.PolicyRule{
 			APIGroups: tfStrings(t, m[1], "api_groups"),
 			Resources: tfStrings(t, m[1], "resources"),
@@ -114,16 +118,19 @@ func TestTerraformViewerRoleMatchesTheManifest(t *testing.T) {
 
 	want, have := ruleKeys(manifest.Rules), ruleKeys(tf)
 	if missing := diff(want, have); len(missing) > 0 {
-		t.Errorf("deploy/terraform/main.tf viewer role lacks what rbac.yaml grants (copy the rules over):\n  %s", strings.Join(missing, "\n  "))
+		t.Errorf("deploy/terraform/main.tf viewer role lacks what rbac.yaml grants (copy the rules over):\n  %s",
+			strings.Join(missing, "\n  "))
 	}
 	if extra := diff(have, want); len(extra) > 0 {
-		t.Errorf("deploy/terraform/main.tf viewer role grants more than rbac.yaml (rbac.yaml is the source of truth):\n  %s", strings.Join(extra, "\n  "))
+		t.Errorf("deploy/terraform/main.tf viewer role grants more than rbac.yaml (rbac.yaml is the source of truth):\n  %s",
+			strings.Join(extra, "\n  "))
 	}
 
 	// The tier label is what aggregates the role into frame-viewer; without it
 	// a Terraform install binds a role the tiers do not know about.
 	const tier = "rbac.frame.plume-labs.io/tier"
-	if !regexp.MustCompile(`"` + regexp.QuoteMeta(tier) + `"\s*=\s*"` + regexp.QuoteMeta(manifest.Labels[tier]) + `"`).MatchString(section) {
+	label := regexp.MustCompile(`"` + regexp.QuoteMeta(tier) + `"\s*=\s*"` + regexp.QuoteMeta(manifest.Labels[tier]) + `"`)
+	if !label.MatchString(section) {
 		t.Errorf("deploy/terraform/main.tf viewer role lacks the label %s=%s", tier, manifest.Labels[tier])
 	}
 }
