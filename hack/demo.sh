@@ -193,6 +193,11 @@ install_console() {
   k apply -f deploy/kubernetes/base/rbac.yaml
   k apply -f deploy/kubernetes/base/rbac-tier-bindings.yaml
   k apply -f deploy/kubernetes/base/service.yaml
+  # The console looks for Frame resources in `frameNamespace` (default:
+  # `default`), which is where the demo does not put them. Its config ConfigMap
+  # (src/lib/frame-config.ts) says where they are: here, `frame-system`.
+  k -n cluster-control create configmap cluster-control-config \
+    --from-literal=config.json='{"frameNamespace":"frame-system"}' --dry-run=client -o yaml | k apply -f -
 
   # authd reads the one-shot bootstrap token and its keys at start. Generate
   # them once: a rerun against a kept cluster must keep what authd already loaded.
@@ -299,6 +304,9 @@ verify() {
     [ "$code" = "200" ] || { echo "demo: reading ${kind%%:*} through the console answered HTTP $code" >&2; exit 1; }
     [ "$(grep -o '"hearthrack.demo/seeded": *"true"' "$STATE_DIR/${kind%%:*}.json" | wc -l)" = "${kind##*:}" ] || { echo "demo: the console does not list the ${kind##*:} seeded ${kind%%:*}" >&2; exit 1; }
   done
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $jwt" \
+    "$base/api/v1/namespaces/cluster-control/configmaps/cluster-control-config")"
+  [ "$code" = "200" ] || { echo "demo: the console cannot read its config ConfigMap (HTTP $code)" >&2; exit 1; }
   echo "OK: signed in as ${ADMIN_EMAIL}; read the four demo FrameNodes, three jobs and three alerts through the console."
 }
 

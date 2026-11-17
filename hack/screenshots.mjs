@@ -45,6 +45,12 @@ const context = await browser.newContext({
 })
 const page = await context.newPage()
 
+// What a screen could not read is the first thing to know when it is empty.
+page.on('response', (r) => {
+  if (r.status() >= 400 && /\/(api|apis)\//.test(r.url())) console.log(`HTTP ${r.status()} ${r.url()}`)
+})
+page.on('pageerror', (e) => console.log(`page error: ${e.message}`))
+
 await page.goto(base)
 const status = await page.evaluate(
   async ({ token, email }) => {
