@@ -68,7 +68,7 @@ jobs:
       # covered by govulncheck and the image scan, this covers the UI's npm tree,
       # which never ships inside an image Trivy can see.
       - name: Audit npm dependencies
-        run: npm audit --audit-level=high
+        run: node hack/npm-audit.mjs
 
   # ── 2. IaC validation: render and dry-run Kubernetes + script checks ──────
   iac:

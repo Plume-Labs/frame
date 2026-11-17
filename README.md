@@ -5,6 +5,10 @@ You need big hardware to run big workloads with unified approach like mainframe 
 Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-like computing platform:
 nine CRDs across two API groups — the eight frozen at `v1beta1` with `v1alpha1` still served and deprecated, plus `NodeTuning` added after the freeze — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
 
+> **Status: pre-release.** There is no tagged release yet and the API is still `v1beta1`. See [known limitations](docs/known-limitations.md) for what has and has not been proven.
+
+> ⚠️ **Security notice.** Frame holds real authority over the cluster it manages, and its node-tuning agent runs as root-equivalent on every node. Do **not** expose the console to the Internet, and try Frame on a disposable cluster before anything that matters. Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+
 > Single physical location only — multi-site federation is out of scope for now.
 
 ---
@@ -18,22 +22,17 @@ UI / SDK / CI
 Frame CRDs  →  Frame operator  →  cluster primitives (Argo, PriorityClasses, …)
 ```
 
-Dev: `kubectl proxy --port=8001`. Prod: ServiceAccount Bearer token via `window.__FRAME_TOKEN__`.
+Deployed: the console talks to the apiserver through the in-pod `frame-uiproxy` sidecar, which impersonates the signed-in user (passkey login via `authd`). Local development has its own loop: see [docs/development.md](docs/development.md).
 
 ---
 
 ## Quick start
 
 ```bash
-kubectl proxy --port=8001   # terminal 1
-npm install && npm run dev  # terminal 2 → http://localhost:5173
-```
-
-```bash
 make build && make run      # run the Go operator against your kubeconfig
 ```
 
-→ See **[docs/getting-started.md](docs/getting-started.md)** for prerequisites, deploy-to-cluster, and troubleshooting.
+The console needs the API proxy *and* `authd` reachable (two terminals plus the dev server). The exact loop is in **[docs/development.md](docs/development.md)**; **[docs/getting-started.md](docs/getting-started.md)** covers prerequisites, deploy-to-cluster, and troubleshooting.
 
 ---
 
@@ -50,6 +49,7 @@ make build && make run      # run the Go operator against your kubeconfig
 | [Deployment](docs/deployment.md) | Image build, kustomize overlays, cert-manager |
 | [Upgrading](docs/upgrading.md) | Chart adoption, chart upgrades, and the `v1alpha1` → `v1beta1` migration |
 | [Roadmap](docs/roadmap.md) | `v1beta1` beta → stable V1 |
+| [Known limitations](docs/known-limitations.md) | What is unproven, unsupported or deliberately out of scope |
 
 ---
 

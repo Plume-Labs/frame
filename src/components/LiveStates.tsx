@@ -31,8 +31,9 @@ export function LiveStates<T>({
           <div className="font-mono text-sm text-foreground">Cannot reach the Kubernetes API</div>
           <div className="text-xs text-muted-foreground max-w-md mx-auto">{state.message}</div>
           <div className="text-xs text-muted-foreground">
-            The UI proxies <span className="font-mono">/api</span> to the apiserver via its
-            ServiceAccount. In dev, run <span className="font-mono">kubectl proxy --port=8001</span>.
+            The UI reaches <span className="font-mono">/api</span> through the in-pod
+            <span className="font-mono"> frame-uiproxy</span>, under your own identity. Check that
+            the proxy is running; local development is covered in docs/development.md.
           </div>
         </CardContent>
       </Card>

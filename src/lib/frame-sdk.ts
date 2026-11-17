@@ -1,9 +1,9 @@
 /**
  * Frame SDK — TypeScript client for the Frame operator CRDs.
  *
- * Talks directly to the Kubernetes API. In dev, run `kubectl proxy --port=8001`
- * so that Vite can proxy /apis/* to the cluster. In production, inject the
- * ServiceAccount token via `window.__FRAME_TOKEN__`.
+ * Talks to the Kubernetes API through the same-origin /api and /apis paths:
+ * in a deployed pod the frame-uiproxy sidecar serves them under the signed-in
+ * user's identity; for local development see docs/development.md.
  *
  * @example
  * ```ts
@@ -4354,8 +4354,9 @@ export interface FrameClientOptions {
 /**
  * Top-level Frame SDK client. Communicates directly with the Kubernetes API.
  *
- * Dev: run `kubectl proxy --port=8001` so Vite proxies /apis to the cluster.
- * Prod: set `window.__FRAME_TOKEN__` to a ServiceAccount Bearer token before mounting the app.
+ * Deployed: requests go through the frame-uiproxy sidecar (per-user identity).
+ * Local development: see docs/development.md.
+ * `window.__FRAME_TOKEN__` carries the authd session token (set and cleared by `auth.ts`).
  */
 export class FrameClient {
   public readonly nodes: NodeClient
