@@ -1,0 +1,7 @@
+[
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "reason": "picomatch ReDoS (single-branch repeated extglobs). No fixed release exists yet (picomatch 4.0.8 is not published). Build and test tooling only (vite via @tailwindcss/vite, vitest, typescript-eslint): the UI image serves compiled static assets and contains no node_modules.",
+    "expires": "2026-01-01"
+  }
+]
