@@ -113,6 +113,18 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 
+.PHONY: demo
+demo: ## Try Hearthrack without hardware: a throwaway Kind cluster with the whole stack (see hack/demo.sh)
+	./hack/demo.sh up
+
+.PHONY: demo-verify
+demo-verify: ## Check the demo install end to end (sign-in, read through the console); uses the one-shot admin token
+	./hack/demo.sh verify
+
+.PHONY: demo-down
+demo-down: ## Delete the demo cluster
+	./hack/demo.sh down
+
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e -timeout 30m ./test/e2e/ -v -ginkgo.v

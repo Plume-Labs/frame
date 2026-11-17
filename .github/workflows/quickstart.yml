@@ -1,0 +1,63 @@
+name: Quickstart
+
+# The demo path (`make demo`) is the first thing a newcomer runs. Without a CI
+# job it rots in two weeks, so this one runs it end to end on a Kind cluster:
+# build the images, install the operator, authd and the console, sign in as the
+# first admin and read a resource through the console.
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  quickstart:
+    name: Quickstart (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          install_only: true
+
+      - name: Bring the demo up
+        run: |
+          start=$(date +%s)
+          ./hack/demo.sh up
+          echo "demo up in $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify the install
+        run: ./hack/demo.sh verify
+
+      - name: Dump the cluster state on failure
+        if: failure()
+        run: |
+          # The demo cluster has its own kubeconfig (hack/demo.sh), not ~/.kube/config.
+          export KUBECONFIG="${XDG_STATE_HOME:-$HOME/.local/state}/hearthrack-demo/kubeconfig"
+          kubectl get pods -A || true
+          kubectl -n cluster-control describe pods || true
+          kubectl -n cluster-control logs deployment/cluster-control-auth --all-containers --tail=100 || true
+          kubectl -n cluster-control logs deployment/cluster-control-ui --all-containers --tail=100 || true
+          kubectl -n frame-system logs deployment/frame-controller-manager --tail=100 || true
+
+      - name: Tear down
+        if: always()
+        run: ./hack/demo.sh down || true
