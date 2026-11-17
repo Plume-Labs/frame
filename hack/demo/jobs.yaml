@@ -1,0 +1,41 @@
+# Three container jobs on the real FrameJob controller (batch/v1 Jobs on the
+# Kind workers): one that finishes, one that keeps running, one that fails.
+# Applied after the PriorityClasses exist (hack/demo.sh, seed_workloads).
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameJob
+metadata:
+  name: demo-nightly-report
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec:
+  serviceClass: LOW
+  priority: low
+  container:
+    image: busybox:1.37
+    command: ["sh", "-c", "echo building the nightly report; sleep 5; echo done"]
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameJob
+metadata:
+  name: demo-training-run
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec:
+  serviceClass: HIGH
+  priority: high
+  container:
+    image: busybox:1.37
+    command: ["sh", "-c", "while true; do echo training step; sleep 10; done"]
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameJob
+metadata:
+  name: demo-flaky-etl
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec:
+  serviceClass: MEDIUM
+  priority: medium
+  container:
+    image: busybox:1.37
+    command: ["sh", "-c", "echo loading the source table; sleep 3; echo source unreachable >&2; exit 1"]

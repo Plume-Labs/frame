@@ -92,6 +92,12 @@ install_cert_manager() {
 
 install_operator() {
   log "Installing the operator (config/default)"
+  # The FrameJob controller watches Argo Workflows. Without that CRD its watch
+  # never syncs: the controller does not start (no FrameJob is ever reconciled)
+  # and, after the two-minute cache-sync timeout, the whole manager exits. The
+  # demo has no Argo, so it installs only the stand-in CRD the unit tests use
+  # (container jobs never create a Workflow; pipeline jobs would not run).
+  k apply -f internal/controller/frame/testdata/crds/argoproj.io_workflows.yaml
   # make deploy reads KUBECONFIG, exported above: it can only reach this cluster.
   make deploy DEPLOY_DEFAULT=1 IMG="$IMG_CONTROLLER"
   k -n frame-system rollout status deployment/frame-controller-manager --timeout=180s
@@ -125,6 +131,48 @@ seed() {
   echo "demo: the four demo nodes did not all reach Online:" >&2
   k -n frame-system get framenodes >&2 || true
   exit 1
+}
+
+# Jobs, volumes, alerts and the scheduling tiers: real objects of the kinds the
+# console already reads (hack/demo/*.yaml, all labelled hearthrack.demo/seeded),
+# so no screen is empty and nothing here is a console-side mock. Waits for the
+# end state it seeded, so `up` fails here rather than leaving a half-populated demo.
+seed_workloads() {
+  log "Seeding jobs, volumes and alerts"
+  k apply -f hack/demo/workloads.yaml
+  # A pod naming a PriorityClass that does not exist is rejected, so the
+  # operator must have reconciled the four tiers before any job is submitted.
+  for pc in frame-critical frame-high frame-medium frame-low; do
+    wait_for "PriorityClass $pc" k get priorityclass "$pc"
+  done
+  k apply -f hack/demo/jobs.yaml
+  k apply -f hack/demo/storage-alerts.yaml
+  wait_for "job demo-nightly-report Completed" job_phase demo-nightly-report Completed
+  wait_for "job demo-training-run Running" job_phase demo-training-run Running
+  wait_for "job demo-flaky-etl Failed" job_phase demo-flaky-etl Failed
+  wait_for "both demo volumes Bound" volumes_bound
+}
+
+# wait_for DESCRIPTION CMD...: retry CMD for up to two minutes.
+wait_for() {
+  local what="$1"
+  shift
+  for _ in $(seq 1 60); do
+    "$@" >/dev/null 2>&1 && return
+    sleep 2
+  done
+  echo "demo: timed out waiting for ${what}:" >&2
+  k -n frame-system get framejobs >&2 || true
+  k -n demo-workloads get pvc,pods >&2 || true
+  exit 1
+}
+
+job_phase() {
+  [ "$(k -n frame-system get framejob "$1" -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}')" = "$2" ]
+}
+
+volumes_bound() {
+  [ "$(k -n demo-workloads get pvc -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -c '^Bound$')" = "2" ]
 }
 
 # Single replica and the demo image tags, on a copy: the manifests in
@@ -243,7 +291,15 @@ verify() {
   [ "$code" = "200" ] || { echo "demo: reading FrameNodes through the console answered HTTP $code" >&2; cat "$STATE_DIR/framenodes.json" >&2; exit 1; }
   grep -q '"kind": *"FrameNodeList"' "$STATE_DIR/framenodes.json" || { echo "demo: unexpected answer from the console" >&2; exit 1; }
   [ "$(grep -o '"rack": *"rack-[ab]"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] && [ "$(grep -o '"reason": *"Online"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] || { echo "demo: the console does not list the four demo nodes, classified and Online" >&2; exit 1; }
-  echo "OK: signed in as ${ADMIN_EMAIL} and read the four demo FrameNodes through the console."
+  # The screens' own data path: the seeded jobs and alerts come back through
+  # the console proxy too, not only through kubectl.
+  for kind in framejobs:3 framealerts:3; do
+    code="$(curl -sS -o "$STATE_DIR/${kind%%:*}.json" -w '%{http_code}' \
+      -H "Authorization: Bearer $jwt" "$base/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/${kind%%:*}")"
+    [ "$code" = "200" ] || { echo "demo: reading ${kind%%:*} through the console answered HTTP $code" >&2; exit 1; }
+    [ "$(grep -o '"hearthrack.demo/seeded": *"true"' "$STATE_DIR/${kind%%:*}.json" | wc -l)" = "${kind##*:}" ] || { echo "demo: the console does not list the ${kind##*:} seeded ${kind%%:*}" >&2; exit 1; }
+  done
+  echo "OK: signed in as ${ADMIN_EMAIL}; read the four demo FrameNodes, three jobs and three alerts through the console."
 }
 
 up() {
@@ -254,6 +310,7 @@ up() {
   install_cert_manager
   install_operator
   seed
+  seed_workloads
   install_console
   port_forward
   local shown

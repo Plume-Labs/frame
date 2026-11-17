@@ -1,0 +1,42 @@
+# Demo workloads for `make demo` (hack/demo.sh): real objects of the kinds the
+# console already reads, not a mock and not new API. Every one carries
+# `hearthrack.demo/seeded: "true"` (label, or annotation where the kind's
+# labels are the operator's) so `kubectl get -A -l hearthrack.demo/seeded`
+# lists exactly what the demo put there.
+#
+# Fictional data only. Nothing here points at hardware.
+
+# --- Scheduling: the four frame-* tiers. A FrameJob names a PriorityClass and
+# a pod naming one that does not exist is rejected, so the operator has to
+# reconcile these before any job is submitted (see docs/roadmap.md, F10).
+apiVersion: frame.plume-labs.io/v1beta1
+kind: SchedulingPolicy
+metadata:
+  name: demo-critical
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec: {scheduler: default, priorityClass: frame-critical, priorityValue: 1000000, preemption: true}
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: SchedulingPolicy
+metadata:
+  name: demo-high
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec: {scheduler: default, priorityClass: frame-high, priorityValue: 100000, preemption: true}
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: SchedulingPolicy
+metadata:
+  name: demo-medium
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec: {scheduler: default, priorityClass: frame-medium, priorityValue: 10000}
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: SchedulingPolicy
+metadata:
+  name: demo-low
+  namespace: frame-system
+  labels: {hearthrack.demo/seeded: "true"}
+spec: {scheduler: default, priorityClass: frame-low, priorityValue: 1000}
