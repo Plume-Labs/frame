@@ -151,7 +151,8 @@ port_forward() {
   local pid=""
   [ -f "$STATE_DIR/port-forward.pid" ] && pid="$(cat "$STATE_DIR/port-forward.pid")"
   if ours "$pid"; then return; fi
-  k -n cluster-control port-forward --address 127.0.0.1 svc/cluster-control-ui "${PORT}:80" >"$STATE_DIR/port-forward.log" 2>&1 &
+  # kubectl itself, not the k() wrapper: $! must be the port-forward process.
+  kubectl -n cluster-control port-forward --address 127.0.0.1 svc/cluster-control-ui "${PORT}:80" >"$STATE_DIR/port-forward.log" 2>&1 &
   pid=$!
   echo "$pid" >"$STATE_DIR/port-forward.pid"
   for _ in $(seq 1 30); do
