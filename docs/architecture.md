@@ -8,7 +8,7 @@ Hearthrack is three cooperating layers in one repo.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                     Hearthrack Control Plane                  │
+│                   Hearthrack Control Plane                    │
 │                                                          │
 │   React UI (src/)          TypeScript SDK (frame-sdk.ts) │
 │        │                          │                      │
@@ -40,7 +40,7 @@ Hearthrack is three cooperating layers in one repo.
 └──────────────────────┬───────────────────────────────────┘
                        │  controller-runtime watches
 ┌──────────────────────▼───────────────────────────────────┐
-│              Hearthrack Operator (internal/)                  │
+│            Hearthrack Operator (internal/)                    │
 │                                                          │
 │  FrameJob controller  → Argo Workflow                    │
 │  FrameNode controller → core v1.Node watch               │

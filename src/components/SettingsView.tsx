@@ -302,7 +302,7 @@ export function SettingsView() {
           <AlertDialogHeader>
             <AlertDialogTitle>Restore compiled defaults?</AlertDialogTitle>
             <AlertDialogDescription>
-              Replaces the form with the values Frame ships with. Nothing is written until you press
+              Replaces the form with the values Hearthrack ships with. Nothing is written until you press
               Save, so the stored ConfigMap is untouched until then.
             </AlertDialogDescription>
           </AlertDialogHeader>

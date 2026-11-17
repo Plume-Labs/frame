@@ -7,12 +7,12 @@ person as the product name.
 
 ## What changed
 
-- README, documentation, `SECURITY.md`, and the texts the console shows to people.
+- README, documentation, `SECURITY.md`, and the product name in the texts the console shows to people (a few comments and API-side labels still say Frame).
 - The container images are published under their new names,
   `ghcr.io/plume-labs/hearthrack-{controller,ui,authd,uiproxy,provisiond,agent}`.
   Each image is **also** pushed under its former name, `ghcr.io/plume-labs/frame-<name>`
   (same tags, same digest), so a manifest that still pulls the old name keeps working.
-  The old names are deprecated and will stop receiving tags in a later release.
+  The old names are kept for the transition; when they stop being pushed is not decided yet.
 
 ## What stays `frame` (compatibility aliases)
 
@@ -31,4 +31,4 @@ needs its own migration plan and is not part of this change.
 ## Not done in the repository
 
 Renaming the GitHub repository and the organisation, and reserving domains, are
-settings an owner makes by hand. GitHub redirects the old repository URL.
+settings an owner makes by hand. Once the repository is renamed, GitHub redirects the old URL for as long as no new repository takes the old name.

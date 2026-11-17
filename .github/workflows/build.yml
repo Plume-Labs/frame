@@ -121,7 +121,7 @@ jobs:
   # ── 3. Build and push the container images ───────────────────────────────
   #
   # One image per Dockerfile, each under its own name:
-  # ghcr.io/<owner>/frame-<name>. This used to be a single leg building the
+  # ghcr.io/<owner>/hearthrack-<name> (and the former frame-<name>). This used to be a single leg building the
   # root Dockerfile -- the UI -- and pushing it as ghcr.io/<owner>/frame, the
   # bare repository name, while the operator the Helm chart installs
   # (Dockerfile.controller) and provisiond (Dockerfile.provisiond, also
@@ -189,8 +189,8 @@ jobs:
           #
           # The product is named Hearthrack. The second line keeps pushing the
           # former frame-<name> image, same tags and digest, so manifests that
-          # still pull it keep working (docs/naming.md). Drop it in a later
-          # release.
+          # still pull it keep working (docs/naming.md). When to drop it is
+          # a later decision.
           images: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/hearthrack-${{ matrix.name }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/frame-${{ matrix.name }}
@@ -222,7 +222,7 @@ jobs:
 
   # ── 4. Supply-chain scan: SBOM + vulnerabilities for all six images ──────
   #
-  # Frame builds six images, and the build job above pushes all six on main
+  # Hearthrack builds six images, and the build job above pushes all six on main
   # and on tags. Scanning covers the same six, because a CVE in the operator
   # is a CVE whether or not this workflow is what publishes it. The matrix names
   # each Dockerfile explicitly rather than deriving anything.
