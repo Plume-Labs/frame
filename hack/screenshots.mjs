@@ -62,9 +62,16 @@ for (const theme of ['light', 'dark']) {
     await page.goto(`${base}/${route}`)
     await page.reload()
     await page.evaluate((t) => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
-    if (text) await page.getByText(text).first().waitFor({ timeout: 30_000 })
-    await page.waitForLoadState('networkidle')
-    await page.waitForTimeout(1500) // charts and counters settle
+    if (text) {
+      try {
+        await page.getByText(text).first().waitFor({ timeout: 30_000 })
+      } catch (err) {
+        await page.screenshot({ path: join(outDir, `debug-${name}-${theme}.png`) })
+        throw err
+      }
+    }
+    // Not `networkidle`: the console polls the apiserver, so it never goes idle.
+    await page.waitForTimeout(4000) // first fetches, charts and counters settle
     const file = join(outDir, `${name}-${theme}.png`)
     await page.screenshot({ path: file })
     console.log(`wrote ${file}`)
