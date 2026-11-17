@@ -38,15 +38,13 @@ This is the standard dev loop: run the UI on your workstation, point it at a clu
 # 1. Install CRDs onto the cluster
 kubectl apply -k config/crd/bases
 
-# 2. Proxy the K8s API locally (keep this running)
-kubectl proxy --port=8001
-
-# 3. In another terminal, start the UI
+# 2. Follow the dev loop in docs/development.md: it needs the K8s API proxy
+#    AND authd reachable (the console sits behind a login gate), then:
 npm install
 npm run dev   # → http://localhost:5173
 ```
 
-Vite proxies all `/apis/*` requests to `localhost:8001`, so the UI reads and writes real `FrameJob`, `FrameNode`, and `SchedulingPolicy` CRs.
+Vite proxies `/api/*` and `/apis/*` to the local API proxy and `/auth/*` to authd, so the UI reads and writes real `FrameJob`, `FrameNode`, and `SchedulingPolicy` CRs. The full three-terminal loop, with its caveats, is in [development.md](development.md#dev-loop).
 
 To also run the operator locally:
 
@@ -123,7 +121,7 @@ kustomize build deploy/kubernetes/overlays/development | kubectl apply -f -
 → CRDs not installed. Run `kubectl apply -k config/crd/bases`.
 
 **UI shows "degraded" status**
-→ `kubectl proxy` not running, or UI not pointed at the cluster. Restart `kubectl proxy --port=8001`.
+→ The API proxy or authd is not reachable from the dev server. Re-check both terminals of the [dev loop](development.md#dev-loop).
 
 **Webhook errors on CR apply**
 → cert-manager not installed or not ready. Check `kubectl -n cert-manager get pods`.
