@@ -98,7 +98,7 @@ export function InviteAcceptView({
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Cpu className="text-primary" weight="bold" />
-            FRAME
+            HEARTHRACK
           </CardTitle>
           {!finished && (
             <p className="text-xs text-muted-foreground">

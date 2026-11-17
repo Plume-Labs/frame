@@ -67,7 +67,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Cpu className="text-primary" weight="bold" />
-            FRAME
+            HEARTHRACK
           </CardTitle>
           <p className="text-xs text-muted-foreground">Sign in to continue.</p>
         </CardHeader>

@@ -1,7 +1,8 @@
-import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavigationContext } from '@/hooks/useNavigation'
 import { currentSession, ensureToken, identityFromToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
 import { inviteTokenFromLocation } from '@/lib/accounts'
+import { formatRoute, parseRoute } from '@/lib/route'
 import { loadConfig } from '@/lib/frame-config'
 
 import { PasskeysDialog } from '@/components/PasskeysDialog'
@@ -485,16 +486,55 @@ function App() {
   // whichever notices first (whole-branch review, I1).
   useEffect(() => onSessionLost(() => setSessionState({ phase: 'signed-out' })), [])
 
-  const [screen, setScreen] = useState('overview')
-  // Set when a navigation targets a specific tab; consumed by the Tabs below so
-  // "3 nodes not ready" can land on Nodes › Fleet rather than Nodes' first tab.
-  const [pendingTab, setPendingTab] = useState<string | undefined>(undefined)
+  // The location is kept in the URL fragment (`#/nodes/fleet`), so a reload, a
+  // pasted link and the back button land where the user was. Read once here,
+  // before sign-in, so a deep link survives the login screen.
+  const [initialRoute] = useState(() => parseRoute(globalThis.location.hash, (id) => id in NAV_INDEX))
+  const [screen, setScreen] = useState(initialRoute?.screen ?? 'overview')
+  // The selected tab of the active screen. Set by a navigation that targets a
+  // tab ("3 nodes not ready" lands on Nodes › Fleet) and by the strip itself.
+  const [pendingTab, setPendingTab] = useState<string | undefined>(initialRoute?.tab)
 
   const navigate = useCallback((next: string, tab?: string) => {
     setScreen(next)
     setPendingTab(tab)
   }, [])
   const [passkeysOpen, setPasskeysOpen] = useState(false)
+
+  // State → URL. Only once signed in, and never on the invitation page, whose
+  // fragment is a one-shot credential. The first write replaces the entry (no
+  // phantom "back" to an empty hash); later ones push, so back works.
+  const signedIn = sessionState.phase === 'signed-in'
+  const wroteRoute = useRef(false)
+  useEffect(() => {
+    if (!signedIn || globalThis.location.pathname === '/invite') return
+    const known = NAV_INDEX[screen]
+    const tab = known?.tabs.some((t) => t.id === pendingTab) ? pendingTab : undefined
+    const next = formatRoute(known ? screen : 'overview', tab)
+    if (globalThis.location.hash === next) {
+      wroteRoute.current = true
+      return
+    }
+    if (wroteRoute.current) globalThis.history.pushState(null, '', next)
+    else globalThis.history.replaceState(null, '', next)
+    wroteRoute.current = true
+  }, [signedIn, screen, pendingTab])
+
+  // URL → state: back, forward, or an edited fragment.
+  useEffect(() => {
+    const onHashChange = () => {
+      const route = parseRoute(globalThis.location.hash, (id) => id in NAV_INDEX)
+      if (!route) return
+      setScreen(route.screen)
+      setPendingTab(route.tab)
+    }
+    globalThis.addEventListener('hashchange', onHashChange)
+    globalThis.addEventListener('popstate', onHashChange)
+    return () => {
+      globalThis.removeEventListener('hashchange', onHashChange)
+      globalThis.removeEventListener('popstate', onHashChange)
+    }
+  }, [])
 
   // The nav gate is a courtesy, not a control: the token is decoded, not
   // verified (see identityFromToken), and every write the screen makes is
@@ -560,7 +600,9 @@ function App() {
     )
   }
 
-  const active = NAV_INDEX[screen] ?? NAV_INDEX['overview']
+  // A deep link to Accounts by a non-admin falls back to Overview rather than
+  // a blank screen (the authorization itself is server-side).
+  const active = (screen === 'accounts' && !admin ? undefined : NAV_INDEX[screen]) ?? NAV_INDEX['overview']
 
   // Only the active tab of the active screen is mounted. Radix keeps inactive
   // TabsContent unmounted, so this holds at both levels.
@@ -679,14 +721,12 @@ function App() {
     if (active.tabs.length === 1) return renderTab(active.tabs[0].id)
 
     return (
-      // key includes pendingTab so a navigation that names a tab re-mounts the
-      // strip onto it; without that the uncontrolled defaultValue is ignored on
-      // a screen that is already open.
+      // Controlled, so the selected tab can live in the URL. A tab the screen
+      // does not have (a stale link) falls back to its first one.
       <Tabs
-        key={`${active.id}:${pendingTab ?? ''}`}
-        defaultValue={
-          pendingTab && active.tabs.some((t) => t.id === pendingTab) ? pendingTab : active.tabs[0].id
-        }
+        key={active.id}
+        value={pendingTab && active.tabs.some((t) => t.id === pendingTab) ? pendingTab : active.tabs[0].id}
+        onValueChange={setPendingTab}
         className="gap-4"
       >
         <TabsList className="flex-wrap h-auto">
@@ -713,9 +753,9 @@ function App() {
           <div className="flex items-center gap-2 px-2 py-1.5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
             <Cpu size={22} className="text-primary shrink-0" weight="bold" />
             <div className="group-data-[collapsible=icon]:hidden min-w-0">
-              <div className="font-mono font-bold text-primary leading-tight tracking-tight">FRAME</div>
+              <div className="font-mono font-bold text-primary leading-tight tracking-tight">HEARTHRACK</div>
               <div className="text-[10px] text-muted-foreground leading-tight truncate">
-                Mainframe Framework for Kubernetes
+                Kubernetes for AI &amp; HPC.
               </div>
             </div>
           </div>
