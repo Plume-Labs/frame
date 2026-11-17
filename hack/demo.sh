@@ -22,7 +22,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 CLUSTER="${DEMO_CLUSTER:-hearthrack-demo}"
-PORT="${DEMO_PORT:-8080}"
+PORT="${DEMO_PORT:-18080}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.20.2}" # keep in step with test/utils/utils.go
 KIND="${KIND:-kind}"
 ADMIN_EMAIL="${DEMO_ADMIN_EMAIL:-admin@example.com}"
