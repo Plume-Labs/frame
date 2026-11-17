@@ -263,12 +263,12 @@ vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
 # attacker-reachable input (the Spec a build request carries) inside a
 # non-distroless base, which is its own reason not to be left out either.
 .PHONY: docker-images
-docker-images: docker-build docker-build-ui docker-build-authd docker-build-uiproxy docker-build-provisiond ## Build all five images (controller, UI, authd, uiproxy, provisiond).
+docker-images: docker-build docker-build-ui docker-build-authd docker-build-uiproxy docker-build-provisiond docker-build-agent ## Build all six images (controller, UI, authd, uiproxy, provisiond, agent).
 
 .PHONY: sbom
 sbom: syft docker-images ## Write a CycloneDX SBOM for each image to dist/.
 	@mkdir -p dist
-	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)"; do \
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)" "agent:$(IMG_AGENT)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "SBOM for $${name} ($${image})"; \
 		"$(SYFT)" scan "$(CONTAINER_TOOL):$${image}" -o cyclonedx-json="dist/sbom-$${name}.cyclonedx.json"; \
@@ -287,8 +287,8 @@ sbom: syft docker-images ## Write a CycloneDX SBOM for each image to dist/.
 # here first. Divergence between the two would make this target worse than
 # useless: it would say "clean" about a build CI is about to reject.
 .PHONY: scan
-scan: docker-images ## Scan all five images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
-	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)"; do \
+scan: docker-images ## Scan all six images for CRITICAL/HIGH vulnerabilities (fails on anything outside .trivyignore).
+	@for pair in "controller:$(IMG)" "ui:$(IMG_UI)" "authd:$(IMG_AUTHD)" "uiproxy:$(IMG_UIPROXY)" "provisiond:$(IMG_PROVISIOND)" "agent:$(IMG_AGENT)"; do \
 		name="$${pair%%:*}"; image="$${pair#*:}"; \
 		echo "=== $${name} ($${image}) ==="; \
 		$(CONTAINER_TOOL) run --rm \

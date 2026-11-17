@@ -129,9 +129,13 @@ jobs:
   # published the one image the chart does not use, under the name a reader
   # would take for the operator.
   #
-  # The legs are the same five as the scan matrix below, which is what the
+  # The legs are the same six as the scan matrix below, which is what the
   # release job gates on: an image is pushed only if it is also scanned.
-  # Dockerfile.agent (the node-tuning DaemonSet) is in neither yet.
+  # Dockerfile.agent (the node-tuning DaemonSet) joined both matrices with the
+  # chart publication, so every Dockerfile in the repository is published. The
+  # production overlay's manifest still names some of them without newName or
+  # newTag (docs/publication-chart-et-image.md, section 1): that is a manifest
+  # gap, not a missing image.
   #
   # Tags: {{version}} is the semver without the leading v (1.0.0), which is
   # what the chart's image.tag defaults to (.Chart.AppVersion).
@@ -156,6 +160,8 @@ jobs:
             dockerfile: Dockerfile.uiproxy
           - name: provisiond
             dockerfile: Dockerfile.provisiond
+          - name: agent
+            dockerfile: Dockerfile.agent
 
     steps:
       - name: Clone the code
@@ -197,7 +203,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Scoped per image: the legs share one GitHub Actions cache, and an
-          # unscoped mode=max export from five different Dockerfiles would
+          # unscoped mode=max export from six different Dockerfiles would
           # have them evict each other's layers.
           cache-from: type=gha,scope=build-${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=build-${{ matrix.name }}
@@ -207,11 +213,11 @@ jobs:
           sbom: true
           provenance: mode=max
 
-  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all five images ─────
+  # ── 4. Supply-chain scan: SBOM + vulnerabilities for all six images ──────
   #
-  # Frame builds five images, and only one of them is pushed by this workflow
-  # today. Scanning still covers all five, because a CVE in the operator is a
-  # CVE whether or not this workflow is what publishes it. The matrix names
+  # Frame builds six images, and the build job above pushes all six on main
+  # and on tags. Scanning covers the same six, because a CVE in the operator
+  # is a CVE whether or not this workflow is what publishes it. The matrix names
   # each Dockerfile explicitly rather than deriving anything.
   #
   # The previous version of this comment claimed a fourth image "cannot be
@@ -226,7 +232,7 @@ jobs:
   # non-distroless image in the fleet, running xorriso against input a
   # BMC-adjacent network can influence. If a sixth Dockerfile appears, add it
   # here; `make docker-images` and `make scan` are the local equivalents and
-  # they do list all five.
+  # they list all six.
   scan:
     name: Scan (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -252,6 +258,8 @@ jobs:
             dockerfile: Dockerfile.uiproxy
           - name: provisiond
             dockerfile: Dockerfile.provisiond
+          - name: agent
+            dockerfile: Dockerfile.agent
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -442,7 +450,58 @@ jobs:
           echo "Smoke test failed: service did not become reachable" >&2
           exit 1
 
-  # ── 6. Create a versioned release package on tags ─────────────────────────
+  # ── 6. Publish the Helm chart as an OCI artifact on tags ──────────────────
+  #
+  # oci://ghcr.io/<owner>/charts/frame, next to the images (see
+  # docs/publication-chart-et-image.md for why OCI rather than a gh-pages
+  # index). The chart version and appVersion are taken from the tag, so
+  # `helm install` of a published chart defaults image.tag to a version that
+  # exists; Chart.yaml in the tree keeps its own value for development.
+  #
+  # Same gate as the release job: images built, kind integration green, scan
+  # clean. The package is private on first push; making it public is a
+  # one-time setting for an organisation owner (docs/publication-chart-et-image.md,
+  # section 3), not something a workflow can do.
+  chart:
+    name: Publish chart
+    runs-on: ubuntu-latest
+    needs: [build, integration, scan]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1 # same as lint.yml
+
+      # REF_NAME and the others go through env, never straight into the shell:
+      # a git tag may contain characters a shell would evaluate. The pattern
+      # below also refuses anything that is not a semver tag.
+      - name: Package and push
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${REF_NAME#v}"
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Tag ${REF_NAME} is not a semver version; refusing to publish a chart." >&2
+            exit 1
+          fi
+          helm package charts/frame --version "${version}" --app-version "${version}"
+          echo "${TOKEN}" | helm registry login ghcr.io --username "${ACTOR}" --password-stdin
+          # OCI registries want a lowercase repository; the owner is Plume-Labs.
+          helm push "frame-${version}.tgz" "oci://ghcr.io/${OWNER,,}/charts"
+
+  # ── 7. Create a versioned release package on tags ─────────────────────────
   release:
     name: Release
     runs-on: ubuntu-latest

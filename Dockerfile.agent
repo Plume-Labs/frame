@@ -40,7 +40,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 
 FROM debian:13-slim
 
+# apt-get upgrade, as Dockerfile.provisiond does: the debian:13-slim tag can lag
+# a fixed package (zlib1g CVE-2026-85091 failed the Trivy gate on first scan).
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends smartmontools \
     && rm -rf /var/lib/apt/lists/* /usr/sbin/smartd /usr/sbin/update-smart-drivedb \
         /etc/init.d/smartmontools /etc/smartmontools

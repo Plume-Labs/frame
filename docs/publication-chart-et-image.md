@@ -53,15 +53,19 @@ Le job `Build` devient une matrice sur les cinq Dockerfiles que le job `scan`
 contrôle déjà (et dont dépend `Release`) : il pousse
 `ghcr.io/plume-labs/frame-{controller,ui,authd,uiproxy,provisiond}` avec les
 mêmes tags (`{{version}}` = `1.0.0`, `{{major}}.{{minor}}`, `sha-…`, branche).
-`Dockerfile.agent` n'est ni scanné ni poussé : l'ajouter au scan d'abord, puis
-au build. Vérifié avec `actionlint`, jamais lancé : il ne publie que depuis
-GitHub.
+`Dockerfile.agent` a rejoint la matrice de build et de scan avec la publication
+du chart : six images, `ghcr.io/plume-labs/frame-{controller,ui,authd,uiproxy,provisiond,agent}`.
+Un job `Publish chart` (sur tag `v*`, mêmes garde-fous que `Release`) empaquette
+`charts/frame` avec la version du tag (`--version` et `--app-version`, tag
+semver exigé) et le pousse sur `oci://ghcr.io/plume-labs/charts`. Le workflow
+n'a pas encore tourné sur un vrai tag : le packaging a été vérifié en local
+(helm 4.3.1), pas le push.
 
 ## 2. Conventions proposées
 
 - Images : `ghcr.io/plume-labs/frame-<nom>:<version sans v>`.
-- Chart : OCI, `oci://ghcr.io/plume-labs/charts/frame`, version = `version` de
-  `Chart.yaml`.
+- Chart : OCI, `oci://ghcr.io/plume-labs/charts/frame`, version = le tag sans `v` (la CI
+  passe `--version` et `--app-version` ; `Chart.yaml` n'est pas modifié).
 
 Pourquoi un chart OCI sur GHCR plutôt qu'un dépôt Helm classique (`index.yaml`
 sur GitHub Pages, chart-releaser) :
@@ -72,7 +76,7 @@ sur GitHub Pages, chart-releaser) :
   régénérer et un workflow détenant `contents: write`, précisément le droit que
   `build.yml` réduit au job `Release`.
 - **Natif dans Helm** depuis 3.8 (`helm push`, `helm install oci://…`) ; la CI
-  utilise Helm v4.2.3.
+  utilise Helm v4.3.1.
 - **Adressable par digest** : une version poussée ne se réécrit pas en silence,
   alors qu'un `index.yaml` peut pointer ailleurs du jour au lendemain.
 - `charts/` dans le chemin sépare le chart de l'image qui porterait sinon le même
@@ -131,27 +135,29 @@ git push origin main
 
 Attendre que les quatre workflows (`Lint`, `Tests`, `E2E Tests`,
 `CI/CD Pipeline`) soient verts sur ce commit. Sur `main`, le job `Build` pousse
-déjà les cinq images aux tags `main` et `sha-…` : c'est la première preuve que
+déjà les six images aux tags `main` et `sha-…` : c'est la première preuve que
 le correctif fonctionne, avant qu'un tag de version ne soit en jeu.
 
-### Étape 2 — Pousser le tag : la CI publie les cinq images (humain)
+### Étape 2 — Pousser le tag : la CI publie les six images et le chart (humain)
 
 ```bash
 git push origin v1.0.0
 ```
 
 Déclenche `build.yml` : `Build` pousse
-`ghcr.io/plume-labs/frame-{controller,ui,authd,uiproxy,provisiond}:1.0.0`
-(et `:1.0`, `:sha-…`), puis `Release` crée la release GitHub si `build`,
+`ghcr.io/plume-labs/frame-{controller,ui,authd,uiproxy,provisiond,agent}:1.0.0`
+(et `:1.0`, `:sha-…`), `Publish chart` pousse `oci://ghcr.io/plume-labs/charts/frame`,
+puis `Release` crée la release GitHub si `build`,
 `integration` et `scan` sont tous verts. Un job amont rouge fait **sauter
-`Release` sans erreur visible** : vérifier son état.
+`Release` et `Publish chart` sans erreur visible** : vérifier leur état.
 
 Contrôle :
 
 ```bash
-for n in controller ui authd uiproxy provisiond; do
+for n in controller ui authd uiproxy provisiond agent; do
   skopeo inspect --format '{{.Name}}:{{.Digest}}' docker://ghcr.io/plume-labs/frame-$n:$VERSION
 done
+helm show chart oci://ghcr.io/plume-labs/charts/frame --version $VERSION
 ```
 
 ### Étape 2 bis — Si la CI ne peut pas publier : pousser à la main (humain)
@@ -174,14 +180,18 @@ Un push manuel ne porte pas le label `org.opencontainers.image.source` que
 (Package settings → *Connect repository*), sinon il n'hérite pas de ses droits.
 Aucun scan Trivy ne précède ce chemin : lancer `make scan` avant de pousser.
 
-### Étape 2 ter — L'image agent (humain, hors CI)
+### Étape 2 ter — L'image agent
 
-Ni scannée ni poussée par la CI. Si l'installation kustomize doit la tirer d'un
-registre :
+Poussée et scannée par la CI comme les cinq autres. Chemin de secours à la
+main, seulement si la CI ne peut pas publier :
 
 ```bash
 make docker-build-agent docker-push-agent CONTAINER_TOOL=podman IMG_AGENT=ghcr.io/plume-labs/frame-agent:$VERSION
 ```
+
+L'agent est la seconde image non distroless (`debian:13-slim`) et n'a jamais
+été scannée : lancer `make scan` avant de poser le tag, car un CVE HIGH corrigé
+en amont ferait sauter `Release` et `Publish chart`.
 
 ### Étape 3 — Rendre les packages publics (propriétaire de l'organisation)
 
@@ -191,8 +201,8 @@ Irréversible sans supprimer le package : décider avant.
 
 ### Étape 4 — Publier le chart (humain)
 
-Aucun mécanisme n'existe dans le dépôt (pas de job, pas de cible `make`) ;
-c'est une commande manuelle.
+La CI le publie sur tag (job `Publish chart`) ; ce qui suit est le chemin de
+secours manuel, si ce job échoue ou n'a pas pu tourner.
 
 ```bash
 git switch --detach v$VERSION
@@ -234,6 +244,11 @@ Si `Release` a tourné, y joindre le chart ; sinon la créer. Voir
 pour les commandes `gh release upload/edit/create`.
 
 ## 5. Ce qui reste non prouvé
+
+- Le job `Publish chart` n'a jamais tourné (il ne s'exécute que sur tag) : le
+  packaging a été vérifié en local, pas le login ni le push OCI. Le package
+  est privé à sa première publication.
+- `Dockerfile.agent` n'a jamais été scanné par Trivy.
 
 - Le job `Build` matriciel n'a jamais tourné : il ne s'exécute que sur GitHub.
   La première exécution sur `main` (étape 1) le prouve, sans tag en jeu.
