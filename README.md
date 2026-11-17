@@ -5,7 +5,7 @@ You need big hardware to run big workloads with unified approach like mainframe 
 Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-like computing platform:
 nine CRDs across two API groups — the eight frozen at `v1beta1` with `v1alpha1` still served and deprecated, plus `NodeTuning` added after the freeze — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
 
-> **Status: pre-release, heading for a public beta.** There is no tagged release yet and the API is still `v1beta1`. See [known limitations](docs/known-limitations.md) for what has and has not been proven.
+> **Status: pre-release.** There is no tagged release yet and the API is still `v1beta1`. See [known limitations](docs/known-limitations.md) for what has and has not been proven.
 
 > ⚠️ **Security notice.** Frame holds real authority over the cluster it manages, and its node-tuning agent runs as root-equivalent on every node. Do **not** expose the console to the Internet, and try Frame on a disposable cluster before anything that matters. Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 

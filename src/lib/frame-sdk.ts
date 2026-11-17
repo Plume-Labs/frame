@@ -4356,7 +4356,7 @@ export interface FrameClientOptions {
  *
  * Deployed: requests go through the frame-uiproxy sidecar (per-user identity).
  * Local development: see docs/development.md.
- * `window.__FRAME_TOKEN__` still lets an embedder supply a Bearer token directly.
+ * `window.__FRAME_TOKEN__` carries the authd session token (set and cleared by `auth.ts`).
  */
 export class FrameClient {
   public readonly nodes: NodeClient
