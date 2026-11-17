@@ -47,7 +47,7 @@ it has no controller.
 
 ### No top-level `status.phase`
 
-No Frame kind has a top-level one. Health is reported through
+No Hearthrack kind has a top-level one. Health is reported through
 `status.conditions`, and every kind with a controller writes a `Ready`
 condition — with two exceptions, recorded below, and they are exceptions for
 two different reasons.
@@ -56,7 +56,7 @@ This is a rule, not a drift. A single enum forces the API to pick one
 dimension of health out of several and cannot express "provisioned but
 degraded", which is why the Kubernetes API conventions have called `phase`
 strongly discouraged for new APIs since 2019. **Do not add a `status.phase`
-field to a Frame kind.** If a lifecycle needs more than `Ready`, add a second
+field to a Hearthrack kind.** If a lifecycle needs more than `Ready`, add a second
 condition type and document its reason vocabulary here.
 
 **NodeTuning is the exception, and it is a partial one.** It has no top-level
@@ -138,7 +138,7 @@ branch on it:
 
 ## FrameNode
 
-How Frame classifies one Kubernetes `v1.Node`: role, rack, zone, service
+How Hearthrack classifies one Kubernetes `v1.Node`: role, rack, zone, service
 class and RDMA, projected onto the node as labels. It does not install
 anything — installing a machine is `FrameInstall`'s job, and the hardware
 itself is a `FrameMachine`. (Until 2026-09-27 FrameNode also carried a Talos
@@ -178,7 +178,7 @@ it back to its FrameNode (`nodeToFrameNode`) to keep the `Ready` condition and
 versions in sync. It branches on the `Ready` condition's `reason` directly,
 not on the `v1alpha1` projection.
 
-### Node labels Frame writes
+### Node labels Hearthrack writes
 
 The FrameNode controller projects five labels onto the corresponding
 `corev1.Node`, and strips them when the FrameNode is deleted. **These are
@@ -198,7 +198,7 @@ and there is no separate "explicitly empty" state.
 
 `rack` lives under `frame.plume-labs.io/`, not `topology.kubernetes.io/`.
 The well-known keys in the `kubernetes.io` namespace are `zone` and `region`;
-`rack` is not one of them and that prefix is reserved for upstream use. Frame
+`rack` is not one of them and that prefix is reserved for upstream use. Hearthrack
 wrote `topology.kubernetes.io/rack` before `v1beta1`; the controller removes
 that key on every reconcile so an existing node relabels itself.
 
@@ -218,7 +218,7 @@ A workload submitted to the cluster, realized as an Argo `Workflow`.
 (critical/high/medium/low, default `medium`), `gpuCount` (0–1024, default 0),
 `parameters` (map, at most 64 keys, each value at most 1024 characters),
 `suspended` (bool, default false). `pipeline` stays an open string — it names
-an Argo `WorkflowTemplate` Frame does not own — but carries DNS-subdomain
+an Argo `WorkflowTemplate` Hearthrack does not own — but carries DNS-subdomain
 form bounds (253 characters, `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.…)*$`) so a
 malformed value is refused at admission. `serviceClass` and `priority` now
 default in the schema as well as in the defaulting webhook, which means the
@@ -245,8 +245,8 @@ the v1beta1 freeze (F8) rather than repaired, because it coupled two
 orthogonal properties: how much hardware a job wants and how preemptible
 it is. `validateFrameJob` today only warns, never rejects: it returns a
 warning when `pipeline` is outside `knownPipelines`, on the grounds that
-`pipeline` names an Argo `WorkflowTemplate` Frame does not own, so
-enumerating other people's templates isn't Frame's business. See
+`pipeline` names an Argo `WorkflowTemplate` Hearthrack does not own, so
+enumerating other people's templates isn't Hearthrack's business. See
 `docs/roadmap.md` and
 `docs/superpowers/specs/2026-08-09-frame-api-freeze-inventory.md`.
 
@@ -593,13 +593,13 @@ object means the defaults below.
 |---|---|---|---|
 | `spec.zfsCapacityPercent` | integer, 1–100 | 80 | Raises `StorageCapacityHigh`; clears two points below. |
 | `spec.ssdWearPercent` | integer, 1–100 | 80 | Raises `DiskWearHigh`. |
-| `spec.scrub.nodeSelector` | label selector | none | Nodes whose ZFS pools Frame scrubs. Nil matches none. |
+| `spec.scrub.nodeSelector` | label selector | none | Nodes whose ZFS pools Hearthrack scrubs. Nil matches none. |
 | `spec.scrub.intervalDays` | integer, 1–365 | 30 | Time between two completed scrubs of a node. |
 | `spec.scrub.windowStart` | `HH:MM` | `02:00` | From when a scrub may start, in `timeZone`. |
 | `spec.scrub.windowHours` | integer, 1–24 | 4 | How long the start window stays open. |
 | `spec.scrub.timeZone` | IANA name | `UTC` | The zone `windowStart` is read in. Not `Local`: that is the controller container's zone. |
 
-`spec.scrub` absent means Frame starts no scrub. The scrub is planned by its
+`spec.scrub` absent means Hearthrack starts no scrub. The scrub is planned by its
 own controller (`zfsscrub`), one node at a time — see
 [storage.md](storage.md#planned-zfs-scrubs). Writing this object is what makes
 every selected node read its disks for hours: the `editor` role decides it.
@@ -841,7 +841,7 @@ the `frame-high`/`frame-medium`/`frame-low` PriorityClasses that
 `SchedulingPolicy`'s controller creates. There is no `spec.priority` on a
 FrameService and no `spec.priorityClassName`: a long-lived instance's tier is
 its urgency, and letting a user name an arbitrary PriorityClass would break
-the invariant that Frame owns placement. If a HIGH-tier instance ever needs
+the invariant that Hearthrack owns placement. If a HIGH-tier instance ever needs
 to be evicted before a MEDIUM one, that is a `v1beta2` problem (F10).
 
 This mapping only *names* a PriorityClass — it does not create one. Unless a
@@ -969,7 +969,7 @@ instance's model cache.
 | `reasoningBudget` | no | `--reasoning-budget`: tokens, `-1` no limit, `0` none. |
 | `reasoningBudgetMessage` | no | `--reasoning-budget-message`. Needs `reasoningBudget`. |
 
-An option left out adds no flag. The image is fixed per Frame release, by digest
+An option left out adds no flag. The image is fixed per Hearthrack release, by digest
 (`server-cuda-b11277`, the build served on a Tesla P4): moving it means checking the
 flags above on the new build, and restarts every instance. The manager creates the three defaults
 (`llama-3.1-8b-instruct`, `llama-3.1-70b-instruct`, `qwen2.5-7b-instruct`) when it
@@ -995,7 +995,7 @@ hold up its labels, or its deletion.
 ### The `postgres` provider (`internal/services/provider/postgres/`)
 
 A cluster of the [Zalando postgres-operator](https://github.com/zalando/postgres-operator),
-which must be installed: Frame writes the `postgresql` CR and the operator does
+which must be installed: Hearthrack writes the `postgresql` CR and the operator does
 the rest. The instance's name has the operator's form, `<team>-<cluster>`.
 
 | Parameter | Required | After creation | Meaning |
@@ -1028,7 +1028,7 @@ existing cluster this FrameService does not claim degrades with
 `ClusterNotOwned`, the message giving its UID. The label alone is not enough: the
 claim records the UID it was made on (`services.plume-labs.io/claimed-uid`), so a
 CR restored from a backup, which keeps both under a new UID, counts as unclaimed.
-Frame leaves it alone until `adoptUID` names it, and that pass compares
+Hearthrack leaves it alone until `adoptUID` names it, and that pass compares
 `instances`, `volumeSize` and `nodes` too, whichever way the cluster came.
 
 With `adoptUID` matching and no drift, including on `instances`, `volumeSize` and
@@ -1055,7 +1055,7 @@ the operator's Secret themselves. Other Ready reasons: `Provisioning`,
 
 ### The `cache` provider (`internal/services/provider/cache/`)
 
-One [Valkey](https://valkey.io) server, run by Frame as a single-replica
+One [Valkey](https://valkey.io) server, run by Hearthrack as a single-replica
 StatefulSet with a Service of the same name, placed by `serviceClass`. No
 operator: see [the design](superpowers/specs/2026-11-07-frameservice-cache-valkey-design.md).
 There is **no replica and no automatic failover**: the server is back when the
@@ -1081,7 +1081,7 @@ this FrameService does not control, or a `data-<name>-0` volume without the labe
 any write. This provider adopts nothing.
 
 **A queue that lost its volume says so.** One that has served and has no volume
-degrades with `InstanceLost` and starts nothing. Frame detects more than it can
+degrades with `InstanceLost` and starts nothing. Hearthrack detects more than it can
 prevent: with the StatefulSet still there and its pod gone, the StatefulSet
 controller makes a new empty claim under the same name and label on its own, and
 the server starts on it. So the volume's UID is recorded on the StatefulSet
@@ -1104,7 +1104,7 @@ a config file from that Secret: it is in no argument and no pod spec. The bindin
 carries `host`, `port`, `password` and `url` (`redis://:<password>@<host>:6379`).
 Both need `frame-manager-secret-writer` in the namespace; without it the instance
 degrades with `SecretAccessForbidden`. To rotate, delete that Secret or edit its
-`password`: Frame rewrites the config and restarts the server, within ten minutes
+`password`: Hearthrack rewrites the config and restarts the server, within ten minutes
 since it does not watch Secrets. A pod that restarts in between fails its probe
 until then. A Secret left with no `password` degrades with `AuthSecretInvalid`.
 
@@ -1115,8 +1115,8 @@ statefulset`. `replicas` is held at 1; other edits to the StatefulSet stay until
 the next change of settings. A claim not bound yet is not grown, and a growing
 volume does not hold `Ready` back. Other Ready reasons: `Provisioning`, `Running`.
 
-The image is fixed per Frame release (`valkey/valkey:9.1.3-alpine`): upgrading
-Frame across an image change restarts every instance.
+The image is fixed per Hearthrack release (`valkey/valkey:9.1.3-alpine`): upgrading
+Hearthrack across an image change restarts every instance.
 
 ## Webhooks
 

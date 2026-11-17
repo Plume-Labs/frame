@@ -136,7 +136,7 @@ function SerialApproval({
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmLabel}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {explain} Serial typed: <span className="font-mono">{typed}</span>. Frame checks it against the disk and
+              {explain} Serial typed: <span className="font-mono">{typed}</span>. Hearthrack checks it against the disk and
               does nothing if it does not match.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -149,7 +149,7 @@ function SerialApproval({
                 try {
                   await onApprove(typed)
                   setSerial('')
-                  toast.success('Approval sent; Frame checks the serial before acting.')
+                  toast.success('Approval sent; Hearthrack checks the serial before acting.')
                 } catch (e) {
                   toast.error(`Not sent: ${errText(e)}`)
                 } finally {
@@ -262,7 +262,7 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
               <AlertDialogDescription>
                 {acts.cancelUndoes
                   ? `Nothing is destroyed yet: osd.${r.osdID} is marked in again and Ceph moves its data back.`
-                  : `osd.${r.osdID} is already purged: nothing is undone. Frame stops here and says where things stand; finish by hand with the fiche.`}
+                  : `osd.${r.osdID} is already purged: nothing is undone. Hearthrack stops here and says where things stand; finish by hand with the fiche.`}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -290,7 +290,7 @@ function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          One OSD at a time. Frame checks Ceph, drains the OSD, then stops twice for you: before the purge and before it
+          One OSD at a time. Hearthrack checks Ceph, drains the OSD, then stops twice for you: before the purge and before it
           wipes the new disk. Each time you retype a serial read on a disk's label. Nothing irreversible happens without it.
         </p>
         {busyElsewhere && (
@@ -322,7 +322,7 @@ function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
             <AlertDialogHeader>
               <AlertDialogTitle>Start replacing osd.{osd.trim()}?</AlertDialogTitle>
               <AlertDialogDescription>
-                Frame runs the checks, then marks osd.{osd.trim()} out and waits for its data to move (about 15 minutes per
+                Hearthrack runs the checks, then marks osd.{osd.trim()} out and waits for its data to move (about 15 minutes per
                 500 GB). This part is undone by Cancel. It then waits for your first approval.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -334,7 +334,7 @@ function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
                     await frame.osdReplacements.create(Number(osd.trim()), serial)
                     setOsd('')
                     setSerial('')
-                    toast.success('Replacement created; Frame starts with the checks.')
+                    toast.success('Replacement created; Hearthrack starts with the checks.')
                   } catch (e) {
                     toast.error(`Not created: ${errText(e)}`)
                   }

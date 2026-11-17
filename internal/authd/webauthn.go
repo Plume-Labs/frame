@@ -97,7 +97,7 @@ func WithUserVerification(mode UserVerificationMode) AuthenticatorOption {
 
 func NewAuthenticator(rpID, rpOrigin string, store *Store, codec *ChallengeCodec, opts ...AuthenticatorOption) (*Authenticator, error) {
 	web, err := webauthn.New(&webauthn.Config{
-		RPDisplayName: "Frame Cluster Control",
+		RPDisplayName: "Hearthrack",
 		RPID:          rpID,
 		RPOrigins:     []string{rpOrigin},
 	})

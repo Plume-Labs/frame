@@ -103,7 +103,7 @@ import {
  * Navigation model.
  *
  * Two levels. The sidebar carries screens grouped by the question each answers —
- * what runs (Workloads), what Frame serves to it (Services: inference,
+ * what runs (Workloads), what Hearthrack serves to it (Services: inference,
  * databases, caches and queues, the FrameService providers), what it runs on
  * (Compute, node tuning included), what it consumes (Resources), and how it is
  * behaving (Operations). Administration holds who may do what and what was
@@ -116,7 +116,7 @@ import {
  *
  * The sidebar was 28 flat entries, most of them one-card panels (MPS, KSM, PTP,
  * burst buffer). Folding those into tabs keeps it short without hiding
- * anything. Panels that only said "Frame does not set this up" (speculative
+ * anything. Panels that only said "Hearthrack does not set this up" (speculative
  * decoding, pipeline parallelism) were dropped: a tab is for something to see.
  */
 /**
@@ -259,7 +259,7 @@ const NAV: NavGroup[] = [
         id: 'databases',
         label: 'Databases',
         icon: <Database />,
-        description: 'PostgreSQL clusters Frame provisions or has adopted',
+        description: 'PostgreSQL clusters Hearthrack provisions or has adopted',
         tabs: [{ id: 'databases', label: 'Databases' }],
       },
       {

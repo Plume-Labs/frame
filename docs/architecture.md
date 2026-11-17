@@ -1,6 +1,6 @@
 # Architecture
 
-Frame is three cooperating layers in one repo.
+Hearthrack is three cooperating layers in one repo.
 
 ---
 
@@ -8,7 +8,7 @@ Frame is three cooperating layers in one repo.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                     Frame Control Plane                  │
+│                   Hearthrack Control Plane                    │
 │                                                          │
 │   React UI (src/)          TypeScript SDK (frame-sdk.ts) │
 │        │                          │                      │
@@ -40,7 +40,7 @@ Frame is three cooperating layers in one repo.
 └──────────────────────┬───────────────────────────────────┘
                        │  controller-runtime watches
 ┌──────────────────────▼───────────────────────────────────┐
-│              Frame Operator (internal/)                  │
+│            Hearthrack Operator (internal/)                    │
 │                                                          │
 │  FrameJob controller  → Argo Workflow                    │
 │  FrameNode controller → core v1.Node watch               │
@@ -146,11 +146,11 @@ Everything needed to stand up the bare-metal cluster the operator runs on.
 
 ## Cluster topology constraints
 
-Frame is designed for a **single physical location**:
+Hearthrack is designed for a **single physical location**:
 
 - One or more racks in the same building (same L2 network segment for RDMA)
 - RDMA fabric (InfiniBand or RoCE) is a **local interconnect** — it does not traverse WAN or internet links
-- `zones` and `racks` in Frame are **failure-domain labels within the same site**, not geographic regions
+- `zones` and `racks` in Hearthrack are **failure-domain labels within the same site**, not geographic regions
 - Multi-site / multi-region federation is explicitly **out of scope** for this version
 
 ---

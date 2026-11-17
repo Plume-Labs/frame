@@ -1,6 +1,6 @@
 # API & SDK
 
-Frame exposes the Kubernetes CRD API directly — there is no intermediate REST server. All reads and writes go through the standard Kubernetes API at `/apis/frame.plume-labs.io/v1beta1/`.
+Hearthrack exposes the Kubernetes CRD API directly — there is no intermediate REST server. All reads and writes go through the standard Kubernetes API at `/apis/frame.plume-labs.io/v1beta1/`.
 
 `v1beta1` is the frozen, stored version and what the SDK speaks. `v1alpha1` is still served and deprecated; a request to it gets a `Warning:` header naming what changed for that kind, and the conversion webhook translates it. See [upgrading.md](upgrading.md), "API versions and the migration path".
 
@@ -287,7 +287,7 @@ kubectl delete framejob llm-finetune-v4 -n acme-prod
 ## Operating a workload from the console
 
 The Workloads screen talks to ordinary Kubernetes endpoints through
-`frame-uiproxy`, like everything else. Nothing here is a Frame API.
+`frame-uiproxy`, like everything else. Nothing here is a Hearthrack API.
 
 | What | Request |
 |---|---|

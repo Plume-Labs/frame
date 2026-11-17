@@ -2,7 +2,7 @@
 
 > **Update, 2026-09-29: the base is Ubuntu 24.04 LTS, not Debian.** The NVIDIA
 > GPU Operator publishes driver images for Ubuntu 24.04 and none for Debian,
-> so a Debian GPU node needed a hand-installed driver outside anything Frame
+> so a Debian GPU node needed a hand-installed driver outside anything Hearthrack
 > declares. The installer is now subiquity autoinstall; see
 > [the design](superpowers/specs/2026-09-29-provisioning-ubuntu-design.md).
 > What follows is the 2026-09-10 record and stays as written.
@@ -156,7 +156,7 @@ precisely because of this.
 
 ## What is not decided here
 
-Whether Frame owns image building at all, whether provisioning is PXE or
+Whether Hearthrack owns image building at all, whether provisioning is PXE or
 written media, and what replaces `TalosUpgrade`. This document scopes the
 problem; it does not answer it.
 
@@ -175,7 +175,7 @@ answers on SSH carrying this installation's UID. While it runs, the
 | `False` / `InstallerFailed` | `failed`, with the time it first arrived | subiquity ran `error-commands`. **This includes a refused disk**: a failing early-command is an install failure, so a disk that was not the declared size (`FRAME: named disk is not the expected size, refusing`), not a block device, or the same disk under two names reports here, not as silence. The line starting `FRAME:` on the console says which; otherwise the cause is in the installer's log on the console. |
 | `False` / `HeartbeatLost` | `early` | it died after the disk guards without reporting a failure: power, kernel, or the network went away |
 | `False` / `NeverSeen` | none | it never booted the media, or the network never came up. A switch port that carries only the tagged VLAN is one way to get there: the early beacon leaves from the DHCP network, so a port with nothing untagged is seen as `NeverSeen` while the budget is still running, not after it. Check the port's native VLAN and the declared VLAN id before waiting longer (not yet observed on hardware, see #103). |
-| `Unknown` / `Unavailable` | — | Frame could not ask `frame-provisiond`; `frame-provisiond` restarted and lost its beacon history for an installation it had already reported on; or two `FrameInstall` objects name the same `machineRef` and this one lost the race for it. **Not** a manager restart mid-install -- that case fails closed (`Failed`, via `failRestarted`) before this condition is ever written again. Says nothing about the machine. |
+| `Unknown` / `Unavailable` | — | Hearthrack could not ask `frame-provisiond`; `frame-provisiond` restarted and lost its beacon history for an installation it had already reported on; or two `FrameInstall` objects name the same `machineRef` and this one lost the race for it. **Not** a manager restart mid-install -- that case fails closed (`Failed`, via `failRestarted`) before this condition is ever written again. Says nothing about the machine. |
 
 The checkpoint in the message is the furthest the installation has reached,
 not the checkpoint of the most recent beacon: the machine re-sends `early`

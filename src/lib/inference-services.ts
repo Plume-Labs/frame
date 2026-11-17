@@ -2,7 +2,7 @@
  * Operating the model servers from the console — lot 1 of the inference spec
  * (docs/specs/2026-09-28-gestion-inference.md, §2.1 option B, §2.2, §5).
  *
- * The servers are plain Deployments applied by hand or by a script; Frame
+ * The servers are plain Deployments applied by hand or by a script; Hearthrack
  * does not own them. Lot 1 only ever writes two things into them, both with
  * grants the console's operators already hold (`cluster-control-workload-operator`,
  * bound per namespace): the pod template's `restartedAt` annotation — the same
@@ -128,7 +128,7 @@ function sameLabels(a: Record<string, string>, b: Record<string, string>): boole
 }
 
 /**
- * Why Frame must not write into this Deployment, or undefined when it may.
+ * Why Hearthrack must not write into this Deployment, or undefined when it may.
  *
  * The gateway's Deployment is owned by its `Gateway` and written by the
  * gateway controller with server-side apply; the EPP's by Helm, also with
@@ -189,7 +189,7 @@ export function resolveDeployment(i: Integration, deployments: DeploymentLike[])
     found = matches[0]
   }
   const foreign = foreignManager(found)
-  if (foreign) return { ok: false, reason: `${found.metadata.name} is ${foreign}: Frame does not write into it.` }
+  if (foreign) return { ok: false, reason: `${found.metadata.name} is ${foreign}: Hearthrack does not write into it.` }
   return { ok: true, deployment: found }
 }
 

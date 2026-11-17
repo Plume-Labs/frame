@@ -10,22 +10,22 @@ The object behind it is a `FrameOSDReplacement`
 (`api/frame/v1beta1/frameosdreplacement_types.go`); the controller is
 `internal/controller/frame/frameosdreplacement_controller.go`.
 
-## What a person does, and what Frame does
+## What a person does, and what Hearthrack does
 
 | Step | Who | What happens |
 |---|---|---|
 | Start | admin | types the OSD number and the serial of its disk, read on the label |
-| Checks | Frame | read-only, see below; any refusal pauses with the reason |
-| Drain | Frame | `ceph osd out N`, waits until every PG is active+clean, then `safe-to-destroy` |
+| Checks | Hearthrack | read-only, see below; any refusal pauses with the reason |
+| Drain | Hearthrack | `ceph osd out N`, waits until every PG is active+clean, then `safe-to-destroy` |
 | **Approval 1** | admin | retypes the old disk's serial: the purge cannot be undone. Only an approval given at this step counts: one written earlier (or left from before a pause) is cleared when the step starts |
-| Purge | Frame | **`rook-ceph-operator` to 0 first** (and its pod gone), then deployment `rook-ceph-osd-N` to 0, OSD down, `safe-to-destroy` again, `osd purge` (sent once), deployment deleted |
+| Purge | Hearthrack | **`rook-ceph-operator` to 0 first** (and its pod gone), then deployment `rook-ceph-osd-N` to 0, OSD down, `safe-to-destroy` again, `osd purge` (sent once), deployment deleted |
 | Swap | person | removes the disk with that serial, inserts the new one (Non-RAID on a PERC/H310) |
-| New disk | Frame | exactly one disk must appear that was not on the host when the checks ran, is not declared in the CephCluster, is unknown to Ceph, whole and free, with 512- or 4096-byte sectors, SMART not failed |
+| New disk | Hearthrack | exactly one disk must appear that was not on the host when the checks ran, is not declared in the CephCluster, is unknown to Ceph, whole and free, with 512- or 4096-byte sectors, SMART not failed |
 | **Approval 2** | admin | reads the new disk's serial on its label and retypes it: the wipe cannot be undone. The console shows the disk's path, model and size, never its serial, until this approval is given |
 | Wipe | the node's agent | `wipefs -a`, zeros at the head (100 MiB), at 1, 10, 100 and 1000 GiB (1 MiB each, where the disk reaches them) and at the tail (100 MiB), `sgdisk --zap-all`, on the by-id path, after its own checks; then it reads 4 KiB at 0, 1, 10, 100 and 1000 GiB and refuses to say "wiped" if a `bluestore block device` label is still there |
-| Declare | Frame | JSON patch of the CephCluster: `test` that entry *i* of `spec.storage.devices` is the old disk, `replace` its name by the new one. Never an apply: nothing else of the spec is touched. **Then `rook-ceph-operator` back to 1** |
-| New OSD | Frame | waits until the host has as many OSDs up and in as before; restarts the Rook operator once after 10 min; pauses after 20 |
-| Backfill | Frame | waits until every PG is active+clean |
+| Declare | Hearthrack | JSON patch of the CephCluster: `test` that entry *i* of `spec.storage.devices` is the old disk, `replace` its name by the new one. Never an apply: nothing else of the spec is touched. **Then `rook-ceph-operator` back to 1** |
+| New OSD | Hearthrack | waits until the host has as many OSDs up and in as before; restarts the Rook operator once after 10 min; pauses after 20 |
+| Backfill | Hearthrack | waits until every PG is active+clean |
 
 ### Why the Rook operator is stopped for the purge
 
@@ -46,7 +46,7 @@ on purpose**: the message says so and gives the command
 (`kubectl -n rook-ceph scale deploy rook-ceph-operator --replicas=1`) to run
 once the old disk is out of the device list. A pause or a resume that goes
 back before the purge, and a cancel before it, restart it by themselves.
-The operator is assumed to have one replica, Rook's default. Frame sets it to 0 once, at the purge: if a GitOps tool (Argo) resyncs Rook's replicas meanwhile, it can come back before the declaration, so the Rook application must not self-heal that Deployment during a replacement.
+The operator is assumed to have one replica, Rook's default. Hearthrack sets it to 0 once, at the purge: if a GitOps tool (Argo) resyncs Rook's replicas meanwhile, it can come back before the declaration, so the Rook application must not self-heal that Deployment during a replacement.
 
 After it succeeds, update `k8s/storage/cephcluster.yaml` in the Neura
 repository to the new by-id path (the replacement says which entry), and
@@ -158,7 +158,7 @@ TOOLS="kubectl -n $NS exec deploy/rook-ceph-tools --"
 SVC=rook-ceph-mgr-dashboard.$NS.svc
 
 # 1. The role.
-$TOOLS ceph dashboard ac-role-create frame-osd-operator "Frame manager: OSD replacement"
+$TOOLS ceph dashboard ac-role-create frame-osd-operator "Hearthrack manager: OSD replacement"
 $TOOLS ceph dashboard ac-role-add-scope-perms frame-osd-operator osd read update create
 $TOOLS ceph dashboard ac-role-add-scope-perms frame-osd-operator pool read
 $TOOLS ceph dashboard ac-role-show frame-osd-operator

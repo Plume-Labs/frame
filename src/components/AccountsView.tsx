@@ -323,7 +323,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 around forever". Saying that without a number cannot go
                 stale.
               */}
-              Frame sends no mail. The link is short-lived, and dies the moment they enrol a key.
+              Hearthrack sends no mail. The link is short-lived, and dies the moment they enrol a key.
             </DialogDescription>
           </DialogHeader>
           {/*

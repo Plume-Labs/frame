@@ -53,27 +53,27 @@ others (`pause`, `noup`, `nodown`, `noin`…) are left to the command line.
 
 - While a flag is held, a banner says so on Storage → Ceph and Storage →
   Ceph actions, with its end and a **Release now** button.
-- At the end, or on release, Frame unsets the flag. Unsetting is retried
+- At the end, or on release, Hearthrack unsets the flag. Unsetting is retried
   until Ceph accepts it.
 - A flag that was **already set** when the action started (by hand) is left
-  set at the end: it was not Frame's.
+  set at the end: it was not Hearthrack's.
 - One action holds a flag at a time: a second one for the same flag is
   refused while the first is active.
 - Deleting an action that holds a flag unsets it first (a finalizer,
   `frame.plume-labs.io/ceph-action-flag`, keeps the object until then).
   If Ceph keeps refusing the unset (or the operator account is not
-  usable), the object stays Terminating and Frame retries; to end it by
+  usable), the object stays Terminating and Hearthrack retries; to end it by
   hand, `ceph osd unset F`, then
   `kubectl -n frame-system patch fca NAME --type=json -p '[{"op":"remove","path":"/metadata/finalizers"}]'`.
   An action already holding a flag when this version was deployed has no
   finalizer: release it rather than delete it.
 - `release` applies to SetFlag only (the apiserver refuses it elsewhere).
-- A flag Ceph has not unset at its end shows in red on the banner: Frame
+- A flag Ceph has not unset at its end shows in red on the banner: Hearthrack
   keeps retrying, and `ceph osd unset F` by hand ends it too.
-- The dashboard's `PUT /api/osd/flags` takes the whole list: Frame sends the
+- The dashboard's `PUT /api/osd/flags` takes the whole list: Hearthrack sends the
   list it just read with only its flag added or removed, so no other flag
   changes. A flag changed by someone else between that read and the write
-  is overwritten: Frame reads the list back and names it in the message.
+  is overwritten: Hearthrack reads the list back and names it in the message.
 
 ## Permissions
 

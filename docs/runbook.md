@@ -1,6 +1,6 @@
 # Runbook
 
-Operating the Frame operator: what healthy looks like, what breaks, and what
+Operating the Hearthrack operator: what healthy looks like, what breaks, and what
 to do about it. Every timing and command here was measured against the k3s
 test cluster, not inferred from the manifests.
 
@@ -70,7 +70,7 @@ way can be one the reconcile loop has never had to handle.
 CRD also declares `conversion.strategy: Webhook` pointing at the same
 manager's `/convert`, and CRD conversion is configured *on the CRD*, not in a
 `ValidatingWebhookConfiguration` you can delete. With the manager
-unreachable, every read and write of a Frame kind fails at **both** versions —
+unreachable, every read and write of a Hearthrack kind fails at **both** versions —
 including `kubectl get`, which the paragraph above says is unaffected. It is
 unaffected only for the single-version CRDs of the pre-freeze install.
 
@@ -149,7 +149,7 @@ Order matters. Apply the CRDs and roll out the manager that serves `/convert`
 ./hack/migrate-storage-version.sh --apply
 ```
 
-**Run it as a cluster administrator.** It needs `patch` on every Frame
+**Run it as a cluster administrator.** It needs `patch` on every Hearthrack
 resource *and* `patch` on `customresourcedefinitions/status` — none of the
 `*-admin-role` tiers grant the latter, and none should: that one verb changes
 which version is stored for *any* CRD in the cluster, for any operator. There
@@ -232,7 +232,7 @@ kubectl get backup -n velero frame-crs \
 ```
 
 Two things this does **not** cover. CRDs themselves are not in the list above,
-because a restore is into a cluster where Frame is installed and the chart owns
+because a restore is into a cluster where Hearthrack is installed and the chart owns
 the schema — restoring a stale CRD over a newer one would be a downgrade, not a
 recovery. And `status` is restored as recorded, so an object mid-operation
 comes back describing a world that has moved on; the controllers correct it on
@@ -314,7 +314,7 @@ responses captured from a real HP ProLiant ML350 Gen9 (iLO 4 v2.77) in
 | `TLSError` | Certificate verification failed. **Expected on a fresh iLO4** — it ships a self-signed certificate, and `spec.bmc.tls` has no permissive default. | Set `tls.insecureSkipVerify: true` if you accept that exposure, or point `tls.caBundleRef` at a ConfigMap holding the CA that signed the BMC's certificate. |
 | `AuthFailed` | The BMC answered `401`/`403` to a *read*. | Check `credentialsRef`'s Secret holds the right `username`/`password` for this BMC. |
 | `Timeout` | The BMC did not answer inside the client's 20-second budget, or the request otherwise timed out. | Check layer-3 reachability from wherever the controller runs — see [deployment.md](deployment.md), "Registering a machine's BMC", for the two prerequisites. |
-| `ConnectionRefused` | The address is routed and something answered, but it refused the TCP connection on the Redfish port: the BMC's web service is down, its management port is disabled, or the BMC is mid-reset — or a firewall on the path rejects rather than drops (Linux reports both as `ECONNREFUSED`). Distinct from `Timeout` (nothing answered in time) and from `ProbeFailed` (it answered, Frame could not read it). "No route to host" and a reset connection still land in `ProbeFailed`. | Check the BMC itself first: open its web console on the same address and port, or reset the BMC from the host (`ipmitool mc reset cold`). A reset BMC refuses connections for a minute or two before answering again. |
+| `ConnectionRefused` | The address is routed and something answered, but it refused the TCP connection on the Redfish port: the BMC's web service is down, its management port is disabled, or the BMC is mid-reset — or a firewall on the path rejects rather than drops (Linux reports both as `ECONNREFUSED`). Distinct from `Timeout` (nothing answered in time) and from `ProbeFailed` (it answered, Hearthrack could not read it). "No route to host" and a reset connection still land in `ProbeFailed`. | Check the BMC itself first: open its web console on the same address and port, or reset the BMC from the host (`ipmitool mc reset cold`). A reset BMC refuses connections for a minute or two before answering again. |
 | `Unsupported` | The address answered, but what's there does not look like a Redfish service: `/redfish/v1/` returned `404`, or it decoded with no `Systems` collection at all (`Probe` in `internal/redfish/client.go`). | Confirm `spec.bmc.address` is actually the BMC's management port, not the host OS or something else that happens to answer HTTPS on that IP; retrying will not help — this is a diagnosis, not a transient gap. |
 | `CredentialsUnavailable` | The controller could not even build a client: `credentialsRef` names a Secret that does not exist, or is missing a key. | Check the Secret exists in the `FrameMachine`'s own namespace and holds both `username` and `password`. |
 | `ProbeFailed` | Anything else — a malformed response, an unexpected HTTP status, a decode failure. | Read `status.conditions[].message`, then `kubectl logs -n frame-system deploy/frame-controller-manager` for the underlying error. |
@@ -428,7 +428,7 @@ was that SA. Per-user identity (2026-09-08, per-user identity and tasks lot
 — see [deployment.md](deployment.md)'s RBAC section) closed that specific
 hole: `frame-uiproxy` now validates authd's token before doing anything at
 all, and the pod ServiceAccount itself carries only `impersonate` plus its
-own direct write access to `frametasks` — not the write actions on Frame's
+own direct write access to `frametasks` — not the write actions on Hearthrack's
 other resources directly. (The `frametasks` grant is deliberate, not a
 leftover: it is what lets a viewer's refused write still leave the trace of
 its own 403, since a viewer's own impersonated identity cannot create a

@@ -1,6 +1,6 @@
 # Storage
 
-Lot 3 (2026-09-13) gives Frame two custom types for storage — `FrameStorage`
+Lot 3 (2026-09-13) gives Hearthrack two custom types for storage — `FrameStorage`
 and `FrameDiskClaim` — plus a disk inventory that lives on `FrameMachine`.
 Full design in
 [`docs/superpowers/specs/2026-09-13-storage-design.md`](superpowers/specs/2026-09-13-storage-design.md).
@@ -45,7 +45,7 @@ spec:
 ```
 
 - `spec.type` is one of `ceph-rbd`, `ceph-bucket`, `local-path`. NFS and
-  iSCSI are not types Frame knows about — nothing in the park runs either.
+  iSCSI are not types Hearthrack knows about — nothing in the park runs either.
 - `spec.adoptExisting` must be `true` to name a `StorageClass` that already
   exists. Without it, admission refuses the create outright: a `FrameStorage`
   that silently took ownership of an existing class would delete that class
@@ -212,7 +212,7 @@ visible: `{total, labelled}` per entry, read as a fact rather than a fault.
 
 ## The two disk sources, and how to read a divergence
 
-Frame keeps the BMC's list and the node's own kernel list separate on
+Hearthrack keeps the BMC's list and the node's own kernel list separate on
 purpose — `divergences[]` is the datum, not something to be resolved by
 merging the two into one. The worked example below is the one the design
 was written against.
@@ -265,7 +265,7 @@ equals `ID_WWN` without its `0x`). The real serial survives in
 `ID_SCSI_SERIAL` and in the `/dev/disk/by-id/scsi-SATA_<model>_<serial>`
 link name.
 
-Frame is not affected, and should stay that way:
+Hearthrack is not affected, and should stay that way:
 
 - The node agent reads lsblk's `SERIAL` column, which reports the SCSI
   serial (`ID_SCSI_SERIAL`, VPD page 0x80) when there is one, before
@@ -454,7 +454,7 @@ reaches each machine at its next pass.
 
 ## Planned ZFS scrubs
 
-`StorageHealthPolicy.spec.scrub` has Frame start the ZFS scrubs, one node at a
+`StorageHealthPolicy.spec.scrub` has Hearthrack start the ZFS scrubs, one node at a
 time, instead of the distribution's cron. The result lands where T-1 already
 judges it: the pool's scan line and `ScrubErrors` on the node's FrameMachine,
 and the Storage → Health tab.
@@ -490,9 +490,9 @@ spec:
   when and how often that happens on every selected node; grant it as you
   would a right to run `zpool scrub` there.
 - **Disable the distribution's cron** on the selected nodes (Ubuntu:
-  `/etc/cron.d/zfsutils-linux`): Frame never starts beside it, but cannot stop
-  it from starting beside Frame.
-- **The order**: a node Frame never scrubbed, then the oldest completed scrub,
+  `/etc/cron.d/zfsutils-linux`): Hearthrack never starts beside it, but cannot stop
+  it from starting beside Hearthrack.
+- **The order**: a node Hearthrack never scrubbed, then the oldest completed scrub,
   then by name. A node is eligible when its FrameMachine reports ZFS present
   with an `ONLINE` or `DEGRADED` pool; a suspended or faulted pool is skipped.
   The read must be under 10 minutes old (the agent reads every 30 s) and
@@ -522,14 +522,14 @@ spec:
   that stays silent therefore stops the plan — on purpose. To release it by
   hand, once you have checked `zpool status` on the node, remove that
   annotation. While the start window is open, a node holding the plan back
-  with no scrub of Frame's own in flight — its ZFS read fails, an unsettled
+  with no scrub of Hearthrack's own in flight — its ZFS read fails, an unsettled
   failure, or a scan shown only by a read too old to be one still running —
   is named by a warning event `ScrubWaiting` on the policy, repeated on every
   pass (the event recorder folds the repeats into one with a count). A pool
   really scanning on a recent read is progress and says nothing.
 - **To stop**: remove `zfs-scrub-requested` from the node before the agent
   takes it; a scrub already running is stopped on the node with
-  `zpool scrub -s <pool>`, which Frame records as failed. Removing
+  `zpool scrub -s <pool>`, which Hearthrack records as failed. Removing
   `spec.scrub` starts nothing new; a request in flight is still concluded.
 
 ---

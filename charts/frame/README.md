@@ -1,6 +1,6 @@
 # frame
 
-Helm chart for the Frame Kubernetes operator (kubebuilder v4, 8 CRDs across
+Helm chart for the Hearthrack Kubernetes operator (kubebuilder v4, 8 CRDs across
 `frame.plume-labs.io` and `services.plume-labs.io`, validating/defaulting
 webhooks, cert-manager-issued webhook TLS). Packages the operator only — the
 React control-plane UI and authd are a separate chart.
@@ -37,7 +37,7 @@ it's cosmetic) and you always get `frame-controller-manager`.
 
 Do not "generalize" `templates/_helpers.tpl`'s `frame.name` into a
 release-name-aware fullname helper. If this chart is ever forked to run
-multiple independent copies of Frame in one cluster, that's a deliberate,
+multiple independent copies of Hearthrack in one cluster, that's a deliberate,
 separate change requiring a real migration plan — not a refactor.
 
 ### 2. CRDs are rendered from `templates/`, not Helm's `crds/` directory
@@ -45,7 +45,7 @@ separate change requiring a real migration plan — not a refactor.
 Helm's special top-level `crds/` directory is installed once on
 `helm install` and **never touched again** by `helm upgrade` — by design,
 Helm won't touch cluster-scoped objects it can't safely diff/own across
-releases. That's the wrong tradeoff here: Frame's Phase B roadmap is CRD
+releases. That's the wrong tradeoff here: Hearthrack's Phase B roadmap is CRD
 schema evolution (new versions, new printer columns, tightened validation),
 and an upgrade path that can't ship a CRD change isn't a real upgrade path.
 

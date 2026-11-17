@@ -2,7 +2,7 @@
 
 The Storage screen shows, per pool, `min_size` and the CRUSH rule, and per
 OSD the CRUSH weight. Prometheus exports none of these (`ceph_osd_weight`
-is the reweight, not the CRUSH weight). The Frame manager reads them from
+is the reweight, not the CRUSH weight). The Hearthrack manager reads them from
 the Ceph dashboard's REST API (`internal/cephmgr`), every 5 minutes, into
 `status.cephPlacement` of each `ceph-*` FrameStorage entry.
 
@@ -30,7 +30,7 @@ dashboard account configured)". Nothing breaks.
 
 The built-in `read-only` role grants read on every dashboard scope. That
 includes configuration options, logs, hosts, users of RGW, the NFS
-exports and the audit trail. Frame needs two scopes. `/api/pool` and
+exports and the audit trail. Hearthrack needs two scopes. `/api/pool` and
 `/api/crush_rule` sit under the `pool` scope, and `/api/osd` under the `osd`
 scope. The role below grants `read` on those two scopes and nothing else.
 With it, even a request the code would never send could not read more.
@@ -70,7 +70,7 @@ kubectl -n $NS patch cephcluster rook-ceph --type merge -p '{"spec":{"dashboard"
 kubectl -n $NS get svc rook-ceph-mgr-dashboard   # port 8443
 
 # 3. The role: read on the pool and osd scopes, nothing else.
-$TOOLS ceph dashboard ac-role-create frame-storage-reader "Frame console: pools and OSDs, read only"
+$TOOLS ceph dashboard ac-role-create frame-storage-reader "Hearthrack console: pools and OSDs, read only"
 $TOOLS ceph dashboard ac-role-add-scope-perms frame-storage-reader pool read
 $TOOLS ceph dashboard ac-role-add-scope-perms frame-storage-reader osd read
 $TOOLS ceph dashboard ac-role-show frame-storage-reader
@@ -236,7 +236,7 @@ exists, clear `pending` and `refused` (see Unblocking) before deploying.
 The password is never stored, and without the key the values can't be
 checked against guesses. The FrameStorage status carries only
 `AuthRefused` or an `Error` and its message, never these values.
-FrameStorage is readable by every Frame viewer; the state Secret is not.
+FrameStorage is readable by every Hearthrack viewer; the state Secret is not.
 
 **Strict validation.** The manager does not log in, and the status says
 "state Secret corrupt", in any of these cases:

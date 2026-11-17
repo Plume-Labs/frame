@@ -70,7 +70,7 @@ step "1. Rôle $ACCOUNT"
 if "${TOOLS[@]}" ceph dashboard ac-role-show "$ACCOUNT" >/dev/null 2>&1; then
   echo "le rôle existe"
 else
-  "${TOOLS[@]}" ceph dashboard ac-role-create "$ACCOUNT" "Frame manager: OSD replacement"
+  "${TOOLS[@]}" ceph dashboard ac-role-create "$ACCOUNT" "Hearthrack manager: OSD replacement"
 fi
 "${TOOLS[@]}" ceph dashboard ac-role-add-scope-perms "$ACCOUNT" osd read update create
 "${TOOLS[@]}" ceph dashboard ac-role-add-scope-perms "$ACCOUNT" pool read
