@@ -23,6 +23,12 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 CLUSTER="${DEMO_CLUSTER:-hearthrack-demo}"
+# Node names are <cluster>-control-plane etc., used as FrameNode spec.hostname
+# (a DNS-1123 label, 63 characters at most).
+case "$CLUSTER" in
+  *[!a-z0-9-]*|-*|*-|"") echo "demo: DEMO_CLUSTER must be lowercase letters, digits and '-'" >&2; exit 2 ;;
+esac
+[ "${#CLUSTER}" -le 49 ] || { echo "demo: DEMO_CLUSTER is too long (49 characters at most)" >&2; exit 2; }
 PORT="${DEMO_PORT:-18080}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.20.2}" # keep in step with test/utils/utils.go
 KIND="${KIND:-kind}"
@@ -65,6 +71,10 @@ create_cluster() {
   if "$KIND" get clusters | grep -qx "$CLUSTER"; then
     log "Kind cluster '$CLUSTER' already exists, reusing it"
     "$KIND" get kubeconfig --name "$CLUSTER" >"$KUBECONFIG"
+    # kind.yaml is not re-applied to an existing cluster: refuse one that
+    # predates the four-node demo rather than fail two minutes later.
+    nodes="$(kubectl get nodes --no-headers | wc -l)"
+    [ "$nodes" = "4" ] || { echo "demo: cluster '$CLUSTER' has $nodes node(s), created before the four-node demo: run 'hack/demo.sh down' then 'up'" >&2; exit 1; }
   else
     log "Creating Kind cluster '$CLUSTER'"
     "$KIND" create cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" --config hack/demo/kind.yaml
@@ -103,8 +113,8 @@ seed() {
 }
 
 # Single replica and the demo image tags, on a copy: the manifests in
-# deploy/kubernetes name placeholder images and several replicas, which a
-# one-node cluster cannot schedule.
+# deploy/kubernetes name placeholder images and several replicas (with
+# anti-affinity), more than a demo needs.
 render() {
   sed -e "s#image: cluster-control:latest#image: ${IMG_UI}#" \
     -e "s#image: frame-uiproxy:latest#image: ${IMG_UIPROXY}#" \
@@ -217,7 +227,7 @@ verify() {
     -H "Authorization: Bearer $jwt" "$base/apis/frame.plume-labs.io/v1beta1/framenodes")"
   [ "$code" = "200" ] || { echo "demo: reading FrameNodes through the console answered HTTP $code" >&2; cat "$STATE_DIR/framenodes.json" >&2; exit 1; }
   grep -q '"kind": *"FrameNodeList"' "$STATE_DIR/framenodes.json" || { echo "demo: unexpected answer from the console" >&2; exit 1; }
-  [ "$(grep -o '"rack": *"rack-[ab]"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] || { echo "demo: the console does not list the four classified demo nodes" >&2; exit 1; }
+  [ "$(grep -o '"rack": *"rack-[ab]"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] && [ "$(grep -o '"reason": *"Online"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] || { echo "demo: the console does not list the four demo nodes, classified and Online" >&2; exit 1; }
   echo "OK: signed in as ${ADMIN_EMAIL} and read the four demo FrameNodes through the console."
 }
 

@@ -2330,7 +2330,7 @@ class ClusterClient {
   /** Real nodes grouped into racks by their FrameNode `spec.rack` label. */
   async racks(): Promise<Rack[]> {
     const [fnRes, k8sNodes, nodes, placement] = await Promise.all([
-      k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string } }>>(
+      k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string; hostname?: string } }>>(
         apiBase('framenodes'),
       ),
       k8sFetch<ListResponse<{ metadata: { name: string; labels?: Record<string, string> } }>>(
@@ -2339,11 +2339,15 @@ class ClusterClient {
       this.nodes(),
       this.placement(),
     ])
-    const fnRackOf = new Map((fnRes.items ?? []).map((f) => [f.metadata.name, f.spec?.rack]))
+    // Keyed by the Kubernetes node a FrameNode classifies (spec.hostname, else its own name).
+    const fnRackOf = new Map((fnRes.items ?? []).map((f) => [f.spec?.hostname || f.metadata.name, f.spec?.rack]))
     // Real physical topology from node labels, falling back to the FrameNode tag.
     const labelsOf = new Map((k8sNodes.items ?? []).map((n) => [n.metadata.name, n.metadata.labels ?? {}]))
     const rackOf = (name: string) =>
-      labelsOf.get(name)?.['topology.frame.io/rack'] ?? fnRackOf.get(name) ?? 'unracked'
+      labelsOf.get(name)?.['topology.frame.io/rack'] ??
+      labelsOf.get(name)?.['frame.plume-labs.io/rack'] ??
+      fnRackOf.get(name) ??
+      'unracked'
     const physicalOf = (name: string): Rack['physical'] => {
       const l = labelsOf.get(name)
       if (!l?.['topology.frame.io/hypervisor']) return undefined

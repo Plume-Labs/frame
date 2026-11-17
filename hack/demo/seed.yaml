@@ -1,13 +1,14 @@
 # Demo data: classifies the demo cluster's four Kind nodes into two racks and
 # two zones, the way an operator would. Applied by hack/demo.sh once the
-# operator is up; CLUSTER_NAME is substituted in a temporary copy.
+# operator is up; CLUSTER_NAME is substituted in a temporary copy. Each object is
+# named after the node it classifies: the Racks screen matches them by name.
 #
 # Everything here is invented: documentation-range addresses (192.0.2.0/24),
 # generic names. Nothing is, or should ever be copied from, a real estate.
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata:
-  name: demo-cp
+  name: CLUSTER_NAME-control-plane
   namespace: frame-system
 spec:
   hostname: CLUSTER_NAME-control-plane
@@ -20,7 +21,7 @@ spec:
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata:
-  name: demo-worker-1
+  name: CLUSTER_NAME-worker
   namespace: frame-system
 spec:
   hostname: CLUSTER_NAME-worker
@@ -33,7 +34,7 @@ spec:
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata:
-  name: demo-worker-2
+  name: CLUSTER_NAME-worker2
   namespace: frame-system
 spec:
   hostname: CLUSTER_NAME-worker2
@@ -46,7 +47,7 @@ spec:
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameNode
 metadata:
-  name: demo-worker-3
+  name: CLUSTER_NAME-worker3
   namespace: frame-system
 spec:
   hostname: CLUSTER_NAME-worker3
