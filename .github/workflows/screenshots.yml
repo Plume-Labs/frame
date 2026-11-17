@@ -1,0 +1,61 @@
+name: Screenshots
+
+# Console screenshots of the demo cluster (hack/screenshots.mjs). On demand from
+# the Actions tab (download the artifact), and on a pull request only when the
+# script or this workflow changes, so they cannot rot. Not on every push: it
+# builds the whole demo, like the Quickstart job, and the images only change
+# when the UI does.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - hack/screenshots.mjs
+      - .github/workflows/screenshots.yml
+
+permissions: {}
+
+jobs:
+  screenshots:
+    name: Screenshots (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          install_only: true
+
+      - name: Bring the demo up
+        run: ./hack/demo.sh up
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
+
+      - name: Take the screenshots
+        run: node hack/screenshots.mjs screens
+
+      - name: Upload the screenshots
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: console-screenshots
+          path: screens/*.png
+          if-no-files-found: error
+
+      - name: Tear down
+        if: always()
+        run: ./hack/demo.sh down || true
