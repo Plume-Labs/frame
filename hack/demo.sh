@@ -95,6 +95,14 @@ install_console() {
   k -n cluster-control create secret generic frame-auth-bootstrap \
     --from-file=token="$STATE_DIR/bootstrap-token" --dry-run=client -o yaml | k apply -f -
 
+  # authd's signing key (ES256) and challenge HMAC key, which the console
+  # trusts through the JWKS authd serves. Generated per demo cluster.
+  openssl ecparam -genkey -name prime256v1 -noout -out "$STATE_DIR/signing.pem"
+  openssl rand -hex 32 >"$STATE_DIR/challenge-hmac"
+  k -n cluster-control create secret generic frame-auth-keys \
+    --from-file=signing.pem="$STATE_DIR/signing.pem" \
+    --from-file=challenge-hmac="$STATE_DIR/challenge-hmac" --dry-run=client -o yaml | k apply -f -
+
   # authd: its kustomization (certificates, RBAC, Service, Deployment) with the
   # demo values substituted in a temporary copy.
   tmp="$(mktemp -d)"
