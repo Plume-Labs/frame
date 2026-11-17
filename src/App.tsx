@@ -1,7 +1,8 @@
-import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavigationContext } from '@/hooks/useNavigation'
 import { currentSession, ensureToken, identityFromToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
 import { inviteTokenFromLocation } from '@/lib/accounts'
+import { formatRoute, parseRoute } from '@/lib/route'
 import { loadConfig } from '@/lib/frame-config'
 
 import { PasskeysDialog } from '@/components/PasskeysDialog'
@@ -406,6 +407,14 @@ const NAV_INDEX: Record<string, NavItem> = Object.fromEntries(
   NAV.flatMap((group) => group.items).map((item) => [item.id, item]),
 )
 
+/** URL for a screen/tab: unknown screen → overview, invalid or first tab → no tab segment. */
+function canonicalRoute(screen: string, tab?: string): string {
+  const known = NAV_INDEX[screen]
+  if (!known) return formatRoute('overview')
+  const valid = known.tabs.some((t) => t.id === tab) && tab !== known.tabs[0]?.id
+  return formatRoute(screen, valid ? tab : undefined)
+}
+
 /** `checking` while the initial `currentSession()` call is in flight. */
 type SessionState =
   | { phase: 'checking' }
@@ -485,16 +494,58 @@ function App() {
   // whichever notices first (whole-branch review, I1).
   useEffect(() => onSessionLost(() => setSessionState({ phase: 'signed-out' })), [])
 
-  const [screen, setScreen] = useState('overview')
-  // Set when a navigation targets a specific tab; consumed by the Tabs below so
-  // "3 nodes not ready" can land on Nodes › Fleet rather than Nodes' first tab.
-  const [pendingTab, setPendingTab] = useState<string | undefined>(undefined)
+  // The location is kept in the URL fragment (`#/nodes/fleet`), so a reload, a
+  // pasted link and the back button land where the user was. Read once here,
+  // before sign-in, so a deep link survives the login screen.
+  const [initialRoute] = useState(() => parseRoute(globalThis.location.hash, (id) => id in NAV_INDEX))
+  const [screen, setScreen] = useState(initialRoute?.screen ?? 'overview')
+  // The selected tab of the active screen. Set by a navigation that targets a
+  // tab ("3 nodes not ready" lands on Nodes › Fleet) and by the strip itself.
+  const [pendingTab, setPendingTab] = useState<string | undefined>(initialRoute?.tab)
 
   const navigate = useCallback((next: string, tab?: string) => {
     setScreen(next)
     setPendingTab(tab)
   }, [])
   const [passkeysOpen, setPasskeysOpen] = useState(false)
+
+  // State → URL. Only once signed in, and never on the invitation page, whose
+  // fragment is a one-shot credential. The first write replaces the entry (no
+  // phantom "back" to an empty hash); later ones push, so back works.
+  const signedIn = sessionState.phase === 'signed-in'
+  const wroteRoute = useRef(false)
+  useEffect(() => {
+    if (!signedIn || globalThis.location.pathname === '/invite') return
+    const next = canonicalRoute(screen, pendingTab)
+    if (globalThis.location.hash === next) {
+      wroteRoute.current = true
+      return
+    }
+    if (wroteRoute.current) globalThis.history.pushState(null, '', next)
+    else globalThis.history.replaceState(null, '', next)
+    wroteRoute.current = true
+  }, [signedIn, screen, pendingTab])
+
+  // URL → state: back, forward, or an edited fragment.
+  useEffect(() => {
+    const onHashChange = () => {
+      const route = parseRoute(globalThis.location.hash, (id) => id in NAV_INDEX)
+      if (!route) return
+      // Canonicalise a hand-edited fragment (`#/nodes/bogus`, `#/nodes/nodes`)
+      // in place, so back never lands on an entry that rewrites itself.
+      const canonical = canonicalRoute(route.screen, route.tab)
+      if (globalThis.location.hash !== canonical) globalThis.history.replaceState(null, '', canonical)
+      const fixed = parseRoute(canonical, (id) => id in NAV_INDEX)
+      setScreen(fixed?.screen ?? 'overview')
+      setPendingTab(fixed?.tab)
+    }
+    globalThis.addEventListener('hashchange', onHashChange)
+    globalThis.addEventListener('popstate', onHashChange)
+    return () => {
+      globalThis.removeEventListener('hashchange', onHashChange)
+      globalThis.removeEventListener('popstate', onHashChange)
+    }
+  }, [])
 
   // The nav gate is a courtesy, not a control: the token is decoded, not
   // verified (see identityFromToken), and every write the screen makes is
@@ -506,6 +557,17 @@ function App() {
     () => (sessionState.phase === 'signed-in' ? isAdminToken(sessionState.session.token) : false),
     [sessionState],
   )
+  // A non-admin who lands on `#/accounts` (link, history) is sent to Overview,
+  // so the URL and the highlighted sidebar entry agree with what is shown.
+  useEffect(() => {
+    if (signedIn && screen === 'accounts' && !admin) {
+      // One-shot redirect on external input (URL); not derivable during render
+      // because the URL effect above must see the corrected screen.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setScreen('overview')
+      setPendingTab(undefined)
+    }
+  }, [signedIn, screen, admin])
   // Who AccountsView is allowed to say "you" about, so it can decline to
   // offer a demotion or a disable that would strand the signed-in admin
   // (see isOnlyEnabledAdmin in @/lib/accounts). Same decode, same trust level
@@ -560,7 +622,9 @@ function App() {
     )
   }
 
-  const active = NAV_INDEX[screen] ?? NAV_INDEX['overview']
+  // A deep link to Accounts by a non-admin falls back to Overview rather than
+  // a blank screen (the authorization itself is server-side).
+  const active = (screen === 'accounts' && !admin ? undefined : NAV_INDEX[screen]) ?? NAV_INDEX['overview']
 
   // Only the active tab of the active screen is mounted. Radix keeps inactive
   // TabsContent unmounted, so this holds at both levels.
@@ -657,12 +721,10 @@ function App() {
       case 'tasks':
         return <TasksView />
       case 'accounts':
-        // Unreachable today: navigation is component state (`screen`), not
-        // URL routing, and `visibleNav` already excludes this entry for a
-        // non-admin. Gated anyway as a regression guard for the day
-        // something drives `screen` from outside the sidebar's own clicks —
-        // a deep link, browser history, a future router — since the real
-        // authorization is server-side regardless of what renders here.
+        // `visibleNav` hides this entry from a non-admin, but `#/accounts`
+        // (deep link, history) can still set `screen`; the effect above then
+        // redirects to Overview. Gated here too for the render in between —
+        // the real authorization is server-side regardless.
         return admin ? <AccountsView currentEmail={selfEmail} /> : null
       case 'settings':
         return <SettingsView />
@@ -679,14 +741,12 @@ function App() {
     if (active.tabs.length === 1) return renderTab(active.tabs[0].id)
 
     return (
-      // key includes pendingTab so a navigation that names a tab re-mounts the
-      // strip onto it; without that the uncontrolled defaultValue is ignored on
-      // a screen that is already open.
+      // Controlled, so the selected tab can live in the URL. A tab the screen
+      // does not have (a stale link) falls back to its first one.
       <Tabs
-        key={`${active.id}:${pendingTab ?? ''}`}
-        defaultValue={
-          pendingTab && active.tabs.some((t) => t.id === pendingTab) ? pendingTab : active.tabs[0].id
-        }
+        key={active.id}
+        value={pendingTab && active.tabs.some((t) => t.id === pendingTab) ? pendingTab : active.tabs[0].id}
+        onValueChange={setPendingTab}
         className="gap-4"
       >
         <TabsList className="flex-wrap h-auto">
@@ -713,9 +773,9 @@ function App() {
           <div className="flex items-center gap-2 px-2 py-1.5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
             <Cpu size={22} className="text-primary shrink-0" weight="bold" />
             <div className="group-data-[collapsible=icon]:hidden min-w-0">
-              <div className="font-mono font-bold text-primary leading-tight tracking-tight">FRAME</div>
+              <div className="font-mono font-bold text-primary leading-tight tracking-tight">HEARTHRACK</div>
               <div className="text-[10px] text-muted-foreground leading-tight truncate">
-                Mainframe Framework for Kubernetes
+                Kubernetes for AI &amp; HPC.
               </div>
             </div>
           </div>
