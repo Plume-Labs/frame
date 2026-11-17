@@ -309,7 +309,8 @@ verify() {
     code="$(curl -sS -o "$STATE_DIR/${kind%%:*}.json" -w '%{http_code}' \
       -H "Authorization: Bearer $jwt" "$base/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/${kind%%:*}")"
     [ "$code" = "200" ] || { echo "demo: reading ${kind%%:*} through the console answered HTTP $code" >&2; exit 1; }
-    [ "$(grep -o '"hearthrack.demo/seeded": *"true"' "$STATE_DIR/${kind%%:*}.json" | wc -l)" = "${kind##*:}" ] || { echo "demo: the console does not list the ${kind##*:} seeded ${kind%%:*}" >&2; exit 1; }
+    found="$(grep -o '"hearthrack.demo/seeded": *"true"' "$STATE_DIR/${kind%%:*}.json" | wc -l)"
+    [ "$found" = "${kind##*:}" ] || { echo "demo: the console lists $found seeded ${kind%%:*}, expected ${kind##*:}:" >&2; grep -o '"name": *"demo-[a-z-]*"' "$STATE_DIR/${kind%%:*}.json" >&2 || true; exit 1; }
   done
   code="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $jwt" \
     "$base/api/v1/namespaces/cluster-control/configmaps/cluster-control-config")"
