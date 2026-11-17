@@ -63,8 +63,8 @@ make demo-down   # delete it
 
 Needs docker, kind, kubectl, go, curl and openssl. The cluster gets its own
 kubeconfig, so your current context is untouched. Nodes, racks and service
-classes are populated with four demo nodes; jobs, volumes and alerts are not seeded
-yet. Sign-in is passkey-only: see [known-limitations.md](known-limitations.md#the-demo-make-demo).
+classes are populated with four demo nodes, plus a few labelled demo jobs, volumes
+and alerts (no Argo pipelines, no Ceph). Sign-in is passkey-only: see [known-limitations.md](known-limitations.md#the-demo-make-demo).
 
 ---
 

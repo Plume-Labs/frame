@@ -17,9 +17,13 @@ issue).
 
 - It installs the real stack on a throwaway Kind cluster (one control plane,
   three workers, classified into two racks), so there is **no hardware behind
-  it**: no machines, BMCs, disks or Ceph. The Nodes screens are real; jobs,
-  volumes and alerts are **not seeded yet** (they need Argo Workflows, Rook/Ceph
-  or simulated data, which is still to be decided).
+  it**: no machines, BMCs, disks or Ceph. The Nodes screens are real. Jobs,
+  volumes, alerts and scheduling tiers are real objects seeded from `hack/demo/`
+  and labelled `hearthrack.demo/seeded` (`kubectl get -A -l hearthrack.demo/seeded`):
+  three container jobs (one completes, one runs, one fails on purpose) on Kind's
+  workers, two local-path volumes, three alerts with fictional content, and the
+  four `frame-*` priority tiers. Argo pipelines and Rook/Ceph storage are **not**
+  in the demo, so the pipeline-job and Ceph screens stay empty.
 - The first admin has no password, only a **passkey**, enrolled from the browser
   within 12 hours of the bootstrap. `make demo-verify` uses up the one-shot
   bootstrap token (it is meant for CI): run it or sign in by hand, not both, on

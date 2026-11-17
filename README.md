@@ -36,7 +36,7 @@ make demo        # ~7 min the first time: a throwaway Kind cluster with the whol
 make demo-down   # delete it
 ```
 
-You need docker, [kind](https://kind.sigs.k8s.io), kubectl, Go, curl and openssl. The demo cluster has its **own kubeconfig**: your current kubectl context is never touched. It gives you the real operator, authd and console on four demo nodes in two racks. Sign-in is by **passkey** (no password): the command prints the one-time step. Jobs, volumes and alerts are not seeded yet, and there is no real hardware behind it: see [known limitations](docs/known-limitations.md#the-demo-make-demo). A CI job runs this exact path on every push, so this section cannot silently rot.
+You need docker, [kind](https://kind.sigs.k8s.io), kubectl, Go, curl and openssl. The demo cluster has its **own kubeconfig**: your current kubectl context is never touched. It gives you the real operator, authd and console on four demo nodes in two racks. Sign-in is by **passkey** (no password): the command prints the one-time step. A few container jobs, two volumes, three alerts and the four scheduling tiers are seeded as real objects labelled `hearthrack.demo/seeded`; there is no real hardware behind it, and no Argo pipelines or Ceph: see [known limitations](docs/known-limitations.md#the-demo-make-demo). A CI job runs this exact path on every push, so this section cannot silently rot.
 
 ---
 
