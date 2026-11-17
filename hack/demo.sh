@@ -101,7 +101,22 @@ install_operator() {
 # operator has projected the labels: that is what the Nodes screens read.
 seed() {
   log "Classifying the demo nodes"
-  sed "s#CLUSTER_NAME#${CLUSTER}#g" hack/demo/seed.yaml | k apply -f -
+  # The rollout reports the operator Ready a moment before its webhook Service
+  # routes to it ("connection refused"), so the first apply can race it: retry
+  # for up to a minute rather than fail a demo that is about to work.
+  seeded=""
+  for _ in $(seq 1 30); do
+    if sed "s#CLUSTER_NAME#${CLUSTER}#g" hack/demo/seed.yaml | k apply -f - 2>/dev/null; then
+      seeded=1
+      break
+    fi
+    sleep 2
+  done
+  if [ -z "$seeded" ]; then
+    echo "demo: could not create the demo nodes (is the operator webhook up?):" >&2
+    sed "s#CLUSTER_NAME#${CLUSTER}#g" hack/demo/seed.yaml | k apply -f - >&2 || true
+    exit 1
+  fi
   for _ in $(seq 1 60); do
     n="$(k -n frame-system get framenodes -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].reason}{"\n"}{end}' 2>/dev/null | grep -c '^Online$' || true)"
     [ "$n" = "4" ] && return
