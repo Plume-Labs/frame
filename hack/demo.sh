@@ -147,6 +147,13 @@ seed_workloads() {
   done
   k apply -f hack/demo/jobs.yaml
   k apply -f hack/demo/storage-alerts.yaml
+  # The alert receiver writes status.state next to the spec; a kubectl apply
+  # cannot (status is a subresource), and the Alerts screen lists only Firing
+  # and Resolved entries. Patch it the way the receiver would.
+  for a in demo-alert-disk-pressure demo-alert-pump-flow; do
+    k -n frame-system patch framealert "$a" --subresource=status --type=merge -p '{"status":{"state":"Firing"}}'
+  done
+  k -n frame-system patch framealert demo-alert-resolved --subresource=status --type=merge -p '{"status":{"state":"Resolved"}}'
   wait_for "job demo-nightly-report Completed" job_phase demo-nightly-report Completed
   wait_for "job demo-training-run Running" job_phase demo-training-run Running
   wait_for "job demo-flaky-etl Failed" job_phase demo-flaky-etl Failed
