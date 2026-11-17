@@ -8,14 +8,15 @@ import { createContext, useContext } from 'react'
  * says "3 nodes are not ready" could not take you to the nodes. Overview needs
  * exactly that, so the state lives here instead.
  *
- * Deliberately not react-router: there is one level of navigation and no URL
- * to keep in sync, so a router would be machinery for a feature we do not have.
+ * Deliberately not react-router: there is one level of navigation, mirrored in
+ * the URL fragment (`#/screen/tab`, see lib/route.ts), so a router would be
+ * machinery for a feature we do not have.
  */
 export interface Navigation {
   screen: string
   /** `tab` selects a tab within the target screen, when it has them. */
   navigate: (screen: string, tab?: string) => void
-  /** Set by `navigate`, read by the target screen to pick its opening tab. */
+  /** The selected tab of the active screen (set by `navigate` or the tab strip). */
   pendingTab?: string
 }
 

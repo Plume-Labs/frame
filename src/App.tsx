@@ -407,6 +407,14 @@ const NAV_INDEX: Record<string, NavItem> = Object.fromEntries(
   NAV.flatMap((group) => group.items).map((item) => [item.id, item]),
 )
 
+/** URL for a screen/tab: unknown screen → overview, invalid or first tab → no tab segment. */
+function canonicalRoute(screen: string, tab?: string): string {
+  const known = NAV_INDEX[screen]
+  if (!known) return formatRoute('overview')
+  const valid = known.tabs.some((t) => t.id === tab) && tab !== known.tabs[0]?.id
+  return formatRoute(screen, valid ? tab : undefined)
+}
+
 /** `checking` while the initial `currentSession()` call is in flight. */
 type SessionState =
   | { phase: 'checking' }
@@ -508,9 +516,7 @@ function App() {
   const wroteRoute = useRef(false)
   useEffect(() => {
     if (!signedIn || globalThis.location.pathname === '/invite') return
-    const known = NAV_INDEX[screen]
-    const tab = known?.tabs.some((t) => t.id === pendingTab) ? pendingTab : undefined
-    const next = formatRoute(known ? screen : 'overview', tab)
+    const next = canonicalRoute(screen, pendingTab)
     if (globalThis.location.hash === next) {
       wroteRoute.current = true
       return
@@ -525,8 +531,13 @@ function App() {
     const onHashChange = () => {
       const route = parseRoute(globalThis.location.hash, (id) => id in NAV_INDEX)
       if (!route) return
-      setScreen(route.screen)
-      setPendingTab(route.tab)
+      // Canonicalise a hand-edited fragment (`#/nodes/bogus`, `#/nodes/nodes`)
+      // in place, so back never lands on an entry that rewrites itself.
+      const canonical = canonicalRoute(route.screen, route.tab)
+      if (globalThis.location.hash !== canonical) globalThis.history.replaceState(null, '', canonical)
+      const fixed = parseRoute(canonical, (id) => id in NAV_INDEX)
+      setScreen(fixed?.screen ?? 'overview')
+      setPendingTab(fixed?.tab)
     }
     globalThis.addEventListener('hashchange', onHashChange)
     globalThis.addEventListener('popstate', onHashChange)
@@ -546,6 +557,17 @@ function App() {
     () => (sessionState.phase === 'signed-in' ? isAdminToken(sessionState.session.token) : false),
     [sessionState],
   )
+  // A non-admin who lands on `#/accounts` (link, history) is sent to Overview,
+  // so the URL and the highlighted sidebar entry agree with what is shown.
+  useEffect(() => {
+    if (signedIn && screen === 'accounts' && !admin) {
+      // One-shot redirect on external input (URL); not derivable during render
+      // because the URL effect above must see the corrected screen.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setScreen('overview')
+      setPendingTab(undefined)
+    }
+  }, [signedIn, screen, admin])
   // Who AccountsView is allowed to say "you" about, so it can decline to
   // offer a demotion or a disable that would strand the signed-in admin
   // (see isOnlyEnabledAdmin in @/lib/accounts). Same decode, same trust level
@@ -699,12 +721,10 @@ function App() {
       case 'tasks':
         return <TasksView />
       case 'accounts':
-        // Unreachable today: navigation is component state (`screen`), not
-        // URL routing, and `visibleNav` already excludes this entry for a
-        // non-admin. Gated anyway as a regression guard for the day
-        // something drives `screen` from outside the sidebar's own clicks —
-        // a deep link, browser history, a future router — since the real
-        // authorization is server-side regardless of what renders here.
+        // `visibleNav` hides this entry from a non-admin, but `#/accounts`
+        // (deep link, history) can still set `screen`; the effect above then
+        // redirects to Overview. Gated here too for the render in between —
+        // the real authorization is server-side regardless.
         return admin ? <AccountsView currentEmail={selfEmail} /> : null
       case 'settings':
         return <SettingsView />
