@@ -53,9 +53,13 @@ Le job `Build` devient une matrice sur les cinq Dockerfiles que le job `scan`
 contrôle déjà (et dont dépend `Release`) : il pousse
 `ghcr.io/plume-labs/frame-{controller,ui,authd,uiproxy,provisiond}` avec les
 mêmes tags (`{{version}}` = `1.0.0`, `{{major}}.{{minor}}`, `sha-…`, branche).
-`Dockerfile.agent` n'est ni scanné ni poussé : l'ajouter au scan d'abord, puis
-au build. Vérifié avec `actionlint`, jamais lancé : il ne publie que depuis
-GitHub.
+`Dockerfile.agent` a rejoint la matrice de build et de scan avec la publication
+du chart : six images, `ghcr.io/plume-labs/frame-{controller,ui,authd,uiproxy,provisiond,agent}`.
+Un job `Publish chart` (sur tag `v*`, mêmes garde-fous que `Release`) empaquette
+`charts/frame` avec la version du tag (`--version` et `--app-version`, tag
+semver exigé) et le pousse sur `oci://ghcr.io/plume-labs/charts`. Le workflow
+n'a pas encore tourné sur un vrai tag : le packaging a été vérifié en local
+(helm 4.3.1), pas le push.
 
 ## 2. Conventions proposées
 
