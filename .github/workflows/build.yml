@@ -132,7 +132,10 @@ jobs:
   # The legs are the same six as the scan matrix below, which is what the
   # release job gates on: an image is pushed only if it is also scanned.
   # Dockerfile.agent (the node-tuning DaemonSet) joined both matrices with the
-  # chart publication, so every image a release references is published.
+  # chart publication, so every Dockerfile in the repository is published. The
+  # production overlay's manifest still names some of them without newName or
+  # newTag (docs/publication-chart-et-image.md, section 1): that is a manifest
+  # gap, not a missing image.
   #
   # Tags: {{version}} is the semver without the leading v (1.0.0), which is
   # what the chart's image.tag defaults to (.Chart.AppVersion).
@@ -200,7 +203,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Scoped per image: the legs share one GitHub Actions cache, and an
-          # unscoped mode=max export from five different Dockerfiles would
+          # unscoped mode=max export from six different Dockerfiles would
           # have them evict each other's layers.
           cache-from: type=gha,scope=build-${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=build-${{ matrix.name }}
@@ -212,9 +215,9 @@ jobs:
 
   # ── 4. Supply-chain scan: SBOM + vulnerabilities for all six images ──────
   #
-  # Frame builds five images, and only one of them is pushed by this workflow
-  # today. Scanning still covers all five, because a CVE in the operator is a
-  # CVE whether or not this workflow is what publishes it. The matrix names
+  # Frame builds six images, and the build job above pushes all six on main
+  # and on tags. Scanning covers the same six, because a CVE in the operator
+  # is a CVE whether or not this workflow is what publishes it. The matrix names
   # each Dockerfile explicitly rather than deriving anything.
   #
   # The previous version of this comment claimed a fourth image "cannot be
@@ -229,7 +232,7 @@ jobs:
   # non-distroless image in the fleet, running xorriso against input a
   # BMC-adjacent network can influence. If a sixth Dockerfile appears, add it
   # here; `make docker-images` and `make scan` are the local equivalents and
-  # they do list all five.
+  # they list all six.
   scan:
     name: Scan (${{ matrix.name }})
     runs-on: ubuntu-latest
