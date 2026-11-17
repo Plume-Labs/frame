@@ -54,6 +54,19 @@ make run   # runs controller against your current kubeconfig
 
 ---
 
+## Option 0 — Try it without hardware (`make demo`)
+
+```bash
+make demo        # a throwaway Kind cluster with the operator, authd and the console
+make demo-down   # delete it
+```
+
+Needs docker, kind, kubectl, go, curl and openssl. The cluster gets its own
+kubeconfig, so your current context is untouched. The console opens empty for
+now, and sign-in is passkey-only: see [known-limitations.md](known-limitations.md#the-demo-make-demo).
+
+---
+
 ## Option B — Full operator stack (envtest / Kind)
 
 For developing or testing the Go operator without a real cluster:

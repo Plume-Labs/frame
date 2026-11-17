@@ -50,6 +50,8 @@ jobs:
       - name: Dump the cluster state on failure
         if: failure()
         run: |
+          # The demo cluster has its own kubeconfig (hack/demo.sh), not ~/.kube/config.
+          export KUBECONFIG="${XDG_STATE_HOME:-$HOME/.local/state}/hearthrack-demo/kubeconfig"
           kubectl get pods -A || true
           kubectl -n cluster-control describe pods || true
           kubectl -n cluster-control logs deployment/cluster-control-auth --all-containers --tail=100 || true

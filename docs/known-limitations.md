@@ -13,6 +13,16 @@ issue).
 - **The `v1alpha1` → `v1beta1` storage migration** (`hack/migrate-storage-version.sh`)
   has been rehearsed on a throwaway Kind cluster only, never on a long-lived one.
 
+## The demo (`make demo`)
+
+- It installs the real stack on a throwaway Kind cluster, so there is **no
+  hardware behind it**: no machines, disks or Ceph. For now the console opens
+  **empty**; seeding demo objects is planned.
+- The first admin has no password, only a **passkey**, enrolled from the browser
+  within 12 hours of the bootstrap. `make demo-verify` uses up the one-shot
+  bootstrap token (it is meant for CI): run it or sign in by hand, not both, on
+  the same cluster.
+
 ## Security caveats
 
 - The **node-tuning agent is root-equivalent** on every node it runs on, and
