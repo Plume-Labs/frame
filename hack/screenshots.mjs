@@ -23,14 +23,16 @@ const stateDir =
 const outDir = process.argv[2] ?? 'docs/img/screens'
 const email = process.env.DEMO_ADMIN_EMAIL ?? 'admin@hearthrack.demo'
 
-// [file name, route fragment, text the screen must show before it is shot]
+// [file name, route fragment (#/<screen>/<tab>, see src/App.tsx NAV), text the
+// screen must show before it is shot]
 const screens = [
   ['overview', '#/overview', null],
-  ['nodes', '#/nodes', 'demo-worker'],
-  ['racks', '#/racks', 'rack-a'],
+  ['nodes', '#/nodes', 'hearthrack-demo-worker'],
+  ['racks', '#/nodes/racks', 'rack-a'],
   ['jobs', '#/jobs', 'demo-training-run'],
-  ['alerts', '#/alerts', 'NodeDiskPressure'],
-  ['scheduler', '#/scheduler', null],
+  ['scheduling', '#/scheduling', 'demo-high'],
+  ['alerts', '#/security/alerts', 'NodeDiskPressure'],
+  ['storage', '#/storage', null],
 ]
 
 const token = (await readFile(join(stateDir, 'bootstrap-token'), 'utf8')).trim()
@@ -57,25 +59,23 @@ const status = await page.evaluate(
 )
 if (status !== 204) throw new Error(`/auth/bootstrap answered HTTP ${status} (token already used?)`)
 
-for (const theme of ['light', 'dark']) {
-  for (const [name, route, text] of screens) {
-    await page.goto(`${base}/${route}`)
-    await page.reload()
-    await page.evaluate((t) => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
-    if (text) {
-      try {
-        await page.getByText(text).first().waitFor({ timeout: 30_000 })
-      } catch (err) {
-        await page.screenshot({ path: join(outDir, `debug-${name}-${theme}.png`) })
-        throw err
-      }
+// The console has one theme (dark): `.dark` on <html> changes nothing today.
+for (const [name, route, text] of screens) {
+  await page.goto(`${base}/${route}`)
+  await page.reload()
+  if (text) {
+    try {
+      await page.getByText(text).first().waitFor({ timeout: 30_000 })
+    } catch (err) {
+      await page.screenshot({ path: join(outDir, `debug-${name}.png`) })
+      throw err
     }
-    // Not `networkidle`: the console polls the apiserver, so it never goes idle.
-    await page.waitForTimeout(4000) // first fetches, charts and counters settle
-    const file = join(outDir, `${name}-${theme}.png`)
-    await page.screenshot({ path: file })
-    console.log(`wrote ${file}`)
   }
+  // Not `networkidle`: the console polls the apiserver, so it never goes idle.
+  await page.waitForTimeout(4000) // first fetches, charts and counters settle
+  const file = join(outDir, `${name}.png`)
+  await page.screenshot({ path: file })
+  console.log(`wrote ${file}`)
 }
 
 await browser.close()

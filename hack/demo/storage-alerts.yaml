@@ -58,8 +58,8 @@ spec:
   alertName: NodeDiskPressure
   severity: warning
   startsAt: "2026-01-01T00:00:00Z"
-  labels: {node: demo-worker2, rack: rack-b}
-  annotations: {summary: "Demo data: a fictional disk-pressure alert on demo-worker2."}
+  labels: {rack: rack-b}
+  annotations: {summary: "Demo data: a fictional disk-pressure alert in rack-b."}
 ---
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameAlert
