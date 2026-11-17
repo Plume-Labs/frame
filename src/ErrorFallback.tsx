@@ -14,7 +14,7 @@ export const ErrorFallback = ({ error, resetErrorBoundary }: { error: unknown; r
       <div className="w-full max-w-md">
         <Alert variant="destructive" className="mb-6">
           <AlertTriangleIcon />
-          <AlertTitle>Cluster Control has encountered a runtime error</AlertTitle>
+          <AlertTitle>Hearthrack has encountered a runtime error</AlertTitle>
           <AlertDescription>
             Something unexpected happened while rendering the UI. The error details are shown below — reloading usually clears it; if it persists, check the browser console and the pod logs.
           </AlertDescription>

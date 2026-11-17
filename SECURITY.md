@@ -1,12 +1,12 @@
 # Security Policy
 
-Frame is a Kubernetes operator and control plane. A vulnerability in it is a
+Hearthrack is a Kubernetes operator and control plane. A vulnerability in it is a
 vulnerability in whatever cluster runs it, so reports are welcome and taken
 seriously.
 
 ## Supported versions
 
-Frame's first tagged release is `v1.0.0`. Fixes land on `main` and ship in
+Hearthrack's first tagged release is `v1.0.0`. Fixes land on `main` and ship in
 the next release of the current minor series; there is no backport branch
 for older series.
 
@@ -48,7 +48,7 @@ make a report triageable at all:
 - Proof-of-concept or exploit code, if you have it
 - The impact: what an attacker gains, and what they need already to get there
 
-Frame runs with real cluster authority, so it is especially useful to say
+Hearthrack runs with real cluster authority, so it is especially useful to say
 **which principal** the attack starts from — an unauthenticated network
 position, a namespaced user, a compromised workload — and what it reaches.
 
@@ -60,7 +60,7 @@ position, a namespaced user, a compromised workload — and what it reaches.
 | Initial assessment and severity | 10 working days |
 | Fix or documented mitigation for Critical/High | 30 days where practical |
 
-Frame is maintained by a small team; these are honest targets, not a
+Hearthrack is maintained by a small team; these are honest targets, not a
 contractual SLA. If a report goes unacknowledged past the first target, please
 comment on the draft advisory to nudge it.
 
@@ -149,7 +149,7 @@ vulnerability.** The same account sends the everyday gestures of
 `FrameCephAction` (in, out, restart, scrub, a flag for a while): out and
 restart only when every PG is active+clean and every OSD up and in, and a
 flag is unset at the end of its duration; **an out or a restart sent while
-that check fails, or a flag left set past its end by Frame, is a bug to
+that check fails, or a flag left set past its end by Hearthrack, is a bug to
 report.**
 
 Note also that **enabling KSM is a security trade-off, not just a performance
@@ -157,17 +157,17 @@ one**: merged pages make writes take a measurable copy-on-write fault, which
 lets one container probe whether another holds a given page. That is why
 `ksm.enabled` defaults to off. Reports about KSM side channels on a cluster
 that deliberately turned it on are a documented trade-off rather than a
-vulnerability; reports that Frame enables it without the operator asking are
+vulnerability; reports that Hearthrack enables it without the operator asking are
 not.
 
-Out of scope, because they are not Frame's to fix — report these upstream:
+Out of scope, because they are not Hearthrack's to fix — report these upstream:
 
 - Vulnerabilities in Kubernetes itself, in k3s, or in Argo Workflows
 - Vulnerabilities in base images (`nginx`, `golang`, `distroless`,
-  `ghcr.io/ggml-org/llama.cpp`) that Frame merely consumes, unless Frame's use
+  `ghcr.io/ggml-org/llama.cpp`) that Hearthrack merely consumes, unless Hearthrack's use
   of them is what makes the issue exploitable
 - Findings that require cluster-admin to begin with, since cluster-admin can
-  already do anything Frame can
+  already do anything Hearthrack can
 
-There is no bug bounty. Frame is not part of any bounty programme, and reports
+There is no bug bounty. Hearthrack is not part of any bounty programme, and reports
 here are not eligible for rewards from GitHub or anyone else.

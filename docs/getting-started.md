@@ -6,7 +6,7 @@
 
 Your node can have many roles for optimal resource utilization (e.g., compute, storage, GPU, controller).
 
-Frame provisionning it with roles based on detected hardware and user preference. The operator will automatically detect the node's hardware and assign the appropriate role.
+Hearthrack provisionning it with roles based on detected hardware and user preference. The operator will automatically detect the node's hardware and assign the appropriate role.
 
 #### Default :
 - 64-bit x86_64 CPU (Dual socket recommended for redundancy and memory bandwidth, RISC-V and ARM64 are not supported yet)
@@ -18,7 +18,7 @@ Frame provisionning it with roles based on detected hardware and user preference
 
 #### Recommended for high-performance workloads and big cluster management :
 - GPU (NVIDIA has better support for now with official operator) with supported drivers
-- ASIC or FPGA accelerators (if your workloads require them, no default support in Frame for now)
+- ASIC or FPGA accelerators (if your workloads require them, no default support in Hearthrack for now)
 - 40+ Gbps RDMA-capable NIC (InfiniBand HCA or RoCE NIC, for high-throughput workloads and large clusters)
 - PXE boot support (For automated node provisioning and OS installation)
 - IPMI / BMC for remote power management
@@ -26,7 +26,7 @@ Frame provisionning it with roles based on detected hardware and user preference
 ### Single-node cluster for testing
 For testing and development, you can use a single-node cluster.
 
- /!\ Frame is designed for multi-node clusters. Running on a single node may lead to unexpected behavior and is not recommended for production use.
+ /!\ Hearthrack is designed for multi-node clusters. Running on a single node may lead to unexpected behavior and is not recommended for production use.
 
 ---
 

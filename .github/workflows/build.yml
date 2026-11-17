@@ -186,7 +186,14 @@ jobs:
         with:
           # metadata-action lowercases the name (the owner is Plume-Labs;
           # registries only accept lowercase repositories).
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/frame-${{ matrix.name }}
+          #
+          # The product is named Hearthrack. The second line keeps pushing the
+          # former frame-<name> image, same tags and digest, so manifests that
+          # still pull it keep working (docs/naming.md). Drop it in a later
+          # release.
+          images: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/hearthrack-${{ matrix.name }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/frame-${{ matrix.name }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr

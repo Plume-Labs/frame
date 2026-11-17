@@ -88,7 +88,7 @@ function DatabaseCard({ db, onSaved }: { db: Database; onSaved: () => void }) {
               <dd>{f.value}</dd>
             </div>
           ))}
-          {db.adopted && <div className="text-muted-foreground">Adopted cluster: Frame never recreates it.</div>}
+          {db.adopted && <div className="text-muted-foreground">Adopted cluster: Hearthrack never recreates it.</div>}
         </dl>
       </CardContent>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>

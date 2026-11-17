@@ -69,7 +69,7 @@ function phaseBadge(a: CephAction) {
 }
 
 /**
- * The cluster flags Frame set and still holds, each with its end. Shown on
+ * The cluster flags Hearthrack set and still holds, each with its end. Shown on
  * the Ceph screens while one is active: a forgotten noout hides failures.
  */
 export function ActiveFlagsBanner({ items, admin }: { items: CephAction[]; admin: boolean }) {
@@ -92,13 +92,13 @@ export function ActiveFlagsBanner({ items, admin }: { items: CephAction[]; admin
           <span className="font-mono font-semibold">{a.flag}</span>
           {isOverdue(a, now) ? (
             <span className="text-destructive font-medium">
-              its time ended at {when(a.expiresAt)} but Frame could not unset it yet ({a.message || 'no answer from Ceph'}
+              its time ended at {when(a.expiresAt)} but Hearthrack could not unset it yet ({a.message || 'no answer from Ceph'}
               ); it keeps retrying, or run <code>ceph osd unset {a.flag}</code>
             </span>
           ) : (
             <span>
               set until {when(a.expiresAt)}
-              {a.flagWasSet && ' (it was already set: Frame leaves it set at the end)'}
+              {a.flagWasSet && ' (it was already set: Hearthrack leaves it set at the end)'}
             </span>
           )}
           {admin && !a.release && (
@@ -150,8 +150,8 @@ function NewAction() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Reversible gestures only; none destroys data. Frame checks Ceph before an out or a restart, and sends each gesture
-          once. A flag is unset by Frame at the end of its duration.
+          Reversible gestures only; none destroys data. Hearthrack checks Ceph before an out or a restart, and sends each gesture
+          once. A flag is unset by Hearthrack at the end of its duration.
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
           <div className="space-y-1 sm:w-64">
@@ -219,7 +219,7 @@ function NewAction() {
                   try {
                     await frame.cephActions.create(action, osdNum, isFlag ? flag : '', Number(minutes))
                     setOsd('')
-                    toast.success('Sent to Frame; the result shows below.')
+                    toast.success('Sent to Hearthrack; the result shows below.')
                   } catch (e) {
                     toast.error(`Not sent: ${errText(e)}`)
                   }

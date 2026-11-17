@@ -568,7 +568,7 @@ it.
 
 ### Turning Pod Security on
 
-`deploy/kubernetes/pod-security/` labels the application namespaces Frame
+`deploy/kubernetes/pod-security/` labels the application namespaces Hearthrack
 ships with — `default` and `inference` — with `baseline`, pinned to `v1.29` so a
 cluster upgrade cannot silently tighten what is admitted. Infrastructure
 namespaces are deliberately absent: `kube-system`, `monitoring`, `alluxio`,
@@ -577,7 +577,7 @@ namespaces are deliberately absent: `kube-system`, `monitoring`, `alluxio`,
 `baseline` forbids, and labelling them would refuse those pods at their next
 restart.
 
-**Your own application namespaces.** Frame does not declare them: their names
+**Your own application namespaces.** Hearthrack does not declare them: their names
 belong to your site, not to the project. To give one restart, scale and the
 manifest editor, add to your own overlay (a kustomization that takes
 `deploy/kubernetes/overlays/production` as its base):
@@ -885,7 +885,7 @@ or RBAC is currently applied — so a rollback and a later re-attempt does not
 need to bootstrap again.
 
 **If you are stranded**, the way back is the node's own kubeconfig:
-cluster-admin outside Frame's RBAC entirely, used either to fix the missing
+cluster-admin outside Hearthrack's RBAC entirely, used either to fix the missing
 piece by hand or to re-apply the previous kustomization. That identity is in
 `system:masters`, which is why the FrameUser webhook's role-change guard
 admits it — see the RBAC section above.
@@ -925,8 +925,8 @@ is bound to the domain it was created for, not to the account.
 
 1. Sign in as an admin, open **Accounts**, choose **Invite**, give an address
    and `viewer` or `operator`.
-2. Copy the link and send it however you already talk to that person. Frame
-   sends no mail: Frame has no mail path, and adding one is a
+2. Copy the link and send it however you already talk to that person. Hearthrack
+   sends no mail: Hearthrack has no mail path, and adding one is a
    separate project.
 3. They open the link and enrol a key. The link then dies — refused because
    the account holds a credential, not because a flag was flipped. Nothing
@@ -994,9 +994,9 @@ change rather than a documentation fix.
 ### Running the storage-version migration
 
 `hack/migrate-storage-version.sh` is **not** runnable under any of these
-tiers, deliberately. It needs `patch` on every Frame resource *and* `patch` on
+tiers, deliberately. It needs `patch` on every Hearthrack resource *and* `patch` on
 `customresourcedefinitions/status` in `apiextensions.k8s.io` — a group no
-Frame tier mentions, and one where that single verb means "change which
+Hearthrack tier mentions, and one where that single verb means "change which
 version is stored for any CRD in the cluster", for any operator, not just
 this one. That is cluster-admin power wearing a narrow name, and shipping a
 bindable `ClusterRole` for it would invite exactly the mistake this section
@@ -1253,7 +1253,7 @@ switched by a click.
 
 ## Provisioning a machine with Ubuntu
 
-Frame installs Ubuntu 24.04 LTS (decision of 2026-09-29, replacing the Debian
+Hearthrack installs Ubuntu 24.04 LTS (decision of 2026-09-29, replacing the Debian
 base of 2026-09-11: the NVIDIA GPU Operator publishes driver images for
 Ubuntu 24.04 and none for Debian). `internal/provision` renders a subiquity
 autoinstall document per machine and serves it over cloud-init's NoCloud
@@ -1310,8 +1310,8 @@ autoinstall seed and posts its progress, from `frame-provisiond-media`
 
 - **NodePort** — a fixed port of your choosing, so the BMC's boot media
   configuration can name a stable address. Pick one free on your
-  management network: before this change every Frame install opened
-  30581, so a second Frame cluster on the same network, or anything else
+  management network: before this change every Hearthrack install opened
+  30581, so a second Hearthrack cluster on the same network, or anything else
   holding that port, collides with it.
 - **LoadBalancer** — if the cluster has a load balancer implementation
   (MetalLB, kube-vip…), with `loadBalancerSourceRanges` set to the BMCs'
@@ -1376,7 +1376,7 @@ The chart refuses `nodePort`, `externalTrafficPolicy` or
 outright on the removed `provisiond.media.nodePort` key (see
 `docs/upgrading.md`).
 
-**While the media listener is not exposed, Frame says so instead of
+**While the media listener is not exposed, Hearthrack says so instead of
 waiting.** The shipped media URL is the placeholder
 `http://ci-placeholder.invalid:30581` (`.invalid` never resolves, RFC
 2606). The manager starts with it (or with none at all: the flag is
@@ -1384,7 +1384,7 @@ checked for syntax only at start-up, and logs that FrameInstall will
 refuse), and every `FrameInstall` then fails at once — phase `Failed`,
 `failedPhase: Pending`, before the BMC is touched or an image built — with
 a message naming the placeholder and telling you to expose
-`frame-provisiond-media` and set the URL. What Frame cannot check is
+`frame-provisiond-media` and set the URL. What Hearthrack cannot check is
 whether a real, well-formed URL actually reaches the Service: point it at
 an address the BMC cannot reach and the install fails later, at the
 `MediaAttached` deadline. Hence the `curl` from the management network
@@ -1730,7 +1730,7 @@ existing cluster and is Ready there`.
 ### Not yet executed
 
 - [ ] The remastered image boots the ML350 Gen9 unattended, in the boot mode
-      Frame set, without a keypress, and `ip=dhcp` finds the one cabled
+      Hearthrack set, without a keypress, and `ip=dhcp` finds the one cabled
       port among four.
 - [ ] The static address lands on the cabled port (netplan `en*` stanza,
       carrier only), and the installed system's netplan names that port alone
@@ -1741,16 +1741,16 @@ existing cluster and is Ready there`.
       absent or the wrong size aborts the install before anything is wiped
       and reports `InstallerFailed`.
 - [ ] `k3s server --cluster-init` produces a cluster whose kubeconfig, as
-      rewritten by Frame, reaches it from another machine.
-- [ ] **The installed node's own kernel command line is clean.** Frame
+      rewritten by Hearthrack, reaches it from another machine.
+- [ ] **The installed node's own kernel command line is clean.** Hearthrack
       inserts its arguments before `---`; read `/proc/cmdline` once on an
       installed node: `ds=nocloud` must not be there.
 - [ ] Hostname and `/etc/hosts`: `sudo -n true` prints nothing on stderr.
 - [ ] **The whole `Installing` gate has never run on hardware.** The
-      installed machine answers SSH with Frame's key, the
+      installed machine answers SSH with Hearthrack's key, the
       `sudoers.d/frame` drop-in landed with mode 440, and
       `/etc/frame-install-uid` holds the UID this run generated. Any one
-      failing looks identical from Frame: a silence ending in the
+      failing looks identical from Hearthrack: a silence ending in the
       `Installing` timeout.
 - [ ] Rebooting with the medium still attached does not stop on a prompt
       (`noprompt`).

@@ -168,7 +168,7 @@ planning an upgrade, and the answer is the same regardless of how many
 
 ## 3. API versions and the migration path
 
-Frame's API is frozen at **`v1beta1`**, in both `frame.plume-labs.io` and
+Hearthrack's API is frozen at **`v1beta1`**, in both `frame.plume-labs.io` and
 `services.plume-labs.io`, on the eight kinds that existed at the freeze.
 `v1beta1` is the storage version and the conversion hub; `v1alpha1` is still
 served, is marked `deprecated: true`, and emits a warning on every read and
@@ -179,7 +179,7 @@ has exactly one version, no `v1alpha1` to convert from, no conversion webhook,
 and nothing in this section applies to it. Nine CRDs exist; eight have a
 migration path.
 
-**`v1` is deliberately not part of V1.** Frame is in beta and needs
+**`v1` is deliberately not part of V1.** Hearthrack is in beta and needs
 capability before it needs a stability promise it cannot yet keep; promotion
 waits until `v1beta1` has survived real use, not until a date arrives.
 Shipping V1 on `v1beta1` says that honestly, where a `v1` issued on schedule
@@ -248,7 +248,7 @@ them, and a version cannot be removed from a CRD while it appears in
 ./hack/migrate-storage-version.sh --apply
 ```
 
-Run it as a cluster administrator: it needs `patch` on every Frame resource
+Run it as a cluster administrator: it needs `patch` on every Hearthrack resource
 *and* `patch` on `customresourcedefinitions/status`, and no shipped role
 grants the second (deliberately — see
 [deployment.md](deployment.md), "Running the storage-version migration").
@@ -536,7 +536,7 @@ installer images from — is now `ClusterIP` in both install paths
   Service still reads `type: NodePort` before applying.
 
 Keeping 30581 keeps your media URL valid. **Consider another port**: 30581
-was the same on every Frame install, so two Frame clusters on one
+was the same on every Hearthrack install, so two Hearthrack clusters on one
 management network — or anything else holding that port — collided. A new
 port means updating the media URL with it (`provisiond.media.url`, or the
 manager's `--provisiond-media-url` and provisiond's `MEDIA_URL`).

@@ -1,6 +1,6 @@
-# Frame Documentation
+# Hearthrack Documentation
 
-Engineering documentation for the Frame operator and control plane. For the product overview and quick start, see the top-level [README](../README.md).
+Engineering documentation for the Hearthrack operator and control plane. For the product overview and quick start, see the top-level [README](../README.md).
 
 ## Contents
 
@@ -26,7 +26,7 @@ Operator / CI / UI (TypeScript SDK)
 Frame CRDs (frame.plume-labs.io/v1beta1, services.plume-labs.io/v1beta1)
         │
         ▼
-Frame operator (controllers + webhooks)   ← api/, internal/, cmd/
+Hearthrack operator (controllers + webhooks)   ← api/, internal/, cmd/
         │  reconciles into
         ▼
 Cluster primitives (ArgoWorkflows, PriorityClasses, node labels, llama.cpp, …)
@@ -41,4 +41,4 @@ Bare-metal IaC (deploy/)
 
 ## Scope
 
-Frame manages a **single local cluster** — one physical location, one or more racks sharing an L2 segment for RDMA. Multi-site / multi-region federation is out of scope for this version.
+Hearthrack manages a **single local cluster** — one physical location, one or more racks sharing an L2 segment for RDMA. Multi-site / multi-region federation is out of scope for this version.

@@ -75,7 +75,7 @@ export function actionLabel(a: CephAction): string {
 /** Grace after a flag's end before the banner calls it overdue. */
 export const OVERDUE_GRACE_MS = 2 * 60_000
 
-/** A held flag whose time is up but that Frame has not unset yet. */
+/** A held flag whose time is up but that Hearthrack has not unset yet. */
 export function isOverdue(a: CephAction, now: Date): boolean {
   if (a.phase !== 'Active' || a.flagWasSet || !a.expiresAt) return false
   return new Date(a.expiresAt).getTime() + OVERDUE_GRACE_MS < now.getTime()
@@ -103,7 +103,7 @@ export function describeAction(action: CephActionKind, osd: number | null, flag:
     case 'OSDDeepScrub':
       return `Ask Ceph to deep-scrub ${o} (reads every object, heavy on the disk for a while).`
     case 'SetFlag':
-      return `Set ${flag} on the whole cluster for ${minutes} minutes. Frame unsets it at the end, or when you release it. ${flagEffect(flag)}`
+      return `Set ${flag} on the whole cluster for ${minutes} minutes. Hearthrack unsets it at the end, or when you release it. ${flagEffect(flag)}`
   }
 }
 

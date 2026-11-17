@@ -63,7 +63,12 @@ n'a pas encore tourné sur un vrai tag : le packaging a été vérifié en local
 
 ## 2. Conventions proposées
 
-- Images : `ghcr.io/plume-labs/frame-<nom>:<version sans v>`.
+- Images : `ghcr.io/plume-labs/hearthrack-<nom>:<version sans v>` (nom public
+  Hearthrack, décision D1 du 17/11/2026), poussées aussi sous l'ancien nom
+  `ghcr.io/plume-labs/frame-<nom>` le temps de la transition (voir
+  [naming.md](naming.md)). Les commandes de ce document qui citent `frame-<nom>`
+  désignent l'alias ; remplacer par `hearthrack-<nom>` pour les nouvelles
+  installations.
 - Chart : OCI, `oci://ghcr.io/plume-labs/charts/frame`, version = le tag sans `v` (la CI
   passe `--version` et `--app-version` ; `Chart.yaml` n'est pas modifié).
 

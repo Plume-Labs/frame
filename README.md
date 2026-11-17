@@ -1,13 +1,15 @@
-# Frame — Mainframe Framework for Kubernetes
+# Hearthrack — mainframe-style computing for Kubernetes
 
 You need big hardware to run big workloads with unified approach like mainframe do, but you don't have the money for a real mainframe ?
 
-Frame turns a rack of bare-metal servers into a unified, self-healing, mainframe-like computing platform:
+Hearthrack turns a rack of bare-metal servers into a unified, self-healing, mainframe-like computing platform:
 nine CRDs across two API groups — the eight frozen at `v1beta1` with `v1alpha1` still served and deprecated, plus `NodeTuning` added after the freeze — a React UI, and a TypeScript SDK for job orchestration, scheduling, resource management, node tuning, and observability.
+
+> **Hearthrack was called Frame until 2026-11.** The API group (`frame.plume-labs.io`), the `Frame*` kinds, namespaces and Helm chart name keep the old name on purpose, so existing installs keep working. See [naming.md](docs/naming.md) for what stays and why.
 
 > **Status: pre-release.** There is no tagged release yet and the API is still `v1beta1`. See [known limitations](docs/known-limitations.md) for what has and has not been proven.
 
-> ⚠️ **Security notice.** Frame holds real authority over the cluster it manages, and its node-tuning agent runs as root-equivalent on every node. Do **not** expose the console to the Internet, and try Frame on a disposable cluster before anything that matters. Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+> ⚠️ **Security notice.** Hearthrack holds real authority over the cluster it manages, and its node-tuning agent runs as root-equivalent on every node. Do **not** expose the console to the Internet, and try Hearthrack on a disposable cluster before anything that matters. Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 > Single physical location only — multi-site federation is out of scope for now.
 
@@ -19,7 +21,7 @@ nine CRDs across two API groups — the eight frozen at `v1beta1` with `v1alpha1
 UI / SDK / CI
     │  direct K8s API calls (/apis/frame.plume-labs.io/v1beta1/…)
     ▼
-Frame CRDs  →  Frame operator  →  cluster primitives (Argo, PriorityClasses, …)
+Frame CRDs  →  Hearthrack operator  →  cluster primitives (Argo, PriorityClasses, …)
 ```
 
 Deployed: the console talks to the apiserver through the in-pod `frame-uiproxy` sidecar, which impersonates the signed-in user (passkey login via `authd`). Local development has its own loop: see [docs/development.md](docs/development.md).
@@ -49,6 +51,7 @@ The console needs the API proxy *and* `authd` reachable (two terminals plus the 
 | [Deployment](docs/deployment.md) | Image build, kustomize overlays, cert-manager |
 | [Upgrading](docs/upgrading.md) | Chart adoption, chart upgrades, and the `v1alpha1` → `v1beta1` migration |
 | [Roadmap](docs/roadmap.md) | `v1beta1` beta → stable V1 |
+| [Naming](docs/naming.md) | Hearthrack vs. the `frame` names that remain in the API and on disk |
 | [Known limitations](docs/known-limitations.md) | What is unproven, unsupported or deliberately out of scope |
 
 ---

@@ -1,6 +1,6 @@
 # Known limitations
 
-Frame is a pre-release. This page says plainly what has **not** been proven, so
+Hearthrack is a pre-release. This page says plainly what has **not** been proven, so
 nobody finds out the hard way. It is derived from [roadmap.md](roadmap.md),
 [SECURITY.md](../SECURITY.md), [getting-started.md](getting-started.md) and the
 code; where they disagree, they win and this page is stale (please open an
@@ -16,8 +16,8 @@ issue).
 ## Security caveats
 
 - The **node-tuning agent is root-equivalent** on every node it runs on, and
-  Frame holds real cluster authority. Do not expose the console to the Internet.
-- Try Frame on a disposable cluster first. Disk-replacement and wipe flows are
+  Hearthrack holds real cluster authority. Do not expose the console to the Internet.
+- Try Hearthrack on a disposable cluster first. Disk-replacement and wipe flows are
   guarded by serial-number re-entry, but they act on real disks.
 
 ## Scope and platform
