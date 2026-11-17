@@ -13,8 +13,9 @@
 # as KUBECONFIG for every command below, make included), so neither your
 # ~/.kube/config nor your current context is read or changed.
 #
-# What this slice does NOT do yet: seed demo objects (nodes, jobs, volumes),
-# so the console opens empty. See docs/known-limitations.md.
+# The demo cluster has four real nodes (one control plane, three workers),
+# classified into two racks by hack/demo/seed.yaml. Jobs, volumes and alerts are
+# not seeded yet. See docs/known-limitations.md.
 set -euo pipefail
 umask 077
 
@@ -66,7 +67,7 @@ create_cluster() {
     "$KIND" get kubeconfig --name "$CLUSTER" >"$KUBECONFIG"
   else
     log "Creating Kind cluster '$CLUSTER'"
-    "$KIND" create cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG"
+    "$KIND" create cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" --config hack/demo/kind.yaml
   fi
   "$KIND" load docker-image --name "$CLUSTER" "$IMG_CONTROLLER" "$IMG_UI" "$IMG_UIPROXY" "$IMG_AUTHD" "$IMG_PROVISIOND"
 }
@@ -84,6 +85,21 @@ install_operator() {
   # make deploy reads KUBECONFIG, exported above: it can only reach this cluster.
   make deploy DEPLOY_DEFAULT=1 IMG="$IMG_CONTROLLER"
   k -n frame-system rollout status deployment/frame-controller-manager --timeout=180s
+}
+
+# Classify the demo cluster's nodes (hack/demo/seed.yaml) and wait until the
+# operator has projected the labels: that is what the Nodes screens read.
+seed() {
+  log "Classifying the demo nodes"
+  sed "s#CLUSTER_NAME#${CLUSTER}#g" hack/demo/seed.yaml | k apply -f -
+  for _ in $(seq 1 60); do
+    n="$(k -n frame-system get framenodes -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].reason}{"\n"}{end}' 2>/dev/null | grep -c '^Online$' || true)"
+    [ "$n" = "4" ] && return
+    sleep 2
+  done
+  echo "demo: the four demo nodes did not all reach Online:" >&2
+  k -n frame-system get framenodes >&2 || true
+  exit 1
 }
 
 # Single replica and the demo image tags, on a copy: the manifests in
@@ -201,7 +217,8 @@ verify() {
     -H "Authorization: Bearer $jwt" "$base/apis/frame.plume-labs.io/v1beta1/framenodes")"
   [ "$code" = "200" ] || { echo "demo: reading FrameNodes through the console answered HTTP $code" >&2; cat "$STATE_DIR/framenodes.json" >&2; exit 1; }
   grep -q '"kind": *"FrameNodeList"' "$STATE_DIR/framenodes.json" || { echo "demo: unexpected answer from the console" >&2; exit 1; }
-  echo "OK: signed in as ${ADMIN_EMAIL} and read FrameNodes through the console."
+  [ "$(grep -o '"rack": *"rack-[ab]"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] || { echo "demo: the console does not list the four classified demo nodes" >&2; exit 1; }
+  echo "OK: signed in as ${ADMIN_EMAIL} and read the four demo FrameNodes through the console."
 }
 
 up() {
@@ -211,6 +228,7 @@ up() {
   create_cluster
   install_cert_manager
   install_operator
+  seed
   install_console
   port_forward
   local shown
@@ -232,8 +250,8 @@ Reload, then enrol a passkey from the "Passkeys" entry in the sidebar footer,
 right away: the session lasts 12 hours, and an admin with no passkey enrolled
 in that window cannot sign in again (then run 'hack/demo.sh down' and 'up').
 (The token is single-use, and 'hack/demo.sh verify' uses it: run one or the
-other on a given cluster.) The console is empty for now: no demo objects are
-seeded yet.
+other on a given cluster.) The Nodes screens show the four demo nodes, in two
+racks; jobs, volumes and alerts are not seeded yet.
 EOF
 }
 

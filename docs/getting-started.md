@@ -62,8 +62,8 @@ make demo-down   # delete it
 ```
 
 Needs docker, kind, kubectl, go, curl and openssl. The cluster gets its own
-kubeconfig, so your current context is untouched. The console opens empty for
-now, and sign-in is passkey-only: see [known-limitations.md](known-limitations.md#the-demo-make-demo).
+kubeconfig, so your current context is untouched. The Nodes screens show four
+demo nodes (the other screens stay empty for now), and sign-in is passkey-only: see [known-limitations.md](known-limitations.md#the-demo-make-demo).
 
 ---
 
