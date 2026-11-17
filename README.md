@@ -1,4 +1,4 @@
-# Hearthrack — mainframe-style computing for Kubernetes
+# Hearthrack — Kubernetes for AI and HPC.
 
 You need big hardware to run big workloads with unified approach like mainframe do, but you don't have the money for a real mainframe ?
 
