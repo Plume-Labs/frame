@@ -15,9 +15,11 @@ issue).
 
 ## The demo (`make demo`)
 
-- It installs the real stack on a throwaway Kind cluster, so there is **no
-  hardware behind it**: no machines, disks or Ceph. For now the console opens
-  **empty**; seeding demo objects is planned.
+- It installs the real stack on a throwaway Kind cluster (one control plane,
+  three workers, classified into two racks), so there is **no hardware behind
+  it**: no machines, BMCs, disks or Ceph. The Nodes screens are real; jobs,
+  volumes and alerts are **not seeded yet** (they need Argo Workflows, Rook/Ceph
+  or simulated data, which is still to be decided).
 - The first admin has no password, only a **passkey**, enrolled from the browser
   within 12 hours of the bootstrap. `make demo-verify` uses up the one-shot
   bootstrap token (it is meant for CI): run it or sign in by hand, not both, on

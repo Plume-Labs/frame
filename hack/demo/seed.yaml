@@ -1,0 +1,58 @@
+# Demo data: classifies the demo cluster's four Kind nodes into two racks and
+# two zones, the way an operator would. Applied by hack/demo.sh once the
+# operator is up; CLUSTER_NAME is substituted in a temporary copy. Each object is
+# named after the node it classifies: the Racks screen matches them by name.
+#
+# Everything here is invented: documentation-range addresses (192.0.2.0/24),
+# generic names. Nothing is, or should ever be copied from, a real estate.
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameNode
+metadata:
+  name: CLUSTER_NAME-control-plane
+  namespace: frame-system
+spec:
+  hostname: CLUSTER_NAME-control-plane
+  ip: 192.0.2.10
+  role: controlplane
+  rack: rack-a
+  zone: zone-1
+  serviceClass: HIGH
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameNode
+metadata:
+  name: CLUSTER_NAME-worker
+  namespace: frame-system
+spec:
+  hostname: CLUSTER_NAME-worker
+  ip: 192.0.2.11
+  role: worker
+  rack: rack-a
+  zone: zone-1
+  serviceClass: HIGH
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameNode
+metadata:
+  name: CLUSTER_NAME-worker2
+  namespace: frame-system
+spec:
+  hostname: CLUSTER_NAME-worker2
+  ip: 192.0.2.12
+  role: worker
+  rack: rack-b
+  zone: zone-2
+  serviceClass: MEDIUM
+---
+apiVersion: frame.plume-labs.io/v1beta1
+kind: FrameNode
+metadata:
+  name: CLUSTER_NAME-worker3
+  namespace: frame-system
+spec:
+  hostname: CLUSTER_NAME-worker3
+  ip: 192.0.2.13
+  role: worker
+  rack: rack-b
+  zone: zone-2
+  serviceClass: LOW

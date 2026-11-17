@@ -1,0 +1,11 @@
+# The demo cluster: one control plane and three workers, so the console has a
+# rack's worth of real nodes to show. Node names are kind's own
+# (<cluster>-control-plane, <cluster>-worker, -worker2, -worker3): hack/demo/seed.yaml
+# classifies them by those names, and hack/demo.sh renders the cluster name in.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker
