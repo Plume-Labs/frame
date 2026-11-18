@@ -138,7 +138,12 @@ export interface FrameNode {
 export interface Job {
   id: string
   name: string
-  pipeline: string
+  /** Set for an Argo pipeline job; absent for a container job (the CRD
+   * requires exactly one of `pipeline` / `container`). */
+  pipeline?: string
+  /** Set for a container job; absent for a pipeline job. */
+  container?: ContainerSpec
+  type?: WorkloadType
   status: JobStatus
   serviceClass: ServiceClass
   priority: Priority
@@ -1145,7 +1150,8 @@ function readyCondition(conditions?: Condition[]): Condition | undefined {
 interface FrameJobCR {
   metadata: { name: string; namespace?: string; creationTimestamp?: string }
   spec: {
-    pipeline: string; serviceClass?: string; priority?: string
+    pipeline?: string; container?: ContainerSpec; type?: WorkloadType
+    serviceClass?: string; priority?: string
     gpuCount?: number; suspended?: boolean
   }
   status?: {
@@ -1212,11 +1218,42 @@ function mapJobPhase(cr: FrameJobCR): JobStatus {
   }
 }
 
+/**
+ * The spec that resubmits `job` on the substrate it ran on. The CRD wants
+ * exactly one of pipeline/container, so a job with neither (a hand-built
+ * object) cannot be retried and yields null instead of an empty pipeline.
+ */
+export function retryJobSpec(job: Job, name: string): JobSpec | null {
+  const common = {
+    name,
+    serviceClass: job.serviceClass,
+    priority: job.priority,
+    namespace: job.namespace,
+    gpuCount: job.gpuCount,
+  }
+  if (job.container) return { ...common, container: job.container, ...(job.type ? { type: job.type } : {}) }
+  if (job.pipeline) return { ...common, pipeline: job.pipeline }
+  return null
+}
+
+/**
+ * What a job runs, for display: the pipeline name, or the image of a container
+ * job. A container job has no pipeline, so showing `job.pipeline` there
+ * rendered an empty label.
+ */
+export function jobWorkloadLabel(job: Pick<Job, 'pipeline' | 'container'>): string {
+  if (job.pipeline) return job.pipeline
+  if (job.container) return `container ${job.container.image}`
+  return 'unknown workload'
+}
+
 function crToJob(cr: FrameJobCR): Job {
   return {
     id:           cr.metadata.name,
     name:         cr.metadata.name,
-    pipeline:     cr.spec.pipeline,
+    ...(cr.spec.pipeline ? { pipeline: cr.spec.pipeline } : {}),
+    ...(cr.spec.container ? { container: cr.spec.container } : {}),
+    ...(cr.spec.type ? { type: cr.spec.type } : {}),
     status:       mapJobPhase(cr),
     // LOW, not MEDIUM: the CRD defaults serviceClass to LOW, so a served
     // object always carries one and this fallback is only reachable for a
@@ -2327,7 +2364,11 @@ class ClusterClient {
       .sort((a, b) => a.node.localeCompare(b.node))
   }
 
-  /** Real nodes grouped into racks by their FrameNode `spec.rack` label. */
+  /**
+   * Real nodes grouped into racks. A node's rack is, in order: its
+   * `topology.frame.io/rack` label, its `frame.plume-labs.io/rack` label, its
+   * FrameNode's `spec.rack`, else `unracked`.
+   */
   async racks(): Promise<Rack[]> {
     const [fnRes, k8sNodes, nodes, placement] = await Promise.all([
       k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string; hostname?: string } }>>(

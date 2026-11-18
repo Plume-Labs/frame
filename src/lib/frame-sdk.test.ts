@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
+  jobWorkloadLabel,
+  retryJobSpec,
   __testing,
   APPLICATION_WATCH_PATHS,
   createFrameClient,
@@ -1714,7 +1716,7 @@ describe('DatabaseClient', () => {
       urls.push(String(input))
       return new Response(JSON.stringify({ items: [
         { metadata: { name: 'b-db', namespace: 'x' }, spec: { type: 'postgres' } },
-        { metadata: { name: 'llm', namespace: 'x' }, spec: { type: 'inference' } },
+        { metadata: { name: 'llm', namespace: 'x' }, spec: { type: 'batch' } },
       ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }))
     const list = await createFrameClient().databases.list()
@@ -1770,5 +1772,31 @@ describe('DatabaseClient', () => {
     expect(calls[1].url).toBe('/apis/services.plume-labs.io/v1beta1/namespaces/x/frameservices/jobs')
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({ spec: { parameters: { maxMemory: '1Gi' } } })
     expect((calls[1].init?.headers as Record<string, string>)['X-Frame-Action']).toBe('set cache jobs')
+  })
+})
+
+describe('jobWorkloadLabel', () => {
+  it('names the pipeline for a pipeline job', () => {
+    expect(jobWorkloadLabel({ pipeline: 'training-dag' })).toBe('training-dag')
+  })
+  it('names the image for a container job instead of an empty label', () => {
+    expect(jobWorkloadLabel({ container: { image: 'busybox:1.36' } })).toBe('container busybox:1.36')
+  })
+})
+
+describe('retryJobSpec', () => {
+  const base = { id: 'j', name: 'j', status: 'failed', serviceClass: 'LOW', priority: 'medium', namespace: 'team-a', gpuCount: 1, createdAt: '' } as const
+  it('resubmits a pipeline job as a pipeline job', () => {
+    const spec = retryJobSpec({ ...base, pipeline: 'training-dag' } as never, 'j-2')
+    expect(spec).toMatchObject({ name: 'j-2', pipeline: 'training-dag', namespace: 'team-a' })
+    expect(spec).not.toHaveProperty('container')
+  })
+  it('resubmits a container job with its container and type, and no pipeline', () => {
+    const spec = retryJobSpec({ ...base, container: { image: 'busybox' }, type: 'batch' } as never, 'j-2')
+    expect(spec).toMatchObject({ container: { image: 'busybox' }, type: 'batch' })
+    expect(spec).not.toHaveProperty('pipeline')
+  })
+  it('refuses a job that names neither', () => {
+    expect(retryJobSpec({ ...base } as never, 'j-2')).toBeNull()
   })
 })

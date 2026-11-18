@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Job, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
+import { Job, jobWorkloadLabel, retryJobSpec, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { retryJobName } from '@/lib/job-names'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -66,14 +66,12 @@ export function FrameJobsView() {
     setBusy(job.id)
     try {
       const retryName = retryJobName(job.name)
-      await frame.jobs.submit({
-        name: retryName,
-        pipeline: job.pipeline,
-        serviceClass: job.serviceClass,
-        priority: job.priority,
-        namespace: job.namespace,
-        gpuCount: job.gpuCount,
-      })
+      const spec = retryJobSpec(job, retryName)
+      if (!spec) {
+        toast.error(`Cannot retry ${job.name}`, { description: 'It names neither a pipeline nor a container.' })
+        return
+      }
+      await frame.jobs.submit(spec)
       toast.success(`Resubmitted as ${retryName}`)
       reload()
     } catch (e) {
@@ -145,7 +143,7 @@ export function FrameJobsView() {
                   <div className="min-w-0">
                     <CardTitle className="font-mono text-lg truncate">{j.name}</CardTitle>
                     <p className="text-xs text-muted-foreground font-mono">
-                      {j.pipeline} · {j.namespace}
+                      {jobWorkloadLabel(j)} · {j.namespace}
                     </p>
                   </div>
                   <Badge variant="outline" className={`font-mono ${s.tone} border-current gap-1`}>
