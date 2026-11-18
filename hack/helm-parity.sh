@@ -658,6 +658,7 @@ EXPECTED_EXTRAS=(
   "NetworkPolicy|frame-system|frame-allow-webhook-traffic"
   "ServiceMonitor|frame-system|frame-controller-manager-metrics-monitor"
   "PodDisruptionBudget|frame-system|frame-controller-manager"
+  "PrometheusRule|frame-system|frame-operator-alerts"
 )
 
 "$HELM" template frame "$CHART_DIR" --namespace frame-system \
@@ -666,6 +667,7 @@ EXPECTED_EXTRAS=(
   --set networkPolicy.enabled=true \
   --set metrics.serviceMonitor.enabled=true \
   --set podDisruptionBudget.enabled=true \
+  --set metrics.prometheusRule.enabled=true \
   > "$tmpdir/helm-extras.yaml"
 extract_jsonl "$tmpdir/helm-extras.yaml" > "$tmpdir/helm-extras.jsonl"
 triples "$tmpdir/helm-extras.jsonl" > "$tmpdir/helm-extras.set"
