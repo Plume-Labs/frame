@@ -192,31 +192,25 @@ projection's vocabulary — compare what the controller wrote against the
 The operator is stateless. Everything worth restoring is CRs in etcd, which
 Velero handles as ordinary API objects — no volume snapshots, no plugins.
 
-Verified round-trip on the test cluster (backup, delete the object, restore):
+Schedule it with `deploy/resilience/velero-hearthrack.yaml` (hourly, every
+Hearthrack kind). The `frame-system` Secrets and ConfigMaps hold credentials:
+back them up only to an encrypted location, with the opt-in
+`velero-hearthrack-secrets.yaml.example`. A test
+fails if a CRD under `config/crd/bases` is missing from that list, so a new
+kind cannot ship unbacked. An ad-hoc restore of a backup looks like:
 
 ```bash
-kubectl apply -f - <<'EOF'
-apiVersion: velero.io/v1
-kind: Backup
-metadata: {name: frame-crs, namespace: velero}
-spec:
-  includedResources:
-    - framejobs.frame.plume-labs.io
-    - framenodes.frame.plume-labs.io
-    - frameresourcequotas.frame.plume-labs.io
-    - frameusers.frame.plume-labs.io
-    - schedulingpolicies.frame.plume-labs.io
-    - frameservices.services.plume-labs.io
-  includedNamespaces: ["*"]
-  ttl: 720h0m0s
-EOF
-
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<'YAML'
 apiVersion: velero.io/v1
 kind: Restore
 metadata: {name: frame-crs-restore, namespace: velero}
-spec: {backupName: frame-crs}
-EOF
+spec:
+  scheduleName: hearthrack-resources   # restores from its latest backup
+  # Without this, status is NOT restored: FrameUser passkeys and password
+  # hashes live in status, and every account would come back without a credential.
+  restoreStatus:
+    includedResources: ["*"]
+YAML
 ```
 
 Restored objects come back spec-identical and the controllers re-reconcile
@@ -227,15 +221,15 @@ selector matches nothing completes green with zero items — backups that
 were silently empty for months have already been seen in practice.
 
 ```bash
-kubectl get backup -n velero frame-crs \
+kubectl get backup -n velero -l velero.io/schedule-name=hearthrack-resources \
   -o jsonpath='{.status.phase} {.status.progress.itemsBackedUp}/{.status.progress.totalItems}{"\n"}'
 ```
 
 Two things this does **not** cover. CRDs themselves are not in the list above,
 because a restore is into a cluster where Hearthrack is installed and the chart owns
 the schema — restoring a stale CRD over a newer one would be a downgrade, not a
-recovery. And `status` is restored as recorded, so an object mid-operation
-comes back describing a world that has moved on; the controllers correct it on
+recovery. And `status` is restored as recorded (only with `restoreStatus`, as
+above), so an object mid-operation comes back describing a world that has moved on; the controllers correct it on
 the next reconcile, but a `FrameInstall` restored mid-install deserves a look
 before you trust its status.
 
