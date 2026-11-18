@@ -20,7 +20,7 @@ func TestVeleroBacksUpEveryHearthrackKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := map[string]bool{}
-	for _, doc := range strings.SplitSeq(string(raw), "\n---") {
+	for doc := range strings.SplitSeq(string(raw), "\n---") {
 		var s struct {
 			Spec struct {
 				Template struct {
