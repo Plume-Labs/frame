@@ -17,6 +17,7 @@ limitations under the License.
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,11 +39,33 @@ type CommandRunner interface {
 
 // ExecCommandRunner is the production CommandRunner: it actually execs the
 // command. cmd/agent/main.go uses this; tests use a fake.
-type ExecCommandRunner struct{}
+type ExecCommandRunner struct {
+	// Timeout bounds one command. Zero means defaultCommandTimeout.
+	//
+	// The agent is root-equivalent and single-threaded per node: a systemctl
+	// that never returns (a unit stuck deactivating, a wedged dbus) would
+	// otherwise hang the reconcile loop forever and take node tuning and
+	// health reporting with it.
+	Timeout time.Duration
+}
 
-// Run implements CommandRunner by shelling out for real.
-func (ExecCommandRunner) Run(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).CombinedOutput()
+// defaultCommandTimeout is long enough for a `systemctl restart` of a heavy
+// unit such as k3s-agent, short enough that a wedged command is noticed.
+const defaultCommandTimeout = 2 * time.Minute
+
+// Run implements CommandRunner by shelling out for real. The command is
+// killed when the timeout elapses and the error says so.
+func (r ExecCommandRunner) Run(name string, args ...string) (string, error) {
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = defaultCommandTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), fmt.Errorf("%s timed out after %s: %w", name, timeout, ctx.Err())
+	}
 	return string(out), err
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // maxBaseImageBytes bounds the download: generous for the server ISO (the
@@ -48,7 +49,12 @@ func DefaultBase() BaseSource {
 // (cmd/bootstrap's FRAME_BASE_ISO_URL requires it) should hold for the
 // whole transfer, not only its first request. A var so a test can give it
 // a transport that trusts an httptest TLS server.
-var baseHTTPClient = &http.Client{CheckRedirect: refuseHTTPSDowngrade}
+var baseHTTPClient = &http.Client{
+	CheckRedirect: refuseHTTPSDowngrade,
+	// Connection and header timeouts only: the body is an ISO of a few GiB, so
+	// no overall deadline. The caller's ctx bounds the whole transfer.
+	Transport: boundedTransport(time.Minute),
+}
 
 func refuseHTTPSDowngrade(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
