@@ -95,6 +95,8 @@ metrics:
     # operator itself: no leader, metrics missing, reconcile errors, backed-up
     # work queues and failing webhooks. `labels` is for your Prometheus's
     # ruleSelector (for example `release: kube-prometheus-stack`).
+    # Needs `serviceMonitor.enabled` (or your own scrape of the manager):
+    # without metrics the "no leader or not scraped" alert fires permanently.
     enabled: false
     labels: {}
 

@@ -18,24 +18,21 @@ spec:
     # missing leader is not only "no reconciliation": reads and writes of every
     # Hearthrack kind can fail with it (see docs/runbook.md, "The blast radius
     # when the operator is down").
+    # leader_election_master_status only has a series on a pod that has held the
+    # lease, and a pod that loses it exits. So "no leader" shows up as the
+    # series disappearing (absent), not as a 0: the `sum == 0` arm covers the
+    # short window where a pod is still reporting 0 after stepping down.
     - alert: FrameOperatorNoLeader
       expr: |
         sum(leader_election_master_status{namespace="{{ .Release.Namespace }}", name="b9bf5a0e.plume-labs.io"}) == 0
-      for: 3m
-      labels:
-        severity: critical
-      annotations:
-        summary: Hearthrack operator has no leader
-        description: Pods report leader election but none holds the lease. Failover normally takes about 70 seconds; longer means no pod is healthy.
-    - alert: FrameOperatorAbsent
-      expr: |
+        or
         absent(leader_election_master_status{namespace="{{ .Release.Namespace }}", name="b9bf5a0e.plume-labs.io"})
       for: 5m
       labels:
         severity: critical
       annotations:
-        summary: Hearthrack operator metrics are missing
-        description: No manager pod is reporting. Either the operator is down or Prometheus cannot scrape it (check the ServiceMonitor, the NetworkPolicy and the metrics token).
+        summary: Hearthrack operator has no leader, or is not being scraped
+        description: No pod reports holding the lease. Failover normally takes about 70 seconds. Otherwise the operator is down, or Prometheus cannot scrape it (check the ServiceMonitor, the NetworkPolicy and the metrics token). It also fires if the operator was scaled to 0 on purpose.
     - alert: FrameReconcileErrors
       expr: |
         sum by (controller) (rate(controller_runtime_reconcile_errors_total{namespace="{{ .Release.Namespace }}"}[10m])) > 0
@@ -61,6 +58,6 @@ spec:
       labels:
         severity: critical
       annotations:
-        summary: Hearthrack admission or conversion webhook is returning errors
-        description: The webhooks fail closed, so writes (and conversions) of Hearthrack kinds are being refused while this fires.
+        summary: Hearthrack admission webhook is returning errors
+        description: The webhooks fail closed, so writes of Hearthrack kinds are being refused while this fires. Conversion errors are not counted by this metric.
 {{- end }}
