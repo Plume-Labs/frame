@@ -214,20 +214,23 @@ function serviceFindings(
 }
 
 /**
- * Which data sources the Overview could not read. A source that is loading or
- * failed contributes no findings, so "no findings" only means "all clear" when
- * this list is empty: otherwise the green check would be a statement about
- * data nobody has seen.
+ * Which data sources the Overview cannot vouch for. A source that is loading,
+ * failed or stale contributes no (or outdated) findings, so "no findings" only
+ * means "all clear" when loading, failed and stale are all empty. `unavailable`
+ * is a source that answered "nothing to read" (no Alertmanager, no Velero, a
+ * metrics query that returned nothing): it cannot block the green check on
+ * clusters that legitimately lack it, but the check must not claim it was
+ * watched.
  */
-export function unreadSources(sources: Record<string, { phase: string }>): {
-  loading: string[]
-  failed: string[]
-} {
-  const loading: string[] = []
-  const failed: string[] = []
+export function unreadSources(
+  sources: Record<string, { phase: string; data?: unknown; staleError?: string }>,
+): { loading: string[]; failed: string[]; stale: string[]; unavailable: string[] } {
+  const out = { loading: [] as string[], failed: [] as string[], stale: [] as string[], unavailable: [] as string[] }
   for (const [name, s] of Object.entries(sources)) {
-    if (s.phase === 'loading') loading.push(name)
-    else if (s.phase === 'error') failed.push(name)
+    if (s.phase === 'loading') out.loading.push(name)
+    else if (s.phase === 'error') out.failed.push(name)
+    else if (s.phase === 'ready' && s.staleError) out.stale.push(name)
+    else if (s.phase === 'ready' && s.data == null) out.unavailable.push(name)
   }
-  return { loading, failed }
+  return out
 }

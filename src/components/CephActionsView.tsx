@@ -130,6 +130,7 @@ export function LiveActiveFlags() {
     [],
     [frame.cephActions.watchPath()],
     60_000,
+    { keepStaleOnError: true },
   )
   return (
     <>
@@ -262,6 +263,7 @@ export function CephActionsView() {
     [],
     [frame.cephActions.watchPath()],
     30_000,
+    { keepStaleOnError: true },
   )
   const admin = isAdmin()
   const items = state.phase === 'ready' ? state.data : []

@@ -196,17 +196,24 @@ describe('collectFindings — machine checks and services', () => {
 })
 
 describe('unreadSources', () => {
-  it('lists what is still loading or failed, so no finding does not read as all clear', () => {
+  it('separates loading, failed, stale and unavailable sources', () => {
     expect(
       unreadSources({
-        nodes: { phase: 'ready' },
+        nodes: { phase: 'ready', data: [] },
         ceph: { phase: 'loading' },
         alerts: { phase: 'error' },
+        machines: { phase: 'ready', data: [], staleError: '503' },
+        backups: { phase: 'ready', data: null },
       }),
-    ).toEqual({ loading: ['ceph'], failed: ['alerts'] })
+    ).toEqual({ loading: ['ceph'], failed: ['alerts'], stale: ['machines'], unavailable: ['backups'] })
   })
 
   it('is empty when every source was read', () => {
-    expect(unreadSources({ nodes: { phase: 'ready' } })).toEqual({ loading: [], failed: [] })
+    expect(unreadSources({ nodes: { phase: 'ready', data: [] } })).toEqual({
+      loading: [],
+      failed: [],
+      stale: [],
+      unavailable: [],
+    })
   })
 })

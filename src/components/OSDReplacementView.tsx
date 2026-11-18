@@ -357,6 +357,7 @@ export function OSDReplacementView() {
     [],
     [frame.osdReplacements.watchPath()],
     30_000,
+    { keepStaleOnError: true },
   )
   // Hides the controls only: the apiserver is what refuses a non-admin write.
   const token = (globalThis as Record<string, unknown>).__FRAME_TOKEN__
