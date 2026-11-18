@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,12 +50,24 @@ type ExecCommandRunner struct {
 	Timeout time.Duration
 }
 
-// defaultCommandTimeout is long enough for a `systemctl restart` of a heavy
-// unit such as k3s-agent, short enough that a wedged command is noticed.
+// defaultCommandTimeout is far above what the agent's inline commands take
+// (systemctl show, systemd-run, tuned-adm, lsblk: seconds), and short enough
+// that a wedged command is noticed. Restarts are not run inline at all:
+// ScheduleDetachedRestart hands them to systemd-run and returns.
 const defaultCommandTimeout = 2 * time.Minute
 
-// Run implements CommandRunner by shelling out for real. The command is
-// killed when the timeout elapses and the error says so.
+// commandWaitDelay bounds how long Run waits for output pipes after the
+// command was killed, see Run.
+const commandWaitDelay = 2 * time.Second
+
+// Run implements CommandRunner by shelling out for real. At the timeout the
+// command's whole process group is killed and the error says so.
+//
+// Through HostCommandRunner the command is `nsenter --pid -- systemctl ...`,
+// and with --pid nsenter forks: killing only the direct child would orphan the
+// real command on the host and leave Run reading a pipe the orphan still
+// holds open. So the command gets its own process group, the kill goes to the
+// group, and WaitDelay stops Wait from blocking on a surviving grandchild.
 func (r ExecCommandRunner) Run(name string, args ...string) (string, error) {
 	timeout := r.Timeout
 	if timeout <= 0 {
@@ -62,7 +75,11 @@ func (r ExecCommandRunner) Run(name string, args ...string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = commandWaitDelay
+	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(out), fmt.Errorf("%s timed out after %s: %w", name, timeout, ctx.Err())
 	}

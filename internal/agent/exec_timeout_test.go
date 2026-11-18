@@ -39,3 +39,17 @@ func TestExecCommandRunnerStillReturnsOutputOfAQuickCommand(t *testing.T) {
 		t.Fatalf("got %q, %v", out, err)
 	}
 }
+
+// With nsenter --pid the real command is a grandchild of the agent. Killing
+// only the direct child would leave Run blocked on the pipe the grandchild
+// holds; the group kill must end both, and promptly.
+func TestExecCommandRunnerKillsAGrandchildThatHoldsThePipe(t *testing.T) {
+	start := time.Now()
+	_, err := ExecCommandRunner{Timeout: 100 * time.Millisecond}.Run("sh", "-c", "sleep 30 & wait")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("want a timeout error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Run stayed blocked on the grandchild's pipe: %s", elapsed)
+	}
+}
