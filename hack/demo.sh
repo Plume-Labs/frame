@@ -147,6 +147,13 @@ seed_workloads() {
   done
   k apply -f hack/demo/jobs.yaml
   k apply -f hack/demo/storage-alerts.yaml
+  # The alert receiver writes status.state next to the spec; a kubectl apply
+  # cannot (status is a subresource), and the Alerts screen lists only Firing
+  # and Resolved entries (a seeded Resolved one was gone within seconds in CI, so only
+  # firing alerts are seeded). Patch it the way the receiver would.
+  for a in demo-alert-disk-pressure demo-alert-pump-flow; do
+    k -n frame-system patch framealert "$a" --subresource=status --type=merge -p '{"status":{"state":"Firing"}}'
+  done
   wait_for "job demo-nightly-report Completed" job_phase demo-nightly-report Completed
   wait_for "job demo-training-run Running" job_phase demo-training-run Running
   wait_for "job demo-flaky-etl Failed" job_phase demo-flaky-etl Failed
@@ -193,6 +200,11 @@ install_console() {
   k apply -f deploy/kubernetes/base/rbac.yaml
   k apply -f deploy/kubernetes/base/rbac-tier-bindings.yaml
   k apply -f deploy/kubernetes/base/service.yaml
+  # The console looks for Frame resources in `frameNamespace` (default:
+  # `default`), which is where the demo does not put them. Its config ConfigMap
+  # (src/lib/frame-config.ts) says where they are: here, `frame-system`.
+  k -n cluster-control create configmap cluster-control-config \
+    --from-literal=config.json='{"frameNamespace":"frame-system"}' --dry-run=client -o yaml | k apply -f -
 
   # authd reads the one-shot bootstrap token and its keys at start. Generate
   # them once: a rerun against a kept cluster must keep what authd already loaded.
@@ -293,13 +305,17 @@ verify() {
   [ "$(grep -o '"rack": *"rack-[ab]"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] && [ "$(grep -o '"reason": *"Online"' "$STATE_DIR/framenodes.json" | wc -l)" = "4" ] || { echo "demo: the console does not list the four demo nodes, classified and Online" >&2; exit 1; }
   # The screens' own data path: the seeded jobs and alerts come back through
   # the console proxy too, not only through kubectl.
-  for kind in framejobs:3 framealerts:3; do
+  for kind in framejobs:3 framealerts:2; do
     code="$(curl -sS -o "$STATE_DIR/${kind%%:*}.json" -w '%{http_code}' \
       -H "Authorization: Bearer $jwt" "$base/apis/frame.plume-labs.io/v1beta1/namespaces/frame-system/${kind%%:*}")"
     [ "$code" = "200" ] || { echo "demo: reading ${kind%%:*} through the console answered HTTP $code" >&2; exit 1; }
-    [ "$(grep -o '"hearthrack.demo/seeded": *"true"' "$STATE_DIR/${kind%%:*}.json" | wc -l)" = "${kind##*:}" ] || { echo "demo: the console does not list the ${kind##*:} seeded ${kind%%:*}" >&2; exit 1; }
+    found="$(grep -o '"hearthrack.demo/seeded": *"true"' "$STATE_DIR/${kind%%:*}.json" | wc -l)"
+    [ "$found" = "${kind##*:}" ] || { echo "demo: the console lists $found seeded ${kind%%:*}, expected ${kind##*:}:" >&2; grep -o '"name": *"demo-[a-z-]*"' "$STATE_DIR/${kind%%:*}.json" >&2 || true; exit 1; }
   done
-  echo "OK: signed in as ${ADMIN_EMAIL}; read the four demo FrameNodes, three jobs and three alerts through the console."
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $jwt" \
+    "$base/api/v1/namespaces/cluster-control/configmaps/cluster-control-config")"
+  [ "$code" = "200" ] || { echo "demo: the console cannot read its config ConfigMap (HTTP $code)" >&2; exit 1; }
+  echo "OK: signed in as ${ADMIN_EMAIL}; read the four demo FrameNodes, three jobs and two alerts through the console."
 }
 
 up() {

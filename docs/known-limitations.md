@@ -21,7 +21,7 @@ issue).
   volumes, alerts and scheduling tiers are real objects seeded from `hack/demo/`
   and labelled `hearthrack.demo/seeded` (`kubectl get -A -l hearthrack.demo/seeded`):
   three container jobs (one completes, one runs, one fails on purpose) on Kind's
-  workers, two local-path volumes, three alerts with fictional content, and the
+  workers, two local-path volumes, two firing alerts with fictional content, and the
   four `frame-*` priority tiers. Argo pipelines and Rook/Ceph storage are **not**
   in the demo, so the pipeline-job and Ceph screens stay empty. The demo installs
   only a stand-in `workflows.argoproj.io` CRD: the FrameJob controller watches

@@ -1,6 +1,6 @@
 # Volumes and alerts for `make demo`. Two real PVCs on Kind's local-path
 # class (bound by the pod below: local-path waits for a first consumer), and
-# three FrameAlerts in the shape the alert receiver writes for Alertmanager.
+# two firing FrameAlerts in the shape the alert receiver writes for Alertmanager.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -58,8 +58,8 @@ spec:
   alertName: NodeDiskPressure
   severity: warning
   startsAt: "2026-01-01T00:00:00Z"
-  labels: {node: demo-worker2, rack: rack-b}
-  annotations: {summary: "Demo data: a fictional disk-pressure alert on demo-worker2."}
+  labels: {rack: rack-b}
+  annotations: {summary: "Demo data: a fictional disk-pressure alert in rack-b."}
 ---
 apiVersion: frame.plume-labs.io/v1beta1
 kind: FrameAlert
@@ -74,17 +74,3 @@ spec:
   startsAt: "2026-01-01T00:00:00Z"
   labels: {rack: rack-a}
   annotations: {summary: "Demo data: a fictional cooling-loop alert on rack-a."}
----
-apiVersion: frame.plume-labs.io/v1beta1
-kind: FrameAlert
-metadata:
-  name: demo-alert-resolved
-  namespace: frame-system
-  labels: {hearthrack.demo/seeded: "true"}
-spec:
-  fingerprint: "d3a10c0ffee00003"
-  alertName: HighLatency
-  severity: info
-  startsAt: "2026-01-01T00:00:00Z"
-  endsAt: "2026-01-01T00:20:00Z"
-  annotations: {summary: "Demo data: a fictional alert that already resolved."}
