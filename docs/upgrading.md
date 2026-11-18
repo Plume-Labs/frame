@@ -102,7 +102,7 @@ cluster to adopt the real, running kustomize objects. That cluster runs
 other workloads and this migration was explicitly out of scope for this
 session — the dry-run evidence above is as far as this doc goes. Before
 doing it for real: back up `frame-system` (Velero, or at minimum
-`kubectl get -o yaml` every object in the namespace plus all nine CRDs —
+`kubectl get -o yaml` every object in the namespace plus every CRD —
 note that `NodeTuning` is cluster-scoped, so a namespaced dump misses both
 the CRD and its CRs),
 run the adoption command for real, then confirm
@@ -225,8 +225,10 @@ write naming what changed for that kind.
 
 **`NodeTuning` is outside all of this.** It was added after the freeze, so it
 has exactly one version, no `v1alpha1` to convert from, no conversion webhook,
-and nothing in this section applies to it. Nine CRDs exist; eight have a
-migration path.
+and nothing in this section applies to it. The newer kinds have exactly one version
+and no migration path. Only the six oldest
+(FrameJob, FrameNode, FrameResourceQuota, FrameUser, SchedulingPolicy, FrameService)
+serve `v1alpha1`.
 
 **`v1` is deliberately not part of V1.** Hearthrack is in beta and needs
 capability before it needs a stability promise it cannot yet keep; promotion
@@ -283,7 +285,7 @@ just the conversions.
    `config/crd/bases/` from a checkout whose manager image is not yet
    deployed.
 2. Let cert-manager issue the webhook certificate and confirm the `caBundle`
-   is injected into all eight CRDs. `make helm-parity` proves the manifests
+   is injected into every CRD that serves a conversion webhook (the six that serve `v1alpha1`). `make helm-parity` proves the manifests
    agree; the cluster-side check is in [runbook.md](runbook.md).
 3. Only then migrate the storage version.
 

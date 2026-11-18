@@ -25,12 +25,15 @@ internal/webhook/<group>/<version>/*   Webhooks by group and version (if present
 
 Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check the `PROJECT` file for `multigroup: true`.
 
-**Frame is multi-group, and ships three Go binaries, not one:**
+**Frame is multi-group, and ships six Go binaries, not one:**
 ```
 cmd/main.go     Manager: controllers + webhooks for frame.plume-labs.io and services.plume-labs.io
 cmd/authd/      Per-user auth (argon2id, OIDC/JWKS, WebAuthn) — reads FrameUser, has no controller
 cmd/agent/      Node-tuning agent — a privileged DaemonSet, one per node. Not scaffolded
                 by kubebuilder; the CLI commands below do not apply to it.
+cmd/uiproxy/    In-pod proxy that forwards the console's calls under the user's identity
+cmd/provisiond/ Machine provisioning (builds installer ISOs, drives BMCs)
+cmd/bootstrap/  Installs node zero, or re-joins a node, from a laptop (no image)
 internal/agent/ The agent's logic: observe.go, apply.go, systemd.go, status.go
 ```
 The agent is privileged with `hostPID`, so treat `internal/agent/` as security-critical: the restartable-unit allowlist in `apply.go` and the fixed `smartctl` command in `smart.go` are its boundary. See [SECURITY.md](SECURITY.md).
