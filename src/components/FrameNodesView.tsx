@@ -91,7 +91,7 @@ export function FrameNodesView() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            How the Frame operator classifies each Kubernetes node: role, rack, zone and service
+            How the Hearthrack operator classifies each Kubernetes node: role, rack, zone and service
             class, projected onto the node as the labels the scheduler and the inference provider
             select on. Machines themselves are on the Hardware screen
             (<span className="font-mono">FrameMachine</span>); installing one is a{' '}
@@ -155,7 +155,7 @@ export function FrameNodesView() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.id}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Removes the FrameNode resource: the operator strips the Frame labels (role, rack,
+              Removes the FrameNode resource: the operator strips the Hearthrack labels (role, rack,
               zone, service class) from the node, so workloads that select on them stop being
               placed there. It does not wipe, power off, or remove the node from Kubernetes.
             </AlertDialogDescription>

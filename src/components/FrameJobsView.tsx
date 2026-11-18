@@ -113,7 +113,7 @@ export function FrameJobsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Queue className="text-primary" />
-            Frame Jobs
+            Hearthrack Jobs
             <Button
               variant="outline"
               size="sm"

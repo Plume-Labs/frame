@@ -14,6 +14,11 @@ person as the product name.
   (same tags, same digest), so a manifest that still pulls the old name keeps working.
   The old names are kept for the transition; when they stop being pushed is not decided yet.
 
+- The console now carries the Hearthrack visual identity (charter, track D · hybrid):
+  inline logo (`src/components/HearthrackMark.tsx`), ink-navy and ember palette in
+  `src/index.css`, Inter and JetBrains Mono, favicon set and web manifest in `public/`.
+  The console is dark-only; `--accent` stays green because it means "healthy".
+
 ## What stays `frame` (compatibility aliases)
 
 | Name | Why it stays |
