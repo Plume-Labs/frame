@@ -281,7 +281,8 @@ func isArgoMissing(err error) bool {
 // instead of returning an error: an error would put the job in the controller's
 // exponential backoff and flood the log, for a condition only an install fixes.
 func (r *FrameJobReconciler) reportArgoMissing(ctx context.Context, job *framev1beta1.FrameJob) (ctrl.Result, error) {
-	const msg = "Argo Workflows is not installed (CRD workflows.argoproj.io not found); pipeline jobs need it, container jobs do not"
+	const msg = "Argo Workflows is not installed (CRD workflows.argoproj.io not found); " +
+		"pipeline jobs need it, container jobs do not"
 	if readyReason(job.Status.Conditions) != jobPhaseArgoMissing || job.Status.ObservedGeneration != job.Generation {
 		patch := client.MergeFrom(job.DeepCopy())
 		job.Status.ObservedGeneration = job.Generation
@@ -417,7 +418,8 @@ func (r *FrameJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		wfType.SetGroupVersionKind(argoWorkflowGVK)
 		b = b.Watches(wfType, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob))
 	} else {
-		logf.Log.WithName("framejob").Info("Argo Workflows CRD not found: pipeline FrameJobs are disabled until it is installed and the operator restarted")
+		logf.Log.WithName("framejob").Info("Argo Workflows CRD not found: pipeline FrameJobs are disabled " +
+			"until it is installed and the operator restarted")
 	}
 	return b.Complete(r)
 }
