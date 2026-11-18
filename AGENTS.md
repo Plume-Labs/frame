@@ -53,6 +53,9 @@ The agent is privileged with `hostPID`, so treat `internal/agent/` as security-c
 - `**/zz_generated.*.go` - from `make generate`
 - `PROJECT` - from `kubebuilder [OPTIONS]`, except its `path:` fields during a multi-group conversion (step 6 above), since the CLI has no subcommand for them
 
+### Sign Off Every Commit (DCO)
+Always commit with `git commit -s`: the `DCO` check fails any pull request commit without a `Signed-off-by` line (merge and bot commits excepted). See CONTRIBUTING.md.
+
 ### Never Remove Scaffold Markers
 Do NOT delete `// +kubebuilder:scaffold:*` comments. CLI injects code at these markers.
 
