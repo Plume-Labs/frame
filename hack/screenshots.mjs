@@ -32,7 +32,7 @@ const screens = [
   ['jobs', '#/jobs', 'demo-training-run'],
   ['scheduling', '#/scheduling', 'demo-high'],
   ['alerts', '#/security/alerts', 'NodeDiskPressure'],
-  ['storage', '#/storage', null],
+  ['volumes', '#/storage/storage-load', 'demo-datasets'],
 ]
 
 const token = (await readFile(join(stateDir, 'bootstrap-token'), 'utf8')).trim()
