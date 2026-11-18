@@ -437,6 +437,8 @@ export interface InstallFormState {
   disksValid: boolean
   joinValid: boolean
   serialMatches: boolean
+  /** The machine's inventory reported a serial at all. Without one the confirmation can never match. */
+  serialKnown: boolean
 }
 
 export function installBlockers(f: InstallFormState): string[] {
@@ -451,6 +453,10 @@ export function installBlockers(f: InstallFormState): string[] {
   if (f.disksValid === false) out.push('Fill every disk with a /dev/disk/by-id/ path and a size')
   if (!f.joinValid) out.push('Give the server URL and join token Secret to join a cluster')
   if (f.k3sVersion.trim() === '') out.push('Enter the k3s version')
-  if (f.machineSelected && !f.serialMatches) out.push("Type the machine's serial to confirm")
+  if (f.machineSelected && !f.serialKnown) {
+    out.push('This machine reported no serial: wait for the next inventory read before installing')
+  } else if (f.machineSelected && !f.serialMatches) {
+    out.push("Type the machine's serial to confirm")
+  }
   return out
 }

@@ -186,6 +186,7 @@ export function InstallDialog({
     disksValid,
     joinValid,
     serialMatches: confirmationMatches(confirmSerial, serial),
+    serialKnown: serial !== '',
   })
   const canSubmit = blockers.length === 0 && !busy
 
@@ -473,7 +474,7 @@ export function InstallDialog({
         </div>
 
         {blockers.length > 0 && (
-          <p id="install-blockers" className="text-[10px] text-muted-foreground font-mono">
+          <p id="install-blockers" role="status" className="text-xs text-muted-foreground font-mono">
             Still needed: {blockers.join(' · ')}
           </p>
         )}
