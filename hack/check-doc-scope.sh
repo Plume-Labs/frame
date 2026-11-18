@@ -15,7 +15,7 @@ crds=$(find config/crd/bases -maxdepth 1 -name '*.yaml' | wc -l)
 bins=$(( $(find cmd -mindepth 1 -maxdepth 1 -type d | wc -l) + $(find cmd -maxdepth 1 -name main.go | wc -l) ))
 dockerfiles=$(find . -maxdepth 1 -name 'Dockerfile*' | wc -l)
 
-DOCS=(README.md AGENTS.md docs/README.md docs/architecture.md docs/deployment.md docs/api.md)
+DOCS=(README.md AGENTS.md docs/README.md docs/architecture.md docs/deployment.md docs/api.md docs/crd-reference.md)
 
 num() { # word or digits -> number, empty if not a count word
   case "${1,,}" in
@@ -29,6 +29,8 @@ fail=0
 check() { # label, actual, regex noun
   local label=$1 actual=$2 noun=$3 f line word n
   for f in "${DOCS[@]}"; do
+    # A renamed or deleted doc must not turn its check into a silent no-op.
+    [ -f "$f" ] || { echo "$f: listed in DOCS but missing" >&2; fail=1; continue; }
     while IFS= read -r hit; do
       line=${hit%%:*}
       word=$(grep -oiE "\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|[0-9]+) ${noun}" <<<"$hit" | head -n1 | awk '{print $1}')
