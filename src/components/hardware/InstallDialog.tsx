@@ -18,6 +18,7 @@ import {
   CONFIRM_SERIAL_HINT,
   CONFIRM_SERIAL_LABEL,
   confirmationMatches,
+  installBlockers,
   installLinks,
   machineOptionLabel,
   parseMACs,
@@ -173,19 +174,20 @@ export function InstallDialog({
 
   const joinValid = clusterMode === 'init' || (serverURL.trim() !== '' && joinTokenRef.trim() !== '')
 
-  const canSubmit =
-    !!selectedMachine &&
-    hostname.trim() !== '' &&
-    address.trim() !== '' &&
-    gateway.trim() !== '' &&
-    dnsValid &&
-    !links.error &&
-    sshKeyRef.trim() !== '' &&
-    k3sVersion.trim() !== '' &&
-    disksValid &&
-    joinValid &&
-    confirmationMatches(confirmSerial, serial) &&
-    !busy
+  const blockers = installBlockers({
+    machineSelected: !!selectedMachine,
+    hostname,
+    address,
+    gateway,
+    dnsValid,
+    linksError: links.error,
+    sshKeyRef,
+    k3sVersion,
+    disksValid,
+    joinValid,
+    serialMatches: confirmationMatches(confirmSerial, serial),
+  })
+  const canSubmit = blockers.length === 0 && !busy
 
   async function handleCreate() {
     if (!selectedMachine || !canSubmit) return
@@ -241,9 +243,9 @@ export function InstallDialog({
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label>Machine</Label>
+            <Label htmlFor="install-machine">Machine</Label>
             <Select value={machineName} onValueChange={setMachineName}>
-              <SelectTrigger>
+              <SelectTrigger id="install-machine">
                 <SelectValue placeholder="Select an inventoried machine…" />
               </SelectTrigger>
               <SelectContent>
@@ -353,9 +355,9 @@ export function InstallDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>Layout</Label>
+            <Label htmlFor="install-layout">Layout</Label>
             <Select value={layoutKind} onValueChange={(v) => setLayout(v as LayoutKind)}>
-              <SelectTrigger>
+              <SelectTrigger id="install-layout">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -393,9 +395,9 @@ export function InstallDialog({
           ))}
 
           <div className="space-y-1.5">
-            <Label>Cluster</Label>
+            <Label htmlFor="install-cluster">Cluster</Label>
             <Select value={clusterMode} onValueChange={(v) => setClusterMode(v as ClusterMode)}>
-              <SelectTrigger>
+              <SelectTrigger id="install-cluster">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -440,9 +442,9 @@ export function InstallDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>Boot mode</Label>
+            <Label htmlFor="install-boot-mode">Boot mode</Label>
             <Select value={bootMode} onValueChange={(v) => setBootMode(v as BootMode)}>
-              <SelectTrigger>
+              <SelectTrigger id="install-boot-mode">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -470,11 +472,23 @@ export function InstallDialog({
           </div>
         </div>
 
+        {blockers.length > 0 && (
+          <p id="install-blockers" className="text-[10px] text-muted-foreground font-mono">
+            Still needed: {blockers.join(' · ')}
+          </p>
+        )}
+
         <DialogFooter>
           <Button variant="outline" className="font-mono" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
           </Button>
-          <Button className="font-mono" disabled={!canSubmit} onClick={() => void handleCreate()}>
+          <Button
+            variant="destructive"
+            className="font-mono"
+            disabled={!canSubmit}
+            aria-describedby={blockers.length > 0 ? 'install-blockers' : undefined}
+            onClick={() => void handleCreate()}
+          >
             {busy ? 'Creating…' : 'Erase and install'}
           </Button>
         </DialogFooter>
