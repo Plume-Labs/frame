@@ -22,14 +22,36 @@ func TestVeleroBacksUpEveryHearthrackKind(t *testing.T) {
 	listed := map[string]bool{}
 	for doc := range strings.SplitSeq(string(raw), "\n---") {
 		var s struct {
+			APIVersion string `json:"apiVersion"`
+			Kind       string `json:"kind"`
+			Metadata   struct {
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
 			Spec struct {
+				Schedule string `json:"schedule"`
 				Template struct {
-					IncludedResources []string `json:"includedResources"`
+					IncludedNamespaces []string `json:"includedNamespaces"`
+					IncludedResources  []string `json:"includedResources"`
+					SnapshotVolumes    bool     `json:"snapshotVolumes"`
+					StorageLocation    string   `json:"storageLocation"`
+					TTL                string   `json:"ttl"`
 				} `json:"template"`
 			} `json:"spec"`
 		}
-		if err := yaml.Unmarshal([]byte(doc), &s); err != nil {
+		// Strict: a misspelled field would otherwise be silently ignored by this
+		// test and by nobody else until the first restore.
+		if err := yaml.UnmarshalStrict([]byte(doc), &s); err != nil {
 			t.Fatal(err)
+		}
+		if s.APIVersion != "velero.io/v1" || s.Kind != "Schedule" || s.Metadata.Namespace != "velero" || s.Spec.Schedule == "" {
+			t.Errorf("unexpected document %q: want a velero Schedule with a cron expression", s.Metadata.Name)
+		}
+		// Cluster-scoped kinds (framestorages, inferencemodels...) are only
+		// backed up when every namespace is included.
+		if !Has(s.Spec.Template.IncludedNamespaces, "*") {
+			t.Errorf("%s must include namespace \"*\" so namespaced and cluster-scoped kinds are both saved",
+				s.Metadata.Name)
 		}
 		for _, r := range s.Spec.Template.IncludedResources {
 			listed[r] = true

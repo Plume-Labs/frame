@@ -3,15 +3,20 @@
 # velero.yaml in this directory backs up workload namespaces. Nothing there
 # covers the control plane itself: the Hearthrack custom resources (users and
 # their passkey state, machines, storage, installs, tasks...) live in etcd and
-# are lost with it. These two schedules cover that gap.
+# are lost with it. This schedule covers that gap. The Secrets of frame-system are a separate,
+# opt-in example: velero-hearthrack-secrets.yaml.example.
 #
 # CRDs themselves are deliberately NOT backed up: the chart owns the schema and
 # restoring an older CRD over a newer one is a downgrade, not a recovery.
 #
 # test/manifests/velero_hearthrack_test.go fails if a CRD under
 # config/crd/bases is missing from the list below, so a new kind cannot ship
-# without a backup. After a restore, check status.progress.itemsBackedUp: a
+# without a backup. After each BACKUP, check status.progress.itemsBackedUp: a
 # selector that matches nothing completes green with zero items.
+#
+# Velero does not restore `status` by default. Users' passkeys and password
+# hashes live in FrameUser status, so every Restore of these objects must set
+# spec.restoreStatus (see docs/runbook.md, "Backup and restore").
 apiVersion: velero.io/v1
 kind: Schedule
 metadata:
@@ -41,26 +46,6 @@ spec:
       - storagehealthpolicies.frame.plume-labs.io
       - frameservices.services.plume-labs.io
       - inferencemodels.services.plume-labs.io
-    snapshotVolumes: false
-    storageLocation: default
-    ttl: 720h
----
-# Secrets and ConfigMaps of the operator's namespace: BMC credentials, authd
-# signing keys, webhook certificates. Needs an encrypted backup location:
-# these are credentials.
-apiVersion: velero.io/v1
-kind: Schedule
-metadata:
-  name: hearthrack-system-secrets
-  namespace: velero
-spec:
-  schedule: "30 2 * * *"
-  template:
-    includedNamespaces:
-      - frame-system
-    includedResources:
-      - secrets
-      - configmaps
     snapshotVolumes: false
     storageLocation: default
     ttl: 720h
