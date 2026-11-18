@@ -77,8 +77,8 @@ unaffected only for the single-version CRDs of the pre-freeze install.
 There is no safe local escape hatch for that: setting `strategy: None` on a
 live CRD makes the apiserver hand back stored `v1beta1` bytes to a `v1alpha1`
 client unconverted, which is how fields get silently dropped. Fix the manager
-instead; that is what `failurePolicy` and the leader lease's 16-second
-takeover are for, and it is the argument for `replicaCount: 2` restated in
+instead; that is what `failurePolicy` and the leader lease's takeover
+are for, and it is the argument for `replicaCount: 2` restated in
 sharper terms.
 
 ## Failover
@@ -90,8 +90,11 @@ configuration — `replicaCount: 2` in the chart, or
 Measured behaviour, force-deleting the leader pod (no graceful lease release,
 the worst case):
 
-- **takeover in 16 seconds**, consistent with controller-runtime's 15s lease
-  duration. A graceful pod deletion releases the lease and is faster.
+- **takeover within about a minute**: `cmd/main.go` sets a 60s lease and a 40s
+  renew deadline on purpose (the defaults made the manager miss its renewal
+  on a saturated node), so a standby waits up to the lease duration after a
+  hard crash. A graceful pod deletion releases the lease and is faster. (Older
+  versions of this page said 16s: that was measured with the 15s defaults.)
 - the new leader starts all controllers and reconciles every existing CR
   immediately — it does not wait for the next resync.
 - **admission keeps working throughout.** Both replicas serve the webhook
@@ -100,8 +103,11 @@ the worst case):
   only one replica reconciles.
 
 That last point is the real argument for running two: reconciliation pausing
-for 16s is unremarkable, but with one replica the same 16s is a window where
-*nobody can write a Frame CR at all*.
+for up to a minute is unremarkable, but with one replica the same window is one
+where *nobody can write a Frame CR at all*.
+
+Production installs should start from `charts/frame/values-production.yaml`
+(`replicaCount: 2` and a PodDisruptionBudget).
 
 ## Certificates
 
