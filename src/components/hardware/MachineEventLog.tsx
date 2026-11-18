@@ -45,16 +45,16 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
     <div className="space-y-3 font-mono text-xs">
       {machine.eventLogPossiblyStale && (
         <div className={`rounded-md border px-3 py-2 ${TONE_TEXT.warning}`}>
-          Le BMC n'a pas confirmé que la page lue est bien la plus récente : les entrées
-          ci-dessous pourraient être les plus anciennes du journal, pas les plus récentes.
+          The BMC did not confirm that the page read is the most recent one: the entries
+          below may be the oldest in the log, not the newest.
         </div>
       )}
       <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-2">
         <div className="text-muted-foreground">
-          {machine.eventLogTotal} entrée{machine.eventLogTotal === 1 ? '' : 's'} au total sur le journal
-          du BMC. Les {machine.eventLog.length} entrées ci-dessous sont celles que la dernière
-          lecture a effectivement récupérées — les compteurs qui suivent portent sur ces
-          entrées récupérées, pas sur le journal entier de la machine.
+          {machine.eventLogTotal} entr{machine.eventLogTotal === 1 ? 'y' : 'ies'} in total in the BMC
+          log. The {machine.eventLog.length} entries below are the ones the last read actually
+          fetched — the counters that follow cover those fetched entries, not the machine's
+          whole log.
         </div>
         {counts.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -69,7 +69,7 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
 
       {machine.eventLog.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
-          Aucune entrée retenue dans le journal.
+          No entries kept from the log.
         </div>
       ) : (
         <div className="border rounded-md divide-y">

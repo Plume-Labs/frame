@@ -63,7 +63,7 @@ function ExpectationsCard() {
       toast.success('Expectations saved')
       reload()
     } catch (e) {
-      toast.error('Échec : expectations not saved', { description: e instanceof Error ? e.message : String(e) })
+      toast.error('Failed: expectations not saved', { description: e instanceof Error ? e.message : String(e) })
     }
   }
 

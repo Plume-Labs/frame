@@ -47,18 +47,18 @@ export function SensorsTab({ machine }: { machine: Machine }) {
     case 'never-read':
       return (
         <Empty>
-          Cette machine n'a jamais été relevée dans un état où ses capteurs étaient exploitables.
+          This machine has never been read in a state where its sensors were usable.
         </Empty>
       )
     case 'powered-off':
-      return <Empty>Machine éteinte — pas de lecture de capteurs actuellement.</Empty>
+      return <Empty>Machine is powered off — no sensor readings right now.</Empty>
     case 'in-post':
       return (
-        <Empty>Démarrage en cours (POST non terminé) — pas de lecture de capteurs actuellement.</Empty>
+        <Empty>Starting up (POST not finished) — no sensor readings right now.</Empty>
       )
     case 'unreachable':
       return (
-        <Empty tone="warning">BMC injoignable, et aucune lecture antérieure n'a été conservée.</Empty>
+        <Empty tone="warning">BMC unreachable, and no earlier reading was kept.</Empty>
       )
     case 'last-known':
       return (
@@ -66,7 +66,7 @@ export function SensorsTab({ machine }: { machine: Machine }) {
           <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 font-mono text-xs">
             <Warning className="text-warning shrink-0" />
             <span>
-              Dernière lecture connue — BMC injoignable maintenant.{' '}
+              Last known reading — BMC unreachable now.{' '}
               <span className="font-medium">{stalenessLabel(machine.sensorsValidAt, new Date())}</span>
             </span>
           </div>

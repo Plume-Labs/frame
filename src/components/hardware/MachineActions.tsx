@@ -88,7 +88,7 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
       await frame.machines.power(machine, action)
       toast.success(label)
     } catch (e) {
-      toast.error(`Échec : ${label}`, {
+      toast.error(`Failed: ${label}`, {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -108,7 +108,7 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
     <div className="space-y-3">
       {!admin && (
         <div className="font-mono text-[10px] text-muted-foreground">
-          Actions réservées aux administrateurs.
+          These actions are for administrators only.
         </div>
       )}
 
@@ -117,7 +117,7 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
           <Warning className="text-destructive shrink-0 mt-0.5" />
           <div>
             <div className="font-medium text-destructive">
-              Échec de la dernière action ({machine.lastPowerAction || 'inconnue'},{' '}
+              Last action failed ({machine.lastPowerAction || 'unknown'},{' '}
               {stalenessLabel(machine.lastPowerActionAt, new Date())})
             </div>
             <div className="text-muted-foreground mt-0.5">{machine.lastPowerActionError}</div>
@@ -140,27 +140,27 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
           variant="outline"
           className="font-mono"
           disabled={disabled}
-          onClick={() => openDialog('GracefulShutdown', 'Extinction propre')}
+          onClick={() => openDialog('GracefulShutdown', 'Graceful shutdown')}
         >
-          Extinction propre
+          Graceful shutdown
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono text-destructive"
           disabled={disabled}
-          onClick={() => openDialog('ForceOff', 'Extinction forcée')}
+          onClick={() => openDialog('ForceOff', 'Force off')}
         >
-          Extinction forcée
+          Force off
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono text-destructive"
           disabled={disabled}
-          onClick={() => openDialog('ForceRestart', 'Redémarrage forcé')}
+          onClick={() => openDialog('ForceRestart', 'Force restart')}
         >
-          Redémarrage forcé
+          Force restart
         </Button>
         <Button
           size="sm"
@@ -170,20 +170,20 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
           onClick={() =>
             openDialog(
               ledOn ? 'IndicatorLedOff' : 'IndicatorLedOn',
-              ledOn ? 'Éteindre le repère lumineux' : 'Allumer le repère lumineux',
+              ledOn ? 'Turn the identification LED off' : 'Turn the identification LED on',
             )
           }
         >
-          LED d'identification
+          Identification LED
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono"
           disabled={disabled}
-          onClick={() => openDialog('ClearSEL', "Effacer le journal d'événements")}
+          onClick={() => openDialog('ClearSEL', 'Clear the event log')}
         >
-          Effacer le journal
+          Clear the log
         </Button>
       </div>
 
@@ -191,71 +191,70 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="font-mono">
-              {pending?.label} de {machine.name}
+              {pending?.label}: {machine.name}
             </AlertDialogTitle>
             <AlertDialogDescription className="font-mono text-xs space-y-1">
               {pending?.action === 'ClearSEL' && (
                 <p>
-                  Efface l'historique du journal d'événements conservé par le BMC. Ce journal existe
-                  pour répondre à « pourquoi cette machine a-t-elle redémarré » — c'est le seul
-                  enregistrement de diagnostic qui survit à une coupure d'alimentation. L'effacer
-                  détruit les preuves de l'incident qu'on est le plus susceptible d'être en train
-                  d'examiner depuis cet écran. Cette action est irréversible.
+                  Erases the event-log history kept by the BMC. That log exists to answer "why did
+                  this machine restart" — it is the only diagnostic record that survives a power
+                  cut. Clearing it destroys the evidence of the very incident you are most likely
+                  investigating from this screen. This cannot be undone.
                 </p>
               )}
               {(pending?.action === 'IndicatorLedOn' || pending?.action === 'IndicatorLedOff') && (
-                <p>Ne modifie que le repère lumineux du châssis — aucun effet sur l'alimentation.</p>
+                <p>Only changes the chassis identification light — no effect on power.</p>
               )}
-              {pending?.action === 'On' && <p>Démarre la machine.</p>}
+              {pending?.action === 'On' && <p>Powers the machine on.</p>}
               {pending?.action === 'GracefulShutdown' && (
                 <p>
-                  Demande au système d'exploitation de s'arrêter proprement — un signal ACPI
-                  (bouton d'alimentation), pas une garantie. Le système d'exploitation doit choisir
-                  d'y répondre : une machine dont le noyau est bloqué l'ignorera et restera allumée.
-                  Si elle ne répond pas, « Extinction forcée » est l'alternative.
+                  Asks the operating system to shut down cleanly — an ACPI signal (the power
+                  button), not a guarantee. The operating system has to choose to answer it: a
+                  machine whose kernel is hung will ignore it and stay on. If it does not respond,
+                  "Force off" is the alternative.
                 </p>
               )}
               {pending?.action === 'ForceOff' && (
                 <p>
-                  Coupe l'alimentation immédiatement, sans laisser le système d'exploitation s'arrêter
-                  proprement — un arrêt brutal, pas un arrêt propre.
+                  Cuts the power immediately, without letting the operating system shut down
+                  cleanly — an abrupt stop, not a clean one.
                 </p>
               )}
               {pending?.action === 'ForceRestart' && (
                 <p>
-                  Redémarre la machine immédiatement, sans laisser le système d'exploitation s'arrêter
-                  proprement.
+                  Restarts the machine immediately, without letting the operating system shut down
+                  cleanly.
                 </p>
               )}
               {pending && DISRUPTIVE_POWER_ACTIONS.has(pending.action) && (
                 <p>
                   {machine.nodeRef ? (
                     pending.nodeCarries === 'loading' ? (
-                      `Vérification du nœud ${machine.nodeRef}…`
+                      `Checking node ${machine.nodeRef}…`
                     ) : pending.nodeCarries === 'error' ? (
-                      `Impossible de vérifier le nombre de pods sur le nœud ${machine.nodeRef} — vérifiez manuellement avant de continuer.`
+                      `Could not check how many pods run on node ${machine.nodeRef} — check by hand before continuing.`
                     ) : (
                       <>
-                        Cette machine porte le nœud <strong>{machine.nodeRef}</strong>, avec{' '}
+                        This machine hosts node <strong>{machine.nodeRef}</strong>, carrying{' '}
                         <strong>{pending.nodeCarries}</strong> pod
                         {pending.nodeCarries === 1 ? '' : 's'}.
                       </>
                     )
                   ) : (
-                    "Aucun nœud renseigné (spec.nodeRef non défini) — si cette machine porte bien " +
-                    "un nœud du cluster, quelqu'un a simplement oublié de le déclarer."
+                    "No node recorded (spec.nodeRef is not set) — if this machine does host a " +
+                    "cluster node, someone simply forgot to declare it."
                   )}
                 </p>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               disabled={confirmDisabled}
               onClick={() => pending && void run(pending.action, pending.label)}
             >
-              Confirmer
+              Confirm
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

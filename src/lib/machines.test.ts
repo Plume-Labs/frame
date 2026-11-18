@@ -135,7 +135,7 @@ describe('staleness', () => {
   // and rendering "0 s ago" would be a lie about a value that does not exist.
   it('treats never-probed as stale', () => {
     expect(isStale(null, now)).toBe(true)
-    expect(stalenessLabel(null, now)).toBe('jamais relevé')
+    expect(stalenessLabel(null, now)).toBe('never read')
   })
 
   it('says how old the reading is in words', () => {

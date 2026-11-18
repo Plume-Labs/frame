@@ -473,7 +473,7 @@ const STALE_AFTER_MS = 150_000 // two polling intervals plus a half
 // same constant for a structurally different absence (e.g. `inventory ===
 // null`) that means the same thing to an operator, so the phrasing cannot
 // drift between the two independently of each other.
-export const NEVER_READ_LABEL = 'jamais relevé'
+export const NEVER_READ_LABEL = 'never read'
 
 // `at` is whichever timestamp is under judgment — a machine's own liveness
 // is `lastProbeAt`, but a sensor reading's age is `sensorsValidAt`, and the

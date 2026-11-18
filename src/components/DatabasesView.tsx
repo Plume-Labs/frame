@@ -36,7 +36,7 @@ function DatabaseCard({ db, onSaved }: { db: Database; onSaved: () => void }) {
       toast.success(`${db.name}: settings saved`)
       onSaved()
     } catch (e) {
-      toast.error(`Échec : ${db.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(`Failed: ${db.name}`, { description: e instanceof Error ? e.message : String(e) })
     }
   }
 
