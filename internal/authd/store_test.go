@@ -2,12 +2,16 @@ package authd
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
@@ -42,7 +46,7 @@ func TestByEmailFindsAndMisses(t *testing.T) {
 	if got.Name != "alice" {
 		t.Fatalf("got %q", got.Name)
 	}
-	if _, err := s.ByEmail(context.Background(), "nobody@example.com"); !errors.Is(err, ErrUserNotFound) {
+	if _, err := s.ByEmail(context.Background(), "nobody@example.com"); !stderrors.Is(err, ErrUserNotFound) {
 		t.Fatalf("want ErrUserNotFound, got %v", err)
 	}
 }
@@ -97,7 +101,7 @@ func TestByCredentialID(t *testing.T) {
 	if got.Name != "alice" {
 		t.Fatalf("got %q", got.Name)
 	}
-	if _, err := s.ByCredentialID(context.Background(), "unknown"); !errors.Is(err, ErrUserNotFound) {
+	if _, err := s.ByCredentialID(context.Background(), "unknown"); !stderrors.Is(err, ErrUserNotFound) {
 		t.Fatalf("want ErrUserNotFound, got %v", err)
 	}
 }
@@ -129,7 +133,7 @@ func TestRemoveCredentialKeepsLastKeyWhateverPasswordAuthSays(t *testing.T) {
 		u.Spec.PasswordAuth = mode
 		s := storeWith(t, u)
 		err := s.RemoveCredential(context.Background(), u, "only")
-		if !errors.Is(err, ErrLastCredential) {
+		if !stderrors.Is(err, ErrLastCredential) {
 			t.Fatalf("passwordAuth=%q: RemoveCredential of the last key = %v, want ErrLastCredential", mode, err)
 		}
 		got, _ := s.ByEmail(context.Background(), "alice@example.com")
@@ -164,5 +168,101 @@ func TestAdminCount(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("AdminCount = %d, want 1", n)
+	}
+}
+
+func cred(id string, count uint32) framev1beta1.WebAuthnCredential {
+	return framev1beta1.WebAuthnCredential{ID: id, SignCount: count}
+}
+
+// A request that read the account before another request changed it must not
+// overwrite that change, nor fail with a conflict.
+func TestStatusWritesFromAStaleReadKeepTheConcurrentChange(t *testing.T) {
+	ctx := context.Background()
+	s := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred("a", 1)))
+	stale, err := s.ByEmail(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.ByEmail(ctx, "alice@example.com")
+	if err := s.AddCredential(ctx, other, cred("b", 0)); err != nil {
+		t.Fatalf("concurrent enrolment: %v", err)
+	}
+
+	if err := s.UpdateSignCount(ctx, stale, "a", 7); err != nil {
+		t.Fatalf("UpdateSignCount from a stale read: %v", err)
+	}
+	got, _ := s.ByEmail(ctx, "alice@example.com")
+	if len(got.Status.Credentials) != 2 {
+		t.Fatalf("the concurrent enrolment was lost: %+v", got.Status.Credentials)
+	}
+	if got.Status.Credentials[0].SignCount != 7 {
+		t.Fatalf("sign count not stored: %+v", got.Status.Credentials)
+	}
+	if len(stale.Status.Credentials) != 2 {
+		t.Fatalf("the caller's copy was not refreshed: %+v", stale.Status.Credentials)
+	}
+}
+
+func TestUpdateSignCountNeverLowersTheCounter(t *testing.T) {
+	ctx := context.Background()
+	s := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred("a", 9)))
+	u, _ := s.ByEmail(ctx, "alice@example.com")
+	if err := s.UpdateSignCount(ctx, u, "a", 3); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ByEmail(ctx, "alice@example.com")
+	if got.Status.Credentials[0].SignCount != 9 {
+		t.Fatalf("counter lowered to %d", got.Status.Credentials[0].SignCount)
+	}
+}
+
+// The last-credential guard must judge the stored account, not the caller's
+// possibly stale copy.
+func TestRemoveCredentialGuardJudgesTheStoredState(t *testing.T) {
+	ctx := context.Background()
+	s := storeWith(t, fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred("a", 0), cred("b", 0)))
+	stale, _ := s.ByEmail(ctx, "alice@example.com")
+	other, _ := s.ByEmail(ctx, "alice@example.com")
+	if err := s.RemoveCredential(ctx, other, "b"); err != nil {
+		t.Fatal(err)
+	}
+	// stale still shows two keys, so a check on it would allow removing "a".
+	if err := s.RemoveCredential(ctx, stale, "a"); !stderrors.Is(err, ErrLastCredential) {
+		t.Fatalf("want ErrLastCredential, got %v", err)
+	}
+}
+
+// A conflict between the read and the write is retried instead of surfacing.
+func TestStatusWriteRetriesAConflict(t *testing.T) {
+	ctx := context.Background()
+	sch := scheme.Scheme
+	if err := framev1beta1.AddToScheme(sch); err != nil {
+		t.Fatal(err)
+	}
+	conflicts := 1
+	c := fake.NewClientBuilder().WithScheme(sch).
+		WithStatusSubresource(&framev1beta1.FrameUser{}).
+		WithObjects(fixture("alice", "alice@example.com", framev1beta1.RoleAdmin, cred("a", 1))).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(
+				ctx context.Context, cl client.Client, sub string, obj client.Object,
+				o ...client.SubResourceUpdateOption,
+			) error {
+				if conflicts > 0 {
+					conflicts--
+					return errors.NewConflict(schema.GroupResource{Resource: "frameusers"}, obj.GetName(), stderrors.New("stale"))
+				}
+				return cl.SubResource(sub).Update(ctx, obj, o...)
+			},
+		}).Build()
+	s := NewStore(c, "cluster-control")
+	u, _ := s.ByEmail(ctx, "alice@example.com")
+	if err := s.UpdateSignCount(ctx, u, "a", 5); err != nil {
+		t.Fatalf("a single conflict must be retried, got %v", err)
+	}
+	got, _ := s.ByEmail(ctx, "alice@example.com")
+	if got.Status.Credentials[0].SignCount != 5 {
+		t.Fatalf("write lost: %+v", got.Status.Credentials)
 	}
 }
