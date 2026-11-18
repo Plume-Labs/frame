@@ -155,6 +155,9 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(argoWorkflowGVK)
 	err := r.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: ns}, existing)
+	if isArgoMissing(err) {
+		return r.reportArgoMissing(ctx, &job)
+	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
@@ -162,6 +165,9 @@ func (r *FrameJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if apierrors.IsNotFound(err) {
 		wf := buildWorkflow(&job)
 		if err := r.Create(ctx, wf); err != nil {
+			if isArgoMissing(err) {
+				return r.reportArgoMissing(ctx, &job)
+			}
 			return ctrl.Result{}, fmt.Errorf("creating ArgoWorkflow: %w", err)
 		}
 		r.Recorder.Event(&job, corev1.EventTypeNormal, "WorkflowCreated", fmt.Sprintf("ArgoWorkflow %s/%s created", ns, job.Name))
@@ -248,11 +254,51 @@ func (r *FrameJobReconciler) reconcileDelete(ctx context.Context, job *framev1be
 	wf.SetGroupVersionKind(argoWorkflowGVK)
 	wf.SetName(job.Name)
 	wf.SetNamespace(ns)
-	if err := r.Delete(ctx, wf); client.IgnoreNotFound(err) != nil {
+	// Without the Argo CRD there is no Workflow to clean up: the job must still
+	// be deletable, or its finalizer would block it forever.
+	if err := r.Delete(ctx, wf); client.IgnoreNotFound(err) != nil && !isArgoMissing(err) {
 		return ctrl.Result{}, err
 	}
 	controllerutil.RemoveFinalizer(job, frameJobFinalizer)
 	return ctrl.Result{}, r.Update(ctx, job)
+}
+
+// jobPhaseArgoMissing is the Ready reason of a pipeline FrameJob on a cluster
+// where Argo Workflows is not installed.
+const jobPhaseArgoMissing = "ArgoWorkflowsMissing"
+
+// argoMissingRetry is how often a pipeline job waits for Argo to appear. Long
+// on purpose: installing Argo is an operator action, not a transient fault.
+const argoMissingRetry = 5 * time.Minute
+
+// isArgoMissing reports whether err means the workflows.argoproj.io API is not
+// served by the cluster (no CRD), as opposed to a transient or RBAC failure.
+func isArgoMissing(err error) bool {
+	return err != nil && (meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err))
+}
+
+// reportArgoMissing records a clear, non-failing status on a pipeline FrameJob
+// instead of returning an error: an error would put the job in the controller's
+// exponential backoff and flood the log, for a condition only an install fixes.
+func (r *FrameJobReconciler) reportArgoMissing(ctx context.Context, job *framev1beta1.FrameJob) (ctrl.Result, error) {
+	const msg = "Argo Workflows is not installed (CRD workflows.argoproj.io not found); pipeline jobs need it, container jobs do not"
+	if readyReason(job.Status.Conditions) != jobPhaseArgoMissing || job.Status.ObservedGeneration != job.Generation {
+		patch := client.MergeFrom(job.DeepCopy())
+		job.Status.ObservedGeneration = job.Generation
+		job.Status.Message = msg
+		setJobReady(job, jobPhaseArgoMissing, msg)
+		if err := r.Status().Patch(ctx, job, patch); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Event(job, corev1.EventTypeWarning, jobPhaseArgoMissing, msg)
+	}
+	return ctrl.Result{RequeueAfter: argoMissingRetry}, nil
+}
+
+// argoWorkflowsServed reports whether the cluster serves the Argo Workflow API.
+func argoWorkflowsServed(mapper meta.RESTMapper) bool {
+	_, err := mapper.RESTMapping(argoWorkflowGVK.GroupKind(), argoWorkflowGVK.Version)
+	return err == nil
 }
 
 func buildWorkflow(job *framev1beta1.FrameJob) *unstructured.Unstructured {
@@ -355,13 +401,23 @@ func (r *FrameJobReconciler) workflowToFrameJob(_ context.Context, obj client.Ob
 // through the same RequeueAfter: 30*time.Second poll every other in-flight
 // FrameJob already uses, rather than a push from an informer.
 func (r *FrameJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	wfType := &unstructured.Unstructured{}
-	wfType.SetGroupVersionKind(argoWorkflowGVK)
-
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&framev1beta1.FrameJob{}).
-		Watches(wfType, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob)).
 		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob)).
-		Named("framejob").
-		Complete(r)
+		Named("framejob")
+
+	// Argo Workflows is optional. A Watch on an absent CRD makes the cache wait
+	// for an informer that never syncs and the whole manager exits after the
+	// cache-sync timeout, so the watch is added only when the API is served.
+	// Pipeline jobs on a cluster without Argo report ArgoWorkflowsMissing and
+	// re-check every few minutes; installing Argo later needs an operator
+	// restart for the push-based watch, the poll covers the gap until then.
+	if argoWorkflowsServed(mgr.GetRESTMapper()) {
+		wfType := &unstructured.Unstructured{}
+		wfType.SetGroupVersionKind(argoWorkflowGVK)
+		b = b.Watches(wfType, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob))
+	} else {
+		logf.Log.WithName("framejob").Info("Argo Workflows CRD not found: pipeline FrameJobs are disabled until it is installed and the operator restarted")
+	}
+	return b.Complete(r)
 }
