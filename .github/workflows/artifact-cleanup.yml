@@ -1,0 +1,50 @@
+name: Artifact cleanup
+
+# Keeps Actions storage under quota: every night, deletes artifacts older than
+# 5 days, artifacts of closed branches (merged or closed PR) and caches of
+# closed PRs. Rules: .github/scripts/nettoyer-artefacts.mjs.
+# Token limited to `actions: write` (delete) and `pull-requests: read`.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: list without deleting'
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: artifact-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Clean artifacts and caches
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # The cron deletes for real; a manual run is a dry run by default.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: node .github/scripts/nettoyer-artefacts.mjs

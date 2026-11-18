@@ -28,6 +28,10 @@ env:
   SMOKE_RETRY_DELAY_SECONDS: '2'
   # Pinned rather than resolved at run time: see the Install kustomize step.
   KUSTOMIZE_VERSION: v5.8.1
+  # Quota d'artefacts Actions : chaque build-push-action déposait un artefact
+  # `*.dockerbuild` (4 700 artefacts au 18/11, 90 jours chacun). Le résumé du
+  # run reste ; l'archive de build n'est pas téléversée.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
 
 jobs:
   # ── 1. Quality gate: lint + typecheck + unit tests ────────────────────────
@@ -293,6 +297,9 @@ jobs:
           image: frame-${{ matrix.name }}:scan
           format: cyclonedx-json
           artifact-name: sbom-${{ matrix.name }}.cyclonedx.json
+          # Le SBOM de référence est celui attaché à l'image (sbom: true plus
+          # haut) ; cette copie sert au coup d'œil, 3 jours suffisent.
+          upload-artifact-retention: 3
           output-file: ${{ runner.temp }}/sbom-${{ matrix.name }}.cyclonedx.json
 
       # Two Trivy passes over the same image, because one invocation emits one
