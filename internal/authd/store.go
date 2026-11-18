@@ -20,6 +20,9 @@ var ErrUserNotFound = errors.New("no such user")
 // from an apiserver failure (500) without matching on message text.
 var ErrLastCredential = errors.New("refusing to remove an account's last credential")
 
+// errNoChange is returned by a mutateStatus callback that has nothing to write.
+var errNoChange = errors.New("no change")
+
 // Store is authd's view of the FrameUser resources.
 type Store struct {
 	client    client.Client
@@ -129,6 +132,10 @@ func (s *Store) mutateStatus(
 			return err
 		}
 		if err := fn(&fresh); err != nil {
+			if errors.Is(err, errNoChange) {
+				fresh.DeepCopyInto(u)
+				return nil
+			}
 			return err
 		}
 		if err := s.client.Status().Update(ctx, &fresh); err != nil {
@@ -158,9 +165,12 @@ func (s *Store) UpdateSignCount(ctx context.Context, u *framev1beta1.FrameUser, 
 	return s.mutateStatus(ctx, u, func(f *framev1beta1.FrameUser) error {
 		for i := range f.Status.Credentials {
 			if f.Status.Credentials[i].ID == credID {
-				if count > f.Status.Credentials[i].SignCount {
-					f.Status.Credentials[i].SignCount = count
+				if count <= f.Status.Credentials[i].SignCount {
+					// Nothing to write (synced passkeys report 0 forever): skip
+					// the apiserver round trip. errNoChange is swallowed below.
+					return errNoChange
 				}
+				f.Status.Credentials[i].SignCount = count
 				return nil
 			}
 		}
