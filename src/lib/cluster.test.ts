@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   generateClusterNodes,
   calculateClusterStats,
@@ -7,7 +7,22 @@ import {
   formatBandwidth
 } from './cluster'
 
+// A small seeded generator (mulberry32): the distribution tests below compare
+// counts drawn from Math.random, and with a real random source "storage > network"
+// (15% vs 5% of 200) fails now and then (once in CI, 17 against 17).
+function seedRandom(seed: number) {
+  let a = seed
+  vi.spyOn(Math, 'random').mockImplementation(() => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  })
+}
+
 describe('generateClusterNodes', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   it('generates the requested number of nodes', () => {
     const nodes = generateClusterNodes(10)
     expect(nodes).toHaveLength(10)
@@ -80,6 +95,7 @@ describe('generateClusterNodes', () => {
   })
 
   it('generates network device types with fixed probability (regression: was unreachable)', () => {
+    seedRandom(42)
     // With 200 nodes the probability of never hitting network (5% chance) is ~0.
     // This test will reliably catch if the condition order reverts.
     const nodes = generateClusterNodes(200)
@@ -88,6 +104,7 @@ describe('generateClusterNodes', () => {
   })
 
   it('generates storage device types more often than network', () => {
+    seedRandom(42)
     const nodes = generateClusterNodes(200)
     const storageCount = nodes.filter(n => n.hardware.deviceType === 'storage').length
     const networkCount = nodes.filter(n => n.hardware.deviceType === 'network').length
