@@ -92,12 +92,8 @@ install_cert_manager() {
 
 install_operator() {
   log "Installing the operator (config/default)"
-  # The FrameJob controller watches Argo Workflows. Without that CRD its watch
-  # never syncs: the controller does not start (no FrameJob is ever reconciled)
-  # and, after the two-minute cache-sync timeout, the whole manager exits. The
-  # demo has no Argo, so it installs only the stand-in CRD the unit tests use
-  # (container jobs never create a Workflow; pipeline jobs would not run).
-  k apply -f internal/controller/frame/testdata/crds/argoproj.io_workflows.yaml
+  # No Argo Workflows here: the operator starts without it (container jobs
+  # work; pipeline jobs report ArgoWorkflowsMissing).
   # make deploy reads KUBECONFIG, exported above: it can only reach this cluster.
   make deploy DEPLOY_DEFAULT=1 IMG="$IMG_CONTROLLER"
   k -n frame-system rollout status deployment/frame-controller-manager --timeout=180s
