@@ -781,7 +781,7 @@ func (r *FrameInstallReconciler) setCondition(ctx context.Context, fi *framev1be
 	patch := client.MergeFrom(latest.DeepCopy())
 	cond.ObservedGeneration = latest.Generation
 	meta.SetStatusCondition(&latest.Status.Conditions, cond)
-	if err := r.Status().Patch(ctx, &latest, patch); err != nil {
+	if err := client.IgnoreNotFound(r.Status().Patch(ctx, &latest, patch)); err != nil {
 		// Best effort by design (the next beacon rewrites it), but not silent:
 		// a status that never updates looks like an installer that never moves.
 		logf.FromContext(ctx).Error(err, "Could not write FrameInstall condition",
@@ -809,7 +809,7 @@ func (r *FrameInstallReconciler) reportPhase(ctx context.Context, key client.Obj
 	fi.Status.Phase = string(p)
 	now := metav1.Now()
 	fi.Status.PhaseSince = &now
-	if err := r.Status().Patch(ctx, &fi, patch); err != nil {
+	if err := client.IgnoreNotFound(r.Status().Patch(ctx, &fi, patch)); err != nil {
 		logf.FromContext(ctx).Error(err, "Could not record FrameInstall phase",
 			"frameinstall", key, "phase", string(p))
 	}
