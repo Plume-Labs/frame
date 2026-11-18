@@ -74,7 +74,7 @@ template itself, specifically so the copies stay byte-for-byte identical to
 
 ## Values
 
-Production installs: add `-f charts/frame/values-production.yaml` (two replicas and a
+Production installs with Helm: add `-f charts/frame/values-production.yaml` (two replicas and a
 PodDisruptionBudget; see `docs/runbook.md`, "Failover").
 
 See `values.yaml` for the full, commented list. Highlights:

@@ -32,6 +32,9 @@ func TestProductionValuesAreHighlyAvailable(t *testing.T) {
 	if !v.PodDisruptionBudget.Enabled {
 		t.Error("the PodDisruptionBudget must be enabled with more than one replica")
 	}
+	if v.PodDisruptionBudget.MinAvailable < 1 {
+		t.Error("minAvailable 0 gives a PodDisruptionBudget that protects nothing")
+	}
 	if v.PodDisruptionBudget.MinAvailable >= v.ReplicaCount {
 		t.Errorf("minAvailable %d >= replicaCount %d would block every drain",
 			v.PodDisruptionBudget.MinAvailable, v.ReplicaCount)

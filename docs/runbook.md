@@ -90,11 +90,13 @@ configuration — `replicaCount: 2` in the chart, or
 Measured behaviour, force-deleting the leader pod (no graceful lease release,
 the worst case):
 
-- **takeover within about a minute**: `cmd/main.go` sets a 60s lease and a 40s
-  renew deadline on purpose (the defaults made the manager miss its renewal
-  on a saturated node), so a standby waits up to the lease duration after a
-  hard crash. A graceful pod deletion releases the lease and is faster. (Older
-  versions of this page said 16s: that was measured with the 15s defaults.)
+- **takeover up to about 70 seconds** (60s lease + 10s retry period, worked out
+  from `cmd/main.go`, not re-measured since the lease was lengthened). The
+  lease is long on purpose: the 15s defaults made the manager miss its renewal
+  on a saturated node. The lease is not released on shutdown
+  (`LeaderElectionReleaseOnCancel` is off), so a graceful deletion waits for
+  expiry too. (Older versions of this page said 16s: that was measured with the
+  15s defaults.)
 - the new leader starts all controllers and reconciles every existing CR
   immediately — it does not wait for the next resync.
 - **admission keeps working throughout.** Both replicas serve the webhook
@@ -106,8 +108,11 @@ That last point is the real argument for running two: reconciliation pausing
 for up to a minute is unremarkable, but with one replica the same window is one
 where *nobody can write a Frame CR at all*.
 
-Production installs should start from `charts/frame/values-production.yaml`
-(`replicaCount: 2` and a PodDisruptionBudget).
+Helm installs for production should start from
+`charts/frame/values-production.yaml` (`replicaCount: 2` and a
+PodDisruptionBudget). The kustomize path (`make deploy-production`) stays at one
+replica: scale it with `kubectl scale deploy -n frame-system
+frame-controller-manager --replicas=2` and add your own PodDisruptionBudget.
 
 ## Certificates
 
