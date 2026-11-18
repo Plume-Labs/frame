@@ -122,6 +122,9 @@ helm upgrade frame charts/frame -n frame-system \
   --set image.tag=<new-tag>
 ```
 
+This is the minimal form. For a running installation prefer `-f values.yaml`
+(see "Before you upgrade" below): a bare `--set` resets every value not repeated.
+
 **Verified this session**, on the same disposable kind cluster: upgrading a
 running release with `--set replicaCount=2 --set
 podDisruptionBudget.enabled=true` scaled the Deployment to 2 replicas and
@@ -131,6 +134,52 @@ second, `deployed` revision superseding the first.
 A controller that reads SMART under an agent that does not yet makes
 `StorageDegraded` and `DiskWearHigh` `Unknown` on solid-state disks until the
 agent is rolled out too. Nothing open is touched.
+
+### Before you upgrade, and going back
+
+Not rehearsed end to end: the checklist below is derived from how the chart and
+the CRDs are built, and each step says what it protects. An e2e that upgrades
+N-1 to N and rolls back is on the production-readiness backlog
+(production-readiness audit of 2026-11-18, item P0-5); until it exists, treat a
+rollback as something to try on a disposable cluster first.
+
+Before the upgrade:
+
+1. **Take a Velero backup of the Hearthrack resources.**
+   `deploy/resilience/velero-hearthrack.yaml` is an hourly `Schedule`, so either
+   take the latest scheduled backup or start one now with
+   `velero backup create pre-upgrade --from-schedule hearthrack-resources`, then
+   check that `status.progress.itemsBackedUp` is not zero (the command is in the
+   runbook, "Backup and restore"). A restore needs `restoreStatus`, or accounts
+   lose their passkeys.
+2. **Keep your values in a file** and upgrade with `-f values.yaml`, not a bare
+   `--set`: `helm upgrade --set` without `--reuse-values` resets every value you
+   did not repeat, including `replicaCount` and the webhook certificate settings.
+   `helm get values frame -n frame-system -o yaml > values.yaml` captures what is running.
+3. **Run two replicas** (`charts/frame/values-production.yaml`): the manager serves
+   admission and CRD conversion, and a single replica restarting makes every
+   kind that has two versions unreadable for the duration (see the runbook, "The blast radius").
+4. **Read the release notes for a CRD change.** `helm upgrade` applies the new
+   CRDs and the new Deployment in the same release, and the old manager keeps
+   serving `/convert` until the roll-out finishes.
+
+Going back:
+
+- `helm rollback frame <revision> -n frame-system` reverts the Deployment, RBAC
+  and webhook configurations, **and re-applies the older CRD schemas**, because
+  the CRDs are templates here. That is safe only while the older schema can
+  still read everything stored. If the upgrade you are leaving added a field
+  that objects now carry, the field disappears from reads straight away and the
+  stored data is destroyed on the next write; if it moved the stored version
+  (section 3), do not roll back.
+- Check before you roll back, for every Hearthrack CRD, not only one:
+  `kubectl get crd -o custom-columns=NAME:.metadata.name,STORED:.status.storedVersions | grep plume-labs.io`.
+  If one lists a version the older chart does not serve, the apiserver refuses
+  the older CRD and the rollback fails midway; **roll forward** (fix or pin the
+  newer release) instead.
+- A rollback does not undo what the controllers did in the meantime
+  (a drain, a Ceph flag, a disk replacement in progress): look at the Tasks and
+  Ceph/OSD screens before and after.
 
 ### CRDs
 
