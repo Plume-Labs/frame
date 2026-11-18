@@ -9,8 +9,8 @@
 # What it proves, per step: the operator rolls out and does not restart; the
 # stored objects (4 FrameNodes, 4 SchedulingPolicies, 3 FrameJobs, the same
 # fixtures as `make demo`) keep their spec byte for byte (no CRD pruning, no
-# defaulting drift) and their status; the admission webhook still accepts a
-# request; and, after the rollback, N-1 reconciles new work (the jobs are
+# defaulting drift) and their status; the admission webhook and the CRD schema
+# still accept a new object; and, after the rollback, N-1 reconciles new work (the jobs are
 # deleted and submitted again).
 #
 # Scope: the operator (frame-controller + its CRDs, RBAC and webhook, from
@@ -153,6 +153,23 @@ check() {
   if ! diff -u "$tmp/baseline.json" "$tmp/now.json"; then fail "stored specs changed after: $1"; fi
   # The webhook is in the path of every write: a server-side dry run exercises it.
   sed "s#CLUSTER_NAME#${CLUSTER}#g" hack/demo/seed.yaml | k apply --dry-run=server -f - >/dev/null || fail "the admission webhook refused a valid object after: $1"
+  # An update of a stored object is not enough: CRD validation ratcheting lets
+  # an object that was valid before keep passing, so a new required field got
+  # through when only existing objects were applied (shown by a deliberately
+  # broken PR). A CREATE is validated against the whole schema.
+  probe='{"apiVersion":"frame.plume-labs.io/v1beta1","kind":"FrameNode","metadata":{"name":"upgrade-probe","namespace":"frame-system"},"spec":{"hostname":"upgrade-probe","ip":"192.0.2.99","role":"worker","rack":"rack-a","zone":"zone-1","serviceClass":"HIGH"}}'
+  # The rollout reports the new pod Ready before the webhook Service routes to
+  # it (a call right then times out), so retry for a minute; a schema break
+  # keeps failing with the same validation error and ends the loop red.
+  created=""
+  for _ in $(seq 1 30); do
+    if printf '%s' "$probe" | k create --dry-run=server -f - >/dev/null 2>"$tmp/probe.err"; then created=1; break; fi
+    sleep 2
+  done
+  if [ -z "$created" ]; then
+    cat "$tmp/probe.err" >&2
+    fail "a new FrameNode is refused after: $1 (CRD schema or webhook break)"
+  fi
 }
 
 # ---- N-1 -------------------------------------------------------------------
