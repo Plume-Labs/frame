@@ -101,9 +101,9 @@ Typography should balance monospace precision for technical data with clean sans
 - **Typographic Hierarchy**:
   - H1 (Panel Titles): JetBrains Mono Bold/24px/tight tracking (-0.02em)
   - H2 (Section Headers): JetBrains Mono SemiBold/18px/tight tracking
-  - Body (Metrics/Labels): Space Grotesk Medium/14px/normal tracking
+  - Body (Metrics/Labels): Inter Medium/14px/normal tracking
   - Monospace Data (IDs/Values): JetBrains Mono Regular/13px/normal tracking
-  - Small (Timestamps/Meta): Space Grotesk Regular/12px/wide tracking (0.01em)
+  - Small (Timestamps/Meta): Inter Regular/12px/wide tracking (0.01em)
 
 ## Animations
 
