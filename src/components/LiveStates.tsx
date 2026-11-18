@@ -27,7 +27,7 @@ export function LiveStates<T>({
   if (state.phase === 'error') {
     const copy = describeLoadError(state.status)
     return (
-      <Card className="border-destructive/40">
+      <Card className="border-destructive/40" role="alert">
         <CardContent className="py-8 space-y-3 text-center">
           <Warning className="mx-auto text-destructive" size={28} />
           <div className="font-mono text-sm text-foreground">{copy.title}</div>

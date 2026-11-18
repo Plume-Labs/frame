@@ -23,19 +23,22 @@ export function describeLoadError(status: number | undefined): LoadErrorCopy {
       }
     case 404:
       return {
-        title: 'This is not installed on this cluster',
-        hint: 'The API does not serve this resource. The component behind it may not be deployed, or its CRD is missing.',
-      }
-    case 429:
-    case 500:
-    case 502:
-    case 503:
-    case 504:
-      return {
-        title: 'The Kubernetes API is not answering properly',
-        hint: 'It returned an error or is overloaded. Try again in a moment; if it persists, check the apiserver and the in-pod frame-uiproxy.',
+        title: 'The API did not find this',
+        hint: 'Nothing answered at this path. The component behind it may not be deployed (CRD missing), or the object no longer exists. If every screen says this, check that the in-pod frame-uiproxy serves /api.',
       }
     default:
+      if (status !== undefined && (status === 429 || status >= 500)) {
+        return {
+          title: 'The Kubernetes API is not answering properly',
+          hint: 'It returned an error or is overloaded. Try again in a moment; if it persists, check the apiserver and the in-pod frame-uiproxy.',
+        }
+      }
+      if (status !== undefined && status >= 400) {
+        return {
+          title: 'The Kubernetes API refused this request',
+          hint: `It answered HTTP ${status}. The cluster is reachable, so the request itself was rejected; the browser console and the apiserver logs hold the reason.`,
+        }
+      }
       return {
         title: 'Cannot reach the Kubernetes API',
         hint: 'The UI reaches /api through the in-pod frame-uiproxy, under your own identity. Check that the proxy is running; local development is covered in docs/development.md.',

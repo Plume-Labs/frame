@@ -13,6 +13,13 @@ describe('describeLoadError', () => {
 
   it('falls back to the proxy hint when there is no status (network failure)', () => {
     expect(describeLoadError(undefined).hint).toMatch(/uiproxy/)
-    expect(describeLoadError(418).title).toBe(describeLoadError(undefined).title)
+  })
+
+  it('says the API answered when it did, and keeps server trouble apart from a rejected request', () => {
+    expect(describeLoadError(418).title).not.toBe(describeLoadError(undefined).title)
+    expect(describeLoadError(418).hint).toContain('418')
+    expect(describeLoadError(501).title).toBe(describeLoadError(503).title)
+    expect(describeLoadError(429).title).toBe(describeLoadError(500).title)
+    expect(describeLoadError(422).title).not.toBe(describeLoadError(500).title)
   })
 })
