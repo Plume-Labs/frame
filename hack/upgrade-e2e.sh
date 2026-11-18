@@ -158,7 +158,18 @@ check() {
   # through when only existing objects were applied (shown by a deliberately
   # broken PR). A CREATE is validated against the whole schema.
   probe='{"apiVersion":"frame.plume-labs.io/v1beta1","kind":"FrameNode","metadata":{"name":"upgrade-probe","namespace":"frame-system"},"spec":{"hostname":"upgrade-probe","ip":"192.0.2.99","role":"worker","rack":"rack-a","zone":"zone-1","serviceClass":"HIGH"}}'
-  printf '%s' "$probe" | k create --dry-run=server -f - >/dev/null || fail "a new FrameNode is refused after: $1 (CRD schema or webhook break)"
+  # The rollout reports the new pod Ready before the webhook Service routes to
+  # it (a call right then times out), so retry for a minute; a schema break
+  # keeps failing with the same validation error and ends the loop red.
+  created=""
+  for _ in $(seq 1 30); do
+    if printf '%s' "$probe" | k create --dry-run=server -f - >/dev/null 2>"$tmp/probe.err"; then created=1; break; fi
+    sleep 2
+  done
+  if [ -z "$created" ]; then
+    cat "$tmp/probe.err" >&2
+    fail "a new FrameNode is refused after: $1 (CRD schema or webhook break)"
+  fi
 }
 
 # ---- N-1 -------------------------------------------------------------------
