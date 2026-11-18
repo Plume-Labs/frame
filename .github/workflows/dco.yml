@@ -1,0 +1,40 @@
+name: DCO
+
+# Every commit of a pull request must carry a Signed-off-by trailer
+# (Developer Certificate of Origin, see CONTRIBUTING.md). No third-party app:
+# a plain git check.
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  dco:
+    name: DCO
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the Signed-off-by trailers
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bad=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author_email=$(git log -1 --format=%ae "$c")
+            case "$author_email" in *"[bot]"*) continue ;; esac
+            if ! git log -1 --format=%B "$c" | grep -qiE '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::Commit $(git log -1 --format='%h %s' "$c") has no Signed-off-by line (git commit -s)"
+              bad=1
+            fi
+          done
+          exit $bad

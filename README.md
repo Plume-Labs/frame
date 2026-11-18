@@ -70,4 +70,4 @@ The console needs the API proxy *and* `authd` reachable (two terminals plus the 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are accepted under the [Developer Certificate of Origin](CONTRIBUTING.md#sign-your-commits-dco).
