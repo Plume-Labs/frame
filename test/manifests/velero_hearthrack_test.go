@@ -44,7 +44,8 @@ func TestVeleroBacksUpEveryHearthrackKind(t *testing.T) {
 		if err := yaml.UnmarshalStrict([]byte(doc), &s); err != nil {
 			t.Fatal(err)
 		}
-		if s.APIVersion != "velero.io/v1" || s.Kind != "Schedule" || s.Metadata.Namespace != "velero" || s.Spec.Schedule == "" {
+		if s.APIVersion != "velero.io/v1" || s.Kind != "Schedule" ||
+			s.Metadata.Namespace != "velero" || s.Spec.Schedule == "" {
 			t.Errorf("unexpected document %q: want a velero Schedule with a cron expression", s.Metadata.Name)
 		}
 		// Cluster-scoped kinds (framestorages, inferencemodels...) are only
