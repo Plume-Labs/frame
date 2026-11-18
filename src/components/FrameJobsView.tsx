@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Job, jobWorkloadLabel, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
+import { Job, jobWorkloadLabel, retryJobSpec, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { retryJobName } from '@/lib/job-names'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -66,17 +66,12 @@ export function FrameJobsView() {
     setBusy(job.id)
     try {
       const retryName = retryJobName(job.name)
-      await frame.jobs.submit({
-        name: retryName,
-        // Resubmit on the substrate the original used; the CRD wants exactly one.
-        ...(job.container
-          ? { container: job.container, ...(job.type ? { type: job.type } : {}) }
-          : { pipeline: job.pipeline ?? '' }),
-        serviceClass: job.serviceClass,
-        priority: job.priority,
-        namespace: job.namespace,
-        gpuCount: job.gpuCount,
-      })
+      const spec = retryJobSpec(job, retryName)
+      if (!spec) {
+        toast.error(`Cannot retry ${job.name}`, { description: 'It names neither a pipeline nor a container.' })
+        return
+      }
+      await frame.jobs.submit(spec)
       toast.success(`Resubmitted as ${retryName}`)
       reload()
     } catch (e) {

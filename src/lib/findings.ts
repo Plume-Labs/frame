@@ -75,9 +75,10 @@ export function collectFindings(
   // Same alert, same namespace = same finding; the registry is a second view of
   // what Alertmanager already shows, not a second alert.
   const seen = new Set((input.alerts?.alerts ?? []).map((a) => `${a.name}/${a.namespace}`))
-  const registryOnly = (input.registry ?? []).filter(
-    (a) => a.state === 'Firing' && !seen.has(`${a.alertName}/${a.namespace}`),
-  )
+  // The registry is sorted by time; the few slots left should go to the worst first.
+  const registryOnly = (input.registry ?? [])
+    .filter((a) => a.state === 'Firing' && !seen.has(`${a.alertName}/${a.namespace}`))
+    .sort((a, b) => Number(b.severity === 'critical') - Number(a.severity === 'critical'))
   for (const a of registryOnly.slice(0, Math.max(0, MAX_ALERTS - live.length))) {
     findings.push({
       key: `registry-${a.name || a.fingerprint}`,

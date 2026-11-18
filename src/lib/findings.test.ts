@@ -257,4 +257,30 @@ describe('collectFindings: alert registry', () => {
   it('ignores resolved registry alerts', () => {
     expect(collectFindings({ registry: [reg({ state: 'Resolved' })] }, NOW)).toEqual([])
   })
+
+  it('gives the remaining slots to critical registry alerts first', () => {
+    const live = Array.from({ length: 4 }, (_, i) => ({
+      name: `Live${i}`, severity: 'warning', state: 'active', summary: '', namespace: 'ns', startsAt: 'x', labels: {},
+    }))
+    const f = collectFindings(
+      {
+        alerts: { alerts: live, bySeverity: {} },
+        registry: [reg({ name: 'w', alertName: 'Warn', severity: 'warning' }), reg({ name: 'c', alertName: 'Crit' })],
+      },
+      NOW,
+    )
+    expect(f).toHaveLength(5)
+    expect(f[4].label).toBe('Crit')
+  })
+
+  it('keeps an alert whose namespace differs from the live one', () => {
+    const f = collectFindings(
+      {
+        alerts: { alerts: [{ name: 'DiskFull', severity: 'critical', state: 'active', summary: '', namespace: 'other', startsAt: 'x', labels: {} }], bySeverity: {} },
+        registry: [reg()],
+      },
+      NOW,
+    )
+    expect(f).toHaveLength(2)
+  })
 })

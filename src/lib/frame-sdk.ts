@@ -1219,6 +1219,24 @@ function mapJobPhase(cr: FrameJobCR): JobStatus {
 }
 
 /**
+ * The spec that resubmits `job` on the substrate it ran on. The CRD wants
+ * exactly one of pipeline/container, so a job with neither (a hand-built
+ * object) cannot be retried and yields null instead of an empty pipeline.
+ */
+export function retryJobSpec(job: Job, name: string): JobSpec | null {
+  const common = {
+    name,
+    serviceClass: job.serviceClass,
+    priority: job.priority,
+    namespace: job.namespace,
+    gpuCount: job.gpuCount,
+  }
+  if (job.container) return { ...common, container: job.container, ...(job.type ? { type: job.type } : {}) }
+  if (job.pipeline) return { ...common, pipeline: job.pipeline }
+  return null
+}
+
+/**
  * What a job runs, for display: the pipeline name, or the image of a container
  * job. A container job has no pipeline, so showing `job.pipeline` there
  * rendered an empty label.
@@ -2346,7 +2364,11 @@ class ClusterClient {
       .sort((a, b) => a.node.localeCompare(b.node))
   }
 
-  /** Real nodes grouped into racks by their FrameNode `spec.rack` label. */
+  /**
+   * Real nodes grouped into racks. A node's rack is, in order: its
+   * `topology.frame.io/rack` label, its `frame.plume-labs.io/rack` label, its
+   * FrameNode's `spec.rack`, else `unracked`.
+   */
   async racks(): Promise<Rack[]> {
     const [fnRes, k8sNodes, nodes, placement] = await Promise.all([
       k8sFetch<ListResponse<{ metadata: { name: string }; spec?: { rack?: string; role?: string; hostname?: string } }>>(
