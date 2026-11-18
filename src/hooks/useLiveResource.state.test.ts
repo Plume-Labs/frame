@@ -15,3 +15,14 @@ describe('stateAfterFailure', () => {
     expect(stateAfterFailure(stateAfterSuccess([1], 1), '503', false)).toEqual({ phase: 'error', message: '503' })
   })
 })
+
+describe('stateAfterFailure status', () => {
+  it('carries the HTTP status into the error state, and omits it when there is none', () => {
+    expect(stateAfterFailure({ phase: 'loading' }, 'denied', false, 403)).toEqual({
+      phase: 'error',
+      message: 'denied',
+      status: 403,
+    })
+    expect(stateAfterFailure({ phase: 'loading' }, 'down', false)).not.toHaveProperty('status')
+  })
+})
