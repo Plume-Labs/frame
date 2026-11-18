@@ -1,6 +1,7 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { Warning } from '@phosphor-icons/react'
 import { LiveState } from '@/hooks/useLiveResource'
+import { describeLoadError } from '@/lib/load-error'
 
 /**
  * Renders the loading / error / empty chrome for a live cluster view. Returns
@@ -24,17 +25,14 @@ export function LiveStates<T>({
   }
 
   if (state.phase === 'error') {
+    const copy = describeLoadError(state.status)
     return (
       <Card className="border-destructive/40">
         <CardContent className="py-8 space-y-3 text-center">
           <Warning className="mx-auto text-destructive" size={28} />
-          <div className="font-mono text-sm text-foreground">Cannot reach the Kubernetes API</div>
+          <div className="font-mono text-sm text-foreground">{copy.title}</div>
           <div className="text-xs text-muted-foreground max-w-md mx-auto">{state.message}</div>
-          <div className="text-xs text-muted-foreground">
-            The UI reaches <span className="font-mono">/api</span> through the in-pod
-            <span className="font-mono"> frame-uiproxy</span>, under your own identity. Check that
-            the proxy is running; local development is covered in docs/development.md.
-          </div>
+          <div className="text-xs text-muted-foreground max-w-md mx-auto">{copy.hint}</div>
         </CardContent>
       </Card>
     )

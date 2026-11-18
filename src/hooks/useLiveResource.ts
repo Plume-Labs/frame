@@ -4,7 +4,9 @@ import { pollInterval, watchPaths } from '@/lib/k8s-watch'
 
 export type LiveState<T> =
   | { phase: 'loading' }
-  | { phase: 'error'; message: string }
+  // status is the HTTP status of the failed read when there was one, so the
+  // screen can say "not allowed" rather than "cannot reach" (see load-error.ts).
+  | { phase: 'error'; message: string; status?: number }
   // staleError is set when a refresh failed after data had been read: `data` is
   // then the last good read, not the current state of the cluster, and the view
   // must say so rather than drop it or pass it off as fresh.
@@ -20,9 +22,10 @@ export function stateAfterFailure<T>(
   prev: LiveState<T>,
   message: string,
   keepStale: boolean,
+  status?: number,
 ): LiveState<T> {
   if (keepStale && prev.phase === 'ready') return { ...prev, staleError: message }
-  return { phase: 'error', message }
+  return status === undefined ? { phase: 'error', message } : { phase: 'error', message, status }
 }
 
 export function stateAfterSuccess<T>(data: T, now: number = Date.now()): LiveState<T> {
@@ -116,7 +119,10 @@ export function useLiveResource<T>(
       .catch((e: unknown) => {
         if (cancelledRef.current || mine !== requestRef.current) return
         const message = e instanceof Error ? e.message : 'Failed to reach the Kubernetes API'
-        setState((prev) => stateAfterFailure(prev, message, keepStaleRef.current))
+        const status = typeof (e as { statusCode?: unknown })?.statusCode === 'number'
+          ? (e as { statusCode: number }).statusCode
+          : undefined
+        setState((prev) => stateAfterFailure(prev, message, keepStaleRef.current, status))
       })
   }, [])
 
