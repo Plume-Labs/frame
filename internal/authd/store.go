@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
@@ -18,6 +19,9 @@ var ErrUserNotFound = errors.New("no such user")
 // is a distinct error so an HTTP caller can tell a deliberate refusal (409)
 // from an apiserver failure (500) without matching on message text.
 var ErrLastCredential = errors.New("refusing to remove an account's last credential")
+
+// errNoChange is returned by a mutateStatus callback that has nothing to write.
+var errNoChange = errors.New("no change")
 
 // Store is authd's view of the FrameUser resources.
 type Store struct {
@@ -108,24 +112,70 @@ func (s *Store) AdminCount(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-func (s *Store) AddCredential(ctx context.Context, u *framev1beta1.FrameUser, cred framev1beta1.WebAuthnCredential) error {
-	for _, existing := range u.Status.Credentials {
-		if existing.ID == cred.ID {
-			return fmt.Errorf("credential %s is already enrolled", cred.ID)
+// mutateStatus applies fn to the freshest copy of u and writes its status,
+// retrying on a resourceVersion conflict.
+//
+// authd is the only writer of status.credentials, but it is not a single
+// writer: two requests for the same account (a login bumping the sign
+// counter while the user enrols a second key) read the same resourceVersion,
+// and the loser of a plain Update failed with a conflict that surfaced as a
+// failed login or a failed enrolment. fn runs again against the refreshed
+// object on every attempt, so its guards (duplicate credential, last
+// credential) judge the state that is actually stored, not the one this
+// request read earlier. On success u is replaced by what was written.
+func (s *Store) mutateStatus(
+	ctx context.Context, u *framev1beta1.FrameUser, fn func(*framev1beta1.FrameUser) error,
+) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var fresh framev1beta1.FrameUser
+		if err := s.client.Get(ctx, client.ObjectKeyFromObject(u), &fresh); err != nil {
+			return err
 		}
-	}
-	u.Status.Credentials = append(u.Status.Credentials, cred)
-	return s.client.Status().Update(ctx, u)
+		if err := fn(&fresh); err != nil {
+			if errors.Is(err, errNoChange) {
+				fresh.DeepCopyInto(u)
+				return nil
+			}
+			return err
+		}
+		if err := s.client.Status().Update(ctx, &fresh); err != nil {
+			return err
+		}
+		fresh.DeepCopyInto(u)
+		return nil
+	})
 }
 
-func (s *Store) UpdateSignCount(ctx context.Context, u *framev1beta1.FrameUser, credID string, count uint32) error {
-	for i := range u.Status.Credentials {
-		if u.Status.Credentials[i].ID == credID {
-			u.Status.Credentials[i].SignCount = count
-			return s.client.Status().Update(ctx, u)
+func (s *Store) AddCredential(ctx context.Context, u *framev1beta1.FrameUser, cred framev1beta1.WebAuthnCredential) error {
+	return s.mutateStatus(ctx, u, func(f *framev1beta1.FrameUser) error {
+		for _, existing := range f.Status.Credentials {
+			if existing.ID == cred.ID {
+				return fmt.Errorf("credential %s is already enrolled", cred.ID)
+			}
 		}
-	}
-	return ErrUserNotFound
+		f.Status.Credentials = append(f.Status.Credentials, cred)
+		return nil
+	})
+}
+
+// UpdateSignCount records the authenticator's counter. It never lowers a stored
+// counter: a concurrent login may already have stored a higher one, and
+// lowering it would blunt cloned-authenticator detection.
+func (s *Store) UpdateSignCount(ctx context.Context, u *framev1beta1.FrameUser, credID string, count uint32) error {
+	return s.mutateStatus(ctx, u, func(f *framev1beta1.FrameUser) error {
+		for i := range f.Status.Credentials {
+			if f.Status.Credentials[i].ID == credID {
+				if count <= f.Status.Credentials[i].SignCount {
+					// Nothing to write (synced passkeys report 0 forever): skip
+					// the apiserver round trip. errNoChange is swallowed below.
+					return errNoChange
+				}
+				f.Status.Credentials[i].SignCount = count
+				return nil
+			}
+		}
+		return ErrUserNotFound
+	})
 }
 
 // RemoveCredential refuses to strip an account of its last way in.
@@ -141,21 +191,23 @@ func (s *Store) UpdateSignCount(ctx context.Context, u *framev1beta1.FrameUser, 
 // closing the route would let an account with passwordAuth: enabled revoke
 // its only key and strand itself.
 func (s *Store) RemoveCredential(ctx context.Context, u *framev1beta1.FrameUser, credID string) error {
-	kept := make([]framev1beta1.WebAuthnCredential, 0, len(u.Status.Credentials))
-	found := false
-	for _, c := range u.Status.Credentials {
-		if c.ID == credID {
-			found = true
-			continue
+	return s.mutateStatus(ctx, u, func(f *framev1beta1.FrameUser) error {
+		kept := make([]framev1beta1.WebAuthnCredential, 0, len(f.Status.Credentials))
+		found := false
+		for _, c := range f.Status.Credentials {
+			if c.ID == credID {
+				found = true
+				continue
+			}
+			kept = append(kept, c)
 		}
-		kept = append(kept, c)
-	}
-	if !found {
-		return ErrUserNotFound
-	}
-	if len(kept) == 0 {
-		return fmt.Errorf("%w: %s would become unreachable", ErrLastCredential, u.Spec.Email)
-	}
-	u.Status.Credentials = kept
-	return s.client.Status().Update(ctx, u)
+		if !found {
+			return ErrUserNotFound
+		}
+		if len(kept) == 0 {
+			return fmt.Errorf("%w: %s would become unreachable", ErrLastCredential, f.Spec.Email)
+		}
+		f.Status.Credentials = kept
+		return nil
+	})
 }
