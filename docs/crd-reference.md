@@ -35,7 +35,10 @@ rather than the shared `Ready`.
 
 ### `status.observedGeneration`
 
-Every kind except `FrameTask` carries a top-level `status.observedGeneration`:
+Every long-lived kind except `FrameTask` carries a top-level
+`status.observedGeneration` (the one-shot acts FrameDiskClaim,
+FrameOSDReplacement and FrameCephAction do not, and neither does the
+receiver-written FrameAlert):
 the `metadata.generation` its status was computed from. Compare it to
 `metadata.generation` to tell whether the controller has seen the current
 spec. Conditions carry their own per-condition `observedGeneration` as well;
@@ -49,19 +52,23 @@ it has no controller.
 
 ### No top-level `status.phase`
 
-> **Since this rule was written, five kinds have broken it:** FrameInstall,
-> FrameDiskClaim, FrameOSDReplacement, FrameCephAction and FrameStorage carry a
-> top-level `status.phase` (some also carry `status.conditions`). The first four are one-shot, destructive or write-ahead acts with
-> a linear lifecycle (`Pending` … `Done`/`Failed`), the same shape that made
-> `phase` right for FrameTask; FrameStorage's `Ready`/`Degraded`/`Unknown` is a
-> health summary read by the console. Their sections below list each vocabulary.
-> The rule still stands for any new *reconciled* kind: prefer a second condition
-> type over a new `phase`.
+> **Exceptions added since the rule below was written.** FrameInstall,
+> FrameDiskClaim, FrameOSDReplacement and FrameCephAction are **one-shot acts**,
+> not states to converge to: each runs once through a linear lifecycle and stops
+> (`Ready`/`Failed`, `Ready`/`Failed`, `Succeeded`/`Cancelled`/`Failed`,
+> `Done`/`Refused`/`Failed` respectively). Like FrameTask they report a `phase`;
+> unlike it, a controller drives them. FrameStorage carries a `phase`
+> (`Ready`/`Degraded`/`Unknown`) as a health summary the console reads.
+> NodeTuning, below, reports one per node. FrameAlert reports a `state`
+> (`Firing`/`Resolved`) and FrameAlertSubscription no phase at all. These are
+> documented divergences, not a licence: the rule still stands for any new kind
+> that describes a state rather than a one-shot act.
 
-No Hearthrack kind has a top-level one. Health is reported through
-`status.conditions`, and every kind with a controller writes a `Ready`
-condition — with two exceptions, recorded below, and they are exceptions for
-two different reasons.
+When this was written no kind had a top-level one. Health is reported through
+`status.conditions`, and every kind that describes a state and has a controller
+writes a `Ready` condition — with two exceptions, recorded below, which are
+exceptions for two different reasons, plus the one-shot acts in the note above,
+which report through `phase`.
 
 This is a rule, not a drift. A single enum forces the API to pick one
 dimension of health out of several and cannot express "provisioned but
@@ -1135,8 +1142,8 @@ Hearthrack across an image change restarts every instance.
 installation on a registered machine, driven through its BMC: attach installer
 media, install, reboot, join or create a k3s cluster. A **one-shot, destructive**
 act with a terminal phase, not a declaration that is reconciled back into place;
-installing again means a new object. Step by step, with the console flow:
-[provisioning.md](provisioning.md).
+installing again means a new object. The runbook is [deployment.md](deployment.md#provisioning-a-machine-with-ubuntu);
+[provisioning.md](provisioning.md) records the design decisions.
 
 Every destructive input is named explicitly; no field means "figure it out".
 
@@ -1156,7 +1163,7 @@ Every destructive input is named explicitly; no field means "figure it out".
 
 **Status:** `phase` is `Pending`, `Preparing`, `MediaAttached`, `Installing`,
 `Installed`, `Joining`, `Ready` or `Failed`; `failedPhase` says where it
-stopped, `message` why. `hostKey` is pinned on first contact (Frame cannot know
+stopped, `message` why. `hostKey` is pinned on first contact (Hearthrack cannot know
 it in advance, and baking it into the image would turn the image into a secret
 carrier). `nodeName` is the joined node; `kubeconfigSecret` is set only when the
 install created a cluster. Conditions and `observedGeneration` as for the other
@@ -1185,7 +1192,15 @@ before the destructive work begins and read back before it is repeated, so a
 manager restart cannot replay a destructive sequence: the record that it already
 ran lives on the node, not in the controller's memory.
 
-No webhook; schema markers only.
+**On this build a claim that would succeed never reaches a phase.** The
+controller is wired with `unconfiguredWiper`, a stand-in whose every method
+fails: the destructive backend (the part that runs `sgdisk` or `ceph-volume`) is
+a physical, human-supervised act deliberately not shipped with a manager
+rollout. Only a refused claim reaches a phase, `Failed`. See
+[storage.md](storage.md).
+
+Printed columns: Machine, Serial, Destination, Phase, Age. No webhook; schema
+markers only.
 
 ## FrameOSDReplacement
 
@@ -1204,10 +1219,10 @@ the disk meant, never by a click.
 | `spec.osdID` | integer, 0–65535 | The OSD to replace. **Fixed at creation**, like `serial`. |
 | `spec.serial` | string | Serial of the OSD's current disk, retyped at launch; must match what Ceph reports for that OSD. |
 | `spec.purgeApproval.serial` | string | Approval no. 1: the old disk's serial, once the OSD is drained and safe to destroy. |
-| `spec.wipeApproval.serial` | string | Approval no. 2: the new disk's serial, read on its label, once Frame shows the disk it found. |
+| `spec.wipeApproval.serial` | string | Approval no. 2: the new disk's serial, read on its label, once Hearthrack shows the disk it found. |
 | `spec.cancel` | bool | Stops the replacement; cannot be taken back. Before the purge a drained OSD is marked in again; after it, nothing is undone and the status says where things stand. |
 | `spec.resume` | integer | Raised by one to retry the current step after a pause. A destructive call whose outcome is unknown is **never re-sent by a resume**: the step pauses again and says what to check by hand. |
-| `spec.drainTimeoutMinutes` | integer, 10–1440, default 120 | Bound on the wait for all PGs `active+clean`. Past it the replacement pauses; nothing is undone. |
+| `spec.drainTimeoutMinutes` | integer, 10–1440, default 120 | Bound on the wait for all PGs `active+clean`, after the OSD is marked out and again after the new OSD is in. Past it the replacement pauses; nothing is undone. |
 
 Approvals are **armed**: on entering an approval step the controller clears the
 field and records `status.approvalArmedGeneration`; only an approval written from
@@ -1230,7 +1245,7 @@ The disk wipe is handed to the node's agent through Node annotations
 disk that its own `lsblk` of the same tick reports at that by-id path with that
 serial, whole and free, and only once per request id.
 
-No webhook; the immutability and approval rules above are CEL on the schema.
+The `rook-ceph-operator` is scaled to 0 for the purge, so Rook does not bring the purged OSD back ([osd-replacement.md](osd-replacement.md)). Printed columns: OSD, Host, Phase, PGs, Age. No webhook; the immutability and approval rules above are CEL on the schema.
 
 ## FrameCephAction
 
@@ -1247,7 +1262,9 @@ object: doing it again means a new one. See [ceph-actions.md](ceph-actions.md).
 | `spec.release` | bool | Unsets a `SetFlag`'s flag before its time. `SetFlag` only; cannot be taken back. |
 
 The gesture is **fixed at creation**: only `release` may change afterwards (CEL
-on the schema).
+on the schema), and `durationMinutes` is refused on any action but `SetFlag`.
+Deleting the object unsets its flag (a finalizer), see
+[ceph-actions.md](ceph-actions.md).
 
 **Status:** `phase` is `Pending` (not sent yet), `Active` (a `SetFlag` whose flag
 is set), `Done`, `Refused` (a check refused it; nothing was sent) or `Failed`
@@ -1284,7 +1301,9 @@ optional `raw` that never stands alone: the park's capacity incident came from
 reading raw numbers on a pool whose replication divides them by three. `claims`
 counts PVCs using the class and how many carry the `frame.plume-labs.io/usage`
 label the content-type webhook selects on; a large total with zero labelled is the
-normal state on the day the webhook lands. `adopted` records that the class was
+normal state on the day the webhook lands. That webhook (a PVC content-type
+admission webhook, `internal/webhook/core/v1`) is described in
+[storage.md](storage.md). `adopted` records that the class was
 not created here and so is never deleted.
 
 `status.cephPlacement` holds what Prometheus does not export about the Ceph
@@ -1311,9 +1330,13 @@ once the controller has created it.
 received it from Alertmanager, with the relay's delivery record. Named
 `fa-<fingerprint>`: Alertmanager's fingerprint is a stable hash of the labels, so
 one object follows an alert from firing to resolution without an index. Two
-writers, each with its own fields: the **receiver** writes `spec` and
+roles, each with its own fields: the **receiver** writes `spec` and
 `status.state`/`lastReceivedAt`, the **relay** writes `status.deliveries`, each
-with a merge patch holding only its own fields. Code: `internal/alerting/`.
+with a merge patch holding only its own fields. The receiver records whatever it
+is handed: Alertmanager's webhook, or a controller with something of its own to
+say (the FrameMachine controller raises storage and network alerts this way, see
+[storage.md](storage.md)), in which case `spec.fingerprint` is not Alertmanager's.
+Code: `internal/alerting/`.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -1323,8 +1346,9 @@ with a merge patch holding only its own fields. Code: `internal/alerting/`.
 | `spec.startsAt`, `.endsAt` | time | `endsAt` is empty while the alert fires. |
 | `spec.generatorURL` | string, ≤2048 | Link back to the rule. |
 
-**Status:** `state` is `Firing` or `Resolved`. `lastReceivedAt` is rewritten at
-most every 15 minutes, because Alertmanager resends unchanged groups every few
+**Status:** `state` is `Firing` or `Resolved`. `lastReceivedAt` is refreshed at
+most every 15 minutes while the state is unchanged (a change of state is written
+at once), because Alertmanager resends unchanged groups every few
 minutes and the test cluster's kine cannot absorb a write per resend.
 `deliveries[]` (keyed by `subscription`) records, per subscription: the last state
 delivered successfully, `attempts`, `lastError`, `lastAttemptAt`,
@@ -1358,7 +1382,8 @@ Printed columns: URL, Pending, LastSuccess.
 FrameNode and FrameJob have **defaulting + validation**; the other five —
 SchedulingPolicy, FrameResourceQuota, FrameUser, FrameService and
 FrameStorage — have **validation** only. **NodeTuning,
-FrameTask and FrameMachine have neither**: their bounds are CRD schema
+FrameTask, FrameMachine, FrameInstall, FrameDiskClaim, FrameOSDReplacement,
+FrameCephAction, FrameAlert and FrameAlertSubscription have neither**: their bounds are CRD schema
 markers alone, CEL included. For NodeTuning that means nothing rejects a
 selector that overlaps another's — the agent detects that at apply time and
 refuses the node instead. For FrameTask it means the schema's
