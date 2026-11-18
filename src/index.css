@@ -7,7 +7,7 @@
  * an external host reachable from wherever the browser sits — which a cluster
  * console viewed from an isolated network cannot count on.
  *
- * Both families ship as variable fonts, so one file covers every weight the UI
+ * Both families (Inter for text, JetBrains Mono for code and technical labels — Hearthrack charter, both OFL) ship as variable fonts, so one file covers every weight the UI
  * asks for; Google's own css2 endpoint serves the same woff2 for each discrete
  * weight it advertises. `swap` keeps text visible while the file loads.
  */
@@ -20,9 +20,9 @@
 }
 
 @font-face {
-  font-family: 'Space Grotesk';
-  src: url('/fonts/SpaceGrotesk.woff2') format('woff2');
-  font-weight: 400 600;
+  font-family: 'Inter';
+  src: url('/fonts/Inter.woff2') format('woff2');
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -33,55 +33,56 @@
   }
 }
 
+/* Hearthrack charter (dark): ink-navy surfaces, ONE warm accent — the ember.
+   The console is dark-only. --accent stays green on purpose: it doubles as the
+   "ok / healthy" status colour across views, so the brand ember lives in
+   --primary instead. Ember text is only used on dark surfaces, where
+   #FF8A3D clears WCAG AA by a wide margin; buttons carry ink text. */
 :root {
-  /* Sober operations-console palette: near-neutral greys (hue 250, chroma
-     0.005) and low-chroma accents. Status colours stay distinct and clear
-     WCAG AA (>= 4.5:1) as text on both --background and --card. */
-  --background: oklch(0.17 0.005 250);
-  --foreground: oklch(0.93 0.005 250);
+  --background: #0b1b2b;
+  --foreground: #f3f6f9;
 
-  --card: oklch(0.21 0.005 250);
-  --card-foreground: oklch(0.93 0.005 250);
+  --card: #102337;
+  --card-foreground: #f3f6f9;
 
-  --popover: oklch(0.21 0.005 250);
-  --popover-foreground: oklch(0.93 0.005 250);
+  --popover: #102337;
+  --popover-foreground: #f3f6f9;
 
-  --primary: oklch(0.72 0.06 235);
-  --primary-foreground: oklch(0.17 0.005 250);
+  --primary: #ff8a3d;
+  --primary-foreground: #0b1b2b;
 
-  --secondary: oklch(0.27 0.005 250);
-  --secondary-foreground: oklch(0.93 0.005 250);
+  --secondary: #1b3048;
+  --secondary-foreground: #f3f6f9;
 
-  --muted: oklch(0.27 0.005 250);
-  --muted-foreground: oklch(0.68 0.01 250);
+  --muted: #1b3048;
+  --muted-foreground: #9aa9b8;
 
   /* Doubles as the "ok / healthy" status colour (text-accent) across views;
      UI primitives use --secondary for hover chrome instead. */
   --accent: oklch(0.74 0.09 155);
-  --accent-foreground: oklch(0.17 0.005 250);
+  --accent-foreground: #0b1b2b;
 
   --destructive: oklch(0.66 0.15 25);
-  --destructive-foreground: oklch(0.17 0.005 250);
+  --destructive-foreground: #0b1b2b;
 
-  --border: oklch(0.32 0.005 250);
-  --input: oklch(0.32 0.005 250);
-  --ring: oklch(0.62 0.06 235);
+  --border: #25394f;
+  --input: #25394f;
+  --ring: #ff8a3d;
 
   --radius: 0.375rem;
 
   --warning: oklch(0.78 0.11 80);
-  --warning-foreground: oklch(0.17 0.005 250);
+  --warning-foreground: #0b1b2b;
 
-  /* Sidebar — the vendored shadcn sidebar reads these; it sits between
-     --background and --card so the nav reads as chrome, not content. */
-  --sidebar: oklch(0.19 0.005 250);
-  --sidebar-foreground: oklch(0.93 0.005 250);
-  --sidebar-primary: oklch(0.72 0.06 235);
-  --sidebar-primary-foreground: oklch(0.17 0.005 250);
-  --sidebar-accent: oklch(0.26 0.005 250);
-  --sidebar-accent-foreground: oklch(0.93 0.005 250);
-  --sidebar-border: oklch(0.29 0.005 250);
-  --sidebar-ring: oklch(0.62 0.06 235);
+  /* Sidebar — sits between --background and --card so the nav reads as chrome. */
+  --sidebar: #0e2033;
+  --sidebar-foreground: #f3f6f9;
+  --sidebar-primary: #ff8a3d;
+  --sidebar-primary-foreground: #0b1b2b;
+  --sidebar-accent: #1b3048;
+  --sidebar-accent-foreground: #f3f6f9;
+  --sidebar-border: #223750;
+  --sidebar-ring: #ff8a3d;
 }
 
 @theme {
@@ -125,7 +126,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --font-mono: 'JetBrains Mono', monospace;
-  --font-sans: 'Space Grotesk', sans-serif;
+  --font-sans: 'Inter', sans-serif;
 }
 
 body {

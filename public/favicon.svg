@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Hearthrack"><title>Hearthrack</title><rect width="64" height="64" rx="14" fill="#0B1B2B"/><g transform="translate(10 10) scale(0.6875)"><defs><linearGradient id="gf" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#E8452C"/><stop offset="1" stop-color="#FFB43A"/></linearGradient>
+<mask id="mf"><path d="M35 2 C35 18 53 26 53 42 C53 53 44 62 32 62 C20 62 11 53 11 42 C11 33 16 27 21 21 C21 28 24 33 28 34 C26 22 30 10 35 2 Z" fill="#fff"/><rect x="0" y="29" width="64" height="3.2" fill="#000"/><rect x="0" y="40" width="64" height="3.2" fill="#000"/><rect x="0" y="51" width="64" height="3.2" fill="#000"/></mask></defs>
+<rect x="5" y="5" width="9" height="54" rx="3" fill="#F3F6F9"/><rect x="50" y="5" width="9" height="54" rx="3" fill="#F3F6F9"/>
+<circle cx="9.5" cy="13" r="1.5" fill="#0B1B2B"/><circle cx="9.5" cy="32" r="1.5" fill="#0B1B2B"/><circle cx="9.5" cy="51" r="1.5" fill="#0B1B2B"/>
+<circle cx="54.5" cy="13" r="1.5" fill="#0B1B2B"/><circle cx="54.5" cy="32" r="1.5" fill="#0B1B2B"/><circle cx="54.5" cy="51" r="1.5" fill="#0B1B2B"/>
+<g transform="translate(6.4 6.4) scale(.8)"><rect width="64" height="64" fill="url(#gf)" mask="url(#mf)"/></g></g></svg>

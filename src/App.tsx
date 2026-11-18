@@ -1,5 +1,6 @@
 import { lazy, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NavigationContext } from '@/hooks/useNavigation'
+import { HearthrackMark, HearthrackWordmark } from '@/components/HearthrackMark'
 import { currentSession, ensureToken, identityFromToken, isAdminToken, logout, onSessionLost, type Session } from '@/lib/auth'
 import { inviteTokenFromLocation } from '@/lib/accounts'
 import { formatRoute, parseRoute } from '@/lib/route'
@@ -771,9 +772,9 @@ function App() {
       <Sidebar collapsible="icon">
         <SidebarHeader className="border-b border-sidebar-border">
           <div className="flex items-center gap-2 px-2 py-1.5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
-            <Cpu size={22} className="text-primary shrink-0" weight="bold" />
+            <HearthrackMark size={28} className="shrink-0" />
             <div className="group-data-[collapsible=icon]:hidden min-w-0">
-              <div className="font-mono font-bold text-primary leading-tight tracking-tight">HEARTHRACK</div>
+              <HearthrackWordmark className="block text-lg leading-tight" />
               <div className="text-[10px] text-muted-foreground leading-tight truncate">
                 Kubernetes for AI &amp; HPC.
               </div>
