@@ -23,12 +23,12 @@ issue).
   three container jobs (one completes, one runs, one fails on purpose) on Kind's
   workers, two local-path volumes, two firing alerts with fictional content, and the
   four `frame-*` priority tiers. Argo pipelines and Rook/Ceph storage are **not**
-  in the demo, so the pipeline-job and Ceph screens stay empty. The demo installs
-  only a stand-in `workflows.argoproj.io` CRD: the FrameJob controller watches
-  Argo Workflows, and without that CRD it never starts and the operator exits
-  after the two-minute cache-sync timeout. That holds on any cluster, so Argo
-  Workflows (or at least its CRD) is a prerequisite of the operator, not only of
-  pipeline jobs.
+  in the demo, so the pipeline-job and Ceph screens stay empty.
+
+  Argo Workflows is optional: without its
+  CRD the operator starts normally, container jobs run, and a pipeline job
+  reports `ArgoWorkflowsMissing` on its Ready condition. Install Argo and restart
+  the operator to get push-based status for pipeline jobs.
 - The first admin has no password, only a **passkey**, enrolled from the browser
   within 12 hours of the bootstrap. `make demo-verify` uses up the one-shot
   bootstrap token (it is meant for CI): run it or sign in by hand, not both, on
