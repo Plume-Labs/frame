@@ -1334,7 +1334,7 @@ roles, each with its own fields: the **receiver** writes `spec` and
 `status.state`/`lastReceivedAt`, the **relay** writes `status.deliveries`, each
 with a merge patch holding only its own fields. The receiver records whatever it
 is handed: Alertmanager's webhook, or a controller with something of its own to
-say (the FrameMachine controller raises storage and network alerts this way, see
+say (the FrameMachine controller raises storage alerts this way, see
 [storage.md](storage.md)), in which case `spec.fingerprint` is not Alertmanager's.
 Code: `internal/alerting/`.
 
