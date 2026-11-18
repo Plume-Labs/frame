@@ -39,7 +39,7 @@ you as part of the install.
 
 ## Verify the images
 
-Every image the CI publishes from `main` or a release tag is signed with
+Every image the CI publishes from `main` or a release tag is signed (images built from `develop` are not) with
 [cosign](https://github.com/sigstore/cosign) **keyless**: there is no key to
 trust or rotate. The signature says the image was built by this repository's
 `build.yml` workflow on `main` or a `v*` tag, and it is recorded in the public
@@ -59,6 +59,8 @@ actually deploy, not a tag: a tag can be moved after signing. The build also
 attaches an SBOM and SLSA provenance to each image as BuildKit attestations
 (`docker buildx imagetools inspect "$IMAGE" --format '{{json .SBOM}}'`). The identity string follows the repository
 name, so it changes if the repository is renamed.
+
+---
 
 ## 2. Install the operator (CRDs + controller + webhooks)
 
