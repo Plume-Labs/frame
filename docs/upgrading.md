@@ -132,6 +132,45 @@ A controller that reads SMART under an agent that does not yet makes
 `StorageDegraded` and `DiskWearHigh` `Unknown` on solid-state disks until the
 agent is rolled out too. Nothing open is touched.
 
+### Before you upgrade, and going back
+
+Not rehearsed end to end: the checklist below is derived from how the chart and
+the CRDs are built, and each step says what it protects. An e2e that upgrades
+N-1 to N and rolls back is on the production-readiness backlog
+(`hearthrack/2026-11-18-audit-solidite.md`, P0-5); until it exists, treat a
+rollback as something to try on a disposable cluster first.
+
+Before the upgrade:
+
+1. **Take a Velero backup of the Hearthrack resources** (`deploy/resilience/velero-hearthrack.yaml`)
+   and check `status.progress.itemsBackedUp` is not zero. A restore needs
+   `restoreStatus`, or accounts lose their passkeys (see the runbook, "Backup and restore").
+2. **Keep your values in a file** and upgrade with `-f values.yaml`, not a bare
+   `--set`: `helm upgrade --set` without `--reuse-values` resets every value you
+   did not repeat, including `replicaCount` and the webhook certificate settings.
+   `helm get values frame -n frame-system -o yaml > values.yaml` captures what is running.
+3. **Run two replicas** (`charts/frame/values-production.yaml`): the manager serves
+   admission and CRD conversion, and a single replica restarting makes every
+   Hearthrack kind unreadable for the duration (see the runbook, "The blast radius").
+4. **Read the release notes for a CRD change.** The upgrade applies new CRDs
+   before the new manager serves `/convert`.
+
+Going back:
+
+- `helm rollback frame <revision> -n frame-system` reverts the Deployment, RBAC
+  and webhook configurations, **and re-applies the older CRD schemas**, because
+  the CRDs are templates here. That is safe only while the older schema can
+  still read everything stored. If the upgrade you are leaving added a field
+  that objects now carry, the apiserver prunes it from each object on its next
+  write; if it moved the stored version (section 3), do not roll back.
+- Check before you roll back:
+  `kubectl get crd framejobs.frame.plume-labs.io -o jsonpath='{.status.storedVersions}'`.
+  If it lists a version the older chart does not serve, **roll forward** (fix
+  or pin the newer release) instead.
+- A rollback does not undo what the controllers did in the meantime
+  (a drain, a Ceph flag, a disk replacement in progress): look at the Tasks and
+  Ceph/OSD screens before and after.
+
 ### CRDs
 
 This chart's CRDs are **not** in Helm's special `crds/` directory — they
