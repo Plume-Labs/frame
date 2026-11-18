@@ -63,7 +63,7 @@ function ThresholdsCard() {
       toast.success('Thresholds saved')
       reload()
     } catch (e) {
-      toast.error('Échec : thresholds not saved', { description: e instanceof Error ? e.message : String(e) })
+      toast.error('Failed: thresholds not saved', { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
     }
@@ -117,7 +117,7 @@ function ReleaseDevice({ machine, device, checks }: { machine: Machine; device: 
       await frame.machines.releaseAlert(machine, device)
       toast.success(`${device}: declared removed`)
     } catch (e) {
-      toast.error(`Échec : ${device}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(`Failed: ${device}`, { description: e instanceof Error ? e.message : String(e) })
     }
   }
   return (

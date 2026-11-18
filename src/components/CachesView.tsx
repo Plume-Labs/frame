@@ -36,7 +36,7 @@ function CacheCard({ cache, onSaved }: { cache: Cache; onSaved: () => void }) {
       toast.success(`${cache.name}: settings saved`)
       onSaved()
     } catch (e) {
-      toast.error(`Échec : ${cache.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(`Failed: ${cache.name}`, { description: e instanceof Error ? e.message : String(e) })
     }
   }
 

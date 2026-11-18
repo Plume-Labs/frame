@@ -64,7 +64,7 @@ async function attempt(name: string, done: string, run: () => Promise<void>, aft
     toast.success(`${name}: ${done}`)
     after()
   } catch (e) {
-    toast.error(`Échec : ${name}`, { description: e instanceof Error ? e.message : String(e) })
+    toast.error(`Failed: ${name}`, { description: e instanceof Error ? e.message : String(e) })
   }
 }
 
