@@ -294,6 +294,10 @@ read — but they are still *stored* at `v1alpha1` until something rewrites
 them, and a version cannot be removed from a CRD while it appears in
 `.status.storedVersions`.
 
+> **Experimental.** This migration has been rehearsed on a throwaway Kind cluster
+> only, never on a long-lived one. Back up first, and run the dry run before
+> `--apply`. See [known-limitations.md](known-limitations.md).
+
 ```bash
 ./hack/migrate-storage-version.sh            # dry run, changes nothing
 ./hack/migrate-storage-version.sh --apply

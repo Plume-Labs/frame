@@ -155,6 +155,10 @@ Order matters. Apply the CRDs and roll out the manager that serves `/convert`
 **first**: a two-version CRD with `strategy: Webhook` and nothing answering
 `/convert` fails every read and write of that kind.
 
+> **Experimental.** This migration has been rehearsed on a throwaway Kind cluster
+> only, never on a long-lived one. Back up first, and run the dry run before
+> `--apply`. See [known-limitations.md](known-limitations.md).
+
 ```bash
 ./hack/migrate-storage-version.sh            # dry run, changes nothing
 ./hack/migrate-storage-version.sh --apply

@@ -51,6 +51,11 @@ case "${1:-}" in
   *) echo "usage: $0 [--apply]" >&2; exit 2 ;;
 esac
 
+if [ "$APPLY" -eq 1 ]; then
+  echo "NOTE: experimental. This migration has been rehearsed on a throwaway Kind cluster only," >&2
+  echo "never on a long-lived one (docs/known-limitations.md). Take an etcd or Velero backup first." >&2
+fi
+
 CRDS=(
   framejobs.frame.plume-labs.io
   framenodes.frame.plume-labs.io
