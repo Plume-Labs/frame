@@ -34,9 +34,13 @@ export function RacksView() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Nodes grouped by physical rack — the <span className="font-mono">topology.frame.io/rack</span> label.
-            On bare metal this is the datacenter rack; on a virtualized cluster it can name the
-            hypervisor host instead (shown below with core oversubscription).
+            Nodes grouped by rack. The rack comes from the node label{' '}
+            <span className="font-mono">topology.frame.io/rack</span> if set, else{' '}
+            <span className="font-mono">frame.plume-labs.io/rack</span> (which the operator writes from a
+            FrameNode's <span className="font-mono">spec.rack</span>); nodes with neither show as
+            <span className="font-mono"> unracked</span>. On bare metal this is the datacenter rack; on a
+            virtualized cluster it can name the hypervisor host instead (shown below with core
+            oversubscription).
           </p>
         </CardContent>
       </Card>

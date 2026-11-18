@@ -6,6 +6,8 @@ import {
   InferenceStatus,
   MetricSeries,
   PostureStatus,
+  RegistryAlert,
+  alertRegistryPath,
   coreListPath,
   createFrameClient,
   crdListPath,
@@ -90,6 +92,13 @@ export function OverviewView() {
     30_000,
     KEEP_STALE,
   )
+  const registry = useLiveResource<RegistryAlert[]>(
+    () => frame.cluster.alertRegistry(),
+    [],
+    [alertRegistryPath()],
+    undefined,
+    KEEP_STALE,
+  )
   const ceph = useLiveResource<CephStatus>(() => frame.cluster.ceph(), [], [
     crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
     crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
@@ -129,7 +138,7 @@ export function OverviewView() {
   )
 
   function reloadAll() {
-    ;[nodes, alerts, ceph, backups, inference, posture, trendState].forEach((r) => r.reload())
+    ;[nodes, alerts, registry, ceph, backups, inference, posture, trendState].forEach((r) => r.reload())
   }
 
   return (
@@ -144,6 +153,7 @@ export function OverviewView() {
       <AttentionCard
         nodes={nodes.state}
         alerts={alerts.state}
+        registry={registry.state}
         ceph={ceph.state}
         backups={backups.state}
         machines={machines.state}
@@ -182,6 +192,7 @@ function FindingRow({ finding }: { finding: Finding }) {
 function AttentionCard({
   nodes,
   alerts,
+  registry,
   ceph,
   backups,
   machines,
@@ -191,6 +202,7 @@ function AttentionCard({
 }: {
   nodes: ReturnType<typeof useLiveResource<ClusterNodeInfo[]>>['state']
   alerts: ReturnType<typeof useLiveResource<AlertsStatus | null>>['state']
+  registry: ReturnType<typeof useLiveResource<RegistryAlert[]>>['state']
   ceph: ReturnType<typeof useLiveResource<CephStatus>>['state']
   backups: ReturnType<typeof useLiveResource<BackupStatus | null>>['state']
   machines: ReturnType<typeof useLiveResource<Machine[]>>['state']
@@ -201,6 +213,7 @@ function AttentionCard({
   const findings = collectFindings({
     nodes: nodes.phase === 'ready' ? nodes.data : undefined,
     alerts: alerts.phase === 'ready' ? alerts.data : undefined,
+    registry: registry.phase === 'ready' ? registry.data : undefined,
     ceph: ceph.phase === 'ready' ? ceph.data : undefined,
     backups: backups.phase === 'ready' ? backups.data : undefined,
     machines: machines.phase === 'ready' ? machines.data : undefined,
@@ -209,7 +222,7 @@ function AttentionCard({
     volumes: volumeFill.phase === 'ready' && volumeFill.data ? volumeFillFindings(volumeFill.data) : undefined,
   })
 
-  const unread = unreadSources({ nodes, alerts, ceph, backups, machines, caches, databases, volumes: volumeFill })
+  const unread = unreadSources({ nodes, alerts, registry, ceph, backups, machines, caches, databases, volumes: volumeFill })
   const unreadCount = unread.loading.length + unread.failed.length + unread.stale.length
   const unreadNote = [
     unread.loading.length > 0 ? `still loading: ${unread.loading.join(', ')}` : '',
@@ -232,7 +245,7 @@ function AttentionCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {Object.entries({ nodes, alerts, ceph, backups, machines, caches, databases, volumes: volumeFill }).map(
+        {Object.entries({ nodes, alerts, registry, ceph, backups, machines, caches, databases, volumes: volumeFill }).map(
           ([name, st]) => (
             <StaleNotice key={name} state={st} label={name} />
           ),

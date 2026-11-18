@@ -4,6 +4,7 @@ import {
   CephStatus,
   ClusterNodeInfo,
 } from './frame-sdk'
+import type { RegistryAlert } from './alert-registry'
 import type { Cache } from './caches'
 import type { Database } from './databases'
 import type { Machine } from './machines'
@@ -40,6 +41,13 @@ export function collectFindings(
   input: {
     nodes?: ClusterNodeInfo[]
     alerts?: AlertsStatus | null
+    /**
+     * The alert registry (FrameAlert). Only its Firing entries count here, and
+     * only those Alertmanager does not already report: the registry outlives
+     * an Alertmanager that is down or has lost an alert, which is exactly when
+     * the live list would say "all quiet".
+     */
+    registry?: RegistryAlert[]
     ceph?: CephStatus | null
     backups?: BackupStatus | null
     machines?: Pick<Machine, 'name' | 'storageConditions'>[]
@@ -52,12 +60,30 @@ export function collectFindings(
 ): Finding[] {
   const findings: Finding[] = []
 
-  for (const a of input.alerts?.alerts.slice(0, MAX_ALERTS) ?? []) {
+  const live = input.alerts?.alerts.slice(0, MAX_ALERTS) ?? []
+  for (const a of live) {
     findings.push({
       key: `alert-${a.name}-${a.startsAt}`,
       tone: a.severity === 'critical' ? 'destructive' : 'warning',
       label: a.name,
       detail: a.summary || `${a.namespace} · ${a.severity}`,
+      screen: 'security',
+      tab: 'alerts',
+    })
+  }
+
+  // Same alert, same namespace = same finding; the registry is a second view of
+  // what Alertmanager already shows, not a second alert.
+  const seen = new Set((input.alerts?.alerts ?? []).map((a) => `${a.name}/${a.namespace}`))
+  const registryOnly = (input.registry ?? []).filter(
+    (a) => a.state === 'Firing' && !seen.has(`${a.alertName}/${a.namespace}`),
+  )
+  for (const a of registryOnly.slice(0, Math.max(0, MAX_ALERTS - live.length))) {
+    findings.push({
+      key: `registry-${a.name || a.fingerprint}`,
+      tone: a.severity === 'critical' ? 'destructive' : 'warning',
+      label: a.alertName,
+      detail: `${a.namespace ? `${a.namespace} · ` : ''}${a.severity} · registry only`,
       screen: 'security',
       tab: 'alerts',
     })

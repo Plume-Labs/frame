@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { collectFindings, unreadSources, BACKUP_STALE_MS } from './findings'
+import type { RegistryAlert } from './alert-registry'
 import type { BackupStatus, CephStatus, ClusterNodeInfo } from './frame-sdk'
 
 const NOW = 1_700_000_000_000
@@ -215,5 +216,45 @@ describe('unreadSources', () => {
       stale: [],
       unavailable: [],
     })
+  })
+})
+
+describe('collectFindings: alert registry', () => {
+  const reg = (over: Partial<RegistryAlert> = {}): RegistryAlert => ({
+    name: 'fa-1',
+    fingerprint: 'abc',
+    alertName: 'DiskFull',
+    severity: 'critical',
+    namespace: 'frame-system',
+    state: 'Firing',
+    startsAt: '2026-11-18T00:00:00Z',
+    endsAt: '',
+    deliveries: [],
+    labels: {},
+    ...over,
+  })
+
+  it('reports a firing registry alert Alertmanager no longer shows', () => {
+    const f = collectFindings({ alerts: { alerts: [], bySeverity: {} }, registry: [reg()] }, NOW)
+    expect(f).toHaveLength(1)
+    expect(f[0]).toMatchObject({ label: 'DiskFull', tone: 'destructive', screen: 'security', tab: 'alerts' })
+  })
+
+  it('does not list the same alert twice when both sources have it', () => {
+    const f = collectFindings(
+      {
+        alerts: {
+          alerts: [{ name: 'DiskFull', severity: 'critical', state: 'active', summary: '', namespace: 'frame-system', startsAt: 'x', labels: {} }],
+          bySeverity: {},
+        },
+        registry: [reg()],
+      },
+      NOW,
+    )
+    expect(f).toHaveLength(1)
+  })
+
+  it('ignores resolved registry alerts', () => {
+    expect(collectFindings({ registry: [reg({ state: 'Resolved' })] }, NOW)).toEqual([])
   })
 })
