@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { currentSession, loginWithPasskey, PasskeyCancelledError, type Session } from '@/lib/auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Cpu, Fingerprint } from '@phosphor-icons/react'
+import { Fingerprint } from '@phosphor-icons/react'
+import { HearthrackMark, HearthrackWordmark } from '@/components/HearthrackMark'
 
 /**
  * The gate the whole console sits behind. `App` renders this in place of
@@ -65,9 +66,9 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="font-mono text-xl flex items-center gap-2">
-            <Cpu className="text-primary" weight="bold" />
-            HEARTHRACK
+          <CardTitle className="text-2xl flex items-center gap-2.5">
+            <HearthrackMark size={32} />
+            <HearthrackWordmark />
           </CardTitle>
           <p className="text-xs text-muted-foreground">Sign in to continue.</p>
         </CardHeader>
