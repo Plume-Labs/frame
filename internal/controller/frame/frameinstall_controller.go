@@ -781,7 +781,12 @@ func (r *FrameInstallReconciler) setCondition(ctx context.Context, fi *framev1be
 	patch := client.MergeFrom(latest.DeepCopy())
 	cond.ObservedGeneration = latest.Generation
 	meta.SetStatusCondition(&latest.Status.Conditions, cond)
-	_ = r.Status().Patch(ctx, &latest, patch)
+	if err := r.Status().Patch(ctx, &latest, patch); err != nil {
+		// Best effort by design (the next beacon rewrites it), but not silent:
+		// a status that never updates looks like an installer that never moves.
+		logf.FromContext(ctx).Error(err, "Could not write FrameInstall condition",
+			"frameinstall", client.ObjectKeyFromObject(fi), "condition", cond.Type)
+	}
 }
 
 // reportPhase is provision.Deps.Report: called on entering every phase,
@@ -804,7 +809,10 @@ func (r *FrameInstallReconciler) reportPhase(ctx context.Context, key client.Obj
 	fi.Status.Phase = string(p)
 	now := metav1.Now()
 	fi.Status.PhaseSince = &now
-	_ = r.Status().Patch(ctx, &fi, patch)
+	if err := r.Status().Patch(ctx, &fi, patch); err != nil {
+		logf.FromContext(ctx).Error(err, "Could not record FrameInstall phase",
+			"frameinstall", key, "phase", string(p))
+	}
 }
 
 // finishStatus runs exactly once per provision.Install call, after it has
