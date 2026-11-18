@@ -5,7 +5,29 @@ import { pollInterval, watchPaths } from '@/lib/k8s-watch'
 export type LiveState<T> =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; data: T }
+  // staleError is set when a refresh failed after data had been read: `data` is
+  // then the last good read, not the current state of the cluster, and the view
+  // must say so rather than drop it or pass it off as fresh.
+  | { phase: 'ready'; data: T; staleError?: string; lastRead?: number }
+
+/**
+ * What a failed fetch does to the state. Before any data was read it is a plain
+ * error; after, the last good data stays on screen and is marked stale, because
+ * blanking a screen on one failed poll hides exactly what an operator is
+ * watching (an active `noout` flag, an OSD replacement waiting for approval).
+ */
+export function stateAfterFailure<T>(
+  prev: LiveState<T>,
+  message: string,
+  keepStale: boolean,
+): LiveState<T> {
+  if (keepStale && prev.phase === 'ready') return { ...prev, staleError: message }
+  return { phase: 'error', message }
+}
+
+export function stateAfterSuccess<T>(data: T, now: number = Date.now()): LiveState<T> {
+  return { phase: 'ready', data, lastRead: now }
+}
 
 /**
  * Fetch a live cluster resource with loading / error / ready states and a
@@ -43,7 +65,12 @@ export function useLiveResource<T>(
   deps: unknown[] = [],
   watch: string[] = [],
   pollMs?: number,
+  options: { keepStaleOnError?: boolean } = {},
 ): { state: LiveState<T>; reload: () => void } {
+  // Opt-in: a view that shows `StaleNotice` can keep its last good read through
+  // a failed refresh. A view that does not must still turn into an error, or it
+  // would pass old data off as current.
+  const keepStale = options.keepStaleOnError === true
   const [state, setState] = useState<LiveState<T>>({ phase: 'loading' })
 
   // When the caller's deps change the data on screen belongs to the old deps:
@@ -71,18 +98,25 @@ export function useLiveResource<T>(
   // Stable: it reads the current fetcher through the ref, so what makes the
   // resource re-read itself when the caller's `deps` change is the effect
   // below, not this function's identity.
+  const requestRef = useRef(0)
+  const keepStaleRef = useRef(keepStale)
+  useLayoutEffect(() => {
+    keepStaleRef.current = keepStale
+  })
+
   const load = useCallback(() => {
+    // Only the newest request may write: a slow answer to an older one (watch and
+    // poll can overlap) must not overwrite, or mark stale, a newer result.
+    const mine = ++requestRef.current
     fetcherRef
       .current()
       .then((data) => {
-        if (!cancelledRef.current) setState({ phase: 'ready', data })
+        if (!cancelledRef.current && mine === requestRef.current) setState(stateAfterSuccess(data))
       })
       .catch((e: unknown) => {
-        if (cancelledRef.current) return
-        setState({
-          phase: 'error',
-          message: e instanceof Error ? e.message : 'Failed to reach the Kubernetes API',
-        })
+        if (cancelledRef.current || mine !== requestRef.current) return
+        const message = e instanceof Error ? e.message : 'Failed to reach the Kubernetes API'
+        setState((prev) => stateAfterFailure(prev, message, keepStaleRef.current))
       })
   }, [])
 

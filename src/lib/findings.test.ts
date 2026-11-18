@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { collectFindings, BACKUP_STALE_MS } from './findings'
+import { collectFindings, unreadSources, BACKUP_STALE_MS } from './findings'
 import type { BackupStatus, CephStatus, ClusterNodeInfo } from './frame-sdk'
 
 const NOW = 1_700_000_000_000
@@ -192,5 +192,28 @@ describe('collectFindings — machine checks and services', () => {
     expect(f.find((x) => x.screen === 'caches')).toMatchObject({ tone: 'destructive', label: 'Cache neura/jobs not ready' })
     expect(f.find((x) => x.screen === 'databases')).toMatchObject({ tone: 'warning', detail: 'Provisioning' })
     expect(f).toHaveLength(2)
+  })
+})
+
+describe('unreadSources', () => {
+  it('separates loading, failed, stale and unavailable sources', () => {
+    expect(
+      unreadSources({
+        nodes: { phase: 'ready', data: [] },
+        ceph: { phase: 'loading' },
+        alerts: { phase: 'error' },
+        machines: { phase: 'ready', data: [], staleError: '503' },
+        backups: { phase: 'ready', data: null },
+      }),
+    ).toEqual({ loading: ['ceph'], failed: ['alerts'], stale: ['machines'], unavailable: ['backups'] })
+  })
+
+  it('is empty when every source was read', () => {
+    expect(unreadSources({ nodes: { phase: 'ready', data: [] } })).toEqual({
+      loading: [],
+      failed: [],
+      stale: [],
+      unavailable: [],
+    })
   })
 })

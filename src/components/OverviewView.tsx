@@ -19,7 +19,8 @@ import { useNavigation } from '@/hooks/useNavigation'
 import { Stat, StatGrid, ScreenHeader } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { TONE_TEXT, formatAge, inverseScoreTone } from '@/lib/thresholds'
-import { Finding, collectFindings } from '@/lib/findings'
+import { Finding, collectFindings, unreadSources } from '@/lib/findings'
+import { StaleNotice } from '@/components/LiveStates'
 import type { Cache } from '@/lib/caches'
 import type { Database } from '@/lib/databases'
 import { volumeFillFindings, type VolumeLoadSnapshot } from '@/lib/volume-load'
@@ -38,6 +39,9 @@ import {
 const frame = createFrameClient()
 
 const WINDOW_HOURS = 3
+
+/** The Needs-attention sources keep their last read through a failed refresh and say so. */
+const KEEP_STALE = { keepStaleOnError: true }
 
 /** The four cluster-level series worth carrying on a landing page. */
 const TREND_QUERIES = [
@@ -72,28 +76,41 @@ export function OverviewView() {
 
   // A mix, call by call: some read real objects (watch), some read a proxied
   // metric with nothing to watch (poll).
-  const nodes = useLiveResource<ClusterNodeInfo[]>(() => frame.cluster.nodes(), [], [coreListPath('nodes')])
-  const alerts = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts(), [], [], 30_000)
+  const nodes = useLiveResource<ClusterNodeInfo[]>(
+    () => frame.cluster.nodes(),
+    [],
+    [coreListPath('nodes')],
+    undefined,
+    KEEP_STALE,
+  )
+  const alerts = useLiveResource<AlertsStatus | null>(
+    () => frame.cluster.alerts(),
+    [],
+    [],
+    30_000,
+    KEEP_STALE,
+  )
   const ceph = useLiveResource<CephStatus>(() => frame.cluster.ceph(), [], [
     crdListPath('ceph.rook.io', 'v1', 'cephclusters', cephNs),
     crdListPath('ceph.rook.io', 'v1', 'cephblockpools', cephNs),
     ...cephPodNamespaces.map((ns) => coreListPath('pods', ns)),
-  ])
+  ], undefined, KEEP_STALE)
   const backups = useLiveResource<BackupStatus | null>(() => frame.cluster.backups(), [], [
     crdListPath('velero.io', 'v1', 'backups', veleroNs),
     crdListPath('velero.io', 'v1', 'backupstoragelocations', veleroNs),
     crdListPath('velero.io', 'v1', 'schedules', veleroNs),
-  ])
+  ], undefined, KEEP_STALE)
   // Same reads, same watch paths as the Health, Links, Caches and Databases
   // tabs, so a condition flipping there flips here at the same moment.
-  const machines = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
-  const caches = useLiveResource<Cache[]>(() => frame.caches.list(), [], [frame.caches.watchPath()])
-  const databases = useLiveResource<Database[]>(() => frame.databases.list(), [], [frame.databases.watchPath()])
+  const machines = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000, KEEP_STALE)
+  const caches = useLiveResource<Cache[]>(() => frame.caches.list(), [], [frame.caches.watchPath()], undefined, KEEP_STALE)
+  const databases = useLiveResource<Database[]>(() => frame.databases.list(), [], [frame.databases.watchPath()], undefined, KEEP_STALE)
   const volumeFill = useLiveResource<Pick<VolumeLoadSnapshot, 'volUsed' | 'volCapacity'> | null>(
     () => frame.cluster.volumeFill(),
     [],
     [],
     60_000,
+    KEEP_STALE,
   )
   const inference = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
   const posture = useLiveResource<PostureStatus | null>(() => frame.cluster.posture(), [], [
@@ -192,6 +209,16 @@ function AttentionCard({
     volumes: volumeFill.phase === 'ready' && volumeFill.data ? volumeFillFindings(volumeFill.data) : undefined,
   })
 
+  const unread = unreadSources({ nodes, alerts, ceph, backups, machines, caches, databases, volumes: volumeFill })
+  const unreadCount = unread.loading.length + unread.failed.length + unread.stale.length
+  const unreadNote = [
+    unread.loading.length > 0 ? `still loading: ${unread.loading.join(', ')}` : '',
+    unread.failed.length > 0 ? `could not be read: ${unread.failed.join(', ')}` : '',
+    unread.stale.length > 0 ? `last refresh failed, showing old data: ${unread.stale.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
   return (
     <Card>
       <CardHeader>
@@ -205,15 +232,35 @@ function AttentionCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {findings.length === 0 ? (
+        {Object.entries({ nodes, alerts, ceph, backups, machines, caches, databases, volumes: volumeFill }).map(
+          ([name, st]) => (
+            <StaleNotice key={name} state={st} label={name} />
+          ),
+        )}
+        {findings.length === 0 && unreadCount > 0 ? (
+          // No findings from sources nobody has read is not "all clear": say
+          // what is missing instead of showing a green check.
+          <div className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
+            <Warning size={18} aria-hidden="true" className="shrink-0 text-warning" />
+            Cannot say everything is fine yet: {unreadNote}.
+          </div>
+        ) : findings.length === 0 ? (
           // Saying "nothing is wrong" is a result. An empty card reads as a
           // panel that failed to load.
           <div className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
-            <CheckCircle size={18} className="text-accent" />
-            No firing alerts, every node ready, Ceph and disks healthy, links clean, services ready, backups current.
+            <CheckCircle size={18} aria-hidden="true" className="text-accent" />
+            <span>
+              No firing alerts, every node ready, Ceph and disks healthy, links clean, services ready, backups current.
+              {unread.unavailable.length > 0 && (
+                <span className="block text-[11px]">Not monitored here: {unread.unavailable.join(', ')}.</span>
+              )}
+            </span>
           </div>
         ) : (
           findings.map((f) => <FindingRow key={f.key} finding={f} />)
+        )}
+        {findings.length > 0 && unreadCount > 0 && (
+          <div className="text-[11px] font-mono text-muted-foreground">Not complete — {unreadNote}.</div>
         )}
       </CardContent>
     </Card>
@@ -275,7 +322,13 @@ function ServingCard({ state }: { state: ReturnType<typeof useLiveResource<Infer
             />
           </StatGrid>
         ) : (
-          <p className="text-sm text-muted-foreground font-mono">No inference server deployed.</p>
+          <p className="text-sm text-muted-foreground font-mono">
+            {state.phase === 'loading'
+              ? 'Reading…'
+              : state.phase === 'error'
+                ? 'Could not read the inference status.'
+                : 'No inference server deployed.'}
+          </p>
         )}
       </CardContent>
     </Card>
@@ -320,7 +373,13 @@ function PostureCard({
             <Stat label="Misconfigs" value={p.misconfigs.critical + p.misconfigs.high} size="md" />
           </StatGrid>
         ) : (
-          <p className="text-sm text-muted-foreground font-mono">trivy-operator not deployed.</p>
+          <p className="text-sm text-muted-foreground font-mono">
+            {state.phase === 'loading'
+              ? 'Reading…'
+              : state.phase === 'error'
+                ? 'Could not read the posture status.'
+                : 'trivy-operator not deployed.'}
+          </p>
         )}
         {bk?.lastSuccess && (
           <div className="text-[11px] font-mono text-muted-foreground">

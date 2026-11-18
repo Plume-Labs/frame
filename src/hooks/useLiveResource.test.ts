@@ -70,6 +70,7 @@ function Harness({
   pollMs,
   deps,
   onReload,
+  keepStaleOnError,
 }: {
   onState: (s: LiveState<number>) => void
   fetcher: () => Promise<number>
@@ -77,8 +78,9 @@ function Harness({
   pollMs?: number
   deps?: unknown[]
   onReload?: (reload: () => void) => void
+  keepStaleOnError?: boolean
 }) {
-  const { state, reload } = useLiveResource<number>(fetcher, deps ?? [], watch ?? [], pollMs)
+  const { state, reload } = useLiveResource<number>(fetcher, deps ?? [], watch ?? [], pollMs, { keepStaleOnError })
   onState(state)
   useEffect(() => {
     onReload?.(reload)
@@ -103,7 +105,7 @@ describe('useLiveResource', () => {
       )
     })
 
-    expect(last(history)).toEqual({ phase: 'ready', data: 0 })
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 0 })
     expect(watchCallbacks).toHaveLength(1)
     expect(pollCallbacks).toHaveLength(1)
 
@@ -111,7 +113,7 @@ describe('useLiveResource', () => {
     await step(() => pollCallbacks[0]())
 
     expect(fetcher).toHaveBeenCalledTimes(3)
-    expect(last(history)).toEqual({ phase: 'ready', data: 2 })
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 2 })
 
     // The property this hook exists to guarantee: once the first load has
     // landed, neither refresh path may show 'loading' again — the view keeps
@@ -131,7 +133,7 @@ describe('useLiveResource', () => {
     await step(() =>
       root.render(createElement(Harness, { onState: (s) => history.push(s), fetcher, onReload: (r) => reloads.push(r) })),
     )
-    expect(last(history)).toEqual({ phase: 'ready', data: 0 })
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 0 })
 
     act(() => last(reloads)())
     // Synchronously after a manual reload, the state has already flipped to
@@ -141,7 +143,7 @@ describe('useLiveResource', () => {
     expect(last(history)).toEqual({ phase: 'loading' })
 
     await step(() => {})
-    expect(last(history)).toEqual({ phase: 'ready', data: 1 })
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 1 })
   })
 
   it('shows loading in the render that changes deps, then reads again', async () => {
@@ -152,7 +154,7 @@ describe('useLiveResource', () => {
       root.render(createElement(Harness, { onState: (s) => history.push(s), fetcher, deps }))
 
     await step(() => render(['a']))
-    expect(last(history)).toEqual({ phase: 'ready', data: 0 })
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 0 })
 
     // Same deps, new array: nothing to re-read.
     await step(() => render(['a']))
@@ -166,7 +168,71 @@ describe('useLiveResource', () => {
     const newDataAt = history.findIndex((s) => s.phase === 'ready' && s.data === 1)
     expect(loadingAt).toBeGreaterThanOrEqual(0)
     expect(newDataAt).toBeGreaterThan(loadingAt)
-    expect(last(history)).toEqual({ phase: 'ready', data: 1 })
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 1 })
     expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the last good data and marks it stale when a refresh fails, if the view opts in', async () => {
+    let fail = false
+    const fetcher = vi.fn(async () => {
+      if (fail) throw new Error('503')
+      return 7
+    })
+    const history: LiveState<number>[] = []
+    await step(() =>
+      root.render(
+        createElement(Harness, { onState: (s) => history.push(s), fetcher, pollMs: 30_000, keepStaleOnError: true }),
+      ),
+    )
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 7 })
+
+    fail = true
+    await step(() => pollCallbacks[0]())
+    expect(last(history)).toMatchObject({ phase: 'ready', data: 7, staleError: '503' })
+
+    fail = false
+    await step(() => pollCallbacks[0]())
+    const recovered = last(history)
+    expect(recovered).toMatchObject({ phase: 'ready', data: 7 })
+    expect((recovered as { staleError?: string }).staleError).toBeUndefined()
+  })
+
+  it('still turns into an error on a failed refresh when the view does not opt in', async () => {
+    let fail = false
+    const fetcher = vi.fn(async () => {
+      if (fail) throw new Error('503')
+      return 7
+    })
+    const history: LiveState<number>[] = []
+    await step(() =>
+      root.render(createElement(Harness, { onState: (s) => history.push(s), fetcher, pollMs: 30_000 })),
+    )
+    fail = true
+    await step(() => pollCallbacks[0]())
+    expect(last(history)).toEqual({ phase: 'error', message: '503' })
+  })
+
+  it('ignores a slow failure that arrives after a newer success', async () => {
+    const pending: Array<{ resolve: (n: number) => void; reject: (e: Error) => void }> = []
+    const fetcher = vi.fn(
+      () =>
+        new Promise<number>((resolve, reject) => {
+          pending.push({ resolve, reject })
+        }),
+    )
+    const history: LiveState<number>[] = []
+    await step(() =>
+      root.render(
+        createElement(Harness, { onState: (s) => history.push(s), fetcher, pollMs: 30_000, keepStaleOnError: true }),
+      ),
+    )
+    await step(() => pending[0].resolve(1)) // initial read
+    await step(() => pollCallbacks[0]()) // request A (will be slow)
+    await step(() => pollCallbacks[0]()) // request B (newer)
+    await step(() => pending[2].resolve(2)) // B succeeds first
+    await step(() => pending[1].reject(new Error('late'))) // A fails afterwards
+    const final = last(history)
+    expect(final).toMatchObject({ phase: 'ready', data: 2 })
+    expect((final as { staleError?: string }).staleError).toBeUndefined()
   })
 })

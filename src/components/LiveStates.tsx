@@ -52,3 +52,32 @@ export function LiveStates<T>({
 
   return null
 }
+
+/**
+ * Shown above a view whose last refresh failed but which still has data: the
+ * numbers below are the last good read, and the view says so. `label` names the
+ * source when a screen shows several. The live region stays mounted (empty when
+ * all is well) so screen readers announce the text when it appears.
+ */
+export function StaleNotice({
+  state,
+  label,
+}: {
+  state: { phase: string; staleError?: string; lastRead?: number }
+  label?: string
+}) {
+  const stale = state.phase === 'ready' && state.staleError ? state : null
+  return (
+    <div role="status" aria-live="polite">
+      {stale && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs font-mono">
+          <Warning size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-warning" />
+          <span>
+            {label ? `${label}: ` : ''}refresh failed, showing the last successful read
+            {stale.lastRead ? ` (${new Date(stale.lastRead).toLocaleTimeString()})` : ''}: {stale.staleError}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
