@@ -78,6 +78,7 @@ export function PodDetailPanel({
             </TabsTrigger>
             <TabsTrigger value="terminal" className="font-mono text-xs">
               Terminal
+              <span className="text-[9px] uppercase tracking-wider text-muted-foreground">experimental</span>
             </TabsTrigger>
             <TabsTrigger value="yaml" className="font-mono text-xs">
               YAML

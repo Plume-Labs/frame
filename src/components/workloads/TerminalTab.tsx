@@ -144,6 +144,10 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
 
   return (
     <div className="space-y-3">
+      <p className="font-mono text-[10px] text-amber-600 dark:text-amber-400">
+        Experimental: this shell has not been proven end to end on a real cluster yet. See
+        docs/known-limitations.md.
+      </p>
       <div className="flex flex-wrap items-center gap-3">
         <select
           value={container}
