@@ -1,0 +1,43 @@
+name: Upgrade e2e
+
+# The operator as it was (N-1: the merge base with main, or the previous commit
+# on main) -> this tree (N) -> back to N-1, on a Kind cluster, with the demo's
+# objects stored the whole time (hack/upgrade-e2e.sh). A change that breaks a
+# CRD already in use, or a rollback, fails here instead of on a real cluster.
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  upgrade:
+    name: Upgrade and rollback (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          install_only: true
+
+      - name: N-1 to N, then back to N-1
+        run: ./hack/upgrade-e2e.sh
