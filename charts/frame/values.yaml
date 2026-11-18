@@ -88,6 +88,15 @@ metrics:
     enabled: false
     interval: ""
     labels: {}
+  prometheusRule:
+    # Off by default, like the ServiceMonitor, and for the same reason: it
+    # needs the Prometheus Operator CRDs and keeps the default rendering equal
+    # to `kustomize build config/default`. Turn it on to get alerts for the
+    # operator itself: no leader, metrics missing, reconcile errors, backed-up
+    # work queues and failing webhooks. `labels` is for your Prometheus's
+    # ruleSelector (for example `release: kube-prometheus-stack`).
+    enabled: false
+    labels: {}
 
 webhooks:
   enabled: true

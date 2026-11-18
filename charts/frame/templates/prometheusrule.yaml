@@ -1,0 +1,66 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "frame.name" . }}-operator-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "frame.chartLabels" . | nindent 4 }}
+    control-plane: controller-manager
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: frame-operator
+    rules:
+    # The manager is the only thing serving admission and CRD conversion, so a
+    # missing leader is not only "no reconciliation": reads and writes of every
+    # Hearthrack kind can fail with it (see docs/runbook.md, "The blast radius
+    # when the operator is down").
+    - alert: FrameOperatorNoLeader
+      expr: |
+        sum(leader_election_master_status{namespace="{{ .Release.Namespace }}", name="b9bf5a0e.plume-labs.io"}) == 0
+      for: 3m
+      labels:
+        severity: critical
+      annotations:
+        summary: Hearthrack operator has no leader
+        description: Pods report leader election but none holds the lease. Failover normally takes about 70 seconds; longer means no pod is healthy.
+    - alert: FrameOperatorAbsent
+      expr: |
+        absent(leader_election_master_status{namespace="{{ .Release.Namespace }}", name="b9bf5a0e.plume-labs.io"})
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Hearthrack operator metrics are missing
+        description: No manager pod is reporting. Either the operator is down or Prometheus cannot scrape it (check the ServiceMonitor, the NetworkPolicy and the metrics token).
+    - alert: FrameReconcileErrors
+      expr: |
+        sum by (controller) (rate(controller_runtime_reconcile_errors_total{namespace="{{ .Release.Namespace }}"}[10m])) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Hearthrack controller {{ "{{ $labels.controller }}" }} keeps failing to reconcile'
+        description: Reconciles of this controller have been returning errors for 15 minutes. Look at the manager logs for that controller.
+    - alert: FrameWorkqueueBacklog
+      expr: |
+        max by (name) (workqueue_depth{namespace="{{ .Release.Namespace }}"}) > 50
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: 'Hearthrack work queue {{ "{{ $labels.name }}" }} is backing up'
+        description: More than 50 items have been waiting for 15 minutes; the controller is not keeping up or is stuck.
+    - alert: FrameWebhookErrors
+      expr: |
+        sum(rate(controller_runtime_webhook_requests_total{namespace="{{ .Release.Namespace }}", code=~"5.."}[5m])) > 0
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: Hearthrack admission or conversion webhook is returning errors
+        description: The webhooks fail closed, so writes (and conversions) of Hearthrack kinds are being refused while this fires.
+{{- end }}
