@@ -1,0 +1,66 @@
+# Velero schedules for Hearthrack's OWN state (not workloads).
+#
+# velero.yaml in this directory backs up workload namespaces. Nothing there
+# covers the control plane itself: the Hearthrack custom resources (users and
+# their passkey state, machines, storage, installs, tasks...) live in etcd and
+# are lost with it. These two schedules cover that gap.
+#
+# CRDs themselves are deliberately NOT backed up: the chart owns the schema and
+# restoring an older CRD over a newer one is a downgrade, not a recovery.
+#
+# test/manifests/velero_hearthrack_test.go fails if a CRD under
+# config/crd/bases is missing from the list below, so a new kind cannot ship
+# without a backup. After a restore, check status.progress.itemsBackedUp: a
+# selector that matches nothing completes green with zero items.
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: hearthrack-resources
+  namespace: velero
+spec:
+  schedule: "15 * * * *"   # hourly: these objects are small and change by hand
+  template:
+    includedNamespaces: ["*"]
+    includedResources:
+      - framealerts.frame.plume-labs.io
+      - framealertsubscriptions.frame.plume-labs.io
+      - framecephactions.frame.plume-labs.io
+      - framediskclaims.frame.plume-labs.io
+      - frameinstalls.frame.plume-labs.io
+      - framejobs.frame.plume-labs.io
+      - framemachines.frame.plume-labs.io
+      - framenodes.frame.plume-labs.io
+      - frameosdreplacements.frame.plume-labs.io
+      - frameresourcequotas.frame.plume-labs.io
+      - framestorages.frame.plume-labs.io
+      - frametasks.frame.plume-labs.io
+      - frameusers.frame.plume-labs.io
+      - networkhealthpolicies.frame.plume-labs.io
+      - nodetunings.frame.plume-labs.io
+      - schedulingpolicies.frame.plume-labs.io
+      - storagehealthpolicies.frame.plume-labs.io
+      - frameservices.services.plume-labs.io
+      - inferencemodels.services.plume-labs.io
+    snapshotVolumes: false
+    storageLocation: default
+    ttl: 720h
+---
+# Secrets and ConfigMaps of the operator's namespace: BMC credentials, authd
+# signing keys, webhook certificates. Needs an encrypted backup location:
+# these are credentials.
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: hearthrack-system-secrets
+  namespace: velero
+spec:
+  schedule: "30 2 * * *"
+  template:
+    includedNamespaces:
+      - frame-system
+    includedResources:
+      - secrets
+      - configmaps
+    snapshotVolumes: false
+    storageLocation: default
+    ttl: 720h

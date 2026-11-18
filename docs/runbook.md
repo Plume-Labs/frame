@@ -192,31 +192,19 @@ projection's vocabulary — compare what the controller wrote against the
 The operator is stateless. Everything worth restoring is CRs in etcd, which
 Velero handles as ordinary API objects — no volume snapshots, no plugins.
 
-Verified round-trip on the test cluster (backup, delete the object, restore):
+Schedule it with `deploy/resilience/velero-hearthrack.yaml` (hourly, every
+Hearthrack kind; plus a daily one for the `frame-system` Secrets and
+ConfigMaps, which hold credentials: use an encrypted backup location). A test
+fails if a CRD under `config/crd/bases` is missing from that list, so a new
+kind cannot ship unbacked. An ad-hoc restore of a backup looks like:
 
 ```bash
-kubectl apply -f - <<'EOF'
-apiVersion: velero.io/v1
-kind: Backup
-metadata: {name: frame-crs, namespace: velero}
-spec:
-  includedResources:
-    - framejobs.frame.plume-labs.io
-    - framenodes.frame.plume-labs.io
-    - frameresourcequotas.frame.plume-labs.io
-    - frameusers.frame.plume-labs.io
-    - schedulingpolicies.frame.plume-labs.io
-    - frameservices.services.plume-labs.io
-  includedNamespaces: ["*"]
-  ttl: 720h0m0s
-EOF
-
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<'YAML'
 apiVersion: velero.io/v1
 kind: Restore
 metadata: {name: frame-crs-restore, namespace: velero}
-spec: {backupName: frame-crs}
-EOF
+spec: {backupName: <backup name>}
+YAML
 ```
 
 Restored objects come back spec-identical and the controllers re-reconcile
