@@ -492,9 +492,10 @@ func main() {
 		// The kubebuilder defaults (15s/10s/2s) assume the manager always gets
 		// scheduled promptly. On a control-plane node sitting at 85% CPU it did
 		// not: the manager missed the 10s renew deadline, logged "leader
-		// election lost" and exited 1 — seventeen times in four days. We run a
-		// single replica, so a longer lease costs nothing (there is no standby
-		// waiting to take over) and buys the renewal a much wider margin.
+		// election lost" and exited 1 — seventeen times in four days. With a
+		// single replica a longer lease costs nothing (no standby waits); with
+		// two (charts/frame/values-production.yaml) it is the failover time:
+		// a standby takes over up to LeaseDuration + RetryPeriod after a crash.
 		LeaseDuration: ptr.To(60 * time.Second),
 		RenewDeadline: ptr.To(40 * time.Second),
 		RetryPeriod:   ptr.To(10 * time.Second),

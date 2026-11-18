@@ -1,0 +1,18 @@
+# Production overlay: helm install frame charts/frame -f charts/frame/values-production.yaml ...
+#
+# Why it exists: with one replica, a restart or a node drain makes the manager
+# unreachable, and then every create/update of every Hearthrack kind is refused
+# (failurePolicy: Fail on the webhooks) and every read fails too (CRD conversion
+# goes through the same manager). Two replicas keep admission and conversion up
+# while one of them restarts; see docs/runbook.md, "The blast radius when the
+# operator is down" and "Failover".
+#
+# Needs at least two schedulable nodes to be useful: the soft anti-affinity
+# prefers separate nodes but never blocks scheduling.
+replicaCount: 2
+
+# Safe only with replicaCount > 1 (a PDB on a single replica blocks node drains
+# forever), which is why it is not the chart default.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
