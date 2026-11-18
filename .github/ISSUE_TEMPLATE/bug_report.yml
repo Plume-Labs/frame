@@ -1,0 +1,41 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issue? Do not file it here, see SECURITY.md. Please check docs/known-limitations.md first and redact secrets.
+  - type: input
+    id: version
+    attributes:
+      label: Hearthrack version
+      description: Controller image tag, or the commit if built from source
+    validations:
+      required: true
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes version and distribution
+      placeholder: "1.33, Kind / k3s / kubeadm"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Manifests and commands, as minimal as you can
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`kubectl -n frame-system logs deploy/frame-controller-manager`, and `kubectl describe` of the object involved"
+      render: shell
