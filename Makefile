@@ -271,7 +271,7 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 vuln: govulncheck ## Scan Go dependencies and code for known vulnerabilities.
 	"$(GOVULNCHECK)" ./...
 
-# docker-images builds all five images the security targets below inspect, so
+# docker-images builds all six images the security targets below inspect, so
 # `make sbom` and `make scan` work from a clean tree instead of failing on
 # whichever image happens not to be in the local daemon. uiproxy holds an
 # impersonation grant to the apiserver, so it gets the same coverage as the

@@ -1,15 +1,24 @@
 # CRD Reference
 
-Nine CRDs across two API groups: eight in `frame.plume-labs.io` and
-`FrameService` in `services.plume-labs.io` — a separate group so the service
-catalog can move without blocking the `frame.plume-labs.io` freeze (see
-[roadmap.md](roadmap.md)). Generated CRDs live in `config/crd/bases/`; sample
-CRs in `config/samples/`. Each kind has a controller
-(`internal/controller/<group>/`) except FrameUser and FrameTask, and a
-webhook (`internal/webhook/<group>/v1beta1/`) except NodeTuning, FrameTask
-and FrameMachine.
+19 CRDs across two API groups: 17 in `frame.plume-labs.io` and
+`FrameService` plus `InferenceModel` in `services.plume-labs.io` — a separate
+group so the service catalog can move without blocking the `frame.plume-labs.io`
+freeze (see [roadmap.md](roadmap.md)). Generated CRDs live in
+`config/crd/bases/`; sample CRs in `config/samples/`. Most kinds have a
+controller (`internal/controller/<group>/`, plus `internal/alerting/`); FrameUser
+and FrameTask have none. Webhooks live in `internal/webhook/<group>/v1beta1/`.
 
-Six of the nine are namespaced and serve both **`v1beta1`** (storage) and
+> **Not documented below yet:** FrameAlert, FrameAlertSubscription,
+> FrameCephAction, FrameDiskClaim, FrameInstall, FrameOSDReplacement and
+> FrameStorage. They are in `config/crd/bases/` and in the operator; their
+> field-level reference is still to be written. This page documents the other
+> twelve. `hack/check-doc-scope.sh` keeps the counts in the docs honest, not the
+> field tables.
+
+The text below was written when nine kinds existed, and the paragraph that
+follows describes that generation.
+
+Six of those nine are namespaced and serve both **`v1beta1`** (storage) and
 a deprecated `v1alpha1`. **NodeTuning, FrameTask and FrameMachine are the
 exceptions**: all three postdate the freeze, so all three have **no
 `v1alpha1`** (nothing to convert from) and **no webhook**. NodeTuning is

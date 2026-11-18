@@ -94,9 +94,9 @@ Hearthrack is three cooperating layers in one repo.
 
 ## Layer 2 — Operator (`api/`, `internal/`, `cmd/`)
 
-**What it is:** a Kubebuilder v4 operator, multi-group: `frame.plume-labs.io/v1beta1` (eight CRDs) and `services.plume-labs.io/v1beta1` (`FrameService`). Eight of the nine also serve a deprecated `v1alpha1` through a conversion webhook; `NodeTuning` was added after the freeze and has no `v1alpha1` to convert from. It reconciles eight of the nine CRDs into real cluster effects. FrameUser has no controller — nothing reconciles a user account; every other CRD, including `FrameService` and `NodeTuning`, does.
+**What it is:** a Kubebuilder v4 operator, multi-group: `frame.plume-labs.io/v1beta1` and `services.plume-labs.io/v1beta1` (`FrameService`, `InferenceModel`) — 19 CRDs in all, listed in `config/crd/bases/`. The six oldest (FrameJob, FrameNode, FrameResourceQuota, FrameUser, SchedulingPolicy, FrameService) also serve a deprecated `v1alpha1` through a conversion webhook; the newer kinds have no `v1alpha1` to convert from. Most kinds are reconciled into real cluster effects; FrameUser is a record `authd` reads and FrameTask is a proxy-written audit trail, so neither has a controller.
 
-**Entry points:** `cmd/main.go` — the controller-runtime manager: registers all controllers and webhooks, wires Prometheus metrics. Two more Go binaries ship alongside it: `cmd/authd` (per-user auth, reads `FrameUser`) and `cmd/agent` (the node-tuning agent, a DaemonSet). Four Dockerfiles: `Dockerfile.controller`, `Dockerfile.authd`, `Dockerfile.agent`, and the unsuffixed `Dockerfile` for the React UI.
+**Entry points:** `cmd/main.go` — the controller-runtime manager: registers all controllers and webhooks, wires Prometheus metrics. Five more Go binaries ship alongside it: `cmd/authd` (per-user auth, reads `FrameUser`), `cmd/agent` (the node-tuning agent, a DaemonSet), `cmd/uiproxy` (the in-pod proxy that carries the user's identity), `cmd/provisiond` (machine provisioning) and `cmd/bootstrap` (installs node zero from a laptop; no image). Six Dockerfiles: `Dockerfile.controller`, `Dockerfile.authd`, `Dockerfile.agent`, `Dockerfile.uiproxy`, `Dockerfile.provisiond`, and the unsuffixed `Dockerfile` for the React UI.
 
 **Controllers:**
 

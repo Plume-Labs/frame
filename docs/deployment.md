@@ -13,7 +13,7 @@
 
 ## 1. Build and push the images
 
-Four images, four Dockerfiles, four target pairs. **`make docker-build` builds
+Six images, six Dockerfiles, six target pairs (`make docker-images` builds all six). **`make docker-build` builds
 the controller, not the UI** — it uses `Dockerfile.controller`. The UI is the
 unsuffixed `Dockerfile` (React + Vite, served by nginx) and has its own target.
 
@@ -21,6 +21,8 @@ unsuffixed `Dockerfile` (React + Vite, served by nginx) and has its own target.
 make docker-build       docker-push        IMG=ghcr.io/<org>/frame-controller:1.0.0
 make docker-build-ui    docker-push-ui     IMG_UI=ghcr.io/<org>/frame-ui:1.0.0
 make docker-build-authd docker-push-authd  IMG_AUTHD=ghcr.io/<org>/frame-authd:1.0.0
+make docker-build-uiproxy    docker-push-uiproxy    IMG_UIPROXY=ghcr.io/<org>/frame-uiproxy:1.0.0
+make docker-build-provisiond docker-push-provisiond IMG_PROVISIOND=ghcr.io/<org>/frame-provisiond:1.0.0
 make docker-build-agent docker-push-agent  IMG_AGENT=ghcr.io/<org>/frame-agent:1.0.0
 ```
 
@@ -110,7 +112,7 @@ refuses unless `DEPLOY_DEFAULT=1` — for throwaway dev/e2e clusters only.
 Edit the overlay's `secret-access.yaml` for your cluster's namespaces (or
 copy the overlay).
 
-This applies the `frame-system` namespace, all ten CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
+This applies the `frame-system` namespace, all 19 CRDs (across `frame.plume-labs.io` and `services.plume-labs.io`), RBAC (ClusterRoles + bindings), the controller manager deployment, webhook configuration, and cert-manager certificate resources.
 
 It does **not** install the node-tuning agent — that is a DaemonSet with node prerequisites, and it has its own step below.
 

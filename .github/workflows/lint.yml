@@ -46,3 +46,5 @@ jobs:
         run: make helm-lint
       - name: Check Helm/kustomize parity
         run: make helm-parity
+      - name: Check the docs state the real CRD, binary and Dockerfile counts
+        run: ./hack/check-doc-scope.sh
