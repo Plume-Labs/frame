@@ -536,7 +536,7 @@ func TestProjectedPhasesAreAllInsideTheV1alpha1Enums(t *testing.T) {
 		"", "Submitted", "Running", "Suspended", "Completed", "Failed",
 		"Discovered", "Provisioning", "Online", "Degraded", "Offline",
 		"WorkflowCreated", "Reconciled", "Applied", "AwaitingNode", "Unclassified",
-		"UnknownType", "SizeRefused", "ModelCacheMissing",
+		"UnknownType", "SizeRefused", "ModelCacheMissing", "ArgoWorkflowsMissing",
 	}
 	for _, r := range reasons {
 		for _, condType := range []string{"Ready", "Submitted", "Progressing"} {

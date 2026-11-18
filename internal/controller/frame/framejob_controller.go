@@ -48,7 +48,8 @@ const frameJobFinalizer = "frame.plume-labs.io/framejob"
 // FrameJob phases. They are the Reason on the Ready condition, and the value
 // api/frame/v1alpha1's conversion projects back out as the legacy
 // status.phase for a v1alpha1 reader. Do not write a reason here that is not
-// one of these.
+// one of these, with one exception: jobPhaseArgoMissing, below, which
+// a pipeline job reports while Argo Workflows is not installed.
 const (
 	jobPhaseSubmitted = "Submitted"
 	jobPhaseRunning   = "Running"
@@ -274,7 +275,7 @@ const argoMissingRetry = 5 * time.Minute
 // isArgoMissing reports whether err means the workflows.argoproj.io API is not
 // served by the cluster (no CRD), as opposed to a transient or RBAC failure.
 func isArgoMissing(err error) bool {
-	return err != nil && (meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err))
+	return err != nil && meta.IsNoMatchError(err)
 }
 
 // reportArgoMissing records a clear, non-failing status on a pipeline FrameJob
@@ -297,9 +298,19 @@ func (r *FrameJobReconciler) reportArgoMissing(ctx context.Context, job *framev1
 }
 
 // argoWorkflowsServed reports whether the cluster serves the Argo Workflow API.
-func argoWorkflowsServed(mapper meta.RESTMapper) bool {
+// Only a definite "no such kind" answers false: any other discovery error
+// (API unreachable, timeout) is returned, so a transient failure at start-up
+// cannot silently switch the watch off for the life of the pod.
+func argoWorkflowsServed(mapper meta.RESTMapper) (bool, error) {
 	_, err := mapper.RESTMapping(argoWorkflowGVK.GroupKind(), argoWorkflowGVK.Version)
-	return err == nil
+	switch {
+	case err == nil:
+		return true, nil
+	case meta.IsNoMatchError(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("discovering the Argo Workflow API: %w", err)
+	}
 }
 
 func buildWorkflow(job *framev1beta1.FrameJob) *unstructured.Unstructured {
@@ -411,15 +422,19 @@ func (r *FrameJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// for an informer that never syncs and the whole manager exits after the
 	// cache-sync timeout, so the watch is added only when the API is served.
 	// Pipeline jobs on a cluster without Argo report ArgoWorkflowsMissing and
-	// re-check every few minutes; installing Argo later needs an operator
-	// restart for the push-based watch, the poll covers the gap until then.
-	if argoWorkflowsServed(mgr.GetRESTMapper()) {
+	// re-check every few minutes and create the Workflow once Argo is there;
+	// only the push-based watch needs an operator restart after Argo is installed.
+	served, err := argoWorkflowsServed(mgr.GetRESTMapper())
+	if err != nil {
+		return err
+	}
+	if served {
 		wfType := &unstructured.Unstructured{}
 		wfType.SetGroupVersionKind(argoWorkflowGVK)
 		b = b.Watches(wfType, handler.EnqueueRequestsFromMapFunc(r.workflowToFrameJob))
 	} else {
-		logf.Log.WithName("framejob").Info("Argo Workflows CRD not found: pipeline FrameJobs are disabled " +
-			"until it is installed and the operator restarted")
+		logf.Log.WithName("framejob").Info("Argo Workflows CRD not found: pipeline FrameJobs wait for it " +
+			"(re-checked every few minutes); restart the operator after installing it to get push-based status")
 	}
 	return b.Complete(r)
 }
