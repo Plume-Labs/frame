@@ -20,7 +20,7 @@ func TestVeleroBacksUpEveryHearthrackKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := map[string]bool{}
-	for _, doc := range strings.Split(string(raw), "\n---") {
+	for _, doc := range strings.SplitSeq(string(raw), "\n---") {
 		var s struct {
 			Spec struct {
 				Template struct {
@@ -47,7 +47,8 @@ func TestVeleroBacksUpEveryHearthrackKind(t *testing.T) {
 			t.Fatalf("unexpected CRD file name %s", f)
 		}
 		if !listed[plural+"."+group] {
-			t.Errorf("%s.%s has no entry in deploy/resilience/velero-hearthrack.yaml: its objects would not be backed up", plural, group)
+			t.Errorf("%s.%s is missing from deploy/resilience/velero-hearthrack.yaml: no backup of its objects",
+				plural, group)
 		}
 	}
 }
