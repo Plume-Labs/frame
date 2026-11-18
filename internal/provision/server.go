@@ -371,7 +371,7 @@ func (s *HTTPImageStore) client() *http.Client {
 	if s.Client != nil {
 		return s.Client
 	}
-	return http.DefaultClient
+	return defaultBuildClient
 }
 
 func (s *HTTPImageStore) Build(ctx context.Context, spec Spec) (imageURL, token string, err error) {

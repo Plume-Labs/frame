@@ -17,11 +17,13 @@ limitations under the License.
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -38,11 +40,49 @@ type CommandRunner interface {
 
 // ExecCommandRunner is the production CommandRunner: it actually execs the
 // command. cmd/agent/main.go uses this; tests use a fake.
-type ExecCommandRunner struct{}
+type ExecCommandRunner struct {
+	// Timeout bounds one command. Zero means defaultCommandTimeout.
+	//
+	// The agent is root-equivalent and single-threaded per node: a systemctl
+	// that never returns (a unit stuck deactivating, a wedged dbus) would
+	// otherwise hang the reconcile loop forever and take node tuning and
+	// health reporting with it.
+	Timeout time.Duration
+}
 
-// Run implements CommandRunner by shelling out for real.
-func (ExecCommandRunner) Run(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).CombinedOutput()
+// defaultCommandTimeout is far above what the agent's inline commands take
+// (systemctl show, systemd-run, tuned-adm, lsblk: seconds), and short enough
+// that a wedged command is noticed. Restarts are not run inline at all:
+// ScheduleDetachedRestart hands them to systemd-run and returns.
+const defaultCommandTimeout = 2 * time.Minute
+
+// commandWaitDelay bounds how long Run waits for output pipes after the
+// command was killed, see Run.
+const commandWaitDelay = 2 * time.Second
+
+// Run implements CommandRunner by shelling out for real. At the timeout the
+// command's whole process group is killed and the error says so.
+//
+// Through HostCommandRunner the command is `nsenter --pid -- systemctl ...`,
+// and with --pid nsenter forks: killing only the direct child would orphan the
+// real command on the host and leave Run reading a pipe the orphan still
+// holds open. So the command gets its own process group, the kill goes to the
+// group, and WaitDelay stops Wait from blocking on a surviving grandchild.
+func (r ExecCommandRunner) Run(name string, args ...string) (string, error) {
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = defaultCommandTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = commandWaitDelay
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), fmt.Errorf("%s timed out after %s: %w", name, timeout, ctx.Err())
+	}
 	return string(out), err
 }
 
