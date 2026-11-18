@@ -52,7 +52,7 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
       <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-2">
         <div className="text-muted-foreground">
           {machine.eventLogTotal} entr{machine.eventLogTotal === 1 ? 'y' : 'ies'} in total in the BMC
-          log. The {machine.eventLog.length} entries below are the ones the last read actually
+          log. The {machine.eventLog.length === 1 ? 'entry' : `${machine.eventLog.length} entries`} below {machine.eventLog.length === 1 ? 'is the one' : 'are the ones'} the last read actually
           fetched — the counters that follow cover those fetched entries, not the machine's
           whole log.
         </div>

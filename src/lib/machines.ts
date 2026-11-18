@@ -489,11 +489,11 @@ export function isStale(at: string | null, now: Date): boolean {
 export function stalenessLabel(at: string | null, now: Date): string {
   if (at === null) return NEVER_READ_LABEL
   const seconds = Math.floor((now.getTime() - new Date(at).getTime()) / 1000)
-  if (seconds < 60) return `il y a ${seconds} s`
+  if (seconds < 60) return `${seconds} s ago`
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `il y a ${minutes} min`
+  if (minutes < 60) return `${minutes} min ago`
   const hours = Math.floor(minutes / 60)
-  return `il y a ${hours} h`
+  return `${hours} h ago`
 }
 
 export function powerActionLabel(action: string, machineName: string): string {
@@ -596,7 +596,7 @@ export function sensorAvailability(machine: Machine): SensorAvailability {
   // 'PowerOff' too: the branch above already returns 'powered-off' for
   // every machine whose powerState isn't 'On', so postState === 'PowerOff'
   // can only be seen here in the contradictory case where powerState says
-  // On — and rendering that as "in-post" (Démarrage en cours) would assert
+  // On — and rendering that as "in-post" (POST in progress) would assert
   // the opposite of what postState itself is saying.
   if (machine.postState === 'InPost') {
     return { kind: 'in-post' }

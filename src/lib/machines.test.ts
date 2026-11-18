@@ -139,9 +139,9 @@ describe('staleness', () => {
   })
 
   it('says how old the reading is in words', () => {
-    expect(stalenessLabel('2026-09-10T11:59:30Z', now)).toBe('il y a 30 s')
-    expect(stalenessLabel('2026-09-10T11:46:00Z', now)).toBe('il y a 14 min')
-    expect(stalenessLabel('2026-09-10T09:00:00Z', now)).toBe('il y a 3 h')
+    expect(stalenessLabel('2026-09-10T11:59:30Z', now)).toBe('30 s ago')
+    expect(stalenessLabel('2026-09-10T11:46:00Z', now)).toBe('14 min ago')
+    expect(stalenessLabel('2026-09-10T09:00:00Z', now)).toBe('3 h ago')
   })
 
   // The functions take the timestamp they are judging rather than reaching
@@ -157,7 +157,7 @@ describe('staleness', () => {
 
     expect(isStale(lastProbeAt, now)).toBe(false)
     expect(isStale(sensorsValidAt, now)).toBe(true)
-    expect(stalenessLabel(lastProbeAt, now)).toBe('il y a 5 s')
+    expect(stalenessLabel(lastProbeAt, now)).toBe('5 s ago')
     expect(stalenessLabel(sensorsValidAt, now)).not.toBe(stalenessLabel(lastProbeAt, now))
   })
 })
