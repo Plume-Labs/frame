@@ -5,7 +5,25 @@ import { pollInterval, watchPaths } from '@/lib/k8s-watch'
 export type LiveState<T> =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; data: T }
+  // staleError is set when a refresh failed after data had been read: `data` is
+  // then the last good read, not the current state of the cluster, and the view
+  // must say so rather than drop it or pass it off as fresh.
+  | { phase: 'ready'; data: T; staleError?: string; lastRead?: number }
+
+/**
+ * What a failed fetch does to the state. Before any data was read it is a plain
+ * error; after, the last good data stays on screen and is marked stale, because
+ * blanking a screen on one failed poll hides exactly what an operator is
+ * watching (an active `noout` flag, an OSD replacement waiting for approval).
+ */
+export function stateAfterFailure<T>(prev: LiveState<T>, message: string): LiveState<T> {
+  if (prev.phase === 'ready') return { ...prev, staleError: message }
+  return { phase: 'error', message }
+}
+
+export function stateAfterSuccess<T>(data: T, now: number = Date.now()): LiveState<T> {
+  return { phase: 'ready', data, lastRead: now }
+}
 
 /**
  * Fetch a live cluster resource with loading / error / ready states and a
@@ -75,14 +93,12 @@ export function useLiveResource<T>(
     fetcherRef
       .current()
       .then((data) => {
-        if (!cancelledRef.current) setState({ phase: 'ready', data })
+        if (!cancelledRef.current) setState(stateAfterSuccess(data))
       })
       .catch((e: unknown) => {
         if (cancelledRef.current) return
-        setState({
-          phase: 'error',
-          message: e instanceof Error ? e.message : 'Failed to reach the Kubernetes API',
-        })
+        const message = e instanceof Error ? e.message : 'Failed to reach the Kubernetes API'
+        setState((prev) => stateAfterFailure(prev, message))
       })
   }, [])
 

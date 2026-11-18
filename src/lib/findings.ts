@@ -212,3 +212,22 @@ function serviceFindings(
       screen,
     }))
 }
+
+/**
+ * Which data sources the Overview could not read. A source that is loading or
+ * failed contributes no findings, so "no findings" only means "all clear" when
+ * this list is empty: otherwise the green check would be a statement about
+ * data nobody has seen.
+ */
+export function unreadSources(sources: Record<string, { phase: string }>): {
+  loading: string[]
+  failed: string[]
+} {
+  const loading: string[] = []
+  const failed: string[] = []
+  for (const [name, s] of Object.entries(sources)) {
+    if (s.phase === 'loading') loading.push(name)
+    else if (s.phase === 'error') failed.push(name)
+  }
+  return { loading, failed }
+}

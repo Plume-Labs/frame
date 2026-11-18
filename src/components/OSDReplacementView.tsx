@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { LiveStates } from '@/components/LiveStates'
+import { LiveStates, StaleNotice } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { CheckCircle, Circle, HardDrives, PauseCircle, Spinner, XCircle } from '@phosphor-icons/react'
 
@@ -366,6 +366,7 @@ export function OSDReplacementView() {
   return (
     <div className="space-y-4">
       {admin && <NewReplacement busyElsewhere={running} />}
+      <StaleNotice state={state} />
       <LiveStates state={state} emptyLabel="No OSD replacement yet." />
       {items.map((r) => (
         <ReplacementCard key={`${r.namespace}/${r.name}`} r={r} admin={admin} />

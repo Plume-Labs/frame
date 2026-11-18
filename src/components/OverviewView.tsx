@@ -19,7 +19,8 @@ import { useNavigation } from '@/hooks/useNavigation'
 import { Stat, StatGrid, ScreenHeader } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { TONE_TEXT, formatAge, inverseScoreTone } from '@/lib/thresholds'
-import { Finding, collectFindings } from '@/lib/findings'
+import { Finding, collectFindings, unreadSources } from '@/lib/findings'
+import { StaleNotice } from '@/components/LiveStates'
 import type { Cache } from '@/lib/caches'
 import type { Database } from '@/lib/databases'
 import { volumeFillFindings, type VolumeLoadSnapshot } from '@/lib/volume-load'
@@ -192,6 +193,15 @@ function AttentionCard({
     volumes: volumeFill.phase === 'ready' && volumeFill.data ? volumeFillFindings(volumeFill.data) : undefined,
   })
 
+  const unread = unreadSources({ nodes, alerts, ceph, backups, machines, caches, databases, volumes: volumeFill })
+  const unreadCount = unread.loading.length + unread.failed.length
+  const unreadNote = [
+    unread.loading.length > 0 ? `still loading: ${unread.loading.join(', ')}` : '',
+    unread.failed.length > 0 ? `could not be read: ${unread.failed.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
   return (
     <Card>
       <CardHeader>
@@ -205,7 +215,17 @@ function AttentionCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {findings.length === 0 ? (
+        {[nodes, alerts, ceph, backups, machines, caches, databases, volumeFill].map((st, i) => (
+          <StaleNotice key={i} state={st} />
+        ))}
+        {findings.length === 0 && unreadCount > 0 ? (
+          // No findings from sources nobody has read is not "all clear": say
+          // what is missing instead of showing a green check.
+          <div role="status" className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
+            <Warning size={18} className="shrink-0 text-warning" />
+            Cannot say everything is fine yet: {unreadNote}.
+          </div>
+        ) : findings.length === 0 ? (
           // Saying "nothing is wrong" is a result. An empty card reads as a
           // panel that failed to load.
           <div className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
@@ -214,6 +234,11 @@ function AttentionCard({
           </div>
         ) : (
           findings.map((f) => <FindingRow key={f.key} finding={f} />)
+        )}
+        {findings.length > 0 && unreadCount > 0 && (
+          <div role="status" className="text-[11px] font-mono text-muted-foreground">
+            Not complete — {unreadNote}.
+          </div>
         )}
       </CardContent>
     </Card>
@@ -275,7 +300,13 @@ function ServingCard({ state }: { state: ReturnType<typeof useLiveResource<Infer
             />
           </StatGrid>
         ) : (
-          <p className="text-sm text-muted-foreground font-mono">No inference server deployed.</p>
+          <p className="text-sm text-muted-foreground font-mono">
+            {state.phase === 'loading'
+              ? 'Reading…'
+              : state.phase === 'error'
+                ? 'Could not read the inference status.'
+                : 'No inference server deployed.'}
+          </p>
         )}
       </CardContent>
     </Card>
@@ -320,7 +351,13 @@ function PostureCard({
             <Stat label="Misconfigs" value={p.misconfigs.critical + p.misconfigs.high} size="md" />
           </StatGrid>
         ) : (
-          <p className="text-sm text-muted-foreground font-mono">trivy-operator not deployed.</p>
+          <p className="text-sm text-muted-foreground font-mono">
+            {state.phase === 'loading'
+              ? 'Reading…'
+              : state.phase === 'error'
+                ? 'Could not read the posture status.'
+                : 'trivy-operator not deployed.'}
+          </p>
         )}
         {bk?.lastSuccess && (
           <div className="text-[11px] font-mono text-muted-foreground">

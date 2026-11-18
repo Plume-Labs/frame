@@ -31,7 +31,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { LiveStates } from '@/components/LiveStates'
+import { LiveStates, StaleNotice } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { Flag } from '@phosphor-icons/react'
 
@@ -131,7 +131,12 @@ export function LiveActiveFlags() {
     [frame.cephActions.watchPath()],
     60_000,
   )
-  return <ActiveFlagsBanner items={state.phase === 'ready' ? state.data : []} admin={isAdmin()} />
+  return (
+    <>
+      <StaleNotice state={state} />
+      <ActiveFlagsBanner items={state.phase === 'ready' ? state.data : []} admin={isAdmin()} />
+    </>
+  )
 }
 
 function NewAction() {
@@ -272,6 +277,7 @@ export function CephActionsView() {
       )}
       {pending.length > 0 && <p className="text-sm">{pending.length} gesture(s) waiting to be sent.</p>}
       {running.length > 0 && <p className="text-sm">{running.length} gesture(s) sent, outcome not known yet.</p>}
+      <StaleNotice state={state} />
       <LiveStates state={state} emptyLabel="No Ceph gesture yet." />
       {items.length > 0 && (
         <Card>

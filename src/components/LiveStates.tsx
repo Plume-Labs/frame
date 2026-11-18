@@ -52,3 +52,23 @@ export function LiveStates<T>({
 
   return null
 }
+
+/**
+ * Shown above a view whose last refresh failed but which still has data: the
+ * numbers below are the last good read, and the view says so.
+ */
+export function StaleNotice({ state }: { state: { phase: string; staleError?: string; lastRead?: number } }) {
+  if (state.phase !== 'ready' || !state.staleError) return null
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs font-mono"
+    >
+      <Warning size={16} className="mt-0.5 shrink-0 text-warning" />
+      <span>
+        Refresh failed, showing the last successful read
+        {state.lastRead ? ` (${new Date(state.lastRead).toLocaleTimeString()})` : ''}: {state.staleError}
+      </span>
+    </div>
+  )
+}
