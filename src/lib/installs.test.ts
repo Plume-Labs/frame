@@ -5,7 +5,7 @@ import {
   installObjectName, isStalledInPhase, isTerminal, machineOptionLabel, phaseIndex, phaseTone,
   randomNameSuffix,
   mapInstallPhase, textsMentioning, toInstall, type MachineChoice,
-  installLinks,
+  installLinks, installBlockers,
 } from './installs'
 
 describe('phases', () => {
@@ -299,5 +299,35 @@ describe('installLinks', () => {
     expect(installLinks(`${a} ${b}`, '20', a).error).toBeDefined()
     expect(installLinks('', '4095', a).error).toBeDefined()
     expect(installLinks('', '', a).error).toBeDefined()
+  })
+})
+
+describe('installBlockers', () => {
+  const ready = {
+    machineSelected: true, hostname: 'w3', address: '192.0.2.213/24', gateway: '192.0.2.1', dnsValid: true,
+    sshKeyRef: 'k', k3sVersion: 'v1', disksValid: true, joinValid: true, serialMatches: true, serialKnown: true,
+  }
+  it('is empty when the form is complete, so the button can unlock', () => {
+    expect(installBlockers(ready)).toEqual([])
+  })
+  it('names what is missing, once per cause, in form order', () => {
+    const b = installBlockers({ ...ready, hostname: ' ', gateway: '', serialMatches: false })
+    expect(b).toEqual(['Enter a hostname', 'Enter the gateway', "Type the machine's serial to confirm"])
+  })
+  it('does not ask for a serial before a machine is chosen', () => {
+    const b = installBlockers({ ...ready, machineSelected: false, serialMatches: false })
+    expect(b).toEqual(['Select a machine'])
+  })
+  it('reports every cause, and each one alone is enough to block', () => {
+    const causes: Array<Partial<typeof ready> & { linksError?: string }> = [
+      { dnsValid: false }, { linksError: 'bad vlan' }, { sshKeyRef: ' ' }, { k3sVersion: '' },
+      { disksValid: false }, { joinValid: false }, { address: '' }, { serialMatches: false },
+    ]
+    for (const c of causes) expect(installBlockers({ ...ready, ...c })).toHaveLength(1)
+  })
+  it('says so, instead of asking for the impossible, when the machine has no serial', () => {
+    const b = installBlockers({ ...ready, serialKnown: false, serialMatches: false })
+    expect(b).toHaveLength(1)
+    expect(b[0]).not.toMatch(/Type the machine/)
   })
 })

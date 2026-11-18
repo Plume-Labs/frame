@@ -419,3 +419,44 @@ export function installLinks(
   out.vlan = { id, parentMAC: port }
   return out
 }
+
+/**
+ * What still stops "Erase and install" from unlocking, in the order a person
+ * fills the form. A button that is merely greyed gives no way to find the
+ * field that is wrong, and this dialog has up to a dozen of them.
+ */
+export interface InstallFormState {
+  machineSelected: boolean
+  hostname: string
+  address: string
+  gateway: string
+  dnsValid: boolean
+  linksError?: string
+  sshKeyRef: string
+  k3sVersion: string
+  disksValid: boolean
+  joinValid: boolean
+  serialMatches: boolean
+  /** The machine's inventory reported a serial at all. Without one the confirmation can never match. */
+  serialKnown: boolean
+}
+
+export function installBlockers(f: InstallFormState): string[] {
+  const out: string[] = []
+  if (!f.machineSelected) out.push('Select a machine')
+  if (f.hostname.trim() === '') out.push('Enter a hostname')
+  if (f.address.trim() === '') out.push('Enter the address (CIDR)')
+  if (f.gateway.trim() === '') out.push('Enter the gateway')
+  if (!f.dnsValid) out.push('Enter one to three DNS resolvers')
+  if (f.linksError) out.push(f.linksError)
+  if (f.sshKeyRef.trim() === '') out.push('Name the SSH key Secret')
+  if (f.disksValid === false) out.push('Fill every disk with a /dev/disk/by-id/ path and a size')
+  if (!f.joinValid) out.push('Give the server URL and join token Secret to join a cluster')
+  if (f.k3sVersion.trim() === '') out.push('Enter the k3s version')
+  if (f.machineSelected && !f.serialKnown) {
+    out.push('This machine reported no serial: wait for the next inventory read before installing')
+  } else if (f.machineSelected && !f.serialMatches) {
+    out.push("Type the machine's serial to confirm")
+  }
+  return out
+}
