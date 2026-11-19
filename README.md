@@ -68,6 +68,13 @@ The console needs the API proxy *and* `authd` reachable (two terminals plus the 
 
 ---
 
+## How it is built
+
+Much of this code is written with AI assistance (Claude), and the commits say so
+with a `Co-Authored-By` trailer. It is held to the same bar as any other change:
+tests, the CI jobs listed in [CONTRIBUTING.md](CONTRIBUTING.md), and a human
+maintainer accountable for what merges.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are accepted under the [Developer Certificate of Origin](CONTRIBUTING.md#sign-your-commits-dco).
