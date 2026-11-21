@@ -8,8 +8,16 @@ import { LiveStates } from '@/components/LiveStates'
 import { TrendRow } from '@/components/Sparkline'
 import { inverseScoreClass, inverseScoreTone } from '@/lib/thresholds'
 import { ChartLine, ArrowClockwise, TrendUp } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
+
+// Resource and forecast metric names come from the SDK; map the known ones.
+const RESOURCE_LABEL: Record<string, MessageKey> = {
+  CPU: 'cap.res.cpu',
+  Memory: 'cap.res.memory',
+}
 
 const pct = (a: number, b: number) => (b > 0 ? (a / b) * 100 : 0)
 // Usage percentages: lower is better, comfortable below 75, tight past 90.
@@ -17,6 +25,7 @@ const capacityTone = (p: number) => inverseScoreTone(p, 75, 90)
 const tone = (p: number) => inverseScoreClass(p, 75, 90)
 
 export function CapacityView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<CapacityResource[]>(
     () => frame.cluster.capacity(),
     [],
@@ -36,7 +45,7 @@ export function CapacityView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <ChartLine className="text-primary" />
-            Cluster Capacity
+            {t('cap.title')}
             <Button
               variant="outline"
               size="sm"
@@ -45,19 +54,18 @@ export function CapacityView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Live allocatable capacity vs actual usage (metrics-server) and reserved requests, plus a
-            usage trend and projection from Prometheus history (below).
+            {t('cap.desc')}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No capacity data." />
+      <LiveStates state={state} emptyLabel={t('cap.empty')} />
 
       {state.phase === 'ready' &&
         res.map((r) => {
@@ -67,26 +75,28 @@ export function CapacityView() {
             <Card key={r.name}>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="font-mono text-lg">{r.name}</CardTitle>
+                  <CardTitle className="font-mono text-lg">{RESOURCE_LABEL[r.name] ? t(RESOURCE_LABEL[r.name]) : r.name}</CardTitle>
                   <Badge variant="outline" className={`font-mono ${tone(reqPct)} border-current`}>
-                    {reqPct.toFixed(0)}% reserved
+                    {t('cap.reserved', { pct: reqPct.toFixed(0) })}
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Bar
-                  label="Used (live)"
+                  label={t('cap.used')}
                   value={usedPct}
                   detail={`${r.used.toFixed(1)} / ${r.allocatable.toFixed(1)} ${r.unit}`}
                 />
                 <Bar
-                  label="Requested (reserved)"
+                  label={t('cap.requested')}
                   value={reqPct}
                   detail={`${r.requested.toFixed(1)} / ${r.allocatable.toFixed(1)} ${r.unit}`}
                 />
                 <div className="text-xs text-muted-foreground font-mono">
-                  Headroom: {(r.allocatable - r.requested).toFixed(1)} {r.unit} unreserved ·{' '}
-                  {(r.allocatable - r.used).toFixed(1)} {r.unit} unused
+                  {t('cap.headroom', {
+                    unreserved: `${(r.allocatable - r.requested).toFixed(1)} ${r.unit}`,
+                    unused: `${(r.allocatable - r.used).toFixed(1)} ${r.unit}`,
+                  })}
                 </div>
               </CardContent>
             </Card>
@@ -99,6 +109,7 @@ export function CapacityView() {
 }
 
 function ForecastCard() {
+  const { t } = useI18n()
   // A Prometheus projection over a 3h history — a "days to full" number that
   // does not need to be fresher than a minute, unlike the gauges above it.
   const { state } = useLiveResource<ForecastStatus | null>(() => frame.cluster.forecast(), [], [], 60_000)
@@ -107,23 +118,24 @@ function ForecastCard() {
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <TrendUp size={16} className="text-primary" /> Usage trend &amp; forecast (Prometheus)
+          <TrendUp size={16} className="text-primary" /> {t('cap.forecast.title')}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <LiveStates state={state} emptyLabel="Prometheus not deployed." />
+        <LiveStates state={state} emptyLabel={t('cap.forecast.empty')} />
         {fc &&
           fc.series.map((s) => (
             <TrendRow
               key={s.metric}
               series={s}
+              label={RESOURCE_LABEL[s.metric] ? t(RESOURCE_LABEL[s.metric]) : undefined}
               windowHours={fc.windowHours}
               tone={capacityTone(s.current)}
-              caption={`last ${fc.windowHours}h · ${
+              caption={
                 s.projectedFullDays == null
-                  ? 'flat/declining — no exhaustion projected'
-                  : `~${s.projectedFullDays.toFixed(1)} days to 100% at current trend`
-              }`}
+                  ? t('cap.caption.flat', { hours: fc.windowHours })
+                  : t('cap.caption.days', { hours: fc.windowHours, days: s.projectedFullDays.toFixed(1) })
+              }
             />
           ))}
       </CardContent>
