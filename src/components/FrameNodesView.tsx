@@ -17,6 +17,8 @@ import {
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { HardDrives, ArrowClockwise, Trash } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
 
 const frame = createFrameClient()
 
@@ -42,6 +44,7 @@ const CLASS_TONE: Record<string, string> = {
  * differing is normal.
  */
 export function FrameNodesView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<{ items: FrameNode[]; total: number }>(
     () => frame.nodes.list(),
     [],
@@ -58,10 +61,10 @@ export function FrameNodesView() {
     setBusy(node.id)
     try {
       await frame.nodes.delete(node.id)
-      toast.success(`${node.id} deleted`)
+      toast.success(t('fn.deleted', { id: node.id }))
       reload()
     } catch (e) {
-      toast.error(`Failed to delete ${node.id}`, {
+      toast.error(t('fn.deleteFailed', { id: node.id }), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -76,7 +79,7 @@ export function FrameNodesView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <HardDrives className="text-primary" />
-            Node classification — FrameNode CRs
+            {t('fn.title')}
             <Button
               variant="outline"
               size="sm"
@@ -85,22 +88,21 @@ export function FrameNodesView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            How the Hearthrack operator classifies each Kubernetes node: role, rack, zone and service
-            class, projected onto the node as the labels the scheduler and the inference provider
-            select on. Machines themselves are on the Hardware screen
-            (<span className="font-mono">FrameMachine</span>); installing one is a{' '}
-            <span className="font-mono">FrameInstall</span>.
+            {richText(t('fn.desc'), {
+              machine: <span className="font-mono">FrameMachine</span>,
+              install: <span className="font-mono">FrameInstall</span>,
+            })}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No FrameNode resources — nothing provisioned yet." />
+      <LiveStates state={state} emptyLabel={t('fn.empty')} />
 
       {state.phase === 'ready' &&
         nodes.map((n) => (
@@ -112,7 +114,7 @@ export function FrameNodesView() {
                   <p className="text-xs text-muted-foreground font-mono">
                     {n.id}
                     {n.zone && ` · ${n.zone}`}
-                    {n.rackId && ` · rack ${n.rackId}`}
+                    {n.rackId && ` · ${t('fn.rack', { id: n.rackId })}`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -120,7 +122,7 @@ export function FrameNodesView() {
                     variant="outline"
                     className={`font-mono text-[10px] border-current ${CLASS_TONE[n.serviceClass] ?? 'text-foreground'}`}
                   >
-                    {n.serviceClass || 'unclassified'}
+                    {n.serviceClass || t('fn.unclassified')}
                   </Badge>
                   <Badge
                     variant="outline"
@@ -136,16 +138,16 @@ export function FrameNodesView() {
                     onClick={() => setDeleteTarget(n)}
                   >
                     <Trash />
-                    Delete
+                    {t('common.delete')}
                   </Button>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
-              <Field label="CPU" value={n.cpu ? `${n.cpu} cores` : '—'} />
-              <Field label="Memory" value={n.memory ? `${n.memory.toFixed(0)} GiB` : '—'} />
-              <Field label="GPUs" value={n.gpuCount ? `${n.gpuCount} × ${n.gpuModel}` : 'none'} />
-              <Field label="Rack" value={n.rackId || '—'} />
+              <Field label={t('fn.cpu')} value={n.cpu ? t('fn.cores', { n: n.cpu }) : '—'} />
+              <Field label={t('fn.memory')} value={n.memory ? `${n.memory.toFixed(0)} GiB` : '—'} />
+              <Field label={t('fn.gpus')} value={n.gpuCount ? `${n.gpuCount} × ${n.gpuModel}` : t('fn.none')} />
+              <Field label={t('fn.rackLabel')} value={n.rackId || '—'} />
             </CardContent>
           </Card>
         ))}
@@ -153,17 +155,15 @@ export function FrameNodesView() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.id}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('fn.confirmTitle', { id: deleteTarget?.id ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Removes the FrameNode resource: the operator strips the Hearthrack labels (role, rack,
-              zone, service class) from the node, so workloads that select on them stop being
-              placed there. It does not wipe, power off, or remove the node from Kubernetes.
+              {t('fn.confirmDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteTarget && remove(deleteTarget)}>
-              Delete resource
+              {t('fn.deleteResource')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
