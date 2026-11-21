@@ -22,12 +22,15 @@ import {
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Calendar, ArrowClockwise, Plus, Trash } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
 
 const frame = createFrameClient()
 
 const SCHEDULERS: SchedulerType[] = ['volcano', 'yunikorn', 'default']
 
 function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState('')
@@ -47,12 +50,12 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
         priority: Number(priority) || 0,
         preemption,
       })
-      toast.success(`Policy ${name} applied`)
+      toast.success(t('pol.applied', { name }))
       setOpen(false)
       setName('')
       onCreated()
     } catch (e) {
-      toast.error(`Failed to apply ${name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('pol.applyFailed', { name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setSaving(false)
     }
@@ -63,21 +66,21 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="font-mono gap-1.5">
           <Plus />
-          New Policy
+          {t('pol.new')}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-mono">New Scheduling Policy</DialogTitle>
-          <DialogDescription>Creates or updates a SchedulingPolicy resource.</DialogDescription>
+          <DialogTitle className="font-mono">{t('pol.newTitle')}</DialogTitle>
+          <DialogDescription>{t('pol.newDesc')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="policy-name">Name</Label>
+            <Label htmlFor="policy-name">{t('pol.name')}</Label>
             <Input id="policy-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="training-high-prio" />
           </div>
           <div className="space-y-1.5">
-            <Label>Scheduler</Label>
+            <Label>{t('pol.scheduler')}</Label>
             <Select value={scheduler} onValueChange={(v) => setScheduler(v as SchedulerType)}>
               <SelectTrigger>
                 <SelectValue />
@@ -92,21 +95,21 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="policy-queue">Queue</Label>
+            <Label htmlFor="policy-queue">{t('pol.queue')}</Label>
             <Input id="policy-queue" value={queue} onChange={(e) => setQueue(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="policy-priority">Priority</Label>
+            <Label htmlFor="policy-priority">{t('pol.priority')}</Label>
             <Input id="policy-priority" type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
           </div>
           <div className="flex items-center justify-between">
-            <Label htmlFor="policy-preemption">Preemption</Label>
+            <Label htmlFor="policy-preemption">{t('pol.preemption')}</Label>
             <Switch id="policy-preemption" checked={preemption} onCheckedChange={setPreemption} />
           </div>
         </div>
         <DialogFooter>
           <Button onClick={submit} disabled={!name || saving} className="font-mono">
-            {saving ? 'Applying…' : 'Apply'}
+            {saving ? t('pol.applying') : t('pol.apply')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -115,6 +118,7 @@ function NewPolicyDialog({ onCreated }: { onCreated: () => void }) {
 }
 
 export function FrameSchedulerView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<{ items: SchedulingPolicy[] }>(
     () => frame.scheduler.listPolicies(),
     [],
@@ -128,10 +132,10 @@ export function FrameSchedulerView() {
     setBusy(p.name)
     try {
       await frame.scheduler.deletePolicy(p.name)
-      toast.success(`Policy ${p.name} deleted`)
+      toast.success(t('pol.deleted', { name: p.name }))
       reload()
     } catch (e) {
-      toast.error(`Failed to delete ${p.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('pol.deleteFailed', { name: p.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
       setDeleteTarget(null)
@@ -144,7 +148,7 @@ export function FrameSchedulerView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Calendar className="text-primary" />
-            Scheduling Policies
+            {t('pol.title')}
             <div className="ml-auto flex gap-2">
               <NewPolicyDialog onCreated={reload} />
               <Button
@@ -155,20 +159,19 @@ export function FrameSchedulerView() {
                 disabled={state.phase === 'loading'}
               >
                 <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-                Refresh
+                {t('common.refresh')}
               </Button>
             </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Live <span className="font-mono">SchedulingPolicy</span> resources — scheduler backend,
-            queues and preemption settings reconciled by the operator.
+            {richText(t('pol.desc'), { kind: <span className="font-mono">SchedulingPolicy</span> })}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No SchedulingPolicies defined." />
+      <LiveStates state={state} emptyLabel={t('pol.empty')} />
 
       {state.phase === 'ready' &&
         policies.map((p) => (
@@ -178,12 +181,12 @@ export function FrameSchedulerView() {
                 <div>
                   <CardTitle className="font-mono text-lg">{p.name}</CardTitle>
                   <p className="text-xs text-muted-foreground font-mono">
-                    scheduler: {p.scheduler}
+                    {t('pol.schedulerOf', { name: p.scheduler })}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="font-mono text-primary border-current">
-                    queue {p.queue}
+                    {t('pol.queueOf', { name: p.queue })}
                   </Badge>
                   <Button
                     variant="outline"
@@ -198,10 +201,10 @@ export function FrameSchedulerView() {
               </div>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2 text-[10px] font-mono">
-              <Badge variant="outline">weight {p.queueWeight}</Badge>
-              <Badge variant="outline">priority {p.priority}</Badge>
+              <Badge variant="outline">{t('pol.weight', { n: p.queueWeight })}</Badge>
+              <Badge variant="outline">{t('pol.priorityOf', { n: p.priority })}</Badge>
               <Badge variant="outline" className={p.preemption ? 'text-warning' : 'text-muted-foreground'}>
-                preemption {p.preemption ? 'on' : 'off'}
+                {p.preemption ? t('pol.preemptionOn') : t('pol.preemptionOff')}
               </Badge>
             </CardContent>
           </Card>
@@ -210,19 +213,18 @@ export function FrameSchedulerView() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pol.confirmTitle', { name: deleteTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Deletes the SchedulingPolicy resource. Jobs referencing its queue fall back to the scheduler
-              default. This cannot be undone.
+              {t('pol.confirmDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep policy</AlertDialogCancel>
+            <AlertDialogCancel>{t('pol.keep')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => deleteTarget && doDelete(deleteTarget)}
             >
-              Delete policy
+              {t('pol.deletePolicy')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
