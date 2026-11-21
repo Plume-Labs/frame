@@ -6,6 +6,7 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Stat, Meter } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
+import { formatTops, peakTops, summarizeTops } from '@/lib/tops'
 import { inverseScoreTone, TONE_TEXT } from '@/lib/thresholds'
 import { Speedometer, ArrowClockwise, Thermometer, Lightning, TrendUp } from '@phosphor-icons/react'
 
@@ -43,6 +44,7 @@ export function GpuView() {
   )
   const gpus = state.phase === 'ready' ? state.data : []
   const trend = trendState.phase === 'ready' ? trendState.data : null
+  const tops = summarizeTops(gpus)
 
   return (
     <div className="space-y-6">
@@ -58,11 +60,19 @@ export function GpuView() {
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && (
-          <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <CardContent className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
             <Stat label="GPUs" value={`${gpus.length}`} tone="accent" />
+            <Stat label="Peak compute" value={tops.known ? formatTops(tops.peak) : '—'} />
+            <Stat label="In use (est.)" value={tops.known ? formatTops(tops.used) : '—'} />
             <Stat label="Avg util" value={`${gpus.length ? Math.round(gpus.reduce((s, g) => s + g.utilPct, 0) / gpus.length) : 0}%`} />
             <Stat label="Total power" value={`${gpus.reduce((s, g) => s + g.powerW, 0).toFixed(0)} W`} />
             <Stat label="Model" value={gpus[0]?.model ?? '—'} size="sm" />
+          </CardContent>
+        )}
+        {state.phase === 'ready' && gpus.length > 0 && (
+          <CardContent className="pt-0 text-[11px] font-mono text-muted-foreground">
+            Peak = vendor INT8 tensor rating (dense), a ceiling. In use = peak × utilisation, an upper-bound estimate.
+            {tops.unknown > 0 && ` ${tops.unknown} GPU${tops.unknown > 1 ? 's' : ''} of unlisted model not counted.`}
           </CardContent>
         )}
       </Card>
@@ -109,6 +119,9 @@ export function GpuView() {
                       {g.tempC}°C
                     </Badge>
                     <Badge variant="outline" className="font-mono text-[10px] gap-1"><Lightning size={11} />{g.powerW.toFixed(0)}W</Badge>
+                    <Badge variant="outline" className="font-mono text-[10px]" title="Peak INT8 tensor rating (dense)">
+                      {formatTops(peakTops(g.model))}
+                    </Badge>
                   </div>
                 </div>
               </CardHeader>
