@@ -36,6 +36,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Trash, UserPlus } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
+
+const ROLE_LABEL: Record<string, MessageKey> = {
+  viewer: 'acc.role.viewer',
+  operator: 'acc.role.operator',
+  admin: 'acc.role.admin',
+}
 
 /**
  * Who can sign in, with what rights, and on which keys.
@@ -57,6 +65,8 @@ import { Trash, UserPlus } from '@phosphor-icons/react'
  * disable that would strand the signed-in admin — see `isOnlyEnabledAdmin`.
  */
 export function AccountsView({ currentEmail }: { currentEmail?: string }) {
+  const { t, tn } = useI18n()
+  const roleLabel = (r: string) => (ROLE_LABEL[r] ? t(ROLE_LABEL[r]) : r)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | undefined>(undefined)
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -161,7 +171,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="font-mono text-sm">Accounts</CardTitle>
+        <CardTitle className="font-mono text-sm">{t('acc.title')}</CardTitle>
         <Button
           className="font-mono gap-1.5"
           onClick={() => {
@@ -172,7 +182,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
           }}
         >
           <UserPlus />
-          Invite
+          {t('acc.invite')}
         </Button>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -184,10 +194,10 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         <table className="w-full text-xs font-mono">
           <thead className="text-muted-foreground">
             <tr>
-              <th className="text-left font-normal">Email</th>
-              <th className="text-left font-normal">Role</th>
-              <th className="text-left font-normal">State</th>
-              <th className="text-right font-normal">Keys</th>
+              <th className="text-left font-normal">{t('acc.email')}</th>
+              <th className="text-left font-normal">{t('acc.role')}</th>
+              <th className="text-left font-normal">{t('acc.state')}</th>
+              <th className="text-right font-normal">{t('acc.keys')}</th>
               <th className="text-right font-normal" />
             </tr>
           </thead>
@@ -205,20 +215,20 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                   <td className="py-1.5">{a.email}</td>
                   <td>
                     <select
-                      aria-label={`Role for ${a.email}`}
+                      aria-label={t('acc.roleFor', { email: a.email })}
                       className="bg-transparent disabled:opacity-50"
                       value={a.role}
                       disabled={lastAdmin}
-                      title={lastAdmin ? 'You are the only enabled admin — promote another admin first.' : undefined}
+                      title={lastAdmin ? t('acc.onlyAdminRole') : undefined}
                       onChange={(e) => setPendingRole({ account: a, role: e.target.value })}
                     >
-                      <option value="viewer">viewer</option>
-                      <option value="operator">operator</option>
-                      <option value="admin">admin</option>
+                      <option value="viewer">{roleLabel('viewer')}</option>
+                      <option value="operator">{roleLabel('operator')}</option>
+                      <option value="admin">{roleLabel('admin')}</option>
                     </select>
                   </td>
                   <td>
-                    <span className="text-muted-foreground mr-2">{a.state}</span>
+                    <span className="text-muted-foreground mr-2">{a.state === 'enabled' ? t('acc.enabled') : a.state === 'disabled' ? t('acc.disabled') : a.state}</span>
                     <Button
                       variant="outline"
                       size="sm"
@@ -226,7 +236,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                       disabled={lastAdmin && a.state === 'enabled'}
                       title={
                         lastAdmin && a.state === 'enabled'
-                          ? 'You are the only enabled admin — enable another admin first.'
+                          ? t('acc.onlyAdminState')
                           : undefined
                       }
                       onClick={() =>
@@ -235,12 +245,12 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                           : void act(() => setAccountState(a.name, a.email, 'enabled'))
                       }
                     >
-                      {a.state === 'enabled' ? 'Disable' : 'Enable'}
+                      {a.state === 'enabled' ? t('acc.disable') : t('acc.enable')}
                     </Button>
                   </td>
                   <td className="text-right">
                     <Button variant="ghost" size="sm" className="font-mono" onClick={() => void showKeys(a.email)}>
-                      {a.keyCount < 0 ? '?' : a.keyCount} {a.keyCount === 1 ? 'key' : 'keys'}
+                      {a.keyCount < 0 ? `? ${t('acc.keysUnit')}` : tn('acc.keyCount', a.keyCount)}
                     </Button>
                   </td>
                   <td className="text-right">
@@ -252,7 +262,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                         className="font-mono"
                         onClick={() => void handleReissue(a.email)}
                       >
-                        New link
+                        {t('acc.newLink')}
                       </Button>
                     )}
                   </td>
@@ -265,12 +275,12 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         {keysFor && (
           <div className="space-y-1.5 pt-2 border-t border-border">
             <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-              Keys enrolled by {keysFor}
+              {t('acc.keysBy', { email: keysFor })}
             </p>
             {keysError ? (
-              <p className="text-xs text-destructive">could not read this account's keys</p>
+              <p className="text-xs text-destructive">{t('acc.keysError')}</p>
             ) : keys.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No keys enrolled.</p>
+              <p className="text-xs text-muted-foreground">{t('acc.noKeys')}</p>
             ) : (
               <ul className="space-y-1">
                 {keys.map((k) => (
@@ -282,8 +292,8 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label={`Revoke ${k.label || k.id}`}
-                      title={`Revoke ${k.label || k.id}`}
+                      aria-label={t('acc.revokeKey', { name: k.label || k.id })}
+                      title={t('acc.revokeKey', { name: k.label || k.id })}
                       onClick={() => setPendingRevoke({ email: keysFor, key: k })}
                     >
                       <Trash />
@@ -300,17 +310,10 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="font-mono">
-              {reissueFor ? `New link for ${reissueFor}` : 'Invite someone'}
+              {reissueFor ? t('acc.newLinkFor', { email: reissueFor }) : t('acc.inviteSomeone')}
             </DialogTitle>
             <DialogDescription>
-              {reissueFor ? (
-                <>
-                  Replaces the earlier link, which may have expired or was never captured. Copy it to
-                  them yourself —{' '}
-                </>
-              ) : (
-                <>Creates an account with no credential and returns a link. Copy it to them yourself — </>
-              )}
+              {reissueFor ? t('acc.reissueIntro') : t('acc.inviteIntro')}{' '}
               {/*
                 No number here on purpose. The lifetime is
                 ServerConfig.InviteTTL (internal/authd/server.go), which
@@ -323,7 +326,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 around forever". Saying that without a number cannot go
                 stale.
               */}
-              Hearthrack sends no mail. The link is short-lived, and dies the moment they enrol a key.
+              {t('acc.inviteNote')}
             </DialogDescription>
           </DialogHeader>
           {/*
@@ -346,7 +349,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
           {!reissueFor && (
             <form className="space-y-3" onSubmit={handleInvite}>
               <div className="space-y-1.5">
-                <Label htmlFor="invite-email">Email</Label>
+                <Label htmlFor="invite-email">{t('acc.email')}</Label>
                 <Input
                   id="invite-email"
                   type="email"
@@ -357,23 +360,22 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="invite-role">Role</Label>
+                <Label htmlFor="invite-role">{t('acc.role')}</Label>
                 <select
                   id="invite-role"
                   className="w-full bg-transparent border border-border rounded px-2 py-1.5 text-sm font-mono"
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value as InvitableRole)}
                 >
-                  <option value="viewer">viewer</option>
-                  <option value="operator">operator</option>
+                  <option value="viewer">{roleLabel('viewer')}</option>
+                  <option value="operator">{roleLabel('operator')}</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground">
-                  An invitation cannot create an admin — authd acts under its own identity, and only an
-                  admin may mint one. Invite, then change the role in the table above.
+                  {t('acc.noAdminInvite')}
                 </p>
               </div>
               <Button type="submit" className="w-full font-mono" disabled={!inviteEmail.trim()}>
-                Create invitation
+                {t('acc.createInvitation')}
               </Button>
             </form>
           )}
@@ -384,7 +386,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
           )}
           <DialogFooter>
             <Button variant="outline" className="font-mono" onClick={closeInviteDialog}>
-              Close
+              {t('common.close')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -394,18 +396,24 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="font-mono">
-              {pendingRole?.role === 'admin' ? 'Promote' : 'Change the role of'} {pendingRole?.account.email}?
+              {pendingRole?.role === 'admin'
+                ? t('acc.promoteTitle', { email: pendingRole.account.email })
+                : t('acc.changeRoleTitle', { email: pendingRole?.account.email ?? '' })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingRole?.role === 'admin'
-                ? `This grants ${pendingRole.account.email} full admin rights over the cluster.`
+                ? t('acc.promoteDesc', { email: pendingRole.account.email })
                 : pendingRole?.account.role === 'admin'
-                  ? `This removes ${pendingRole.account.email}'s admin rights.`
-                  : `This changes ${pendingRole?.account.email}'s role from ${pendingRole?.account.role} to ${pendingRole?.role}.`}
+                  ? t('acc.demoteDesc', { email: pendingRole.account.email })
+                  : t('acc.changeRoleDesc', {
+                      email: pendingRole?.account.email ?? '',
+                      from: roleLabel(pendingRole?.account.role ?? ''),
+                      to: roleLabel(pendingRole?.role ?? ''),
+                    })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (!pendingRole) return
@@ -414,7 +422,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 void act(() => setAccountRole(account.name, account.email, role))
               }}
             >
-              Confirm
+              {t('common.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -423,14 +431,13 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
       <AlertDialog open={!!pendingDisable} onOpenChange={(open) => !open && setPendingDisable(undefined)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-mono">Disable {pendingDisable?.email}?</AlertDialogTitle>
+            <AlertDialogTitle className="font-mono">{t('acc.disableTitle', { email: pendingDisable?.email ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingDisable?.email} will no longer be able to sign in. Nothing is deleted — their
-              enrolled keys stay on the account, and re-enabling restores access.
+              {t('acc.disableDesc', { email: pendingDisable?.email ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (!pendingDisable) return
@@ -439,7 +446,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 void act(() => setAccountState(account.name, account.email, 'disabled'))
               }}
             >
-              Disable
+              {t('acc.disable')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -449,15 +456,14 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="font-mono">
-              Revoke {pendingRevoke?.key.label || pendingRevoke?.key.id}?
+              {t('acc.revokeTitle', { name: pendingRevoke?.key.label || pendingRevoke?.key.id || '' })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingRevoke?.email} will no longer be able to sign in with this key. This cannot be
-              undone.
+              {t('acc.revokeDesc', { email: pendingRevoke?.email ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (!pendingRevoke) return
@@ -481,7 +487,7 @@ export function AccountsView({ currentEmail }: { currentEmail?: string }) {
                 })
               }}
             >
-              Revoke
+              {t('acc.revoke')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
