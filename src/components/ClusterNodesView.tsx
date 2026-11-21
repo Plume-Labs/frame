@@ -18,10 +18,12 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Stat, Meter } from '@/components/Primitives'
 import { Cpu, ArrowClockwise, CheckCircle, XCircle, LockSimple, LockSimpleOpen, Eject } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
 export function ClusterNodesView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<ClusterNodeInfo[]>(
     () => frame.cluster.nodes(),
     [],
@@ -44,10 +46,10 @@ export function ClusterNodesView() {
     setBusy(node.name)
     try {
       await frame.cluster.cordon(node.name, unschedulable)
-      toast.success(`${node.name} ${unschedulable ? 'cordoned' : 'uncordoned'}`)
+      toast.success(t(unschedulable ? 'cn.cordoned' : 'cn.uncordoned', { name: node.name }))
       reload()
     } catch (e) {
-      toast.error(`Failed to ${unschedulable ? 'cordon' : 'uncordon'} ${node.name}`, {
+      toast.error(t(unschedulable ? 'cn.cordonFailed' : 'cn.uncordonFailed', { name: node.name }), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -60,16 +62,15 @@ export function ClusterNodesView() {
     setBusy(node.name)
     try {
       const { evicted, skipped, blocked } = await frame.cluster.drain(node.name)
-      const detail = `${evicted} evicted · ${skipped} skipped (DaemonSet/static)${
-        blocked ? ` · ${blocked} blocked by PodDisruptionBudget` : ''
-      }`
+      const detail =
+        t('cn.drainDetail', { evicted, skipped }) + (blocked ? ` · ${t('cn.drainBlocked', { blocked })}` : '')
       // A blocked pod is not a failure of the drain, but it does mean the node
       // is not actually empty — say so rather than showing a plain success.
-      if (blocked) toast.warning(`${node.name} partially drained`, { description: detail })
-      else toast.success(`${node.name} drained`, { description: detail })
+      if (blocked) toast.warning(t('cn.partiallyDrained', { name: node.name }), { description: detail })
+      else toast.success(t('cn.drained', { name: node.name }), { description: detail })
       reload()
     } catch (e) {
-      toast.error(`Failed to drain ${node.name}`, {
+      toast.error(t('cn.drainFailed', { name: node.name }), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -91,7 +92,7 @@ export function ClusterNodesView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Cpu className="text-primary" />
-            Cluster Nodes
+            {t('cn.title')}
             <Button
               variant="outline"
               size="sm"
@@ -100,27 +101,27 @@ export function ClusterNodesView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && (
           <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <Stat label="Nodes ready" value={`${ready} / ${nodes.length}`} tone="accent" />
+            <Stat label={t('cn.nodesReady')} value={`${ready} / ${nodes.length}`} tone="accent" />
             <Stat
-              label="CPU in use"
-              value={`${usedCpu.toFixed(1)} / ${totalCpu.toFixed(0)} cores`}
+              label={t('cn.cpuInUse')}
+              value={t('cn.coresOf', { used: usedCpu.toFixed(1), total: totalCpu.toFixed(0) })}
             />
             <Stat
-              label="Memory in use"
+              label={t('cn.memInUse')}
               value={`${usedMem.toFixed(1)} / ${totalMem.toFixed(0)} GiB`}
             />
-            <Stat label="Kubelet" value={nodes[0]?.kubeletVersion ?? '—'} size="sm" />
+            <Stat label={t('cn.kubelet')} value={nodes[0]?.kubeletVersion ?? '—'} size="sm" />
           </CardContent>
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No nodes returned by the cluster." />
+      <LiveStates state={state} emptyLabel={t('cn.empty')} />
 
       {state.phase === 'ready' &&
         nodes.map((n) => {
@@ -142,7 +143,7 @@ export function ClusterNodesView() {
                   <div className="flex items-center gap-2">
                     {n.unschedulable && (
                       <Badge variant="outline" className="font-mono text-warning border-current">
-                        Cordoned
+                        {t('cn.cordonedBadge')}
                       </Badge>
                     )}
                     <Badge
@@ -150,7 +151,7 @@ export function ClusterNodesView() {
                       className={`font-mono ${n.ready ? 'text-accent' : 'text-destructive'} border-current`}
                     >
                       {n.ready ? <CheckCircle className="mr-1" size={12} /> : <XCircle className="mr-1" size={12} />}
-                      {n.ready ? 'Ready' : 'NotReady'}
+                      {n.ready ? t('cn.ready') : t('cn.notReady')}
                     </Badge>
                     {n.unschedulable ? (
                       <Button
@@ -161,7 +162,7 @@ export function ClusterNodesView() {
                         onClick={() => setCordon(n, false)}
                       >
                         <LockSimpleOpen />
-                        Uncordon
+                        {t('cn.uncordon')}
                       </Button>
                     ) : (
                       <Button
@@ -172,7 +173,7 @@ export function ClusterNodesView() {
                         onClick={() => setCordonTarget(n)}
                       >
                         <LockSimple />
-                        Cordon
+                        {t('cn.cordon')}
                       </Button>
                     )}
                     <Button
@@ -183,28 +184,28 @@ export function ClusterNodesView() {
                       onClick={() => setDrainTarget(n)}
                     >
                       <Eject />
-                      Drain
+                      {t('cn.drain')}
                     </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Meter
-                  label="CPU"
+                  label={t('cn.cpu')}
                   pct={cpuPct}
                   detail={
                     n.cpuUsedCores !== undefined
-                      ? `${n.cpuUsedCores.toFixed(2)} / ${n.cpuCores} cores`
-                      : `${n.cpuCores} cores (no metrics)`
+                      ? t('cn.coresOf', { used: n.cpuUsedCores.toFixed(2), total: n.cpuCores })
+                      : t('cn.coresNoMetrics', { total: n.cpuCores })
                   }
                 />
                 <Meter
-                  label="Memory"
+                  label={t('cn.memory')}
                   pct={memPct}
                   detail={
                     n.memUsedGiB !== undefined
                       ? `${n.memUsedGiB.toFixed(1)} / ${n.memGiB.toFixed(0)} GiB`
-                      : `${n.memGiB.toFixed(0)} GiB (no metrics)`
+                      : t('cn.gibNoMetrics', { total: n.memGiB.toFixed(0) })
                   }
                 />
               </CardContent>
@@ -215,16 +216,15 @@ export function ClusterNodesView() {
       <AlertDialog open={!!cordonTarget} onOpenChange={(open) => !open && setCordonTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cordon {cordonTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('cn.cordonTitle', { name: cordonTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Marks the node unschedulable — no new pods will be placed on it. Existing pods keep running
-              until evicted separately. Reversible with Uncordon.
+              {t('cn.cordonDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep schedulable</AlertDialogCancel>
+            <AlertDialogCancel>{t('cn.keepSchedulable')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => cordonTarget && setCordon(cordonTarget, true)}>
-              Cordon node
+              {t('cn.cordonNode')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -233,18 +233,15 @@ export function ClusterNodesView() {
       <AlertDialog open={!!drainTarget} onOpenChange={(open) => !open && setDrainTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Drain {drainTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('cn.drainTitle', { name: drainTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Cordons the node, then evicts every pod on it so its workloads reschedule elsewhere.
-              DaemonSet and static pods stay — their controllers would recreate them here anyway.
-              Pods protected by a PodDisruptionBudget may be refused and left running. Undo by
-              uncordoning; evicted pods do not come back to this node on their own.
+              {t('cn.drainDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => drainTarget && drain(drainTarget)}>
-              Drain node
+              {t('cn.drainNode')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
