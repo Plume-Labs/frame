@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { ShieldCheck, ArrowClockwise, PencilSimple } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
 
 const frame = createFrameClient()
 
@@ -30,6 +32,7 @@ function EditQuotaDialog({
   quota?: ResourceQuota
   onSaved: () => void
 }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [maxCPU, setMaxCPU] = useState(quota?.maxCPU ?? '')
@@ -45,11 +48,11 @@ function EditQuotaDialog({
         maxMemory,
         maxGPUs: Number(maxGPUs) || 0,
       })
-      toast.success(`${serviceClass} quota updated`)
+      toast.success(t('sc.updated', { cls: serviceClass }))
       setOpen(false)
       onSaved()
     } catch (e) {
-      toast.error(`Failed to update ${serviceClass} quota`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('sc.updateFailed', { cls: serviceClass }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setSaving(false)
     }
@@ -60,31 +63,31 @@ function EditQuotaDialog({
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="font-mono gap-1.5 w-full">
           <PencilSimple />
-          Edit quota
+          {t('sc.edit')}
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="font-mono">{serviceClass} quota</DialogTitle>
-          <DialogDescription>Creates or updates the FrameResourceQuota for this service class.</DialogDescription>
+          <DialogTitle className="font-mono">{t('sc.dialogTitle', { cls: serviceClass })}</DialogTitle>
+          <DialogDescription>{t('sc.dialogDesc')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor={`${serviceClass}-cpu`}>Max CPU</Label>
+            <Label htmlFor={`${serviceClass}-cpu`}>{t('sc.maxCpu')}</Label>
             <Input id={`${serviceClass}-cpu`} value={maxCPU} onChange={(e) => setMaxCPU(e.target.value)} placeholder="16" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor={`${serviceClass}-mem`}>Max memory</Label>
+            <Label htmlFor={`${serviceClass}-mem`}>{t('sc.maxMemory')}</Label>
             <Input id={`${serviceClass}-mem`} value={maxMemory} onChange={(e) => setMaxMemory(e.target.value)} placeholder="64Gi" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor={`${serviceClass}-gpu`}>Max GPUs</Label>
+            <Label htmlFor={`${serviceClass}-gpu`}>{t('sc.maxGpus')}</Label>
             <Input id={`${serviceClass}-gpu`} type="number" value={maxGPUs} onChange={(e) => setMaxGPUs(e.target.value)} />
           </div>
         </div>
         <DialogFooter>
           <Button onClick={submit} disabled={saving} className="font-mono">
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('common.saving') : t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -93,6 +96,7 @@ function EditQuotaDialog({
 }
 
 export function ServiceClassesView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<Data>(
     async () => {
       const [classes, quotas] = await Promise.all([
@@ -113,7 +117,7 @@ export function ServiceClassesView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <ShieldCheck className="text-primary" />
-            Service Classes
+            {t('sc.title')}
             <Button
               variant="outline"
               size="sm"
@@ -122,19 +126,21 @@ export function ServiceClassesView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Live tiers derived from <span className="font-mono">FrameNode</span> service classes and
-            their <span className="font-mono">FrameResourceQuota</span> limits.
+            {richText(t('sc.desc'), {
+              node: <span className="font-mono">FrameNode</span>,
+              quota: <span className="font-mono">FrameResourceQuota</span>,
+            })}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No FrameNodes or quotas defined." />
+      <LiveStates state={state} emptyLabel={t('sc.empty')} />
 
       {data && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -148,13 +154,13 @@ export function ServiceClassesView() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2 text-xs font-mono">
-                  <Row label="Nodes" value={`${c.nodeCount}`} />
-                  <Row label="GPUs" value={`${c.totalGPUs}`} />
+                  <Row label={t('sc.nodes')} value={`${c.nodeCount}`} />
+                  <Row label={t('sc.gpus')} value={`${c.totalGPUs}`} />
                   {quota && (
                     <>
-                      <Row label="Max CPU" value={quota.maxCPU} />
-                      <Row label="Max memory" value={quota.maxMemory} />
-                      <Row label="Max GPUs" value={`${quota.maxGPUs}`} />
+                      <Row label={t('sc.maxCpu')} value={quota.maxCPU} />
+                      <Row label={t('sc.maxMemory')} value={quota.maxMemory} />
+                      <Row label={t('sc.maxGpus')} value={`${quota.maxGPUs}`} />
                     </>
                   )}
                   <div className="pt-2">
