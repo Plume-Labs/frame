@@ -4,7 +4,8 @@ import type { RegistryAlert } from '@/lib/alert-registry'
 import { isAdminToken } from '@/lib/auth'
 import { alertRegistryPath, createFrameClient } from '@/lib/frame-sdk'
 import type { Machine } from '@/lib/machines'
-import { checkVerdicts, heldDevices, mirrorRows, readingNotes, StorageThresholds, validThreshold } from '@/lib/storage-health'
+import { checkVerdicts, heldDevices, mirrorRows, readingNotes, StorageThresholds, validThreshold, VERDICT_WORD } from '@/lib/storage-health'
+import { useI18n } from '@/i18n/context'
 import { TONE_TEXT } from '@/lib/thresholds'
 import {
   AlertDialog,
@@ -147,6 +148,7 @@ function ReleaseDevice({ machine, device, checks }: { machine: Machine; device: 
 }
 
 function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alerts: RegistryAlert[]; admin: boolean }) {
+  const { t } = useI18n()
   const now = useNow()
   const rows = mirrorRows(machine)
   const attention = checkVerdicts(machine).filter((v) => v.detail)
@@ -157,7 +159,7 @@ function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alert
         <div className="flex flex-wrap gap-2">
           {checkVerdicts(machine).map((v) => (
             <Badge key={v.type} variant="outline" className={`font-mono text-[10px] border-current ${TONE_TEXT[v.tone]}`}>
-              {v.label}: {v.word}
+              {t(v.label)}: {VERDICT_WORD[v.word] ? t(VERDICT_WORD[v.word]) : v.word}
             </Badge>
           ))}
         </div>
@@ -181,7 +183,7 @@ function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alert
           heldDevices(machine, alerts).map((h) => <ReleaseDevice key={h.device} machine={machine} device={h.device} checks={h.checks} />)}
         {attention.map((v) => (
           <p key={v.type} className={TONE_TEXT[v.tone]}>
-            {v.label}: {v.detail}
+            {t(v.label)}: {v.detail}
           </p>
         ))}
       </CardContent>

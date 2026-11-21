@@ -10,6 +10,7 @@ import { agentFreshness } from './disk-inventory'
 import type { RegistryAlert } from './alert-registry'
 import type { Machine } from './machines'
 import type { Tone } from './thresholds'
+import type { MessageKey } from '@/i18n'
 
 export const STORAGE_HEALTH_POLICY_NAME = 'default'
 
@@ -34,23 +35,32 @@ export function validThreshold(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= 100
 }
 
-export const STORAGE_CHECKS = [
-  { type: 'StorageDegraded', label: 'Mirrors and disks' },
-  { type: 'ScrubErrors', label: 'Scrub' },
-  { type: 'StorageCapacityHigh', label: 'ZFS capacity' },
-  { type: 'DiskWearHigh', label: 'SSD wear' },
-] as const
+export const STORAGE_CHECKS: readonly { type: string; label: MessageKey }[] = [
+  { type: 'StorageDegraded', label: 'health.check.storage' },
+  { type: 'ScrubErrors', label: 'health.check.scrub' },
+  { type: 'StorageCapacityHigh', label: 'health.check.zfs' },
+  { type: 'DiskWearHigh', label: 'health.check.wear' },
+]
 
-export const NETWORK_CHECKS = [
-  { type: 'NetworkDegraded', label: 'Bonds and links' },
-  { type: 'LinkSpeedLow', label: 'Link speed' },
-  { type: 'LinkSaturated', label: 'Link load' },
-  { type: 'LinkErrorsRising', label: 'Link errors' },
-] as const
+export const NETWORK_CHECKS: readonly { type: string; label: MessageKey }[] = [
+  { type: 'NetworkDegraded', label: 'health.check.network' },
+  { type: 'LinkSpeedLow', label: 'health.check.speed' },
+  { type: 'LinkSaturated', label: 'health.check.load' },
+  { type: 'LinkErrorsRising', label: 'health.check.errors' },
+]
+
+/** The verdict words `checkVerdicts` returns, and their labels. */
+export const VERDICT_WORD: Record<string, MessageKey> = {
+  'alert held': 'health.word.alertHeld',
+  alert: 'health.word.alert',
+  ok: 'health.word.ok',
+  unknown: 'health.word.unknown',
+  'not assessed': 'health.word.notAssessed',
+}
 
 export interface CheckVerdict {
   type: string
-  label: string
+  label: MessageKey
   tone: Tone
   word: string
   detail: string
@@ -62,7 +72,7 @@ export interface CheckVerdict {
  */
 export function checkVerdicts(
   machine: Machine,
-  checks: readonly { type: string; label: string }[] = STORAGE_CHECKS,
+  checks: readonly { type: string; label: MessageKey }[] = STORAGE_CHECKS,
 ): CheckVerdict[] {
   return checks.map(({ type, label }) => {
     const c = machine.storageConditions.find((x) => x.type === type)
