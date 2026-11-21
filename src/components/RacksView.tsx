@@ -6,10 +6,13 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { TONE_TEXT, inverseScoreTone } from '@/lib/thresholds'
 import { Stack, ArrowClockwise, Cpu, CheckCircle, XCircle, HardDrives } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
 
 const frame = createFrameClient()
 
 export function RacksView() {
+  const { t, tn } = useI18n()
   const { state, reload } = useLiveResource<Rack[]>(
     () => frame.cluster.racks(),
     [],
@@ -25,27 +28,26 @@ export function RacksView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Stack className="text-primary" />
-            Racks
+            {t('racks.title')}
             <Button variant="outline" size="sm" className="ml-auto font-mono gap-1.5" onClick={reload} disabled={state.phase === 'loading'}>
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Nodes grouped by rack. The rack comes from the node label{' '}
-            <span className="font-mono">topology.frame.io/rack</span> if set, else the label{' '}
-            <span className="font-mono">frame.plume-labs.io/rack</span>, else the node's FrameNode{' '}
-            <span className="font-mono">spec.rack</span>; a node with none of the three shows as{' '}
-            <span className="font-mono">unracked</span>. On bare metal this is the datacenter rack; on a
-            virtualized cluster it can name the hypervisor host instead (shown below with core
-            oversubscription).
+            {richText(t('racks.desc'), {
+              topo: <span className="font-mono">topology.frame.io/rack</span>,
+              label: <span className="font-mono">frame.plume-labs.io/rack</span>,
+              spec: <span className="font-mono">spec.rack</span>,
+              unracked: <span className="font-mono">unracked</span>,
+            })}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No nodes / racks found." />
+      <LiveStates state={state} emptyLabel={t('racks.empty')} />
 
       {state.phase === 'ready' &&
         racks.map((r) => (
@@ -57,18 +59,18 @@ export function RacksView() {
                   <div>
                     <CardTitle className="font-mono text-lg">{r.name}</CardTitle>
                     <p className="text-xs text-muted-foreground font-mono">
-                      {r.nodes.length} nodes · {r.totalCpu.toFixed(0)} vCPU · {r.totalMem.toFixed(0)} GiB · {r.totalPods} pods
+                      {tn('racks.nodes', r.nodes.length)} · {r.totalCpu.toFixed(0)} vCPU · {r.totalMem.toFixed(0)} GiB · {tn('racks.pods', r.totalPods)}
                     </p>
                   </div>
                 </div>
                 <Badge variant="outline" className={`font-mono ${r.readyNodes === r.nodes.length ? 'text-accent' : 'text-warning'} border-current`}>
-                  {r.readyNodes}/{r.nodes.length} ready
+                  {t('racks.ready', { ready: r.readyNodes, total: r.nodes.length })}
                 </Badge>
               </div>
               {r.physical && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-mono">
                   <Badge variant="secondary" className="gap-1">
-                    <HardDrives size={12} />{r.physical.hypervisor} host · {r.physical.pcpu} pCPU · {r.physical.pmemGiB} GiB
+                    <HardDrives size={12} />{t('racks.host', { hypervisor: r.physical.hypervisor })} · {r.physical.pcpu} pCPU · {r.physical.pmemGiB} GiB
                   </Badge>
                   {r.physical.pcpu > 0 && (
                     // Some oversubscription is the point of virtualising; past
@@ -76,7 +78,7 @@ export function RacksView() {
                     // scheduling latency is the dominant cost. Flagging anything
                     // over 1× made the normal case look like a problem.
                     <span className={TONE_TEXT[inverseScoreTone(r.totalCpu / r.physical.pcpu, 2, 4)]}>
-                      vCPU {r.totalCpu.toFixed(0)}/{r.physical.pcpu} ({(r.totalCpu / r.physical.pcpu).toFixed(1)}× oversubscribed)
+                      {t('racks.oversub', { used: r.totalCpu.toFixed(0), pcpu: r.physical.pcpu, ratio: (r.totalCpu / r.physical.pcpu).toFixed(1) })}
                     </span>
                   )}
                 </div>
@@ -96,7 +98,7 @@ export function RacksView() {
                   <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground font-mono">
                     <div><div className="text-foreground font-bold">{n.cpuCores}</div>vCPU</div>
                     <div><div className="text-foreground font-bold">{n.memGiB.toFixed(0)}</div>GiB</div>
-                    <div><div className="text-foreground font-bold">{n.pods}</div>pods</div>
+                    <div><div className="text-foreground font-bold">{n.pods}</div>{t('racks.podsUnit')}</div>
                   </div>
                 </div>
               ))}

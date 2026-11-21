@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { HardDrives, ArrowClockwise } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -12,6 +13,7 @@ const phaseTone = (p: string) =>
   p === 'Running' ? 'text-accent' : p === 'Pending' ? 'text-warning' : 'text-destructive'
 
 export function WorkloadPlacementView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<NodePlacement[]>(
     () => frame.cluster.placement(),
     [],
@@ -26,7 +28,7 @@ export function WorkloadPlacementView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <HardDrives className="text-primary" />
-            Workload Placement
+            {t('place.title')}
             <Button
               variant="outline"
               size="sm"
@@ -35,19 +37,18 @@ export function WorkloadPlacementView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Where compute actually sits — {totalPods} workload pods grouped by the node scheduling
-            them (system namespaces excluded).
+            {t('place.desc', { count: totalPods })}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No workload pods scheduled." />
+      <LiveStates state={state} emptyLabel={t('place.empty')} />
 
       {state.phase === 'ready' &&
         nodes.map((n) => (
@@ -56,7 +57,7 @@ export function WorkloadPlacementView() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="font-mono text-lg">{n.node}</CardTitle>
                 <Badge variant="outline" className="font-mono text-accent border-current">
-                  {n.running}/{n.total} running
+                  {t('place.running', { running: n.running, total: n.total })}
                 </Badge>
               </div>
             </CardHeader>
