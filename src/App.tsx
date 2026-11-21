@@ -60,6 +60,7 @@ const AlertsView = lazy(() => import('@/components/AlertsView').then((m) => ({ d
 const ClusterEventsView = lazy(() => import('@/components/ClusterEventsView').then((m) => ({ default: m.ClusterEventsView })))
 const TasksView = lazy(() => import('@/components/TasksView').then((m) => ({ default: m.TasksView })))
 const AccountsView = lazy(() => import('@/components/AccountsView').then((m) => ({ default: m.AccountsView })))
+const UpdatesView = lazy(() => import('@/components/UpdatesView').then((m) => ({ default: m.UpdatesView })))
 const SettingsView = lazy(() => import('@/components/SettingsView').then((m) => ({ default: m.SettingsView })))
 
 import { Toaster } from '@/components/ui/sonner'
@@ -91,6 +92,7 @@ import {
   Fingerprint,
   Gauge,
   Gear,
+  ArrowsClockwise,
   HardDrive,
   Lightning,
   ListChecks,
@@ -171,6 +173,7 @@ type TabId =
   | 'events'
   | 'tasks'
   | 'accounts'
+  | 'updates'
   | 'settings'
 
 interface NavTab {
@@ -395,6 +398,13 @@ const NAV: NavGroup[] = [
         icon: <Users />,
         description: 'nav.accounts.desc',
         tabs: [{ id: 'accounts', label: 'tab.accounts' }],
+      },
+      {
+        id: 'updates',
+        label: 'nav.updates.label',
+        icon: <ArrowsClockwise />,
+        description: 'nav.updates.desc',
+        tabs: [{ id: 'updates', label: 'tab.updates' }],
       },
       {
         id: 'settings',
@@ -731,6 +741,8 @@ function App() {
         // redirects to Overview. Gated here too for the render in between —
         // the real authorization is server-side regardless.
         return admin ? <AccountsView currentEmail={selfEmail} /> : null
+      case 'updates':
+        return <UpdatesView />
       case 'settings':
         return <SettingsView />
 
