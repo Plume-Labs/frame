@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Job, jobWorkloadLabel, retryJobSpec, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
+import { Job, retryJobSpec, coreListPath, createFrameClient, frameListPath } from '@/lib/frame-sdk'
 import { retryJobName } from '@/lib/job-names'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -18,8 +18,18 @@ import {
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Queue, ArrowClockwise, CheckCircle, Spinner, XCircle, Clock, ArrowCounterClockwise, Prohibit } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
+
+const STATUS_LABEL: Record<Job['status'], MessageKey> = {
+  running: 'jobs.status.running',
+  completed: 'jobs.status.completed',
+  failed: 'jobs.status.failed',
+  queued: 'jobs.status.queued',
+}
 
 const STATUS: Record<Job['status'], { tone: string; icon: React.ReactNode }> = {
   running: { tone: 'text-primary', icon: <Spinner className="animate-spin" size={12} /> },
@@ -29,6 +39,7 @@ const STATUS: Record<Job['status'], { tone: string; icon: React.ReactNode }> = {
 }
 
 export function FrameJobsView() {
+  const { t, locale } = useI18n()
   const { state, reload } = useLiveResource<{ items: Job[] }>(
     () => frame.jobs.list(),
     [],
@@ -52,10 +63,10 @@ export function FrameJobsView() {
     setBusy(job.id)
     try {
       await frame.jobs.cancel(job.id)
-      toast.success(`${job.name} cancelled`)
+      toast.success(t('jobs.cancelled', { name: job.name }))
       reload()
     } catch (e) {
-      toast.error(`Failed to cancel ${job.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('jobs.cancelFailed', { name: job.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
       setCancelTarget(null)
@@ -68,14 +79,14 @@ export function FrameJobsView() {
       const retryName = retryJobName(job.name)
       const spec = retryJobSpec(job, retryName)
       if (!spec) {
-        toast.error(`Cannot retry ${job.name}`, { description: 'It names neither a pipeline nor a container.' })
+        toast.error(t('jobs.cannotRetry', { name: job.name }), { description: t('jobs.cannotRetryWhy') })
         return
       }
       await frame.jobs.submit(spec)
-      toast.success(`Resubmitted as ${retryName}`)
+      toast.success(t('jobs.resubmitted', { name: retryName }))
       reload()
     } catch (e) {
-      toast.error(`Failed to retry ${job.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('jobs.retryFailed', { name: job.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
     }
@@ -87,7 +98,7 @@ export function FrameJobsView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <Queue className="text-primary" size={18} /> Sandbox jobs (pods)
+              <Queue className="text-primary" size={18} /> {t('jobs.sandbox')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -95,7 +106,7 @@ export function FrameJobsView() {
               {Object.entries(ns.byPhase).map(([p, n]) => (
                 <Badge key={p} variant="outline" className={`border-current ${p === 'Running' ? 'text-primary' : p === 'Failed' ? 'text-destructive' : p === 'Succeeded' ? 'text-accent' : 'text-muted-foreground'}`}>{n} {p}</Badge>
               ))}
-              {ns.recent.length === 0 && <span className="text-muted-foreground">no active sandbox jobs</span>}
+              {ns.recent.length === 0 && <span className="text-muted-foreground">{t('jobs.noSandbox')}</span>}
             </div>
             {ns.recent.map((r) => (
               <div key={r.name} className="flex items-center gap-2 text-[11px] font-mono">
@@ -111,7 +122,7 @@ export function FrameJobsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Queue className="text-primary" />
-            Hearthrack Jobs
+            {t('jobs.title')}
             <Button
               variant="outline"
               size="sm"
@@ -120,18 +131,18 @@ export function FrameJobsView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Live <span className="font-mono">FrameJob</span> resources reconciled by the operator.
+            {richText(t('jobs.desc'), { kind: <span className="font-mono">FrameJob</span> })}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No FrameJobs submitted." />
+      <LiveStates state={state} emptyLabel={t('jobs.empty')} />
 
       {state.phase === 'ready' &&
         jobs.map((j) => {
@@ -143,21 +154,21 @@ export function FrameJobsView() {
                   <div className="min-w-0">
                     <CardTitle className="font-mono text-lg truncate">{j.name}</CardTitle>
                     <p className="text-xs text-muted-foreground font-mono">
-                      {jobWorkloadLabel(j)} · {j.namespace}
+                      {j.pipeline || (j.container ? t('jobs.container', { image: j.container.image }) : t('jobs.unknownWorkload'))} · {j.namespace}
                     </p>
                   </div>
                   <Badge variant="outline" className={`font-mono ${s.tone} border-current gap-1`}>
                     {s.icon}
-                    {j.status}
+                    {t(STATUS_LABEL[j.status])}
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent className="flex flex-wrap items-center gap-2 text-[10px] font-mono">
-                <Badge variant="outline">class {j.serviceClass}</Badge>
-                <Badge variant="outline">priority {j.priority}</Badge>
-                <Badge variant="outline">{j.gpuCount} GPU</Badge>
+                <Badge variant="outline">{t('jobs.class', { name: j.serviceClass })}</Badge>
+                <Badge variant="outline">{t('jobs.priority', { n: j.priority })}</Badge>
+                <Badge variant="outline">{t('jobs.gpu', { n: j.gpuCount })}</Badge>
                 <Badge variant="outline">
-                  created {new Date(j.createdAt).toLocaleString()}
+                  {t('jobs.created', { when: new Date(j.createdAt).toLocaleString(locale) })}
                 </Badge>
                 <div className="ml-auto flex gap-2">
                   {j.status === 'failed' && (
@@ -169,7 +180,7 @@ export function FrameJobsView() {
                       onClick={() => doRetry(j)}
                     >
                       <ArrowCounterClockwise className={busy === j.id ? 'animate-spin' : ''} />
-                      Retry
+                      {t('jobs.retry')}
                     </Button>
                   )}
                   {(j.status === 'queued' || j.status === 'running') && (
@@ -181,7 +192,7 @@ export function FrameJobsView() {
                       onClick={() => setCancelTarget(j)}
                     >
                       <Prohibit />
-                      Cancel
+                      {t('common.cancel')}
                     </Button>
                   )}
                 </div>
@@ -193,18 +204,18 @@ export function FrameJobsView() {
       <AlertDialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cancel {cancelTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('jobs.confirmTitle', { name: cancelTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Deletes the FrameJob resource. A running job's pods are torn down immediately. This cannot be undone.
+              {t('jobs.confirmDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep job</AlertDialogCancel>
+            <AlertDialogCancel>{t('jobs.keep')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => cancelTarget && doCancel(cancelTarget)}
             >
-              Cancel job
+              {t('jobs.cancelJob')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
