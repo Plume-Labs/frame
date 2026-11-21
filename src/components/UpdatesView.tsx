@@ -158,7 +158,7 @@ function Body({ data }: { data: UpdatesData }) {
                     <td className="py-1 pr-4">{c.name}</td>
                     <td className="py-1 pr-4 break-all">{img.repository}</td>
                     <td className="py-1 pr-4">
-                      <Badge variant="outline">{img.version || 'untagged'}</Badge>
+                      <Badge variant="outline">{img.version || t('updates.untagged')}</Badge>
                     </td>
                     <td className="py-1">
                       {c.readyReplicas}/{c.desiredReplicas}

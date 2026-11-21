@@ -106,6 +106,7 @@ export const en = {
   'updates.col.name': 'Component',
   'updates.col.image': 'Image',
   'updates.col.version': 'Version',
+  'updates.untagged': 'untagged',
   'updates.col.ready': 'Ready',
   'updates.moment.title': 'Is now a good moment?',
   'updates.moment.ok': 'Nothing is in flight: no job, install, disk replacement or unready component.',

@@ -103,6 +103,7 @@ export const fr: Record<MessageKey, string> = {
   'updates.col.name': 'Composant',
   'updates.col.image': 'Image',
   'updates.col.version': 'Version',
+  'updates.untagged': 'sans étiquette',
   'updates.col.ready': 'Prêts',
   'updates.moment.title': 'Le moment est-il bon ?',
   'updates.moment.ok': 'Rien n\'est en cours : ni tâche, ni installation, ni remplacement de disque, ni composant non prêt.',
