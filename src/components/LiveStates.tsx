@@ -2,6 +2,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Warning } from '@phosphor-icons/react'
 import { LiveState } from '@/hooks/useLiveResource'
 import { describeLoadError } from '@/lib/load-error'
+import { useI18n } from '@/i18n/context'
 
 /**
  * Renders the loading / error / empty chrome for a live cluster view. Returns
@@ -14,11 +15,12 @@ export function LiveStates<T>({
   state: LiveState<T>
   emptyLabel: string
 }) {
+  const { t } = useI18n()
   if (state.phase === 'loading') {
     return (
       <Card>
         <CardContent className="py-10 text-center font-mono text-sm text-muted-foreground">
-          Reading from the Kubernetes API…
+          {t('live.loading')}
         </CardContent>
       </Card>
     )
@@ -30,9 +32,9 @@ export function LiveStates<T>({
       <Card className="border-destructive/40" role="alert">
         <CardContent className="py-8 space-y-3 text-center">
           <Warning className="mx-auto text-destructive" size={28} />
-          <div className="font-mono text-sm text-foreground">{copy.title}</div>
+          <div className="font-mono text-sm text-foreground">{t(copy.title)}</div>
           <div className="text-xs text-muted-foreground max-w-md mx-auto">{state.message}</div>
-          <div className="text-xs text-muted-foreground max-w-md mx-auto">{copy.hint}</div>
+          <div className="text-xs text-muted-foreground max-w-md mx-auto">{t(copy.hint, copy.params)}</div>
         </CardContent>
       </Card>
     )
@@ -64,6 +66,7 @@ export function StaleNotice({
   state: { phase: string; staleError?: string; lastRead?: number }
   label?: string
 }) {
+  const { t, locale } = useI18n()
   const stale = state.phase === 'ready' && state.staleError ? state : null
   return (
     <div role="status" aria-live="polite">
@@ -71,8 +74,11 @@ export function StaleNotice({
         <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs font-mono">
           <Warning size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-warning" />
           <span>
-            {label ? `${label}: ` : ''}refresh failed, showing the last successful read
-            {stale.lastRead ? ` (${new Date(stale.lastRead).toLocaleTimeString()})` : ''}: {stale.staleError}
+            {t('live.stale', {
+              source: label ? `${label}: ` : '',
+              at: stale.lastRead ? ` (${new Date(stale.lastRead).toLocaleTimeString(locale)})` : '',
+              error: stale.staleError ?? '',
+            })}
           </span>
         </div>
       )}

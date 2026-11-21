@@ -4,12 +4,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useI18n } from '@/i18n/context'
 import { LiveStates } from '@/components/LiveStates'
 import { Info, ArrowClockwise } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
 
 export function ClusterEventsView() {
+  const { t, locale } = useI18n()
   const { state, reload } = useLiveResource<ClusterEvent[]>(
     () => frame.cluster.events(),
     [],
@@ -23,7 +25,7 @@ export function ClusterEventsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Info className="text-primary" />
-            Cluster Events
+            {t('events.title')}
             <Button
               variant="outline"
               size="sm"
@@ -32,7 +34,7 @@ export function ClusterEventsView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
@@ -59,7 +61,7 @@ export function ClusterEventsView() {
                         {e.namespace ? `${e.namespace}/` : ''}
                         {e.involvedObject}
                         {e.count > 1 ? ` ·×${e.count}` : ''}
-                        {e.lastTimestamp ? ` · ${new Date(e.lastTimestamp).toLocaleTimeString()}` : ''}
+                        {e.lastTimestamp ? ` · ${new Date(e.lastTimestamp).toLocaleTimeString(locale)}` : ''}
                       </div>
                     </div>
                   </div>
@@ -70,7 +72,7 @@ export function ClusterEventsView() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No recent events." />
+      <LiveStates state={state} emptyLabel={t('events.empty')} />
     </div>
   )
 }
