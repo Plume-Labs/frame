@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useI18n } from '@/i18n/context'
 import { LiveStates } from '@/components/LiveStates'
 import { formatAge } from '@/lib/thresholds'
 import {
@@ -30,6 +31,7 @@ const PHASE: Record<TaskRecord['phase'], { tone: string; icon: React.ReactNode }
  * ClusterEventsView: one live-watched list, filtered client-side.
  */
 export function TasksView() {
+  const { t: tr } = useI18n()
   const { state, reload } = useLiveResource<TaskRecord[]>(
     () => frame.tasks.list(200),
     [],
@@ -49,7 +51,7 @@ export function TasksView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <ListChecks className="text-primary" />
-            Tasks
+            {tr('tasks.title')}
             <Button
               variant="outline"
               size="sm"
@@ -58,14 +60,14 @@ export function TasksView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {tr('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && tasks.length > 0 && (
           <CardContent className="space-y-3">
             <Input
-              placeholder="Filter by user or action…"
+              placeholder={tr('tasks.filter')}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="max-w-xs font-mono text-xs"
@@ -73,11 +75,11 @@ export function TasksView() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Outcome</TableHead>
-                  <TableHead>Age</TableHead>
+                  <TableHead>{tr('tasks.user')}</TableHead>
+                  <TableHead>{tr('tasks.action')}</TableHead>
+                  <TableHead>{tr('tasks.target')}</TableHead>
+                  <TableHead>{tr('tasks.outcome')}</TableHead>
+                  <TableHead>{tr('tasks.age')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -93,7 +95,7 @@ export function TasksView() {
                       <TableCell>
                         <Badge variant="outline" className={`gap-1 font-mono text-[10px] border-current ${phase.tone}`}>
                           {phase.icon}
-                          {t.phase}
+                          {tr(`tasks.phase.${t.phase}`)}
                           {t.httpCode ? ` · ${t.httpCode}` : ''}
                         </Badge>
                       </TableCell>
@@ -106,7 +108,7 @@ export function TasksView() {
                 {filtered.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-6">
-                      No tasks match “{query}”.
+                      {tr('tasks.noMatch', { query })}
                     </TableCell>
                   </TableRow>
                 )}
@@ -116,7 +118,7 @@ export function TasksView() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No writes made through the UI yet." />
+      <LiveStates state={state} emptyLabel={tr('tasks.empty')} />
     </div>
   )
 }
