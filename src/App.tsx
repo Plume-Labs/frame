@@ -9,6 +9,9 @@ import { loadConfig } from '@/lib/frame-config'
 import { PasskeysDialog } from '@/components/PasskeysDialog'
 import { HeaderStats } from '@/components/HeaderStats'
 import { LoginView } from '@/components/LoginView'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 import { InviteAcceptView } from '@/components/InviteAcceptView'
 
 // Lazy: only the active screen is ever mounted (see renderScreen below), so
@@ -172,233 +175,233 @@ type TabId =
 
 interface NavTab {
   id: TabId
-  label: string
+  label: MessageKey
 }
 
 interface NavItem {
   id: string
-  label: string
+  label: MessageKey
   icon: ReactNode
   /** Shown under the page title; explains what the screen is for. */
-  description: string
+  description: MessageKey
   /** A single tab renders bare — no tab strip is drawn for it. */
   tabs: NavTab[]
 }
 
 interface NavGroup {
-  label: string
+  label: MessageKey
   items: NavItem[]
 }
 
 const NAV: NavGroup[] = [
   {
-    label: 'Start',
+    label: 'nav.group.start',
     items: [
       {
         id: 'overview',
-        label: 'Overview',
+        label: 'nav.overview.label',
         icon: <SquaresFour />,
-        description: 'What needs attention, where the cluster is heading, what it is serving',
-        tabs: [{ id: 'overview', label: 'Overview' }],
+        description: 'nav.overview.desc',
+        tabs: [{ id: 'overview', label: 'tab.overview' }],
       },
     ],
   },
   {
-    label: 'Workloads',
+    label: 'nav.group.workloads',
     items: [
       {
         id: 'workloads',
-        label: 'Workloads',
+        label: 'nav.workloads.label',
         icon: <TreeStructure />,
-        description: 'Every workload on the cluster — logs, a shell, restart, scale and the manifest',
-        tabs: [{ id: 'workloads', label: 'Workloads' }],
+        description: 'nav.workloads.desc',
+        tabs: [{ id: 'workloads', label: 'tab.workloads' }],
       },
       {
         id: 'applications',
-        label: 'Applications',
+        label: 'nav.applications.label',
         icon: <Package />,
-        description: 'Deployed apps read live from the cluster',
-        tabs: [{ id: 'applications', label: 'Applications' }],
+        description: 'nav.applications.desc',
+        tabs: [{ id: 'applications', label: 'tab.applications' }],
       },
       {
         id: 'jobs',
-        label: 'Jobs',
+        label: 'nav.jobs.label',
         icon: <Queue />,
-        description: 'Workflow DAGs, queue depth, checkpoints and their Argo run traces',
+        description: 'nav.jobs.desc',
         tabs: [
-          { id: 'jobs', label: 'Queue' },
-          { id: 'lineage', label: 'Lineage' },
+          { id: 'jobs', label: 'tab.jobs' },
+          { id: 'lineage', label: 'tab.lineage' },
         ],
       },
       {
         id: 'scheduling',
-        label: 'Scheduling',
+        label: 'nav.scheduling.label',
         icon: <Calendar />,
-        description: 'Policies, service-class SLAs and the Volcano queues they land in',
+        description: 'nav.scheduling.desc',
         tabs: [
-          { id: 'scheduler', label: 'Policies' },
-          { id: 'service-classes', label: 'Service Classes' },
-          { id: 'elastic-pools', label: 'Elastic Pools' },
+          { id: 'scheduler', label: 'tab.scheduler' },
+          { id: 'service-classes', label: 'tab.service-classes' },
+          { id: 'elastic-pools', label: 'tab.elastic-pools' },
         ],
       },
     ],
   },
   {
-    label: 'Services',
+    label: 'nav.group.services',
     items: [
       {
         id: 'inference',
-        label: 'Inference',
+        label: 'nav.inference.label',
         icon: <ChartBar />,
-        description: 'Served models, their GPU and KV-cache pressure, and the request queue behind them',
+        description: 'nav.inference.desc',
         tabs: [
-          { id: 'inference', label: 'Overview' },
-          { id: 'inference-models', label: 'Models' },
-          { id: 'kv-cache', label: 'KV-Cache' },
+          { id: 'inference', label: 'tab.inference' },
+          { id: 'inference-models', label: 'tab.inference-models' },
+          { id: 'kv-cache', label: 'tab.kv-cache' },
         ],
       },
       {
         id: 'databases',
-        label: 'Databases',
+        label: 'nav.databases.label',
         icon: <Database />,
-        description: 'PostgreSQL clusters Hearthrack provisions or has adopted',
-        tabs: [{ id: 'databases', label: 'Databases' }],
+        description: 'nav.databases.desc',
+        tabs: [{ id: 'databases', label: 'tab.databases' }],
       },
       {
         id: 'caches',
-        label: 'Caches & Queues',
+        label: 'nav.caches.label',
         icon: <Lightning />,
-        description: 'Valkey instances — LRU caches and durable job queues',
-        tabs: [{ id: 'caches', label: 'Caches & Queues' }],
+        description: 'nav.caches.desc',
+        tabs: [{ id: 'caches', label: 'tab.caches' }],
       },
     ],
   },
   {
-    label: 'Compute',
+    label: 'nav.group.compute',
     items: [
       {
         id: 'nodes',
-        label: 'Nodes',
+        label: 'nav.nodes.label',
         icon: <Cpu />,
-        description: 'Fleet health, operator-managed FrameNodes, their hypervisor racks and what runs where',
+        description: 'nav.nodes.desc',
         tabs: [
-          { id: 'nodes', label: 'Fleet' },
-          { id: 'provisioned-nodes', label: 'Provisioned' },
-          { id: 'racks', label: 'Racks' },
-          { id: 'data-locality', label: 'Placement' },
+          { id: 'nodes', label: 'tab.nodes' },
+          { id: 'provisioned-nodes', label: 'tab.provisioned-nodes' },
+          { id: 'racks', label: 'tab.racks' },
+          { id: 'data-locality', label: 'tab.data-locality' },
         ],
       },
       {
         id: 'hardware',
-        label: 'Hardware',
+        label: 'nav.hardware.label',
         icon: <ComputerTower />,
-        description: 'Physical chassis over Redfish: inventory, sensors, event log and power',
+        description: 'nav.hardware.desc',
         tabs: [
-          { id: 'hardware', label: 'Machines' },
-          { id: 'installs', label: 'Installs' },
+          { id: 'hardware', label: 'tab.hardware' },
+          { id: 'installs', label: 'tab.installs' },
         ],
       },
       {
         id: 'node-tuning',
-        label: 'Node Tuning',
+        label: 'nav.node-tuning.label',
         icon: <Gauge />,
-        description: 'Per-node knobs — GPU sharing, clock sync, page merging',
+        description: 'nav.node-tuning.desc',
         tabs: [
-          { id: 'mps', label: 'MPS' },
-          { id: 'ptp', label: 'PTP Sync' },
-          { id: 'ksm', label: 'KSM' },
+          { id: 'mps', label: 'tab.mps' },
+          { id: 'ptp', label: 'tab.ptp' },
+          { id: 'ksm', label: 'tab.ksm' },
         ],
       },
     ],
   },
   {
-    label: 'Resources',
+    label: 'nav.group.resources',
     items: [
       {
         id: 'gpu',
-        label: 'GPU',
+        label: 'nav.gpu.label',
         icon: <Speedometer />,
-        description: 'Live GPU telemetry (DCGM) — util, memory, temp, power',
-        tabs: [{ id: 'gpu', label: 'GPU' }],
+        description: 'nav.gpu.desc',
+        tabs: [{ id: 'gpu', label: 'tab.gpu' }],
       },
       {
         id: 'storage',
-        label: 'Storage',
+        label: 'nav.storage.label',
         icon: <HardDrive />,
-        description: 'Ceph, declared storage entries, which volume writes where, disks and the NVMe scratch tier — and whether they are healthy',
+        description: 'nav.storage.desc',
         tabs: [
-          { id: 'storage', label: 'Ceph' },
-          { id: 'storage-entries', label: 'Entries' },
-          { id: 'storage-load', label: 'Volumes' },
-          { id: 'storage-ceph-actions', label: 'Ceph actions' },
-          { id: 'storage-osd-replacement', label: 'Replace OSD' },
-          { id: 'disks', label: 'Disks' },
-          { id: 'burst-buffer', label: 'Burst Buffer' },
-          { id: 'storage-health', label: 'Health' },
+          { id: 'storage', label: 'tab.storage' },
+          { id: 'storage-entries', label: 'tab.storage-entries' },
+          { id: 'storage-load', label: 'tab.storage-load' },
+          { id: 'storage-ceph-actions', label: 'tab.storage-ceph-actions' },
+          { id: 'storage-osd-replacement', label: 'tab.storage-osd-replacement' },
+          { id: 'disks', label: 'tab.disks' },
+          { id: 'burst-buffer', label: 'tab.burst-buffer' },
+          { id: 'storage-health', label: 'tab.storage-health' },
         ],
       },
       {
         id: 'network',
-        label: 'Network',
+        label: 'nav.network.label',
         icon: <Network />,
-        description: 'NIC throughput, link state and where the traffic chokes',
+        description: 'nav.network.desc',
         tabs: [
-          { id: 'network', label: 'Throughput' },
-          { id: 'network-links', label: 'Links' },
-          { id: 'network-bottlenecks', label: 'Bottlenecks' },
+          { id: 'network', label: 'tab.network' },
+          { id: 'network-links', label: 'tab.network-links' },
+          { id: 'network-bottlenecks', label: 'tab.network-bottlenecks' },
         ],
       },
     ],
   },
   {
-    label: 'Operations',
+    label: 'nav.group.operations',
     items: [
       {
         id: 'capacity',
-        label: 'Capacity',
+        label: 'nav.capacity.label',
         icon: <ChartLine />,
-        description: 'Allocatable vs used vs reserved, and how much disruption the cluster absorbs',
+        description: 'nav.capacity.desc',
         tabs: [
-          { id: 'capacity', label: 'Capacity' },
-          { id: 'resilience', label: 'Resilience' },
+          { id: 'capacity', label: 'tab.capacity' },
+          { id: 'resilience', label: 'tab.resilience' },
         ],
       },
       {
         id: 'security',
-        label: 'Security',
+        label: 'nav.security.label',
         icon: <Detective />,
-        description: 'Runtime and posture findings, firing alerts and the raw cluster event feed',
+        description: 'nav.security.desc',
         tabs: [
-          { id: 'security', label: 'Runtime & Posture' },
-          { id: 'alerts', label: 'Alerts' },
-          { id: 'events', label: 'Events' },
+          { id: 'security', label: 'tab.security' },
+          { id: 'alerts', label: 'tab.alerts' },
+          { id: 'events', label: 'tab.events' },
         ],
       },
     ],
   },
   {
-    label: 'Administration',
+    label: 'nav.group.administration',
     items: [
       {
         id: 'tasks',
-        label: 'Tasks',
+        label: 'nav.tasks.label',
         icon: <ListChecks />,
-        description: 'Every write made through the UI, and how it ended',
-        tabs: [{ id: 'tasks', label: 'Tasks' }],
+        description: 'nav.tasks.desc',
+        tabs: [{ id: 'tasks', label: 'tab.tasks' }],
       },
       {
         id: 'accounts',
-        label: 'Accounts',
+        label: 'nav.accounts.label',
         icon: <Users />,
-        description: 'Who can sign in, with what rights, and on which keys',
-        tabs: [{ id: 'accounts', label: 'Accounts' }],
+        description: 'nav.accounts.desc',
+        tabs: [{ id: 'accounts', label: 'tab.accounts' }],
       },
       {
         id: 'settings',
-        label: 'Settings',
+        label: 'nav.settings.label',
         icon: <Gear />,
-        description: 'Namespaces, selectors and ports of every integration',
-        tabs: [{ id: 'settings', label: 'Settings' }],
+        description: 'nav.settings.desc',
+        tabs: [{ id: 'settings', label: 'tab.settings' }],
       },
     ],
   },
@@ -423,6 +426,7 @@ type SessionState =
   | { phase: 'signed-in'; session: Session }
 
 function App() {
+  const { t } = useI18n()
   // Session gate: the console must not mount — and so must not fire a single
   // /api/ request — until authd has confirmed a signed-in session. Checked
   // once on mount; the early returns below keep the rest of the component
@@ -594,7 +598,7 @@ function App() {
   if (sessionState.phase === 'checking') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="font-mono text-sm text-muted-foreground">Loading…</div>
+        <div className="font-mono text-sm text-muted-foreground">{t('app.loading')}</div>
       </div>
     )
   }
@@ -618,7 +622,7 @@ function App() {
   if (!configLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="font-mono text-sm text-muted-foreground">Loading…</div>
+        <div className="font-mono text-sm text-muted-foreground">{t('app.loading')}</div>
       </div>
     )
   }
@@ -753,7 +757,7 @@ function App() {
         <TabsList className="flex-wrap h-auto">
           {active.tabs.map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id} className="font-mono text-xs">
-              {tab.label}
+              {t(tab.label)}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -776,7 +780,7 @@ function App() {
             <div className="group-data-[collapsible=icon]:hidden min-w-0">
               <HearthrackWordmark className="block text-lg leading-tight" />
               <div className="text-[10px] text-muted-foreground leading-tight truncate">
-                Kubernetes for AI &amp; HPC.
+                {t('app.tagline')}
               </div>
             </div>
           </div>
@@ -784,9 +788,9 @@ function App() {
 
         <SidebarContent>
           {visibleNav.map((group) => (
-            <SidebarGroup key={group.label}>
+            <SidebarGroup key={t(group.label)}>
               <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-widest">
-                {group.label}
+                {t(group.label)}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
@@ -794,12 +798,12 @@ function App() {
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
                         isActive={screen === item.id}
-                        tooltip={item.label}
+                        tooltip={t(item.label)}
                         onClick={() => navigate(item.id)}
                         className="font-mono text-xs"
                       >
                         {item.icon}
-                        <span>{item.label}</span>
+                        <span>{t(item.label)}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
@@ -810,20 +814,23 @@ function App() {
         </SidebarContent>
 
         <SidebarFooter className="border-t border-sidebar-border">
+          <div className="px-2 group-data-[collapsible=icon]:hidden">
+            <LanguageSwitcher />
+          </div>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip="Passkeys"
+                tooltip={t('sidebar.passkeys')}
                 className="font-mono text-xs"
                 onClick={() => setPasskeysOpen(true)}
               >
                 <Fingerprint />
-                <span>Passkeys</span>
+                <span>{t('sidebar.passkeys')}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip="Sign out"
+                tooltip={t('sidebar.signOut')}
                 className="font-mono text-xs"
                 onClick={() => {
                   // logout() clears the in-memory token in its own `finally`
@@ -839,7 +846,7 @@ function App() {
                 }}
               >
                 <SignOut />
-                <span>Sign out</span>
+                <span>{t('sidebar.signOut')}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -856,10 +863,10 @@ function App() {
             <SidebarTrigger className="shrink-0" />
             <div className="min-w-0 flex-1">
               <h1 className="font-mono text-lg font-bold text-primary leading-tight truncate">
-                {active.label}
+                {t(active.label)}
               </h1>
               <p className="text-xs text-muted-foreground leading-tight truncate">
-                {active.description}
+                {t(active.description)}
               </p>
             </div>
             <div className="hidden lg:block shrink-0">
@@ -875,7 +882,7 @@ function App() {
         <div className="p-4 sm:p-6 min-w-0">
           <Suspense
             fallback={
-              <div className="py-10 text-center font-mono text-sm text-muted-foreground">Loading…</div>
+              <div className="py-10 text-center font-mono text-sm text-muted-foreground">{t('app.loading')}</div>
             }
           >
             {renderScreen()}

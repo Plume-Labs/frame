@@ -3,6 +3,8 @@ import { currentSession, loginWithPasskey, PasskeyCancelledError, type Session }
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Fingerprint } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { HearthrackMark, HearthrackWordmark } from '@/components/HearthrackMark'
 
 /**
@@ -27,6 +29,7 @@ import { HearthrackMark, HearthrackWordmark } from '@/components/HearthrackMark'
  * message on screen. Any other failure is shown verbatim.
  */
 export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => void }) {
+  const { t } = useI18n()
   const [error, setError] = useState<string | undefined>(undefined)
   const [notice, setNotice] = useState<string | undefined>(undefined)
   const [passkeySubmitting, setPasskeySubmitting] = useState(false)
@@ -41,7 +44,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
       // what actually mints and publishes the bearer token the SDK reads.
       const session = await currentSession()
       if (!session) {
-        setError('login succeeded but no session cookie was set')
+        setError(t('login.noSession'))
         return
       }
       onSignedIn(session)
@@ -53,7 +56,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
         // timed out or was not touched in time exactly like a dismissed
         // prompt (NotAllowedError), and a screen that quietly resets looks
         // like a crash. Say what happened so the retry is an obvious next step.
-        setNotice('Passkey prompt closed or timed out. Try again.')
+        setNotice(t('login.cancelled'))
       } else {
         setError(err instanceof Error ? err.message : String(err))
       }
@@ -70,7 +73,7 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
             <HearthrackMark size={32} />
             <HearthrackWordmark />
           </CardTitle>
-          <p className="text-xs text-muted-foreground">Sign in to continue.</p>
+          <p className="text-xs text-muted-foreground">{t('login.subtitle')}</p>
         </CardHeader>
         <CardContent className="space-y-4">
           {error && (
@@ -91,8 +94,9 @@ export function LoginView({ onSignedIn }: { onSignedIn: (session: Session) => vo
             autoFocus
           >
             <Fingerprint />
-            {passkeySubmitting ? 'Waiting for passkey…' : 'Sign in with a passkey'}
+            {passkeySubmitting ? t('login.waiting') : t('login.signIn')}
           </Button>
+          <LanguageSwitcher className="mx-auto flex w-fit" />
         </CardContent>
       </Card>
     </div>

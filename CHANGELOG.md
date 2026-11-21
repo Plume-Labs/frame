@@ -6,6 +6,16 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — console translation (English and French)
+
+- ui: the console now has a translation layer (`src/i18n/`, no new dependency).
+  English is the source language; French is the first translation. It opens in
+  the saved choice, else the browser language, else English, and a switcher in
+  the sidebar and on the sign-in screen changes it. First batch translated: the
+  sign-in screen, the sidebar, screen titles and tabs, and Settings. Screens not
+  listed yet still show English and move over screen by screen — see
+  `docs/i18n.md`.
+
 ### Added — compute capacity in TOPS
 
 - ui: the GPU screen and the Overview show peak compute (TOPS) per GPU and for

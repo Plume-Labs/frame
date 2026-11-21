@@ -4,6 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 
 import App from './App.tsx'
 import { ErrorFallback } from './ErrorFallback.tsx'
+import { I18nProvider } from './i18n/I18nProvider.tsx'
 
 import "./main.css"
 import "./styles/theme.css"
@@ -22,8 +23,10 @@ import "./index.css"
 // step later in the sequence.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <App />
-    </ErrorBoundary>
+    <I18nProvider>
+      <ErrorBoundary FallbackComponent={ErrorFallback}>
+        <App />
+      </ErrorBoundary>
+    </I18nProvider>
   </StrictMode>
 )
