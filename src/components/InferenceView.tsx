@@ -7,6 +7,8 @@ import { InferenceServicesPanel } from '@/components/InferenceServicesPanel'
 import { TrendRow } from '@/components/Sparkline'
 import { inverseScoreTone } from '@/lib/thresholds'
 import { Lightning, Database } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -24,7 +26,14 @@ const TREND_QUERIES = [
   { metric: 'Requests processing', q: 'llamacpp:requests_processing' },
 ]
 
+const TREND_LABEL: Record<string, MessageKey> = {
+  'KV depth': 'inf.trend.kv',
+  'Decode rate': 'inf.trend.decode',
+  'Requests processing': 'inf.trend.processing',
+}
+
 export function InferenceView() {
+  const { t } = useI18n()
   // llama.cpp's own /metrics, not a Kubernetes object — nothing to watch.
   // Decode rate and KV depth move within a single generation, so this wants a
   // faster read than the slower node-level gauges elsewhere.
@@ -44,24 +53,24 @@ export function InferenceView() {
         server is down — exactly when its Start button is needed. */}
     <InferenceServicesPanel inFlight={inf?.requestsProcessing} />
     <TuningDashboard
-      title="KV-Cache & Inference"
+      title={t('inf.title')}
       icon={<Lightning className="text-primary" />}
       state={state}
       onReload={reload}
-      emptyLabel="No inference server (llama.cpp) deployed."
+      emptyLabel={t('inf.empty')}
       stats={
         inf
           ? [
-              { label: 'Decode tok/s', value: formatRate(inf.predictedTokensPerSec), tone: 'accent' },
-              { label: 'Prompt tok/s', value: formatRate(inf.promptTokensPerSec) },
-              { label: 'Processing', value: `${inf.requestsProcessing}` },
+              { label: t('inf.decode'), value: formatRate(inf.predictedTokensPerSec), tone: 'accent' },
+              { label: t('inf.prompt'), value: formatRate(inf.promptTokensPerSec) },
+              { label: t('inf.processing'), value: `${inf.requestsProcessing}` },
               {
-                label: 'Deferred',
+                label: t('inf.deferred'),
                 value: `${inf.requestsDeferred}`,
                 // Anything deferred means requests are queueing behind the slots.
                 tone: inverseScoreTone(inf.requestsDeferred, 0, 0),
               },
-              { label: 'Busy slots/decode', value: inf.busySlotsPerDecode.toFixed(2), size: 'sm' },
+              { label: t('inf.busySlots'), value: inf.busySlotsPerDecode.toFixed(2), size: 'sm' },
             ]
           : []
       }
@@ -69,8 +78,8 @@ export function InferenceView() {
         inf
           ? {
               value: Math.max(0, Math.min(100, inf.kvUsePct)),
-              captionLeft: `KV ${inf.kvTokens} / ${inf.nCtx} tokens`,
-              captionRight: `${inf.kvUsePct.toFixed(1)}% of context window`,
+              captionLeft: t('inf.kvCaption', { used: inf.kvTokens, ctx: inf.nCtx }),
+              captionRight: t('inf.kvPct', { pct: inf.kvUsePct.toFixed(1) }),
             }
           : undefined
       }
@@ -78,7 +87,13 @@ export function InferenceView() {
         trend && (
           <>
             {trend.map((series) => (
-              <TrendRow key={series.metric} series={series} windowHours={WINDOW_HOURS} format={(v) => v.toFixed(1)} />
+              <TrendRow
+                key={series.metric}
+                series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
+                windowHours={WINDOW_HOURS}
+                format={(v) => v.toFixed(1)}
+              />
             ))}
           </>
         )
@@ -94,26 +109,26 @@ export function InferenceView() {
               {inf.node}
             </Badge>
             <Badge variant="outline" className="font-mono">
-              {inf.slots} slots
+              {t('inf.slots', { n: inf.slots })}
             </Badge>
             <Badge variant="outline" className="font-mono">
-              ctx {inf.nCtx}
+              {t('inf.ctx', { n: inf.nCtx })}
             </Badge>
           </div>
         )
       }
-      entitiesTitle="Cumulative"
+      entitiesTitle={t('inf.cumulative')}
       entities={inf ? [inf] : []}
       entityKey={() => 'totals'}
       entityColumns={2}
       renderEntity={(i) => (
         <div className="grid grid-cols-2 gap-4 text-xs font-mono">
           <div>
-            <div className="text-muted-foreground">Prompt tokens</div>
+            <div className="text-muted-foreground">{t('inf.promptTokens')}</div>
             <div className="text-foreground font-bold">{i.promptTokensTotal.toLocaleString()}</div>
           </div>
           <div>
-            <div className="text-muted-foreground">Decoded tokens</div>
+            <div className="text-muted-foreground">{t('inf.decodedTokens')}</div>
             <div className="text-foreground font-bold">{i.tokensPredictedTotal.toLocaleString()}</div>
           </div>
         </div>

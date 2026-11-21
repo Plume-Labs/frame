@@ -3,6 +3,8 @@
 // The form works in strings, the CR in numbers: toSpec is the one place that
 // converts, and an empty field means the option is absent.
 
+import type { Message } from '@/i18n'
+
 export interface InferenceModelCR {
   metadata: { name: string }
   spec: {
@@ -44,18 +46,18 @@ export function toInferenceModel(cr: InferenceModelCR): InferenceModel {
 }
 
 /** The form's mistakes, before the apiserver's message. Its maximums stay the apiserver's. */
-export function settingsProblem(s: ModelSettings): string | null {
-  for (const key of REQUIRED) if (!/^[1-9][0-9]*$/.test(s[key])) return `${key}: a positive whole number.`
-  for (const key of OPTIONAL) if (s[key] && !/^[1-9][0-9]*$/.test(s[key])) return `${key}: a positive whole number, or empty.`
-  if (s.kvCacheType && !KV_CACHE_TYPES.includes(s.kvCacheType)) return `kvCacheType: one of ${KV_CACHE_TYPES.join(', ')}, or empty.`
-  if (s.reasoningBudget && !/^(-1|0|[1-9][0-9]*)$/.test(s.reasoningBudget)) return 'reasoningBudget: -1, 0 or a number of tokens.'
-  if (s.reasoningBudgetMessage && !s.reasoningBudget) return 'reasoningBudgetMessage needs reasoningBudget.'
-  if (s.cpuMoELayers && !s.hostMemoryMiB) return 'cpuMoELayers needs hostMemoryMiB: the experts live there.'
+export function settingsProblem(s: ModelSettings): Message | null {
+  for (const key of REQUIRED) if (!/^[1-9][0-9]*$/.test(s[key])) return { key: 'infm.problem.positive', params: { key } }
+  for (const key of OPTIONAL) if (s[key] && !/^[1-9][0-9]*$/.test(s[key])) return { key: 'infm.problem.positiveOrEmpty', params: { key } }
+  if (s.kvCacheType && !KV_CACHE_TYPES.includes(s.kvCacheType)) return { key: 'infm.problem.kvType', params: { types: KV_CACHE_TYPES.join(', ') } }
+  if (s.reasoningBudget && !/^(-1|0|[1-9][0-9]*)$/.test(s.reasoningBudget)) return { key: 'infm.problem.budget' }
+  if (s.reasoningBudgetMessage && !s.reasoningBudget) return { key: 'infm.problem.budgetMessage' }
+  if (s.cpuMoELayers && !s.hostMemoryMiB) return { key: 'infm.problem.cpuMoE' }
   return null
 }
 
-export function nameProblem(name: string): string | null {
-  return /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(name) ? null : 'Name: lowercase letters, digits, dots and dashes. The weights are <name>.gguf.'
+export function nameProblem(name: string): Message | null {
+  return /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/.test(name) ? null : { key: 'infm.problem.name' }
 }
 
 /** A whole spec: sent as a merge patch, null is what removes an option. */
