@@ -5,6 +5,9 @@ import { TuningDashboard, EntityTile } from '@/components/TuningDashboard'
 import { TrendRow } from '@/components/Sparkline'
 import { scoreTone } from '@/lib/thresholds'
 import { Archive } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -20,7 +23,13 @@ const TREND_QUERIES = [
   { metric: 'Pages shared', q: 'sum(node_ksmd_pages_shared)' },
 ]
 
+const TREND_LABEL: Record<string, MessageKey> = {
+  'Pages sharing': 'ksm.trend.sharing',
+  'Pages shared': 'ksm.trend.shared',
+}
+
 export function KsmView() {
+  const { t, tn, locale } = useI18n()
   // node-exporter's own /metrics, not a Kubernetes object — nothing to watch.
   // Page-sharing counts move slowly, so this stays at the default 30s cadence.
   const { state, reload } = useLiveResource<KsmStats>(() => frame.cluster.ksm(), [], [], 30_000)
@@ -39,21 +48,21 @@ export function KsmView() {
 
   return (
     <TuningDashboard
-      title="KSM — Kernel Same-page Merging"
+      title={t('ksm.title')}
       icon={<Archive className="text-primary" />}
       state={state}
       onReload={reload}
-      emptyLabel="node-exporter (ksmd) not deployed."
+      emptyLabel={t('ksm.empty')}
       stats={
         s
           ? [
               {
-                label: 'Enabled nodes',
+                label: t('ksm.stat.enabled'),
                 value: `${s.enabledNodes} / ${s.nodes.length}`,
                 tone: scoreTone(coverage, 100, 50),
               },
-              { label: 'Memory saved', value: `${s.totalSavedMiB.toFixed(1)} MiB` },
-              { label: 'Pages sharing', value: s.totalPagesSharing.toLocaleString() },
+              { label: t('ksm.stat.saved'), value: `${s.totalSavedMiB.toFixed(1)} MiB` },
+              { label: t('ksm.stat.sharing'), value: s.totalPagesSharing.toLocaleString(locale) },
             ]
           : []
       }
@@ -64,8 +73,9 @@ export function KsmView() {
               <TrendRow
                 key={series.metric}
                 series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
                 windowHours={WINDOW_HOURS}
-                format={(v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                format={(v) => v.toLocaleString(locale, { maximumFractionDigits: 0 })}
               />
             ))}
           </>
@@ -74,18 +84,14 @@ export function KsmView() {
       note={
         s && s.enabledNodes > 0 && s.totalPagesSharing === 0 ? (
           <p className="text-sm text-muted-foreground">
-            KSM is running on {s.enabledNodes} node{s.enabledNodes > 1 ? 's' : ''} but has merged
-            nothing, and that is expected rather than broken: the scanner only ever looks at memory a
-            process has explicitly offered with <span className="font-mono">madvise(MADV_MERGEABLE)</span>.
-            QEMU/KVM does that for guest RAM, which is where KSM earns its keep; container runtimes do
-            not, so on a plain Kubernetes node there is nothing for it to deduplicate. Making
-            containers participate needs the workload to opt in per process
-            (<span className="font-mono">prctl(PR_SET_MEMORY_MERGE)</span>, Linux 6.4+) — until then
-            these counters stay at zero however long it scans.
+            {richText(tn('ksm.note', s.enabledNodes), {
+              madvise: <span className="font-mono">madvise(MADV_MERGEABLE)</span>,
+              prctl: <span className="font-mono">prctl(PR_SET_MEMORY_MERGE)</span>,
+            })}
           </p>
         ) : undefined
       }
-      entitiesTitle="Per-node"
+      entitiesTitle={t('ksm.perNode')}
       entities={s?.nodes ?? []}
       entityKey={(n) => n.node}
       renderEntity={(n) => (
@@ -96,7 +102,7 @@ export function KsmView() {
               variant="outline"
               className={`text-[10px] font-mono ${n.run ? 'text-accent' : 'text-muted-foreground'}`}
             >
-              KSM {n.run ? 'ON' : 'OFF'}
+              {n.run ? t('ksm.on') : t('ksm.off')}
             </Badge>
           }
           className={n.run ? undefined : 'opacity-60'}
@@ -104,20 +110,20 @@ export function KsmView() {
           <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground font-mono">
             <div>
               <div className="text-foreground font-bold">{n.savedMiB.toFixed(1)} MiB</div>
-              saved
+              {t('ksm.saved')}
             </div>
             <div>
-              <div className="text-foreground font-bold">{n.pagesSharing.toLocaleString()}</div>
-              sharing
+              <div className="text-foreground font-bold">{n.pagesSharing.toLocaleString(locale)}</div>
+              {t('ksm.sharing')}
             </div>
             <div>
               <div className="text-foreground font-bold">{n.fullScans}</div>
-              scans
+              {t('ksm.scans')}
             </div>
           </div>
         </EntityTile>
       )}
-      configTitle="How KSM is enabled"
+      configTitle={t('ksm.config')}
       config={`# node-prep.sh sets these per node, persisted by ksm-enable.service
 echo 1    > /sys/kernel/mm/ksm/run
 echo 1000 > /sys/kernel/mm/ksm/pages_to_scan

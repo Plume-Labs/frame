@@ -4,6 +4,8 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { TuningDashboard, EntityTile } from '@/components/TuningDashboard'
 import { TrendRow } from '@/components/Sparkline'
 import { Gauge } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -22,7 +24,13 @@ const TREND_QUERIES = [
   { metric: 'Framebuffer used', q: 'sum(DCGM_FI_DEV_FB_USED)', unit: ' MiB' },
 ]
 
+const TREND_LABEL: Record<string, MessageKey> = {
+  'GPU utilisation': 'mps.trend.util',
+  'Framebuffer used': 'mps.trend.fb',
+}
+
 export function MpsView() {
+  const { t } = useI18n()
   // DCGM's own /metrics, not a Kubernetes object — nothing to watch.
   // Utilisation is exactly the kind of second-to-second gauge that earns a
   // fast rate rather than the 30s+ most screens use.
@@ -41,41 +49,40 @@ export function MpsView() {
 
   return (
     <TuningDashboard
-      title="MPS — GPU sharing"
+      title={t('mps.title')}
       icon={<Gauge className="text-primary" />}
       badge={
         <Badge variant="outline" className="font-mono text-[10px]">
-          exclusive · MPS off
+          {t('mps.badge')}
         </Badge>
       }
       state={state}
       onReload={reload}
-      emptyLabel="No GPUs present."
+      emptyLabel={t('mps.empty')}
       stats={[
-        { label: 'GPUs advertised', value: `${gpus.length} × exclusive` },
-        { label: 'Clients per GPU', value: '1', size: 'sm' },
-        { label: 'Mean utilisation', value: `${meanUtil.toFixed(0)}%` },
-        { label: 'Idle headroom', value: `${idleHeadroom.toFixed(0)}%` },
+        { label: t('mps.stat.advertised'), value: t('mps.stat.exclusive', { count: gpus.length }) },
+        { label: t('mps.stat.clients'), value: '1', size: 'sm' },
+        { label: t('mps.stat.meanUtil'), value: `${meanUtil.toFixed(0)}%` },
+        { label: t('mps.stat.idle'), value: `${idleHeadroom.toFixed(0)}%` },
       ]}
       trend={
         trend && (
           <>
             {trend.map((series) => (
-              <TrendRow key={series.metric} series={series} windowHours={WINDOW_HOURS} />
+              <TrendRow
+                key={series.metric}
+                series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
+                windowHours={WINDOW_HOURS}
+              />
             ))}
           </>
         )
       }
       note={
-        <p className="text-sm text-muted-foreground">
-          Multi-Process Service lets several processes share one GPU context. With the NVIDIA
-          device plugin's default configuration, each GPU is advertised as a single exclusive
-          resource, so a second workload cannot be admitted however idle the device is — the headroom above is the share that goes unused rather than
-          being reclaimable. Enabling MPS or time-slicing trades that back for weaker isolation:
-          clients share a context, so one of them faulting can take the others down with it.
-        </p>
+        <p className="text-sm text-muted-foreground">{t('mps.note')}</p>
       }
-      entitiesTitle="Per-GPU"
+      entitiesTitle={t('mps.perGpu')}
       entities={gpus}
       entityKey={(g) => `${g.node}-${g.index}`}
       entityColumns={2}
@@ -89,20 +96,20 @@ export function MpsView() {
           <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground font-mono">
             <div>
               <div className="text-foreground font-bold">1 × nvidia.com/gpu</div>
-              advertised
+              {t('mps.advertised')}
             </div>
             <div>
-              <div className="text-foreground font-bold">1 (exclusive)</div>
-              clients
+              <div className="text-foreground font-bold">{t('mps.exclusive')}</div>
+              {t('mps.clients')}
             </div>
             <div>
               <div className="text-foreground font-bold">{g.utilPct}%</div>
-              util now
+              {t('mps.utilNow')}
             </div>
           </div>
         </EntityTile>
       )}
-      configTitle="How sharing would be enabled"
+      configTitle={t('mps.config')}
       config={`# GPU operator device-plugin — time-slicing (coarse, no memory isolation)
 sharing:
   timeSlicing:

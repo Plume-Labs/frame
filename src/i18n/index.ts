@@ -53,5 +53,21 @@ export function translate(locale: Locale, key: MessageKey, params?: Params): str
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? String(params[name]) : whole))
 }
 
+/** The base of a `<base>.one` / `<base>.other` pair of messages, for counted text. */
+export type PluralKey = MessageKey extends infer K ? (K extends `${infer B}.one` ? B : never) : never
+
+/**
+ * Counted text: picks `<base>.one` or `<base>.other` by the locale's plural
+ * rule (`Intl.PluralRules`) and fills `{count}` plus any other params. Only
+ * `one` and `other` are used — enough for English and French; a language that
+ * needs more categories adds `<base>.few` etc. and they are picked up here.
+ */
+export function translatePlural(locale: Locale, base: PluralKey, count: number, params?: Params): string {
+  const category = new Intl.PluralRules(locale).select(count)
+  const key = `${base}.${category}` as MessageKey
+  const chosen = key in CATALOGUES[locale] ? key : (`${base}.other` as MessageKey)
+  return translate(locale, chosen, { count, ...params })
+}
+
 /** Every catalogue, for the tests that compare them. */
 export const catalogues: Record<Locale, Record<MessageKey, string>> = CATALOGUES

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { catalogues, detectLocale, LOCALES, translate, type MessageKey } from '@/i18n'
+import { catalogues, detectLocale, LOCALES, translate, translatePlural, type MessageKey } from '@/i18n'
 import { en } from '@/i18n/en'
 
 const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort()
@@ -71,11 +71,28 @@ describe('rendering', () => {
     const html = renderToStaticMarkup(
       createElement(
         I18nContext.Provider,
-        { value: { locale: 'fr', setLocale: () => {}, t: (k, p) => translate('fr', k, p) } },
+        { value: { locale: 'fr', setLocale: () => {}, t: (k, p) => translate('fr', k, p), tn: (b, c, p) => translatePlural('fr', b, c, p) } },
         createElement(LoginView, { onSignedIn: () => {} }),
       ),
     )
     expect(html).toContain(catalogues.fr['login.signIn'].replace(/'/g, '&#x27;'))
     expect(html).not.toContain('Sign in with a passkey')
+  })
+})
+
+describe('translatePlural', () => {
+  it('picks one/other by the locale rule and fills {count}', () => {
+    expect(translatePlural('en', 'ksm.note', 1)).toContain('1 node but')
+    expect(translatePlural('en', 'ksm.note', 3)).toContain('3 nodes but')
+    expect(translatePlural('fr', 'ksm.note', 1)).toContain('1 nœud mais')
+    expect(translatePlural('fr', 'ksm.note', 3)).toContain('3 nœuds mais')
+  })
+
+  it('has both forms for every counted message in every language', () => {
+    for (const code of Object.keys(catalogues) as Array<keyof typeof catalogues>) {
+      for (const key of Object.keys(catalogues[code])) {
+        if (key.endsWith('.one')) expect(catalogues[code], key).toHaveProperty(key.replace(/\.one$/, '.other'))
+      }
+    }
   })
 })

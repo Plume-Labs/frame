@@ -1,4 +1,5 @@
 import { MetricSeries } from '@/lib/frame-sdk'
+import { useI18n } from '@/i18n/context'
 import { Tone, TONE_TEXT } from '@/lib/thresholds'
 import { cn } from '@/lib/utils'
 
@@ -46,6 +47,7 @@ export function TrendRow({
   tone,
   format = (v) => v.toFixed(0),
   caption,
+  label,
 }: {
   series: MetricSeries
   windowHours: number
@@ -54,18 +56,21 @@ export function TrendRow({
   format?: (v: number) => string
   /** Replaces the default "last Nh" note — use it for a projection or a rate. */
   caption?: string
+  /** Replaces `series.metric` — the query's own English name — with translated text. */
+  label?: string
 }) {
+  const { t } = useI18n()
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs font-mono">
-        <span className="text-muted-foreground">{series.metric}</span>
+        <span className="text-muted-foreground">{label ?? series.metric}</span>
         <span className={tone ? TONE_TEXT[tone] : 'text-foreground'}>
           {format(series.current)}
           {series.unit ?? ''}
         </span>
       </div>
       <Sparkline points={series.history.map((p) => p.v)} />
-      <div className="text-[10px] text-muted-foreground font-mono">{caption ?? `last ${windowHours}h`}</div>
+      <div className="text-[10px] text-muted-foreground font-mono">{caption ?? t('trend.last', { hours: windowHours })}</div>
     </div>
   )
 }
