@@ -3,6 +3,7 @@ import {
   BackupStatus,
   CephStatus,
   ClusterNodeInfo,
+  GpuInfo,
   InferenceStatus,
   MetricSeries,
   PostureStatus,
@@ -14,6 +15,7 @@ import {
 } from '@/lib/frame-sdk'
 import { config } from '@/lib/frame-config'
 import { formatRate } from '@/lib/inference-rates'
+import { formatTops, summarizeTops } from '@/lib/tops'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useLiveResource } from '@/hooks/useLiveResource'
@@ -122,6 +124,7 @@ export function OverviewView() {
     KEEP_STALE,
   )
   const inference = useLiveResource<InferenceStatus | null>(() => frame.cluster.inference(), [], [], 10_000)
+  const gpus = useLiveResource<GpuInfo[]>(() => frame.cluster.gpus(), [], [], 10_000)
   const posture = useLiveResource<PostureStatus | null>(() => frame.cluster.posture(), [], [
     crdListPath('aquasecurity.github.io', 'v1alpha1', 'vulnerabilityreports'),
     crdListPath('aquasecurity.github.io', 'v1alpha1', 'configauditreports'),
@@ -138,7 +141,7 @@ export function OverviewView() {
   )
 
   function reloadAll() {
-    ;[nodes, alerts, registry, ceph, backups, inference, posture, trendState].forEach((r) => r.reload())
+    ;[nodes, alerts, registry, ceph, backups, inference, posture, gpus, trendState].forEach((r) => r.reload())
   }
 
   return (
@@ -161,6 +164,8 @@ export function OverviewView() {
         databases={databases.state}
         volumeFill={volumeFill.state}
       />
+
+      <ComputeCard state={gpus.state} />
 
       <TrendCard state={trendState.state} />
 
@@ -299,6 +304,44 @@ function TrendCard({ state }: { state: ReturnType<typeof useLiveResource<MetricS
             tone={inverseScoreTone(series.current, 75, 90)}
           />
         ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Compute capacity in TOPS. Hidden when the cluster has no GPU telemetry (no
+ * DCGM, no cards): a tile saying "0 TOPS" would read as a fault.
+ */
+function ComputeCard({ state }: { state: ReturnType<typeof useLiveResource<GpuInfo[]>>['state'] }) {
+  const { navigate } = useNavigation()
+  const gpus = state.phase === 'ready' ? state.data : []
+  if (gpus.length === 0) return null
+  const t = summarizeTops(gpus)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="font-mono text-base flex items-center gap-2">
+          <Lightning size={16} className="text-primary" /> Compute
+          <button
+            type="button"
+            onClick={() => navigate('gpu')}
+            className="ml-auto text-[10px] font-mono text-muted-foreground hover:text-foreground"
+          >
+            open →
+          </button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <StatGrid count={3}>
+          <Stat label="Peak" value={t.known ? formatTops(t.peak) : '—'} tone="accent" size="md" />
+          <Stat label="In use (est.)" value={t.known ? formatTops(t.used) : '—'} size="md" />
+          <Stat label="GPUs" value={`${gpus.length}`} size="md" />
+        </StatGrid>
+        <p className="text-[11px] font-mono text-muted-foreground">
+          Vendor INT8 rating (dense) × utilisation.
+          {t.unknown > 0 && ` ${t.unknown} GPU${t.unknown > 1 ? 's' : ''} of unlisted model not counted.`}
+        </p>
       </CardContent>
     </Card>
   )

@@ -6,6 +6,14 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — compute capacity in TOPS
+
+- ui: the GPU screen and the Overview show peak compute (TOPS) per GPU and for
+  the cluster, plus an upper-bound estimate of what is in use (peak ×
+  utilisation). The figure is the vendor's INT8 tensor rating (dense) looked
+  up by the DCGM model name, not a measurement; a model missing from the table
+  shows "—" and is left out of the sums.
+
 ### Fixed — scrub request no longer written and retracted every tick (#101)
 
 - agent: a read no scrub can start from (ZFS in `error` or `busy`, a capped
