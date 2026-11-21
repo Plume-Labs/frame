@@ -27,6 +27,7 @@ import {
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Bell, ArrowClockwise, BellSlash, BellRinging } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -45,6 +46,7 @@ const TONE: Record<string, string> = {
 }
 
 export function AlertsView() {
+  const { t, locale } = useI18n()
   // Alertmanager's own API, not a Kubernetes object — nothing to watch.
   const { state, reload } = useLiveResource<AlertsStatus | null>(() => frame.cluster.alerts(), [], [], 30_000)
   const { state: silenceState, reload: reloadSilences } = useLiveResource<AlertSilence[]>(
@@ -83,11 +85,11 @@ export function AlertsView() {
     setBusy(true)
     try {
       await frame.cluster.silenceAlert(silenceTarget, duration, 'frame-ui')
-      toast.success(`${silenceTarget.name} silenced`)
+      toast.success(t('al.silenced', { name: silenceTarget.name }))
       setSilenceTarget(null)
       reloadAll()
     } catch (e) {
-      toast.error(`Failed to silence ${silenceTarget.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('al.silenceFailed', { name: silenceTarget.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
     }
@@ -97,10 +99,10 @@ export function AlertsView() {
     setExpiring(s.id)
     try {
       await frame.cluster.expireSilence(s.id)
-      toast.success('Silence lifted', { description: s.matchers })
+      toast.success(t('al.lifted'), { description: s.matchers })
       reloadAll()
     } catch (e) {
-      toast.error('Failed to lift silence', { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('al.liftFailed'), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setExpiring(null)
     }
@@ -112,17 +114,17 @@ export function AlertsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Bell className="text-primary" />
-            Active alerts (Alertmanager)
+            {t('al.title')}
             <Button variant="outline" size="sm" className="ml-auto font-mono gap-1.5" onClick={reloadAll} disabled={state.phase === 'loading'}>
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {data && (
           <CardContent className="flex flex-wrap items-center gap-3">
             <div className="mr-4">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Firing</div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">{t('al.firing')}</div>
               <div className="font-mono font-bold text-2xl text-foreground">{data.alerts.length}</div>
             </div>
             {Object.entries(data.bySeverity)
@@ -132,12 +134,12 @@ export function AlertsView() {
                   {n} {s}
                 </Badge>
               ))}
-            <span className="text-[11px] text-muted-foreground font-mono">Prometheus rules + routed Falco detections</span>
+            <span className="text-[11px] text-muted-foreground font-mono">{t('al.sources')}</span>
           </CardContent>
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No active alerts (or Alertmanager not deployed)." />
+      <LiveStates state={state} emptyLabel={t('al.empty')} />
 
       {data && data.alerts.length > 0 && (
         <Card>
@@ -148,7 +150,7 @@ export function AlertsView() {
                 <span className="font-mono text-xs font-bold">{a.name}</span>
                 {a.namespace && <span className="font-mono text-[10px] text-muted-foreground">{a.namespace}</span>}
                 <span className="font-mono text-[10px] text-muted-foreground flex-1 truncate">{a.summary}</span>
-                <span className="font-mono text-[10px] text-muted-foreground">{a.startsAt ? new Date(a.startsAt).toLocaleTimeString() : ''}</span>
+                <span className="font-mono text-[10px] text-muted-foreground">{a.startsAt ? new Date(a.startsAt).toLocaleTimeString(locale) : ''}</span>
                 <Button
                   variant="outline"
                   size="sm"
@@ -156,7 +158,7 @@ export function AlertsView() {
                   onClick={() => setSilenceTarget(a)}
                 >
                   <BellSlash size={10} />
-                  Silence
+                  {t('al.silence')}
                 </Button>
               </div>
             ))}
@@ -166,11 +168,11 @@ export function AlertsView() {
 
       <Card>
         <CardHeader className="flex flex-row items-center gap-2">
-          <CardTitle className="font-mono text-base">Registry</CardTitle>
+          <CardTitle className="font-mono text-base">{t('al.registry')}</CardTitle>
           <div className="ml-auto flex gap-1">
             {(['Firing', 'Resolved'] as const).map((v) => (
               <Button key={v} size="sm" variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
-                {v === 'Firing' ? 'Active' : 'History'}
+                {v === 'Firing' ? t('al.active') : t('al.history')}
               </Button>
             ))}
           </div>
@@ -178,11 +180,11 @@ export function AlertsView() {
         <CardContent className="space-y-2">
           {registryState.phase === 'error' ? (
             <p className="text-sm font-mono text-destructive">
-              Cannot read the alert registry: {registryState.message}
+              {t('al.registryError', { message: registryState.message })}
             </p>
           ) : registry.filter((a) => a.state === view).length === 0 ? (
             <p className="text-sm font-mono text-muted-foreground">
-              {view === 'Firing' ? 'No active alert in the registry.' : 'No resolved alert within retention.'}
+              {view === 'Firing' ? t('al.registryNoActive') : t('al.registryNoResolved')}
             </p>
           ) : (
             registry
@@ -190,7 +192,7 @@ export function AlertsView() {
               .map((a) => (
                 <div key={a.name} className="flex items-center gap-3 p-2 rounded border border-border font-mono text-xs">
                   <span className={TONE[a.severity] ?? TONE.none}>{a.alertName}</span>
-                  <span className="text-muted-foreground">{a.namespace || 'cluster'}</span>
+                  <span className="text-muted-foreground">{a.namespace || t('al.cluster')}</span>
                   <span className="ml-auto flex gap-1">
                     {a.deliveries.map((d) => (
                       <Badge
@@ -211,23 +213,23 @@ export function AlertsView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-mono text-base">Subscriptions</CardTitle>
+          <CardTitle className="font-mono text-base">{t('al.subs')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {subsState.phase === 'error' ? (
             <p className="text-sm font-mono text-destructive">
-              Cannot read alert subscriptions: {subsState.message}
+              {t('al.subsError', { message: subsState.message })}
             </p>
           ) : subscriptions.length === 0 ? (
-            <p className="text-sm font-mono text-muted-foreground">No tenant receives the cluster's alerts.</p>
+            <p className="text-sm font-mono text-muted-foreground">{t('al.subsNone')}</p>
           ) : (
             subscriptions.map((s) => (
               <div key={s.name} className="flex items-center gap-3 p-2 rounded border border-border font-mono text-xs">
                 <span className="font-bold">{s.name}</span>
                 <span className="text-muted-foreground truncate">{s.url}</span>
-                {s.paused && <Badge variant="outline">paused</Badge>}
-                <span className="ml-auto">pending {s.pending}</span>
-                <span className="text-muted-foreground">{s.lastSuccessAt ? `last ok ${s.lastSuccessAt}` : 'never delivered'}</span>
+                {s.paused && <Badge variant="outline">{t('al.paused')}</Badge>}
+                <span className="ml-auto">{t('al.pending', { n: s.pending })}</span>
+                <span className="text-muted-foreground">{s.lastSuccessAt ? t('al.lastOk', { when: s.lastSuccessAt }) : t('al.neverDelivered')}</span>
                 {s.lastError && <span className="text-destructive">{s.lastError}</span>}
               </div>
             ))
@@ -240,7 +242,7 @@ export function AlertsView() {
           <CardHeader>
             <CardTitle className="font-mono text-lg flex items-center gap-2">
               <BellSlash className="text-warning" />
-              Silences ({silences.length})
+              {t('al.silences', { n: silences.length })}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -259,7 +261,7 @@ export function AlertsView() {
                 </Badge>
                 <span className="font-mono text-[11px] flex-1 truncate">{s.matchers}</span>
                 <span className="font-mono text-[10px] text-muted-foreground">
-                  until {s.endsAt ? new Date(s.endsAt).toLocaleString() : '—'}
+                  {t('al.until', { when: s.endsAt ? new Date(s.endsAt).toLocaleString(locale) : '—' })}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground">{s.createdBy}</span>
                 <Button
@@ -270,7 +272,7 @@ export function AlertsView() {
                   onClick={() => expire(s)}
                 >
                   <BellRinging size={10} />
-                  {expiring === s.id ? 'Lifting…' : 'Lift'}
+                  {expiring === s.id ? t('al.lifting') : t('al.lift')}
                 </Button>
               </div>
             ))}
@@ -281,14 +283,13 @@ export function AlertsView() {
       <AlertDialog open={!!silenceTarget} onOpenChange={(open) => !open && setSilenceTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Silence {silenceTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('al.confirmTitle', { name: silenceTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Matches on every label of this alert instance ({silenceTarget ? Object.keys(silenceTarget.labels).length : 0} labels) —
-              won't suppress other alerts with the same name but different labels.
+              {t('al.confirmDesc', { n: silenceTarget ? Object.keys(silenceTarget.labels).length : 0 })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground font-mono">Duration</label>
+            <label className="text-xs text-muted-foreground font-mono">{t('al.duration')}</label>
             <Select value={String(duration)} onValueChange={(v) => setDuration(Number(v))}>
               <SelectTrigger>
                 <SelectValue />
@@ -303,9 +304,9 @@ export function AlertsView() {
             </Select>
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={doSilence} disabled={busy}>
-              {busy ? 'Silencing…' : 'Silence'}
+              {busy ? t('al.silencing') : t('al.silence')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
