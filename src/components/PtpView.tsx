@@ -5,6 +5,8 @@ import { TuningDashboard, EntityTile } from '@/components/TuningDashboard'
 import { TrendRow } from '@/components/Sparkline'
 import { inverseScoreTone, scoreTone } from '@/lib/thresholds'
 import { Clock } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -27,7 +29,14 @@ const TREND_QUERIES = [
 const OFFSET_GOOD_S = 100e-6
 const OFFSET_OK_S = 1e-3
 
+/** The query's own metric name → its translated label. */
+const TREND_LABEL: Record<string, MessageKey> = {
+  'Max offset': 'ptp.trend.maxOffset',
+  'Max freq adjustment': 'ptp.trend.maxFreq',
+}
+
 export function PtpView() {
+  const { t } = useI18n()
   // Both read node-exporter/Prometheus metrics, not Kubernetes objects — there
   // is nothing to watch. Clock offset drifts over minutes, not seconds.
   const { state, reload } = useLiveResource<PtpNode[]>(() => frame.cluster.ptp(), [], [], 30_000)
@@ -46,26 +55,32 @@ export function PtpView() {
 
   return (
     <TuningDashboard
-      title="Clock Sync — PTP / adjtimex"
+      title={t('ptp.title')}
       icon={<Clock className="text-primary" />}
       state={state}
       onReload={reload}
-      emptyLabel="node-exporter (timex) not deployed."
+      emptyLabel={t('ptp.empty')}
       stats={[
-        { label: 'Synced nodes', value: `${synced} / ${nodes.length}`, tone: scoreTone(syncedPct, 100, 50) },
-        { label: 'Max offset', value: usFmt(maxOff), tone: inverseScoreTone(maxOff, OFFSET_GOOD_S, OFFSET_OK_S) },
-        { label: 'Source', value: 'ptp_kvm PHC', size: 'sm' },
+        { label: t('ptp.stat.synced'), value: `${synced} / ${nodes.length}`, tone: scoreTone(syncedPct, 100, 50) },
+        { label: t('ptp.stat.maxOffset'), value: usFmt(maxOff), tone: inverseScoreTone(maxOff, OFFSET_GOOD_S, OFFSET_OK_S) },
+        { label: t('ptp.stat.source'), value: 'ptp_kvm PHC', size: 'sm' },
       ]}
       trend={
         trend && (
           <>
             {trend.map((series) => (
-              <TrendRow key={series.metric} series={series} windowHours={WINDOW_HOURS} format={(v) => v.toFixed(2)} />
+              <TrendRow
+                key={series.metric}
+                series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
+                windowHours={WINDOW_HOURS}
+                format={(v) => v.toFixed(2)}
+              />
             ))}
           </>
         )
       }
-      entitiesTitle="Per-node"
+      entitiesTitle={t('ptp.perNode')}
       entities={nodes}
       entityKey={(n) => n.node}
       renderEntity={(n) => (
@@ -76,27 +91,27 @@ export function PtpView() {
               variant="outline"
               className={`text-[10px] font-mono ${n.synced ? 'text-accent' : 'text-destructive'}`}
             >
-              {n.synced ? 'SYNCED' : 'UNSYNCED'}
+              {n.synced ? t('ptp.synced') : t('ptp.unsynced')}
             </Badge>
           }
         >
           <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground font-mono">
             <div>
               <div className="text-foreground font-bold">{usFmt(n.offsetSeconds)}</div>
-              offset
+              {t('ptp.offset')}
             </div>
             <div>
               <div className="text-foreground font-bold">{n.freqPpm.toFixed(1)}</div>
-              ppm adj
+              {t('ptp.ppmAdj')}
             </div>
             <div>
               <div className="text-foreground font-bold">{usFmt(n.maxErrorSeconds)}</div>
-              max err
+              {t('ptp.maxErr')}
             </div>
           </div>
         </EntityTile>
       )}
-      configTitle="How the clock is disciplined"
+      configTitle={t('ptp.config')}
       config={`# node-prep.sh loads the paravirtual PHC, persisted across reboots
 modprobe ptp_kvm                       # -> /dev/ptp0, fed by the hypervisor
 echo ptp_kvm > /etc/modules-load.d/ptp_kvm.conf

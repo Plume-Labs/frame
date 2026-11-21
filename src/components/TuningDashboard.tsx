@@ -7,6 +7,7 @@ import { LiveState } from '@/hooks/useLiveResource'
 import { Stat, StatGrid } from '@/components/Primitives'
 import { Tone, TONE_TEXT } from '@/lib/thresholds'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/context'
 import { ArrowClockwise } from '@phosphor-icons/react'
 
 /**
@@ -105,6 +106,7 @@ export function TuningDashboard<T>({
   onReload,
   emptyLabel,
 }: TuningDashboardProps<T>) {
+  const { t } = useI18n()
   return (
     <div className="space-y-6">
       {/* ── Summary ─────────────────────────────────────────────────────── */}
@@ -123,7 +125,7 @@ export function TuningDashboard<T>({
                 disabled={state?.phase === 'loading'}
               >
                 <ArrowClockwise className={state?.phase === 'loading' ? 'animate-spin' : ''} />
-                Refresh
+                {t('common.refresh')}
               </Button>
             )}
           </CardTitle>

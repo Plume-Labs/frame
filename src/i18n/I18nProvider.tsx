@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { I18nContext, type I18n } from './context'
-import { detectLocale, LOCALE_STORAGE_KEY, translate, type Locale } from './index'
+import { detectLocale, LOCALE_STORAGE_KEY, translate, translatePlural, type Locale } from './index'
 
 function readSaved(): string | null {
   try {
@@ -31,7 +31,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale])
 
   const value = useMemo<I18n>(
-    () => ({ locale, setLocale, t: (key, params) => translate(locale, key, params) }),
+    () => ({
+      locale,
+      setLocale,
+      t: (key, params) => translate(locale, key, params),
+      tn: (base, count, params) => translatePlural(locale, base, count, params),
+    }),
     [locale, setLocale],
   )
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
