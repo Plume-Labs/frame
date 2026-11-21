@@ -7,6 +7,8 @@ import { LiveStates } from '@/components/LiveStates'
 import { Stat } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
 import { Network, ArrowClockwise, WarningCircle, TrendUp } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -33,13 +35,20 @@ const MiB = 1024 ** 2
 const fmt = (b: number) => (b >= GiB ? `${(b / GiB).toFixed(2)} GiB` : `${(b / MiB).toFixed(0)} MiB`)
 const pkts = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : `${n}`)
 
-const IFACE_ROLE: Record<string, string> = {
-  eth0: 'physical NIC',
-  'flannel.1': 'VXLAN overlay',
-  cni0: 'pod bridge',
+const IFACE_ROLE: Record<string, MessageKey> = {
+  eth0: 'net.role.eth0',
+  'flannel.1': 'net.role.flannel',
+  cni0: 'net.role.cni0',
+}
+
+const TREND_LABEL: Record<string, MessageKey> = {
+  Receive: 'net.trend.rx',
+  Transmit: 'net.trend.tx',
+  'Errors + drops': 'net.trend.errs',
 }
 
 export function NetworkView() {
+  const { t } = useI18n()
   // node-exporter's own /metrics, not a Kubernetes object — nothing to watch.
   const { state, reload } = useLiveResource<NetNode[]>(() => frame.cluster.network(), [], [], 30_000)
   const { state: trendState } = useLiveResource<MetricSeries[] | null>(
@@ -63,7 +72,7 @@ export function NetworkView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Network className="text-primary" />
-            Network
+            {t('net.title')}
             <Button
               variant="outline"
               size="sm"
@@ -72,16 +81,16 @@ export function NetworkView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && (
           <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <Stat label="NIC received" value={fmt(rx)} />
-            <Stat label="NIC transmitted" value={fmt(tx)} />
-            <Stat label="RX+TX errors" value={`${errs}`} tone={errs ? 'warning' : 'accent'} />
-            <Stat label="RX+TX drops" value={`${drops}`} tone={drops ? 'warning' : 'accent'} />
+            <Stat label={t('net.stat.rx')} value={fmt(rx)} />
+            <Stat label={t('net.stat.tx')} value={fmt(tx)} />
+            <Stat label={t('net.stat.errs')} value={`${errs}`} tone={errs ? 'warning' : 'accent'} />
+            <Stat label={t('net.stat.drops')} value={`${drops}`} tone={drops ? 'warning' : 'accent'} />
           </CardContent>
         )}
       </Card>
@@ -90,7 +99,7 @@ export function NetworkView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <TrendUp size={16} className="text-primary" /> Throughput, last {WINDOW_HOURS}h (Prometheus)
+              <TrendUp size={16} className="text-primary" /> {t('net.trendTitle', { hours: WINDOW_HOURS })}
             </CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -98,6 +107,7 @@ export function NetworkView() {
               <TrendRow
                 key={series.metric}
                 series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
                 windowHours={WINDOW_HOURS}
                 format={(v) => (v >= 1 ? v.toFixed(1) : v.toFixed(3))}
                 tone={series.metric === 'Errors + drops' && series.current > 0 ? 'warning' : undefined}
@@ -107,7 +117,7 @@ export function NetworkView() {
         </Card>
       )}
 
-      <LiveStates state={state} emptyLabel="node-exporter (netdev) not deployed." />
+      <LiveStates state={state} emptyLabel={t('net.empty')} />
 
       {state.phase === 'ready' &&
         nodes.map((n) => (
@@ -127,21 +137,21 @@ export function NetworkView() {
                       <span className="font-mono text-xs font-bold">
                         {i.device}
                         <span className="text-muted-foreground font-normal ml-2">
-                          {IFACE_ROLE[i.device] ?? ''}
+                          {IFACE_ROLE[i.device] ? t(IFACE_ROLE[i.device]) : ''}
                         </span>
                       </span>
                       {bad > 0 && (
                         <Badge variant="outline" className="text-[10px] font-mono text-warning border-warning/40 gap-1">
                           <WarningCircle size={11} />
-                          {bad} err/drop
+                          {t('net.errDrop', { count: bad })}
                         </Badge>
                       )}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-muted-foreground font-mono">
-                      <Micro v={fmt(i.rxBytes)} l="rx bytes" tone="accent" />
-                      <Micro v={fmt(i.txBytes)} l="tx bytes" tone="primary" />
-                      <Micro v={pkts(i.rxPackets)} l="rx pkts" />
-                      <Micro v={pkts(i.txPackets)} l="tx pkts" />
+                      <Micro v={fmt(i.rxBytes)} l={t('net.rxBytes')} tone="accent" />
+                      <Micro v={fmt(i.txBytes)} l={t('net.txBytes')} tone="primary" />
+                      <Micro v={pkts(i.rxPackets)} l={t('net.rxPkts')} />
+                      <Micro v={pkts(i.txPackets)} l={t('net.txPkts')} />
                     </div>
                   </div>
                 )
@@ -151,7 +161,7 @@ export function NetworkView() {
         ))}
 
       <Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">
-        cumulative counters since boot · RDMA/SR-IOV/DPDK need dedicated NICs (not present)
+        {t('net.footer')}
       </Badge>
     </div>
   )
