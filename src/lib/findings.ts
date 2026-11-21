@@ -11,6 +11,7 @@ import type { Machine } from './machines'
 import { NETWORK_CHECKS, STORAGE_CHECKS } from './storage-health'
 import { Tone, formatAge } from './thresholds'
 import type { VolumeFillFinding } from './volume-load'
+import { translate } from '@/i18n'
 
 /**
  * What the Overview screen calls a problem, and where it sends you about it.
@@ -208,7 +209,8 @@ function machineChecks(machines: Pick<Machine, 'name' | 'storageConditions'>[]):
       out.push({
         key: `check-${type}`,
         tone: DESTRUCTIVE_CHECKS.has(type) ? 'destructive' : 'warning',
-        label: `${label}: ${plural(hit.length, 'machine')}`,
+        // Findings are still English-only: the Overview lot gives them Messages.
+        label: `${translate('en', label)}: ${plural(hit.length, 'machine')}`,
         detail: hit.length === 1 && first?.message ? `${hit[0].name} · ${first.message}` : hit.map((m) => m.name).join(', '),
         screen,
         tab,

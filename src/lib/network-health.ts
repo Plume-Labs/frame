@@ -4,6 +4,7 @@
 
 import type { MachineNetwork, NetworkBond, NetworkInterface } from './machines'
 import type { Tone } from './thresholds'
+import type { Message } from '@/i18n'
 import { agentFreshness } from './disk-inventory'
 
 export const NETWORK_HEALTH_POLICY_NAME = 'default'
@@ -39,19 +40,19 @@ export function toExpectations(cr: NetworkHealthPolicyCR): NetworkExpectations {
 }
 
 /** The CRD's bounds; an empty optional stays absent rather than zero. */
-export function expectationsProblem(e: NetworkExpectations): string | null {
-  if (!Number.isInteger(e.minLinkSpeedMbps) || e.minLinkSpeedMbps < 1) return 'Minimum speed: a whole number of Mb/s.'
+export function expectationsProblem(e: NetworkExpectations): Message | null {
+  if (!Number.isInteger(e.minLinkSpeedMbps) || e.minLinkSpeedMbps < 1) return { key: 'net.exp.minSpeed' }
   if (!Number.isInteger(e.linkSaturatedPercent) || e.linkSaturatedPercent < 1 || e.linkSaturatedPercent > 100) {
-    return 'Saturation: a percentage from 1 to 100.'
+    return { key: 'net.exp.saturation' }
   }
-  if (!Number.isInteger(e.linkErrorsPerMinute) || e.linkErrorsPerMinute < 1) return 'Errors: a whole number a minute.'
-  if (e.links.length > 64) return 'At most 64 expected links.'
+  if (!Number.isInteger(e.linkErrorsPerMinute) || e.linkErrorsPerMinute < 1) return { key: 'net.exp.errors' }
+  if (e.links.length > 64) return { key: 'net.exp.tooMany' }
   for (const l of e.links) {
-    if (!l.node || !l.interface) return 'Each expected link needs a node and an interface.'
-    if (e.links.some((o) => o !== l && o.node === l.node && o.interface === l.interface)) return `${l.interface}: named twice on ${l.node}.`
-    if (l.interface.length > 15) return `${l.interface}: an interface name is 15 characters at most.`
-    if (l.speedMbps !== undefined && (!Number.isInteger(l.speedMbps) || l.speedMbps < 1)) return `${l.interface}: speed must be a whole number of Mb/s.`
-    if (l.members !== undefined && (!Number.isInteger(l.members) || l.members < 1 || l.members > 16)) return `${l.interface}: members go from 1 to 16.`
+    if (!l.node || !l.interface) return { key: 'net.exp.needsBoth' }
+    if (e.links.some((o) => o !== l && o.node === l.node && o.interface === l.interface)) return { key: 'net.exp.twice', params: { name: l.interface, node: l.node } }
+    if (l.interface.length > 15) return { key: 'net.exp.nameLen', params: { name: l.interface } }
+    if (l.speedMbps !== undefined && (!Number.isInteger(l.speedMbps) || l.speedMbps < 1)) return { key: 'net.exp.speed', params: { name: l.interface } }
+    if (l.members !== undefined && (!Number.isInteger(l.members) || l.members < 1 || l.members > 16)) return { key: 'net.exp.members', params: { name: l.interface } }
   }
   return null
 }
@@ -73,43 +74,47 @@ export function portDrops(i: NetworkInterface): number {
   return (i.rxDropped ?? 0) + (i.txDropped ?? 0)
 }
 
-/** The bond's own view of a member, in words. */
-export function memberLine(b: NetworkBond): { name: string; tone: Tone; detail: string }[] {
+/**
+ * The bond's own view of a member. `status` is the raw kernel word (`up`,
+ * `down`, `?`); `notes` are what else is wrong, to be joined by the view.
+ */
+export function memberLine(b: NetworkBond): { name: string; tone: Tone; status: string; notes: Message[] }[] {
   return (b.members ?? []).map((m) => {
     const outOfAggregate = b.mode === '802.3ad' && !!b.aggregatorID && !!m.aggregatorID && m.aggregatorID !== b.aggregatorID
     const up = m.miiStatus === 'up'
+    const notes: Message[] = []
+    if (outOfAggregate) notes.push({ key: 'net.member.outOfAggregate', params: { member: m.aggregatorID!, bond: b.aggregatorID! } })
+    if (m.linkFailures) notes.push({ key: 'net.member.failures', params: { n: m.linkFailures } })
     return {
       name: m.name,
       tone: outOfAggregate || (m.miiStatus && !up) ? 'destructive' : up ? 'accent' : 'muted',
-      detail: [
-        m.miiStatus ?? '?',
-        outOfAggregate ? `aggregator ${m.aggregatorID}, the bond uses ${b.aggregatorID}` : '',
-        m.linkFailures ? `${m.linkFailures} link failures` : '',
-      ].filter(Boolean).join(' · '),
+      status: m.miiStatus ?? '?',
+      notes,
     }
   })
 }
 
 /** LACP's partner: all zeros means the switch side answers nothing. */
-export function lacpLine(b: NetworkBond): string {
-  if (b.mode !== '802.3ad') return ''
-  const partner = !b.partnerMAC ? 'LACP partner not read' : /^[0:]+$/.test(b.partnerMAC) ? 'no LACP partner' : `partner ${b.partnerMAC}`
-  return `${partner} · ${b.portsInAggregator ?? '?'} port(s) in aggregator ${b.aggregatorID ?? '?'}`
+export function lacpLine(b: NetworkBond): Message | null {
+  if (b.mode !== '802.3ad') return null
+  const params = { ports: b.portsInAggregator ?? '?', agg: b.aggregatorID ?? '?' }
+  if (!b.partnerMAC) return { key: 'net.lacp.unread', params }
+  if (/^[0:]+$/.test(b.partnerMAC)) return { key: 'net.lacp.none', params }
+  return { key: 'net.lacp.partner', params: { ...params, mac: b.partnerMAC } }
 }
 
 /** What the rows cannot show: a read that failed, its age, what was cut. */
-export function networkNotes(n: MachineNetwork | null, now: number): string[] {
-  if (!n) return ['The agent has not reported this node’s links.']
-  if (n.error) return [`Could not be read: ${n.error}`]
-  const notes: string[] = []
+export function networkNotes(n: MachineNetwork | null, now: number): Message[] {
+  if (!n) return [{ key: 'net.note.unreported' }]
+  if (n.error) return [{ key: 'net.note.error', params: { error: n.error } }]
+  const notes: Message[] = []
   const { ageS, stale } = agentFreshness(n.observedAt ?? null, now)
-  if (stale) notes.push(ageS === null ? 'The agent has not dated this reading.' : `Reading ${Math.round(ageS / 60)} min old: the agent is silent.`)
+  if (stale) notes.push(ageS === null ? { key: 'net.note.undated' } : { key: 'net.note.old', params: { min: Math.round(ageS / 60) } })
   const cut = (n.interfacesOmitted ?? 0) + (n.bondsOmitted ?? 0)
-  if (cut > 0) notes.push(`${cut} port(s) or bond(s) past the agent's list limit are not shown.`)
+  if (cut > 0) notes.push({ key: 'net.note.cut', params: { n: cut } })
   for (const b of n.bonds ?? []) {
-    if (b.membersUnread) notes.push(`${b.name}: its members could not be read.`)
-    if (b.membersOmitted) notes.push(`${b.name}: ${b.membersOmitted} member(s) past the agent's list limit are not shown.`)
+    if (b.membersUnread) notes.push({ key: 'net.note.membersUnread', params: { bond: b.name } })
+    if (b.membersOmitted) notes.push({ key: 'net.note.membersCut', params: { bond: b.name, n: b.membersOmitted } })
   }
   return notes
 }
-
