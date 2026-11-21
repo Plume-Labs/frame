@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { ShieldWarning, ArrowClockwise, Warning, Package, Wrench, Network } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -27,7 +29,15 @@ const TONE: Record<string, string> = {
   debug: 'text-muted-foreground',
 }
 
+const SEV_LABEL: Record<'critical' | 'high' | 'medium' | 'low', MessageKey> = {
+  critical: 'sec.sev.critical',
+  high: 'sec.sev.high',
+  medium: 'sec.sev.medium',
+  low: 'sec.sev.low',
+}
+
 export function SecurityView() {
+  const { t, tn, locale } = useI18n()
   // Falco's Prometheus metrics, not a Kubernetes object — nothing to watch.
   // Runtime detections are worth surfacing faster than a passive storage
   // gauge, so this sits below the 30s default.
@@ -58,7 +68,7 @@ export function SecurityView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <ShieldWarning className="text-primary" />
-            Security — runtime threats (Falco)
+            {t('sec.title')}
             <Button
               variant="outline"
               size="sm"
@@ -71,14 +81,14 @@ export function SecurityView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {sec && (
           <CardContent className="flex flex-wrap items-center gap-3">
             <div className="mr-4">
-              <div className="text-xs text-muted-foreground uppercase tracking-wide">Detections</div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">{t('sec.detections')}</div>
               <div className="font-mono font-bold text-2xl text-foreground">{sec.total}</div>
             </div>
             {Object.entries(sec.byPriority)
@@ -92,11 +102,11 @@ export function SecurityView() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No Falco detections (or Falco not deployed)." />
+      <LiveStates state={state} emptyLabel={t('sec.empty')} />
 
       {sec && sec.events.length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="font-mono text-base">Detections by rule</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="font-mono text-base">{t('sec.byRule')}</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             {sec.events.map((e, i) => (
               <div key={`${e.rule}-${e.pod}-${i}`} className="flex flex-wrap items-center gap-2 rounded border border-border bg-secondary/30 px-3 py-2">
@@ -119,24 +129,24 @@ export function SecurityView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <Package size={16} className="text-primary" /> Image vulnerabilities
+              <Package size={16} className="text-primary" /> {t('sec.imageVulns')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <LiveStates state={postureState} emptyLabel="trivy-operator not deployed." />
+            <LiveStates state={postureState} emptyLabel={t('sec.trivyEmpty')} />
             {posture && (
               <>
-                <SevRow s={posture.vulns} suffix={`across ${posture.vulns.images} images`} />
+                <SevRow s={posture.vulns} suffix={tn('sec.acrossImages', posture.vulns.images)} />
                 {posture.topImages.length === 0 ? (
                   <p className="text-[11px] text-muted-foreground font-mono">
-                    No critical/high CVEs (or image scans still running).
+                    {t('sec.noCves')}
                   </p>
                 ) : (
                   posture.topImages.map((img) => (
                     <div key={img.image} className="flex items-center gap-2 text-[11px] font-mono">
                       <span className="flex-1 truncate">{img.image}</span>
-                      {img.critical > 0 && <Badge variant="outline" className="border-current text-destructive text-[10px]">{img.critical} crit</Badge>}
-                      {img.high > 0 && <Badge variant="outline" className="border-current text-warning text-[10px]">{img.high} high</Badge>}
+                      {img.critical > 0 && <Badge variant="outline" className="border-current text-destructive text-[10px]">{t('sec.crit', { n: img.critical })}</Badge>}
+                      {img.high > 0 && <Badge variant="outline" className="border-current text-warning text-[10px]">{t('sec.highN', { n: img.high })}</Badge>}
                     </div>
                   ))
                 )}
@@ -148,14 +158,14 @@ export function SecurityView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <Wrench size={16} className="text-primary" /> Workload misconfigs
+              <Wrench size={16} className="text-primary" /> {t('sec.misconfigs')}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <LiveStates state={postureState} emptyLabel="trivy-operator not deployed." />
+            <LiveStates state={postureState} emptyLabel={t('sec.trivyEmpty')} />
             {posture && (
               <>
-                <SevRow s={posture.misconfigs} suffix={`across ${posture.misconfigs.resources} resources`} />
+                <SevRow s={posture.misconfigs} suffix={tn('sec.acrossResources', posture.misconfigs.resources)} />
                 {posture.topChecks.map((c) => (
                   <div key={c.id} className="flex items-center gap-2 text-[11px] font-mono">
                     <span className="flex-1 truncate" title={c.id}>{c.title}</span>
@@ -173,23 +183,23 @@ export function SecurityView() {
       <Card>
         <CardHeader>
           <CardTitle className="font-mono text-base flex items-center gap-2">
-            <Network size={16} className="text-primary" /> Network &amp; process activity (Tetragon)
+            <Network size={16} className="text-primary" /> {t('sec.tetragon')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <LiveStates state={tetraState} emptyLabel="Tetragon not deployed." />
+          <LiveStates state={tetraState} emptyLabel={t('sec.tetraEmpty')} />
           {tetra && (
             <>
               <div className="flex flex-wrap gap-2 text-[11px] font-mono">
-                <Badge variant="outline" className="border-current text-accent">{tetra.network.toLocaleString()} net connects</Badge>
-                <Badge variant="outline" className="border-current text-foreground">{tetra.exec.toLocaleString()} process exec</Badge>
-                <Badge variant="outline" className="border-current text-muted-foreground">{tetra.exit.toLocaleString()} exit</Badge>
+                <Badge variant="outline" className="border-current text-accent">{t('sec.netConnects', { n: tetra.network.toLocaleString(locale) })}</Badge>
+                <Badge variant="outline" className="border-current text-foreground">{t('sec.procExec', { n: tetra.exec.toLocaleString(locale) })}</Badge>
+                <Badge variant="outline" className="border-current text-muted-foreground">{t('sec.procExit', { n: tetra.exit.toLocaleString(locale) })}</Badge>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Top network talkers</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t('sec.topNet')}</div>
                   {tetra.topNetwork.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground font-mono">No network connects captured yet.</p>
+                    <p className="text-[11px] text-muted-foreground font-mono">{t('sec.noNet')}</p>
                   ) : (
                     tetra.topNetwork.map((n) => (
                       <div key={`${n.workload}-${n.namespace}`} className="flex items-center gap-2 text-[11px] font-mono">
@@ -200,7 +210,7 @@ export function SecurityView() {
                   )}
                 </div>
                 <div className="space-y-1">
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Top exec'd binaries</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{t('sec.topExec')}</div>
                   {tetra.topExec.map((e) => (
                     <div key={`${e.binary}-${e.workload}`} className="flex items-center gap-2 text-[11px] font-mono">
                       <span className="flex-1 truncate">{e.binary}</span>
@@ -219,11 +229,12 @@ export function SecurityView() {
 }
 
 function SevRow({ s, suffix }: { s: { critical: number; high: number; medium: number; low: number }; suffix: string }) {
+  const { t } = useI18n()
   return (
     <div className="flex flex-wrap items-center gap-2">
       {(['critical', 'high', 'medium', 'low'] as const).map((k) => (
         <Badge key={k} variant="outline" className={`font-mono text-[11px] border-current ${SEV_TONE[k]}`}>
-          {s[k]} {k}
+          {s[k]} {t(SEV_LABEL[k])}
         </Badge>
       ))}
       <span className="text-[10px] text-muted-foreground font-mono">{suffix}</span>
