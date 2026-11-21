@@ -35,6 +35,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       locale,
       setLocale,
       t: (key, params) => translate(locale, key, params),
+      tm: (m) => translate(locale, m.key, m.params),
       tn: (base, count, params) => translatePlural(locale, base, count, params),
     }),
     [locale, setLocale],

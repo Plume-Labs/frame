@@ -12,6 +12,12 @@ import { fr } from './fr'
 export type MessageKey = keyof typeof en
 export type Params = Record<string, string | number>
 
+/** Text a pure module cannot render itself: a message key plus its parameters. The UI renders it with `useI18n().tm`. */
+export interface Message {
+  key: MessageKey
+  params?: Params
+}
+
 export const LOCALES = [
   // Each language is named in itself, so it is findable whatever the current one.
   { code: 'en', label: 'English' },

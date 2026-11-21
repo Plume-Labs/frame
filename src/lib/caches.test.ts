@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { translate, type Message } from '@/i18n'
 
-import { changed, changeWarnings, parametersPatch, settingsProblem, toCache, type Cache } from './caches'
+import { changed, changeWarnings as rawWarnings, parametersPatch, settingsProblem as rawProblem, toCache, type Cache } from './caches'
+
+const en = (m: Message) => translate('en', m.key, m.params)
+// The module returns message keys; the tests read them in English.
+const settingsProblem = (...args: Parameters<typeof rawProblem>) => {
+  const m = rawProblem(...args)
+  return m && en(m)
+}
+const changeWarnings = (...args: Parameters<typeof rawWarnings>) => rawWarnings(...args).map(en)
 
 const queue: Cache = toCache({
   metadata: { name: 'jobs', namespace: 'shop' },

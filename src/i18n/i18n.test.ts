@@ -71,7 +71,7 @@ describe('rendering', () => {
     const html = renderToStaticMarkup(
       createElement(
         I18nContext.Provider,
-        { value: { locale: 'fr', setLocale: () => {}, t: (k, p) => translate('fr', k, p), tn: (b, c, p) => translatePlural('fr', b, c, p) } },
+        { value: { locale: 'fr', setLocale: () => {}, t: (k, p) => translate('fr', k, p), tm: (m) => translate('fr', m.key, m.params), tn: (b, c, p) => translatePlural('fr', b, c, p) } },
         createElement(LoginView, { onSignedIn: () => {} }),
       ),
     )
