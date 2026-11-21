@@ -5,6 +5,8 @@ import { TuningDashboard, EntityTile } from '@/components/TuningDashboard'
 import { TrendRow } from '@/components/Sparkline'
 import { inverseScoreTone } from '@/lib/thresholds'
 import { HardDrive } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 const GiB = 1024 ** 3
@@ -29,7 +31,13 @@ const TREND_QUERIES = [
   },
 ]
 
+const TREND_LABEL: Record<string, MessageKey> = {
+  Staged: 'burst.trend.staged',
+  'Fill rate': 'burst.trend.fill',
+}
+
 export function BurstBufferView() {
+  const { t } = useI18n()
   // node-exporter/Prometheus metrics, not objects — nothing to watch. A
   // scratch tier fills and drains over minutes, so 30s is plenty fresh.
   const { state, reload } = useLiveResource<BurstNode[]>(() => frame.cluster.burstBuffer(), [], [], 30_000)
@@ -48,16 +56,16 @@ export function BurstBufferView() {
 
   return (
     <TuningDashboard
-      title="Burst Buffer — SSD scratch tier"
+      title={t('burst.title')}
       icon={<HardDrive className="text-primary" />}
       state={state}
       onReload={reload}
-      emptyLabel="No /burst-buffer mount found on any node."
+      emptyLabel={t('burst.empty')}
       stats={[
-        { label: 'Nodes with burst', value: `${nodes.length}` },
-        { label: 'Total capacity', value: `${(total / GiB).toFixed(1)} GiB` },
+        { label: t('burst.stat.nodes'), value: `${nodes.length}` },
+        { label: t('burst.stat.capacity'), value: `${(total / GiB).toFixed(1)} GiB` },
         {
-          label: 'Staged',
+          label: t('burst.stat.staged'),
           value: `${(used / GiB).toFixed(2)} GiB`,
           // Scratch is meant to be used, so only a nearly-full tier is a problem
           // — that is when a job that needs to stage data starts failing.
@@ -68,12 +76,18 @@ export function BurstBufferView() {
         trend && (
           <>
             {trend.map((series) => (
-              <TrendRow key={series.metric} series={series} windowHours={WINDOW_HOURS} format={(v) => v.toFixed(2)} />
+              <TrendRow
+                key={series.metric}
+                series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
+                windowHours={WINDOW_HOURS}
+                format={(v) => v.toFixed(2)}
+              />
             ))}
           </>
         )
       }
-      entitiesTitle="Per-node"
+      entitiesTitle={t('burst.perNode')}
       entities={nodes}
       entityKey={(n) => n.node}
       entityColumns={2}
@@ -84,14 +98,14 @@ export function BurstBufferView() {
             <div className="space-y-1">
               <Progress value={pct} className="h-2" />
               <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
-                <span>{(n.usedBytes / GiB).toFixed(2)} GiB staged</span>
-                <span>{(n.totalBytes / GiB).toFixed(1)} GiB SSD</span>
+                <span>{t('burst.stagedOf', { value: (n.usedBytes / GiB).toFixed(2) })}</span>
+                <span>{t('burst.ssd', { value: (n.totalBytes / GiB).toFixed(1) })}</span>
               </div>
             </div>
           </EntityTile>
         )
       }}
-      configTitle="How the tier is mounted"
+      configTitle={t('burst.config')}
       config={`# node-prep.sh formats the ssd=1 disk and mounts it by UUID
 mkfs.ext4 /dev/sdX
 echo "UUID=<uuid> /burst-buffer ext4 defaults,nofail 0 2" >> /etc/fstab
