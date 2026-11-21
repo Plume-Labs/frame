@@ -13,12 +13,13 @@
  */
 const PEAK_INT8_TOPS: ReadonlyArray<readonly [RegExp, number]> = [
   [/\bh100\b.*\bpcie\b/i, 1513],
+  [/\bh100\b.*\bnvl\b/i, 1671],
   [/\bh100\b/i, 1979],
   [/\ba100\b/i, 624],
   [/\bl40s\b/i, 733],
   [/\bl4\b/i, 242],
   [/\ba10\b/i, 250],
-  [/\ba6000\b/i, 154.8],
+  [/\ba6000\b/i, 309.7],
   [/\bt4\b/i, 130],
   [/\bp40\b/i, 47],
   [/\bp4\b/i, 22],

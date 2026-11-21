@@ -13,6 +13,10 @@ describe('peakTops', () => {
     expect(peakTops('NVIDIA A10')).not.toBe(peakTops('NVIDIA A100-SXM4-40GB'))
     expect(peakTops('NVIDIA H100 PCIe')).toBeLessThan(peakTops('NVIDIA H100 80GB HBM3')!)
   })
+  it('uses the INT8 rating, not the FP16 one', () => {
+    expect(peakTops('NVIDIA RTX A6000')).toBe(309.7)
+    expect(peakTops('NVIDIA H100 NVL')).toBe(1671)
+  })
   it('returns null rather than inventing a figure', () => {
     expect(peakTops('Quadro K620')).toBeNull()
     expect(peakTops('')).toBeNull()
@@ -39,6 +43,6 @@ describe('formatTops', () => {
     expect(formatTops(null)).toBe('—')
     expect(formatTops(130)).toBe('130 TOPS')
     expect(formatTops(22.04)).toBe('22 TOPS')
-    expect(formatTops(154.8)).toBe('155 TOPS')
+    expect(formatTops(309.7)).toBe('310 TOPS')
   })
 })
