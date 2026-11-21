@@ -27,6 +27,7 @@ import {
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { ArrowsLeftRight, ArrowClockwise, Play, Pause, Scales } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -34,6 +35,7 @@ const phaseTone = (p: string) =>
   p === 'Running' ? 'text-accent' : p === 'Pending' || p === 'Inqueue' ? 'text-warning' : 'text-muted-foreground'
 
 export function VolcanoPoolsView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<VolcanoStats>(
     () => frame.cluster.volcano(),
     [],
@@ -52,10 +54,10 @@ export function VolcanoPoolsView() {
     setBusy(q.name)
     try {
       await action()
-      toast.success(`${q.name} ${what}`)
+      toast.success(t('vq.done', { name: q.name, what }))
       reload()
     } catch (e) {
-      toast.error(`Failed to update ${q.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('vq.failed', { name: q.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
       setCloseTarget(null)
@@ -64,7 +66,7 @@ export function VolcanoPoolsView() {
   }
 
   const setState = (q: VolcanoQueue, state: 'Open' | 'Closed') =>
-    run(q, () => frame.cluster.setQueueState(q.name, state), state === 'Open' ? 'reopened' : 'closed')
+    run(q, () => frame.cluster.setQueueState(q.name, state), state === 'Open' ? t('vq.reopened') : t('vq.closed'))
 
   function openWeightDialog(q: VolcanoQueue) {
     setWeight(String(q.weight))
@@ -77,10 +79,10 @@ export function VolcanoPoolsView() {
     // Volcano treats weight as a positive share divisor — 0 or negative would
     // make the queue's fair share meaningless, so refuse before the API does.
     if (!Number.isInteger(n) || n < 1) {
-      toast.error('Weight must be a positive integer')
+      toast.error(t('vq.weightInvalid'))
       return
     }
-    run(weightTarget, () => frame.cluster.setQueueWeight(weightTarget.name, n), `weight set to ${n}`)
+    run(weightTarget, () => frame.cluster.setQueueWeight(weightTarget.name, n), t('vq.weightSet', { n }))
   }
 
   return (
@@ -89,7 +91,7 @@ export function VolcanoPoolsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <ArrowsLeftRight className="text-primary" />
-            Elastic Pools — Volcano Queues
+            {t('vq.title')}
             <Button
               variant="outline"
               size="sm"
@@ -98,19 +100,18 @@ export function VolcanoPoolsView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Live Volcano scheduling queues (elastic resource pools) and the gang-scheduled
-            PodGroups running in them.
+            {t('vq.desc')}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="Volcano not installed / no queues." />
+      <LiveStates state={state} emptyLabel={t('vq.empty')} />
 
       {d && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -140,7 +141,7 @@ export function VolcanoPoolsView() {
                         onClick={() => setState(q, 'Open')}
                       >
                         <Play size={10} />
-                        Open
+                        {t('vq.open')}
                       </Button>
                     ) : (
                       <Button
@@ -151,7 +152,7 @@ export function VolcanoPoolsView() {
                         onClick={() => setCloseTarget(q)}
                       >
                         <Pause size={10} />
-                        Close
+                        {t('vq.close')}
                       </Button>
                     )}
                     <Button
@@ -162,15 +163,15 @@ export function VolcanoPoolsView() {
                       onClick={() => openWeightDialog(q)}
                     >
                       <Scales size={10} />
-                      Weight
+                      {t('vq.weight')}
                     </Button>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-2 text-xs font-mono">
-                  <Row label="Weight" value={`${q.weight}`} />
-                  <Row label="Capability" value={`${q.cpuCapability} CPU · ${q.memCapability}`} />
-                  <Row label="Reclaimable" value={q.reclaimable ? 'yes' : 'no'} />
-                  <Row label="Running" value={`${q.running}`} />
+                  <Row label={t('vq.weight')} value={`${q.weight}`} />
+                  <Row label={t('vq.capability')} value={`${q.cpuCapability} CPU · ${q.memCapability}`} />
+                  <Row label={t('vq.reclaimable')} value={q.reclaimable ? t('common.yes') : t('common.no')} />
+                  <Row label={t('vq.running')} value={`${q.running}`} />
                   {groups.length > 0 && (
                     <div className="pt-2 space-y-1">
                       {groups.map((g) => (
@@ -195,16 +196,15 @@ export function VolcanoPoolsView() {
       <AlertDialog open={!!closeTarget} onOpenChange={(open) => !open && setCloseTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Close queue {closeTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('vq.closeTitle', { name: closeTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Stops Volcano from admitting new PodGroups to this queue. The {closeTarget?.running ?? 0}{' '}
-              already running keep their resources — nothing is evicted. Reversible with Open.
+              {t('vq.closeDesc', { running: closeTarget?.running ?? 0 })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep open</AlertDialogCancel>
+            <AlertDialogCancel>{t('vq.keepOpen')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => closeTarget && setState(closeTarget, 'Closed')}>
-              Close queue
+              {t('vq.closeQueue')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -213,15 +213,14 @@ export function VolcanoPoolsView() {
       <Dialog open={!!weightTarget} onOpenChange={(open) => !open && setWeightTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="font-mono">Share weight — {weightTarget?.name}</DialogTitle>
+            <DialogTitle className="font-mono">{t('vq.weightTitle', { name: weightTarget?.name ?? '' })}</DialogTitle>
             <DialogDescription>
-              Relative share of cluster capacity when queues compete. Only the ratio between queues
-              matters, not the absolute number.
+              {t('vq.weightDesc')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
             <Label htmlFor="queue-weight" className="text-xs font-mono">
-              Weight
+              {t('vq.weight')}
             </Label>
             <Input
               id="queue-weight"
@@ -235,10 +234,10 @@ export function VolcanoPoolsView() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setWeightTarget(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={submitWeight} disabled={busy === weightTarget?.name}>
-              Apply
+              {t('pol.apply')}
             </Button>
           </DialogFooter>
         </DialogContent>
