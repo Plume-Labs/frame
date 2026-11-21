@@ -4403,12 +4403,57 @@ export interface FrameClientOptions {
  * Local development: see docs/development.md.
  * `window.__FRAME_TOKEN__` carries the authd session token (set and cleared by `auth.ts`).
  */
+/** Hearthrack's own control-plane namespace: where the operator, UI, proxy and agent run. */
+export const FRAME_SYSTEM_NAMESPACE = 'frame-system'
+
+/** One Hearthrack workload and the image it is running, as read from `frame-system`. */
+export interface RunningComponent {
+  name: string
+  kind: 'Deployment' | 'StatefulSet' | 'DaemonSet'
+  image: string
+  readyReplicas: number
+  desiredReplicas: number
+}
+
+/** The collections the Updates screen reads, for a live watch. */
+export const UPDATE_WATCH_PATHS = [
+  `/apis/apps/v1/namespaces/${FRAME_SYSTEM_NAMESPACE}/deployments`,
+  `/apis/apps/v1/namespaces/${FRAME_SYSTEM_NAMESPACE}/statefulsets`,
+  `/apis/apps/v1/namespaces/${FRAME_SYSTEM_NAMESPACE}/daemonsets`,
+] as const
+
+interface DaemonSetCR extends WorkloadCR {
+  status?: { readyReplicas?: number; replicas?: number; numberReady?: number; desiredNumberScheduled?: number }
+}
+
+/** Read-only: what version of Hearthrack is running. Nothing here writes to the cluster. */
+class UpdateClient {
+  async running(): Promise<RunningComponent[]> {
+    const [deps, sts, dss] = await Promise.all(
+      UPDATE_WATCH_PATHS.map((path) => k8sFetch<ListResponse<DaemonSetCR>>(path)),
+    )
+    const kinds = ['Deployment', 'StatefulSet', 'DaemonSet'] as const
+    return [deps, sts, dss]
+      .flatMap((list, i) =>
+        (list.items ?? []).map((cr): RunningComponent => ({
+          name: cr.metadata.name,
+          kind: kinds[i],
+          image: cr.spec?.template?.spec?.containers?.[0]?.image ?? 'unknown',
+          readyReplicas: cr.status?.readyReplicas ?? cr.status?.numberReady ?? 0,
+          desiredReplicas: cr.spec?.replicas ?? cr.status?.desiredNumberScheduled ?? cr.status?.replicas ?? 0,
+        })),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+}
+
 export class FrameClient {
   public readonly nodes: NodeClient
   public readonly jobs: JobClient
   public readonly scheduler: SchedulerClient
   public readonly resources: ResourceClient
   public readonly apps: ApplicationClient
+  public readonly updates: UpdateClient
   public readonly cluster: ClusterClient
   public readonly users: UserClient
   public readonly workloads: WorkloadClient
@@ -4432,6 +4477,7 @@ export class FrameClient {
     this.scheduler = new SchedulerClient(opts.namespace)
     this.resources = new ResourceClient(opts.namespace)
     this.apps      = new ApplicationClient()
+    this.updates   = new UpdateClient()
     this.cluster   = new ClusterClient()
     this.users     = new UserClient()
     this.workloads = new WorkloadClient()

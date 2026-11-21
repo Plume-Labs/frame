@@ -6,6 +6,14 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Updates screen (read-only)
+
+- ui: a new Updates screen under Administration shows the image version each
+  component in `frame-system` runs, flags a mixed estate, and lists what an
+  update would disturb right now (running jobs, node installs, Ceph disk
+  replacements, unready components). It writes nothing; the latest published
+  version is not read yet because no release exists.
+
 ### Added — console translation (English and French)
 
 - ui: the console now has a translation layer (`src/i18n/`, no new dependency).
