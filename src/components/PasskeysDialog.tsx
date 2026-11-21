@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Fingerprint, Plus, Trash } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
 
 /**
  * Where a signed-in user manages their passkeys.
@@ -36,6 +37,7 @@ import { Fingerprint, Plus, Trash } from '@phosphor-icons/react'
  * removed with no undo.
  */
 export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { t } = useI18n()
   const [label, setLabel] = useState('')
   const [enrolling, setEnrolling] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -99,19 +101,19 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         <DialogHeader>
           <DialogTitle className="font-mono flex items-center gap-2">
             <Fingerprint className="text-primary" />
-            Passkeys
+            {t('passkeys.title')}
           </DialogTitle>
           <DialogDescription>
-            Passkeys are how you sign in. Add a second one — a hardware key or a platform authenticator — so losing one does not lock you out.
+            {t('passkeys.intro')}
           </DialogDescription>
         </DialogHeader>
 
         <form className="space-y-3" onSubmit={handleEnrol}>
           <div className="space-y-1.5">
-            <Label htmlFor="passkey-label">Label</Label>
+            <Label htmlFor="passkey-label">{t('passkeys.label')}</Label>
             <Input
               id="passkey-label"
-              placeholder="YubiKey 5C"
+              placeholder={t('passkeys.labelPlaceholder')}
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               disabled={enrolling}
@@ -126,16 +128,16 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           )}
           <Button type="submit" className="w-full font-mono gap-1.5" disabled={enrolling || !label.trim()}>
             <Plus />
-            {enrolling ? 'Waiting for authenticator…' : 'Add passkey'}
+            {enrolling ? t('passkeys.waiting') : t('passkeys.add')}
           </Button>
         </form>
 
         <div className="space-y-1.5 pt-2 border-t border-border">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            Your passkeys
+            {t('passkeys.yours')}
           </p>
           {keys.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No keys enrolled.</p>
+            <p className="text-xs text-muted-foreground">{t('passkeys.none')}</p>
           ) : (
             <ul className="space-y-1">
               {keys.map((key) => (
@@ -147,8 +149,8 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                   <Button
                     variant="ghost"
                     size="sm"
-                    aria-label={`Revoke ${key.label || key.id}`}
-                    title={`Revoke ${key.label || key.id}`}
+                    aria-label={t('passkeys.revokeKey', { name: key.label || key.id })}
+                    title={t('passkeys.revokeKey', { name: key.label || key.id })}
                     onClick={() => setPendingRevoke(key)}
                   >
                     <Trash />
@@ -161,7 +163,7 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
         <DialogFooter>
           <Button variant="outline" className="font-mono" onClick={() => onOpenChange(false)}>
-            Close
+            {t('ui.close')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -171,16 +173,14 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle className="font-mono">
-            Revoke {pendingRevoke?.label || pendingRevoke?.id}?
+            {t('passkeys.revokeTitle', { name: pendingRevoke?.label || pendingRevoke?.id || '' })}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            You will no longer be able to sign in with this key. This cannot be undone. (authd
-            refuses to remove your last key, so this is safe to confirm even if it turns out to be
-            your only one.)
+            {t('passkeys.revokeBody')}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             onClick={() => {
               if (!pendingRevoke) return
@@ -189,7 +189,7 @@ export function PasskeysDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               void handleRevoke(id)
             }}
           >
-            Revoke
+            {t('passkeys.revoke')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

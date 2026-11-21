@@ -2,8 +2,10 @@ import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert";
 import { Button } from "./components/ui/button";
 
 import { AlertTriangleIcon, RefreshCwIcon } from "lucide-react";
+import { useI18n } from "./i18n/context";
 
 export const ErrorFallback = ({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) => {
+  const { t } = useI18n();
   // react-error-boundary >= 6.1 types the thrown value as `unknown`: anything
   // can be thrown, not only an Error.
   // In dev, rethrow so Vite's own overlay shows the stack trace instead of this fallback.
@@ -14,14 +16,14 @@ export const ErrorFallback = ({ error, resetErrorBoundary }: { error: unknown; r
       <div className="w-full max-w-md">
         <Alert variant="destructive" className="mb-6">
           <AlertTriangleIcon />
-          <AlertTitle>Hearthrack has encountered a runtime error</AlertTitle>
+          <AlertTitle>{t('error.title')}</AlertTitle>
           <AlertDescription>
-            Something unexpected happened while rendering the UI. The error details are shown below — reloading usually clears it; if it persists, check the browser console and the pod logs.
+            {t('error.body')}
           </AlertDescription>
         </Alert>
         
         <div className="bg-card border rounded-lg p-4 mb-6">
-          <h3 className="font-semibold text-sm text-muted-foreground mb-2">Error Details:</h3>
+          <h3 className="font-semibold text-sm text-muted-foreground mb-2">{t('error.details')}</h3>
           <pre className="text-xs text-destructive bg-muted/50 p-3 rounded border overflow-auto max-h-32">
             {error instanceof Error ? error.message : String(error)}
           </pre>
@@ -33,7 +35,7 @@ export const ErrorFallback = ({ error, resetErrorBoundary }: { error: unknown; r
           variant="outline"
         >
           <RefreshCwIcon />
-          Try Again
+          {t('error.retry')}
         </Button>
       </div>
     </div>

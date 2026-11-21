@@ -1,10 +1,12 @@
 import { CapacityResource, ClusterNodeInfo, coreListPath, createFrameClient } from '@/lib/frame-sdk'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
 /** Compact live cluster summary for the page header — real nodes + CPU/mem usage. */
 export function HeaderStats() {
+  const { t } = useI18n()
   const { state } = useLiveResource<{ nodes: ClusterNodeInfo[]; cap: CapacityResource[] }>(
     async () => {
       const [nodes, cap] = await Promise.all([frame.cluster.nodes(), frame.cluster.capacity()])
@@ -34,9 +36,9 @@ export function HeaderStats() {
 
   return (
     <div className="flex items-center gap-3 font-mono text-xs">
-      <Item label="nodes" value={`${ready}/${nodes.length}`} tone={ready === nodes.length ? 'text-accent' : 'text-warning'} />
-      <Item label="cpu" value={`${pct(cpu)}%`} />
-      <Item label="mem" value={`${pct(mem)}%`} />
+      <Item label={t('header.nodes')} value={`${ready}/${nodes.length}`} tone={ready === nodes.length ? 'text-accent' : 'text-warning'} />
+      <Item label={t('header.cpu')} value={`${pct(cpu)}%`} />
+      <Item label={t('header.mem')} value={`${pct(mem)}%`} />
     </div>
   )
 }

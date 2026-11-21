@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Cpu, Fingerprint } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 
 /**
  * Where an invitation is spent.
@@ -39,6 +41,7 @@ export function InviteAcceptView({
   /** Called once the invitee is done here and should see the sign-in screen. */
   onFinished: () => void
 }) {
+  const { t } = useI18n()
   const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -102,7 +105,7 @@ export function InviteAcceptView({
           </CardTitle>
           {!finished && (
             <p className="text-xs text-muted-foreground">
-              You have been invited. Enrol a passkey to finish — this link works once.
+              {t('invite.subtitle')}
             </p>
           )}
         </CardHeader>
@@ -110,20 +113,19 @@ export function InviteAcceptView({
           {finished ? (
             <>
               <p className="text-sm">
-                Your passkey is enrolled. This invitation link is now spent — sign in with your new
-                passkey to continue.
+                {t('invite.done')}
               </p>
               <Button className="w-full font-mono" onClick={leave}>
-                Go to sign in
+                {t('invite.goToSignIn')}
               </Button>
             </>
           ) : (
             <>
               <div className="space-y-1.5">
-                <Label htmlFor="invite-key-label">Name this key</Label>
+                <Label htmlFor="invite-key-label">{t('invite.nameKey')}</Label>
                 <Input
                   id="invite-key-label"
-                  placeholder="YubiKey 5C"
+                  placeholder={t('passkeys.labelPlaceholder')}
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   disabled={busy}
@@ -137,7 +139,7 @@ export function InviteAcceptView({
               )}
               <Button className="w-full font-mono gap-1.5" disabled={busy} onClick={() => void handleAccept()}>
                 <Fingerprint />
-                {busy ? 'Waiting for authenticator…' : 'Enrol a passkey'}
+                {busy ? t('passkeys.waiting') : t('invite.enrol')}
               </Button>
               {error && (
                 // A failure here is not always retryable — a spent or expired
@@ -148,11 +150,12 @@ export function InviteAcceptView({
                 // dropped connection, a cancelled ceremony that got treated
                 // as an error) genuinely are worth trying again first.
                 <Button variant="outline" className="w-full font-mono" onClick={leave}>
-                  Go to sign in
+                  {t('invite.goToSignIn')}
                 </Button>
               )}
             </>
           )}
+          <LanguageSwitcher className="mx-auto flex w-fit" />
         </CardContent>
       </Card>
     </div>
