@@ -26,35 +26,37 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Gear, FloppyDisk, ArrowCounterClockwise, Warning } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 import { INFERENCE_SERVICES } from '@/lib/inference-services'
 
 type IntegrationKey = keyof FrameConfig['integrations']
 
 /** Which screen each integration feeds, so a wrong value is traceable to what broke. */
-const FEEDS: Record<IntegrationKey, string> = {
-  cephOsd: 'Storage',
-  cephMon: 'Storage',
-  alluxio: 'Storage (Alluxio tiers)',
-  nodeExporter: 'Network · Burst Buffer · KSM · PTP',
-  dcgm: 'GPU',
-  llamacpp: 'KV-Cache · Inference',
-  llamacppVision: 'Inference (service panel)',
-  tei: 'Inference',
-  falcosidekick: 'Security (runtime)',
-  tetragon: 'Security (network)',
-  prometheus: 'Capacity (forecast) · Storage (OSD, PG, pools)',
-  alertmanager: 'Alerts',
-  sandboxPods: 'Jobs (sandbox pods)',
+const FEEDS: Record<IntegrationKey, MessageKey> = {
+  cephOsd: 'settings.feeds.cephOsd',
+  cephMon: 'settings.feeds.cephMon',
+  alluxio: 'settings.feeds.alluxio',
+  nodeExporter: 'settings.feeds.nodeExporter',
+  dcgm: 'settings.feeds.dcgm',
+  llamacpp: 'settings.feeds.llamacpp',
+  llamacppVision: 'settings.feeds.llamacppVision',
+  tei: 'settings.feeds.tei',
+  falcosidekick: 'settings.feeds.falcosidekick',
+  tetragon: 'settings.feeds.tetragon',
+  prometheus: 'settings.feeds.prometheus',
+  alertmanager: 'settings.feeds.alertmanager',
+  sandboxPods: 'settings.feeds.sandboxPods',
 }
 
 /** The integrations the Inference panel operates, which alone take a Deployment name. */
 const DEPLOYMENT_KEYS: ReadonlySet<IntegrationKey> = new Set(INFERENCE_SERVICES.map((s) => s.key))
 
-const NAMESPACE_HELP: Record<keyof FrameConfig['namespaces'], string> = {
-  ceph: 'CephCluster and CephBlockPool CRs',
-  velero: 'Backup CRs — listing and on-demand triggers',
-  argo: 'Workflow CRs behind the Lineage screen',
-  volcanoCommands: 'Where queue open/close Commands are created',
+const NAMESPACE_HELP: Record<keyof FrameConfig['namespaces'], MessageKey> = {
+  ceph: 'settings.ns.ceph',
+  velero: 'settings.ns.velero',
+  argo: 'settings.ns.argo',
+  volcanoCommands: 'settings.ns.volcanoCommands',
 }
 
 /**
@@ -64,6 +66,7 @@ const NAMESPACE_HELP: Record<keyof FrameConfig['namespaces'], string> = {
  * ports.
  */
 export function SettingsView() {
+  const { t } = useI18n()
   const [draft, setDraft] = useState<FrameConfig>(() => structuredClone(config()))
   const [saving, setSaving] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
@@ -82,12 +85,12 @@ export function SettingsView() {
     setSaving(true)
     try {
       await saveConfig(draft)
-      toast.success('Configuration saved', {
-        description: 'Other tabs and pods pick it up on their next load.',
+      toast.success(t('settings.saved'), {
+        description: t('settings.savedHint'),
       })
       setDraft(structuredClone(config()))
     } catch (e) {
-      toast.error('Failed to save configuration', {
+      toast.error(t('settings.saveFailed'), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -101,7 +104,7 @@ export function SettingsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Gear className="text-primary" />
-            Settings — cluster wiring
+            {t('settings.title')}
             <div className="ml-auto flex items-center gap-2">
               <Button
                 variant="outline"
@@ -110,23 +113,22 @@ export function SettingsView() {
                 onClick={() => setResetOpen(true)}
               >
                 <ArrowCounterClockwise />
-                Defaults
+                {t('common.defaults')}
               </Button>
               <Button size="sm" className="font-mono gap-1.5" onClick={save} disabled={!dirty || saving}>
                 <FloppyDisk />
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t('common.saving') : t('common.save')}
               </Button>
             </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Where each cluster component lives, how its pods are labelled, and which port it answers
-            on. Stored in the{' '}
+            {t('settings.intro.before')}{' '}
             <span className="font-mono text-foreground">
               {CONFIG_NAMESPACE}/{CONFIG_NAME}
             </span>{' '}
-            ConfigMap and read at page load.
+            {t('settings.intro.after')}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Badge
@@ -136,10 +138,10 @@ export function SettingsView() {
               }`}
             >
               {status.source === 'configmap'
-                ? 'loaded from ConfigMap'
+                ? t('settings.source.configmap')
                 : status.error
-                  ? 'compiled defaults — ConfigMap unreadable'
-                  : 'compiled defaults — nothing saved yet'}
+                  ? t('settings.source.unreadable')
+                  : t('settings.source.nothingSaved')}
             </Badge>
             {status.error && (
               <span className="font-mono text-[10px] text-warning flex items-center gap-1">
@@ -149,7 +151,7 @@ export function SettingsView() {
             )}
             {dirty && (
               <Badge variant="outline" className="font-mono text-[10px] text-warning border-current">
-                unsaved changes
+                {t('settings.unsaved')}
               </Badge>
             )}
           </div>
@@ -158,7 +160,7 @@ export function SettingsView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-mono text-lg">Pod-proxied components</CardTitle>
+          <CardTitle className="font-mono text-lg">{t('settings.podProxied')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {(Object.keys(draft.integrations) as IntegrationKey[]).map((key) => {
@@ -167,35 +169,35 @@ export function SettingsView() {
               <div key={key} className="rounded border border-border bg-secondary/30 p-3 space-y-2">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="font-mono text-sm font-bold">{key}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">{FEEDS[key]}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">{t(FEEDS[key])}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Field
                     id={`${key}-ns`}
-                    label="Namespace"
+                    label={t('settings.namespace')}
                     value={i.namespace}
-                    placeholder={key === 'sandboxPods' ? 'all namespaces' : undefined}
+                    placeholder={key === 'sandboxPods' ? t('settings.allNamespaces') : undefined}
                     onChange={(v) => setIntegration(key, { namespace: v })}
                   />
                   <Field
                     id={`${key}-sel`}
-                    label="Label selector"
+                    label={t('settings.selector')}
                     value={i.selector}
                     onChange={(v) => setIntegration(key, { selector: v })}
                   />
                   {i.port !== undefined ? (
                     <Field
                       id={`${key}-port`}
-                      label="Port"
+                      label={t('settings.port')}
                       type="number"
                       value={String(i.port)}
                       onChange={(v) => setIntegration(key, { port: Number(v) || 0 })}
                     />
                   ) : (
                     <div className="space-y-1.5">
-                      <Label className="text-[10px] font-mono text-muted-foreground">Port</Label>
+                      <Label className="text-[10px] font-mono text-muted-foreground">{t('settings.port')}</Label>
                       <p className="text-[10px] font-mono text-muted-foreground pt-2">
-                        read via its own API — no proxy
+                        {t('settings.noProxy')}
                       </p>
                     </div>
                   )}
@@ -203,10 +205,10 @@ export function SettingsView() {
                 {DEPLOYMENT_KEYS.has(key) && (
                   <Field
                     id={`${key}-deploy`}
-                    label="Deployment (restart / stop / start)"
-                    hint="Empty: the one Deployment whose selector equals the label selector above"
+                    label={t('settings.deployment')}
+                    hint={t('settings.deploymentHint')}
                     value={i.deployment ?? ''}
-                    placeholder="resolved from the selector"
+                    placeholder={t('settings.deploymentPlaceholder')}
                     onChange={(v) => setIntegration(key, { deployment: v || undefined })}
                   />
                 )}
@@ -218,20 +220,20 @@ export function SettingsView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-mono text-lg">API-addressed namespaces</CardTitle>
+          <CardTitle className="font-mono text-lg">{t('settings.apiNamespaces')}</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field
             id="frame-ns"
-            label="Frame CRs"
-            hint="FrameJob, FrameNode, SchedulingPolicy, ResourceQuota"
+            label={t('settings.frameCrs')}
+            hint={t('settings.frameCrsHint')}
             value={draft.frameNamespace}
             onChange={(v) => setDraft((d) => ({ ...d, frameNamespace: v }))}
           />
           <Field
             id="task-ns"
-            label="FrameTasks"
-            hint="Must match frame-uiproxy's TASK_NAMESPACE (deployment.yaml)"
+            label={t('settings.frameTasks')}
+            hint={t('settings.frameTasksHint')}
             value={draft.taskNamespace}
             onChange={(v) => setDraft((d) => ({ ...d, taskNamespace: v }))}
           />
@@ -240,7 +242,7 @@ export function SettingsView() {
               key={key}
               id={`ns-${key}`}
               label={key}
-              hint={NAMESPACE_HELP[key]}
+              hint={t(NAMESPACE_HELP[key])}
               value={draft.namespaces[key]}
               onChange={(v) => setDraft((d) => ({ ...d, namespaces: { ...d.namespaces, [key]: v } }))}
             />
@@ -250,13 +252,13 @@ export function SettingsView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-mono text-lg">Node metrics</CardTitle>
+          <CardTitle className="font-mono text-lg">{t('settings.nodeMetrics')}</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field
             id="net-devices"
-            label="Network interfaces"
-            hint="Comma-separated; charted on the Network screen"
+            label={t('settings.netDevices')}
+            hint={t('settings.netDevicesHint')}
             value={draft.network.devices.join(', ')}
             onChange={(v) =>
               setDraft((d) => ({
@@ -267,8 +269,8 @@ export function SettingsView() {
           />
           <Field
             id="burst-mount"
-            label="Burst-buffer mount"
-            hint="Mountpoint reported as the scratch tier"
+            label={t('settings.burstMount')}
+            hint={t('settings.burstMountHint')}
             value={draft.burstBuffer.mount}
             onChange={(v) => setDraft((d) => ({ ...d, burstBuffer: { mount: v } }))}
           />
@@ -277,13 +279,13 @@ export function SettingsView() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="font-mono text-lg">Workloads</CardTitle>
+          <CardTitle className="font-mono text-lg">{t('settings.workloads')}</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field
             id="extra-operable-namespaces"
-            label="Extra operable namespaces"
-            hint="Comma-separated; restart, scale and the editor are offered here too — only where your site grants the workload RoleBindings"
+            label={t('settings.extraNs')}
+            hint={t('settings.extraNsHint')}
             value={draft.workloads.extraOperableNamespaces.join(', ')}
             onChange={(v) =>
               setDraft((d) => ({
@@ -300,21 +302,20 @@ export function SettingsView() {
       <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Restore compiled defaults?</AlertDialogTitle>
+            <AlertDialogTitle>{t('settings.restoreTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Replaces the form with the values Hearthrack ships with. Nothing is written until you press
-              Save, so the stored ConfigMap is untouched until then.
+              {t('settings.restoreBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setDraft(structuredClone(DEFAULT_CONFIG))
                 setResetOpen(false)
               }}
             >
-              Restore
+              {t('common.restore')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
