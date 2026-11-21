@@ -788,7 +788,7 @@ function App() {
 
         <SidebarContent>
           {visibleNav.map((group) => (
-            <SidebarGroup key={t(group.label)}>
+            <SidebarGroup key={group.label}>
               <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-widest">
                 {t(group.label)}
               </SidebarGroupLabel>

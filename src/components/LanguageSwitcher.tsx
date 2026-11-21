@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 export function LanguageSwitcher({ className }: { className?: string }) {
   const { locale, setLocale, t } = useI18n()
   return (
-    <div role="group" aria-label={t('common.language')} className={cn('inline-flex rounded border border-border text-[10px] font-mono', className)}>
+    <div role="group" aria-label={t('common.language')} className={cn('inline-flex rounded border border-border text-xs font-mono', className)}>
       {LOCALES.map((l) => (
         <button
           key={l.code}
@@ -15,7 +15,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
           aria-pressed={locale === l.code}
           onClick={() => setLocale(l.code)}
           className={cn(
-            'px-2 py-1 first:rounded-l last:rounded-r',
+            'px-3 py-1.5 first:rounded-l last:rounded-r',
             locale === l.code ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
           )}
         >
