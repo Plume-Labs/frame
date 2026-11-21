@@ -21,10 +21,12 @@ import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { changed, changeWarnings, Database, DatabaseSettings, settingsProblem } from '@/lib/databases'
 import { createFrameClient } from '@/lib/frame-sdk'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
 function DatabaseCard({ db, onSaved }: { db: Database; onSaved: () => void }) {
+  const { t, tm } = useI18n()
   const [draft, setDraft] = useState<DatabaseSettings>({ instances: db.instances, volumeSize: db.volumeSize, nodes: db.nodes })
   const [confirming, setConfirming] = useState(false)
   const problem = settingsProblem(draft)
@@ -33,17 +35,17 @@ function DatabaseCard({ db, onSaved }: { db: Database; onSaved: () => void }) {
     setConfirming(false)
     try {
       await frame.databases.save(db, draft)
-      toast.success(`${db.name}: settings saved`)
+      toast.success(t('svc.saved', { name: db.name }))
       onSaved()
     } catch (e) {
-      toast.error(`Failed: ${db.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('svc.failed', { name: db.name }), { description: e instanceof Error ? e.message : String(e) })
     }
   }
 
   const fields = [
-    { key: 'instances', label: 'Instances' },
-    { key: 'volumeSize', label: 'Volume size' },
-    { key: 'nodes', label: 'Nodes (comma-separated)' },
+    { key: 'instances', label: t('db.instances') },
+    { key: 'volumeSize', label: t('svc.volumeSize') },
+    { key: 'nodes', label: t('db.nodes') },
   ] as const
 
   return (
@@ -71,41 +73,41 @@ function DatabaseCard({ db, onSaved }: { db: Database; onSaved: () => void }) {
             </div>
           ))}
         </div>
-        {problem && <p className="text-xs text-warning">{problem}</p>}
+        {problem && <p className="text-xs text-warning">{tm(problem)}</p>}
         <Button disabled={problem !== null || !changed(db, draft)} onClick={() => setConfirming(true)}>
-          Apply
+          {t('svc.apply')}
         </Button>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
           {db.endpoint && (
             <div className="flex gap-2">
-              <dt className="text-muted-foreground">Endpoint</dt>
+              <dt className="text-muted-foreground">{t('svc.endpoint')}</dt>
               <dd>{db.endpoint}</dd>
             </div>
           )}
           {db.fixed.map((f) => (
-            <div key={f.key} className="flex gap-2">
-              <dt className="text-muted-foreground">{f.key}</dt>
+            <div key={f.label} className="flex gap-2">
+              <dt className="text-muted-foreground">{t(f.label)}</dt>
               <dd>{f.value}</dd>
             </div>
           ))}
-          {db.adopted && <div className="text-muted-foreground">Adopted cluster: Hearthrack never recreates it.</div>}
+          {db.adopted && <div className="text-muted-foreground">{t('db.adopted')}</div>}
         </dl>
       </CardContent>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Apply to {db.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('svc.applyTo', { name: db.name })}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <ul className="list-disc pl-4 space-y-1">
                 {changeWarnings(db, draft).map((w) => (
-                  <li key={w}>{w}</li>
+                  <li key={w.key}>{tm(w)}</li>
                 ))}
               </ul>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={save}>Apply</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={save}>{t('svc.apply')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -115,10 +117,11 @@ function DatabaseCard({ db, onSaved }: { db: Database; onSaved: () => void }) {
 
 /** Postgres clusters run through FrameService, and the settings that can move. */
 export function DatabasesView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<Database[]>(() => frame.databases.list(), [], [frame.databases.watchPath()])
   return (
     <div className="space-y-4">
-      <LiveStates state={state} emptyLabel="No FrameService of type postgres yet." />
+      <LiveStates state={state} emptyLabel={t('db.empty')} />
       {state.phase === 'ready' &&
         state.data.map((db) => (
           // Keyed on the saved values: a change from elsewhere replaces the form.

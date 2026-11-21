@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { changed, changeWarnings, parametersPatch, settingsProblem, toDatabase, type FrameServiceCR } from './databases'
+import { translate, type Message } from '@/i18n'
+import { changed, changeWarnings as rawWarnings, parametersPatch, settingsProblem as rawProblem, toDatabase, type FrameServiceCR } from './databases'
+
+const en = (m: Message) => translate('en', m.key, m.params)
+// The module returns message keys; the tests read them in English.
+const settingsProblem = (...args: Parameters<typeof rawProblem>) => {
+  const m = rawProblem(...args)
+  return m && en(m)
+}
+const changeWarnings = (...args: Parameters<typeof rawWarnings>) => rawWarnings(...args).map(en)
 
 const cr = (over: Partial<FrameServiceCR> = {}): FrameServiceCR => ({
   metadata: { name: 'shop-db', namespace: 'shop' },

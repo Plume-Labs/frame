@@ -21,10 +21,12 @@ import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { Cache, CacheSettings, changed, changeWarnings, settingsProblem } from '@/lib/caches'
 import { createFrameClient } from '@/lib/frame-sdk'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
 function CacheCard({ cache, onSaved }: { cache: Cache; onSaved: () => void }) {
+  const { t, tm } = useI18n()
   const [draft, setDraft] = useState<CacheSettings>({ maxMemory: cache.maxMemory, volumeSize: cache.volumeSize })
   const [confirming, setConfirming] = useState(false)
   const problem = settingsProblem(cache, draft)
@@ -33,16 +35,16 @@ function CacheCard({ cache, onSaved }: { cache: Cache; onSaved: () => void }) {
     setConfirming(false)
     try {
       await frame.caches.save(cache, draft)
-      toast.success(`${cache.name}: settings saved`)
+      toast.success(t('svc.saved', { name: cache.name }))
       onSaved()
     } catch (e) {
-      toast.error(`Failed: ${cache.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('svc.failed', { name: cache.name }), { description: e instanceof Error ? e.message : String(e) })
     }
   }
 
   const fields = [
-    { key: 'maxMemory', label: 'Max memory' },
-    ...(cache.profile === 'queue' ? [{ key: 'volumeSize', label: 'Volume size' } as const] : []),
+    { key: 'maxMemory', label: t('cache.maxMemory') },
+    ...(cache.profile === 'queue' ? [{ key: 'volumeSize', label: t('svc.volumeSize') } as const] : []),
   ] as const
 
   return (
@@ -73,20 +75,20 @@ function CacheCard({ cache, onSaved }: { cache: Cache; onSaved: () => void }) {
             </div>
           ))}
         </div>
-        {problem && <p className="text-xs text-warning">{problem}</p>}
+        {problem && <p className="text-xs text-warning">{tm(problem)}</p>}
         <Button disabled={problem !== null || !changed(cache, draft)} onClick={() => setConfirming(true)}>
-          Apply
+          {t('svc.apply')}
         </Button>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
           {cache.endpoint && (
             <div className="flex gap-2">
-              <dt className="text-muted-foreground">Endpoint</dt>
+              <dt className="text-muted-foreground">{t('svc.endpoint')}</dt>
               <dd>{cache.endpoint}</dd>
             </div>
           )}
           {cache.storageClass && (
             <div className="flex gap-2">
-              <dt className="text-muted-foreground">Storage class</dt>
+              <dt className="text-muted-foreground">{t('svc.storageClass')}</dt>
               <dd>{cache.storageClass}</dd>
             </div>
           )}
@@ -95,18 +97,18 @@ function CacheCard({ cache, onSaved }: { cache: Cache; onSaved: () => void }) {
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Apply to {cache.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('svc.applyTo', { name: cache.name })}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <ul className="list-disc pl-4 space-y-1">
                 {changeWarnings(cache, draft).map((w) => (
-                  <li key={w}>{w}</li>
+                  <li key={w.key}>{tm(w)}</li>
                 ))}
               </ul>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={save}>Apply</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={save}>{t('svc.apply')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -116,10 +118,11 @@ function CacheCard({ cache, onSaved }: { cache: Cache; onSaved: () => void }) {
 
 /** Valkey instances run through FrameService, and the settings that can move. */
 export function CachesView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<Cache[]>(() => frame.caches.list(), [], [frame.caches.watchPath()])
   return (
     <div className="space-y-4">
-      <LiveStates state={state} emptyLabel="No FrameService of type cache yet." />
+      <LiveStates state={state} emptyLabel={t('cache.empty')} />
       {state.phase === 'ready' &&
         state.data.map((c) => (
           // Keyed on the saved values: a change from elsewhere replaces the form.
