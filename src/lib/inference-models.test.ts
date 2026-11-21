@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
+import { translate, type Message } from '@/i18n'
 
 import {
-  changed, EMPTY_SETTINGS, nameProblem, settingsProblem, toCreateSpec, toInferenceModel, toSpec, type ModelSettings,
+  changed, EMPTY_SETTINGS, nameProblem as rawName, settingsProblem as rawProblem, toCreateSpec, toInferenceModel, toSpec, type ModelSettings,
 } from './inference-models'
+
+const en = (m: Message) => translate('en', m.key, m.params)
+// The module returns message keys; the tests read them in English.
+const settingsProblem = (...args: Parameters<typeof rawProblem>) => {
+  const m = rawProblem(...args)
+  return m && en(m)
+}
+const nameProblem = (...args: Parameters<typeof rawName>) => {
+  const m = rawName(...args)
+  return m && en(m)
+}
 
 const base: ModelSettings = { ...EMPTY_SETTINGS, weightsMiB: '4696', layers: '32', kvHeads: '8', headDim: '128' }
 
