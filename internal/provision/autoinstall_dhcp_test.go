@@ -22,6 +22,9 @@ func TestRenderAutoinstallDHCPAsksForAnAddressAndPinsNothing(t *testing.T) {
 	if eth["dhcp4"] != true {
 		t.Errorf("dhcp4 = %v, want true", eth["dhcp4"])
 	}
+	if m, _ := eth["match"].(map[string]any); m["name"] != "en*" || eth["optional"] != true {
+		t.Errorf("stanza must match en* and be optional so an uncabled port does not hold the boot: %v", eth)
+	}
 	for _, k := range []string{"addresses", "routes", "nameservers"} {
 		if _, ok := eth[k]; ok {
 			t.Errorf("DHCP stanza carries %q", k)

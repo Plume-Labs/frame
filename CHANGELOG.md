@@ -12,8 +12,8 @@ release tags follow [Semantic Versioning](https://semver.org/).
   address to DHCP (refused by `Install`, which waits for SSH at a known address).
 - hack: `build-iso.sh` builds an unattended installer image for one machine
   (BIOS or UEFI, one disk or a mirror, static or DHCP), `list-disks.sh` prints
-  the `by-id` names and sizes it needs, `check-iso-secrets.sh` fails on any
-  private key or join token in the image or its seed, and `qemu-iso-test.sh`
+  the `by-id` names and sizes it needs, `check-iso-secrets.sh` fails on a private
+  key or join token in the image's GRUB files or its seed, and `qemu-iso-test.sh`
   installs the image in QEMU in both firmware modes. See `docs/install/`.
 
 ### Added — Updates screen (read-only)

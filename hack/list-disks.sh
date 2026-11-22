@@ -9,11 +9,12 @@
 #
 #   curl -fsSL <url of this file> | bash        # or copy it over with scp
 #
-# Prefers the wwn-/scsi-/ata-/nvme- names, which are stable; skips partitions,
+# Run as root (blockdev). Prefers the nvme-/wwn-/scsi-/ata-/virtio- names, which are stable; skips partitions,
 # loop and optical devices, and USB sticks (the key you booted from is not a
 # disk to install on).
 set -euo pipefail
 
+[ "$(id -u)" = 0 ] || { echo "list-disks: run as root (sudo)" >&2; exit 1; }
 [ -d /dev/disk/by-id ] || { echo "list-disks: no /dev/disk/by-id here" >&2; exit 1; }
 
 printf '%-8s %-9s %-14s %s\n' DEVICE SIZE TRANSPORT "--disk argument"
@@ -26,7 +27,7 @@ for dev in /sys/block/*; do
   [ "$tran" = usb ] && continue
   bytes=$(blockdev --getsize64 "$node")
   best=""
-  for rank in nvme- wwn- scsi- ata-; do
+  for rank in nvme- wwn- scsi- ata- virtio-; do
     for link in /dev/disk/by-id/${rank}*; do
       [ -e "$link" ] || continue
       case "$link" in *-part*) continue ;; esac

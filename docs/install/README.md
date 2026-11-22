@@ -11,7 +11,7 @@ two edited GRUB files that tell the installer to run unattended and where to
 fetch its seed. The seed (disk, network, hostname, your **public** SSH key) is
 served by `frame-provisiond` while the machine installs. **No private key and no
 cluster token is ever written to the image or the seed**; `hack/check-iso-secrets.sh`
-checks that and `hack/build-iso.sh` runs it on every build.
+checks the two GRUB files and the seed (including its base64 payloads) and `hack/build-iso.sh` runs it on every build.
 
 ## What you need
 
@@ -31,7 +31,8 @@ you need the disk's stable name before you build. Boot the machine from any
 Ubuntu Server live USB, open a shell (Help > Enter shell), and run:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/Plume-Labs/frame/main/hack/list-disks.sh | bash
+# read it first, then run as root; pin a tag or commit instead of main for anything serious
+curl -fsSL https://raw.githubusercontent.com/Plume-Labs/frame/main/hack/list-disks.sh | sudo bash
 ```
 
 (or copy `hack/list-disks.sh` over with a second key). It prints one line per
@@ -60,7 +61,9 @@ hack/build-iso.sh --hostname tacos --boot bios \
 static address is pinned by MAC to the port that reached the gateway during the
 install, so a second cable later does not take the same address. DHCP keeps the
 installer's own stanza (DHCP on every cabled port): fine for a trial, but a
-cluster node wants a fixed address, so prefer static or a DHCP reservation.
+cluster node wants a fixed address, so prefer static or a DHCP reservation. With several cables, DHCP
+may hand the node one lease and one default route per cabled port; a static address
+is pinned to a single port. In DHCP mode read the lease on the router or the console.
 
 The script prints the image path and its SHA256 and **leaves `provisiond`
 running**: the machine fetches its seed from it. Keep it up until step 4.
@@ -68,6 +71,7 @@ running**: the machine fetches its seed from it. Keep it up until step 4.
 ## 3. Burn and boot
 
 ```
+# check the device with lsblk first: dd overwrites it without asking
 sudo dd if=iso-out/tacos.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
@@ -84,7 +88,7 @@ screen shows the first reboot.
 
 ```
 ssh frame@<address>            # key only; the account has no password
-cat /etc/frame-install-uid     # the UID the build printed
+cat /etc/frame-install-uid     # must equal the "install UID" the build printed
 hack/build-iso.sh --stop
 ```
 
@@ -112,7 +116,7 @@ that is committed or copied:
 | The image refuses to build without both a BIOS and a UEFI boot record | tested |
 | Unattended autoinstall renders for single disk and mirror, BIOS and UEFI | tested |
 | No private key or token in the image or the seed | tested on every build |
-| Installs by itself in QEMU, **BIOS** and **UEFI** (`hack/qemu-iso-test.sh`) | see the pull request |
+| Installs by itself in QEMU, **BIOS** and **UEFI** (`hack/qemu-iso-test.sh`, static address; `DHCP=1` for the DHCP mode) | run by hand, no CI job (needs ~30 min per mode without KVM) |
 | Boots from a USB key on a real 2009-era server, with a BMC VGA console | **not tried** |
 | Installs on a machine whose network has no DHCP | **not possible today**: the live installer needs one lease |
 

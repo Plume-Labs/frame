@@ -11,6 +11,10 @@
 # QEMU emulates the CPU and an install takes an hour or more: set TIMEOUT
 # (seconds, default 5400). Work files go in WORK (default ./qemu-out).
 #
+# The key is booted once, then the disk: the same as pulling the USB key at the
+# first reboot. Left in place, a BIOS machine boots the key again and reinstalls
+# in a loop (seen in this bench with the key first in the boot order).
+#
 # The guest reaches this host at 10.0.2.2 (QEMU user networking), which is
 # where provisiond serves the seed; its address is 10.0.2.15 behind the
 # built-in DHCP, with SSH forwarded to 127.0.0.1:$SSH_PORT.
@@ -38,19 +42,23 @@ if [ -z "$bin" ]; then bin=$w/provisiond; (cd "$here" && go build -o "$bin" ./cm
 
 # BASE_ISO: an already downloaded, SHA256-verified base image, to skip the 4 GB fetch.
 if [ -n "${BASE_ISO:-}" ]; then mkdir -p "$w/images/base"; ln -sf "$BASE_ISO" "$w/images/base/$(basename "$BASE_ISO")"; fi
+# DHCP=1 builds with --dhcp (installed system asks QEMU's DHCP) instead of a static 10.0.2.15.
+net=(--address 10.0.2.15/24 --gateway 10.0.2.2 --dns 10.0.2.3); [ "${DHCP:-0}" = 1 ] && net=(--dhcp)
 serial=frametest; size=$((8<<30))
 qemu-img create -q -f qcow2 "$w/disk.qcow2" 8G
 
-FRAME_PROVISIOND_BIN=$bin OUT=$w MEDIA_BIND=127.0.0.1 "$here/hack/build-iso.sh" \
+trap '"$here/hack/build-iso.sh" --stop >/dev/null 2>&1 || true; [ -f "$w/qemu.pid" ] && kill "$(cat "$w/qemu.pid")" 2>/dev/null || true' EXIT
+export OUT=$w   # build-iso.sh --stop in the trap must find the same pid file
+FRAME_PROVISIOND_BIN=$bin MEDIA_BIND=127.0.0.1 "$here/hack/build-iso.sh" \
   --hostname qemu-$mode --boot "$mode" --ssh-key "$w/key.pub" --media-ip 10.0.2.2 \
-  --address 10.0.2.15/24 --gateway 10.0.2.2 --dns 10.0.2.3 \
+  "${net[@]}" \
   --disk "/dev/disk/by-id/virtio-$serial:$size"
 trap '"$here/hack/build-iso.sh" --stop >/dev/null 2>&1 || true; [ -f "$w/qemu.pid" ] && kill "$(cat "$w/qemu.pid")" 2>/dev/null || true' EXIT
 
 accel=(); [ -w /dev/kvm ] && accel=(-enable-kvm -cpu host) || accel=(-cpu max)
 qemu-system-x86_64 "${accel[@]}" -m 4096 -smp 2 "${fw[@]}" \
   -drive "file=$w/disk.qcow2,if=none,id=d0,format=qcow2" -device "virtio-blk-pci,drive=d0,serial=$serial" \
-  -cdrom "$w/qemu-$mode.iso" -boot order=dc \
+  -cdrom "$w/qemu-$mode.iso" -boot order=c,once=d \
   -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22" -device virtio-net-pci,netdev=n0 \
   -display none -monitor "unix:$w/mon.sock,server,nowait" -pidfile "$w/qemu.pid" -daemonize
 

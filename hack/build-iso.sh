@@ -106,15 +106,19 @@ token=$(jq -r .token <<<"$resp" 2>/dev/null || true)
 [[ "$token" =~ ^[a-f0-9]{32}$ ]] || die "build refused: $resp"
 
 iso="$OUT/$hostname.iso"
+rm -f "$iso" "$iso.sha256"
+# Checked BEFORE the image is copied to a name someone will burn.
+"$here/hack/check-iso-secrets.sh" "$OUT/images/$token.iso" "$OUT/images/$token" || { stop >/dev/null; die "secret check failed, no image written"; }
 cp "$OUT/images/$token.iso" "$iso"
-"$here/hack/check-iso-secrets.sh" "$OUT/images/$token.iso" "$OUT/images/$token"
 ( cd "$OUT" && sha256sum "$hostname.iso" | tee "$hostname.iso.sha256" )
 cat <<MSG
 
 ISO ready: $iso
+  install UID: $uid  (the installed system's /etc/frame-install-uid must say this)
   mode: $mode, disks: ${#disks[@]} ($kind), network: $([ $dhcp = 1 ] && echo DHCP || echo "$address")
 Burn it:   sudo dd if=$iso of=/dev/sdX bs=4M status=progress conv=fsync   (sdX = the USB key)
 Boot the machine from the key; it installs with no input and reboots. It fetches
 its seed from http://$media_ip:$media_port, so leave provisiond running until
 'ssh frame@<address>' answers, then: $0 --stop
+<address> is the one you gave, or in DHCP mode the lease: read it on the router or the machine's console.
 MSG
