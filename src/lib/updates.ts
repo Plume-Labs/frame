@@ -68,3 +68,44 @@ export function disturbances(counts: ActivityCounts): Disturbance[] {
 export function countUnready(components: RunningComponent[]): number {
   return components.filter((c) => c.readyReplicas < c.desiredReplicas).length
 }
+
+/** A git commit id as typed by a person: 7 to 40 hex digits. Anything else is refused. */
+export function isCommitId(s: string): boolean {
+  return /^[0-9a-f]{7,40}$/.test(s)
+}
+
+export interface PreparationInput {
+  target: string
+  components: RunningComponent[]
+  reasons: Disturbance[]
+  /** Site commands with `{sha}` and `{current}` placeholders (config `updates.prepareCommands`). */
+  template: string
+  gitopsUrl: string
+  now: Date
+}
+
+/**
+ * The text an operator copies to prepare an update. It prepares only: it
+ * changes nothing and opens no pull request. The cluster is updated by the
+ * GitOps pipeline after review, and the "moment" snapshot is dated because it
+ * is read now and the sync happens later.
+ */
+export function buildPreparation(input: PreparationInput): string {
+  const { target, components, reasons, template, gitopsUrl, now } = input
+  if (!isCommitId(target)) throw new Error('target is not a commit id')
+  const current = summarizeVersions(components).dominant || 'unknown'
+  const lines: string[] = [
+    `# Hearthrack update to ${target}`,
+    `# Prepared ${now.toISOString()} from the console. Nothing has been changed.`,
+    `# Running now: ${current}`,
+  ]
+  for (const c of components) lines.push(`#   ${c.name}: ${c.image}`)
+  lines.push(
+    reasons.length === 0
+      ? '# At that moment nothing was in flight. Check again before the sync.'
+      : `# In flight at that moment: ${reasons.map((r) => `${r.key}=${r.count}`).join(', ')}. Check again before the sync.`,
+  )
+  if (gitopsUrl) lines.push(`# GitOps repository: ${gitopsUrl}`)
+  lines.push('', template.split('{sha}').join(target).split('{current}').join(current))
+  return lines.join('\n')
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countUnready, disturbances, parseImage, summarizeVersions } from './updates'
+import { buildPreparation, countUnready, disturbances, isCommitId, parseImage, summarizeVersions } from './updates'
 import type { RunningComponent } from './frame-sdk'
 
 const comp = (name: string, image: string, ready = 1, desired = 1): RunningComponent => ({
@@ -44,5 +44,31 @@ describe('disturbances', () => {
 describe('countUnready', () => {
   it('counts components below their desired replicas', () => {
     expect(countUnready([comp('a', 'r/a:1'), comp('b', 'r/b:1', 0, 2)])).toBe(1)
+  })
+})
+
+describe('buildPreparation', () => {
+  const base = {
+    components: [comp('frame-ui', 'r/frame-ui:abc1234')],
+    reasons: [],
+    template: 'git checkout {sha}\n# was {current}',
+    gitopsUrl: 'https://example.test/gitops',
+    now: new Date('2026-11-22T10:00:00Z'),
+  }
+  it('fills the placeholders and says nothing was changed', () => {
+    const out = buildPreparation({ ...base, target: 'def5678' })
+    expect(out).toContain('git checkout def5678')
+    expect(out).toContain('# was abc1234')
+    expect(out).toContain('Nothing has been changed')
+    expect(out).toContain('Check again before the sync')
+  })
+  it('lists what was in flight', () => {
+    const out = buildPreparation({ ...base, target: 'def5678', reasons: [{ key: 'runningJobs', count: 2 }] })
+    expect(out).toContain('runningJobs=2')
+  })
+  it('refuses a target that is not a commit id, so nothing odd reaches a shell', () => {
+    expect(isCommitId('def5678; rm -rf /')).toBe(false)
+    expect(isCommitId('DEF5678')).toBe(false)
+    expect(() => buildPreparation({ ...base, target: '$(id)' })).toThrow()
   })
 })

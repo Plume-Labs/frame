@@ -117,3 +117,23 @@ describe('workloads.extraOperableNamespaces', () => {
     expect(config().workloads.extraOperableNamespaces).toEqual([])
   })
 })
+
+describe('updates', () => {
+  it('is empty by default, which hides the prepare card', () => {
+    expect(DEFAULT_CONFIG.updates).toEqual({ gitopsUrl: '', prepareCommands: '' })
+  })
+
+  it('keeps an https link and the command text', async () => {
+    stubConfigMap({
+      'config.json': JSON.stringify({ updates: { gitopsUrl: 'https://example.test/gitops', prepareCommands: 'echo {sha}' } }),
+    })
+    await loadConfig()
+    expect(config().updates).toEqual({ gitopsUrl: 'https://example.test/gitops', prepareCommands: 'echo {sha}' })
+  })
+
+  it('drops a link that is not https', async () => {
+    stubConfigMap({ 'config.json': JSON.stringify({ updates: { gitopsUrl: 'javascript:alert(1)' } }) })
+    await loadConfig()
+    expect(config().updates.gitopsUrl).toBe('')
+  })
+})
