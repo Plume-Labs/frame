@@ -176,11 +176,11 @@ docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
 .PHONY: docker-build-ui
-docker-build-ui: ## Build the Frame UI Docker image
+docker-build-ui: ## Build the Hearthrack UI Docker image
 	$(CONTAINER_TOOL) build -t $(IMG_UI) .
 
 .PHONY: docker-push-ui
-docker-push-ui: ## Push the Frame UI Docker image
+docker-push-ui: ## Push the Hearthrack UI Docker image
 	$(CONTAINER_TOOL) push $(IMG_UI)
 
 .PHONY: docker-build-authd

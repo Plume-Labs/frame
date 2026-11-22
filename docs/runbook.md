@@ -48,7 +48,7 @@ webhook and got a verdict. Nothing is created.
 Every validating webhook is registered `failurePolicy: Fail` with a 10s
 timeout. That is the right default — a silently unvalidated CR is worse than a
 rejected one — but it means **an operator that cannot be reached blocks every
-create and update of every Frame CRD, cluster-wide**. Existing objects keep
+create and update of every Hearthrack CRD, cluster-wide**. Existing objects keep
 running; the controllers simply stop reconciling. Reads are unaffected.
 
 If you must write a CR while the manager is unrecoverable, delete the webhook
@@ -106,7 +106,7 @@ the worst case):
 
 That last point is the real argument for running two: reconciliation pausing
 for up to a minute is unremarkable, but with one replica the same window is one
-where *nobody can write a Frame CR at all*.
+where *nobody can write a Hearthrack CR at all*.
 
 Helm installs for production should start from
 `charts/frame/values-production.yaml` (`replicaCount: 2` and a

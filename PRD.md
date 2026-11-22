@@ -1,8 +1,8 @@
 # Planning Guide
 
-Frame is a **mainframe framework for Kubernetes** — not merely a monitoring dashboard. It provides a complete operator control plane (CRD API, TypeScript SDK, and UI) that lets operators, workloads, and CI pipelines manage jobs, scheduling policies, resource quotas, storage, networking, and resilience programmatically or through the interface.
+Hearthrack is a **mainframe framework for Kubernetes** — not merely a monitoring dashboard. It provides a complete operator control plane (CRD API, TypeScript SDK, and UI) that lets operators, workloads, and CI pipelines manage jobs, scheduling policies, resource quotas, storage, networking, and resilience programmatically or through the interface.
 
-> **Cluster scope:** Frame manages a **single local cluster** — one physical location, with one or more racks. The RDMA fabric (InfiniBand or RoCE) is a local, intra-datacenter interconnect and does **not** traverse the internet or WAN. `zones` and `racks` are failure-domain labels within the same site. Multi-site / multi-region federation is **out of scope** for this version.
+> **Cluster scope:** Hearthrack manages a **single local cluster** — one physical location, with one or more racks. The RDMA fabric (InfiniBand or RoCE) is a local, intra-datacenter interconnect and does **not** traverse the internet or WAN. `zones` and `racks` are failure-domain labels within the same site. Multi-site / multi-region federation is **out of scope** for this version.
 
 **Experience Qualities**:
 1. **Control-first** - The interface leads with operator actions: job submission, policy management, resource provisioning, and resilience controls. Observability is present but secondary.
@@ -10,14 +10,14 @@ Frame is a **mainframe framework for Kubernetes** — not merely a monitoring da
 3. **Authoritative** - Design conveys ownership and control over complex distributed infrastructure, not just passive visibility into it.
 
 **Complexity Level**: Complex Application (advanced functionality, multiple views, operator + control plane)
-Frame is a full-stack mainframe framework: a React control-plane UI, a TypeScript operator SDK, a Kubebuilder operator reconciling the Frame CRDs, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph (RGW) storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
+Hearthrack is a full-stack mainframe framework: a React control-plane UI, a TypeScript operator SDK, a Kubebuilder operator reconciling the Hearthrack CRDs, and comprehensive IaC for bare-metal Kubernetes provisioning (RDMA networking, Ceph (RGW) storage, PXE boot, GitOps via Flux/ArgoCD, HPC scheduling via Volcano/YuniKorn, and Argo Workflow job orchestration).
 
 ## Essential Features
 
 **CRD API & TypeScript SDK** *(primary)*
-- Functionality: the Frame CRDs are the API. The TypeScript `FrameClient` SDK reads and writes them directly against the Kubernetes API — job submission, scheduling policy management, resource quota control, node inspection. There is no intermediate REST server.
-- Purpose: Lets workloads, CI pipelines, and operator CLIs interact with Frame programmatically without the UI, using ordinary Kubernetes clients if they prefer
-- Trigger: Any client writes a Frame CR — `POST /apis/frame.plume-labs.io/v1beta1/namespaces/:ns/framejobs`, and so on — through the SDK, `kubectl`, or its own client
+- Functionality: the Hearthrack CRDs are the API. The TypeScript `FrameClient` SDK reads and writes them directly against the Kubernetes API — job submission, scheduling policy management, resource quota control, node inspection. There is no intermediate REST server.
+- Purpose: Lets workloads, CI pipelines, and operator CLIs interact with Hearthrack programmatically without the UI, using ordinary Kubernetes clients if they prefer
+- Trigger: Any client writes a Hearthrack CR — `POST /apis/frame.plume-labs.io/v1beta1/namespaces/:ns/framejobs`, and so on — through the SDK, `kubectl`, or its own client
 - Progression: Client calls SDK → SDK calls the Kubernetes API → operator reconciles the CR into real cluster state → status subresource reports back
 - Success criteria: every CRD kind is readable and writable through the SDK with accurate TypeScript types; the schema contract is the CRD's own OpenAPI, served by the apiserver and generated from the kubebuilder markers, not a hand-maintained document
 
@@ -58,8 +58,8 @@ Frame is a full-stack mainframe framework: a React control-plane UI, a TypeScrip
 - Functionality: Complete IaC for bare-metal Kubernetes with RDMA networking, Ceph (RGW) storage, HPC scheduling (Volcano/YuniKorn), Argo Workflows, and GitOps workflows
 - Purpose: Production-ready deployment scripts for mainframe-like clustering with automated provisioning and continuous delivery
 - Trigger: Operations team registers each machine's BMC (FrameMachine) and installs it (FrameInstall)
-- Progression: Register BMC → FrameInstall builds a Debian preseed and boots it over virtual media → k3s join → FrameNode classifies the node → Flux/ArgoCD syncs from Git → Frame API + UI deployed
-- Success criteria: Full cluster deployed with RDMA networking, Ceph (RGW) storage, automated GitOps, hot-add node capability, HPC scheduler, and Frame API server running
+- Progression: Register BMC → FrameInstall builds a Debian preseed and boots it over virtual media → k3s join → FrameNode classifies the node → Flux/ArgoCD syncs from Git → Hearthrack API + UI deployed
+- Success criteria: Full cluster deployed with RDMA networking, Ceph (RGW) storage, automated GitOps, hot-add node capability, HPC scheduler, and Hearthrack API server running
 
 ## Edge Case Handling
 
@@ -73,7 +73,7 @@ Frame is a full-stack mainframe framework: a React control-plane UI, a TypeScrip
 - **Empty State**: Show "Initializing cluster..." skeleton loaders during first render
 - **Hot Node Addition**: Support dynamic node provisioning via IPMI/PXE without cluster disruption
 - **Storage Failures**: Gracefully handle Ceph OSD failures with visible cluster health degradation
-- **Multi-site Request**: Out of scope — Frame manages a single local cluster. If a user requests multi-region federation, surface a clear message that it is not yet supported.
+- **Multi-site Request**: Out of scope — Hearthrack manages a single local cluster. If a user requests multi-region federation, surface a clear message that it is not yet supported.
 
 ## Design Direction
 

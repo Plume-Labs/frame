@@ -124,7 +124,7 @@ Inject the token before mounting the app:
 </script>
 ```
 
-The SDK reads `window.__FRAME_TOKEN__` and adds `Authorization: Bearer <token>` to every request. The token must have RBAC rights on the Frame CRDs in the target namespace.
+The SDK reads `window.__FRAME_TOKEN__` and adds `Authorization: Bearer <token>` to every request. The token must have RBAC rights on the Hearthrack CRDs in the target namespace.
 
 ---
 
@@ -263,7 +263,7 @@ const health = await frame.health()
 
 ## Raw Kubernetes API
 
-The Frame CRDs are standard Kubernetes resources. You can use `kubectl` directly:
+The Hearthrack CRDs are standard Kubernetes resources. You can use `kubectl` directly:
 
 ```bash
 # List all FrameJobs in a namespace
