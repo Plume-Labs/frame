@@ -9,11 +9,14 @@ import {
   config,
   configStatus,
   saveConfig,
+  isGitopsUrl,
+  isPrepareCommands,
 } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
   AlertDialog,
@@ -296,6 +299,42 @@ export function SettingsView() {
               }))
             }
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-lg">{t('settings.updates')}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-4">
+          <Field
+            id="updates-gitops-url"
+            label={t('settings.gitopsUrl')}
+            hint={t('settings.gitopsUrlHint')}
+            placeholder="https://github.com/your-org/your-gitops-repo"
+            value={draft.updates.gitopsUrl}
+            onChange={(v) => setDraft((d) => ({ ...d, updates: { ...d.updates, gitopsUrl: v } }))}
+          />
+          {draft.updates.gitopsUrl.trim() !== '' && !isGitopsUrl(draft.updates.gitopsUrl) && (
+            <p className="text-[10px] text-destructive">{t('settings.gitopsUrlInvalid')}</p>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="updates-prepare-commands" className="text-[10px] font-mono text-muted-foreground">
+              {t('settings.prepareCommands')}
+            </Label>
+            <Textarea
+              id="updates-prepare-commands"
+              rows={6}
+              value={draft.updates.prepareCommands}
+              placeholder={'git -C ~/gitops checkout -b hearthrack-{sha}\n# bump image tags from {current} to {sha}\n'}
+              onChange={(e) => setDraft((d) => ({ ...d, updates: { ...d.updates, prepareCommands: e.target.value } }))}
+              className="font-mono text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground">{t('settings.prepareCommandsHint')}</p>
+            {draft.updates.prepareCommands !== '' && !isPrepareCommands(draft.updates.prepareCommands) && (
+              <p className="text-[10px] text-destructive">{t('settings.prepareCommandsInvalid')}</p>
+            )}
+          </div>
         </CardContent>
       </Card>
 
