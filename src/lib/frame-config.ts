@@ -121,6 +121,18 @@ export interface FrameConfig {
   }
 }
 
+/** An https link without credentials. Also what the Settings form checks before saving. */
+export function isGitopsUrl(v: string): boolean {
+  return /^https:\/\/[^\s@]+$/.test(v.trim())
+}
+
+export const PREPARE_COMMANDS_MAX = 4000
+
+/** Non-blank command text within the size bound. Also what the Settings form checks. */
+export function isPrepareCommands(v: string): boolean {
+  return v.trim() !== '' && v.length <= PREPARE_COMMANDS_MAX
+}
+
 export const DEFAULT_CONFIG: FrameConfig = {
   frameNamespace: 'default',
   taskNamespace: 'frame-system',
@@ -234,11 +246,11 @@ function merge(stored: unknown): FrameConfig {
       // A link must be https (nothing that runs script when clicked); the
       // command text is bounded so a bad ConfigMap cannot fill the screen.
       gitopsUrl:
-        typeof s.updates?.gitopsUrl === 'string' && /^https:\/\/[^\s@]+$/.test(s.updates.gitopsUrl.trim())
+        typeof s.updates?.gitopsUrl === 'string' && isGitopsUrl(s.updates.gitopsUrl)
           ? s.updates.gitopsUrl.trim()
           : DEFAULT_CONFIG.updates.gitopsUrl,
       prepareCommands:
-        typeof s.updates?.prepareCommands === 'string' && s.updates.prepareCommands.trim() !== '' && s.updates.prepareCommands.length <= 4000
+        typeof s.updates?.prepareCommands === 'string' && isPrepareCommands(s.updates.prepareCommands)
           ? s.updates.prepareCommands
           : DEFAULT_CONFIG.updates.prepareCommands,
     },

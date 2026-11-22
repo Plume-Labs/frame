@@ -8,6 +8,11 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ### Added — Updates screen (read-only)
 
+- ui: Settings gets an "Updates" card (GitOps repository link and update
+  preparation steps). A site now turns the "Prepare an update" card on from the
+  console, with no manifest change. The form checks the same rules the loader
+  applies, so a value that would be ignored is flagged before saving.
+
 - ui: the Updates screen gets a "Prepare an update" card. Given a target commit it
   fills in the steps your site runs (config `updates.prepareCommands`, with `{sha}`
   and `{current}`), the running images and a dated snapshot of what is in flight,

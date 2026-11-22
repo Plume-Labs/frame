@@ -9,11 +9,14 @@ import {
   config,
   configStatus,
   saveConfig,
+  isGitopsUrl,
+  isPrepareCommands,
 } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
   AlertDialog,
@@ -72,6 +75,9 @@ export function SettingsView() {
   const [resetOpen, setResetOpen] = useState(false)
   const status = configStatus()
 
+  const updatesInvalid =
+    (draft.updates.gitopsUrl.trim() !== '' && !isGitopsUrl(draft.updates.gitopsUrl)) ||
+    (draft.updates.prepareCommands !== '' && !isPrepareCommands(draft.updates.prepareCommands))
   const dirty = JSON.stringify(draft) !== JSON.stringify(config())
 
   function setIntegration(key: IntegrationKey, patch: Partial<Integration>) {
@@ -115,7 +121,7 @@ export function SettingsView() {
                 <ArrowCounterClockwise />
                 {t('common.defaults')}
               </Button>
-              <Button size="sm" className="font-mono gap-1.5" onClick={save} disabled={!dirty || saving}>
+              <Button size="sm" className="font-mono gap-1.5" onClick={save} disabled={!dirty || saving || updatesInvalid}>
                 <FloppyDisk />
                 {saving ? t('common.saving') : t('common.save')}
               </Button>
@@ -299,6 +305,44 @@ export function SettingsView() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-lg">{t('settings.updates')}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-4">
+          <Field
+            id="updates-gitops-url"
+            label={t('settings.gitopsUrl')}
+            hint={t('settings.gitopsUrlHint')}
+            placeholder="https://github.com/your-org/your-gitops-repo"
+            value={draft.updates.gitopsUrl}
+            invalid={draft.updates.gitopsUrl.trim() !== '' && !isGitopsUrl(draft.updates.gitopsUrl)}
+            onChange={(v) => setDraft((d) => ({ ...d, updates: { ...d.updates, gitopsUrl: v } }))}
+          />
+          {draft.updates.gitopsUrl.trim() !== '' && !isGitopsUrl(draft.updates.gitopsUrl) && (
+            <p role="alert" className="text-[10px] text-destructive">{t('settings.gitopsUrlInvalid')}</p>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="updates-prepare-commands" className="text-[10px] font-mono text-muted-foreground">
+              {t('settings.prepareCommands')}
+            </Label>
+            <Textarea
+              id="updates-prepare-commands"
+              rows={6}
+              value={draft.updates.prepareCommands}
+              placeholder={'git -C ~/gitops checkout -b hearthrack-{sha}\n# bump image tags from {current} to {sha}\n'}
+              onChange={(e) => setDraft((d) => ({ ...d, updates: { ...d.updates, prepareCommands: e.target.value } }))}
+              aria-invalid={draft.updates.prepareCommands !== '' && !isPrepareCommands(draft.updates.prepareCommands)}
+              className="font-mono text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground">{t('settings.prepareCommandsHint')}</p>
+            {draft.updates.prepareCommands !== '' && !isPrepareCommands(draft.updates.prepareCommands) && (
+              <p role="alert" className="text-[10px] text-destructive">{t('settings.prepareCommandsInvalid')}</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -331,6 +375,7 @@ function Field({
   hint,
   type,
   placeholder,
+  invalid,
   onChange,
 }: {
   id: string
@@ -339,6 +384,7 @@ function Field({
   hint?: string
   type?: string
   placeholder?: string
+  invalid?: boolean
   onChange: (v: string) => void
 }) {
   return (
@@ -351,6 +397,7 @@ function Field({
         type={type}
         value={value}
         placeholder={placeholder}
+        aria-invalid={invalid || undefined}
         onChange={(e) => onChange(e.target.value)}
         className="font-mono text-xs"
       />

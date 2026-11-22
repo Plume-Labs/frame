@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { config, DEFAULT_CONFIG, loadConfig } from './frame-config'
+import { config, DEFAULT_CONFIG, loadConfig, isGitopsUrl, isPrepareCommands, PREPARE_COMMANDS_MAX } from './frame-config'
 
 /**
  * `authHeaders()` in frame-config.ts reads a bare `window`, which does not
@@ -145,5 +145,16 @@ describe('updates, stricter', () => {
     })
     await loadConfig()
     expect(config().updates).toEqual({ gitopsUrl: '', prepareCommands: '' })
+  })
+})
+
+describe('updates validators shared with the Settings form', () => {
+  it('accepts exactly what the loader keeps', () => {
+    expect(isGitopsUrl('https://example.test/x')).toBe(true)
+    expect(isGitopsUrl('http://example.test/x')).toBe(false)
+    expect(isGitopsUrl('https://user:token@example.test/x')).toBe(false)
+    expect(isPrepareCommands('echo {sha}')).toBe(true)
+    expect(isPrepareCommands('   ')).toBe(false)
+    expect(isPrepareCommands('x'.repeat(PREPARE_COMMANDS_MAX + 1))).toBe(false)
   })
 })
