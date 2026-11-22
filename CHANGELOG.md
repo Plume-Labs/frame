@@ -6,6 +6,16 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — USB installer image for machines without virtual media
+
+- provision: `network.dhcp` in the build API's spec leaves the installed system's
+  address to DHCP (refused by `Install`, which waits for SSH at a known address).
+- hack: `build-iso.sh` builds an unattended installer image for one machine
+  (BIOS or UEFI, one disk or a mirror, static or DHCP), `list-disks.sh` prints
+  the `by-id` names and sizes it needs, `check-iso-secrets.sh` fails on a private
+  key or join token in the image's GRUB files or its seed, and `qemu-iso-test.sh`
+  installs the image in QEMU in both firmware modes. See `docs/install/`.
+
 ### Added — Updates screen (read-only)
 
 - ui: Updates can list and prepare updates for other applications on the cluster

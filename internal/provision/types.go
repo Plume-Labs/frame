@@ -33,6 +33,12 @@ type Spec struct {
 // the worst possible time. Chosen to match Config's own tags (config.go):
 // lowerCamelCase, acronyms kept upper (byID, sizeBytes, serverURL).
 type Network struct {
+	// DHCP leaves the address to the network's DHCP server, for an image
+	// burned to a USB key for a machine whose address is not decided yet
+	// (provisiond's build API, `hack/build-iso.sh --dhcp`). Address, Gateway
+	// and DNS must then be empty, and no bond or VLAN may be declared. Install
+	// refuses it: the controller waits for SSH at a known address.
+	DHCP    bool     `yaml:"dhcp,omitempty"`
 	Address string   `yaml:"address"` // CIDR, e.g. "192.0.2.210/24"
 	Gateway string   `yaml:"gateway"`
 	DNS     []string `yaml:"dns"`

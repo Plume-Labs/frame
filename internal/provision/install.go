@@ -44,6 +44,9 @@ func validatePendingSpec(s Spec, nodeAddress string) error {
 	if err := ValidateSpec(s); err != nil {
 		return err
 	}
+	if s.Network.DHCP {
+		return fmt.Errorf("network dhcp: an installation waits for SSH at a known address, so it needs a static network; DHCP is for burning a key (hack/build-iso.sh)")
+	}
 	if err := ValidateClusterTarget(s.Cluster); err != nil {
 		return err
 	}
