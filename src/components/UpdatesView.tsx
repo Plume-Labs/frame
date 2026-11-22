@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ArrowClockwise, ArrowsClockwise, CheckCircle, Copy, Warning } from '@phosphor-icons/react'
 import { toast } from 'sonner'
-import { config } from '@/lib/frame-config'
+import { config, type UpdateApp } from '@/lib/frame-config'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,7 +9,7 @@ import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { useI18n } from '@/i18n/context'
 import type { MessageKey } from '@/i18n'
-import { FRAME_SYSTEM_NAMESPACE, UPDATE_WATCH_PATHS, createFrameClient, type RunningComponent } from '@/lib/frame-sdk'
+import { FRAME_SYSTEM_NAMESPACE, UPDATE_WATCH_PATHS, createFrameClient, updateWatchPaths, type RunningComponent } from '@/lib/frame-sdk'
 import { isTerminal as installTerminal } from '@/lib/installs'
 import { isTerminal as replacementTerminal } from '@/lib/osd-replacement'
 import {
@@ -17,6 +17,7 @@ import {
   countUnready,
   disturbances,
   isCommitId,
+  isVersionRef,
   parseImage,
   summarizeVersions,
   type ActivityCounts,
@@ -24,36 +25,59 @@ import {
 
 const frame = createFrameClient()
 
+/** One extra application: its workloads, or why they could not be read. */
+interface AppReading {
+  app: UpdateApp
+  components: RunningComponent[]
+  error?: string
+}
+
 interface UpdatesData {
   components: RunningComponent[]
+  apps: AppReading[]
   activity: ActivityCounts
 }
 
+async function readApp(app: UpdateApp): Promise<AppReading> {
+  try {
+    return { app, components: await frame.updates.running(app.namespace) }
+  } catch (e) {
+    // One namespace the console may not read must not blank the whole screen.
+    return { app, components: [], error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 async function load(): Promise<UpdatesData> {
-  const [components, jobs, installs, replacements] = await Promise.all([
+  const [components, jobs, installs, replacements, apps] = await Promise.all([
     frame.updates.running(),
     frame.jobs.list(),
     frame.installs.list(),
     frame.osdReplacements.list(),
+    Promise.all(config().updates.apps.map(readApp)),
   ])
   return {
     components,
+    apps,
     activity: {
       runningJobs: jobs.items.filter((j) => j.status === 'running').length,
       installsInProgress: installs.filter((i) => !installTerminal(i.phase)).length,
       osdReplacementsActive: replacements.filter((r) => !replacementTerminal(r.phase)).length,
-      unreadyComponents: countUnready(components),
+      unreadyComponents: countUnready([...components, ...apps.flatMap((a) => a.components)]),
     },
   }
 }
 
 // Component changes arrive by watch; jobs, installs and replacements by a slow
 // poll, since the screen only needs a recent answer to "is now a good moment".
-const WATCHED = [...UPDATE_WATCH_PATHS]
 
 export function UpdatesView() {
   const { t } = useI18n()
-  const { state, reload } = useLiveResource<UpdatesData>(load, [], WATCHED, 30000)
+  const appNamespaces = config().updates.apps.map((a) => a.namespace).join(',')
+  const watched = useMemo(
+    () => [...UPDATE_WATCH_PATHS, ...appNamespaces.split(',').filter(Boolean).flatMap(updateWatchPaths)],
+    [appNamespaces],
+  )
+  const { state, reload } = useLiveResource<UpdatesData>(load, [appNamespaces], watched, 30000)
   const ns = FRAME_SYSTEM_NAMESPACE
 
   return (
@@ -152,37 +176,96 @@ function Body({ data }: { data: UpdatesData }) {
           <CardTitle className="font-mono text-base">{t('updates.components.title')}</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          <table className="w-full text-sm font-mono">
-            <thead>
-              <tr className="text-left text-muted-foreground">
-                <th className="py-1 pr-4">{t('updates.col.name')}</th>
-                <th className="py-1 pr-4">{t('updates.col.image')}</th>
-                <th className="py-1 pr-4">{t('updates.col.version')}</th>
-                <th className="py-1">{t('updates.col.ready')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.components.map((c) => {
-                const img = parseImage(c.image)
-                return (
-                  <tr key={`${c.kind}/${c.name}`} className="border-t border-border">
-                    <td className="py-1 pr-4">{c.name}</td>
-                    <td className="py-1 pr-4 break-all">{img.repository}</td>
-                    <td className="py-1 pr-4">
-                      <Badge variant="outline">{img.version || t('updates.untagged')}</Badge>
-                    </td>
-                    <td className="py-1">
-                      {c.readyReplicas}/{c.desiredReplicas}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <ComponentsTable components={data.components} />
         </CardContent>
       </Card>
+      <PrepareCard
+        components={data.components}
+        activity={data.activity}
+        gitopsUrl={config().updates.gitopsUrl}
+        template={config().updates.prepareCommands}
+      />
 
-      <PrepareCard data={data} />
+      {data.apps.map((r) => (
+        <AppSection key={r.app.namespace} reading={r} activity={data.activity} />
+      ))}
+    </>
+  )
+}
+
+function ComponentsTable({ components }: { components: RunningComponent[] }) {
+  const { t } = useI18n()
+  return (
+    <table className="w-full text-sm font-mono">
+      <thead>
+        <tr className="text-left text-muted-foreground">
+          <th className="py-1 pr-4">{t('updates.col.name')}</th>
+          <th className="py-1 pr-4">{t('updates.col.image')}</th>
+          <th className="py-1 pr-4">{t('updates.col.version')}</th>
+          <th className="py-1">{t('updates.col.ready')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {components.map((c) => {
+          const img = parseImage(c.image)
+          return (
+            <tr key={`${c.kind}/${c.name}`} className="border-t border-border">
+              <td className="py-1 pr-4">{c.name}</td>
+              <td className="py-1 pr-4 break-all">{img.repository}</td>
+              <td className="py-1 pr-4">
+                <Badge variant="outline">{img.version || t('updates.untagged')}</Badge>
+              </td>
+              <td className="py-1">
+                {c.readyReplicas}/{c.desiredReplicas}
+              </td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+/** Another application on the cluster: what runs in its namespace, and its own preparation card. */
+function AppSection({ reading, activity }: { reading: AppReading; activity: ActivityCounts }) {
+  const { t } = useI18n()
+  const { app, components, error } = reading
+  const summary = summarizeVersions(components)
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-mono text-base">{app.name}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 overflow-x-auto text-sm">
+          {error ? (
+            <p role="alert" className="flex items-center gap-2 text-destructive">
+              <Warning />
+              {t('updates.app.unreadable', { ns: app.namespace })}
+            </p>
+          ) : components.length === 0 ? (
+            <p className="text-muted-foreground">{t('updates.empty', { ns: app.namespace })}</p>
+          ) : (
+            <>
+              <p className="flex items-center gap-2">
+                {summary.mixed ? <Warning className="text-warning" /> : <CheckCircle className="text-primary" />}
+                {summary.mixed
+                  ? t('updates.version.mixed', { versions: summary.versions.join(', ') })
+                  : t('updates.version.single', { version: summary.dominant })}
+              </p>
+              <ComponentsTable components={components} />
+            </>
+          )}
+        </CardContent>
+      </Card>
+      <PrepareCard
+        name={app.name}
+        components={components}
+        activity={activity}
+        gitopsUrl={app.gitopsUrl}
+        template={app.prepareCommands}
+        allowVersionRef
+      />
     </>
   )
 }
@@ -192,22 +275,37 @@ function Body({ data }: { data: UpdatesData }) {
  * cluster changes only through the site's GitOps pipeline, after review.
  * Hidden until the site configures it, since the steps are the site's.
  */
-function PrepareCard({ data }: { data: UpdatesData }) {
+function PrepareCard({
+  name,
+  components,
+  activity,
+  gitopsUrl,
+  template: prepareCommands,
+  allowVersionRef,
+}: {
+  name?: string
+  components: RunningComponent[]
+  activity: ActivityCounts
+  gitopsUrl: string
+  template: string
+  allowVersionRef?: boolean
+}) {
   const { t } = useI18n()
-  const { gitopsUrl, prepareCommands } = config().updates
   const [target, setTarget] = useState('')
   const [text, setText] = useState('')
   if (!gitopsUrl && !prepareCommands) return null
 
   const id = target.trim().toLowerCase()
-  const valid = isCommitId(id)
+  const valid = allowVersionRef ? isVersionRef(target.trim()) : isCommitId(id)
 
   function prepare() {
     setText(
       buildPreparation({
-        target: id,
-        components: data.components,
-        reasons: disturbances(data.activity),
+        name,
+        allowVersionRef,
+        target: allowVersionRef ? target.trim() : id,
+        components,
+        reasons: disturbances(activity),
         template: prepareCommands,
         gitopsUrl,
         now: new Date(),
@@ -227,7 +325,9 @@ function PrepareCard({ data }: { data: UpdatesData }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="font-mono text-base">{t('updates.prepare.title')}</CardTitle>
+        <CardTitle className="font-mono text-base">
+          {name ? t('updates.prepare.titleFor', { name }) : t('updates.prepare.title')}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">{t('updates.prepare.intro')}</p>
@@ -236,8 +336,8 @@ function PrepareCard({ data }: { data: UpdatesData }) {
             className="h-9 rounded-md border border-border bg-background px-3 font-mono text-sm"
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder={t('updates.prepare.target')}
-            aria-label={t('updates.prepare.target')}
+            placeholder={allowVersionRef ? t('updates.prepare.targetRef') : t('updates.prepare.target')}
+            aria-label={allowVersionRef ? t('updates.prepare.targetRef') : t('updates.prepare.target')}
             spellCheck={false}
           />
           <Button size="sm" className="font-mono" onClick={prepare} disabled={!valid || !prepareCommands}>
@@ -249,7 +349,11 @@ function PrepareCard({ data }: { data: UpdatesData }) {
             </a>
           )}
         </div>
-        {target !== '' && !valid && <p className="text-destructive">{t('updates.prepare.invalid')}</p>}
+        {target !== '' && !valid && (
+          <p className="text-destructive">
+            {allowVersionRef ? t('updates.prepare.invalidRef') : t('updates.prepare.invalid')}
+          </p>
+        )}
         {text && (
           <div className="space-y-2">
             <pre className="overflow-x-auto rounded-md border border-border bg-muted p-3 text-xs">{text}</pre>

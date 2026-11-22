@@ -74,7 +74,20 @@ export function isCommitId(s: string): boolean {
   return /^[0-9a-f]{7,40}$/.test(s)
 }
 
+/**
+ * A version or commit as typed for another application: a tag or short digest
+ * (letters, digits, dot, dash, underscore; starts alphanumeric). It lands in a
+ * shell template, so nothing else is accepted.
+ */
+export function isVersionRef(s: string): boolean {
+  return /^[A-Za-z0-9][\w.-]{0,63}$/.test(s)
+}
+
 export interface PreparationInput {
+  /** What is being updated; defaults to Hearthrack. */
+  name?: string
+  /** A version tag is accepted for another application; Hearthrack takes a commit id only. */
+  allowVersionRef?: boolean
   target: string
   components: RunningComponent[]
   reasons: Disturbance[]
@@ -92,12 +105,13 @@ export interface PreparationInput {
  */
 export function buildPreparation(input: PreparationInput): string {
   const { target, components, reasons, template, gitopsUrl, now } = input
-  if (!isCommitId(target)) throw new Error('target is not a commit id')
+  const name = input.name ?? 'Hearthrack'
+  if (!(input.allowVersionRef ? isVersionRef(target) : isCommitId(target))) throw new Error('target is not a valid version')
   // The version comes from the cluster and lands in a shell template: keep only
   // characters a tag or short digest can carry.
   const current = (summarizeVersions(components).dominant || 'unknown').replace(/[^\w.-]/g, '_')
   const lines: string[] = [
-    `# Hearthrack update to ${target}`,
+    `# ${name.replace(/[\r\n]/g, ' ')} update to ${target}`,
     `# Prepared ${now.toISOString()} from the console. Nothing has been changed.`,
     `# Running now: ${current}`,
   ]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPreparation, countUnready, disturbances, isCommitId, parseImage, summarizeVersions } from './updates'
+import { buildPreparation, countUnready, disturbances, isCommitId, isVersionRef, parseImage, summarizeVersions } from './updates'
 import type { RunningComponent } from './frame-sdk'
 
 const comp = (name: string, image: string, ready = 1, desired = 1): RunningComponent => ({
@@ -70,5 +70,22 @@ describe('buildPreparation', () => {
     expect(isCommitId('def5678; rm -rf /')).toBe(false)
     expect(isCommitId('DEF5678')).toBe(false)
     expect(() => buildPreparation({ ...base, target: '$(id)' })).toThrow()
+  })
+})
+
+describe('another application', () => {
+  const base = { components: [], reasons: [], template: 'bump {sha}', gitopsUrl: '', now: new Date('2026-11-22T00:00:00Z') }
+  it('accepts a version tag and names the application', () => {
+    const out = buildPreparation({ ...base, name: 'Fusora', allowVersionRef: true, target: 'v1.4.2' })
+    expect(out).toContain('# Fusora update to v1.4.2')
+    expect(out).toContain('bump v1.4.2')
+  })
+  it('still refuses anything a shell could act on', () => {
+    expect(isVersionRef('v1.4.2; rm -rf /')).toBe(false)
+    expect(isVersionRef('$(id)')).toBe(false)
+    expect(() => buildPreparation({ ...base, allowVersionRef: true, target: 'a b' })).toThrow()
+  })
+  it('keeps Hearthrack to commit ids', () => {
+    expect(() => buildPreparation({ ...base, target: 'v1.4.2' })).toThrow()
   })
 })

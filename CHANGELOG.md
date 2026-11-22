@@ -8,6 +8,11 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ### Added — Updates screen (read-only)
 
+- ui: Updates can list and prepare updates for other applications on the cluster
+  (config `updates.apps`: name, namespace, steps, optional GitOps link), each in its
+  own section; a namespace the console cannot read shows an error instead of
+  blanking the screen. The target may be a version tag for these.
+
 - ui: Settings gets an "Updates" card (GitOps repository link and update
   preparation steps). A site now turns the "Prepare an update" card on from the
   console, with no manifest change. The form checks the same rules the loader
