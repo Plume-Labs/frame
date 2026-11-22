@@ -98,6 +98,20 @@ export interface FrameConfig {
      */
     extraOperableNamespaces: string[]
   }
+  updates: {
+    /**
+     * https link to where this site's GitOps repository keeps the Hearthrack
+     * manifests. Shown on the Updates screen; empty hides the "prepare an
+     * update" card. Never a token: the console only links, it does not push.
+     */
+    gitopsUrl: string
+    /**
+     * The shell steps this site runs to prepare an update, as text the Updates
+     * screen fills in and offers to copy. `{sha}` is the target commit,
+     * `{current}` the version running now. Empty hides the card.
+     */
+    prepareCommands: string
+  }
   storage: {
     /**
      * Minutes an OSD must run without a restart before its restarts are
@@ -142,6 +156,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
   network: { devices: ['eth0', 'flannel.1', 'cni0'] },
   burstBuffer: { mount: '/burst-buffer' },
   workloads: { extraOperableNamespaces: [] },
+  updates: { gitopsUrl: '', prepareCommands: '' },
   storage: { osdStableAfterMinutes: 60 },
 }
 
@@ -214,6 +229,18 @@ function merge(stored: unknown): FrameConfig {
             (n): n is string => typeof n === 'string' && /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(n),
           )
         : DEFAULT_CONFIG.workloads.extraOperableNamespaces,
+    },
+    updates: {
+      // A link must be https (nothing that runs script when clicked); the
+      // command text is bounded so a bad ConfigMap cannot fill the screen.
+      gitopsUrl:
+        typeof s.updates?.gitopsUrl === 'string' && /^https:\/\/[^\s@]+$/.test(s.updates.gitopsUrl.trim())
+          ? s.updates.gitopsUrl.trim()
+          : DEFAULT_CONFIG.updates.gitopsUrl,
+      prepareCommands:
+        typeof s.updates?.prepareCommands === 'string' && s.updates.prepareCommands.trim() !== '' && s.updates.prepareCommands.length <= 4000
+          ? s.updates.prepareCommands
+          : DEFAULT_CONFIG.updates.prepareCommands,
     },
     storage: {
       // A positive number of minutes, or the default: 0 would forget every

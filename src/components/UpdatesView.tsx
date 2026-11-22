@@ -1,4 +1,7 @@
-import { ArrowClockwise, ArrowsClockwise, CheckCircle, Warning } from '@phosphor-icons/react'
+import { useState } from 'react'
+import { ArrowClockwise, ArrowsClockwise, CheckCircle, Copy, Warning } from '@phosphor-icons/react'
+import { toast } from 'sonner'
+import { config } from '@/lib/frame-config'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,7 +12,15 @@ import type { MessageKey } from '@/i18n'
 import { FRAME_SYSTEM_NAMESPACE, UPDATE_WATCH_PATHS, createFrameClient, type RunningComponent } from '@/lib/frame-sdk'
 import { isTerminal as installTerminal } from '@/lib/installs'
 import { isTerminal as replacementTerminal } from '@/lib/osd-replacement'
-import { countUnready, disturbances, parseImage, summarizeVersions, type ActivityCounts } from '@/lib/updates'
+import {
+  buildPreparation,
+  countUnready,
+  disturbances,
+  isCommitId,
+  parseImage,
+  summarizeVersions,
+  type ActivityCounts,
+} from '@/lib/updates'
 
 const frame = createFrameClient()
 
@@ -170,6 +181,85 @@ function Body({ data }: { data: UpdatesData }) {
           </table>
         </CardContent>
       </Card>
+
+      <PrepareCard data={data} />
     </>
+  )
+}
+
+/**
+ * Prepares an update, never performs one. The output is text to copy: the
+ * cluster changes only through the site's GitOps pipeline, after review.
+ * Hidden until the site configures it, since the steps are the site's.
+ */
+function PrepareCard({ data }: { data: UpdatesData }) {
+  const { t } = useI18n()
+  const { gitopsUrl, prepareCommands } = config().updates
+  const [target, setTarget] = useState('')
+  const [text, setText] = useState('')
+  if (!gitopsUrl && !prepareCommands) return null
+
+  const id = target.trim().toLowerCase()
+  const valid = isCommitId(id)
+
+  function prepare() {
+    setText(
+      buildPreparation({
+        target: id,
+        components: data.components,
+        reasons: disturbances(data.activity),
+        template: prepareCommands,
+        gitopsUrl,
+        now: new Date(),
+      }),
+    )
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(t('updates.prepare.copied'))
+    } catch {
+      toast.error(t('updates.prepare.copyFailed'))
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="font-mono text-base">{t('updates.prepare.title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <p className="text-muted-foreground">{t('updates.prepare.intro')}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="h-9 rounded-md border border-border bg-background px-3 font-mono text-sm"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder={t('updates.prepare.target')}
+            aria-label={t('updates.prepare.target')}
+            spellCheck={false}
+          />
+          <Button size="sm" className="font-mono" onClick={prepare} disabled={!valid || !prepareCommands}>
+            {t('updates.prepare.button')}
+          </Button>
+          {gitopsUrl && (
+            <a className="text-primary underline" href={gitopsUrl} target="_blank" rel="noreferrer noopener">
+              {t('updates.prepare.repo')}
+            </a>
+          )}
+        </div>
+        {target !== '' && !valid && <p className="text-destructive">{t('updates.prepare.invalid')}</p>}
+        {text && (
+          <div className="space-y-2">
+            <pre className="overflow-x-auto rounded-md border border-border bg-muted p-3 text-xs">{text}</pre>
+            <Button variant="outline" size="sm" className="gap-1.5 font-mono" onClick={copy}>
+              <Copy />
+              {t('updates.prepare.copy')}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

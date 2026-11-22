@@ -8,6 +8,12 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ### Added — Updates screen (read-only)
 
+- ui: the Updates screen gets a "Prepare an update" card. Given a target commit it
+  fills in the steps your site runs (config `updates.prepareCommands`, with `{sha}`
+  and `{current}`), the running images and a dated snapshot of what is in flight,
+  and offers to copy it. It changes nothing and opens no pull request; the card is
+  hidden until `updates.gitopsUrl` or `updates.prepareCommands` is set.
+
 - ui: a new Updates screen under Administration shows the image version each
   component in `frame-system` runs, flags a mixed estate, and lists what an
   update would disturb right now (running jobs, node installs, Ceph disk
