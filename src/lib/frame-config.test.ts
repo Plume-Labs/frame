@@ -137,3 +137,13 @@ describe('updates', () => {
     expect(config().updates.gitopsUrl).toBe('')
   })
 })
+
+describe('updates, stricter', () => {
+  it('refuses a link carrying credentials and a blank command text', async () => {
+    stubConfigMap({
+      'config.json': JSON.stringify({ updates: { gitopsUrl: 'https://user:token@example.test/x', prepareCommands: '   ' } }),
+    })
+    await loadConfig()
+    expect(config().updates).toEqual({ gitopsUrl: '', prepareCommands: '' })
+  })
+})

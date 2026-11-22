@@ -93,7 +93,9 @@ export interface PreparationInput {
 export function buildPreparation(input: PreparationInput): string {
   const { target, components, reasons, template, gitopsUrl, now } = input
   if (!isCommitId(target)) throw new Error('target is not a commit id')
-  const current = summarizeVersions(components).dominant || 'unknown'
+  // The version comes from the cluster and lands in a shell template: keep only
+  // characters a tag or short digest can carry.
+  const current = (summarizeVersions(components).dominant || 'unknown').replace(/[^\w.-]/g, '_')
   const lines: string[] = [
     `# Hearthrack update to ${target}`,
     `# Prepared ${now.toISOString()} from the console. Nothing has been changed.`,

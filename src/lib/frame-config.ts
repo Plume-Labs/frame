@@ -234,11 +234,11 @@ function merge(stored: unknown): FrameConfig {
       // A link must be https (nothing that runs script when clicked); the
       // command text is bounded so a bad ConfigMap cannot fill the screen.
       gitopsUrl:
-        typeof s.updates?.gitopsUrl === 'string' && /^https:\/\/[^\s]+$/.test(s.updates.gitopsUrl.trim())
+        typeof s.updates?.gitopsUrl === 'string' && /^https:\/\/[^\s@]+$/.test(s.updates.gitopsUrl.trim())
           ? s.updates.gitopsUrl.trim()
           : DEFAULT_CONFIG.updates.gitopsUrl,
       prepareCommands:
-        typeof s.updates?.prepareCommands === 'string' && s.updates.prepareCommands.length <= 4000
+        typeof s.updates?.prepareCommands === 'string' && s.updates.prepareCommands.trim() !== '' && s.updates.prepareCommands.length <= 4000
           ? s.updates.prepareCommands
           : DEFAULT_CONFIG.updates.prepareCommands,
     },
