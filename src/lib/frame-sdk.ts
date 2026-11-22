@@ -4416,10 +4416,16 @@ export interface RunningComponent {
 }
 
 /** The collections the Updates screen reads, for a live watch. */
+export function updateWatchPaths(namespace: string): string[] {
+  return [
+    `/apis/apps/v1/namespaces/${namespace}/deployments`,
+    `/apis/apps/v1/namespaces/${namespace}/statefulsets`,
+    `/apis/apps/v1/namespaces/${namespace}/daemonsets`,
+  ]
+}
+
 export const UPDATE_WATCH_PATHS = [
-  `/apis/apps/v1/namespaces/${FRAME_SYSTEM_NAMESPACE}/deployments`,
-  `/apis/apps/v1/namespaces/${FRAME_SYSTEM_NAMESPACE}/statefulsets`,
-  `/apis/apps/v1/namespaces/${FRAME_SYSTEM_NAMESPACE}/daemonsets`,
+  ...updateWatchPaths(FRAME_SYSTEM_NAMESPACE),
 ] as const
 
 interface DaemonSetCR extends WorkloadCR {
@@ -4428,9 +4434,9 @@ interface DaemonSetCR extends WorkloadCR {
 
 /** Read-only: what version of Hearthrack is running. Nothing here writes to the cluster. */
 class UpdateClient {
-  async running(): Promise<RunningComponent[]> {
+  async running(namespace: string = FRAME_SYSTEM_NAMESPACE): Promise<RunningComponent[]> {
     const [deps, sts, dss] = await Promise.all(
-      UPDATE_WATCH_PATHS.map((path) => k8sFetch<ListResponse<DaemonSetCR>>(path)),
+      updateWatchPaths(namespace).map((path) => k8sFetch<ListResponse<DaemonSetCR>>(path)),
     )
     const kinds = ['Deployment', 'StatefulSet', 'DaemonSet'] as const
     return [deps, sts, dss]

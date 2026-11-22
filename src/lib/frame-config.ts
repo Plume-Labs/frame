@@ -33,6 +33,47 @@ export interface Integration {
   deployment?: string
 }
 
+/** One extra application shown on the Updates screen. */
+export interface UpdateApp {
+  /** Label shown on the screen. */
+  name: string
+  /** Namespace its workloads run in. */
+  namespace: string
+  /** Same placeholders as `updates.prepareCommands`; `{sha}` is the target version or commit. */
+  prepareCommands: string
+  /** https link to its GitOps repository; optional. */
+  gitopsUrl: string
+}
+
+export const UPDATE_APPS_MAX = 8
+
+export function isAppName(v: string): boolean {
+  return /^[\p{L}\p{N} ._-]{1,40}$/u.test(v.trim())
+}
+
+export function isAppNamespace(v: string): boolean {
+  return v !== 'frame-system' && /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(v)
+}
+
+/** An app the loader keeps: usable name, namespace and steps; a bad link is dropped, not fatal. */
+export function sanitizeUpdateApps(v: unknown): UpdateApp[] {
+  if (!Array.isArray(v)) return []
+  const seen = new Set<string>()
+  const out: UpdateApp[] = []
+  for (const a of v) {
+    if (out.length >= UPDATE_APPS_MAX || typeof a !== 'object' || a === null) continue
+    const r = a as Record<string, unknown>
+    const name = typeof r.name === 'string' ? r.name.trim() : ''
+    const namespace = typeof r.namespace === 'string' ? r.namespace : ''
+    const prepareCommands = typeof r.prepareCommands === 'string' ? r.prepareCommands : ''
+    const gitopsUrl = typeof r.gitopsUrl === 'string' && isGitopsUrl(r.gitopsUrl) ? r.gitopsUrl.trim() : ''
+    if (!isAppName(name) || !isAppNamespace(namespace) || !isPrepareCommands(prepareCommands) || seen.has(namespace)) continue
+    seen.add(namespace)
+    out.push({ name, namespace, prepareCommands, gitopsUrl })
+  }
+  return out
+}
+
 export interface FrameConfig {
   /** Namespace holding the Frame CRs (FrameJob, FrameNode, SchedulingPolicy…). */
   frameNamespace: string
@@ -111,6 +152,13 @@ export interface FrameConfig {
      * `{current}` the version running now. Empty hides the card.
      */
     prepareCommands: string
+    /**
+     * Other applications on this cluster whose versions the Updates screen
+     * lists and prepares an update for (for instance the platform's own
+     * workloads), each read from its own namespace. Hearthrack itself is always
+     * `frame-system` and is configured by the two fields above.
+     */
+    apps: UpdateApp[]
   }
   storage: {
     /**
@@ -168,7 +216,7 @@ export const DEFAULT_CONFIG: FrameConfig = {
   network: { devices: ['eth0', 'flannel.1', 'cni0'] },
   burstBuffer: { mount: '/burst-buffer' },
   workloads: { extraOperableNamespaces: [] },
-  updates: { gitopsUrl: '', prepareCommands: '' },
+  updates: { gitopsUrl: '', prepareCommands: '', apps: [] },
   storage: { osdStableAfterMinutes: 60 },
 }
 
@@ -253,6 +301,7 @@ function merge(stored: unknown): FrameConfig {
         typeof s.updates?.prepareCommands === 'string' && isPrepareCommands(s.updates.prepareCommands)
           ? s.updates.prepareCommands
           : DEFAULT_CONFIG.updates.prepareCommands,
+      apps: sanitizeUpdateApps(s.updates?.apps),
     },
     storage: {
       // A positive number of minutes, or the default: 0 would forget every

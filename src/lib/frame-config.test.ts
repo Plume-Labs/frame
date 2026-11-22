@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { config, DEFAULT_CONFIG, loadConfig, isGitopsUrl, isPrepareCommands, PREPARE_COMMANDS_MAX } from './frame-config'
+import { config, DEFAULT_CONFIG, loadConfig, isGitopsUrl, isPrepareCommands, PREPARE_COMMANDS_MAX, sanitizeUpdateApps, UPDATE_APPS_MAX } from './frame-config'
 
 /**
  * `authHeaders()` in frame-config.ts reads a bare `window`, which does not
@@ -120,7 +120,7 @@ describe('workloads.extraOperableNamespaces', () => {
 
 describe('updates', () => {
   it('is empty by default, which hides the prepare card', () => {
-    expect(DEFAULT_CONFIG.updates).toEqual({ gitopsUrl: '', prepareCommands: '' })
+    expect(DEFAULT_CONFIG.updates).toEqual({ gitopsUrl: '', prepareCommands: '', apps: [] })
   })
 
   it('keeps an https link and the command text', async () => {
@@ -128,7 +128,7 @@ describe('updates', () => {
       'config.json': JSON.stringify({ updates: { gitopsUrl: 'https://example.test/gitops', prepareCommands: 'echo {sha}' } }),
     })
     await loadConfig()
-    expect(config().updates).toEqual({ gitopsUrl: 'https://example.test/gitops', prepareCommands: 'echo {sha}' })
+    expect(config().updates).toEqual({ gitopsUrl: 'https://example.test/gitops', prepareCommands: 'echo {sha}', apps: [] })
   })
 
   it('drops a link that is not https', async () => {
@@ -144,7 +144,7 @@ describe('updates, stricter', () => {
       'config.json': JSON.stringify({ updates: { gitopsUrl: 'https://user:token@example.test/x', prepareCommands: '   ' } }),
     })
     await loadConfig()
-    expect(config().updates).toEqual({ gitopsUrl: '', prepareCommands: '' })
+    expect(config().updates).toEqual({ gitopsUrl: '', prepareCommands: '', apps: [] })
   })
 })
 
@@ -156,5 +156,29 @@ describe('updates validators shared with the Settings form', () => {
     expect(isPrepareCommands('echo {sha}')).toBe(true)
     expect(isPrepareCommands('   ')).toBe(false)
     expect(isPrepareCommands('x'.repeat(PREPARE_COMMANDS_MAX + 1))).toBe(false)
+  })
+})
+
+describe('sanitizeUpdateApps', () => {
+  const ok = { name: 'Fusora', namespace: 'neura', prepareCommands: 'echo {sha}', gitopsUrl: 'https://example.test/g' }
+  it('keeps a well-formed app', () => {
+    expect(sanitizeUpdateApps([ok])).toEqual([ok])
+  })
+  it('drops frame-system, bad namespaces, blank steps and duplicates, and a bad link without the app', () => {
+    const out = sanitizeUpdateApps([
+      { ...ok, namespace: 'frame-system' },
+      { ...ok, namespace: '../x' },
+      { ...ok, prepareCommands: ' ' },
+      ok,
+      { ...ok, name: 'Twin' },
+      { ...ok, namespace: 'other', gitopsUrl: 'http://insecure' },
+    ])
+    expect(out.map((a) => a.namespace)).toEqual(['neura', 'other'])
+    expect(out[1].gitopsUrl).toBe('')
+  })
+  it('is bounded and tolerates junk', () => {
+    expect(sanitizeUpdateApps('x')).toEqual([])
+    const many = Array.from({ length: UPDATE_APPS_MAX + 5 }, (_, i) => ({ ...ok, namespace: `app-${i}` }))
+    expect(sanitizeUpdateApps(many)).toHaveLength(UPDATE_APPS_MAX)
   })
 })

@@ -9,8 +9,12 @@ import {
   config,
   configStatus,
   saveConfig,
+  isAppName,
+  isAppNamespace,
   isGitopsUrl,
   isPrepareCommands,
+  UPDATE_APPS_MAX,
+  type UpdateApp,
 } from '@/lib/frame-config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -77,7 +81,8 @@ export function SettingsView() {
 
   const updatesInvalid =
     (draft.updates.gitopsUrl.trim() !== '' && !isGitopsUrl(draft.updates.gitopsUrl)) ||
-    (draft.updates.prepareCommands !== '' && !isPrepareCommands(draft.updates.prepareCommands))
+    (draft.updates.prepareCommands !== '' && !isPrepareCommands(draft.updates.prepareCommands)) ||
+    draft.updates.apps.some((a, i) => appProblem(a, draft.updates.apps, i) !== null)
   const dirty = JSON.stringify(draft) !== JSON.stringify(config())
 
   function setIntegration(key: IntegrationKey, patch: Partial<Integration>) {
@@ -340,6 +345,69 @@ export function SettingsView() {
               <p role="alert" className="text-[10px] text-destructive">{t('settings.prepareCommandsInvalid')}</p>
             )}
           </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] font-mono text-muted-foreground">{t('settings.apps')}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="font-mono"
+                disabled={draft.updates.apps.length >= UPDATE_APPS_MAX}
+                onClick={() =>
+                  setDraft((d) => ({
+                    ...d,
+                    updates: { ...d.updates, apps: [...d.updates.apps, { name: '', namespace: '', prepareCommands: '', gitopsUrl: '' }] },
+                  }))
+                }
+              >
+                {t('settings.appsAdd')}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">{t('settings.appsHint')}</p>
+            {draft.updates.apps.map((a, i) => {
+              const problem = appProblem(a, draft.updates.apps, i)
+              const set = (patch: Partial<UpdateApp>) =>
+                setDraft((d) => ({
+                  ...d,
+                  updates: { ...d.updates, apps: d.updates.apps.map((x, j) => (j === i ? { ...x, ...patch } : x)) },
+                }))
+              return (
+                <div key={i} className="space-y-3 rounded-md border border-border p-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field id={`app-name-${i}`} label={t('settings.appName')} value={a.name} onChange={(v) => set({ name: v })} invalid={a.name !== '' && !isAppName(a.name)} />
+                    <Field id={`app-ns-${i}`} label={t('settings.appNamespace')} value={a.namespace} onChange={(v) => set({ namespace: v })} invalid={a.namespace !== '' && !isAppNamespace(a.namespace)} />
+                  </div>
+                  <Field id={`app-gitops-${i}`} label={t('settings.gitopsUrl')} value={a.gitopsUrl} onChange={(v) => set({ gitopsUrl: v })} invalid={a.gitopsUrl.trim() !== '' && !isGitopsUrl(a.gitopsUrl)} />
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`app-cmd-${i}`} className="text-[10px] font-mono text-muted-foreground">
+                      {t('settings.prepareCommands')}
+                    </Label>
+                    <Textarea
+                      id={`app-cmd-${i}`}
+                      rows={5}
+                      value={a.prepareCommands}
+                      onChange={(e) => set({ prepareCommands: e.target.value })}
+                      aria-invalid={a.prepareCommands !== '' && !isPrepareCommands(a.prepareCommands)}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  {problem && (
+                    <p role="alert" className="text-[10px] text-destructive">
+                      {t(problem)}
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="font-mono"
+                    onClick={() => setDraft((d) => ({ ...d, updates: { ...d.updates, apps: d.updates.apps.filter((_, j) => j !== i) } }))}
+                  >
+                    {t('settings.appRemove')}
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
         </CardContent>
       </Card>
 
@@ -366,6 +434,16 @@ export function SettingsView() {
       </AlertDialog>
     </div>
   )
+}
+
+/** Why an extra application would not be kept, or null when it would. */
+function appProblem(a: UpdateApp, all: UpdateApp[], index: number): MessageKey | null {
+  if (!isAppName(a.name)) return 'settings.appBadName'
+  if (!isAppNamespace(a.namespace)) return 'settings.appBadNamespace'
+  if (all.some((o, j) => j < index && o.namespace === a.namespace)) return 'settings.appDuplicate'
+  if (!isPrepareCommands(a.prepareCommands)) return 'settings.prepareCommandsInvalid'
+  if (a.gitopsUrl.trim() !== '' && !isGitopsUrl(a.gitopsUrl)) return 'settings.gitopsUrlInvalid'
+  return null
 }
 
 function Field({
