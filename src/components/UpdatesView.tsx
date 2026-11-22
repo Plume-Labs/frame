@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { ArrowClockwise, ArrowsClockwise, CheckCircle, Copy, Warning } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { config, type UpdateApp } from '@/lib/frame-config'
@@ -9,7 +9,7 @@ import { LiveStates } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { useI18n } from '@/i18n/context'
 import type { MessageKey } from '@/i18n'
-import { FRAME_SYSTEM_NAMESPACE, UPDATE_WATCH_PATHS, createFrameClient, updateWatchPaths, type RunningComponent } from '@/lib/frame-sdk'
+import { FRAME_SYSTEM_NAMESPACE, UPDATE_WATCH_PATHS, createFrameClient, type RunningComponent } from '@/lib/frame-sdk'
 import { isTerminal as installTerminal } from '@/lib/installs'
 import { isTerminal as replacementTerminal } from '@/lib/osd-replacement'
 import {
@@ -62,7 +62,7 @@ async function load(): Promise<UpdatesData> {
       runningJobs: jobs.items.filter((j) => j.status === 'running').length,
       installsInProgress: installs.filter((i) => !installTerminal(i.phase)).length,
       osdReplacementsActive: replacements.filter((r) => !replacementTerminal(r.phase)).length,
-      unreadyComponents: countUnready([...components, ...apps.flatMap((a) => a.components)]),
+      unreadyComponents: countUnready(components),
     },
   }
 }
@@ -73,11 +73,7 @@ async function load(): Promise<UpdatesData> {
 export function UpdatesView() {
   const { t } = useI18n()
   const appNamespaces = config().updates.apps.map((a) => a.namespace).join(',')
-  const watched = useMemo(
-    () => [...UPDATE_WATCH_PATHS, ...appNamespaces.split(',').filter(Boolean).flatMap(updateWatchPaths)],
-    [appNamespaces],
-  )
-  const { state, reload } = useLiveResource<UpdatesData>(load, [appNamespaces], watched, 30000)
+  const { state, reload } = useLiveResource<UpdatesData>(load, [appNamespaces], [...UPDATE_WATCH_PATHS], 30000)
   const ns = FRAME_SYSTEM_NAMESPACE
 
   return (
@@ -115,6 +111,9 @@ export function UpdatesView() {
       )}
 
       {state.phase === 'ready' && state.data.components.length > 0 && <Body data={state.data} />}
+
+      {state.phase === 'ready' &&
+        state.data.apps.map((r) => <AppSection key={r.app.namespace} reading={r} activity={state.data.activity} />)}
     </div>
   )
 }
@@ -186,9 +185,6 @@ function Body({ data }: { data: UpdatesData }) {
         template={config().updates.prepareCommands}
       />
 
-      {data.apps.map((r) => (
-        <AppSection key={r.app.namespace} reading={r} activity={data.activity} />
-      ))}
     </>
   )
 }
@@ -244,7 +240,7 @@ function AppSection({ reading, activity }: { reading: AppReading; activity: Acti
               {t('updates.app.unreadable', { ns: app.namespace })}
             </p>
           ) : components.length === 0 ? (
-            <p className="text-muted-foreground">{t('updates.empty', { ns: app.namespace })}</p>
+            <p className="text-muted-foreground">{t('updates.app.empty', { ns: app.namespace })}</p>
           ) : (
             <>
               <p className="flex items-center gap-2">
@@ -330,7 +326,7 @@ function PrepareCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        <p className="text-muted-foreground">{t('updates.prepare.intro')}</p>
+        <p className="text-muted-foreground">{allowVersionRef ? t('updates.prepare.introRef') : t('updates.prepare.intro')}</p>
         <div className="flex flex-wrap items-center gap-2">
           <input
             className="h-9 rounded-md border border-border bg-background px-3 font-mono text-sm"

@@ -88,4 +88,12 @@ describe('another application', () => {
   it('keeps Hearthrack to commit ids', () => {
     expect(() => buildPreparation({ ...base, target: 'v1.4.2' })).toThrow()
   })
+  it('keeps an image with a line break on one comment line', () => {
+    const out = buildPreparation({
+      ...base,
+      target: 'def5678',
+      components: [{ name: 'a', kind: 'Deployment', image: 'x\nrm -rf ~ #', readyReplicas: 1, desiredReplicas: 1 }],
+    })
+    expect(out.split('\n').filter((l) => l.startsWith('rm'))).toEqual([])
+  })
 })

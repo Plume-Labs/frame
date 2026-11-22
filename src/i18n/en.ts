@@ -117,6 +117,8 @@ export const en = {
   'updates.prepare.targetRef': 'Target version or tag',
   'updates.prepare.invalidRef': 'Not a version: letters, digits, dot, dash and underscore only, 64 characters at most.',
   'updates.app.unreadable': 'The console may not read the workloads in {ns} (permission or network). Check the workload RoleBindings for that namespace.',
+  'updates.app.empty': 'No workload found in {ns}.',
+  'updates.prepare.introRef': 'Prepares the steps for a target version and fills in what runs now. It changes nothing: the cluster is updated by your GitOps pipeline after review. Check again before the sync.',
   'updates.prepare.copy': 'Copy',
   'updates.prepare.copied': 'Copied',
   'updates.prepare.copyFailed': 'Could not copy: select the text by hand',

@@ -115,7 +115,7 @@ export function buildPreparation(input: PreparationInput): string {
     `# Prepared ${now.toISOString()} from the console. Nothing has been changed.`,
     `# Running now: ${current}`,
   ]
-  for (const c of components) lines.push(`#   ${c.name}: ${c.image}`)
+  for (const c of components) lines.push(`#   ${c.name.replace(/[\r\n]/g, ' ')}: ${c.image.replace(/[\r\n]/g, ' ')}`)
   lines.push(
     reasons.length === 0
       ? '# At that moment nothing was in flight. Check again before the sync.'

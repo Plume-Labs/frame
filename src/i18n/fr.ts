@@ -114,6 +114,8 @@ export const fr: Record<MessageKey, string> = {
   'updates.prepare.targetRef': 'Version ou tag visé',
   'updates.prepare.invalidRef': "Pas une version : lettres, chiffres, point, tiret et tiret bas seulement, 64 caractères au plus.",
   'updates.app.unreadable': "La console ne peut peut-être pas lire les charges de {ns} (droits ou réseau). Vérifiez les RoleBindings des charges de cet espace de noms.",
+  'updates.app.empty': 'Aucune charge trouvée dans {ns}.',
+  'updates.prepare.introRef': "Prépare les étapes pour une version visée et renseigne ce qui tourne maintenant. Rien n'est modifié : le cluster est mis à jour par votre pipeline GitOps après relecture. Vérifiez à nouveau avant la synchronisation.",
   'updates.prepare.copy': 'Copier',
   'updates.prepare.copied': 'Copié',
   'updates.prepare.copyFailed': 'Copie impossible : sélectionnez le texte à la main',
