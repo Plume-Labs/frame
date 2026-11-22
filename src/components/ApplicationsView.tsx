@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { Application, AppComponent, APPLICATION_WATCH_PATHS, createFrameClient } from '@/lib/frame-sdk'
 import type { WorkloadPod } from '@/lib/workloads'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
+import type { MessageKey } from '@/i18n'
 import { LogsTab } from '@/components/workloads/LogsTab'
 import {
   Dialog,
@@ -46,10 +49,10 @@ const HEALTH_TONE: Record<Application['health'], Tone> = {
   down: 'destructive',
 }
 
-const HEALTH_LABEL: Record<Application['health'], string> = {
-  healthy: 'Healthy',
-  degraded: 'Degraded',
-  down: 'Down',
+const HEALTH_LABEL: Record<Application['health'], MessageKey> = {
+  healthy: 'apps.health.healthy',
+  degraded: 'apps.health.degraded',
+  down: 'apps.health.down',
 }
 
 /**
@@ -66,6 +69,7 @@ const HEALTH_LABEL: Record<Application['health'], string> = {
 const WATCHED = [...APPLICATION_WATCH_PATHS]
 
 export function ApplicationsView() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<Application[]>(() => frame.apps.list(), [], WATCHED)
 
   return (
@@ -74,7 +78,7 @@ export function ApplicationsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Package className="text-primary" />
-            Applications
+            {t('apps.title')}
             <Button
               variant="outline"
               size="sm"
@@ -83,14 +87,13 @@ export function ApplicationsView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Deployed workloads read live from the cluster, grouped by Helm release
-            (<span className="font-mono">app.kubernetes.io/instance</span>).
+            {richText(t('apps.desc'), { label: <span className="font-mono">app.kubernetes.io/instance</span> })}
           </p>
         </CardContent>
       </Card>
@@ -98,7 +101,7 @@ export function ApplicationsView() {
       {state.phase === 'loading' && (
         <Card>
           <CardContent className="py-10 text-center font-mono text-sm text-muted-foreground">
-            Reading workloads from the Kubernetes API…
+            {t('apps.loading')}
           </CardContent>
         </Card>
       )}
@@ -107,12 +110,13 @@ export function ApplicationsView() {
         <Card className="border-destructive/40">
           <CardContent className="py-8 space-y-3 text-center">
             <Warning className="mx-auto text-destructive" size={28} />
-            <div className="font-mono text-sm text-foreground">Cannot reach the Kubernetes API</div>
+            <div className="font-mono text-sm text-foreground">{t('apps.unreachable')}</div>
             <div className="text-xs text-muted-foreground max-w-md mx-auto">{state.message}</div>
             <div className="text-xs text-muted-foreground">
-              The UI reaches <span className="font-mono">/apis</span> through the in-pod
-              <span className="font-mono"> frame-uiproxy</span>, under your own identity. Check that
-              the proxy is running; local development is covered in docs/development.md.
+              {richText(t('apps.unreachableHint'), {
+                path: <span className="font-mono">/apis</span>,
+                proxy: <span className="font-mono">frame-uiproxy</span>,
+              })}
             </div>
           </CardContent>
         </Card>
@@ -121,7 +125,7 @@ export function ApplicationsView() {
       {state.phase === 'ready' && state.data.length === 0 && (
         <Card>
           <CardContent className="py-10 text-center font-mono text-sm text-muted-foreground">
-            No applications found outside the system namespaces.
+            {t('apps.empty')}
           </CardContent>
         </Card>
       )}
@@ -135,6 +139,7 @@ export function ApplicationsView() {
 }
 
 function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () => void }) {
+  const { t, tn } = useI18n()
   const pct = app.desiredReplicas > 0 ? (app.readyReplicas / app.desiredReplicas) * 100 : 0
   const [restartTarget, setRestartTarget] = useState<AppComponent | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -163,10 +168,10 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
     setBusy(c.name)
     try {
       await frame.apps.restart(c)
-      toast.success(`${c.name} restarting`)
+      toast.success(t('apps.restarting', { name: c.name }))
       onChanged()
     } catch (e) {
-      toast.error(`Failed to restart ${c.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('apps.restartFailed', { name: c.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
       setRestartTarget(null)
@@ -179,10 +184,10 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
     setBusy(c.name)
     try {
       await frame.apps.scale(c, target)
-      toast.success(`${c.name} scaled to ${target}`)
+      toast.success(t('apps.scaled', { name: c.name, n: target }))
       onChanged()
     } catch (e) {
-      toast.error(`Failed to scale ${c.name}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('apps.scaleFailed', { name: c.name }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(null)
     }
@@ -197,7 +202,7 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
             <div className="min-w-0">
               <CardTitle className="font-mono text-lg truncate">{app.name}</CardTitle>
               <p className="text-xs text-muted-foreground font-mono">
-                {app.namespace} · {app.components.length} components
+                {app.namespace} · {tn('apps.components', app.components.length)}
               </p>
             </div>
           </div>
@@ -210,7 +215,7 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
             ) : (
               <Warning className="mr-1" size={12} />
             )}
-            {HEALTH_LABEL[app.health]}
+            {t(HEALTH_LABEL[app.health])}
           </Badge>
         </div>
       </CardHeader>
@@ -218,7 +223,7 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
         <div className="space-y-1">
           <Progress value={pct} className="h-2" />
           <div className="flex justify-between text-xs text-muted-foreground font-mono">
-            <span>Replicas ready</span>
+            <span>{t('apps.replicasReady')}</span>
             <span>
               {app.readyReplicas} / {app.desiredReplicas}
             </span>
@@ -242,7 +247,7 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
                   TONE_TEXT[HEALTH_TONE[healthTone(c.readyReplicas, c.desiredReplicas)]]
                 }`}
               >
-                {c.readyReplicas}/{c.desiredReplicas} ready
+                {t('apps.ready', { ready: c.readyReplicas, desired: c.desiredReplicas })}
               </div>
               <div className="text-[10px] text-muted-foreground font-mono break-all">{c.image}</div>
               <div className="flex items-center justify-between gap-2 pt-1">
@@ -274,7 +279,7 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
                   onClick={() => void openLogs(c)}
                 >
                   <FileText size={10} />
-                  Logs
+                  {t('apps.logs')}
                 </Button>
                 <Button
                   variant="outline"
@@ -284,7 +289,7 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
                   onClick={() => setRestartTarget(c)}
                 >
                   <ArrowsClockwise className={busy === c.name ? 'animate-spin' : ''} size={10} />
-                  Restart
+                  {t('apps.restart')}
                 </Button>
               </div>
             </div>
@@ -299,19 +304,19 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
               {logsFor?.name} {pod ? <span className="text-muted-foreground">· {pod.name}</span> : null}
             </DialogTitle>
             <DialogDescription>
-              Read straight from the apiserver, the same path the Workloads screen uses.
+              {t('apps.logsDesc')}
             </DialogDescription>
           </DialogHeader>
 
           {logsError && (
-            <div className="font-mono text-xs text-destructive">Cannot list pods: {logsError}</div>
+            <div className="font-mono text-xs text-destructive">{t('apps.podsFailed', { error: logsError })}</div>
           )}
           {!logsError && logPods === null && (
-            <div className="font-mono text-xs text-muted-foreground">Finding this component's pods…</div>
+            <div className="font-mono text-xs text-muted-foreground">{t('apps.findingPods')}</div>
           )}
           {!logsError && logPods?.length === 0 && (
             <div className="font-mono text-xs text-muted-foreground">
-              This {logsFor?.kind} has no pods right now — scaled to zero, or none scheduled yet.
+              {t('apps.noPods', { kind: logsFor?.kind ?? '' })}
             </div>
           )}
           {logPods && logPods.length > 1 && (
@@ -336,16 +341,15 @@ function ApplicationCard({ app, onChanged }: { app: Application; onChanged: () =
       <AlertDialog open={!!restartTarget} onOpenChange={(open) => !open && setRestartTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Restart {restartTarget?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('apps.restartTitle', { name: restartTarget?.name ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              Rolling-restarts every pod of this {restartTarget?.kind}. Brief capacity dip while new pods
-              come up, no downtime if it has 2+ replicas with a working readiness probe.
+              {t('apps.restartDesc', { kind: restartTarget?.kind ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => restartTarget && doRestart(restartTarget)}>
-              Restart
+              {t('apps.restart')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
