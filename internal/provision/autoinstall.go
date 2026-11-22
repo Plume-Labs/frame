@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -78,6 +79,8 @@ func ValidateSpec(s Spec) error {
 // parses the address a second time and, eventually, differently.
 type validated struct {
 	cidr string
+	// dhcp is true when the spec leaves the address to DHCP; cidr is then empty.
+	dhcp bool
 	// macs are the bond members, or the VLAN's parent port, normalized to
 	// lower case; empty when the network declares neither.
 	macs []string
@@ -95,6 +98,16 @@ func validate(s Spec) (validated, error) {
 	}
 	if err := checkPublicKeyOnly(s.SSHPublicKey); err != nil {
 		return validated{}, err
+	}
+
+	if s.Network.DHCP {
+		if err := validateDHCP(s.Network); err != nil {
+			return validated{}, err
+		}
+		if err := validateLayout(s.Layout); err != nil {
+			return validated{}, err
+		}
+		return validated{dhcp: true}, nil
 	}
 
 	addr, ipnet, err := net.ParseCIDR(s.Network.Address)
@@ -135,19 +148,38 @@ func validate(s Spec) (validated, error) {
 		return validated{}, err
 	}
 
-	want := map[LayoutKind]int{LayoutSingleDisk: 1, LayoutMirror: 2}[s.Layout.Kind]
-	if want == 0 {
-		return validated{}, fmt.Errorf("layout %q: unknown kind", s.Layout.Kind)
-	}
-	if len(s.Layout.Disks) != want {
-		return validated{}, fmt.Errorf("layout %s: needs exactly %d disks, got %d", s.Layout.Kind, want, len(s.Layout.Disks))
-	}
-	if err := validateDisks(s.Layout.Disks); err != nil {
+	if err := validateLayout(s.Layout); err != nil {
 		return validated{}, err
 	}
 
 	ones, _ := ipnet.Mask.Size()
 	return validated{cidr: fmt.Sprintf("%s/%d", addr, ones), macs: macs}, nil
+}
+
+// validateLayout is the disk half of validate, shared by the static and the
+// DHCP paths.
+func validateLayout(l Layout) error {
+	want := map[LayoutKind]int{LayoutSingleDisk: 1, LayoutMirror: 2}[l.Kind]
+	if want == 0 {
+		return fmt.Errorf("layout %q: unknown kind", l.Kind)
+	}
+	if len(l.Disks) != want {
+		return fmt.Errorf("layout %s: needs exactly %d disks, got %d", l.Kind, want, len(l.Disks))
+	}
+	return validateDisks(l.Disks)
+}
+
+// validateDHCP refuses a network that says DHCP and also names what DHCP
+// would decide: two sources for one address is a spec whose outcome depends on
+// which one the reader believed.
+func validateDHCP(n Network) error {
+	if n.Address != "" || n.Gateway != "" || len(n.DNS) != 0 {
+		return fmt.Errorf("network dhcp: address, gateway and dns must be empty; the DHCP server decides them")
+	}
+	if declaresLinks(n) {
+		return fmt.Errorf("network dhcp: a bond or a VLAN needs a declared address; use a static network")
+	}
+	return nil
 }
 
 // The document, as Go types. Marshalled, never templated: no value a spec
@@ -185,9 +217,9 @@ type ethernet struct {
 	Match       map[string]string   `yaml:"match"`
 	Optional    bool                `yaml:"optional"`
 	DHCP4       bool                `yaml:"dhcp4"`
-	Addresses   []string            `yaml:"addresses"`
-	Routes      []map[string]string `yaml:"routes"`
-	Nameservers map[string][]string `yaml:"nameservers"`
+	Addresses   []string            `yaml:"addresses,omitempty"`
+	Routes      []map[string]string `yaml:"routes,omitempty"`
+	Nameservers map[string][]string `yaml:"nameservers,omitempty"`
 }
 
 type storage struct {
@@ -245,8 +277,13 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		// machine's own name every sudo prints "unable to resolve host".
 		fmt.Sprintf("echo '%[1]s' > /target/etc/hostname && (grep -qx '127.0.1.1 %[1]s' /target/etc/hosts || echo '127.0.1.1 %[1]s' >> /target/etc/hosts)", s.Hostname),
 		"curtin in-target --target=/target -- passwd -l frame",
-		installedNetwork(v, s, targetRoot),
 		relockCommand(targetRoot),
+	}
+	// DHCP: subiquity copies the live system's en* stanza, which already asks
+	// for DHCP, so there is nothing to pin. A static network is pinned to the
+	// one port that reached the gateway, by MAC.
+	if !v.dhcp {
+		late = slices.Insert(late, len(late)-1, installedNetwork(v, s, targetRoot))
 	}
 	errs := []string{}
 	if strings.TrimSpace(beaconBase) != "" {

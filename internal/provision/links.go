@@ -166,6 +166,14 @@ func declaredNetwork(v validated, s Spec) netplan {
 
 // liveNetwork is the installer's own network.
 func liveNetwork(v validated, s Spec) netplan {
+	if v.dhcp {
+		return netplan{Version: 2, Ethernets: map[string]any{
+			// Same glob as the static case: DHCP is asked on every en* port
+			// that has a carrier, optional so an uncabled port does not hold
+			// the boot.
+			"frame0": ethernet{Match: map[string]string{"name": "en*"}, Optional: true, DHCP4: true},
+		}}
+	}
 	if declaresLinks(s.Network) {
 		return declaredNetwork(v, s)
 	}
