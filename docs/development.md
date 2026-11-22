@@ -85,7 +85,7 @@ conversion test pass while exercising no conversion at all.
 ### Prerequisites
 
 - Node.js 20+
-- A cluster with Frame CRDs installed (or just CRDs for UI-only dev)
+- A cluster with Hearthrack CRDs installed (or just CRDs for UI-only dev)
 - `kubectl proxy` running
 - something serving `/auth` — see below
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Frame is a **`v1beta1` beta**: the operator reconciles CRDs across two API groups (ten total; see [crd-reference.md](crd-reference.md) for which kinds have a controller and which don't) with webhooks, a conversion webhook and envtest coverage, the IaC under `deploy/` provisions the cluster, and the UI reaches the Kubernetes CRD API through the `frame-uiproxy` sidecar, impersonating the signed-in person. `v1alpha1` is still served and deprecated on the eight kinds that predate the freeze — see [upgrading.md](upgrading.md).
+Hearthrack is a **`v1beta1` beta**: the operator reconciles CRDs across two API groups (ten total; see [crd-reference.md](crd-reference.md) for which kinds have a controller and which don't) with webhooks, a conversion webhook and envtest coverage, the IaC under `deploy/` provisions the cluster, and the UI reaches the Kubernetes CRD API through the `frame-uiproxy` sidecar, impersonating the signed-in person. `v1alpha1` is still served and deprecated on the eight kinds that predate the freeze — see [upgrading.md](upgrading.md).
 
 Two things advance at once:
 
@@ -136,7 +136,7 @@ Nothing here is new capability. It removes claims the code no longer backs, and 
 - [x] Fold in whatever S1 proved the core needs — `FrameService` gets a `serviceClass` → `PriorityClass` mechanism symmetric to `FrameJob`'s, hoisted into `internal/scheduling` so the two cannot drift; `FrameResourceQuota` needed no API change and gained the usage projection its status always implied
 - [x] Introduce `v1beta1` with a conversion webhook and a documented storage version — both groups, all eight kinds, `v1beta1` as storage and hub
 - [x] Add CRD field validation (CEL / kubebuilder markers), printer columns, defaults — and `status.observedGeneration` on all eight, which is what makes the round trip lossless without an annotation escape hatch
-- [x] Write a deprecation and migration policy — [upgrading.md](upgrading.md), "API versions and the migration path". **`v1` is not part of V1.** Frame is still in beta and needs capability before it needs a stability promise it cannot yet keep; promotion waits until `v1beta1` has survived real use, and that document says what would justify it. Shipping V1 on `v1beta1` says that honestly, where a `v1` issued on schedule would not.
+- [x] Write a deprecation and migration policy — [upgrading.md](upgrading.md), "API versions and the migration path". **`v1` is not part of V1.** Hearthrack is still in beta and needs capability before it needs a stability promise it cannot yet keep; promotion waits until `v1beta1` has survived real use, and that document says what would justify it. Shipping V1 on `v1beta1` says that honestly, where a `v1` issued on schedule would not.
 - [x] Lock the viewer/editor/admin RBAC tiers to the final schema, and extend them to the new API groups as those land — 24 per-kind tiers across both groups, `verbs: ['*']` replaced by an explicit list with no effective change to anything bound, and `FrameUser` given the tiers it never had. `services.plume-labs.io` was already covered; **S2–S4 will need the same treatment as they land, and that is Phase E, not a gap here.**
 
 **On what RBAC means in V1.** When this phase shipped, the tiers existed as manifests but the UI authenticated with a single ServiceAccount token, so the tiers were not enforced against any human. V1 delivered *correct, frozen, tested tiers* and said so plainly rather than advertise RBAC it did not enforce. **Per-user enforcement has since shipped**, post-V1 as scoped here, in the 2026-09-08 per-user identity and tasks lot: authd Stages 2 and 3 are done (see "Current state" above), and every tier is now reached through a `frame:` group an impersonated `FrameUser` carries, not through the ServiceAccount — see `docs/deployment.md`'s RBAC section for the enforcement model and the rollout order.
@@ -176,8 +176,8 @@ A watch here is a change signal, not a data source: an event re-runs the fetch t
 
 - [x] Packaging: a versioned Helm chart at `charts/frame/`, covering the operator (the UI and authd stay on the kustomize manifests under `deploy/kubernetes/`). Two decisions are load-bearing and documented in the chart's README so a later reader does not "fix" them. **CRDs render from `templates/`, not Helm's magic `crds/` directory**, because that directory installs once and is never touched again on upgrade — and Phase B is nothing but schema evolution; `helm.sh/resource-policy: keep` is what protects a user's CRs on uninstall. **Default rendering reproduces kustomize's object names exactly**, so an existing `make deploy` install can be adopted with `helm install --take-ownership` rather than torn down. `hack/helm-parity.sh` is the guard on that second claim: it diffs the chart's rendering against `kustomize build config/default` by name *and by content*, and runs in CI.
 - [x] Cert-manager-backed webhook TLS verified in-cluster. Both Certificates Ready with 90-day validity and renewal at 60; the `caBundle` in both webhook configurations byte-matches the issued CA; SANs correct. The real proof is a server-side dry-run apply succeeding — with `failurePolicy: Fail` on all webhooks, a verdict coming back at all means the apiserver completed the TLS call. Turned up one oddity: `frame-metrics-certs` is issued and auto-renewed but mounted nowhere, because the metrics cert patch is commented out in `config/default` — dead weight that looks load-bearing.
-- [x] HA manager validated under failover. Force-deleting the leader (no graceful lease release, the worst case) gives **takeover in 16s**, consistent with controller-runtime's 15s lease duration; the new leader restarts every controller and reconciles all existing CRs immediately. **Admission is never interrupted**: both replicas serve the webhook regardless of which holds the lease. That last point is the actual argument for two replicas — a 16s reconcile pause is unremarkable, but at one replica the same 16s is a window where nobody can write a Frame CR at all.
-- [x] Backup/restore (Velero) exercised — backup, delete, restore of a Frame CR returns it spec-identical and the controllers reconcile it back to `Ready` unaided. Recipe in the runbook, including the insistence on checking `itemsBackedUp`: a selector matching nothing completes green, and months of backups have already been lost to exactly that. **The checkpoint and IPMI-watchdog paths in that original bullet were not exercised** and are not covered by e2e.
+- [x] HA manager validated under failover. Force-deleting the leader (no graceful lease release, the worst case) gives **takeover in 16s**, consistent with controller-runtime's 15s lease duration; the new leader restarts every controller and reconciles all existing CRs immediately. **Admission is never interrupted**: both replicas serve the webhook regardless of which holds the lease. That last point is the actual argument for two replicas — a 16s reconcile pause is unremarkable, but at one replica the same 16s is a window where nobody can write a Hearthrack CR at all.
+- [x] Backup/restore (Velero) exercised — backup, delete, restore of a Hearthrack CR returns it spec-identical and the controllers reconcile it back to `Ready` unaided. Recipe in the runbook, including the insistence on checking `itemsBackedUp`: a selector matching nothing completes green, and months of backups have already been lost to exactly that. **The checkpoint and IPMI-watchdog paths in that original bullet were not exercised** and are not covered by e2e.
 - [x] Security review — `docs/superpowers/reviews/2026-08-09-security-review.md`. **2 Critical, 11 Important, 16 Minor.** The Criticals are one finding in two parts: the control plane is an unauthenticated path to node root. nginx blanket-proxies `/api/` and `/apis/` to a `kubectl proxy` sidecar carrying the UI's ServiceAccount, with no authentication — the Bearer-token plumbing exists in the client but nothing sets it, so the credential is attached server-side and there is neither a token to steal nor one to revoke. That SA holds `pods/proxy` and `patch deployments.apps` cluster-wide, and with no PodSecurity enforcement anywhere the second reaches node root. No Ingress, so not reachable from the WAN — but `jupyterhub` and `acme-sandbox` run on the reviewed cluster, so anything already inside can reach it. The proper fix is authd Stages 2–3, which are post-V1; containment before then is narrowing `pods/proxy` to `services/proxy` with `resourceNames` and a default-deny NetworkPolicy on `cluster-control`. **This is an open posture decision, not a scheduled task.** The review also found the secret-logging sweep genuinely clean across 108 log sites, 20 Event calls and every status assignment.
 - [x] Docs: install guide and values reference in `docs/deployment.md`, migration and upgrade in `docs/upgrading.md`, operations in `docs/runbook.md`, API in `docs/crd-reference.md`.
 
@@ -189,7 +189,7 @@ A watch here is a change signal, not a data source: an event re-runs the fetch t
 
 ## New API groups
 
-Four capabilities that Frame does not have. Each gets its own API group at `v1alpha1`, versioned independently of `frame.plume-labs.io`, so building them never blocks the V1 freeze. Each gets its own spec before any code.
+Four capabilities that Hearthrack does not have. Each gets its own API group at `v1alpha1`, versioned independently of `frame.plume-labs.io`, so building them never blocks the V1 freeze. Each gets its own spec before any code.
 
 Four of these requests share one shape — *declare a desired resource, a controller provisions it, a consumer binds to it*. Databases, queues, inference servers and VMs are not four projects; they are four types in one catalog.
 
@@ -199,7 +199,7 @@ Declarative provisioning of service instances with a lifecycle and credential bi
 
 **This is the one new group that precedes the V1 freeze**, and it is sliced so that only its first part does:
 
-1. ✅ **Done. The model + inference** — the instance/binding shape, and one type implemented against it. Designed in `docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`: one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Frame stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze. See "What implementing S1 proved" below for the answers.
+1. ✅ **Done. The model + inference** — the instance/binding shape, and one type implemented against it. Designed in `docs/superpowers/specs/2026-08-08-frame-service-catalog-design.md`: one generic `FrameService` CRD, a Go provider per type, per-type parameter schemas validated at admission, and a stated compatibility boundary around `parameters`. Today `InferenceView` reads llama.cpp metrics from Prometheus — monitoring only, no provisioning. Managing inference means declaring a model server and having Hearthrack stand it up. This part gates Phase B: whatever it proves the core API needs must land before the freeze. See "What implementing S1 proved" below for the answers.
 2. **Database, queue, VM** — further types on a settled model. These do not gate anything. VM implies KubeVirt, which appears nowhere in the repo: greenfield, and the reason V1 must not wait for the full catalog.
 
 Note the hardware constraint on the inference type: the current GPU is a Pascal P4 (`sm_6.1`), which rules out vLLM and KubeAI. `deploy/caching/vllm-rdma-kvcache.yaml` exists but cannot run here. llama.cpp is the only viable backend until the hardware changes — the model must not assume otherwise.
@@ -218,7 +218,7 @@ The design spec posed three hypotheses under "Where this may force the core API 
 
 ### S3 — Auto-update
 
-Frame itself — **and now the node OS too, which this section used to inherit rather than own.**
+Hearthrack itself — **and now the node OS too, which this section used to inherit rather than own.**
 
 `TalosUpgrade` covered the node OS while the estate ran Talos. It does not any more: since 2026-09-10 a node is a machine installed by `FrameInstall` (Ubuntu 24.04 LTS since 2026-09-29), and **nothing upgrades it**. The `TalosUpgrade` CRD and its controller were removed on 2026-09-27 (work item 3 of [provisioning.md](provisioning.md)).
 
@@ -231,23 +231,23 @@ So S3 has three pieces, not two, and the third is the one that needs a design be
 
 No self-updating operator: the UI patches the Deployment, so the bootstrap problem — a controller surviving its own rollout mid-reconcile — never arises. No new CRD either, which means **S3 does not gate the Phase B freeze**, contrary to the assumption behind the phase ordering.
 
-Argo CD already converges declared versions and this does not compete with it. What Argo cannot see is whether now is a moment the cluster can afford the interruption. Frame can, by reading its own resources. That panel is the point; the button is the easy part.
+Argo CD already converges declared versions and this does not compete with it. What Argo cannot see is whether now is a moment the cluster can afford the interruption. Hearthrack can, by reading its own resources. That panel is the point; the button is the easy part.
 
-The addons under `deploy/` — Argo, cert-manager, Volcano, Cilium, the Postgres operator — stay out. They are Argo CD's to converge, and Frame has nothing to add about them that Argo does not already know.
+The addons under `deploy/` — Argo, cert-manager, Volcano, Cilium, the Postgres operator — stay out. They are Argo CD's to converge, and Hearthrack has nothing to add about them that Argo does not already know.
 
 ### S4 — Application management
 
 Three layers of one subsystem:
 
 1. **`FrameApplication` CRD** — the model. An application declares its components, the services it requires (binding to S1), its quotas and its scheduling policy; a controller reconciles it.
-2. **Deploy from Frame** — the action. Install and update an application (Helm chart or manifests) from the UI, with Frame owning the lifecycle.
+2. **Deploy from Hearthrack** — the action. Install and update an application (Helm chart or manifests) from the UI, with Hearthrack owning the lifecycle.
 3. ✅ **A grouped view — largely shipped.** This item described `ApplicationsView` as listing Deployments; it has not done that for some time. `ApplicationClient.list()` groups workloads by their `app.kubernetes.io/instance` label — a Helm release — falling back to the namespace, which is how Acme (api + client + worker + postgres + redis) appears as one entry. `Application` carries typed `components` (kind, role, image, ready/desired replicas) and a three-state health, and the screen adds two actions the item never asked for: per-component restart behind a confirmation, and ±1 scaling.
 
    Three things from the item's own wording are **not** done, and they are not equal:
 
    - **Logs are not reachable from this screen.** They exist — `WorkloadClient.logs()` — but only from Workloads, so getting from an unhealthy application to its output means finding the pod by hand. Small, and reuses the existing mechanism.
    - **The screen does not refresh itself.** It loads once and offers a button. Phase C converted twenty-two views to watch streams to kill exactly this behaviour and this one was missed, so a scale or restart the operator just triggered stays invisible until they click again. Small, and it is the defect a user actually notices.
-   - **Rollback does not exist anywhere** — no occurrence in `src/`, and the ReplicaSets the SDK reads are used only to build the workload tree, never to offer a previous revision. This one is a design question before it is work: **where Argo CD converges the cluster**, a rollback issued from the UI is reverted at the next sync. Frame has to decide whether it refuses, warns, or suspends the Argo application — and that is the same "can the cluster afford this right now" judgment S3's update screen exists to make, so the two should answer it once, together.
+   - **Rollback does not exist anywhere** — no occurrence in `src/`, and the ReplicaSets the SDK reads are used only to build the workload tree, never to offer a previous revision. This one is a design question before it is work: **where Argo CD converges the cluster**, a rollback issued from the UI is reverted at the next sync. Hearthrack has to decide whether it refuses, warns, or suspends the Argo application — and that is the same "can the cluster afford this right now" judgment S3's update screen exists to make, so the two should answer it once, together.
 
 Layer 3 needed neither the CRD nor S1, which is why it arrived first. Layers 1 and 2 follow S1, since an application binding to services requires services to exist.
 
@@ -261,7 +261,7 @@ S1 is already through it: `services.plume-labs.io` was frozen alongside `frame.p
 
 ## V2
 
-**Multi-site / multi-region federation.** Note that `PRD.md` currently declares this out of scope — "Frame manages a single local cluster", with an RDMA fabric that is local by construction and does not traverse the WAN. V2 will have to contradict the PRD; that argument belongs in the V2 spec, not here.
+**Multi-site / multi-region federation.** Note that `PRD.md` currently declares this out of scope — "Hearthrack manages a single local cluster", with an RDMA fabric that is local by construction and does not traverse the WAN. V2 will have to contradict the PRD; that argument belongs in the V2 spec, not here.
 
 ---
 

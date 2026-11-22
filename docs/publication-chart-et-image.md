@@ -1,6 +1,6 @@
-# Publier les images et le chart Helm de Frame
+# Publier les images et le chart Helm de Hearthrack
 
-Procédure pour publier une version de Frame : les images de conteneur (opérateur,
+Procédure pour publier une version de Hearthrack : les images de conteneur (opérateur,
 UI et les autres), puis le chart `charts/frame`. Chaque étape est exécutée par un
 **humain** ; aucun agent ne pousse, ne publie ni n'écrit sur un cluster.
 
@@ -122,7 +122,7 @@ git merge --ff-only fix/ci-green                 # main n'a pas bougé : avance 
 git switch release/v1.0.0
 git rebase main                                   # rejoue les 3 commits de release
 git tag -d v1.0.0                                 # le tag n'a jamais été poussé
-git tag -a v1.0.0 -m "Frame v1.0.0" -m "See CHANGELOG.md, section 1.0.0."
+git tag -a v1.0.0 -m "Hearthrack v1.0.0" -m "See CHANGELOG.md, section 1.0.0."
 git switch main
 git merge --ff-only release/v1.0.0
 git rev-parse main v1.0.0^{commit}               # même SHA deux fois

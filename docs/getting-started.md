@@ -32,7 +32,7 @@ For testing and development, you can use a single-node cluster.
 
 ## Option A — UI against a live cluster
 
-This is the standard dev loop: run the UI on your workstation, point it at a cluster that already has the Frame CRDs installed.
+This is the standard dev loop: run the UI on your workstation, point it at a cluster that already has the Hearthrack CRDs installed.
 
 ```bash
 # 1. Install CRDs onto the cluster

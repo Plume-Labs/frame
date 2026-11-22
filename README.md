@@ -21,7 +21,7 @@ Hearthrack turns a rack of bare-metal servers into a unified, self-healing, main
 UI / SDK / CI
     │  direct K8s API calls (/apis/frame.plume-labs.io/v1beta1/…)
     ▼
-Frame CRDs  →  Hearthrack operator  →  cluster primitives (Argo, PriorityClasses, …)
+Hearthrack CRDs  →  Hearthrack operator  →  cluster primitives (Argo, PriorityClasses, …)
 ```
 
 Deployed: the console talks to the apiserver through the in-pod `frame-uiproxy` sidecar, which impersonates the signed-in user (passkey login via `authd`). Local development has its own loop: see [docs/development.md](docs/development.md).

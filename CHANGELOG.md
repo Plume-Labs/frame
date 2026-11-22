@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Frame are recorded here. The format follows
+All notable changes to Hearthrack (formerly Frame) are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the chart and
 release tags follow [Semantic Versioning](https://semver.org/).
 

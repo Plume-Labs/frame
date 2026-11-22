@@ -464,7 +464,7 @@ freeze. The tiers are written in the shape they will need when it happens.
 Lot 2 (2026-09-09) added the Workloads screen, and with it a
 `cluster-control-admin` ClusterRole — until then nothing in
 `deploy/kubernetes/base/rbac.yaml` carried `tier: admin` at all, and the admin
-tier was satisfied only by the twenty-seven per-kind Frame CRD roles.
+tier was satisfied only by the twenty-seven per-kind Hearthrack CRD roles.
 
 | Tier | Gains | Where |
 |---|---|---|

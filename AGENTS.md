@@ -25,7 +25,7 @@ internal/webhook/<group>/<version>/*   Webhooks by group and version (if present
 
 Multi-group layout organizes APIs by group name (e.g., `batch`, `apps`). Check the `PROJECT` file for `multigroup: true`.
 
-**Frame is multi-group, and ships six Go binaries, not one:**
+**Hearthrack is multi-group, and ships six Go binaries, not one:**
 ```
 cmd/main.go     Manager: controllers + webhooks for frame.plume-labs.io and services.plume-labs.io
 cmd/authd/      Per-user auth (argon2id, OIDC/JWKS, WebAuthn) — reads FrameUser, has no controller
