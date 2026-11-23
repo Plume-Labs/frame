@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { Button } from '@/components/ui/button'
+import { richText } from '@/i18n/rich'
 import { ensureToken } from '@/lib/auth'
 import {
   CHANNEL_ERROR,
@@ -18,6 +19,7 @@ import {
   frameText,
 } from '@/lib/exec-protocol'
 import type { WorkloadPod } from '@/lib/workloads'
+import { useI18n } from '@/i18n/context'
 
 /**
  * `sh` is the only shell every image on this cluster has. `-c 'exec bash …'`
@@ -45,6 +47,13 @@ const SHELL = ['/bin/sh', '-c', 'exec bash -l 2>/dev/null || exec sh -l']
  * which is.
  */
 export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }) {
+  const { t } = useI18n()
+  // The socket outlives a render: its callbacks read the current language
+  // through a ref, so switching language does not tear the session down.
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  })
   const host = useRef<HTMLDivElement | null>(null)
   const [container, setContainer] = useState(pod.containers[0] ?? '')
   const [open, setOpen] = useState(false)
@@ -71,7 +80,7 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
       const token = await ensureToken()
       if (disposed) return
       if (!token) {
-        setError('No session — sign in again.')
+        setError(tRef.current('wl.term.noSession'))
         return
       }
       const ws = new WebSocket(
@@ -105,9 +114,9 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
       // by an admin already, so "you lack permission" would be a guess that
       // sends someone hunting a permissions problem during a real outage
       // (frame-uiproxy down, apiserver unreachable) instead of paging on-call.
-      ws.onerror = () => setError('The shell connection failed. The proxy or the apiserver may be unreachable.')
+      ws.onerror = () => setError(tRef.current('wl.term.failed'))
       ws.onclose = () => {
-        term.write('\r\n\x1b[90m— session closed —\x1b[0m\r\n')
+        term.write(`\r\n\x1b[90m${tRef.current('wl.term.closed')}\x1b[0m\r\n`)
       }
 
       term.onData((data) => {
@@ -136,8 +145,7 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
   if (!admin) {
     return (
       <p className="font-mono text-xs text-muted-foreground">
-        Opening a shell requires an admin account. A shell carries every permission the container
-        itself holds, so it is the one action in this screen that is not delegated further down.
+        {t('wl.term.adminOnly')}
       </p>
     )
   }
@@ -145,8 +153,7 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
   return (
     <div className="space-y-3">
       <p className="font-mono text-[10px] text-amber-600 dark:text-amber-400">
-        Experimental: this shell has not been proven end to end on a real cluster yet. See
-        docs/known-limitations.md.
+        {t('wl.term.experimental')}
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <select
@@ -170,17 +177,14 @@ export function TerminalTab({ pod, admin }: { pod: WorkloadPod; admin: boolean }
             setOpen((v) => !v)
           }}
         >
-          {open ? 'Close session' : 'Open shell'}
+          {open ? t('wl.term.closeSession') : t('wl.term.open')}
         </Button>
       </div>
 
       {/* Said where the person opening the session can read it, before they
           open it — not in a document nobody opens. */}
       <p className="font-mono text-[10px] text-muted-foreground">
-        This session is recorded: who opened it, which pod and container, when, and for how long.
-        What is typed and what is displayed are <strong>not</strong> recorded — keystroke capture
-        was considered and rejected, because it would put every secret typed or printed here into
-        the audit trail.
+        {richText(t('wl.term.recorded'), { not: <strong>{t('wl.term.notWord')}</strong> })}
       </p>
 
       {error && <p className="font-mono text-xs text-destructive">{error}</p>}
