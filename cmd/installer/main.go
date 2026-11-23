@@ -102,7 +102,7 @@ func runConsole(path string, srv *installer.Server) {
 	defer func() { _ = tty.Close() }()
 	// Switch the screen only now that the terminal is ours: a switch to a terminal
 	// nothing serves would leave a black screen and hide the installer's own.
-	if n := strings.TrimPrefix(path, "/dev/tty"); n != path {
+	if n, ok := strings.CutPrefix(path, "/dev/tty"); ok {
 		_ = exec.Command("chvt", n).Run()
 	}
 	if err := installer.RunConsole(context.Background(), tty, tty, srv); err != nil {
