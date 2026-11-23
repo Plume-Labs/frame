@@ -180,7 +180,7 @@ Proven in QEMU (software-emulated CPU, no KVM), by `hack/qemu-assistant-test.sh`
 | ISO boots, assistant up, token on the console | yes | yes |
 | install driven through the assistant's API, SSH on the right UID, role recorded | yes | yes |
 | wrong serial answered with an error (that nothing is written is proven by unit tests, not by QEMU) | yes | yes |
-| answers typed on the emulated keyboard on tty8, installation started | yes | not run |
+| answers typed on the emulated keyboard on tty8, installation started | yes (first build) | yes (final build) |
 
 **Not proven**: a browser or kiosk session (the live system has no browser: a kiosk needs
 packages that are not on the ISO, a decision for later), live progress, the rendering on a
