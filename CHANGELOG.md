@@ -6,7 +6,16 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added — guided installer, first stage (assistant server, not yet on the ISO)
+### Added — guided installer on the ISO (hack/build-installer-iso.sh)
+
+- hack: `build-installer-iso.sh` adds the assistant and a cloud-init seed to the Ubuntu
+  live-server ISO (GRUB `autoinstall ds=nocloud\;s=/cdrom/server/`, BIOS and UEFI kept).
+  `qemu-assistant-test.sh` proves, in QEMU, an install driven through the assistant in BIOS
+  and UEFI; `qemu-console-test.sh` proves the text assistant typed on the keyboard (BIOS and UEFI).
+- installer: text assistant (`--console /dev/tty8`) sharing the page's rules and its
+  one-installation lock.
+
+### Added — guided installer, first stage (assistant server)
 
 - installer: `cmd/installer` and `internal/installer`, a local web assistant (loopback
   only, embedded page, standard library only) that detects the hardware (CPU AVX/AES-NI,

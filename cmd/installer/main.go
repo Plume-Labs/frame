@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Plume-Labs/frame/internal/installer"
@@ -24,6 +25,8 @@ func main() {
 	out := flag.String("autoinstall", "/autoinstall.yaml", "where the autoinstall document is written")
 	restart := flag.Bool("restart-subiquity", true,
 		"restart subiquity after writing, so it starts non-interactively (false: dry run)")
+	consoleTTY := flag.String("console", "",
+		"also run the text assistant on this terminal (e.g. /dev/tty8), for screens that cannot show a page")
 	root := flag.String("root", "/", "filesystem root to read the hardware from (tests)")
 	flag.Parse()
 
@@ -51,6 +54,9 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Fprintf(os.Stderr, "installer: open http://%s/#%s\n", ln.Addr(), srv.Token)
+	if *consoleTTY != "" {
+		go runConsole(*consoleTTY, srv)
+	}
 	s := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute}
 	log.Fatal(s.Serve(ln))
 }
@@ -83,4 +89,23 @@ func writeAtomic(path string, b []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// runConsole puts the text assistant on a terminal of its own, so it does not
+// fight the installer's interface for tty1.
+func runConsole(path string, srv *installer.Server) {
+	tty, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		log.Printf("installer: text console %s: %v", path, err)
+		return
+	}
+	defer func() { _ = tty.Close() }()
+	// Switch the screen only now that the terminal is ours: a switch to a terminal
+	// nothing serves would leave a black screen and hide the installer's own.
+	if n, ok := strings.CutPrefix(path, "/dev/tty"); ok {
+		_ = exec.Command("chvt", n).Run()
+	}
+	if err := installer.RunConsole(context.Background(), tty, tty, srv); err != nil {
+		log.Printf("installer: text console: %v", err)
+	}
 }
