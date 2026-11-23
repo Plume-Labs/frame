@@ -157,7 +157,7 @@ describe('humanizeQuantity', () => {
   // What the controller writes for the production pool (raw / 4).
   it('rend la capacité utilisable de prod lisible', () => {
     expect(humanizeQuantity('2782725720Ki')).toBe('2.59 TiB')
-    expect(capacityLine(humanizeCapacity({ usable: '2782725720Ki', used: '43026138Ki', raw: '11130902880Ki' }))).toBe(
+    expect(en(capacityLine(humanizeCapacity({ usable: '2782725720Ki', used: '43026138Ki', raw: '11130902880Ki' })))).toBe(
       '41.0 GiB used of 2.59 TiB usable (raw 10.4 TiB)',
     )
   })
