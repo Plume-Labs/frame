@@ -29,6 +29,7 @@ import {
   type ServiceState,
 } from './inference-services'
 import { currentSession } from './auth'
+import type { Message } from '@/i18n'
 import {
   crToReplacement,
   newReplacementBody,
@@ -3197,7 +3198,7 @@ export interface InferenceServiceView {
   namespace: string
   /** Set when the panel may act on it; `unresolved` says why not otherwise. */
   deployment?: string
-  unresolved?: string
+  unresolved?: Message
   state?: ServiceState
   /** Served model, read from the server itself when it is up (`/props` alias, TEI `/info`). */
   model?: string
