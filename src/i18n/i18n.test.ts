@@ -96,3 +96,11 @@ describe('translatePlural', () => {
     }
   })
 })
+
+describe('nested message parameters', () => {
+  it('translates a Message passed as a parameter in the same language', () => {
+    const dur = { key: 'inf.dur.min', params: { n: 6 } } as const
+    expect(translate('en', 'inf.load.typical', { dur })).toBe('about 6 min (typical)')
+    expect(translate('fr', 'inf.load.typical', { dur })).toBe('environ 6 min (typique)')
+  })
+})

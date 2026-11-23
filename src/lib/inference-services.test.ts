@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
+import { translate, type Message } from '@/i18n'
 import { DEFAULT_CONFIG, config, loadConfig, type Integration } from './frame-config'
 import { createFrameClient, FrameAPIError, type TaskRecord } from './frame-sdk'
 import { MAX_ACTION_LENGTH } from './manifest-diff'
@@ -23,6 +24,9 @@ import {
   type Permissions,
   type PodLike,
 } from './inference-services'
+
+const en = (m: Message | Message[] | undefined) =>
+  (Array.isArray(m) ? m : m ? [m] : []).map((x) => translate('en', x.key, x.params)).join(' ')
 
 // ── Fixtures: shapes read off a live cluster, names and models made generic ──
 
@@ -111,7 +115,7 @@ describe('resolveDeployment', () => {
   it('offers nothing when two Deployments share the selector, and says to pick one', () => {
     const twin = deploy('llamacpp-b', { app: 'llamacpp' })
     const r = resolveDeployment(integ('app=llamacpp'), [chat, twin])
-    expect(r).toEqual({ ok: false, reason: expect.stringContaining('2 Deployments') })
+    expect(!r.ok && en(r.reason)).toContain('2 Deployments')
   })
 
   it('ignores a Deployment carrying matchExpressions', () => {
@@ -148,7 +152,7 @@ describe('gateway and EPP are never operable', () => {
     ['the Helm annotation', { annotations: { 'meta.helm.sh/release-name': 'r' } }, 'Helm'],
     ['a server-side apply manager', { managedFields: [{ manager: 'someone', operation: 'Apply' }] }, 'server-side apply (someone)'],
   ])('refuses on %s', (_, meta, reason) => {
-    expect(foreignManager(deploy('x', { app: 'x' }, meta as Partial<DeploymentLike['metadata']>))).toContain(reason)
+    expect(en(foreignManager(deploy('x', { app: 'x' }, meta as Partial<DeploymentLike['metadata']>)))).toContain(reason)
   })
 
   it('accepts a Deployment written by kubectl apply and kubectl patch', () => {
@@ -199,12 +203,12 @@ describe('serviceState', () => {
 
 describe('applyWarning', () => {
   it('always says a kubectl apply undoes a stop', () => {
-    for (const d of [chat, vision]) expect(applyWarning(serviceState(d, []))).toContain('kubectl apply')
+    for (const d of [chat, vision]) expect(en(applyWarning(serviceState(d, [])))).toContain('kubectl apply')
   })
 
   it('names the replica count the manifest will restore once stopped', () => {
     const stopped = { ...chat, spec: { ...chat.spec, replicas: 0 } }
-    expect(applyWarning(serviceState(stopped, []))).toContain('replicas: 1')
+    expect(en(applyWarning(serviceState(stopped, [])))).toContain('replicas: 1')
   })
 })
 
@@ -217,12 +221,14 @@ describe('actionsFor', () => {
   })
 
   it('disables a button without the right, and says why', () => {
-    const perms: Permissions = { patch: { state: 'denied', reason: 'no patch' }, scale: { state: 'allowed' } }
+    const perms: Permissions = { patch: { state: 'denied', reason: { key: 'inf.perm.denied', params: { what: 'x', ns: 'n' } } }, scale: { state: 'allowed' } }
     const [restart, stop] = actionsFor({ desired: 1 }, perms)
-    expect(restart).toEqual({ kind: 'restart', enabled: false, why: 'no patch' })
+    expect(restart).toMatchObject({ kind: 'restart', enabled: false })
+    expect(en(restart.why)).toContain('may not x in n')
     expect(stop.enabled).toBe(true)
-    const [start] = actionsFor({ desired: 0 }, { ...perms, scale: { state: 'denied', reason: 'no scale' } })
-    expect(start).toEqual({ kind: 'start', enabled: false, why: 'no scale' })
+    const [start] = actionsFor({ desired: 0 }, { ...perms, scale: { state: 'denied', reason: { key: 'inf.perm.checking' } } })
+    expect(start).toMatchObject({ kind: 'start', enabled: false })
+    expect(en(start.why)).toContain('Checking')
   })
 
   it('keeps buttons disabled while the check runs, and enabled when the check itself failed', () => {
@@ -233,10 +239,9 @@ describe('actionsFor', () => {
 
 describe('permissionFromError', () => {
   it('reads a 403 as a denial and anything else as no answer', () => {
-    expect(permissionFromError(new FrameAPIError(403, 'forbidden'), 'patch deployments', NS)).toEqual({
-      state: 'denied',
-      reason: expect.stringContaining('patch deployments in inference'),
-    })
+    const denied = permissionFromError(new FrameAPIError(403, 'forbidden'), 'patch deployments', NS)
+    expect(denied.state).toBe('denied')
+    expect(denied.state === 'denied' && en(denied.reason)).toContain('patch deployments in inference')
     expect(permissionFromError(new FrameAPIError(500, 'boom'), 'patch deployments', NS).state).toBe('unknown')
   })
 })
@@ -273,15 +278,15 @@ describe('confirmationFor', () => {
 
   it('states the effect and the outage, with the measured load when there is one', () => {
     const typical = confirmationFor('restart', chatDef, target)
-    expect(typical.effect).toContain('restartedAt')
-    expect(typical.outage).toContain('chat LLM')
-    expect(typical.outage).toContain('about 6 min (typical)')
+    expect(en(typical.effect)).toContain('restartedAt')
+    expect(en(typical.outage)).toContain('chat LLM')
+    expect(en(typical.outage)).toContain('about 6 min (typical)')
     const measured = confirmationFor('restart', chatDef, target, { lastLoadSeconds: 432, inFlight: 2 })
-    expect(measured.outage).toContain('about 7 min (last load measured)')
-    expect(measured.effect).toContain('2 request(s) in flight')
-    expect(confirmationFor('stop', chatDef, target).effect).toContain('0 replicas')
-    expect(confirmationFor('stop', chatDef, target).outage).toContain('until someone starts it again')
-    expect(confirmationFor('start', chatDef, target).effect).toContain('1 replica')
+    expect(en(measured.outage)).toContain('about 7 min (last load measured)')
+    expect(en(measured.effect)).toContain('2 request(s) in flight')
+    expect(en(confirmationFor('stop', chatDef, target).effect)).toContain('0 replicas')
+    expect(en(confirmationFor('stop', chatDef, target).outage)).toContain('until someone starts it again')
+    expect(en(confirmationFor('start', chatDef, target).effect)).toContain('1 replica')
   })
 })
 
@@ -492,7 +497,7 @@ describe('templateDrift', () => {
       'containers[server].env[X]',
       'containers[server].env[Y]',
     ])
-    const w = applyWarning(serviceState(d, []))
+    const w = en(applyWarning(serviceState(d, [])))
     expect(w).toContain('containers[server].args[1]')
     expect(w).toContain('reverts those too')
   })

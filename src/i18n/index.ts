@@ -10,7 +10,9 @@ import { fr } from './fr'
  * `<code>.ts` next to `fr.ts`, add it to `CATALOGUES` and `LOCALES` below.
  */
 export type MessageKey = keyof typeof en
-export type Params = Record<string, string | number>
+/** A parameter may itself be a `Message`, translated in the same language: `{ dur: { key: 'x.min', params: { n: 6 } } }`. */
+export type Param = string | number | Message
+export type Params = Record<string, Param>
 
 /** Text a pure module cannot render itself: a message key plus its parameters. The UI renders it with `useI18n().tm`. */
 export interface Message {
@@ -56,7 +58,11 @@ export function detectLocale(saved: string | null | undefined, browserLanguages:
 export function translate(locale: Locale, key: MessageKey, params?: Params): string {
   const template = CATALOGUES[locale][key] ?? en[key] ?? key
   if (!params) return template
-  return template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? String(params[name]) : whole))
+  return template.replace(/\{(\w+)\}/g, (whole, name: string) => {
+    if (!(name in params)) return whole
+    const v = params[name]
+    return typeof v === 'object' ? translate(locale, v.key, v.params) : String(v)
+  })
 }
 
 /** The base of a `<base>.one` / `<base>.other` pair of messages, for counted text. */

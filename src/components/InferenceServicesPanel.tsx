@@ -18,6 +18,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useLiveResource } from '@/hooks/useLiveResource'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 import { createFrameClient, type InferenceServiceView, type TaskRecord } from '@/lib/frame-sdk'
 import {
   actionsFor,
@@ -40,16 +42,16 @@ import { canOperateWorkloads } from '@/lib/workloads'
 
 const frame = createFrameClient()
 
-const POD_LABEL: Record<PodState, { text: string; tone: string }> = {
-  ready: { text: 'ready', tone: 'text-accent' },
-  loading: { text: 'loading the model', tone: 'text-warning' },
-  starting: { text: 'starting', tone: 'text-warning' },
-  stopping: { text: 'stopping', tone: 'text-warning' },
-  stopped: { text: 'stopped', tone: 'text-muted-foreground' },
+const POD_LABEL: Record<PodState, { text: MessageKey; tone: string }> = {
+  ready: { text: 'inf.pod.ready', tone: 'text-accent' },
+  loading: { text: 'inf.pod.loading', tone: 'text-warning' },
+  starting: { text: 'inf.pod.starting', tone: 'text-warning' },
+  stopping: { text: 'inf.pod.stopping', tone: 'text-warning' },
+  stopped: { text: 'inf.pod.stopped', tone: 'text-muted-foreground' },
 }
 
 const ICON: Record<ActionKind, typeof Play> = { restart: ArrowClockwise, stop: Stop, start: Play }
-const LABEL: Record<ActionKind, string> = { restart: 'Restart', stop: 'Stop', start: 'Start' }
+const LABEL: Record<ActionKind, MessageKey> = { restart: 'inf.act.restart', stop: 'inf.act.stop', start: 'inf.act.start' }
 
 /**
  * The model servers — chat, vision, embeddings — with what they are doing and
@@ -59,6 +61,7 @@ const LABEL: Record<ActionKind, string> = { restart: 'Restart', stop: 'Stop', st
  * takes to unlock it) is in `src/lib/inference-services.ts`, where it is tested.
  */
 export function InferenceServicesPanel({ inFlight }: { inFlight?: number }) {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<InferenceServiceView[]>(() => frame.inference.list(), [], [], 10_000)
   const { state: taskState } = useLiveResource<TaskRecord[]>(() => frame.tasks.list(100), [], [], 30_000)
   const tasks = taskState.phase === 'ready' ? taskState.data : []
@@ -66,10 +69,10 @@ export function InferenceServicesPanel({ inFlight }: { inFlight?: number }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="font-mono text-lg">Model servers</CardTitle>
+        <CardTitle className="font-mono text-lg">{t('inf.servers.title')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {state.phase === 'loading' && <p className="font-mono text-xs text-muted-foreground">Loading…</p>}
+        {state.phase === 'loading' && <p className="font-mono text-xs text-muted-foreground">{t('inf.loading')}</p>}
         {state.phase === 'error' && <p className="font-mono text-xs text-destructive">{state.message}</p>}
         {state.phase === 'ready' &&
           state.data.map((v) => (
@@ -82,8 +85,7 @@ export function InferenceServicesPanel({ inFlight }: { inFlight?: number }) {
             />
           ))}
         <p className="font-mono text-[10px] text-muted-foreground">
-          The gateway and the endpoint picker have no buttons here: their fields belong to the gateway
-          controller and to Helm.
+          {t('inf.gatewayNote')}
         </p>
       </CardContent>
     </Card>
@@ -112,7 +114,7 @@ function usePermissions(namespace: string, name: string | undefined): [Permissio
   if (notGranted) {
     const denied: Permission = {
       state: 'denied',
-      reason: `Restart and scale are not granted in ${namespace}: it is not a namespace enforcing baseline Pod Security.`,
+      reason: { key: 'inf.perm.notGranted', params: { ns: namespace } },
     }
     return [{ patch: denied, scale: denied }, (p) => setPerms((cur) => ({ ...cur, ...p }))]
   }
@@ -130,6 +132,7 @@ function ServiceRow({
   inFlight?: number
   onChanged: () => void
 }) {
+  const { t, tm, locale } = useI18n()
   const { def, namespace, deployment, state: s } = view
   const [perms, updatePerms] = usePermissions(namespace, deployment)
   const [pending, setPending] = useState<ActionKind>()
@@ -154,7 +157,7 @@ function ServiceRow({
     const why = reason
     setPending(undefined)
     setBusy(true)
-    const what = `${def.label}: ${LABEL[a].toLowerCase()}`
+    const what = t('inf.done', { service: t(def.label), action: t(LABEL[a]).toLowerCase() })
     try {
       if (a === 'restart') await frame.workloads.restart('Deployment', namespace, deployment)
       else await frame.workloads.scale('Deployment', namespace, deployment, replicasFor(def, a), a === 'stop' ? why : undefined)
@@ -165,7 +168,7 @@ function ServiceRow({
       // button goes grey with the reason instead of failing the same way twice.
       const p = permissionFromError(e, a === 'restart' ? 'patch deployments' : 'patch deployments/scale', namespace)
       if (p.state === 'denied') updatePerms(a === 'restart' ? { patch: p } : { scale: p })
-      toast.error(`Failed: ${what}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('inf.failed', { what }), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
     }
@@ -175,7 +178,7 @@ function ServiceRow({
     <div className="rounded border border-border bg-secondary/30 p-3 space-y-2">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="font-mono text-sm font-bold">
-          {def.label}
+          {t(def.label)}
           {deployment && (
             <span className="ml-2 font-normal text-muted-foreground">
               {namespace}/{deployment}
@@ -184,12 +187,12 @@ function ServiceRow({
         </span>
         {s && (
           <span className={`font-mono text-xs ${POD_LABEL[s.pod].tone}`}>
-            {POD_LABEL[s.pod].text} · {s.ready}/{s.desired} ready
+            {t('inf.status', { pod: t(POD_LABEL[s.pod].text), ready: s.ready, desired: s.desired })}
           </span>
         )}
       </div>
 
-      {view.unresolved && <p className="font-mono text-[10px] text-muted-foreground">{view.unresolved}</p>}
+      {view.unresolved && <p className="font-mono text-[10px] text-muted-foreground">{tm(view.unresolved)}</p>}
       {view.error && <p className="font-mono text-[10px] text-destructive">{view.error}</p>}
 
       {s && (
@@ -201,30 +204,30 @@ function ServiceRow({
           )}
           {view.contextSize !== undefined && (
             <Badge variant="outline" className="font-mono">
-              ctx {view.contextSize}
+              {t('inf.ctx', { n: view.contextSize })}
             </Badge>
           )}
           {view.slots !== undefined && (
             <Badge variant="outline" className="font-mono">
-              {view.slots} slots
+              {t('inf.slots', { n: view.slots })}
             </Badge>
           )}
           {s.podStartedAt && (
             <Badge variant="outline" className="font-mono">
-              pod since {new Date(s.podStartedAt).toLocaleString()}
+              {t('inf.podSince', { when: new Date(s.podStartedAt).toLocaleString(locale) })}
             </Badge>
           )}
           {s.lastLoadSeconds !== undefined && (
             <Badge variant="outline" className="font-mono">
-              last load {formatDuration(s.lastLoadSeconds)}
+              {t('inf.lastLoad', { dur: tm(formatDuration(s.lastLoadSeconds)) })}
             </Badge>
           )}
           <Badge variant="outline" className="font-mono">
-            last restart {s.lastRestart ? new Date(s.lastRestart).toLocaleString() : 'none recorded'}
+            {t('inf.lastRestart', { when: s.lastRestart ? new Date(s.lastRestart).toLocaleString(locale) : t('inf.noRestart') })}
           </Badge>
           {lastTask && (
             <Badge variant="outline" className="font-mono">
-              last console action: {lastTask.action} by {lastTask.user} ({lastTask.phase})
+              {t('inf.lastAction', { action: lastTask.action, user: lastTask.user, phase: lastTask.phase })}
             </Badge>
           )}
         </div>
@@ -242,20 +245,20 @@ function ServiceRow({
                     variant="outline"
                     className={`font-mono gap-1 ${o.kind === 'stop' ? 'text-destructive' : ''}`}
                     disabled={!o.enabled || busy}
-                    title={o.why}
+                    title={o.why && tm(o.why)}
                     onClick={() => open(o.kind)}
                   >
                     <Icon size={14} />
-                    {LABEL[o.kind]}
+                    {t(LABEL[o.kind])}
                   </Button>
-                  {o.why && <span className="font-mono text-[10px] text-muted-foreground max-w-xs">{o.why}</span>}
+                  {o.why && <span className="font-mono text-[10px] text-muted-foreground max-w-xs">{tm(o.why)}</span>}
                 </div>
               )
             })}
           </div>
           <p className="flex gap-1 font-mono text-[10px] text-warning">
             <Warning size={12} className="shrink-0 mt-px" />
-            {applyWarning(s)}
+            {applyWarning(s).map(tm).join(' ')}
           </p>
         </>
       )}
@@ -264,19 +267,19 @@ function ServiceRow({
         {confirmation && pending && (
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>{confirmation.title}</AlertDialogTitle>
+              <AlertDialogTitle>{tm(confirmation.title)}</AlertDialogTitle>
               <AlertDialogDescription className="space-y-2">
-                <span className="block">{confirmation.effect}</span>
-                <span className="block font-semibold">{confirmation.outage}</span>
-                {pending === 'stop' && s && <span className="block">{applyWarning(s)}</span>}
+                <span className="block">{confirmation.effect.map(tm).join(' ')}</span>
+                <span className="block font-semibold">{tm(confirmation.outage)}</span>
+                {pending === 'stop' && s && <span className="block">{applyWarning(s).map(tm).join(' ')}</span>}
               </AlertDialogDescription>
             </AlertDialogHeader>
             {confirmation.typeToConfirm !== undefined && (
               <Input
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
-                placeholder={`type ${confirmation.typeToConfirm} to confirm`}
-                aria-label="Service name"
+                placeholder={t('inf.typePlaceholder', { name: confirmation.typeToConfirm })}
+                aria-label={t('inf.serviceName')}
                 className="font-mono text-xs"
               />
             )}
@@ -286,23 +289,26 @@ function ServiceRow({
                   value={reason}
                   maxLength={reasonMaxLength(namespace, deployment, MAX_ACTION_LENGTH)}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Reason (recorded with the action)"
-                  aria-label="Reason"
+                  placeholder={t('inf.reasonPlaceholder')}
+                  aria-label={t('inf.reasonAria')}
                   className="font-mono text-xs"
                 />
                 <p className="font-mono text-[10px] text-muted-foreground">
-                  {reason.length}/{reasonMaxLength(namespace, deployment, MAX_ACTION_LENGTH)} · recorded as:{' '}
-                  {sanitizeReason(reason) || '(empty — accents are folded, emoji and other symbols dropped)'}
+                  {t('inf.reasonRecorded', {
+                    n: reason.length,
+                    max: reasonMaxLength(namespace, deployment, MAX_ACTION_LENGTH),
+                    text: sanitizeReason(reason) || t('inf.reasonEmpty'),
+                  })}
                 </p>
               </div>
             )}
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
               <AlertDialogAction
                 disabled={!canConfirm(confirmation, typed, reason)}
                 onClick={() => canConfirm(confirmation, typed, reason) && void run(pending)}
               >
-                {confirmation.confirmLabel}
+                {tm(confirmation.confirmLabel)}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

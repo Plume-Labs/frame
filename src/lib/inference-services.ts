@@ -16,13 +16,14 @@
  */
 import type { FrameConfig, Integration } from './frame-config'
 import type { TaskRecord } from './frame-sdk'
+import type { Message, MessageKey } from '@/i18n'
 
 /** The integrations the panel may act on. Anything absent here gets no button. */
 export type InferenceServiceKey = 'llamacpp' | 'llamacppVision' | 'tei'
 
 export interface InferenceServiceDef {
   key: InferenceServiceKey & keyof FrameConfig['integrations']
-  label: string
+  label: MessageKey
   role: 'chat' | 'vision' | 'embeddings'
   /** Holds a GPU: may run 0 or 1 replica, never more (one card). */
   gpu: boolean
@@ -40,16 +41,16 @@ export interface InferenceServiceDef {
  * configuration that points one of these three at such an object anyway.
  */
 export const INFERENCE_SERVICES: readonly InferenceServiceDef[] = [
-  { key: 'llamacpp', label: 'Chat LLM', role: 'chat', gpu: true, engine: 'llamacpp', typicalLoadSeconds: 360 },
+  { key: 'llamacpp', label: 'inf.svc.chat', role: 'chat', gpu: true, engine: 'llamacpp', typicalLoadSeconds: 360 },
   {
     key: 'llamacppVision',
-    label: 'Vision',
+    label: 'inf.svc.vision',
     role: 'vision',
     gpu: false,
     engine: 'llamacpp',
     typicalLoadSeconds: 60,
   },
-  { key: 'tei', label: 'Embeddings (TEI)', role: 'embeddings', gpu: false, engine: 'tei', typicalLoadSeconds: 180 },
+  { key: 'tei', label: 'inf.svc.embeddings', role: 'embeddings', gpu: false, engine: 'tei', typicalLoadSeconds: 180 },
 ]
 
 // ── Kubernetes shapes (only the fields read here) ────────────────────────────
@@ -136,22 +137,22 @@ function sameLabels(a: Record<string, string>, b: Record<string, string>): boole
  * reconcile or steals a field from its owner. Each test below catches one of
  * those shapes, so a Deployment is refused if any one of them matches.
  */
-export function foreignManager(d: DeploymentLike): string | undefined {
+export function foreignManager(d: DeploymentLike): Message | undefined {
   const owner = d.metadata.ownerReferences?.find((o) => o.controller)
-  if (owner) return `controlled by ${owner.kind} ${owner.name}`
+  if (owner) return { key: 'inf.foreign.controlled', params: { kind: owner.kind, name: owner.name } }
   const labels = d.metadata.labels ?? {}
-  if (labels['gateway.networking.k8s.io/gateway-name']) return 'a Gateway API gateway'
+  if (labels['gateway.networking.k8s.io/gateway-name']) return { key: 'inf.foreign.gateway' }
   if (labels['app.kubernetes.io/managed-by'] === 'Helm' || d.metadata.annotations?.['meta.helm.sh/release-name']) {
-    return 'managed by Helm'
+    return { key: 'inf.foreign.helm' }
   }
   const ssa = d.metadata.managedFields?.find((f) => f.operation === 'Apply' && !f.subresource)
-  if (ssa) return `fields held by server-side apply (${ssa.manager ?? 'unknown manager'})`
+  if (ssa) return { key: 'inf.foreign.ssa', params: { manager: ssa.manager ?? '—' } }
   return undefined
 }
 
 export type Resolution =
   | { ok: true; deployment: DeploymentLike }
-  | { ok: false; reason: string }
+  | { ok: false; reason: Message }
 
 /**
  * The Deployment behind an integration.
@@ -166,11 +167,11 @@ export function resolveDeployment(i: Integration, deployments: DeploymentLike[])
   let found: DeploymentLike | undefined
   if (i.deployment) {
     found = deployments.find((d) => d.metadata.name === i.deployment)
-    if (!found) return { ok: false, reason: `Deployment ${i.namespace}/${i.deployment} not found.` }
+    if (!found) return { ok: false, reason: { key: 'inf.res.notFound', params: { ns: i.namespace, name: i.deployment } } }
   } else {
     const want = parseSelector(i.selector)
     if (!want) {
-      return { ok: false, reason: `Selector "${i.selector}" is not a plain equality selector; set its Deployment in Settings.` }
+      return { ok: false, reason: { key: 'inf.res.badSelector', params: { selector: i.selector } } }
     }
     const matches = deployments.filter(
       (d) =>
@@ -178,18 +179,18 @@ export function resolveDeployment(i: Integration, deployments: DeploymentLike[])
         sameLabels(d.spec?.selector?.matchLabels ?? {}, want),
     )
     if (matches.length === 0) {
-      return { ok: false, reason: `No Deployment in ${i.namespace} selects exactly "${i.selector}".` }
+      return { ok: false, reason: { key: 'inf.res.none', params: { ns: i.namespace, selector: i.selector } } }
     }
     if (matches.length > 1) {
       return {
         ok: false,
-        reason: `${matches.length} Deployments in ${i.namespace} select "${i.selector}"; set the one to operate in Settings.`,
+        reason: { key: 'inf.res.several', params: { n: matches.length, ns: i.namespace, selector: i.selector } },
       }
     }
     found = matches[0]
   }
   const foreign = foreignManager(found)
-  if (foreign) return { ok: false, reason: `${found.metadata.name} is ${foreign}: Hearthrack does not write into it.` }
+  if (foreign) return { ok: false, reason: { key: 'inf.res.foreign', params: { name: found.metadata.name, why: foreign } } }
   return { ok: true, deployment: found }
 }
 
@@ -341,17 +342,16 @@ export function serviceState(d: DeploymentLike, pods: PodLike[]): ServiceState {
  */
 export function applyWarning(
   s: Pick<ServiceState, 'desired' | 'replicasHeldByApply' | 'lastAppliedReplicas'> & { drift?: string[] },
-): string {
-  const base =
-    'Stop only lasts until the next `kubectl apply` of this manifest or of its install script: that write sets replicas back and starts the server again, silently.'
-  const drift = s.drift?.length
-    ? ` The live object also differs from its last-applied manifest on ${s.drift.join(', ')}: the same apply reverts those too.`
-    : ''
+): Message[] {
+  const out: Message[] = []
   if (s.desired === 0 && s.lastAppliedReplicas !== undefined && s.lastAppliedReplicas > 0) {
-    return `Stopped here, but the applied manifest says replicas: ${s.lastAppliedReplicas}. ${base}${drift}`
+    out.push({ key: 'inf.warn.stopped', params: { n: s.lastAppliedReplicas } })
+  } else if (s.replicasHeldByApply) {
+    out.push({ key: 'inf.warn.held' })
   }
-  if (s.replicasHeldByApply) return `replicas is held by kubectl-client-side-apply. ${base}${drift}`
-  return base + drift
+  out.push({ key: 'inf.warn.base' })
+  if (s.drift?.length) out.push({ key: 'inf.warn.drift', params: { list: s.drift.join(', ') } })
+  return out
 }
 
 // ── Permissions ──────────────────────────────────────────────────────────────
@@ -359,7 +359,7 @@ export function applyWarning(
 export type Permission =
   | { state: 'checking' }
   | { state: 'allowed' }
-  | { state: 'denied'; reason: string }
+  | { state: 'denied'; reason: Message }
   /** The check itself failed for another reason; the action stays offered and a 403 is handled on click. */
   | { state: 'unknown'; reason: string }
 
@@ -374,7 +374,7 @@ export interface Permissions {
 export function permissionFromError(e: unknown, what: string, namespace: string): Permission {
   const status = (e as { statusCode?: number } | null)?.statusCode
   if (status === 403) {
-    return { state: 'denied', reason: `Your role may not ${what} in ${namespace} (operators and admins only).` }
+    return { state: 'denied', reason: { key: 'inf.perm.denied', params: { what, ns: namespace } } }
   }
   return { state: 'unknown', reason: e instanceof Error ? e.message : String(e) }
 }
@@ -387,17 +387,17 @@ export interface ActionOffer {
   kind: ActionKind
   enabled: boolean
   /** Why the button is disabled, shown beside it. */
-  why?: string
+  why?: Message
 }
 
-function gate(p: Permission): { enabled: boolean; why?: string } {
+function gate(p: Permission): { enabled: boolean; why?: Message } {
   switch (p.state) {
     case 'allowed':
       return { enabled: true }
     case 'unknown':
       return { enabled: true }
     case 'checking':
-      return { enabled: false, why: 'Checking your permission…' }
+      return { enabled: false, why: { key: 'inf.perm.checking' } }
     case 'denied':
       return { enabled: false, why: p.reason }
   }
@@ -426,38 +426,31 @@ export function replicasFor(def: InferenceServiceDef, action: 'stop' | 'start'):
 // ── Confirmations ────────────────────────────────────────────────────────────
 
 export interface Confirmation {
-  title: string
-  /** What the write does. */
-  effect: string
+  title: Message
+  /** What the write does, in sentences to be joined with a space. */
+  effect: Message[]
   /** How long nothing answers, and who notices. */
-  outage: string
+  outage: Message
   /** The name that must be typed back before the confirm button unlocks. */
   typeToConfirm?: string
   requireReason: boolean
-  confirmLabel: string
+  confirmLabel: Message
 }
 
-export function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number): Message {
   const m = Math.round(seconds / 60)
-  if (m >= 1) return `about ${m} min`
-  return `about ${Math.max(1, Math.round(seconds))} s`
+  if (m >= 1) return { key: 'inf.dur.min', params: { n: m } }
+  return { key: 'inf.dur.sec', params: { n: Math.max(1, Math.round(seconds)) } }
 }
 
-function loadText(def: InferenceServiceDef, measured?: number): string {
+function loadText(def: InferenceServiceDef, measured?: number): Message {
   return measured
-    ? `${formatDuration(measured)} (last load measured)`
-    : `${formatDuration(def.typicalLoadSeconds)} (typical)`
+    ? { key: 'inf.load.measured', params: { dur: formatDuration(measured) } }
+    : { key: 'inf.load.typical', params: { dur: formatDuration(def.typicalLoadSeconds) } }
 }
 
-function consumers(def: InferenceServiceDef): string {
-  switch (def.role) {
-    case 'chat':
-      return 'Every client of the chat LLM gets no answer'
-    case 'vision':
-      return 'Image understanding gets no answer'
-    case 'embeddings':
-      return 'Embeddings, and so search and indexing, get no answer'
-  }
+function consumers(def: InferenceServiceDef): Message {
+  return { key: `inf.consumers.${def.role}` }
 }
 
 export function confirmationFor(
@@ -467,37 +460,39 @@ export function confirmationFor(
   ctx: { lastLoadSeconds?: number; inFlight?: number } = {},
 ): Confirmation {
   const ref = `${target.namespace}/${target.name}`
+  const service: Message = { key: def.label }
   const load = loadText(def, ctx.lastLoadSeconds)
   switch (action) {
-    case 'restart':
+    case 'restart': {
+      const effect: Message[] = [
+        { key: 'inf.confirm.restartEffect', params: { annotation: RESTARTED_AT } },
+        { key: def.gpu ? 'inf.confirm.restartGpu' : 'inf.confirm.restartPlain' },
+      ]
+      if (ctx.inFlight) effect.push({ key: 'inf.confirm.inFlight', params: { n: ctx.inFlight } })
       return {
-        title: `Restart ${def.label} (${ref})?`,
-        effect:
-          `Bumps the pod template's ${RESTARTED_AT} annotation, as \`kubectl rollout restart\` does. ` +
-          (def.gpu
-            ? 'The server runs one pod on one GPU, so the old pod stops before the new one starts.'
-            : 'The Deployment replaces its pod following its own update strategy.') +
-          (ctx.inFlight ? ` ${ctx.inFlight} request(s) in flight now will be cut.` : ''),
-        outage: `${consumers(def)} while the model loads again from its cache: ${load}.`,
+        title: { key: 'inf.confirm.restartTitle', params: { service, ref } },
+        effect,
+        outage: { key: 'inf.confirm.restartOutage', params: { consumers: consumers(def), load } },
         requireReason: false,
-        confirmLabel: 'Restart',
+        confirmLabel: { key: 'inf.act.restart' },
       }
+    }
     case 'stop':
       return {
-        title: `Stop ${def.label} (${ref})?`,
-        effect: `Scales the Deployment to 0 replicas: the pod is deleted${def.gpu ? ' and its GPU freed' : ''}.`,
-        outage: `${consumers(def)} until someone starts it again, then for one more load: ${load}.`,
+        title: { key: 'inf.confirm.stopTitle', params: { service, ref } },
+        effect: [{ key: def.gpu ? 'inf.confirm.stopEffectGpu' : 'inf.confirm.stopEffect' }],
+        outage: { key: 'inf.confirm.stopOutage', params: { consumers: consumers(def), load } },
         typeToConfirm: target.name,
         requireReason: true,
-        confirmLabel: 'Stop',
+        confirmLabel: { key: 'inf.act.stop' },
       }
     case 'start':
       return {
-        title: `Start ${def.label} (${ref})?`,
-        effect: 'Scales the Deployment to 1 replica.',
-        outage: `Nothing answers until the model has loaded: ${load}.`,
+        title: { key: 'inf.confirm.startTitle', params: { service, ref } },
+        effect: [{ key: 'inf.confirm.startEffect' }],
+        outage: { key: 'inf.confirm.startOutage', params: { load } },
         requireReason: false,
-        confirmLabel: 'Start',
+        confirmLabel: { key: 'inf.act.start' },
       }
   }
 }
