@@ -15,7 +15,13 @@ type Spec struct {
 	Network      Network
 	Layout       Layout
 	SSHPublicKey string // an authorized_keys line; never a private key
-	Cluster      ClusterTarget
+	// U2FKeys are pam_u2f credentials (hack/enroll-yubikey.sh) that let the
+	// `frame` account log in on the local console with a FIDO2 key and its PIN
+	// instead of a password. Each is "keyHandle,publicKey,type,options": public
+	// material, written to the installed system's /etc/Yubico/u2f_keys. Empty:
+	// no console login at all (the account has no password). SSH is unaffected.
+	U2FKeys []string
+	Cluster ClusterTarget
 	// BootMode is "UEFI" or "Legacy". Set by Install from Options.BootMode,
 	// not by callers: the image's disk layout depends on it.
 	BootMode string

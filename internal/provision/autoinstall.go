@@ -99,6 +99,9 @@ func validate(s Spec) (validated, error) {
 	if err := checkPublicKeyOnly(s.SSHPublicKey); err != nil {
 		return validated{}, err
 	}
+	if err := validateU2FKeys(s.U2FKeys); err != nil {
+		return validated{}, err
+	}
 
 	if s.Network.DHCP {
 		if err := validateDHCP(s.Network); err != nil {
@@ -194,6 +197,7 @@ type autoinstall struct {
 	RefreshInstaller map[string]bool   `yaml:"refresh-installer"`
 	Updates          string            `yaml:"updates"`
 	Apt              map[string]string `yaml:"apt"`
+	Packages         []string          `yaml:"packages,omitempty"`
 	Locale           string            `yaml:"locale"`
 	Keyboard         map[string]string `yaml:"keyboard"`
 	Network          netplan           `yaml:"network"`
@@ -279,6 +283,15 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		"curtin in-target --target=/target -- passwd -l frame",
 		relockCommand(targetRoot),
 	}
+	var packages []string
+	if len(s.U2FKeys) > 0 {
+		// Installed from the archive during the install, before late-commands
+		// run: an unreachable archive fails the install, which is wanted -- a
+		// node that was asked for a console key login and has none must not
+		// come up looking finished.
+		packages = []string{"libpam-u2f"}
+		late = slices.Insert(late, len(late)-1, u2fConsoleLogin(s.U2FKeys, targetRoot))
+	}
 	// DHCP: subiquity copies the live system's en* stanza, which already asks
 	// for DHCP, so there is nothing to pin. A static network is pinned to the
 	// one port that reached the gateway, by MAC.
@@ -303,6 +316,7 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		// and the kernel installed can be newer than the ISO's.
 		Updates:  "security",
 		Apt:      map[string]string{"fallback": "offline-install"},
+		Packages: packages,
 		Locale:   "en_US.UTF-8",
 		Keyboard: map[string]string{"layout": "us"},
 		Network:  liveNetwork(v, s),

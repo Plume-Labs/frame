@@ -6,6 +6,13 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — YubiKey login on the local console (installer image)
+
+- provision: `U2FKeys` in the build spec enables a FIDO2 key + PIN login on the
+  console of the installed node (`libpam-u2f`, `/etc/Yubico/u2f_keys`, one line in
+  `/etc/pam.d/login`). SSH and sudo are unchanged. `hack/enroll-yubikey.sh` enrols
+  keys beforehand; `hack/build-iso.sh --u2f-keys FILE` puts them in the image.
+
 ### Added — USB installer image for machines without virtual media
 
 - provision: `network.dhcp` in the build API's spec leaves the installed system's

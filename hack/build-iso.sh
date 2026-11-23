@@ -14,7 +14,8 @@
 #       (--dhcp | --address 192.168.2.202/24 --gateway 192.168.2.254 --dns 192.168.2.254)
 #   hack/build-iso.sh --stop
 #
-# Two --disk arguments make a RAID 1 mirror. Find the disk with hack/list-disks.sh.
+# --u2f-keys FILE (from hack/enroll-yubikey.sh) enables a YubiKey + PIN login on the
+# local console. Two --disk arguments make a RAID 1 mirror. Find the disk with hack/list-disks.sh.
 #
 # Environment: MEDIA_BIND (listen address, default --media-ip), OUT (default ./iso-out), FRAME_PROVISIOND_BIN (a provisiond
 # binary to run directly; default: podman build + run of Dockerfile.provisiond),
@@ -33,7 +34,7 @@ stop() {
   echo "provisiond stopped."
 }
 
-hostname="" boot="" key="" media_ip="" dhcp=0 address="" gateway="" dns=() disks=() build_port=${BUILD_PORT:-8080} media_port=${MEDIA_PORT:-8081}
+u2f_file="" hostname="" boot="" key="" media_ip="" dhcp=0 address="" gateway="" dns=() disks=() build_port=${BUILD_PORT:-8080} media_port=${MEDIA_PORT:-8081}
 while [ $# -gt 0 ]; do
   case "$1" in
     --stop) stop; exit 0 ;;
@@ -46,6 +47,7 @@ while [ $# -gt 0 ]; do
     --address) address=$2; shift 2 ;;
     --gateway) gateway=$2; shift 2 ;;
     --dns) dns+=("$2"); shift 2 ;;
+    --u2f-keys) u2f_file=$2; shift 2 ;;
     *) die "unknown argument $1" ;;
   esac
 done
@@ -78,10 +80,16 @@ else
   dns_json=$(printf '%s\n' "${dns[@]}" | jq -R . | jq -sc .)
   net=$(jq -nc --arg a "$address" --arg g "$gateway" --argjson d "$dns_json" '{Address:$a, Gateway:$g, DNS:$d}')
 fi
+u2f_json='[]'
+if [ -n "$u2f_file" ]; then
+  [ -r "$u2f_file" ] || die "--u2f-keys: cannot read $u2f_file (hack/enroll-yubikey.sh writes it)"
+  u2f_json=$(grep -vE '^[[:space:]]*(#|$)' "$u2f_file" | jq -R . | jq -sc .)
+  [ "$u2f_json" != '[]' ] || die "--u2f-keys: $u2f_file holds no credential"
+fi
 uid=$(cat /proc/sys/kernel/random/uuid)
 spec=$(jq -nc --arg uid "$uid" --arg host "$hostname" --arg mode "$mode" --arg kind "$kind" \
-  --argjson disks "$disk_json" --argjson net "$net" --arg key "$(cat "$key")" \
-  '{UID:$uid, Hostname:$host, Network:$net, Layout:{Kind:$kind, Disks:$disks}, SSHPublicKey:$key, BootMode:$mode}')
+  --argjson disks "$disk_json" --argjson net "$net" --arg key "$(cat "$key")" --argjson u2f "$u2f_json" \
+  '{UID:$uid, Hostname:$host, Network:$net, Layout:{Kind:$kind, Disks:$disks}, SSHPublicKey:$key, U2FKeys:$u2f, BootMode:$mode}')
 
 bind=${MEDIA_BIND:-$media_ip}   # where provisiond listens; differs from --media-ip only behind NAT (QEMU bench)
 mkdir -p "$OUT/images"
@@ -115,6 +123,7 @@ cat <<MSG
 
 ISO ready: $iso
   install UID: $uid  (the installed system's /etc/frame-install-uid must say this)
+  console key login: $([ -n "$u2f_file" ] && echo "YubiKey + PIN ($(jq length <<<"$u2f_json") key(s))" || echo "none")
   mode: $mode, disks: ${#disks[@]} ($kind), network: $([ $dhcp = 1 ] && echo DHCP || echo "$address")
 Burn it:   sudo dd if=$iso of=/dev/sdX bs=4M status=progress conv=fsync   (sdX = the USB key)
 Boot the machine from the key; it installs with no input and reboots. It fetches
