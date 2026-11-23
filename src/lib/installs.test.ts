@@ -8,6 +8,10 @@ import {
   installLinks, installBlockers,
 } from './installs'
 
+import { translate, type Message } from '@/i18n'
+
+const en = (m: Message) => translate('en', m.key, m.params)
+
 describe('phases', () => {
   it('orders every phase the controller can write', () => {
     expect(phaseIndex('Pending')).toBe(0)
@@ -185,7 +189,8 @@ describe('the create dialog never shows the serial it asks for', () => {
   it('the texts under test are the ones the dialog renders', () => {
     const texts = installDialogMachineTexts([machine])
     expect(texts).toContain(machineOptionLabel(machine))
-    expect(texts).toContain(CONFIRM_SERIAL_LABEL)
+    expect(texts).toContain(translate('en', CONFIRM_SERIAL_LABEL))
+    expect(texts).toContain(translate('fr', CONFIRM_SERIAL_LABEL))
     expect(machineOptionLabel(machine)).toContain('ml350-g9')
     expect(machineOptionLabel(machine)).toContain('ProLiant ML350 Gen9')
   })
@@ -213,7 +218,8 @@ describe('the create dialog never shows the serial it asks for', () => {
   // Where to find it instead, so removing the display is not just removing
   // information.
   it('says where to read the serial from instead', () => {
-    expect(CONFIRM_SERIAL_HINT).toMatch(/BMC/)
+    expect(translate('en', CONFIRM_SERIAL_HINT)).toMatch(/BMC/)
+    expect(translate('fr', CONFIRM_SERIAL_HINT)).toMatch(/BMC/)
   })
 })
 
@@ -311,22 +317,22 @@ describe('installBlockers', () => {
     expect(installBlockers(ready)).toEqual([])
   })
   it('names what is missing, once per cause, in form order', () => {
-    const b = installBlockers({ ...ready, hostname: ' ', gateway: '', serialMatches: false })
+    const b = installBlockers({ ...ready, hostname: ' ', gateway: '', serialMatches: false }).map(en)
     expect(b).toEqual(['Enter a hostname', 'Enter the gateway', "Type the machine's serial to confirm"])
   })
   it('does not ask for a serial before a machine is chosen', () => {
-    const b = installBlockers({ ...ready, machineSelected: false, serialMatches: false })
+    const b = installBlockers({ ...ready, machineSelected: false, serialMatches: false }).map(en)
     expect(b).toEqual(['Select a machine'])
   })
   it('reports every cause, and each one alone is enough to block', () => {
-    const causes: Array<Partial<typeof ready> & { linksError?: string }> = [
-      { dnsValid: false }, { linksError: 'bad vlan' }, { sshKeyRef: ' ' }, { k3sVersion: '' },
+    const causes: Array<Partial<typeof ready> & { linksError?: Message }> = [
+      { dnsValid: false }, { linksError: { key: 'inst.err.vlanId' } as Message }, { sshKeyRef: ' ' }, { k3sVersion: '' },
       { disksValid: false }, { joinValid: false }, { address: '' }, { serialMatches: false },
     ]
     for (const c of causes) expect(installBlockers({ ...ready, ...c })).toHaveLength(1)
   })
   it('says so, instead of asking for the impossible, when the machine has no serial', () => {
-    const b = installBlockers({ ...ready, serialKnown: false, serialMatches: false })
+    const b = installBlockers({ ...ready, serialKnown: false, serialMatches: false }).map(en)
     expect(b).toHaveLength(1)
     expect(b[0]).not.toMatch(/Type the machine/)
   })

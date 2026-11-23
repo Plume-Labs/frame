@@ -18,6 +18,8 @@ import {
 } from '@/lib/installs'
 import type { Machine } from '@/lib/machines'
 import { TONE_TEXT, type Tone } from '@/lib/thresholds'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -26,6 +28,17 @@ const PHASE_TONE_CLASS: Record<ReturnType<typeof phaseTone>, Tone> = {
   running: 'primary',
   good: 'accent',
   bad: 'destructive',
+}
+
+const PHASE_LABEL: Record<Install['phase'], MessageKey> = {
+  Pending: 'inst.phase.Pending',
+  Preparing: 'inst.phase.Preparing',
+  MediaAttached: 'inst.phase.MediaAttached',
+  Installing: 'inst.phase.Installing',
+  Installed: 'inst.phase.Installed',
+  Joining: 'inst.phase.Joining',
+  Ready: 'inst.phase.Ready',
+  Failed: 'inst.phase.Failed',
 }
 
 /**
@@ -46,6 +59,11 @@ const PHASE_TONE_CLASS: Record<ReturnType<typeof phaseTone>, Tone> = {
  * advancing.
  */
 export function InstallsTab() {
+  const { t } = useI18n()
+  const phaseText = (p: string) => {
+    const key = (PHASE_LABEL as Record<string, MessageKey | undefined>)[p]
+    return key ? t(key) : p
+  }
   const { state, reload } = useLiveResource<Install[]>(
     () => frame.installs.list(),
     [],
@@ -89,7 +107,7 @@ export function InstallsTab() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <HardDrives className="text-primary" />
-            Installs
+            {t('inst.title')}
             {canCreate && (
               <Button
                 size="sm"
@@ -97,7 +115,7 @@ export function InstallsTab() {
                 onClick={() => setDialogOpen(true)}
               >
                 <Plus />
-                New install
+                {t('inst.new')}
               </Button>
             )}
           </CardTitle>
@@ -117,10 +135,10 @@ export function InstallsTab() {
                       <span className="flex-1 truncate">{install.machineRef}</span>
                       <span className="text-muted-foreground w-40 truncate">{install.hostname}</span>
                       <Badge variant="outline" className={`text-[10px] ${TONE_TEXT[tone]}`}>
-                        {install.phase}
+                        {phaseText(install.phase)}
                       </Badge>
                       <span className="text-muted-foreground w-40 truncate">
-                        node {install.nodeName || '—'}
+                        {t('inst.node', { v: install.nodeName || '—' })}
                       </span>
                       <span className={`w-28 text-right ${stalled ? 'text-warning' : 'text-muted-foreground'}`}>
                         {elapsedLabel(install.phaseSince, now)}
@@ -129,14 +147,16 @@ export function InstallsTab() {
                     {stalled && (
                       <div className="flex items-center gap-1.5 text-warning">
                         <Warning className="shrink-0" size={12} />
-                        Longer than expected in {install.phase} — check the machine directly.
+                        {t('inst.stalled', { phase: phaseText(install.phase) })}
                       </div>
                     )}
                     {install.phase === 'Failed' && install.message && (
                       <div className="flex items-start gap-1.5 text-destructive">
                         <Warning className="shrink-0 mt-0.5" size={12} />
                         <span>
-                          {install.failedPhase ? `Failed in ${install.failedPhase}: ` : ''}
+                          {install.failedPhase
+                            ? t('inst.failedIn', { phase: phaseText(install.failedPhase) }) + ' '
+                            : ''}
                           {install.message}
                         </span>
                       </div>
@@ -149,7 +169,7 @@ export function InstallsTab() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No installations yet." />
+      <LiveStates state={state} emptyLabel={t('inst.empty')} />
 
       <InstallDialog
         open={dialogOpen}

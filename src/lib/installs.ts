@@ -5,6 +5,8 @@
 // so every decision belongs in this file, the same split lot 1 used for
 // src/lib/machines.ts).
 
+import { catalogues, type Message, type MessageKey } from '@/i18n'
+
 /** The eight values `FrameInstallStatus.phase` can carry (Task 6's CRD). */
 export type InstallPhase =
   | 'Pending'
@@ -164,7 +166,7 @@ export function machineOptionLabel(m: MachineChoice): string {
 }
 
 /** The label above the confirmation box. Names no serial, by construction. */
-export const CONFIRM_SERIAL_LABEL = "Type the machine's serial to confirm"
+export const CONFIRM_SERIAL_LABEL: MessageKey = 'inst.confirmLabel'
 
 /**
  * Where to read the serial from.
@@ -178,10 +180,7 @@ export const CONFIRM_SERIAL_LABEL = "Type the machine's serial to confirm"
  * a glance. A console that could not show a serial at all would be a
  * different change, in a different file, and is not this one.
  */
-export const CONFIRM_SERIAL_HINT =
-  'Read it from the chassis pull-tab or from the BMC. Checking it against this console ' +
-  'proves only that the console and the console agree — the point of retyping it is that ' +
-  'it came from the machine.'
+export const CONFIRM_SERIAL_HINT: MessageKey = 'inst.confirmHint'
 
 /**
  * Every string `InstallDialog` renders that is derived from a machine, in
@@ -194,7 +193,10 @@ export const CONFIRM_SERIAL_HINT =
  * instead of repeating their text.
  */
 export function installDialogMachineTexts(choices: MachineChoice[]): string[] {
-  return [CONFIRM_SERIAL_LABEL, CONFIRM_SERIAL_HINT, ...choices.map(machineOptionLabel)]
+  // Both constants are keys, so the check runs on their text in every
+  // language the console ships, not only English.
+  const texts = Object.values(catalogues).flatMap((c) => [c[CONFIRM_SERIAL_LABEL], c[CONFIRM_SERIAL_HINT]])
+  return [...texts, ...choices.map(machineOptionLabel)]
 }
 
 /**
@@ -391,31 +393,31 @@ export function installLinks(
   bondText: string,
   vlanText: string,
   vlanPortMAC: string,
-): { bond?: { members: string[] }; vlan?: { id: number; parentMAC?: string }; error?: string } {
+): { bond?: { members: string[] }; vlan?: { id: number; parentMAC?: string }; error?: Message } {
   const members = parseMACs(bondText)
-  const out: { bond?: { members: string[] }; vlan?: { id: number; parentMAC?: string }; error?: string } = {}
+  const out: { bond?: { members: string[] }; vlan?: { id: number; parentMAC?: string } } = {}
   if (members.length > 0) {
-    if (members.length < 2 || members.length > 8) return { error: 'A bond needs 2 to 8 ports.' }
-    if (!members.every((m) => MAC_SHAPE.test(m))) return { error: 'Bond ports are MAC addresses (aa:bb:cc:dd:ee:ff).' }
-    if (members.some(isZeroMAC)) return { error: 'The all-zero MAC names no port.' }
-    if (new Set(members.map((m) => m.toLowerCase())).size !== members.length) return { error: 'A bond port is named twice.' }
+    if (members.length < 2 || members.length > 8) return { error: { key: 'inst.err.bondCount' } }
+    if (!members.every((m) => MAC_SHAPE.test(m))) return { error: { key: 'inst.err.bondMac' } }
+    if (members.some(isZeroMAC)) return { error: { key: 'inst.err.zeroMac' } }
+    if (new Set(members.map((m) => m.toLowerCase())).size !== members.length) return { error: { key: 'inst.err.bondTwice' } }
     out.bond = { members }
   }
   const vlan = vlanText.trim()
   const port = vlanPortMAC.trim()
   if (vlan === '') {
-    if (port !== '') return { error: 'A VLAN port without a VLAN ID.' }
+    if (port !== '') return { error: { key: 'inst.err.vlanPortNoId' } }
     return out
   }
   const id = Number(vlan)
-  if (!Number.isInteger(id) || id < 1 || id > 4094) return { error: 'The VLAN ID is 1 to 4094.' }
+  if (!Number.isInteger(id) || id < 1 || id > 4094) return { error: { key: 'inst.err.vlanId' } }
   if (out.bond) {
-    if (port !== '') return { error: 'With a bond, the VLAN rides on it: leave its port empty.' }
+    if (port !== '') return { error: { key: 'inst.err.vlanOnBond' } }
     out.vlan = { id }
     return out
   }
-  if (!MAC_SHAPE.test(port)) return { error: 'Without a bond, name the VLAN\'s port by its MAC.' }
-  if (isZeroMAC(port)) return { error: 'The all-zero MAC names no port.' }
+  if (!MAC_SHAPE.test(port)) return { error: { key: 'inst.err.vlanPort' } }
+  if (isZeroMAC(port)) return { error: { key: 'inst.err.zeroMac' } }
   out.vlan = { id, parentMAC: port }
   return out
 }
@@ -431,7 +433,7 @@ export interface InstallFormState {
   address: string
   gateway: string
   dnsValid: boolean
-  linksError?: string
+  linksError?: Message
   sshKeyRef: string
   k3sVersion: string
   disksValid: boolean
@@ -441,22 +443,22 @@ export interface InstallFormState {
   serialKnown: boolean
 }
 
-export function installBlockers(f: InstallFormState): string[] {
-  const out: string[] = []
-  if (!f.machineSelected) out.push('Select a machine')
-  if (f.hostname.trim() === '') out.push('Enter a hostname')
-  if (f.address.trim() === '') out.push('Enter the address (CIDR)')
-  if (f.gateway.trim() === '') out.push('Enter the gateway')
-  if (!f.dnsValid) out.push('Enter one to three DNS resolvers')
+export function installBlockers(f: InstallFormState): Message[] {
+  const out: Message[] = []
+  if (!f.machineSelected) out.push({ key: 'inst.need.machine' })
+  if (f.hostname.trim() === '') out.push({ key: 'inst.need.hostname' })
+  if (f.address.trim() === '') out.push({ key: 'inst.need.address' })
+  if (f.gateway.trim() === '') out.push({ key: 'inst.need.gateway' })
+  if (!f.dnsValid) out.push({ key: 'inst.need.dns' })
   if (f.linksError) out.push(f.linksError)
-  if (f.sshKeyRef.trim() === '') out.push('Name the SSH key Secret')
-  if (f.disksValid === false) out.push('Fill every disk with a /dev/disk/by-id/ path and a size')
-  if (!f.joinValid) out.push('Give the server URL and join token Secret to join a cluster')
-  if (f.k3sVersion.trim() === '') out.push('Enter the k3s version')
+  if (f.sshKeyRef.trim() === '') out.push({ key: 'inst.need.sshKey' })
+  if (f.disksValid === false) out.push({ key: 'inst.need.disks' })
+  if (!f.joinValid) out.push({ key: 'inst.need.join' })
+  if (f.k3sVersion.trim() === '') out.push({ key: 'inst.need.k3s' })
   if (f.machineSelected && !f.serialKnown) {
-    out.push('This machine reported no serial: wait for the next inventory read before installing')
+    out.push({ key: 'inst.need.noSerial' })
   } else if (f.machineSelected && !f.serialMatches) {
-    out.push("Type the machine's serial to confirm")
+    out.push({ key: CONFIRM_SERIAL_LABEL })
   }
   return out
 }
