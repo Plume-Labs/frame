@@ -254,10 +254,10 @@ func newServer(t *testing.T, started *string) *httptest.Server {
 
 const testToken = "tok"
 
-func post(t *testing.T, url string, v any, hdr map[string]string) *http.Response {
+func post(t *testing.T, target string, v any, hdr map[string]string) *http.Response {
 	t.Helper()
 	b, _ := json.Marshal(v)
-	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(string(b)))
+	req, _ := http.NewRequest(http.MethodPost, target, strings.NewReader(string(b)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Installer-Token", testToken)
 	for k, v := range hdr {
@@ -395,8 +395,7 @@ func TestConcurrentInstallsStartOnce(t *testing.T) {
 	defer ts.Close()
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() { defer wg.Done(); post(t, ts.URL+"/api/install", answers(), nil) }()
+		wg.Go(func() { post(t, ts.URL+"/api/install", answers(), nil) })
 	}
 	wg.Wait()
 	if n.Load() != 1 {
