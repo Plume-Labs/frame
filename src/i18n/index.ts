@@ -16,7 +16,8 @@ export type Params = Record<string, Param>
 
 /** Text a pure module cannot render itself: a message key plus its parameters. The UI renders it with `useI18n().tm`. */
 export interface Message {
-  key: MessageKey
+  /** A plain key, or the base of a `.one`/`.other` pair, picked by `params.count`. */
+  key: MessageKey | PluralKey
   params?: Params
 }
 
@@ -55,8 +56,9 @@ export function detectLocale(saved: string | null | undefined, browserLanguages:
  * catalogue (only reachable through a cast) falls back to English, then to the
  * key itself, so a gap shows up as readable text instead of a crash.
  */
-export function translate(locale: Locale, key: MessageKey, params?: Params): string {
-  const template = CATALOGUES[locale][key] ?? en[key] ?? key
+export function translate(locale: Locale, key: MessageKey | PluralKey, params?: Params): string {
+  if (!(key in en) && typeof params?.count === 'number') return translatePlural(locale, key as PluralKey, params.count, params)
+  const template = CATALOGUES[locale][key as MessageKey] ?? en[key as MessageKey] ?? key
   if (!params) return template
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => {
     if (!(name in params)) return whole

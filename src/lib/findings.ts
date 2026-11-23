@@ -11,7 +11,7 @@ import type { Machine } from './machines'
 import { NETWORK_CHECKS, STORAGE_CHECKS } from './storage-health'
 import { Tone, formatAge } from './thresholds'
 import type { VolumeFillFinding } from './volume-load'
-import { translate } from '@/i18n'
+import type { Message, MessageKey } from '@/i18n'
 
 /**
  * What the Overview screen calls a problem, and where it sends you about it.
@@ -24,8 +24,9 @@ import { translate } from '@/i18n'
 export interface Finding {
   key: string
   tone: Tone
-  label: string
-  detail: string
+  /** Raw text (an alert's own name, a node list) or a Message for the UI to render. */
+  label: string | Message
+  detail: string | Message
   screen: string
   tab?: string
 }
@@ -35,8 +36,6 @@ export const BACKUP_STALE_MS = 48 * 3600_000
 
 /** Beyond this the list stops being a summary; the Alerts tab has the rest. */
 const MAX_ALERTS = 5
-
-const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`
 
 export function collectFindings(
   input: {
@@ -85,7 +84,7 @@ export function collectFindings(
       key: `registry-${a.name || a.fingerprint}`,
       tone: a.severity === 'critical' ? 'destructive' : 'warning',
       label: a.alertName,
-      detail: `${a.namespace ? `${a.namespace} · ` : ''}${a.severity} · registry only`,
+      detail: { key: 'find.registryOnly', params: { where: a.namespace ? `${a.namespace} · ` : '', severity: a.severity } },
       screen: 'security',
       tab: 'alerts',
     })
@@ -97,7 +96,7 @@ export function collectFindings(
       findings.push({
         key: 'nodes-not-ready',
         tone: 'destructive',
-        label: `${plural(down.length, 'node')} not ready`,
+        label: { key: 'find.nodesNotReady', params: { count: down.length } },
         detail: down.map((n) => n.name).join(', '),
         screen: 'nodes',
         tab: 'nodes',
@@ -110,7 +109,7 @@ export function collectFindings(
       findings.push({
         key: 'nodes-cordoned',
         tone: 'warning',
-        label: `${plural(cordoned.length, 'node')} cordoned`,
+        label: { key: 'find.nodesCordoned', params: { count: cordoned.length } },
         detail: cordoned.map((n) => n.name).join(', '),
         screen: 'nodes',
         tab: 'nodes',
@@ -122,8 +121,8 @@ export function collectFindings(
     findings.push({
       key: 'ceph-health',
       tone: input.ceph.health === 'HEALTH_WARN' ? 'warning' : 'destructive',
-      label: `Ceph ${input.ceph.health.replace('HEALTH_', '')}`,
-      detail: `${input.ceph.osds} OSDs · ${input.ceph.mons} mons`,
+      label: { key: 'find.ceph', params: { status: input.ceph.health.replace('HEALTH_', '') } },
+      detail: { key: 'find.cephDetail', params: { osds: input.ceph.osds, mons: input.ceph.mons } },
       screen: 'storage',
     })
   }
@@ -132,7 +131,7 @@ export function collectFindings(
     findings.push({
       key: `volume-fill-${v.key}`,
       tone: v.severity === 'critical' ? 'destructive' : 'warning',
-      label: `Volume ${v.usePct.toFixed(1)} % full`,
+      label: { key: 'find.volumeFull', params: { pct: v.usePct.toFixed(1) } },
       detail: v.key,
       screen: 'storage',
       tab: 'storage-load',
@@ -145,8 +144,8 @@ export function collectFindings(
       findings.push({
         key: 'backup-storage',
         tone: 'destructive',
-        label: 'Backup storage unavailable',
-        detail: 'Velero cannot reach its object store — backups are not being written',
+        label: { key: 'find.backupStorage' },
+        detail: { key: 'find.backupStorageDetail' },
         screen: 'capacity',
         tab: 'resilience',
       })
@@ -156,8 +155,8 @@ export function collectFindings(
       findings.push({
         key: 'backup-none',
         tone: 'warning',
-        label: 'No successful backup recorded',
-        detail: bk.schedule ? `schedule ${bk.schedule} has never completed` : 'no schedule configured',
+        label: { key: 'find.backupNone' },
+        detail: bk.schedule ? { key: 'find.backupNeverCompleted', params: { schedule: bk.schedule } } : { key: 'find.backupNoSchedule' },
         screen: 'capacity',
         tab: 'resilience',
       })
@@ -167,8 +166,8 @@ export function collectFindings(
         findings.push({
           key: 'backup-stale',
           tone: 'warning',
-          label: 'Last successful backup is stale',
-          detail: `${formatAge(last, now)} ago`,
+          label: { key: 'find.backupStale' },
+          detail: { key: 'find.ago', params: { age: formatAge(last, now) } },
           screen: 'capacity',
           tab: 'resilience',
         })
@@ -177,8 +176,8 @@ export function collectFindings(
   }
 
   for (const m of machineChecks(input.machines ?? [])) findings.push(m)
-  for (const f of serviceFindings('Cache', 'caches', input.caches ?? [])) findings.push(f)
-  for (const f of serviceFindings('Database', 'databases', input.databases ?? [])) findings.push(f)
+  for (const f of serviceFindings('find.kind.cache', 'caches', input.caches ?? [])) findings.push(f)
+  for (const f of serviceFindings('find.kind.database', 'databases', input.databases ?? [])) findings.push(f)
 
   return findings
 }
@@ -209,8 +208,7 @@ function machineChecks(machines: Pick<Machine, 'name' | 'storageConditions'>[]):
       out.push({
         key: `check-${type}`,
         tone: DESTRUCTIVE_CHECKS.has(type) ? 'destructive' : 'warning',
-        // Findings are still English-only: the Overview lot gives them Messages.
-        label: `${translate('en', label)}: ${plural(hit.length, 'machine')}`,
+        label: { key: 'find.checkMachines', params: { check: { key: label }, count: hit.length } },
         detail: hit.length === 1 && first?.message ? `${hit[0].name} · ${first.message}` : hit.map((m) => m.name).join(', '),
         screen,
         tab,
@@ -227,7 +225,7 @@ function machineChecks(machines: Pick<Machine, 'name' | 'storageConditions'>[]):
  * is a warning.
  */
 function serviceFindings(
-  kind: string,
+  kind: MessageKey,
   screen: string,
   services: Pick<Cache, 'name' | 'namespace' | 'ready' | 'reason' | 'message'>[],
 ): Finding[] {
@@ -236,7 +234,7 @@ function serviceFindings(
     .map((s): Finding => ({
       key: `${screen}-${s.namespace}-${s.name}`,
       tone: s.reason === 'InstanceLost' ? 'destructive' : 'warning',
-      label: `${kind} ${s.namespace}/${s.name} not ready`,
+      label: { key: 'find.serviceNotReady', params: { kind: { key: kind }, ref: `${s.namespace}/${s.name}` } },
       detail: s.message ? `${s.reason} · ${s.message}` : s.reason,
       screen,
     }))
