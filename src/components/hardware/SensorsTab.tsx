@@ -10,6 +10,7 @@ import {
   type Machine,
   type SensorSeverity,
 } from '@/lib/machines'
+import { useI18n } from '@/i18n/context'
 
 const SEVERITY_CLASS: Record<SensorSeverity, string> = {
   ok: TONE_TEXT.accent,
@@ -41,24 +42,23 @@ const SEVERITY_CLASS: Record<SensorSeverity, string> = {
  * `MachineDetail`) and the two are never mixed here.
  */
 export function SensorsTab({ machine }: { machine: Machine }) {
+  const { t, tm } = useI18n()
   const availability = sensorAvailability(machine)
 
   switch (availability.kind) {
     case 'never-read':
       return (
-        <Empty>
-          This machine has never been read in a state where its sensors were usable.
-        </Empty>
+        <Empty>{t('hw.sensors.neverRead')}</Empty>
       )
     case 'powered-off':
-      return <Empty>Machine is powered off — no sensor readings right now.</Empty>
+      return <Empty>{t('hw.sensors.off')}</Empty>
     case 'in-post':
       return (
-        <Empty>Starting up (POST not finished) — no sensor readings right now.</Empty>
+        <Empty>{t('hw.sensors.post')}</Empty>
       )
     case 'unreachable':
       return (
-        <Empty tone="warning">BMC unreachable, and no earlier reading was kept.</Empty>
+        <Empty tone="warning">{t('hw.sensors.unreachable')}</Empty>
       )
     case 'last-known':
       return (
@@ -66,8 +66,8 @@ export function SensorsTab({ machine }: { machine: Machine }) {
           <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 font-mono text-xs">
             <Warning className="text-warning shrink-0" />
             <span>
-              Last known reading — BMC unreachable now.{' '}
-              <span className="font-medium">{stalenessLabel(machine.sensorsValidAt, new Date())}</span>
+              {t('hw.sensors.lastKnown')}{' '}
+              <span className="font-medium">{tm(stalenessLabel(machine.sensorsValidAt, new Date()))}</span>
             </span>
           </div>
           <Readings machine={machine} />
@@ -100,6 +100,7 @@ function Empty({ children, tone }: { children: ReactNode; tone?: 'warning' }) {
 
 /** Renders `machine.sensors`. Only reached from a case that already knows it is non-null. */
 function Readings({ machine }: { machine: Machine }) {
+  const { t } = useI18n()
   const sensors = machine.sensors
   if (!sensors) return null
 
@@ -108,20 +109,20 @@ function Readings({ machine }: { machine: Machine }) {
   return (
     <div className="space-y-4 font-mono text-xs">
       <div>
-        <span className="text-muted-foreground">Power consumed</span>{' '}
+        <span className="text-muted-foreground">{t('hw.sensors.power')}</span>{' '}
         <span>{sensors.powerConsumedWatts} W</span>
       </div>
 
-      <Section icon={<Thermometer />} title={`Temperatures (${temperatures.length})`}>
+      <Section icon={<Thermometer />} title={t('hw.sensors.temps', { n: temperatures.length })}>
         {temperatures.length === 0 ? (
-          <div className="text-muted-foreground pl-5">none reported</div>
+          <div className="text-muted-foreground pl-5">{t('hw.noneReported')}</div>
         ) : (
           <div className="border rounded-md divide-y">
             {temperatures.map(({ reading, severity }) => (
               <div key={reading.name} className="flex items-center gap-3 px-3 py-1.5">
                 <span className="flex-1 truncate">{reading.name}</span>
                 {reading.upperCritical != null && (
-                  <span className="text-muted-foreground">max {reading.upperCritical} °C</span>
+                  <span className="text-muted-foreground">{t('hw.sensors.max', { v: reading.upperCritical })}</span>
                 )}
                 <span className={SEVERITY_CLASS[severity]}>{reading.celsius} °C</span>
               </div>
@@ -134,9 +135,9 @@ function Readings({ machine }: { machine: Machine }) {
           hardware 23 means 23 percent; on other Redfish implementations the
           same field is RPM, and the unit is the only thing that tells them
           apart. */}
-      <Section icon={<Fan />} title={`Fans (${sensors.fans.length})`}>
+      <Section icon={<Fan />} title={t('hw.sensors.fans', { n: sensors.fans.length })}>
         {sensors.fans.length === 0 ? (
-          <div className="text-muted-foreground pl-5">none reported</div>
+          <div className="text-muted-foreground pl-5">{t('hw.noneReported')}</div>
         ) : (
           <div className="border rounded-md divide-y">
             {sensors.fans.map((fan) => (
@@ -151,9 +152,9 @@ function Readings({ machine }: { machine: Machine }) {
         )}
       </Section>
 
-      <Section icon={<Lightning />} title={`Power supplies (${sensors.powerSupplies.length})`}>
+      <Section icon={<Lightning />} title={t('hw.sensors.psus', { n: sensors.powerSupplies.length })}>
         {sensors.powerSupplies.length === 0 ? (
-          <div className="text-muted-foreground pl-5">none reported</div>
+          <div className="text-muted-foreground pl-5">{t('hw.noneReported')}</div>
         ) : (
           <div className="border rounded-md divide-y">
             {sensors.powerSupplies.map((psu) => (

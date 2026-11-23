@@ -14,6 +14,9 @@ import {
   type MachineCR,
 } from './machines'
 import type { NamespaceNode, WorkloadPod } from './workloads'
+import { translate, type Message } from '@/i18n'
+
+const en = (m: Message) => translate('en', m.key, m.params)
 
 describe('temperatureSeverity', () => {
   it('is critical at or above the reported upper critical threshold', () => {
@@ -135,13 +138,13 @@ describe('staleness', () => {
   // and rendering "0 s ago" would be a lie about a value that does not exist.
   it('treats never-probed as stale', () => {
     expect(isStale(null, now)).toBe(true)
-    expect(stalenessLabel(null, now)).toBe('never read')
+    expect(en(stalenessLabel(null, now))).toBe('never read')
   })
 
   it('says how old the reading is in words', () => {
-    expect(stalenessLabel('2026-09-10T11:59:30Z', now)).toBe('30 s ago')
-    expect(stalenessLabel('2026-09-10T11:46:00Z', now)).toBe('14 min ago')
-    expect(stalenessLabel('2026-09-10T09:00:00Z', now)).toBe('3 h ago')
+    expect(en(stalenessLabel('2026-09-10T11:59:30Z', now))).toBe('30 s ago')
+    expect(en(stalenessLabel('2026-09-10T11:46:00Z', now))).toBe('14 min ago')
+    expect(en(stalenessLabel('2026-09-10T09:00:00Z', now))).toBe('3 h ago')
   })
 
   // The functions take the timestamp they are judging rather than reaching
@@ -157,8 +160,8 @@ describe('staleness', () => {
 
     expect(isStale(lastProbeAt, now)).toBe(false)
     expect(isStale(sensorsValidAt, now)).toBe(true)
-    expect(stalenessLabel(lastProbeAt, now)).toBe('5 s ago')
-    expect(stalenessLabel(sensorsValidAt, now)).not.toBe(stalenessLabel(lastProbeAt, now))
+    expect(en(stalenessLabel(lastProbeAt, now))).toBe('5 s ago')
+    expect(en(stalenessLabel(sensorsValidAt, now))).not.toBe(en(stalenessLabel(lastProbeAt, now)))
   })
 })
 
