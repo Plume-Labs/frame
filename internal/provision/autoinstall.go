@@ -102,6 +102,9 @@ func validate(s Spec) (validated, error) {
 	if err := validateU2FKeys(s.U2FKeys); err != nil {
 		return validated{}, err
 	}
+	if err := validateRole(s.Role); err != nil {
+		return validated{}, err
+	}
 
 	if s.Network.DHCP {
 		if err := validateDHCP(s.Network); err != nil {
@@ -282,6 +285,9 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		fmt.Sprintf("echo '%[1]s' > /target/etc/hostname && (grep -qx '127.0.1.1 %[1]s' /target/etc/hosts || echo '127.0.1.1 %[1]s' >> /target/etc/hosts)", s.Hostname),
 		"curtin in-target --target=/target -- passwd -l frame",
 		relockCommand(targetRoot),
+	}
+	if s.Role != "" {
+		late = slices.Insert(late, len(late)-1, writeFileCommand(targetRoot+rolePath, s.Role+"\n"))
 	}
 	var packages []string
 	if len(s.U2FKeys) > 0 {

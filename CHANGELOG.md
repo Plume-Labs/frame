@@ -6,6 +6,16 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — guided installer, first stage (assistant server, not yet on the ISO)
+
+- installer: `cmd/installer` and `internal/installer`, a local web assistant (loopback
+  only, embedded page, standard library only) that detects the hardware (CPU AVX/AES-NI,
+  memory, BIOS or UEFI, disks by `by-id`, ports), asks for name, role, disk(s), network
+  and keys, shows what will be erased, and writes the autoinstall document that
+  `internal/provision` renders. An erase needs the disk's serial retyped; a USB disk
+  cannot be chosen. Spike S0 proved the document can be handed to a running live system.
+- provision: `Spec.Role` records the node's role in `/etc/frame-node-role`.
+
 ### Added — YubiKey login on the local console (installer image)
 
 - provision: `U2FKeys` in the build spec enables a FIDO2 key + PIN login on the

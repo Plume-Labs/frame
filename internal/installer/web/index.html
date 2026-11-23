@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Installation Hearthrack</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#14181f; --muted:#5b6472; --line:#cfd5de; --acc:#1f5eff; --bad:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#10141b; --fg:#e8ecf2; --muted:#9aa4b2; --line:#2b3340; --acc:#6b95ff; --bad:#ff8a80; } }
+  body { margin:0; font:18px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:46rem; margin:0 auto; padding:1.5rem 1rem 4rem; }
+  h1 { font-size:1.4rem; margin:0 0 .25rem } h2 { font-size:1.15rem; margin:1.5rem 0 .5rem }
+  .muted { color:var(--muted) } .err { color:var(--bad); min-height:1.5em }
+  label { display:block; margin:.75rem 0 .25rem; font-weight:600 }
+  input, select, textarea { width:100%; box-sizing:border-box; font:inherit; padding:.5rem; border:1px solid var(--line); border-radius:.4rem; background:transparent; color:inherit }
+  textarea { min-height:4.5rem; font-family:ui-monospace,monospace; font-size:.85rem }
+  button { font:inherit; padding:.6rem 1.2rem; border-radius:.4rem; border:1px solid var(--acc); background:var(--acc); color:#fff; cursor:pointer }
+  button.sec { background:transparent; color:var(--acc) } button:disabled { opacity:.5; cursor:default }
+  .row { display:flex; gap:.75rem; margin-top:1.25rem } .disk { border:1px solid var(--line); border-radius:.4rem; padding:.6rem; margin:.5rem 0 }
+  .disk.off { opacity:.55 } ul { padding-left:1.2rem } li.erase { color:var(--bad); font-weight:700 }
+  [hidden] { display:none !important } .steps { color:var(--muted); font-size:.9rem }
+</style>
+</head>
+<body>
+<main>
+  <h1>Installation Hearthrack</h1>
+  <p class="steps" id="steps"></p>
+
+  <section id="s1"><h2>Matériel détecté</h2><div id="hw">Lecture du matériel…</div></section>
+
+  <section id="s2" hidden><h2>Nom et rôle</h2>
+    <label for="hostname">Nom de la machine</label><input id="hostname" placeholder="tacos" autocapitalize="none" spellcheck="false">
+    <label for="role">Rôle du nœud</label><select id="role"></select>
+    <p class="muted">Le rôle est noté sur la machine ; la jonction au cluster se fait après l'installation, sans que le jeton passe par ici.</p>
+  </section>
+
+  <section id="s3" hidden><h2>Disque système</h2>
+    <p class="muted">Tout le contenu du disque choisi sera effacé. Pour un miroir, cochez deux disques.</p>
+    <div id="disks"></div>
+  </section>
+
+  <section id="s4" hidden><h2>Réseau</h2>
+    <label><input type="checkbox" id="dhcp" style="width:auto"> Adresse automatique (DHCP)</label>
+    <div id="static">
+      <label for="address">Adresse IP et masque</label><input id="address" placeholder="192.168.2.201/24">
+      <label for="gateway">Passerelle</label><input id="gateway" placeholder="192.168.2.1">
+      <label for="dns">Résolveurs DNS (séparés par des espaces)</label><input id="dns" placeholder="192.168.2.1">
+    </div>
+  </section>
+
+  <section id="s5" hidden><h2>Accès</h2>
+    <label for="ssh">Clé SSH publique (une ligne)</label><textarea id="ssh" placeholder="ssh-ed25519 AAAA… romuald"></textarea>
+    <label for="u2f">Clés de sécurité pour la console (facultatif, une par ligne, sortie de enroll-yubikey.sh)</label><textarea id="u2f"></textarea>
+  </section>
+
+  <section id="s6" hidden><h2>Résumé</h2><ul id="summary"></ul>
+    <label><input type="checkbox" id="ok" style="width:auto"> J'ai relu : ces disques seront effacés.</label>
+  </section>
+
+  <section id="s7" hidden><h2>Installation</h2><p id="progress">Installation lancée. La machine redémarrera toute seule ; retirez la clé USB au premier redémarrage.</p></section>
+
+  <p class="err" id="err" role="alert"></p>
+  <div class="row" id="nav"><button class="sec" id="back">Retour</button><button id="next">Suivant</button></div>
+</main>
+<script>
+"use strict";
+let step = 1, hw = null;
+const last = 6, $ = id => document.getElementById(id);
+const gb = n => n >= 1e12 ? (n/1e12).toFixed(1)+" To" : Math.round(n/1e9)+" Go";
+const text = (tag, s, cls) => { const e = document.createElement(tag); e.textContent = s; if (cls) e.className = cls; return e; };
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json", "X-Installer-Token":location.hash.slice(1)}, body:JSON.stringify(body)} : {});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function answers() {
+  const disks = [...document.querySelectorAll(".disk input[type=checkbox]:checked")].map(c => ({
+    byID: c.dataset.byid, confirm: document.querySelector('input[data-confirm="'+CSS.escape(c.dataset.byid)+'"]').value }));
+  const lines = s => s.split("\n").map(x => x.trim()).filter(Boolean);
+  return { hostname:$("hostname").value, role:$("role").value, disks, dhcp:$("dhcp").checked,
+    address:$("dhcp").checked ? "" : $("address").value, gateway:$("dhcp").checked ? "" : $("gateway").value,
+    dns:$("dhcp").checked ? [] : $("dns").value.split(/\s+/).filter(Boolean),
+    sshPublicKey:$("ssh").value, u2fKeys:lines($("u2f").value) };
+}
+
+function show() {
+  for (let i = 1; i <= 7; i++) $("s"+i).hidden = i !== step;
+  $("steps").textContent = step <= last ? "Étape "+step+" sur "+last : "";
+  $("back").hidden = step === 1 || step === 7; $("next").hidden = step === 7;
+  $("next").textContent = step === last ? "Installer" : "Suivant";
+  $("next").disabled = step === last && !$("ok").checked;
+  $("err").textContent = "";
+}
+
+function renderHW() {
+  const box = $("hw"); box.replaceChildren();
+  const ul = document.createElement("ul");
+  ul.append(text("li", hw.cpuModel || "Processeur inconnu"));
+  ul.append(text("li", "Mémoire : "+gb(hw.memBytes)));
+  ul.append(text("li", "Démarrage : "+(hw.uefi ? "UEFI" : "BIOS (Legacy)")));
+  ul.append(text("li", "AVX : "+(hw.avx ? "oui" : "non — taint no-avx conseillé")+" · AES-NI : "+(hw.aesni ? "oui" : "non")));
+  for (const n of hw.nics) ul.append(text("li", "Réseau "+n.name+" "+n.mac+(n.up ? " (lien actif)" : " (pas de lien)")));
+  box.append(ul);
+  const d = $("disks"); d.replaceChildren();
+  for (const k of hw.disks) {
+    const div = document.createElement("div"); div.className = "disk"+(k.removable ? " off" : "");
+    const lab = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.style.width = "auto"; cb.dataset.byid = k.byID; cb.disabled = k.removable || k.inUse;
+    lab.append(cb, " "+k.path+" · "+gb(k.sizeBytes)+" · "+(k.rotational ? "disque" : "SSD/NVMe")+" · "+k.model+(k.removable ? " (clé ou carte amovible : non utilisable)" : k.inUse ? " (en cours d'utilisation : non utilisable)" : ""));
+    const ser = text("div", "Numéro de série : "+(k.serial || k.byID.split("/").pop())+(k.contents.length ? " · contient : "+k.contents.join(", ") : ""), "muted");
+    const conf = document.createElement("input"); conf.placeholder = "Retapez le numéro de série ci-dessus pour autoriser l'effacement"; conf.dataset.confirm = k.byID; conf.autocomplete = "off"; conf.hidden = true;
+    cb.onchange = () => { conf.hidden = !cb.checked; };
+    div.append(lab, ser, conf); d.append(div);
+  }
+}
+
+async function next() {
+  $("err").textContent = "";
+  try {
+    if (step === 6) { $("next").disabled = true; await api("/api/install", answers()); step = 7; show(); poll(); return; }
+    if (step === 5) { const j = await api("/api/summary", answers()); const ul = $("summary"); ul.replaceChildren(); for (const l of j.summary) ul.append(text("li", l, l.startsWith("ERASE") ? "erase" : "")); $("ok").checked = false; }
+    step++; show();
+  } catch (e) { $("err").textContent = e.message; if (step === 6) $("next").disabled = !$("ok").checked; }
+}
+
+async function poll() {
+  try { const j = await api("/api/status"); if (j.state === "failed") { $("progress").textContent = "Erreur : "+j.error+". Redémarrez la machine avant de réessayer : l'installation a peut-être déjà commencé."; return; } } catch (_) {}
+  if (step === 7) setTimeout(poll, 3000);
+}
+
+$("next").onclick = next;
+$("back").onclick = () => { step--; show(); };
+$("ok").onchange = () => { $("next").disabled = !$("ok").checked; };
+$("dhcp").onchange = () => { $("static").hidden = $("dhcp").checked; };
+
+api("/api/hardware").then(j => {
+  hw = j.hardware;
+  for (const r of ["", ...j.roles]) { const o = document.createElement("option"); o.value = r; o.textContent = r || "(non précisé)"; $("role").append(o); }
+  renderHW(); show();
+}).catch(e => { $("hw").textContent = ""; $("err").textContent = e.message; $("next").disabled = true; });
+show();
+</script>
+</body>
+</html>

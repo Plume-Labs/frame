@@ -21,6 +21,11 @@ type Spec struct {
 	// material, written to the installed system's /etc/Yubico/u2f_keys. Empty:
 	// no console login at all (the account has no password). SSH is unaffected.
 	U2FKeys []string
+	// Role is what the node is for: one of the Role* constants, recorded in
+	// /etc/frame-node-role on the installed system so the join that follows
+	// (by hand, or by the controller) knows which taints and labels to apply.
+	// Empty: not recorded. It changes nothing about the installation itself.
+	Role    string
 	Cluster ClusterTarget
 	// BootMode is "UEFI" or "Legacy". Set by Install from Options.BootMode,
 	// not by callers: the image's disk layout depends on it.
