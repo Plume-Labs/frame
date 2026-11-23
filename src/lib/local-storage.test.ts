@@ -9,6 +9,7 @@ import { g9Local, zfsLocal } from './testdata/local-storage'
 import { translate, type Message } from '@/i18n'
 
 const txt = (x?: { text: string | Message }) => (!x ? undefined : typeof x.text === 'string' ? x.text : translate('en', x.text.key, x.text.params)) as string
+const en = (m: Message | string | undefined) => (m === undefined ? '' : typeof m === 'string' ? m : translate('en', m.key, m.params))
 
 
 function machine(local = zfsLocal()) {
@@ -76,7 +77,7 @@ describe('localStackItems', () => {
   it('ne dit rien d-une machine dont l-agent ne publie pas encore les piles', () => {
     const m = hwMachine()
     expect(localStackItems(m)).toEqual([])
-    expect(stackSummary(null)).toBe("not published by this node's agent")
+    expect(en(stackSummary(null))).toBe("not published by this node's agent")
   })
 })
 
@@ -174,6 +175,6 @@ describe('réserves du réaudit', () => {
     l.zfs.readAt = '2026-09-27T11:59:00Z'
     const item = localStackItems(machine(l)).find((i) => i.code === 'local-stack-busy')
     expect(txt(item)).toBe('srv-hw ZFS: previous read still running on the node — showing the read of 2026-09-27T11:59:00Z')
-    expect(stackSummary(l)).toContain('ZFS: 2 pool(s) (previous read still running)')
+    expect(en(stackSummary(l))).toContain('ZFS: 2 pools (previous read still running)')
   })
 })

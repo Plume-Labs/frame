@@ -9,6 +9,7 @@
 
 import type { LocalStorage, Machine, ObservedDisk, ZPool, ZVdev } from './machines'
 import type { AttentionItem } from './storage-attention'
+import type { Message } from '@/i18n'
 
 /** Pool states zpool reports that mean data is at risk or unavailable. */
 const POOL_OK = 'ONLINE'
@@ -166,19 +167,27 @@ export function nodesWithPublishedMd(machines: Machine[]): Set<string> {
 }
 
 /** One line per stack for the card header: what the node runs. */
-export function stackSummary(local: LocalStorage | null | undefined): string {
-  if (!local) return "not published by this node's agent"
-  const one = (label: string, state: string, n: number, unit: string) =>
-    state === 'present'
-      ? `${label}: ${n} ${unit}`
-      : state === 'absent'
-        ? `${label}: not in use`
-        : state === 'busy'
-          ? `${label}: ${n} ${unit} (previous read still running)`
-          : `${label}: unreadable`
-  return [
-    one('ZFS', local.zfs.state, (local.zfs.pools ?? []).length, 'pool(s)'),
-    one('md', local.md.state, (local.md.arrays ?? []).length, 'array(s)'),
-    one('LVM', local.lvm.state, (local.lvm.vgs ?? []).length, 'VG(s)'),
-  ].join(' · ')
+export function stackSummary(local: LocalStorage | null | undefined): Message {
+  if (!local) return { key: 'lsc.sum.none' }
+  const one = (label: string, state: string, n: number, unit: 'lsc.unit.pool' | 'lsc.unit.array' | 'lsc.unit.vg'): Message => {
+    const what: Message = { key: unit, params: { count: n } }
+    switch (state) {
+      case 'present':
+        return { key: 'lsc.sum.present', params: { label, what } }
+      case 'absent':
+        return { key: 'lsc.sum.absent', params: { label } }
+      case 'busy':
+        return { key: 'lsc.sum.busy', params: { label, what } }
+      default:
+        return { key: 'lsc.sum.error', params: { label } }
+    }
+  }
+  return {
+    key: 'lsc.sum',
+    params: {
+      zfs: one('ZFS', local.zfs.state, (local.zfs.pools ?? []).length, 'lsc.unit.pool'),
+      md: one('md', local.md.state, (local.md.arrays ?? []).length, 'lsc.unit.array'),
+      lvm: one('LVM', local.lvm.state, (local.lvm.vgs ?? []).length, 'lsc.unit.vg'),
+    },
+  }
 }

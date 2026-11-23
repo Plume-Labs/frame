@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { translate, type Message } from '@/i18n'
+
+const en = (m: Message | string | undefined) => (m === undefined ? '' : typeof m === 'string' ? m : translate('en', m.key, m.params))
 import {
   buildOsdRows,
   currentOsdPods,
@@ -52,7 +55,7 @@ describe('buildOsdRows', () => {
     pods[0] = osdPod(0, { phase: 'Pending', ready: false, initDone: 1, initTotal: 4, waiting: 'init expand-bluefs' })
     const r = rows({ pods })[0]
     expect(r.state).toBe('unstable')
-    expect(r.stateDetail).toContain('init 1/4')
+    expect(en(r.stateDetail)).toContain('init 1/4')
   })
 
   it('marque out un OSD sorti du placement', () => {
@@ -127,7 +130,7 @@ describe('pods OSD', () => {
     const recentRunning = osdPod(0, { restarts: 1, lastTerminationAt: '2026-09-27T12:00:00Z' })
     const recentDown = osdPod(0, { restarts: 1, lastTerminationAt: '2026-09-27T12:00:00Z', ready: false })
     expect(podInstability(recentRunning, NOW)).toBe('')
-    expect(podInstability(recentDown, NOW)).toContain('1 restart(s), last 20 min ago')
+    expect(en(podInstability(recentDown, NOW))).toContain('1 restart, last 20 min ago')
   })
 
   it('lit un pod Kubernetes en init', () => {
@@ -196,14 +199,14 @@ describe('fenêtre de stabilité après redémarrage', () => {
   it('dit depuis quand c-est stable pendant la fenêtre', () => {
     const r = row(last + 47 * 60_000)
     expect(r.state).toBe('settling')
-    expect(r.stateDetail).toBe('stable for 47 min, 5 restart(s) in total — watched until 1 h without a restart')
+    expect(en(r.stateDetail)).toBe('stable for 47 min, 5 restarts in total — watched until 1 h without a restart')
   })
 
   it('oublie le redémarrage au bord exact de la fenêtre, pas une milliseconde avant', () => {
     expect(row(last + 60 * 60_000 - 1).state).toBe('settling')
     const r = row(last + 60 * 60_000)
     expect(r.state).toBe('up-in')
-    expect(r.stateDetail).toBe('stable for 1 h, 5 restart(s) in total')
+    expect(en(r.stateDetail)).toBe('stable for 1 h, 5 restarts in total')
   })
 
   it('suit une fenêtre configurée', () => {

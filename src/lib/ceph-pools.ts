@@ -7,6 +7,7 @@
 // lists them all, so the mgr is the source of the pool list; the CRs are not.
 
 import type { PromSample, PromSnapshot } from './ceph-diagnostic'
+import type { Message } from '@/i18n'
 
 /**
  * PG states whose presence in a pool means data is at risk or unavailable,
@@ -48,7 +49,7 @@ export interface PoolRow {
   objects: number | null
   /** Worst PG trouble in the pool, for the table and the banner. */
   trouble: 'critical' | 'warning' | null
-  troubleDetail: string
+  troubleDetail: string | Message
 }
 
 function pgStateName(metric: string): string | null {
@@ -78,15 +79,19 @@ export function tallyPgs(samples: PromSample[] | undefined): { cluster: PgTally;
 }
 
 /** The worst PG trouble in a tally, and the states behind it in words. */
-export function pgTrouble(t: PgTally): { trouble: 'critical' | 'warning' | null; detail: string } {
+export function pgTrouble(t: PgTally): { trouble: 'critical' | 'warning' | null; detail: string | Message } {
+  // Ceph's own state names (degraded, undersized…) stay raw, counts in front.
   const hit = (states: readonly string[]) =>
     states.filter((s) => (t.byState[s] ?? 0) > 0).map((s) => `${t.byState[s]} ${s}`)
   const crit = hit(PG_CRITICAL_STATES)
   const warn = hit(PG_WARNING_STATES)
   // A PG that is not active serves no I/O at all, whatever else it is.
   const inactive = t.total - (t.byState.active ?? t.total)
-  if (inactive > 0) crit.unshift(`${inactive} not active`)
-  if (crit.length) return { trouble: 'critical', detail: [...crit, ...warn].join(', ') }
+  const rest = [...crit, ...warn].join(', ')
+  if (inactive > 0) {
+    return { trouble: 'critical', detail: { key: 'pool.notActive', params: { count: inactive, rest: rest ? `, ${rest}` : '' } } }
+  }
+  if (crit.length) return { trouble: 'critical', detail: rest }
   if (warn.length) return { trouble: 'warning', detail: warn.join(', ') }
   return { trouble: null, detail: '' }
 }
