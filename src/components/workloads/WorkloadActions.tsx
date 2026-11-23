@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,6 +59,7 @@ export function WorkloadActions({
   selection: PodSelection
   onChanged: () => void
 }) {
+  const { t, tn } = useI18n()
   const { pod, controller } = selection
   const [pending, setPending] = useState<Pending>()
   const [replicas, setReplicas] = useState(String(controller?.desiredReplicas ?? 1))
@@ -69,7 +73,7 @@ export function WorkloadActions({
       toast.success(what)
       onChanged()
     } catch (e) {
-      toast.error(`Failed: ${what}`, {
+      toast.error(t('wl.act.failed', { what }), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -99,10 +103,11 @@ export function WorkloadActions({
     <div className="flex flex-wrap items-center gap-2">
       {!operable && controller && (
         <span className="font-mono text-[10px] text-muted-foreground max-w-md">
-          Restart and scale are not available in <strong>{pod.namespace}</strong>. They are granted
-          only where Pod Security enforces <code>baseline</code>, because changing a pod template is
-          root on the node anywhere a privileged pod is still admitted. Use <code>kubectl</code> for
-          infrastructure workloads.
+          {richText(t('wl.act.unavailable'), {
+            ns: <strong>{pod.namespace}</strong>,
+            baseline: <code>baseline</code>,
+            kubectl: <code>kubectl</code>,
+          })}
         </span>
       )}
       {restartable && (
@@ -113,7 +118,7 @@ export function WorkloadActions({
           disabled={busy}
           onClick={() => setPending('restart')}
         >
-          Restart {controller.kind.toLowerCase()}
+          {t('wl.act.restartKind', { kind: controller.kind.toLowerCase() })}
         </Button>
       )}
       {operable && controller?.scalable && (
@@ -133,7 +138,7 @@ export function WorkloadActions({
             setPending('scale')
           }}
         >
-          Scale
+          {t('wl.act.scale')}
         </Button>
       )}
       <Button
@@ -143,28 +148,26 @@ export function WorkloadActions({
         disabled={busy}
         onClick={() => setPending('delete')}
       >
-        Delete pod
+        {t('wl.act.deletePod')}
       </Button>
 
       <AlertDialog open={pending === 'restart'} onOpenChange={(o) => !o && setPending(undefined)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Restart {controller?.kind.toLowerCase()} {pod.namespace}/{controller?.name}?
+              {t('wl.act.restartTitle', { kind: controller?.kind.toLowerCase() ?? '', target: `${pod.namespace}/${controller?.name}` })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Every pod is replaced, one batch at a time, following this controller's own update
-              strategy — the pod template's restart annotation is bumped rather than pods being
-              deleted, so surge and maxUnavailable are respected. Expect a brief capacity dip.
+              {t('wl.act.restartBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
                 controller &&
                 restartable &&
-                void run(`${controller.name} restarting`, () =>
+                void run(t('wl.act.restarting', { name: controller.name }), () =>
                   frame.workloads.restart(
                     controller.kind as 'Deployment' | 'StatefulSet',
                     controller.namespace,
@@ -173,7 +176,7 @@ export function WorkloadActions({
                 )
               }
             >
-              Restart
+              {t('wl.act.restart')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -183,13 +186,11 @@ export function WorkloadActions({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Scale {controller?.kind.toLowerCase()} {pod.namespace}/{controller?.name}?
+              {t('wl.act.scaleTitle', { kind: controller?.kind.toLowerCase() ?? '', target: `${pod.namespace}/${controller?.name}` })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Currently {controller?.desiredReplicas} replicas.
-              {target === 0
-                ? ' Scaling to zero stops this workload entirely: every pod is removed and nothing serves until it is scaled back up.'
-                : ' The new count is applied through the scale subresource, which cannot change anything but the replica count.'}
+              {tn('wl.act.currently', controller?.desiredReplicas ?? 0)}{' '}
+              {target === 0 ? t('wl.act.scaleZero') : t('wl.act.scaleApplied')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input
@@ -197,16 +198,16 @@ export function WorkloadActions({
             inputMode="numeric"
             onChange={(e) => setReplicas(e.target.value)}
             className="font-mono text-xs w-24"
-            aria-label="Replicas"
+            aria-label={t('wl.act.replicas')}
           />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={!targetValid}
               onClick={() =>
                 controller?.scalable &&
                 targetValid &&
-                void run(`${controller.name} scaled to ${target}`, () =>
+                void run(t('wl.act.scaledTo', { name: controller.name, n: target }), () =>
                   frame.workloads.scale(
                     controller.kind as 'Deployment' | 'StatefulSet',
                     controller.namespace,
@@ -216,7 +217,7 @@ export function WorkloadActions({
                 )
               }
             >
-              {target === 0 ? 'Stop' : 'Scale'}
+              {target === 0 ? t('wl.act.stop') : t('wl.act.scale')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -226,26 +227,26 @@ export function WorkloadActions({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Delete pod {pod.namespace}/{pod.name}?
+              {t('wl.act.deleteTitle', { target: `${pod.namespace}/${pod.name}` })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {controller
-                ? `${controller.kind} ${controller.name} owns this pod, so it will be recreated straight away. This is how you restart one pod without restarting the rest.`
+                ? t('wl.act.deleteOwned', { kind: controller.kind, name: controller.name })
                 : pod.owner
-                  ? `${pod.owner.kind} ${pod.owner.name} owns this pod, but this screen did not resolve it to a workload it tracks. The pod will most likely be recreated shortly — this screen cannot say by what, or how soon.`
-                  : 'Nothing owns this pod. Deleting it is final — no controller will bring it back, and whatever it was doing stops for good.'}
+                  ? t('wl.act.deleteUnresolved', { kind: pod.owner.kind, name: pod.owner.name })
+                  : t('wl.act.deleteBare')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
-                void run(`${pod.name} deleted`, () =>
+                void run(t('wl.act.deleted', { name: pod.name }), () =>
                   frame.workloads.deletePod(pod.namespace, pod.name),
                 )
               }
             >
-              Delete
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
