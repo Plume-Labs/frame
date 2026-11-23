@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { collectFindings, unreadSources, BACKUP_STALE_MS } from './findings'
 import type { RegistryAlert } from './alert-registry'
+import { translate, type Message } from '@/i18n'
 import type { BackupStatus, CephStatus, ClusterNodeInfo } from './frame-sdk'
 
 const NOW = 1_700_000_000_000
+
+const en = (x: string | Message | undefined) => (typeof x === 'object' ? translate('en', x.key, x.params) : x)
 
 function node(name: string, over: Partial<ClusterNodeInfo> = {}): ClusterNodeInfo {
   return {
@@ -190,7 +193,9 @@ describe('collectFindings — machine checks and services', () => {
       },
       NOW,
     )
-    expect(f.find((x) => x.screen === 'caches')).toMatchObject({ tone: 'destructive', label: 'Cache neura/jobs not ready' })
+    const cache = f.find((x) => x.screen === 'caches')
+    expect(cache?.tone).toBe('destructive')
+    expect(en(cache?.label)).toBe('Cache neura/jobs not ready')
     expect(f.find((x) => x.screen === 'databases')).toMatchObject({ tone: 'warning', detail: 'Provisioning' })
     expect(f).toHaveLength(2)
   })
@@ -282,5 +287,15 @@ describe('collectFindings: alert registry', () => {
       NOW,
     )
     expect(f).toHaveLength(2)
+  })
+})
+
+describe('findings are messages, not English strings', () => {
+  it('counts nodes with a plural message and names the check on a machine finding', () => {
+    const one = collectFindings({ nodes: [node('a', { ready: false })] }, NOW)
+    const two = collectFindings({ nodes: [node('a', { ready: false }), node('b', { ready: false })] }, NOW)
+    expect(en(one[0].label)).toBe('1 node not ready')
+    expect(en(two[0].label)).toBe('2 nodes not ready')
+    expect(translate('fr', (two[0].label as Message).key, (two[0].label as Message).params)).toBe('2 nœuds non prêts')
   })
 })

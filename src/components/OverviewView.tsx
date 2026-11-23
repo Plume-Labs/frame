@@ -30,6 +30,8 @@ import type { Database } from '@/lib/databases'
 import { volumeFillFindings, type VolumeLoadSnapshot } from '@/lib/volume-load'
 import type { Machine } from '@/lib/machines'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/context'
+import type { Message, MessageKey } from '@/i18n'
 import {
   Bell,
   CheckCircle,
@@ -43,6 +45,27 @@ import {
 const frame = createFrameClient()
 
 const WINDOW_HOURS = 3
+
+/** Series names come from the queries below (and the SDK echoes them back); the screen shows them translated. */
+const TREND_LABEL: Record<string, MessageKey> = {
+  CPU: 'ov.trend.cpu',
+  Memory: 'ov.trend.memory',
+  GPU: 'ov.trend.gpu',
+  Storage: 'ov.trend.storage',
+}
+
+/** The source ids `collectFindings` / `unreadSources` use, named for people. */
+const SOURCE_LABEL: Record<string, MessageKey> = {
+  nodes: 'ov.src.nodes',
+  alerts: 'ov.src.alerts',
+  registry: 'ov.src.registry',
+  ceph: 'ov.src.ceph',
+  backups: 'ov.src.backups',
+  machines: 'ov.src.machines',
+  caches: 'ov.src.caches',
+  databases: 'ov.src.databases',
+  volumes: 'ov.src.volumes',
+}
 
 /** The Needs-attention sources keep their last read through a failed refresh and say so. */
 const KEEP_STALE = { keepStaleOnError: true }
@@ -68,6 +91,7 @@ const TREND_QUERIES = [
  * context before this could exist.
  */
 export function OverviewView() {
+  const { t } = useI18n()
   const cephNs = config().namespaces.ceph
   const veleroNs = config().namespaces.velero
   // Sourced from the same integration config ceph() itself reads osd/mon pods
@@ -148,7 +172,7 @@ export function OverviewView() {
     <div className="space-y-6">
       <ScreenHeader
         icon={<SquaresFour className="text-primary" />}
-        title="Overview"
+        title={t('tab.overview')}
         state={loading ? { phase: 'loading' } : { phase: 'ready', data: null }}
         onReload={reloadAll}
       />
@@ -179,7 +203,9 @@ export function OverviewView() {
 
 /** One actionable line: what is wrong, how bad, and where to go about it. */
 function FindingRow({ finding }: { finding: Finding }) {
+  const { t, tm } = useI18n()
   const { navigate } = useNavigation()
+  const text = (x: string | Message) => (typeof x === 'string' ? x : tm(x))
   return (
     <button
       type="button"
@@ -187,9 +213,9 @@ function FindingRow({ finding }: { finding: Finding }) {
       className="w-full flex items-center gap-3 p-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary/60 transition-colors text-left"
     >
       <Warning size={16} className={cn('shrink-0', TONE_TEXT[finding.tone])} />
-      <span className="font-mono text-xs font-bold">{finding.label}</span>
-      <span className="text-[11px] text-muted-foreground truncate flex-1">{finding.detail}</span>
-      <span className="text-[10px] font-mono text-muted-foreground shrink-0">open →</span>
+      <span className="font-mono text-xs font-bold">{text(finding.label)}</span>
+      <span className="text-[11px] text-muted-foreground truncate flex-1">{text(finding.detail)}</span>
+      <span className="text-[10px] font-mono text-muted-foreground shrink-0">{t('ov.open')}</span>
     </button>
   )
 }
@@ -215,6 +241,7 @@ function AttentionCard({
   databases: ReturnType<typeof useLiveResource<Database[]>>['state']
   volumeFill: ReturnType<typeof useLiveResource<Pick<VolumeLoadSnapshot, 'volUsed' | 'volCapacity'> | null>>['state']
 }) {
+  const { t } = useI18n()
   const findings = collectFindings({
     nodes: nodes.phase === 'ready' ? nodes.data : undefined,
     alerts: alerts.phase === 'ready' ? alerts.data : undefined,
@@ -229,10 +256,11 @@ function AttentionCard({
 
   const unread = unreadSources({ nodes, alerts, registry, ceph, backups, machines, caches, databases, volumes: volumeFill })
   const unreadCount = unread.loading.length + unread.failed.length + unread.stale.length
+  const names = (ids: string[]) => ids.map((id) => (SOURCE_LABEL[id] ? t(SOURCE_LABEL[id]) : id)).join(', ')
   const unreadNote = [
-    unread.loading.length > 0 ? `still loading: ${unread.loading.join(', ')}` : '',
-    unread.failed.length > 0 ? `could not be read: ${unread.failed.join(', ')}` : '',
-    unread.stale.length > 0 ? `last refresh failed, showing old data: ${unread.stale.join(', ')}` : '',
+    unread.loading.length > 0 ? t('ov.unread.loading', { list: names(unread.loading) }) : '',
+    unread.failed.length > 0 ? t('ov.unread.failed', { list: names(unread.failed) }) : '',
+    unread.stale.length > 0 ? t('ov.unread.stale', { list: names(unread.stale) }) : '',
   ]
     .filter(Boolean)
     .join(' · ')
@@ -241,7 +269,7 @@ function AttentionCard({
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <Bell size={16} className="text-primary" /> Needs attention
+          <Bell size={16} className="text-primary" /> {t('ov.attention')}
           {findings.length > 0 && (
             <Badge variant="outline" className="ml-auto font-mono text-[10px] text-warning border-warning/40">
               {findings.length}
@@ -252,7 +280,7 @@ function AttentionCard({
       <CardContent className="space-y-2">
         {Object.entries({ nodes, alerts, registry, ceph, backups, machines, caches, databases, volumes: volumeFill }).map(
           ([name, st]) => (
-            <StaleNotice key={name} state={st} label={name} />
+            <StaleNotice key={name} state={st} label={SOURCE_LABEL[name] ? t(SOURCE_LABEL[name]) : name} />
           ),
         )}
         {findings.length === 0 && unreadCount > 0 ? (
@@ -260,7 +288,7 @@ function AttentionCard({
           // what is missing instead of showing a green check.
           <div className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
             <Warning size={18} aria-hidden="true" className="shrink-0 text-warning" />
-            Cannot say everything is fine yet: {unreadNote}.
+            {t('ov.cannotSay', { note: unreadNote })}
           </div>
         ) : findings.length === 0 ? (
           // Saying "nothing is wrong" is a result. An empty card reads as a
@@ -268,9 +296,9 @@ function AttentionCard({
           <div className="flex items-center gap-2 py-4 text-sm font-mono text-muted-foreground">
             <CheckCircle size={18} aria-hidden="true" className="text-accent" />
             <span>
-              No firing alerts, every node ready, Ceph and disks healthy, links clean, services ready, backups current.
+              {t('ov.allClear')}
               {unread.unavailable.length > 0 && (
-                <span className="block text-[11px]">Not monitored here: {unread.unavailable.join(', ')}.</span>
+                <span className="block text-[11px]">{t('ov.notMonitored', { list: names(unread.unavailable) })}</span>
               )}
             </span>
           </div>
@@ -278,7 +306,7 @@ function AttentionCard({
           findings.map((f) => <FindingRow key={f.key} finding={f} />)
         )}
         {findings.length > 0 && unreadCount > 0 && (
-          <div className="text-[11px] font-mono text-muted-foreground">Not complete — {unreadNote}.</div>
+          <div className="text-[11px] font-mono text-muted-foreground">{t('ov.incomplete', { note: unreadNote })}</div>
         )}
       </CardContent>
     </Card>
@@ -286,13 +314,14 @@ function AttentionCard({
 }
 
 function TrendCard({ state }: { state: ReturnType<typeof useLiveResource<MetricSeries[] | null>>['state'] }) {
+  const { t } = useI18n()
   const trend = state.phase === 'ready' ? state.data : null
   if (!trend) return null
   return (
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <TrendUp size={16} className="text-primary" /> Cluster, last {WINDOW_HOURS}h
+          <TrendUp size={16} className="text-primary" /> {t('ov.cluster', { hours: WINDOW_HOURS })}
         </CardTitle>
       </CardHeader>
       <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -300,6 +329,7 @@ function TrendCard({ state }: { state: ReturnType<typeof useLiveResource<MetricS
           <TrendRow
             key={series.metric}
             series={series}
+            label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
             windowHours={WINDOW_HOURS}
             tone={inverseScoreTone(series.current, 75, 90)}
           />
@@ -314,33 +344,34 @@ function TrendCard({ state }: { state: ReturnType<typeof useLiveResource<MetricS
  * DCGM, no cards): a tile saying "0 TOPS" would read as a fault.
  */
 function ComputeCard({ state }: { state: ReturnType<typeof useLiveResource<GpuInfo[]>>['state'] }) {
+  const { t, tn } = useI18n()
   const { navigate } = useNavigation()
   const gpus = state.phase === 'ready' ? state.data : []
   if (gpus.length === 0) return null
-  const t = summarizeTops(gpus)
+  const tops = summarizeTops(gpus)
   return (
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <Lightning size={16} className="text-primary" /> Compute
+          <Lightning size={16} className="text-primary" /> {t('nav.group.compute')}
           <button
             type="button"
             onClick={() => navigate('gpu')}
             className="ml-auto text-[10px] font-mono text-muted-foreground hover:text-foreground"
           >
-            open →
+            {t('ov.open')}
           </button>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <StatGrid count={3}>
-          <Stat label="Peak" value={t.known ? formatTops(t.peak) : '—'} tone="accent" size="md" />
-          <Stat label="In use (est.)" value={t.known ? formatTops(t.used) : '—'} size="md" />
-          <Stat label="GPUs" value={`${gpus.length}`} size="md" />
+          <Stat label={t('ov.compute.peak')} value={tops.known ? formatTops(tops.peak) : '—'} tone="accent" size="md" />
+          <Stat label={t('ov.compute.used')} value={tops.known ? formatTops(tops.used) : '—'} size="md" />
+          <Stat label={t('ov.compute.gpus')} value={`${gpus.length}`} size="md" />
         </StatGrid>
         <p className="text-[11px] font-mono text-muted-foreground">
-          Vendor INT8 rating (dense) × utilisation.
-          {t.unknown > 0 && ` ${t.unknown} GPU${t.unknown > 1 ? 's' : ''} of unlisted model not counted.`}
+          {t('ov.compute.note')}
+          {tops.unknown > 0 && ` ${tn('ov.compute.unknown', tops.unknown)}`}
         </p>
       </CardContent>
     </Card>
@@ -348,30 +379,31 @@ function ComputeCard({ state }: { state: ReturnType<typeof useLiveResource<GpuIn
 }
 
 function ServingCard({ state }: { state: ReturnType<typeof useLiveResource<InferenceStatus | null>>['state'] }) {
+  const { t } = useI18n()
   const { navigate } = useNavigation()
   const inf = state.phase === 'ready' ? state.data : null
   return (
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <Lightning size={16} className="text-primary" /> Serving
+          <Lightning size={16} className="text-primary" /> {t('ov.serving')}
           <button
             type="button"
             onClick={() => navigate('inference')}
             className="ml-auto text-[10px] font-mono text-muted-foreground hover:text-foreground"
           >
-            open →
+            {t('ov.open')}
           </button>
         </CardTitle>
       </CardHeader>
       <CardContent>
         {inf ? (
           <StatGrid count={4}>
-            <Stat label="Decode" value={formatRate(inf.predictedTokensPerSec)} tone="accent" size="md" />
-            <Stat label="KV used" value={`${inf.kvUsePct.toFixed(0)}%`} size="md" />
-            <Stat label="Processing" value={`${inf.requestsProcessing}`} size="md" />
+            <Stat label={t('ov.serving.decode')} value={formatRate(inf.predictedTokensPerSec)} tone="accent" size="md" />
+            <Stat label={t('ov.serving.kv')} value={`${inf.kvUsePct.toFixed(0)}%`} size="md" />
+            <Stat label={t('ov.serving.processing')} value={`${inf.requestsProcessing}`} size="md" />
             <Stat
-              label="Deferred"
+              label={t('ov.serving.deferred')}
               value={`${inf.requestsDeferred}`}
               size="md"
               tone={inf.requestsDeferred > 0 ? 'warning' : 'foreground'}
@@ -380,10 +412,10 @@ function ServingCard({ state }: { state: ReturnType<typeof useLiveResource<Infer
         ) : (
           <p className="text-sm text-muted-foreground font-mono">
             {state.phase === 'loading'
-              ? 'Reading…'
+              ? t('ov.reading')
               : state.phase === 'error'
-                ? 'Could not read the inference status.'
-                : 'No inference server deployed.'}
+                ? t('ov.serving.error')
+                : t('ov.serving.none')}
           </p>
         )}
       </CardContent>
@@ -398,6 +430,7 @@ function PostureCard({
   state: ReturnType<typeof useLiveResource<PostureStatus | null>>['state']
   backups: ReturnType<typeof useLiveResource<BackupStatus | null>>['state']
 }) {
+  const { t } = useI18n()
   const { navigate } = useNavigation()
   const p = state.phase === 'ready' ? state.data : null
   const bk = backups.phase === 'ready' ? backups.data : null
@@ -405,13 +438,13 @@ function PostureCard({
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <Detective size={16} className="text-primary" /> Posture
+          <Detective size={16} className="text-primary" /> {t('ov.posture')}
           <button
             type="button"
             onClick={() => navigate('security')}
             className="ml-auto text-[10px] font-mono text-muted-foreground hover:text-foreground"
           >
-            open →
+            {t('ov.open')}
           </button>
         </CardTitle>
       </CardHeader>
@@ -419,28 +452,28 @@ function PostureCard({
         {p ? (
           <StatGrid count={4}>
             <Stat
-              label="Critical vulns"
+              label={t('ov.posture.critical')}
               value={p.vulns.critical}
               size="md"
               tone={p.vulns.critical > 0 ? 'destructive' : 'accent'}
             />
-            <Stat label="High vulns" value={p.vulns.high} size="md" tone={p.vulns.high > 0 ? 'warning' : 'accent'} />
-            <Stat label="Images scanned" value={p.vulns.images} size="md" />
-            <Stat label="Misconfigs" value={p.misconfigs.critical + p.misconfigs.high} size="md" />
+            <Stat label={t('ov.posture.high')} value={p.vulns.high} size="md" tone={p.vulns.high > 0 ? 'warning' : 'accent'} />
+            <Stat label={t('ov.posture.images')} value={p.vulns.images} size="md" />
+            <Stat label={t('ov.posture.misconfigs')} value={p.misconfigs.critical + p.misconfigs.high} size="md" />
           </StatGrid>
         ) : (
           <p className="text-sm text-muted-foreground font-mono">
             {state.phase === 'loading'
-              ? 'Reading…'
+              ? t('ov.reading')
               : state.phase === 'error'
-                ? 'Could not read the posture status.'
-                : 'trivy-operator not deployed.'}
+                ? t('ov.posture.error')
+                : t('ov.posture.none')}
           </p>
         )}
         {bk?.lastSuccess && (
           <div className="text-[11px] font-mono text-muted-foreground">
-            last backup {formatAge(new Date(bk.lastSuccess).getTime())} ago
-            {bk.schedule ? ` · schedule ${bk.schedule}` : ' · no schedule'}
+            {t('ov.posture.lastBackup', { age: formatAge(new Date(bk.lastSuccess).getTime()) })}
+            {bk.schedule ? ` · ${t('ov.posture.schedule', { schedule: bk.schedule })}` : ` · ${t('ov.posture.noSchedule')}`}
           </div>
         )}
       </CardContent>
