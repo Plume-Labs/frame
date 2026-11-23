@@ -95,43 +95,77 @@ func valueOr(v, def string) string {
 	return v
 }
 
+// prompt is what the questions below share: how to ask, how to say.
+type prompt struct {
+	ask asker
+	say func(string, ...any)
+}
+
 func askAnswers(ask asker, say func(string, ...any), keymap func(string) error, hw Hardware, prev Answers) (Answers, error) {
+	p := prompt{ask, say}
 	var a Answers
 	var err error
-	// First, so that everything typed after it lands as typed on the keyboard in front of you.
-	kb, err := ask("Keyboard layout ("+strings.Join(provision.KeyboardLayouts(), " ")+")", valueOr(prev.Keyboard, "us"))
-	if err != nil {
+	if a.Keyboard, err = p.keyboard(keymap, prev); err != nil {
 		return a, err
-	}
-	a.Keyboard = strings.ToLower(kb)
-	if keymap != nil && slices.Contains(provision.KeyboardLayouts(), a.Keyboard) {
-		if e := keymap(a.Keyboard); e != nil {
-			say("  could not switch the console keyboard: %v", clean(e.Error()))
-		}
 	}
 	if a.Hostname, err = ask("Machine name", prev.Hostname); err != nil {
 		return a, err
 	}
+	if a.Role, err = p.role(); err != nil {
+		return a, err
+	}
+	if a.Disks, err = p.disks(hw); err != nil {
+		return a, err
+	}
+	if err = p.network(&a, prev); err != nil {
+		return a, err
+	}
+	if a.SSHPublicKey, err = ask("SSH public key (one line)", prev.SSHPublicKey); err != nil {
+		return a, err
+	}
+	a.U2FKeys, err = p.securityKeys(prev)
+	return a, err
+}
+
+// keyboard is asked first, so that everything typed after it lands as typed on
+// the keyboard in front of you.
+func (p prompt) keyboard(keymap func(string) error, prev Answers) (string, error) {
+	kb, err := p.ask("Keyboard layout ("+strings.Join(provision.KeyboardLayouts(), " ")+")", valueOr(prev.Keyboard, "us"))
+	if err != nil {
+		return "", err
+	}
+	kb = strings.ToLower(kb)
+	if keymap != nil && slices.Contains(provision.KeyboardLayouts(), kb) {
+		if e := keymap(kb); e != nil {
+			p.say("  could not switch the console keyboard: %v", clean(e.Error()))
+		}
+	}
+	return kb, nil
+}
+
+func (p prompt) role() (string, error) {
 	roles := append([]string{""}, provision.Roles()...)
-	say("Role:")
+	p.say("Role:")
 	for i, r := range roles {
 		label := r
 		if r == "" {
 			label = "(not recorded)"
 		}
-		say("  %d) %s", i, label)
+		p.say("  %d) %s", i, label)
 	}
-	n, err := ask("Role number", "0")
+	n, err := p.ask("Role number", "0")
 	if err != nil {
-		return a, err
+		return "", err
 	}
 	if i, e := strconv.Atoi(n); e == nil && i >= 0 && i < len(roles) {
-		a.Role = roles[i]
-	} else {
-		say("  %q is not a role number: no role recorded.", clean(n))
+		return roles[i], nil
 	}
+	p.say("  %q is not a role number: no role recorded.", clean(n))
+	return "", nil
+}
 
-	say("Disks (everything on the chosen disk is erased):")
+func (p prompt) disks(hw Hardware) ([]DiskChoice, error) {
+	p.say("Disks (everything on the chosen disk is erased):")
 	for i, d := range hw.Disks {
 		note := ""
 		switch {
@@ -144,71 +178,73 @@ func askAnswers(ask asker, say func(string, ...any), keymap func(string) error, 
 		if len(d.Contents) > 0 {
 			contents = "  holds: " + strings.Join(d.Contents, ", ")
 		}
-		say("  %d) %s  %s  %s  serial %s%s%s", i+1, d.Path, humanBytes(d.SizeBytes), clean(d.Model), clean(d.Confirm()), clean(contents), note)
+		p.say("  %d) %s  %s  %s  serial %s%s%s", i+1, d.Path, humanBytes(d.SizeBytes), clean(d.Model), clean(d.Confirm()), clean(contents), note)
 	}
-	picks, err := ask("Disk number (two numbers for a mirror, e.g. \"1 2\")", "")
+	picks, err := p.ask("Disk number (two numbers for a mirror, e.g. \"1 2\")", "")
 	if err != nil {
-		return a, err
+		return nil, err
 	}
+	var chosen []DiskChoice
 	for f := range strings.FieldsSeq(picks) {
 		i, e := strconv.Atoi(f)
 		if e != nil || i < 1 || i > len(hw.Disks) {
-			say("  %q is not a disk number: ignored.", clean(f))
+			p.say("  %q is not a disk number: ignored.", clean(f))
 			continue
 		}
 		d := hw.Disks[i-1]
-		c, err := ask("Retype the serial of "+d.Path+" to allow erasing it", "")
+		c, err := p.ask("Retype the serial of "+d.Path+" to allow erasing it", "")
 		if err != nil {
-			return a, err
+			return nil, err
 		}
-		a.Disks = append(a.Disks, DiskChoice{ByID: d.ByID, Confirm: c})
+		chosen = append(chosen, DiskChoice{ByID: d.ByID, Confirm: c})
 	}
+	return chosen, nil
+}
 
-	netMode, err := ask("Network: dhcp or static", "static")
+func (p prompt) network(a *Answers, prev Answers) error {
+	mode, err := p.ask("Network: dhcp or static", "static")
 	if err != nil {
-		return a, err
+		return err
 	}
-	if strings.EqualFold(netMode, "dhcp") {
+	if strings.EqualFold(mode, "dhcp") {
 		a.DHCP = true
-	} else {
-		if a.Address, err = ask("Address with mask (e.g. 192.168.2.201/24)", prev.Address); err != nil {
-			return a, err
-		}
-		if a.Gateway, err = ask("Gateway", prev.Gateway); err != nil {
-			return a, err
-		}
-		dns, err := ask("DNS servers, separated by spaces", strings.Join(prev.DNS, " "))
-		if err != nil {
-			return a, err
-		}
-		a.DNS = strings.Fields(dns)
+		return nil
 	}
-	if a.SSHPublicKey, err = ask("SSH public key (one line)", prev.SSHPublicKey); err != nil {
-		return a, err
+	if a.Address, err = p.ask("Address with mask (e.g. 192.168.2.201/24)", prev.Address); err != nil {
+		return err
 	}
+	if a.Gateway, err = p.ask("Gateway", prev.Gateway); err != nil {
+		return err
+	}
+	dns, err := p.ask("DNS servers, separated by spaces", strings.Join(prev.DNS, " "))
+	a.DNS = strings.Fields(dns)
+	return err
+}
+
+func (p prompt) securityKeys(prev Answers) ([]string, error) {
 	if len(prev.U2FKeys) > 0 {
-		keep, err := ask(fmt.Sprintf("Keep the %d security-key credential(s) typed before? (y/n)", len(prev.U2FKeys)), "y")
+		keep, err := p.ask(fmt.Sprintf("Keep the %d security-key credential(s) typed before? (y/n)", len(prev.U2FKeys)), "y")
 		if err != nil {
-			return a, err
+			return nil, err
 		}
 		if strings.HasPrefix(strings.ToLower(keep), "y") {
-			a.U2FKeys = append([]string(nil), prev.U2FKeys...)
-			return a, nil
+			return append([]string(nil), prev.U2FKeys...), nil
 		}
 	}
-	say("Security keys for the local console login (hack/enroll-yubikey.sh output):")
-	say("paste one credential per line, up to %d; an empty line ends (empty from the start: no console login).", provision.MaxU2FKeys)
-	for len(a.U2FKeys) < provision.MaxU2FKeys {
-		k, err := ask("Credential "+strconv.Itoa(len(a.U2FKeys)+1), "")
+	p.say("Security keys for the local console login (hack/enroll-yubikey.sh output):")
+	p.say("paste one credential per line, up to %d; an empty line ends (empty from the start: no console login).", provision.MaxU2FKeys)
+	var keys []string
+	for len(keys) < provision.MaxU2FKeys {
+		k, err := p.ask("Credential "+strconv.Itoa(len(keys)+1), "")
 		if err != nil {
-			return a, err
+			return nil, err
 		}
 		if k == "" {
 			break
 		}
-		a.U2FKeys = append(a.U2FKeys, k)
+		keys = append(keys, k)
 	}
-	return a, nil
+	return keys, nil
 }
 
 func bootName(hw Hardware) string {
