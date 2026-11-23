@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { describe, it, expect } from 'vitest'
+import { translate } from '@/i18n'
 import {
   OPERABLE_NAMESPACES,
   buildWorkloadTree,
@@ -296,16 +297,18 @@ describe('canEditManifest', () => {
 
 describe('ownershipWarning', () => {
   it('names Argo CD from its tracking annotation', () => {
-    const w = ownershipWarning({ annotations: { 'argocd.argoproj.io/tracking-id': 'acme:apps/Deployment:acme/api' } })
+    const m = ownershipWarning({ annotations: { 'argocd.argoproj.io/tracking-id': 'acme:apps/Deployment:acme/api' } })
+    const w = m && translate('en', m.key, m.params)
     expect(w).toContain('Argo CD')
     expect(w).toContain('reverted')
   })
 
   it('names Helm and its release', () => {
-    const w = ownershipWarning({
+    const m = ownershipWarning({
       labels: { 'app.kubernetes.io/managed-by': 'Helm' },
       annotations: { 'meta.helm.sh/release-name': 'acme' },
     })
+    const w = m && translate('en', m.key, m.params)
     expect(w).toContain('Helm')
     expect(w).toContain('acme')
   })

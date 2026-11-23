@@ -1,4 +1,5 @@
 import { config } from './frame-config'
+import type { Message } from '@/i18n'
 
 /**
  * What the Workloads screen decides, minus the rendering.
@@ -303,18 +304,18 @@ export function buildWorkloadTree(input: {
 export function ownershipWarning(meta: {
   labels?: Record<string, string>
   annotations?: Record<string, string>
-}): string | undefined {
+}): Message | undefined {
   const labels = meta.labels ?? {}
   const annotations = meta.annotations ?? {}
 
   const argo =
     annotations['argocd.argoproj.io/tracking-id'] ?? labels['argocd.argoproj.io/instance']
   if (argo) {
-    return `Argo CD manages this object (${argo}). Your edit will be reverted at the next sync.`
+    return { key: 'wl.own.argo', params: { id: argo } }
   }
   if (labels['app.kubernetes.io/managed-by'] === 'Helm') {
-    const release = annotations['meta.helm.sh/release-name'] ?? 'an unnamed release'
-    return `Helm manages this object (release ${release}). Your edit will be reverted at the next upgrade.`
+    const release = annotations['meta.helm.sh/release-name']
+    return release ? { key: 'wl.own.helm', params: { release } } : { key: 'wl.own.helmUnnamed' }
   }
   return undefined
 }

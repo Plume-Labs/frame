@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
+import type { Message } from '@/i18n'
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,10 +74,11 @@ export function YamlTab({
   admin: boolean
   onSaved: () => void
 }) {
+  const { t, tm } = useI18n()
   const [text, setText] = useState('')
   const [before, setBefore] = useState<Record<string, unknown> | undefined>()
-  const [warning, setWarning] = useState<string | undefined>()
-  const [error, setError] = useState<string | undefined>()
+  const [warning, setWarning] = useState<Message | undefined>()
+  const [error, setError] = useState<Message | string | undefined>()
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
 
@@ -119,7 +124,7 @@ export function YamlTab({
     setBusy(true)
     try {
       await frame.workloads.applyManifest({ kind, namespace, name, before, yaml: text })
-      toast.success(`${name} updated`)
+      toast.success(t('wl.yaml.updated', { name }))
       onSaved()
       await load()
     } catch (e) {
@@ -128,10 +133,7 @@ export function YamlTab({
         // happened rather than reporting a status code: the person's text is
         // still on screen and still valid, against a version that no longer
         // exists.
-        setError(
-          'Someone else changed this object while you were editing it. Nothing was written. ' +
-            'Reload to get the current version, then re-apply your change.',
-        )
+        setError({ key: 'wl.yaml.conflict' })
       } else {
         setError(e instanceof Error ? e.message : String(e))
       }
@@ -144,10 +146,10 @@ export function YamlTab({
     <div className="space-y-3">
       {warning && (
         <p className="font-mono text-xs text-primary border border-primary/40 rounded-md p-2">
-          {warning}
+          {tm(warning)}
         </p>
       )}
-      {error && <p className="font-mono text-xs text-destructive">{error}</p>}
+      {error && <p className="font-mono text-xs text-destructive">{typeof error === 'string' ? error : tm(error)}</p>}
 
       <Textarea
         value={text}
@@ -163,27 +165,21 @@ export function YamlTab({
           disabled={busy || !writable}
           onClick={() => setConfirming(true)}
         >
-          Apply
+          {t('wl.yaml.apply')}
         </Button>
         <Button size="sm" variant="outline" className="font-mono" disabled={busy} onClick={() => void load()}>
-          Reload
+          {t('wl.yaml.reload')}
         </Button>
         <span className="font-mono text-[10px] text-muted-foreground max-w-lg">
-          {writable ? (
-            'Applied as a whole-object update, carrying the version you read.'
-          ) : !admin ? (
-            <>
-              Read-only: saving a manifest is an administrator action. Your account is not an
-              admin — restart and scale, if this namespace grants them, are still yours.
-            </>
-          ) : (
-            <>
-              Read-only in <strong>{namespace}</strong>. Saving is granted only where Pod Security
-              enforces <code>baseline</code>, because rewriting a pod template is root on the node
-              anywhere a privileged pod is still admitted. Use <code>kubectl</code> for
-              infrastructure workloads.
-            </>
-          )}
+          {writable
+            ? t('wl.yaml.hintWritable')
+            : !admin
+              ? t('wl.yaml.hintNotAdmin')
+              : richText(t('wl.yaml.hintNamespace'), {
+                  ns: <strong>{namespace}</strong>,
+                  baseline: <code>baseline</code>,
+                  kubectl: <code>kubectl</code>,
+                })}
         </span>
       </div>
 
@@ -191,18 +187,16 @@ export function YamlTab({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Apply your changes to {kind.toLowerCase()} {namespace}/{name}?
+              {t('wl.yaml.confirmTitle', { kind: kind.toLowerCase(), target: `${namespace}/${name}` })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              The manifest is validated against the apiserver first, as a dry run that stores
-              nothing and is not itself recorded, and only written if it is accepted. One row
-              appears on the Tasks screen, naming the fields you changed.
-              {warning ? ` ${warning}` : ''}
+              {t('wl.yaml.confirmBody')}
+              {warning ? ` ${tm(warning)}` : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void save()}>Apply</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void save()}>{t('wl.yaml.apply')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

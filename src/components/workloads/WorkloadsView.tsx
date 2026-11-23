@@ -18,6 +18,7 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { isAdminToken } from '@/lib/auth'
 import { createFrameClient, workloadWatchPaths } from '@/lib/frame-sdk'
 import { resolveSelection, type NamespaceNode, type WorkloadPod } from '@/lib/workloads'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -40,6 +41,7 @@ const PHASE_TONE: Record<string, string> = {
  * returns it.
  */
 export function WorkloadsView() {
+  const { t, tn } = useI18n()
   const { state, reload } = useLiveResource<NamespaceNode[]>(
     () => frame.workloads.tree(),
     [],
@@ -139,7 +141,7 @@ export function WorkloadsView() {
       <span className="flex-1 truncate">{pod.name}</span>
       {pod.restarts > 0 && (
         <Badge variant="outline" className="font-mono text-[10px] border-current text-destructive">
-          {pod.restarts} restarts
+          {tn('wl.restarts', pod.restarts)}
         </Badge>
       )}
       <span className="text-muted-foreground w-24 truncate">{pod.nodeName || '—'}</span>
@@ -152,7 +154,7 @@ export function WorkloadsView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <TreeStructure className="text-primary" />
-            Workloads
+            {t('wl.title')}
             <Button
               variant="outline"
               size="sm"
@@ -161,7 +163,7 @@ export function WorkloadsView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
@@ -169,7 +171,7 @@ export function WorkloadsView() {
           <CardContent className="space-y-3">
             <div className="flex flex-wrap items-center gap-4">
               <Input
-                placeholder="Filter by namespace, controller or pod…"
+                placeholder={t('wl.filter')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="max-w-xs font-mono text-xs"
@@ -181,7 +183,7 @@ export function WorkloadsView() {
                   onCheckedChange={setShowInfrastructure}
                 />
                 <Label htmlFor="show-infra" className="font-mono text-xs text-muted-foreground">
-                  Show infrastructure namespaces
+                  {t('wl.showInfra')}
                 </Label>
               </div>
             </div>
@@ -200,11 +202,11 @@ export function WorkloadsView() {
                       <span className="font-medium">{ns.namespace}</span>
                       {ns.infrastructure && (
                         <Badge variant="outline" className="font-mono text-[10px]">
-                          infrastructure
+                          {t('wl.infra')}
                         </Badge>
                       )}
                       <span className="ml-auto text-muted-foreground">
-                        {ns.controllers.length} controllers · {ns.podCount} pods
+                        {tn('wl.controllers', ns.controllers.length)} · {tn('wl.pods', ns.podCount)}
                       </span>
                     </button>
 
@@ -236,7 +238,7 @@ export function WorkloadsView() {
                     {nsOpen && ns.barePods.length > 0 && (
                       <div>
                         <div className="pl-8 pr-3 py-1.5 font-mono text-[10px] text-muted-foreground">
-                          Pods with no controller
+                          {t('wl.barePods')}
                         </div>
                         {ns.barePods.map((p) => podRow(p))}
                       </div>
@@ -249,7 +251,7 @@ export function WorkloadsView() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No workloads are readable with your permissions." />
+      <LiveStates state={state} emptyLabel={t('wl.empty')} />
 
       {selection && (
         <PodDetailPanel

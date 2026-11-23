@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch'
 import { createFrameClient } from '@/lib/frame-sdk'
 import { pumpLogLines } from '@/lib/pod-logs'
 import type { WorkloadPod } from '@/lib/workloads'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -34,6 +35,7 @@ const MAX_LINES = 5_000
  * The `pods/log` grant starts at the operator tier for that reason.
  */
 export function LogsTab({ pod }: { pod: WorkloadPod }) {
+  const { t } = useI18n()
   const [container, setContainer] = useState(pod.containers[0] ?? '')
   const [follow, setFollow] = useState(true)
   const [previous, setPrevious] = useState(false)
@@ -117,7 +119,7 @@ export function LogsTab({ pod }: { pod: WorkloadPod }) {
       <div className="flex flex-wrap items-center gap-4">
         <Select value={container} onValueChange={setContainer}>
           <SelectTrigger className="w-56 font-mono text-xs">
-            <SelectValue placeholder="Container" />
+            <SelectValue placeholder={t('wl.logs.container')} />
           </SelectTrigger>
           <SelectContent>
             {pod.containers.map((c) => (
@@ -131,14 +133,14 @@ export function LogsTab({ pod }: { pod: WorkloadPod }) {
         <div className="flex items-center gap-2">
           <Switch id="log-follow" checked={follow} onCheckedChange={setFollow} disabled={previous} />
           <Label htmlFor="log-follow" className="font-mono text-xs text-muted-foreground">
-            Follow
+            {t('wl.logs.follow')}
           </Label>
         </div>
 
         <div className="flex items-center gap-2">
           <Switch id="log-previous" checked={previous} onCheckedChange={setPrevious} />
           <Label htmlFor="log-previous" className="font-mono text-xs text-muted-foreground">
-            Previous container
+            {t('wl.logs.previous')}
           </Label>
         </div>
 
@@ -148,13 +150,12 @@ export function LogsTab({ pod }: { pod: WorkloadPod }) {
           className="ml-auto font-mono"
           onClick={() => setLines([])}
         >
-          Clear
+          {t('wl.logs.clear')}
         </Button>
       </div>
 
       <p className="font-mono text-[10px] text-muted-foreground">
-        Reading logs is not recorded. Anything printed here — including a secret — leaves no trace
-        that it was read.
+        {t('wl.logs.notRecorded')}
       </p>
 
       {error && <p className="font-mono text-xs text-destructive">{error}</p>}
