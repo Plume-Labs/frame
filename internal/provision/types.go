@@ -25,8 +25,12 @@ type Spec struct {
 	// /etc/frame-node-role on the installed system so the join that follows
 	// (by hand, or by the controller) knows which taints and labels to apply.
 	// Empty: not recorded. It changes nothing about the installation itself.
-	Role    string
-	Cluster ClusterTarget
+	Role string
+	// Keyboard is the console keyboard layout of the installed system (one of
+	// KeyboardLayouts). Empty means "us". It matters for the local login: a
+	// security key's PIN is typed on this layout.
+	Keyboard string
+	Cluster  ClusterTarget
 	// BootMode is "UEFI" or "Legacy". Set by Install from Options.BootMode,
 	// not by callers: the image's disk layout depends on it.
 	BootMode string

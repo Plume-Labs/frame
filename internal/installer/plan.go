@@ -20,6 +20,7 @@ type DiskChoice struct {
 type Answers struct {
 	Hostname     string       `json:"hostname"`
 	Role         string       `json:"role"`
+	Keyboard     string       `json:"keyboard"`
 	Disks        []DiskChoice `json:"disks"` // one disk, or two for a mirror
 	DHCP         bool         `json:"dhcp"`
 	Address      string       `json:"address"`
@@ -87,6 +88,7 @@ func BuildPlan(hw Hardware, a Answers, uid string) (Plan, error) {
 		UID:          uid,
 		Hostname:     strings.TrimSpace(a.Hostname),
 		Role:         a.Role,
+		Keyboard:     a.Keyboard,
 		BootMode:     boot,
 		SSHPublicKey: strings.TrimSpace(a.SSHPublicKey),
 		U2FKeys:      a.U2FKeys,
@@ -107,6 +109,9 @@ func BuildPlan(hw Hardware, a Answers, uid string) (Plan, error) {
 	}
 	if spec.Role != "" {
 		lines = append(lines, "Role recorded: "+spec.Role+" (joining the cluster stays a separate step after the install)")
+	}
+	if spec.Keyboard != "" && spec.Keyboard != "us" {
+		lines = append(lines, "Keyboard layout: "+spec.Keyboard)
 	}
 	if len(spec.U2FKeys) > 0 {
 		lines = append(lines, fmt.Sprintf("Console login with %d security key(s)", len(spec.U2FKeys)))
@@ -141,3 +146,5 @@ func humanBytes(n int64) string {
 }
 
 func rolesList() []string { return provision.Roles() }
+
+func keyboardsList() []string { return provision.KeyboardLayouts() }

@@ -15,6 +15,11 @@ import (
 	"testing"
 )
 
+const (
+	u2fTestKeyA = "Z3JlZW5Ub21hdG9LZXlIYW5kbGU,cHVibGljS2V5QmxvYkFBQUFBQQ==,es256,+presence+pin"
+	u2fTestKeyB = "YmFja3VwS2V5SGFuZGxlQkJC,YmFja3VwUHVibGljS2V5QkJCQg==,es256,+presence+pin"
+)
+
 const testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl test@frame"
 
 const lsblkJSON = `{"blockdevices":[

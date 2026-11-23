@@ -6,6 +6,12 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — text assistant covers the whole configuration
+
+- installer: the text assistant now asks the keyboard layout first (switches the live
+  console with `loadkeys`, and sets the installed system's layout, `Spec.Keyboard`) and
+  takes up to four security-key credentials for the console login, like the page does.
+
 ### Added — guided installer on the ISO (hack/build-installer-iso.sh)
 
 - hack: `build-installer-iso.sh` adds the assistant and a cloud-init seed to the Ubuntu

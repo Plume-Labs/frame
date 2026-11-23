@@ -2,7 +2,7 @@
 # Bench for the TEXT assistant (tty8) of the guided-installer ISO: boots the ISO
 # in QEMU, TYPES the answers on the emulated keyboard (QEMU monitor `sendkey`)
 # the way a person at a screen would, and passes when the assistant reports the
-# installation started. It stops there: the install itself is what
+# installation started, and that what was typed (keyboard layout, security keys) is in the document. It stops there: the install itself is what
 # qemu-assistant-test.sh proves, through the same code path.
 #
 #   hack/qemu-console-test.sh bios|uefi        (same needs and variables as qemu-assistant-test.sh)
@@ -46,7 +46,10 @@ pgrep -f "L 127.0.0.1:$API_PORT" | head -1 >"$w/tunnel.pid"
 python3 - "$w/mon.sock" "$(cat "$w/key.pub")" <<'PYEOF'
 import socket, sys, time
 sock, key = sys.argv[1], sys.argv[2].strip()
-lines = ["qemu-console", "3", "1", "frametest", "static", "10.0.2.15/24", "10.0.2.2", "10.0.2.3", key, "ERASE"]
+# "gb" is first: it switches the live keyboard, and every character typed afterwards (+ / = , - .) is the same
+# key on a gb layout as on the US keys this script sends. Two security-key credentials, then an empty line.
+cred = ["Z3JlZW5Ub21hdG9LZXlIYW5kbGU,cHVibGljS2V5QmxvYkFBQUFBQQ==,es256,+presence+pin", "YmFja3VwS2V5SGFuZGxlQkJC,YmFja3VwUHVibGljS2V5QkJCQg==,es256,+presence+pin"]
+lines = ["gb", "qemu-console", "3", "1", "frametest", "static", "10.0.2.15/24", "10.0.2.2", "10.0.2.3", key] + cred + ["", "ERASE"]
 shifted = {'+':'equal','_':'minus','@':'2'}
 plain = {' ':'spc','.':'dot','/':'slash','-':'minus','=':'equal',',':'comma','\n':'ret'}
 s = socket.socket(socket.AF_UNIX); s.connect(sock); time.sleep(0.5); s.recv(65536)
@@ -58,12 +61,27 @@ for line in lines:
         elif c in shifted: send("shift-" + shifted[c])
         elif c in plain: send(plain[c])
         else: send(c)
-    send("ret"); time.sleep(1.5)
+    send("ret")
+    # The first answer switches the keyboard (loadkeys): give it time to finish before typing on.
+    time.sleep(8 if line == "gb" else 1.5)
 PYEOF
 echo "==> answers typed on tty8; waiting for the assistant to report the installation"
 while [ $SECONDS -lt $end ]; do
   st=$(curl -fsS "http://127.0.0.1:$API_PORT/api/status" 2>/dev/null || true)
-  case "$st" in *'"installing"'*) echo "PASS ($mode): typed on the text console, the assistant started the installation"; exit 0;; *'"failed"'*) die "FAIL ($mode): $st";; esac
+  case "$st" in *'"installing"'*)
+      # The live system's ssh only reaches the installer's own interface, so what was typed is
+      # checked on the INSTALLED system instead: wait for it (an hour or more without KVM).
+      echo "==> installation started; waiting for the installed system to check what was typed"
+      while [ $SECONDS -lt $end ]; do
+        if got=$("${SSH[@]}" frame@127.0.0.1 'cat /etc/hostname /etc/frame-node-role /etc/default/keyboard; grep -c "^auth sufficient pam_u2f.so" /etc/pam.d/login; grep -c "^frame:" /etc/Yubico/u2f_keys' 2>/dev/null) && [ -n "$got" ]; then
+          grep -qx 'qemu-console' <<<"$got" || die "FAIL ($mode): hostname typed is not the installed one: $got"
+          grep -q 'XKBLAYOUT="gb"' <<<"$got" || die "FAIL ($mode): the keyboard layout typed (gb) is not installed: $got"
+          [ "$(tail -2 <<<"$got" | tr '\n' ' ')" = "1 1 " ] || die "FAIL ($mode): the security-key console login typed is not installed: $got"
+          echo "PASS ($mode): typed on the text console (layout gb, two security keys); the installed system has that hostname, layout and key login"; exit 0
+        fi
+        sleep 30
+      done
+      die "FAIL ($mode): the installed system never answered";; *'"failed"'*) die "FAIL ($mode): $st";; esac
   sleep 10
 done
 die "FAIL ($mode): the text console never started an installation (screendump: echo screendump $w/s.ppm | socat - UNIX-CONNECT:$w/mon.sock)"

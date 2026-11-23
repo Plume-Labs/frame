@@ -30,6 +30,7 @@
 
   <section id="s2" hidden><h2>Nom et rôle</h2>
     <label for="hostname">Nom de la machine</label><input id="hostname" placeholder="tacos" autocapitalize="none" spellcheck="false">
+    <label for="keyboard">Clavier de la console (installée)</label><select id="keyboard"></select>
     <label for="role">Rôle du nœud</label><select id="role"></select>
     <p class="muted">Le rôle est noté sur la machine ; la jonction au cluster se fait après l'installation, sans que le jeton passe par ici.</p>
   </section>
@@ -80,7 +81,7 @@ function answers() {
   const disks = [...document.querySelectorAll(".disk input[type=checkbox]:checked")].map(c => ({
     byID: c.dataset.byid, confirm: document.querySelector('input[data-confirm="'+CSS.escape(c.dataset.byid)+'"]').value }));
   const lines = s => s.split("\n").map(x => x.trim()).filter(Boolean);
-  return { hostname:$("hostname").value, role:$("role").value, disks, dhcp:$("dhcp").checked,
+  return { hostname:$("hostname").value, role:$("role").value, keyboard:$("keyboard").value, disks, dhcp:$("dhcp").checked,
     address:$("dhcp").checked ? "" : $("address").value, gateway:$("dhcp").checked ? "" : $("gateway").value,
     dns:$("dhcp").checked ? [] : $("dns").value.split(/\s+/).filter(Boolean),
     sshPublicKey:$("ssh").value, u2fKeys:lines($("u2f").value) };
@@ -139,6 +140,7 @@ $("dhcp").onchange = () => { $("static").hidden = $("dhcp").checked; };
 api("/api/hardware").then(j => {
   hw = j.hardware;
   for (const r of ["", ...j.roles]) { const o = document.createElement("option"); o.value = r; o.textContent = r || "(non précisé)"; $("role").append(o); }
+  for (const k of j.keyboards) { const o = document.createElement("option"); o.value = k; o.textContent = k; $("keyboard").append(o); }
   renderHW(); show();
 }).catch(e => { $("hw").textContent = ""; $("err").textContent = e.message; $("next").disabled = true; });
 show();
