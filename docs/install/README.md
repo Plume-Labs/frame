@@ -184,7 +184,7 @@ Proven in QEMU (software-emulated CPU, no KVM), by `hack/qemu-assistant-test.sh`
 
 **Not proven**: a browser or kiosk session (the live system has no browser: a kiosk needs
 packages that are not on the ISO, a decision for later), live progress, the rendering on a
-real VGA or BMC console, real hardware, a real keyboard layout other than US. The bench builds
+real VGA or BMC console, real hardware, a real keyboard layout other than US (the console switch with `loadkeys` is only unit-tested with a stub: the bench types keys that are identical on gb and US, and only checks the installed layout). The bench builds
 its ISO with `--test-ssh-key` and `--serial-console` (only together): that image is marked
 (`/frame/TEST-BUILD`), prints a red warning, and the builder refuses a release image that
 carries either. casper's "Check disk integrity" entry will call the image modified

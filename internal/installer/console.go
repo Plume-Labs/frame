@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -86,7 +87,8 @@ func RunConsole(ctx context.Context, in io.Reader, out io.Writer, srv *Server) e
 
 type asker func(prompt, def string) (string, error)
 
-func cmpDefault(v, def string) string {
+// valueOr returns v, or def when v is empty.
+func valueOr(v, def string) string {
 	if v == "" {
 		return def
 	}
@@ -97,12 +99,12 @@ func askAnswers(ask asker, say func(string, ...any), keymap func(string) error, 
 	var a Answers
 	var err error
 	// First, so that everything typed after it lands as typed on the keyboard in front of you.
-	kb, err := ask("Keyboard layout ("+strings.Join(provision.KeyboardLayouts(), " ")+")", cmpDefault(prev.Keyboard, "us"))
+	kb, err := ask("Keyboard layout ("+strings.Join(provision.KeyboardLayouts(), " ")+")", valueOr(prev.Keyboard, "us"))
 	if err != nil {
 		return a, err
 	}
 	a.Keyboard = strings.ToLower(kb)
-	if keymap != nil {
+	if keymap != nil && slices.Contains(provision.KeyboardLayouts(), a.Keyboard) {
 		if e := keymap(a.Keyboard); e != nil {
 			say("  could not switch the console keyboard: %v", clean(e.Error()))
 		}
@@ -183,6 +185,16 @@ func askAnswers(ask asker, say func(string, ...any), keymap func(string) error, 
 	}
 	if a.SSHPublicKey, err = ask("SSH public key (one line)", prev.SSHPublicKey); err != nil {
 		return a, err
+	}
+	if len(prev.U2FKeys) > 0 {
+		keep, err := ask(fmt.Sprintf("Keep the %d security-key credential(s) typed before? (y/n)", len(prev.U2FKeys)), "y")
+		if err != nil {
+			return a, err
+		}
+		if strings.HasPrefix(strings.ToLower(keep), "y") {
+			a.U2FKeys = append([]string(nil), prev.U2FKeys...)
+			return a, nil
+		}
 	}
 	say("Security keys for the local console login (hack/enroll-yubikey.sh output):")
 	say("paste one credential per line, up to %d; an empty line ends (empty from the start: no console login).", provision.MaxU2FKeys)

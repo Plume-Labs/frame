@@ -168,11 +168,59 @@ func TestConsoleAsksKeyboardFirstAndCarriesLayoutAndSecurityKeys(t *testing.T) {
 func TestConsoleRefusesAKeyboardOutsideTheList(t *testing.T) {
 	var doc string
 	srv := consoleServer(t, &doc)
+	srv.Keymap = func(l string) error { t.Errorf("Keymap was given %q", l); return nil }
 	in := strings.Join([]string{"xx", "tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1", "dhcp", testKey, ""}, "\n") + "\n"
 	var out bytes.Buffer
 	_ = RunConsole(context.Background(), strings.NewReader(in), &out, srv)
 	if !strings.Contains(out.String(), "Refused") || doc != "" {
 		t.Errorf("refused=%v started=%v", strings.Contains(out.String(), "Refused"), doc != "")
+	}
+}
+
+func TestConsoleKeepsTheCredentialsAfterARefusal(t *testing.T) {
+	var doc string
+	srv := consoleServer(t, &doc)
+	disk := diskNumber(t, srv, ssdID)
+	in := strings.Join([]string{
+		"", "tacos", "0", disk, "wrong", "dhcp", testKey, u2fTestKeyA, "", // refused: wrong serial
+		"", "tacos", "0", disk, "2012E2A5B6C1", "dhcp", testKey, "y", "ERASE",
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(doc, "pam_u2f") {
+		t.Error("the credentials typed before the refusal were lost")
+	}
+}
+
+func TestConsoleStopsAtFourCredentialsAndRefusesAMalformedOne(t *testing.T) {
+	var doc string
+	srv := consoleServer(t, &doc)
+	disk := diskNumber(t, srv, ssdID)
+	five := []string{u2fTestKeyA, u2fTestKeyB, u2fTestKeyA, u2fTestKeyB}
+	// Four are read without an empty line; the next line is the ERASE answer, not a fifth credential.
+	in := strings.Join(append(append([]string{"", "tacos", "0", disk, "2012E2A5B6C1", "dhcp", testKey}, five...), "ERASE"), "\n") + "\n"
+	var out bytes.Buffer
+	_ = RunConsole(context.Background(), strings.NewReader(in), &out, srv)
+	if strings.Count(out.String(), "Credential ") != 4 {
+		t.Errorf("asked for more or fewer than four credentials:\n%s", out.String())
+	}
+	bad := strings.Join([]string{"", "tacos", "0", disk, "2012E2A5B6C1", "dhcp", testKey, "not-a-credential", ""}, "\n") + "\n"
+	out.Reset()
+	_ = RunConsole(context.Background(), strings.NewReader(bad), &out, srv)
+	if !strings.Contains(out.String(), "Refused") || doc != "" && strings.Contains(doc, "not-a-credential") {
+		t.Errorf("a malformed credential was not refused:\n%s", out.String())
+	}
+}
+
+func TestConsoleInputEndingInTheCredentialLoopIsAnErrorNotALoop(t *testing.T) {
+	var doc string
+	srv := consoleServer(t, &doc)
+	in := strings.Join([]string{"", "tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1", "dhcp", testKey, u2fTestKeyA}, "\n") + "\n"
+	var out bytes.Buffer
+	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err == nil || doc != "" {
+		t.Errorf("err=%v started=%v", err, doc != "")
 	}
 }
 

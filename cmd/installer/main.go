@@ -123,5 +123,10 @@ func loadKeys(layout string) error {
 	if !ok {
 		return fmt.Errorf("no console keymap for layout %q", layout)
 	}
-	return exec.Command("loadkeys", name).Run()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "loadkeys", name).CombinedOutput(); err != nil {
+		return fmt.Errorf("loadkeys %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
