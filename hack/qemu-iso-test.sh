@@ -77,7 +77,7 @@ while [ $SECONDS -lt $end ]; do
     echo "$got" >"$w/installed-uid"
     if [ "${U2F:-0}" = 1 ]; then
       ssh -i "$w/key" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null frame@127.0.0.1 \
-        'test -f /usr/lib/x86_64-linux-gnu/security/pam_u2f.so && grep -q "^auth sufficient pam_u2f.so.*pinverification=1" /etc/pam.d/login && [ "$(grep -c "^frame:" /etc/Yubico/u2f_keys)" = 1 ] && ! grep -q u2f /etc/pam.d/sshd /etc/pam.d/sudo' \
+        'test -f /usr/lib/x86_64-linux-gnu/security/pam_u2f.so && grep -q "^auth sufficient pam_u2f.so.*pinverification=1" /etc/pam.d/login && [ "$(grep -c "^frame:" /etc/Yubico/u2f_keys)" = 1 ] && [ -f /etc/pam.d/sshd ] && [ -f /etc/pam.d/sudo ] && ! grep -qs u2f /etc/pam.d/sshd /etc/pam.d/sudo' \
         || die "FAIL ($mode): the console key login is not set up as expected"
       echo "u2f: module installed, login line present, sshd and sudo untouched"
     fi

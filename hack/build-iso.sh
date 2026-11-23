@@ -83,7 +83,7 @@ fi
 u2f_json='[]'
 if [ -n "$u2f_file" ]; then
   [ -r "$u2f_file" ] || die "--u2f-keys: cannot read $u2f_file (hack/enroll-yubikey.sh writes it)"
-  u2f_json=$(grep -vE '^[[:space:]]*(#|$)' "$u2f_file" | jq -R . | jq -sc .)
+  u2f_json=$({ grep -vE '^[[:space:]]*(#|$)' "$u2f_file" || true; } | jq -R . | jq -sc .)
   [ "$u2f_json" != '[]' ] || die "--u2f-keys: $u2f_file holds no credential"
 fi
 uid=$(cat /proc/sys/kernel/random/uuid)

@@ -62,6 +62,8 @@ func validateU2FKeys(keys []string) error {
 // u2fAuthLine is the PAM line the console login gets, before common-auth.
 // `sufficient`: a key plus its PIN is enough and no password is asked, and a
 // failure falls through to the stock stack, which cannot succeed (no password).
+// A success skips the rest of the stack, including what common-auth and the
+// lines after it do (pam_cap, pam_group): both are no-ops in the stock file.
 // pinverification=1 makes the PIN mandatory whatever the credential's options
 // say: a key lying on a desk must not open a console. cue prints the prompt to
 // touch the key.
@@ -85,7 +87,7 @@ func u2fConsoleLogin(keys []string, target string) string {
 		fmt.Sprintf("grep -q '^@include common-auth' '%s' || { %s; }", pam, refuse("/etc/pam.d/login has no common-auth include to put the key login before")),
 		fmt.Sprintf("mkdir -p '%s/etc/Yubico' && %s", target, writeFileCommand(target+u2fAuthFile, file, "644")),
 		// Written once: a login file that already carries the line is left alone.
-		fmt.Sprintf("grep -q pam_u2f.so '%[1]s' || sed -i '/^@include common-auth/i %[2]s' '%[1]s'", pam, u2fAuthLine()),
+		fmt.Sprintf("grep -q '^auth sufficient pam_u2f.so' '%[1]s' || sed -i '/^@include common-auth/i %[2]s' '%[1]s'", pam, u2fAuthLine()),
 		fmt.Sprintf("grep -q '^auth sufficient pam_u2f.so' '%s' || { %s; }", pam, refuse("the key login line did not reach /etc/pam.d/login")),
 	}, "; ")
 }

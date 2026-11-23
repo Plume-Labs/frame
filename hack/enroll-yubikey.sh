@@ -12,7 +12,9 @@
 #
 # The file holds, per key, a key handle and a public key: nothing that opens
 # anything without the physical key and its PIN. It is still yours: do not
-# publish it. Every credential is bound to the origin pam://hearthrack (the same
+# publish it. NOTE: a FIDO2 registration yields a different key handle every time,
+# so enrolling the SAME physical key twice looks like two keys: the script cannot
+# tell. Plug in a different key for each round, or the "spare" is not a spare. Every credential is bound to the origin pam://hearthrack (the same
 # constant as internal/provision/u2f.go), so one key works on every node.
 set -euo pipefail
 
@@ -26,12 +28,11 @@ origin=pam://hearthrack
 : >"$out.tmp"
 trap 'rm -f "$out.tmp"' EXIT
 for i in $(seq "$count"); do
-  echo "Key $i of $count: plug it in (and no other key), enter its PIN if asked, then touch it when it blinks."
+  echo "Key $i of $count: plug it in (a DIFFERENT physical key each round, and no other key plugged in), enter its PIN if asked, then touch it when it blinks."
   line=$(pamu2fcfg -u frame -o "$origin" -i "$origin" -N) || { echo "enroll-yubikey: enrolment of key $i failed (no PIN set on it?)" >&2; exit 1; }
   cred=${line#frame:}
   [ "$cred" != "$line" ] && [[ "$cred" != *$'\n'* ]] && [[ "$cred" =~ ^[A-Za-z0-9+/_=-]+,[A-Za-z0-9+/_=-]+,(es256|rs256|eddsa),[a-z+-]*$ ]] \
     || { echo "enroll-yubikey: unexpected pamu2fcfg output for key $i" >&2; exit 1; }
-  grep -qxF "$cred" "$out.tmp" && { echo "enroll-yubikey: that is the same key as before; plug in a different one" >&2; exit 1; }
   echo "$cred" >>"$out.tmp"
   [ "$i" -lt "$count" ] && read -r -p "Unplug it, plug the next one, press Enter. " _
 done

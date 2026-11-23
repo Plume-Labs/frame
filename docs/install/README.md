@@ -117,7 +117,7 @@ the console too, without a password, enrol a FIDO2 key (a YubiKey) **before buil
 
 ```
 ykman fido access change-pin                 # once per key: the console asks key + PIN
-hack/enroll-yubikey.sh -o u2f-keys.txt 2     # touch each key; the second is a spare
+hack/enroll-yubikey.sh -o u2f-keys.txt 2     # touch each key; the second is a spare: use a DIFFERENT physical key each round, the script cannot tell
 hack/build-iso.sh ... --u2f-keys u2f-keys.txt
 ```
 
