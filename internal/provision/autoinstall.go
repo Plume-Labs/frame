@@ -350,13 +350,14 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 // temporary directory.
 const targetRoot = "/target"
 
-// writeFileCommand writes content to path and sets its mode. The content
+// writeFileCommand writes content to path, world-readable (0644): everything
+// Frame writes this way is configuration, never a secret. The content
 // travels base64-encoded: the alphabet has no quote, no backslash, no $ and
 // no newline, so whatever the content holds it cannot leave the single-quoted
 // shell word it sits in. base64 is coreutils, present in the live system.
-func writeFileCommand(path, content, mode string) string {
-	return fmt.Sprintf("echo '%s' | base64 -d > '%s' && chmod %s '%s'",
-		base64.StdEncoding.EncodeToString([]byte(content)), path, mode, path)
+func writeFileCommand(path, content string) string {
+	return fmt.Sprintf("echo '%s' | base64 -d > '%s' && chmod 644 '%s'",
+		base64.StdEncoding.EncodeToString([]byte(content)), path, path)
 }
 
 // relockCommand leaves a cloud-init config on the target whose runcmd locks
@@ -371,7 +372,7 @@ func relockCommand(target string) string {
 	if err != nil {
 		panic(err) // a constant map; cannot fail
 	}
-	return writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-lock.cfg", string(b), "644")
+	return writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-lock.cfg", string(b))
 }
 
 // quoted marshals as a double-quoted YAML scalar. The MAC placeholder needs
@@ -463,7 +464,7 @@ func netplanPin(v validated, s Spec, target, sysClassNet string) string {
 		fmt.Sprintf("rm -f '%s/etc/netplan/'*.yaml '%s' && echo '%s' | base64 -d | sed \"s/%s/$mac/; s/%s/$dev/\" > '%s' && chmod 600 '%s' && %s",
 			target, target+"/etc/cloud/cloud.cfg.d/90-installer-network.cfg",
 			base64.StdEncoding.EncodeToString(b), macPlaceholder, devPlaceholder, pinned, pinned,
-			writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg", "network: {config: disabled}\n", "644")),
+			writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg", "network: {config: disabled}\n")),
 	}, "; ")
 }
 

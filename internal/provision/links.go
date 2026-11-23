@@ -240,7 +240,7 @@ func writeNetplan(target string, doc []byte) string {
 	return fmt.Sprintf("rm -f '%s/etc/netplan/'*.yaml '%s' && echo '%s' | base64 -d > '%s' && chmod 600 '%s' && %s",
 		target, target+"/etc/cloud/cloud.cfg.d/90-installer-network.cfg",
 		base64.StdEncoding.EncodeToString(doc), pinned, pinned,
-		writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg", "network: {config: disabled}\n", "644"))
+		writeFileCommand(target+"/etc/cloud/cloud.cfg.d/99-zz-frame-network.cfg", "network: {config: disabled}\n"))
 }
 
 // macGuard refuses the install (exit 1, before any disk is touched) unless

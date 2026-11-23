@@ -85,7 +85,7 @@ func u2fConsoleLogin(keys []string, target string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("[ -f '%s%s' ] || { %s; }", target, pamU2FModule, refuse("libpam-u2f is not installed in the target")),
 		fmt.Sprintf("grep -q '^@include common-auth' '%s' || { %s; }", pam, refuse("/etc/pam.d/login has no common-auth include to put the key login before")),
-		fmt.Sprintf("mkdir -p '%s/etc/Yubico' && %s", target, writeFileCommand(target+u2fAuthFile, file, "644")),
+		fmt.Sprintf("mkdir -p '%s/etc/Yubico' && %s", target, writeFileCommand(target+u2fAuthFile, file)),
 		// Written once: a login file that already carries the line is left alone.
 		fmt.Sprintf("grep -q '^auth sufficient pam_u2f.so' '%[1]s' || sed -i '/^@include common-auth/i %[2]s' '%[1]s'", pam, u2fAuthLine()),
 		fmt.Sprintf("grep -q '^auth sufficient pam_u2f.so' '%s' || { %s; }", pam, refuse("the key login line did not reach /etc/pam.d/login")),
