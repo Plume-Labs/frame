@@ -130,9 +130,6 @@ export function formatIec(bytes: number | null | undefined): string {
   return `${bytes < 0 ? '-' : ''}${v.toFixed(digits)} ${units[u]}`
 }
 
-/** The label every screen uses for a value no source collects yet. */
-export const NOT_COLLECTED = 'not collected'
-
 const QUANTITY_SUFFIX: Record<string, number> = {
   '': 1, Ki: 2 ** 10, Mi: 2 ** 20, Gi: 2 ** 30, Ti: 2 ** 40, Pi: 2 ** 50, Ei: 2 ** 60,
   k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18,

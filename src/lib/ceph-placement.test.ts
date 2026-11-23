@@ -60,15 +60,19 @@ describe('placement ceph-mgr', () => {
   })
 
   it('dit d-où viennent les chiffres, ou pourquoi ils manquent', () => {
-    expect(placementSourceLine(null)).toContain('not collected (no ceph FrameStorage entry)')
-    expect(placementSourceLine({ state: 'NotConfigured' })).toContain('no read-only dashboard account')
-    expect(placementSourceLine({ state: 'AuthRefused', message: 'x', collectedAt: 'T' })).toBe(
+    const line = (p: Parameters<typeof placementSourceLine>[0]) => {
+      const m = placementSourceLine(p)
+      return translate('en', m.key, m.params)
+    }
+    expect(line(null)).toContain('not collected (no ceph FrameStorage entry)')
+    expect(line({ state: 'NotConfigured' })).toContain('no read-only dashboard account')
+    expect(line({ state: 'AuthRefused', message: 'x', collectedAt: 'T' })).toBe(
       'min_size, CRUSH rule and CRUSH weight: the dashboard refused the account — no retry until the account in the Secret changes; showing the read of T',
     )
-    expect(placementSourceLine({ state: 'Error', message: 'dashboard login: HTTP 401', collectedAt: 'T' })).toBe(
+    expect(line({ state: 'Error', message: 'dashboard login: HTTP 401', collectedAt: 'T' })).toBe(
       'min_size, CRUSH rule and CRUSH weight: last read failed — dashboard login: HTTP 401; showing the read of T',
     )
-    expect(placementSourceLine({ state: 'Error', message: 'partial read', poolsReadAt: 'T2', osdsReadAt: 'T1' })).toBe(
+    expect(line({ state: 'Error', message: 'partial read', poolsReadAt: 'T2', osdsReadAt: 'T1' })).toBe(
       'min_size, CRUSH rule and CRUSH weight: last read failed — partial read; lists as read: pools T2, OSDs T1',
     )
   })

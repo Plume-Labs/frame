@@ -6,6 +6,7 @@ import { alertRegistryPath, createFrameClient } from '@/lib/frame-sdk'
 import type { Machine } from '@/lib/machines'
 import { checkVerdicts, heldDevices, mirrorRows, readingNotes, StorageThresholds, validThreshold, VERDICT_WORD } from '@/lib/storage-health'
 import { useI18n } from '@/i18n/context'
+import type { Message } from '@/i18n'
 import { TONE_TEXT } from '@/lib/thresholds'
 import {
   AlertDialog,
@@ -31,6 +32,7 @@ const frame = createFrameClient()
 
 /** The two numbers of the StorageHealthPolicy. A save lands on every machine at its next pass. */
 function ThresholdsCard() {
+  const { t } = useI18n()
   const { state, reload } = useLiveResource<StorageThresholds>(
     () => frame.storageHealthPolicy.get(),
     [],
@@ -50,8 +52,8 @@ function ThresholdsCard() {
   }
 
   const fields = [
-    { key: 'zfsCapacityPercent', label: 'ZFS pool capacity (%)', hint: 'Alert at this level, clears two points below.' },
-    { key: 'ssdWearPercent', label: 'SSD endurance used (%)', hint: 'From the BMC, or the disk\'s own SMART where the BMC gives no figure.' },
+    { key: 'zfsCapacityPercent', label: 'hlt.zfsLabel', hint: 'hlt.zfsHint' },
+    { key: 'ssdWearPercent', label: 'hlt.wearLabel', hint: 'hlt.wearHint' },
   ] as const
   const valid = draft !== null && fields.every((f) => validThreshold(draft[f.key]))
   const changed = draft !== null && saved !== null && fields.some((f) => draft[f.key] !== saved[f.key])
@@ -61,10 +63,10 @@ function ThresholdsCard() {
     setBusy(true)
     try {
       await frame.storageHealthPolicy.save(draft)
-      toast.success('Thresholds saved')
+      toast.success(t('hlt.saved'))
       reload()
     } catch (e) {
-      toast.error('Failed: thresholds not saved', { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('hlt.saveFailed'), { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
     }
@@ -75,7 +77,7 @@ function ThresholdsCard() {
       <CardHeader>
         <CardTitle className="font-mono text-lg flex items-center gap-2">
           <Heartbeat className="text-primary" />
-          Alert thresholds
+          {t('hlt.thresholds')}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -85,7 +87,7 @@ function ThresholdsCard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {fields.map((f) => (
                 <div key={f.key} className="space-y-1">
-                  <Label htmlFor={f.key}>{f.label}</Label>
+                  <Label htmlFor={f.key}>{t(f.label)}</Label>
                   <Input
                     id={f.key}
                     type="number"
@@ -95,12 +97,12 @@ function ThresholdsCard() {
                     value={Number.isNaN(draft[f.key]) ? '' : draft[f.key]}
                     onChange={(e) => setDraft({ ...draft, [f.key]: e.target.valueAsNumber })}
                   />
-                  <p className="text-xs text-muted-foreground">{f.hint}</p>
+                  <p className="text-xs text-muted-foreground">{t(f.hint)}</p>
                 </div>
               ))}
             </div>
             <Button onClick={save} disabled={!valid || !changed || busy}>
-              Save
+              {t('common.save')}
             </Button>
           </>
         )}
@@ -111,35 +113,35 @@ function ThresholdsCard() {
 
 /** Admin only: says what no read can, and the alert closes for the subscribers too. */
 function ReleaseDevice({ machine, device, checks }: { machine: Machine; device: string; checks: string[] }) {
+  const { t } = useI18n()
   const [confirming, setConfirming] = useState(false)
   async function release() {
     setConfirming(false)
     try {
       await frame.machines.releaseAlert(machine, device)
-      toast.success(`${device}: declared removed`)
+      toast.success(t('hlt.released', { device }))
     } catch (e) {
-      toast.error(`Failed: ${device}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(t('hlt.releaseFailed', { device }), { description: e instanceof Error ? e.message : String(e) })
     }
   }
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-md border border-border p-2">
       <span className="font-bold">{device}</span>
-      <span className="text-muted-foreground">{checks.join(', ')} held, no read mentions it</span>
+      <span className="text-muted-foreground">{t('hlt.held', { checks: checks.join(', ') })}</span>
       <Button variant="outline" size="sm" className="ml-auto" onClick={() => setConfirming(true)}>
-        Removed on purpose
+        {t('hlt.removedOnPurpose')}
       </Button>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Was {device} removed on purpose?</AlertDialogTitle>
+            <AlertDialogTitle>{t('hlt.confirmTitle', { device })}</AlertDialogTitle>
             <AlertDialogDescription>
-              This closes its alerts and tells subscribers the incident is resolved. A pool a reboot failed to import looks the
-              same: check before confirming. An alert a read still shows stays open.
+              {t('hlt.confirmBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={release}>Close the alerts</AlertDialogAction>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={release}>{t('hlt.closeAlerts')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -148,7 +150,8 @@ function ReleaseDevice({ machine, device, checks }: { machine: Machine; device: 
 }
 
 function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alerts: RegistryAlert[]; admin: boolean }) {
-  const { t } = useI18n()
+  const { t, tm } = useI18n()
+  const text = (x: string | Message) => (typeof x === 'string' ? x : tm(x))
   const now = useNow()
   const rows = mirrorRows(machine)
   const attention = checkVerdicts(machine).filter((v) => v.detail)
@@ -165,18 +168,18 @@ function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alert
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-xs font-mono">
-        {rows.length === 0 && <p className="text-muted-foreground">No md array or ZFS pool reported by this node.</p>}
+        {rows.length === 0 && <p className="text-muted-foreground">{t('hlt.noRows')}</p>}
         {rows.map((r) => (
           <div key={r.key} className="flex flex-wrap gap-x-4 rounded-md border border-border p-2">
             <span className="font-bold">{r.name}</span>
             <span className="text-muted-foreground">{r.layout}</span>
-            <span className={TONE_TEXT[r.tone]}>{r.state}</span>
-            <span className="text-muted-foreground">{r.detail}</span>
+            <span className={TONE_TEXT[r.tone]}>{text(r.state)}</span>
+            <span className="text-muted-foreground">{r.detail.map(text).join(' · ')}</span>
           </div>
         ))}
         {readingNotes(machine, now).map((n) => (
-          <p key={n} className="text-warning">
-            {n}
+          <p key={tm(n)} className="text-warning">
+            {tm(n)}
           </p>
         ))}
         {admin &&
@@ -193,6 +196,7 @@ function MachineHealthCard({ machine, alerts, admin }: { machine: Machine; alert
 
 /** Storage health per machine and per mirror, and the thresholds that alert on it. */
 export function StorageHealthView() {
+  const { t } = useI18n()
   const { state } = useLiveResource<Machine[]>(() => frame.machines.list(), [], [frame.machines.watchPath()], 30_000)
   const { state: alertState } = useLiveResource<RegistryAlert[]>(() => frame.cluster.alertRegistry(), [], [alertRegistryPath()])
   const alerts = alertState.phase === 'ready' ? alertState.data : []
@@ -202,7 +206,7 @@ export function StorageHealthView() {
   return (
     <div className="space-y-6">
       <ThresholdsCard />
-      <LiveStates state={state} emptyLabel="No FrameMachine declared yet." />
+      <LiveStates state={state} emptyLabel={t('hlt.noMachines')} />
       {state.phase === 'ready' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {state.data.map((m) => (

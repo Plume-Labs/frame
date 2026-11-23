@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { translate, type Message } from '@/i18n'
 import { alertReleaseBody, checkVerdicts, DEFAULT_STORAGE_THRESHOLDS, heldDevices, mirrorRows, readingNotes, toThresholds, validThreshold } from './storage-health'
 import type { RegistryAlert } from './alert-registry'
 import { toMachine } from './machines'
@@ -38,11 +39,14 @@ describe('checkVerdicts', () => {
   })
 })
 
+const en = (m: Message | string | undefined) => (m === undefined ? '' : typeof m === 'string' ? m : translate('en', m.key, m.params))
+const detail = (r: { detail: Array<string | Message> }) => r.detail.map(en).join(' · ')
+
 describe('mirrorRows', () => {
   it('donne md0 du G9 avec ses disques actifs', () => {
-    expect(mirrorRows(machine(g9Local()))).toEqual([
-      expect.objectContaining({ stack: 'md', name: 'md0', layout: 'raid1', tone: 'accent', detail: expect.stringContaining('2/2') }),
-    ])
+    const rows = mirrorRows(machine(g9Local()))
+    expect(rows).toEqual([expect.objectContaining({ stack: 'md', name: 'md0', layout: 'raid1', tone: 'accent' })])
+    expect(detail(rows[0])).toContain('2/2')
   })
 
   it('nomme le membre en échec et la reconstruction', () => {
@@ -50,9 +54,10 @@ describe('mirrorRows', () => {
     Object.assign(local.md.arrays![0], { degraded: true, activeDisks: 1, slots: 'U_', sync: 'recovery 8.5%' })
     local.md.arrays![0].members![1].failed = true
     const row = mirrorRows(machine(local))[0]
-    expect(row).toMatchObject({ tone: 'destructive', state: 'degraded' })
-    expect(row.detail).toContain(`failed: ${local.md.arrays![0].members![1].device}`)
-    expect(row.detail).toContain('recovery 8.5%')
+    expect(row).toMatchObject({ tone: 'destructive' })
+    expect(en(row.state)).toBe('degraded')
+    expect(detail(row)).toContain(`failed: ${local.md.arrays![0].members![1].device}`)
+    expect(detail(row)).toContain('recovery 8.5%')
   })
 
   it('remonte un pool dégradé', () => {
@@ -64,13 +69,17 @@ describe('mirrorRows', () => {
     const p = local.zfs.pools![0]
     p.health = 'ONLINE'
     p.vdevs = [{ name: 'mirror-0', depth: 0, state: 'ONLINE' }, { name: '/dev/x', depth: 1, state: 'FAULTED' }]
-    expect(mirrorRows(machine(local)).find((r) => r.stack === 'zfs')).toMatchObject({ tone: 'destructive', detail: expect.stringContaining('FAULTED') })
+    const row = mirrorRows(machine(local)).find((r) => r.stack === 'zfs')!
+    expect(row.tone).toBe('destructive')
+    expect(detail(row)).toContain('FAULTED')
   })
 
   it("dit qu'une pile illisible n'a pas été lue, sans lister ses restes", () => {
     const local = g9Local()
     local.md.state = 'busy'
-    expect(mirrorRows(machine(local))).toEqual([expect.objectContaining({ name: 'md', tone: 'warning', state: 'busy' })])
+    const rows = mirrorRows(machine(local))
+    expect(rows).toEqual([expect.objectContaining({ name: 'md', tone: 'warning' })])
+    expect(en(rows[0].state)).toBe('busy')
   })
 
   it('reste vide sans rapport local', () => {
@@ -105,7 +114,7 @@ describe('readingNotes', () => {
   it('date une lecture dont l’agent s’est tu', () => {
     const m = machine(g9Local())
     m.storage!.observedAt = '2026-11-06T11:40:00Z'
-    expect(readingNotes(m, now)[0]).toContain('20 min')
+    expect(en(readingNotes(m, now)[0])).toContain('20 min')
   })
 
   it('dit ce que les listes ont laissé de côté', () => {
@@ -113,7 +122,7 @@ describe('readingNotes', () => {
     local.md.arraysOmitted = 2
     const m = machine(local)
     m.storage!.observedAt = fresh
-    expect(readingNotes(m, now)[0]).toContain('2 array(s)')
+    expect(en(readingNotes(m, now)[0])).toContain('2 arrays or pools')
   })
 })
 

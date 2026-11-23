@@ -30,7 +30,7 @@ function phaseTone(phase: string): Tone {
  * in §6a: a state nobody can act on.
  */
 export function FrameStorageView() {
-  const { tm } = useI18n()
+  const { t, tm } = useI18n()
   const { state, reload } = useLiveResource<StorageEntry[]>(
     () => frame.storage.list(),
     [],
@@ -44,7 +44,7 @@ export function FrameStorageView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Database className="text-primary" />
-            Storage Entries
+            {t('fst.title')}
             <Button
               variant="outline"
               size="sm"
@@ -53,18 +53,18 @@ export function FrameStorageView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            FrameStorage — declared places where volumes may live, and what backs them.
+            {t('fst.intro')}
           </p>
         </CardContent>
       </Card>
 
-      <LiveStates state={state} emptyLabel="No FrameStorage entries declared yet." />
+      <LiveStates state={state} emptyLabel={t('fst.none')} />
 
       {entries.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -85,11 +85,11 @@ export function FrameStorageView() {
                     {e.storageClassName}
                   </Badge>
                   <Badge variant="outline" className="font-mono text-[10px]">
-                    {e.shared ? 'shared' : 'local'}
+                    {t(e.shared ? 'fst.shared' : 'fst.local')}
                   </Badge>
                   {e.adopted && (
                     <Badge variant="outline" className="font-mono text-[10px] text-muted-foreground">
-                      adopted
+                      {t('fst.adopted')}
                     </Badge>
                   )}
                 </div>
@@ -98,7 +98,7 @@ export function FrameStorageView() {
                 <div className="text-foreground">{tm(capacityLine(e.capacity))}</div>
                 <div className="text-muted-foreground">{tm(claimGapLine(e.storageClassName, e.claims))}</div>
                 <div className="text-muted-foreground">
-                  Available: {e.available?.message || 'unknown'}
+                  {t('fst.available', { value: e.available?.message || t('fst.unknown') })}
                 </div>
                 {e.healthy && (
                   <div className={e.healthy.status === 'True' ? 'text-muted-foreground' : TONE_TEXT[phaseTone(e.phase)]}>

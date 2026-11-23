@@ -34,16 +34,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { LiveStates, StaleNotice } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { Flag } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { Message, MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
-const ACTIONS: { value: CephActionKind; label: string }[] = [
-  { value: 'OSDOut', label: 'Mark an OSD out' },
-  { value: 'OSDIn', label: 'Mark an OSD in' },
-  { value: 'OSDRestart', label: 'Restart an OSD' },
-  { value: 'OSDScrub', label: 'Scrub an OSD' },
-  { value: 'OSDDeepScrub', label: 'Deep-scrub an OSD' },
-  { value: 'SetFlag', label: 'Set a cluster flag for a while' },
+const ACTIONS: { value: CephActionKind; label: MessageKey }[] = [
+  { value: 'OSDOut', label: 'cax.act.out' },
+  { value: 'OSDIn', label: 'cax.act.in' },
+  { value: 'OSDRestart', label: 'cax.act.restart' },
+  { value: 'OSDScrub', label: 'cax.act.scrub' },
+  { value: 'OSDDeepScrub', label: 'cax.act.deepScrub' },
+  { value: 'SetFlag', label: 'cax.act.flag' },
 ]
 
 function errText(e: unknown): string {
@@ -56,16 +58,16 @@ function isAdmin(): boolean {
   return typeof token === 'string' ? isAdminToken(token) : false
 }
 
-function when(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : '—'
+function when(iso: string | null, locale?: string): string {
+  return iso ? new Date(iso).toLocaleString(locale) : '—'
 }
 
-function phaseBadge(a: CephAction) {
+function phaseBadge(a: CephAction, text: (x: string | Message) => string) {
   const phase = a.phase
-  if (phase === 'Done') return <Badge variant="secondary">Done</Badge>
-  if (phase === 'Refused' || phase === 'Failed') return <Badge variant="destructive">{phase}</Badge>
-  if (phase === 'Active') return <Badge>Active</Badge>
-  return <Badge variant="outline">{actionLabel(a)}</Badge>
+  if (phase === 'Done') return <Badge variant="secondary">{text(actionLabel(a))}</Badge>
+  if (phase === 'Refused' || phase === 'Failed') return <Badge variant="destructive">{text(actionLabel(a))}</Badge>
+  if (phase === 'Active') return <Badge>{text(actionLabel(a))}</Badge>
+  return <Badge variant="outline">{text(actionLabel(a))}</Badge>
 }
 
 /**
@@ -73,6 +75,7 @@ function phaseBadge(a: CephAction) {
  * the Ceph screens while one is active: a forgotten noout hides failures.
  */
 export function ActiveFlagsBanner({ items, admin }: { items: CephAction[]; admin: boolean }) {
+  const { t, locale } = useI18n()
   const flags = activeFlags(items)
   if (flags.length === 0) return null
   const now = new Date()
@@ -92,13 +95,13 @@ export function ActiveFlagsBanner({ items, admin }: { items: CephAction[]; admin
           <span className="font-mono font-semibold">{a.flag}</span>
           {isOverdue(a, now) ? (
             <span className="text-destructive font-medium">
-              its time ended at {when(a.expiresAt)} but Hearthrack could not unset it yet ({a.message || 'no answer from Ceph'}
-              ); it keeps retrying, or run <code>ceph osd unset {a.flag}</code>
+              {t('cax.overdue', { at: when(a.expiresAt, locale), why: a.message || t('cax.noAnswer') })}{' '}
+              <code>ceph osd unset {a.flag}</code>
             </span>
           ) : (
             <span>
-              set until {when(a.expiresAt)}
-              {a.flagWasSet && ' (it was already set: Hearthrack leaves it set at the end)'}
+              {t('cax.setUntil', { at: when(a.expiresAt, locale) })}
+              {a.flagWasSet && ` ${t('cax.alreadySet')}`}
             </span>
           )}
           {admin && !a.release && (
@@ -108,13 +111,13 @@ export function ActiveFlagsBanner({ items, admin }: { items: CephAction[]; admin
               onClick={async () => {
                 try {
                   await frame.cephActions.release(a)
-                  toast.success(`${a.flag}: release sent`)
+                  toast.success(t('cax.releaseSent', { flag: a.flag }))
                 } catch (e) {
-                  toast.error(`Not released: ${errText(e)}`)
+                  toast.error(t('cax.notReleased', { error: errText(e) }))
                 }
               }}
             >
-              Release now
+              {t('cax.releaseNow')}
             </Button>
           )}
         </div>
@@ -141,6 +144,7 @@ export function LiveActiveFlags() {
 }
 
 function NewAction() {
+  const { t, tm } = useI18n()
   const [action, setAction] = useState<CephActionKind>('OSDOut')
   const [osd, setOsd] = useState('')
   const [flag, setFlag] = useState<SettableFlag>('noout')
@@ -152,24 +156,23 @@ function NewAction() {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Ceph gesture</CardTitle>
+        <CardTitle className="text-base">{t('cax.gesture')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Reversible gestures only; none destroys data. Hearthrack checks Ceph before an out or a restart, and sends each gesture
-          once. A flag is unset by Hearthrack at the end of its duration.
+          {t('cax.intro')}
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
           <div className="space-y-1 sm:w-64">
-            <Label className="text-xs">Gesture</Label>
+            <Label className="text-xs">{t('cax.gestureLabel')}</Label>
             <Select value={action} onValueChange={(v) => setAction(v as CephActionKind)}>
-              <SelectTrigger aria-label="Gesture">
+              <SelectTrigger aria-label={t('cax.gestureLabel')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {ACTIONS.map((a) => (
                   <SelectItem key={a.value} value={a.value}>
-                    {a.label}
+                    {t(a.label)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -178,9 +181,9 @@ function NewAction() {
           {isFlag ? (
             <>
               <div className="space-y-1 sm:w-48">
-                <Label className="text-xs">Flag</Label>
+                <Label className="text-xs">{t('cax.flagLabel')}</Label>
                 <Select value={flag} onValueChange={(v) => setFlag(v as SettableFlag)}>
-                  <SelectTrigger aria-label="Flag">
+                  <SelectTrigger aria-label={t('cax.flagLabel')}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -194,7 +197,7 @@ function NewAction() {
               </div>
               <div className="space-y-1 sm:w-32">
                 <Label htmlFor="flag-minutes" className="text-xs">
-                  Minutes
+                  {t('cax.minutes')}
                 </Label>
                 <Input id="flag-minutes" inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
               </div>
@@ -202,36 +205,36 @@ function NewAction() {
           ) : (
             <div className="space-y-1 sm:w-32">
               <Label htmlFor="act-osd" className="text-xs">
-                OSD number
+                {t('cax.osdNumber')}
               </Label>
               <Input id="act-osd" inputMode="numeric" placeholder="8" value={osd} onChange={(e) => setOsd(e.target.value)} />
             </div>
           )}
           <Button disabled={error !== null} onClick={() => setOpen(true)}>
-            Send
+            {t('cax.send')}
           </Button>
         </div>
-        {(osd !== '' || isFlag) && error && <p className="text-xs text-muted-foreground">{error}</p>}
+        {(osd !== '' || isFlag) && error && <p className="text-xs text-muted-foreground">{tm(error)}</p>}
         <AlertDialog open={open} onOpenChange={setOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>{ACTIONS.find((a) => a.value === action)?.label}?</AlertDialogTitle>
-              <AlertDialogDescription>{describeAction(action, osdNum, flag, Number(minutes))}</AlertDialogDescription>
+              <AlertDialogTitle>{t('cax.confirmTitle', { what: t(ACTIONS.find((a) => a.value === action)!.label) })}</AlertDialogTitle>
+              <AlertDialogDescription>{tm(describeAction(action, osdNum, flag, Number(minutes)))}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Back</AlertDialogCancel>
+              <AlertDialogCancel>{t('cax.back')}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={async () => {
                   try {
                     await frame.cephActions.create(action, osdNum, isFlag ? flag : '', Number(minutes))
                     setOsd('')
-                    toast.success('Sent to Hearthrack; the result shows below.')
+                    toast.success(t('cax.sent'))
                   } catch (e) {
-                    toast.error(`Not sent: ${errText(e)}`)
+                    toast.error(t('cax.notSent', { error: errText(e) }))
                   }
                 }}
               >
-                Send
+                {t('cax.send')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -242,14 +245,16 @@ function NewAction() {
 }
 
 function ActionRow({ a }: { a: CephAction }) {
-  const what = a.action === 'SetFlag' ? `${a.flag} (${a.durationMinutes} min)` : `osd.${a.osdID}`
+  const { t, tm, locale } = useI18n()
+  const text = (x: string | Message) => (typeof x === 'string' ? x : tm(x))
+  const what = a.action === 'SetFlag' ? `${a.flag} (${t('cax.min', { n: a.durationMinutes })})` : `osd.${a.osdID}`
   return (
     <li className="border-t border-border py-2 text-sm space-y-0.5">
       <div className="flex flex-wrap items-center gap-2">
-        {phaseBadge(a)}
+        {phaseBadge(a, text)}
         <span className="font-semibold">{a.action}</span>
         <span className="font-mono">{what}</span>
-        <span className="text-xs text-muted-foreground">{when(a.createdAt)}</span>
+        <span className="text-xs text-muted-foreground">{when(a.createdAt, locale)}</span>
       </div>
       {a.message && <p className="text-xs text-muted-foreground">{a.message}</p>}
     </li>
@@ -258,6 +263,7 @@ function ActionRow({ a }: { a: CephAction }) {
 
 /** Storage → Ceph actions: active flags, the form, and the recent gestures. */
 export function CephActionsView() {
+  const { t, tn } = useI18n()
   const { state } = useLiveResource<CephAction[]>(
     () => frame.cephActions.list(),
     [],
@@ -275,16 +281,16 @@ export function CephActionsView() {
       {admin ? (
         <NewAction />
       ) : (
-        <p className="text-sm text-muted-foreground">Only an admin can send a Ceph gesture.</p>
+        <p className="text-sm text-muted-foreground">{t('cax.adminOnly')}</p>
       )}
-      {pending.length > 0 && <p className="text-sm">{pending.length} gesture(s) waiting to be sent.</p>}
-      {running.length > 0 && <p className="text-sm">{running.length} gesture(s) sent, outcome not known yet.</p>}
+      {pending.length > 0 && <p className="text-sm">{tn('cax.waiting', pending.length)}</p>}
+      {running.length > 0 && <p className="text-sm">{tn('cax.running', running.length)}</p>}
       <StaleNotice state={state} />
-      <LiveStates state={state} emptyLabel="No Ceph gesture yet." />
+      <LiveStates state={state} emptyLabel={t('cax.none')} />
       {items.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Recent gestures</CardTitle>
+            <CardTitle className="text-base">{t('cax.recent')}</CardTitle>
           </CardHeader>
           <CardContent>
             <ul>

@@ -32,6 +32,8 @@ import { Label } from '@/components/ui/label'
 import { LiveStates, StaleNotice } from '@/components/LiveStates'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { CheckCircle, Circle, HardDrives, PauseCircle, Spinner, XCircle } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
 
 const frame = createFrameClient()
 
@@ -39,37 +41,40 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-function phaseBadge(phase: string) {
-  if (phase === 'Succeeded') return <Badge variant="secondary">Succeeded</Badge>
-  if (phase === 'Paused' || phase === 'Failed') return <Badge variant="destructive">{phase}</Badge>
-  if (phase === 'Cancelled') return <Badge variant="outline">Cancelled</Badge>
-  if (phase.startsWith('Awaiting')) return <Badge>Waiting for you</Badge>
+function phaseBadge(phase: string, t: ReturnType<typeof useI18n>['t']) {
+  if (phase === 'Succeeded') return <Badge variant="secondary">{t('osr.phase.succeeded')}</Badge>
+  if (phase === 'Paused') return <Badge variant="destructive">{t('osr.phase.paused')}</Badge>
+  if (phase === 'Failed') return <Badge variant="destructive">{t('cax.phase.failed')}</Badge>
+  if (phase === 'Cancelled') return <Badge variant="outline">{t('osr.phase.cancelled')}</Badge>
+  if (phase.startsWith('Awaiting')) return <Badge>{t('osr.phase.waiting')}</Badge>
   return <Badge variant="outline">{phase}</Badge>
 }
 
 function StepIcon({ state }: { state: StepState }) {
+  const { t } = useI18n()
   switch (state) {
     case 'done':
-      return <CheckCircle size={16} weight="fill" className="text-emerald-500" aria-label="done" />
+      return <CheckCircle size={16} weight="fill" className="text-emerald-500" aria-label={t('osr.state.done')} />
     case 'current':
-      return <Spinner size={16} className="text-primary animate-spin" aria-label="in progress" />
+      return <Spinner size={16} className="text-primary animate-spin" aria-label={t('osr.state.current')} />
     case 'paused':
-      return <PauseCircle size={16} weight="fill" className="text-destructive" aria-label="paused" />
+      return <PauseCircle size={16} weight="fill" className="text-destructive" aria-label={t('osr.state.paused')} />
     case 'stopped':
-      return <XCircle size={16} weight="fill" className="text-muted-foreground" aria-label="stopped" />
+      return <XCircle size={16} weight="fill" className="text-muted-foreground" aria-label={t('osr.state.stopped')} />
     default:
-      return <Circle size={16} className="text-muted-foreground" aria-label="not started" />
+      return <Circle size={16} className="text-muted-foreground" aria-label={t('osr.state.pending')} />
   }
 }
 
 function Steps({ r }: { r: OSDReplacement }) {
+  const { t } = useI18n()
   const states = stepStates(r)
   return (
     <ol className="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-1 text-xs">
       {REPLACEMENT_STEPS.map((s, i) => (
         <li key={s.phase} className={`flex items-center gap-1.5 ${states[i] === 'pending' ? 'text-muted-foreground' : ''}`}>
           <StepIcon state={states[i]} />
-          <span className={s.human ? 'font-semibold' : ''}>{s.label}</span>
+          <span className={s.human ? 'font-semibold' : ''}>{t(s.label)}</span>
         </li>
       ))}
     </ol>
@@ -78,19 +83,20 @@ function Steps({ r }: { r: OSDReplacement }) {
 
 /** A disk as found. The new disk's path goes through shownPath: an NVMe path can carry its serial. */
 function DiskFacts({ title, d }: { title: string; d: ReplacementDisk }) {
+  const { t } = useI18n()
   return (
     <div className="rounded-md border p-3 text-xs space-y-1">
       <div className="font-semibold">{title}</div>
       <div className="font-mono break-all">{shownPath(d.byIdPath)}</div>
       <div>
-        {d.model || 'model unknown'}
+        {d.model || t('osr.modelUnknown')}
         {d.sizeGB > 0 && <> · {d.sizeGB} GB</>}
-        {d.logicalSectorBytes > 0 && <> · {d.logicalSectorBytes}-byte sectors</>}
-        {d.path && <> · now {d.path}</>}
-        {d.smartPassed === true && <> · SMART passed</>}
-        {d.smartPassed === false && <span className="text-destructive"> · SMART FAILED</span>}
+        {d.logicalSectorBytes > 0 && <> · {t('osr.sectors', { n: d.logicalSectorBytes })}</>}
+        {d.path && <> · {t('osr.now', { path: d.path })}</>}
+        {d.smartPassed === true && <> · {t('osr.smartPassed')}</>}
+        {d.smartPassed === false && <span className="text-destructive"> · {t('osr.smartFailed')}</span>}
       </div>
-      <div className="text-muted-foreground">The serial is not shown on purpose: read it on the disk's label.</div>
+      <div className="text-muted-foreground">{t('osr.serialHidden')}</div>
     </div>
   )
 }
@@ -107,6 +113,7 @@ function SerialApproval({
   confirmLabel: string
   onApprove: (serial: string) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [serial, setSerial] = useState('')
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -117,7 +124,7 @@ function SerialApproval({
       <p className="text-xs text-muted-foreground">{explain}</p>
       <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
         <div className="space-y-1 flex-1">
-          <Label htmlFor={`serial-${title}`} className="text-xs">Serial, as printed on the label</Label>
+          <Label htmlFor={`serial-${title}`} className="text-xs">{t('osr.serialLabel')}</Label>
           <Input
             id={`serial-${title}`}
             value={serial}
@@ -136,12 +143,11 @@ function SerialApproval({
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmLabel}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {explain} Serial typed: <span className="font-mono">{typed}</span>. Hearthrack checks it against the disk and
-              does nothing if it does not match.
+              {explain} {t('osr.serialTyped')} <span className="font-mono">{typed}</span>. {t('osr.serialChecked')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Back</AlertDialogCancel>
+            <AlertDialogCancel>{t('cax.back')}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={async () => {
@@ -149,9 +155,9 @@ function SerialApproval({
                 try {
                   await onApprove(typed)
                   setSerial('')
-                  toast.success('Approval sent; Hearthrack checks the serial before acting.')
+                  toast.success(t('osr.approvalSent'))
                 } catch (e) {
-                  toast.error(`Not sent: ${errText(e)}`)
+                  toast.error(t('cax.notSent', { error: errText(e) }))
                 } finally {
                   setBusy(false)
                 }
@@ -167,6 +173,7 @@ function SerialApproval({
 }
 
 function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
+  const { t } = useI18n()
   const acts = availableActions(r)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [showEvents, setShowEvents] = useState(!isTerminal(r.phase))
@@ -175,7 +182,7 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
       await f()
       toast.success(what)
     } catch (e) {
-      toast.error(`${what} failed: ${errText(e)}`)
+      toast.error(t('osr.failed', { what, error: errText(e) }))
     }
   }
   return (
@@ -184,9 +191,9 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
         <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           <HardDrives size={18} />
           <span className="font-mono">osd.{r.osdID}</span>
-          {r.host && <span className="text-muted-foreground text-sm">on {r.host}</span>}
-          {phaseBadge(r.phase)}
-          {r.pgs && <span className="text-xs text-muted-foreground font-mono">PGs {r.pgs} active+clean</span>}
+          {r.host && <span className="text-muted-foreground text-sm">{t('osr.on', { host: r.host })}</span>}
+          {phaseBadge(r.phase, t)}
+          {r.pgs && <span className="text-xs text-muted-foreground font-mono">{t('osr.pgs', { pgs: r.pgs })}</span>}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -196,45 +203,46 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
         )}
         {r.oldDisk && r.phase === 'AwaitingDisk' && (
           <div className="rounded-md border p-3 text-sm">
-            Remove the disk with serial <span className="font-mono font-semibold">{r.oldDisk.serial}</span> from{' '}
-            <span className="font-mono">{r.host}</span>
-            {r.machineRef && <> (machine {r.machineRef}: its bay is on the Disks tab)</>}, then insert the new disk. If it
-            does not appear, set it to Non-RAID in iDRAC → Storage → Physical Disks.
+            {richText(t('osr.swap'), {
+              serial: <span className="font-mono font-semibold">{r.oldDisk.serial}</span>,
+              host: <span className="font-mono">{r.host}</span>,
+              machine: r.machineRef ? ` ${t('osr.swapMachine', { machine: r.machineRef })}` : '',
+            })}
           </div>
         )}
         {admin && acts.approvePurge && r.oldDisk && (
           <SerialApproval
-            title={`Approval 1 — purge osd.${r.osdID}`}
-            explain={`osd.${r.osdID} is drained and Ceph says it is safe to destroy. Purging removes it from Ceph for good; its data already has its copies elsewhere. Retype the serial on the label of the OLD disk (${r.oldDisk.byIdPath}).`}
-            confirmLabel={`Purge osd.${r.osdID}`}
+            title={t('osr.a1.title', { osd: r.osdID })}
+            explain={t('osr.a1.explain', { osd: r.osdID, path: r.oldDisk.byIdPath })}
+            confirmLabel={t('osr.a1.confirm', { osd: r.osdID })}
             onApprove={(s) => frame.osdReplacements.approvePurge(r, s)}
           />
         )}
-        {r.newDisk && <DiskFacts title="New disk found" d={r.newDisk} />}
+        {r.newDisk && <DiskFacts title={t('osr.newDisk')} d={r.newDisk} />}
         {admin && acts.approveWipe && r.newDisk && (
           <SerialApproval
-            title="Approval 2 — wipe the new disk"
-            explain={`Wiping erases the start of ${shownPath(r.newDisk.byIdPath)} and its partition tables. Read the serial on the NEW disk's label and retype it.`}
-            confirmLabel="Wipe the new disk"
+            title={t('osr.a2.title')}
+            explain={t('osr.a2.explain', { path: shownPath(r.newDisk.byIdPath) })}
+            confirmLabel={t('osr.a2.confirm')}
             onApprove={(s) => frame.osdReplacements.approveWipe(r, s)}
           />
         )}
         {admin && (acts.resume || acts.cancel) && (
           <div className="flex flex-wrap gap-2">
             {acts.resume && (
-              <Button size="sm" onClick={() => run('Resumed', () => frame.osdReplacements.resume(r))}>
-                Resume (retry this step)
+              <Button size="sm" onClick={() => run(t('osr.resumed'), () => frame.osdReplacements.resume(r))}>
+                {t('osr.resume')}
               </Button>
             )}
             {acts.cancel && (
               <Button size="sm" variant="outline" onClick={() => setConfirmCancel(true)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             )}
           </div>
         )}
         {!admin && !isTerminal(r.phase) && (
-          <p className="text-xs text-muted-foreground">Only an admin can approve, resume or cancel a replacement.</p>
+          <p className="text-xs text-muted-foreground">{t('osr.adminOnly')}</p>
         )}
         <div>
           <button
@@ -243,7 +251,7 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
             aria-expanded={showEvents}
             onClick={() => setShowEvents((v) => !v)}
           >
-            {showEvents ? 'Hide' : 'Show'} the journal ({r.events.length})
+            {t(showEvents ? 'osr.hideJournal' : 'osr.showJournal', { count: r.events.length })}
           </button>
           {showEvents && (
             <ul className="mt-2 space-y-0.5 text-xs font-mono max-h-64 overflow-y-auto">
@@ -258,17 +266,17 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
         <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Cancel the replacement of osd.{r.osdID}?</AlertDialogTitle>
+              <AlertDialogTitle>{t('osr.cancelTitle', { osd: r.osdID })}</AlertDialogTitle>
               <AlertDialogDescription>
                 {acts.cancelUndoes
-                  ? `Nothing is destroyed yet: osd.${r.osdID} is marked in again and Ceph moves its data back.`
-                  : `osd.${r.osdID} is already purged: nothing is undone. Hearthrack stops here and says where things stand; finish by hand with the fiche.`}
+                  ? t('osr.cancelUndoes', { osd: r.osdID })
+                  : t('osr.cancelFinal', { osd: r.osdID })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Back</AlertDialogCancel>
-              <AlertDialogAction onClick={() => run('Cancel sent', () => frame.osdReplacements.cancel(r))}>
-                Cancel the replacement
+              <AlertDialogCancel>{t('cax.back')}</AlertDialogCancel>
+              <AlertDialogAction onClick={() => run(t('osr.cancelSent'), () => frame.osdReplacements.cancel(r))}>
+                {t('osr.cancelReplacement')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -279,6 +287,7 @@ function ReplacementCard({ r, admin }: { r: OSDReplacement; admin: boolean }) {
 }
 
 function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
+  const { t, tm } = useI18n()
   const [osd, setOsd] = useState('')
   const [serial, setSerial] = useState('')
   const [open, setOpen] = useState(false)
@@ -286,23 +295,22 @@ function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Replace an OSD</CardTitle>
+        <CardTitle className="text-base">{t('osr.new.title')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          One OSD at a time. Hearthrack checks Ceph, drains the OSD, then stops twice for you: before the purge and before it
-          wipes the new disk. Each time you retype a serial read on a disk's label. Nothing irreversible happens without it.
+          {t('osr.new.intro')}
         </p>
         {busyElsewhere && (
-          <p className="text-sm">A replacement is already running: a new one waits for it to finish.</p>
+          <p className="text-sm">{t('osr.new.busy')}</p>
         )}
         <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
           <div className="space-y-1 sm:w-32">
-            <Label htmlFor="new-osd" className="text-xs">OSD number</Label>
+            <Label htmlFor="new-osd" className="text-xs">{t('cax.osdNumber')}</Label>
             <Input id="new-osd" inputMode="numeric" placeholder="8" value={osd} onChange={(e) => setOsd(e.target.value)} />
           </div>
           <div className="space-y-1 flex-1">
-            <Label htmlFor="new-serial" className="text-xs">Serial of its current disk (on the label)</Label>
+            <Label htmlFor="new-serial" className="text-xs">{t('osr.new.serialLabel')}</Label>
             <Input
               id="new-serial"
               className="font-mono"
@@ -313,34 +321,33 @@ function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
             />
           </div>
           <Button disabled={error !== null} onClick={() => setOpen(true)}>
-            Start
+            {t('osr.new.start')}
           </Button>
         </div>
-        {osd !== '' && error && <p className="text-xs text-muted-foreground">{error}</p>}
+        {osd !== '' && error && <p className="text-xs text-muted-foreground">{tm(error)}</p>}
         <AlertDialog open={open} onOpenChange={setOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Start replacing osd.{osd.trim()}?</AlertDialogTitle>
+              <AlertDialogTitle>{t('osr.new.confirmTitle', { osd: osd.trim() })}</AlertDialogTitle>
               <AlertDialogDescription>
-                Hearthrack runs the checks, then marks osd.{osd.trim()} out and waits for its data to move (about 15 minutes per
-                500 GB). This part is undone by Cancel. It then waits for your first approval.
+                {t('osr.new.confirmBody', { osd: osd.trim() })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Back</AlertDialogCancel>
+              <AlertDialogCancel>{t('cax.back')}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={async () => {
                   try {
                     await frame.osdReplacements.create(Number(osd.trim()), serial)
                     setOsd('')
                     setSerial('')
-                    toast.success('Replacement created; Hearthrack starts with the checks.')
+                    toast.success(t('osr.new.created'))
                   } catch (e) {
-                    toast.error(`Not created: ${errText(e)}`)
+                    toast.error(t('osr.new.notCreated', { error: errText(e) }))
                   }
                 }}
               >
-                Start
+                {t('osr.new.start')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -352,6 +359,7 @@ function NewReplacement({ busyElsewhere }: { busyElsewhere: boolean }) {
 
 /** Storage → Replace OSD: the replacements, newest first, and the form to start one. */
 export function OSDReplacementView() {
+  const { t } = useI18n()
   const { state } = useLiveResource<OSDReplacement[]>(
     () => frame.osdReplacements.list(),
     [],
@@ -368,7 +376,7 @@ export function OSDReplacementView() {
     <div className="space-y-4">
       {admin && <NewReplacement busyElsewhere={running} />}
       <StaleNotice state={state} />
-      <LiveStates state={state} emptyLabel="No OSD replacement yet." />
+      <LiveStates state={state} emptyLabel={t('osr.none')} />
       {items.map((r) => (
         <ReplacementCard key={`${r.namespace}/${r.name}`} r={r} admin={admin} />
       ))}

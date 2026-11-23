@@ -9,6 +9,8 @@
  * its label and retyped, wipes it). Neither can be undone.
  */
 
+import type { Message, MessageKey } from '@/i18n'
+
 /** A disk as the replacement identified it (status.oldDisk / newDisk). */
 export interface ReplacementDisk {
   byIdPath: string
@@ -138,17 +140,17 @@ export function crToReplacement(cr: FrameOSDReplacementCR): OSDReplacement {
 }
 
 /** The steps, in order, as the screen names them. */
-export const REPLACEMENT_STEPS: { phase: string; label: string; human?: boolean }[] = [
-  { phase: 'Checking', label: 'Checks' },
-  { phase: 'Draining', label: 'Drain (out)' },
-  { phase: 'AwaitingPurgeApproval', label: 'Approval 1: purge', human: true },
-  { phase: 'Purging', label: 'Purge' },
-  { phase: 'AwaitingDisk', label: 'Swap the disk', human: true },
-  { phase: 'AwaitingWipeApproval', label: 'Approval 2: wipe', human: true },
-  { phase: 'Wiping', label: 'Wipe' },
-  { phase: 'Declaring', label: 'Declare to Rook' },
-  { phase: 'AwaitingOSD', label: 'New OSD' },
-  { phase: 'Backfilling', label: 'Backfill' },
+export const REPLACEMENT_STEPS: { phase: string; label: MessageKey; human?: boolean }[] = [
+  { phase: 'Checking', label: 'osr.step.checking' },
+  { phase: 'Draining', label: 'osr.step.draining' },
+  { phase: 'AwaitingPurgeApproval', label: 'osr.step.approval1', human: true },
+  { phase: 'Purging', label: 'osr.step.purging' },
+  { phase: 'AwaitingDisk', label: 'osr.step.swap', human: true },
+  { phase: 'AwaitingWipeApproval', label: 'osr.step.approval2', human: true },
+  { phase: 'Wiping', label: 'osr.step.wiping' },
+  { phase: 'Declaring', label: 'osr.step.declaring' },
+  { phase: 'AwaitingOSD', label: 'osr.step.awaitingOsd' },
+  { phase: 'Backfilling', label: 'osr.step.backfilling' },
 ]
 
 export const TERMINAL_PHASES = ['Succeeded', 'Cancelled', 'Failed']
@@ -232,10 +234,10 @@ export function newReplacementBody(namespace: string, osdID: number, serial: str
 }
 
 /** Why the form cannot be sent, or null. */
-export function newReplacementError(osd: string, serial: string): string | null {
-  if (!/^\d{1,5}$/.test(osd.trim()) || Number(osd) > 65535) return 'The OSD is a number, e.g. 8 for osd.8.'
+export function newReplacementError(osd: string, serial: string): Message | null {
+  if (!/^\d{1,5}$/.test(osd.trim()) || Number(osd) > 65535) return { key: 'cax.err.osdNumber' }
   const s = normalizeSerial(serial)
-  if (!s) return 'Type the serial of the disk behind this OSD, as printed on its label.'
-  if (s.length > 128) return 'A serial is at most 128 characters.'
+  if (!s) return { key: 'osr.err.serialMissing' }
+  if (s.length > 128) return { key: 'osr.err.serialLong' }
   return null
 }

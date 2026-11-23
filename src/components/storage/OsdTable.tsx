@@ -1,9 +1,9 @@
 import { Fragment, useState } from 'react'
 import type { OsdRow } from '@/lib/ceph-diagnostic'
-import { osdDiskLabel } from '@/lib/storage-labels'
+import { OSD_STATE_LABEL, osdDiskLabel } from '@/lib/storage-labels'
 import { formatIec } from '@/lib/storage'
 import { useI18n } from '@/i18n/context'
-import type { Message, MessageKey } from '@/i18n'
+import type { Message } from '@/i18n'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { HardDrives } from '@phosphor-icons/react'
 
@@ -14,15 +14,6 @@ const STATE_CLASS: Record<OsdRow['state'], string> = {
   unstable: 'text-warning',
   settling: 'text-primary',
   unknown: 'text-muted-foreground',
-}
-
-const STATE_LABEL: Record<OsdRow['state'], MessageKey> = {
-  'up-in': 'osd.state.upIn',
-  down: 'osd.state.down',
-  out: 'osd.state.out',
-  unstable: 'osd.state.unstable',
-  settling: 'osd.state.settling',
-  unknown: 'osd.state.unknown',
 }
 
 function ms(v: number | null): string {
@@ -80,7 +71,7 @@ export function OsdTable({ osds }: { osds: OsdRow[] }) {
                   <td className="py-1 pr-3 font-bold">{o.name}</td>
                   <td className="pr-3">{o.deviceClass || '—'}</td>
                   <td className="pr-3">{o.host || '—'}</td>
-                  <td className={`pr-3 ${STATE_CLASS[o.state]}`}>{t(STATE_LABEL[o.state])}</td>
+                  <td className={`pr-3 ${STATE_CLASS[o.state]}`}>{t(OSD_STATE_LABEL[o.state])}</td>
                   <td className={`pr-3 text-right ${o.pgs === 0 ? 'text-warning' : ''}`}>{o.pgs ?? '—'}</td>
                   <td className="pr-3 text-right">{formatIec(o.bytesTotal)}</td>
                   <td className="pr-3 text-right">{o.usePct === null ? '—' : `${o.usePct.toFixed(1)} %`}</td>

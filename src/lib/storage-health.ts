@@ -10,7 +10,7 @@ import { agentFreshness } from './disk-inventory'
 import type { RegistryAlert } from './alert-registry'
 import type { Machine } from './machines'
 import type { Tone } from './thresholds'
-import type { MessageKey } from '@/i18n'
+import type { Message, MessageKey } from '@/i18n'
 
 export const STORAGE_HEALTH_POLICY_NAME = 'default'
 
@@ -93,8 +93,10 @@ export interface MirrorRow {
   name: string
   layout: string
   tone: Tone
-  state: string
-  detail: string
+  /** A raw word read off the node (ONLINE, active…) or one of ours. */
+  state: string | Message
+  /** Pieces joined by the screen with " · "; raw (a sync status, a vdev name) or ours. */
+  detail: Array<string | Message>
 }
 
 /** Every md array and pool of the node, or one row saying the stack could not be read. */
@@ -109,8 +111,8 @@ export function mirrorRows(machine: Machine): MirrorRow[] {
       name: stack,
       layout: '',
       tone: 'warning',
-      state,
-      detail: state === 'busy' ? 'previous read still running, state not refreshed' : error || 'could not be read',
+      state: { key: state === 'busy' ? 'hlt.state.busy' : 'hlt.state.error' },
+      detail: [state === 'busy' ? { key: 'hlt.busyDetail' } : error || { key: 'hlt.unreadable' }],
     })
 
   if (local.md.state === 'error' || local.md.state === 'busy') {
@@ -124,12 +126,12 @@ export function mirrorRows(machine: Machine): MirrorRow[] {
         name: a.name,
         layout: a.level ?? '',
         tone: a.degraded ? 'destructive' : 'accent',
-        state: a.degraded ? 'degraded' : a.state || 'active',
+        state: a.degraded ? { key: 'hlt.state.degraded' } : a.state || 'active',
         detail: [
           a.raidDisks ? `${a.activeDisks ?? 0}/${a.raidDisks} [${a.slots ?? ''}]` : '',
-          failed.length ? `failed: ${failed.join(', ')}` : '',
+          failed.length ? ({ key: 'hlt.failedList', params: { list: failed.join(', ') } } as Message) : '',
           a.sync ?? '',
-        ].filter(Boolean).join(' · '),
+        ].filter(Boolean),
       })
     }
   }
@@ -149,11 +151,11 @@ export function mirrorRows(machine: Machine): MirrorRow[] {
         tone: p.health === 'ONLINE' && errors === 0 && badVdevs.length === 0 ? 'accent' : 'destructive',
         state: p.health || '?',
         detail: [
-          p.capacityPercent !== undefined ? `${p.capacityPercent} % used` : '',
+          p.capacityPercent !== undefined ? ({ key: 'hlt.capUsed', params: { pct: p.capacityPercent } } as Message) : '',
           ...badVdevs,
-          errors ? `${errors} vdev errors` : '',
-          p.scrubErrors ? `${p.scrubErrors} scrub errors` : '',
-        ].filter(Boolean).join(' · '),
+          errors ? ({ key: 'hlt.vdevErrors', params: { count: errors } } as Message) : '',
+          p.scrubErrors ? ({ key: 'hlt.scrubErrors', params: { count: p.scrubErrors } } as Message) : '',
+        ].filter(Boolean),
       })
     }
   }
@@ -161,14 +163,14 @@ export function mirrorRows(machine: Machine): MirrorRow[] {
 }
 
 /** What the rows above cannot show: their age when the agent is silent, and what its lists left out. */
-export function readingNotes(machine: Machine, now: number): string[] {
+export function readingNotes(machine: Machine, now: number): Message[] {
   const storage = machine.storage
   if (!storage?.local) return []
-  const notes: string[] = []
+  const notes: Message[] = []
   const { ageS, stale } = agentFreshness(storage.observedAt, now)
-  if (stale) notes.push(ageS === null ? 'The agent has not dated this reading.' : `Reading ${Math.round(ageS / 60)} min old: the agent is silent.`)
+  if (stale) notes.push(ageS === null ? { key: 'hlt.note.undated' } : { key: 'hlt.note.silent', params: { min: Math.round(ageS / 60) } })
   const cut = (storage.local.md.arraysOmitted ?? 0) + (storage.local.zfs.poolsOmitted ?? 0)
-  if (cut > 0) notes.push(`${cut} array(s) or pool(s) past the agent's list limit are not shown.`)
+  if (cut > 0) notes.push({ key: 'hlt.note.cut', params: { count: cut } })
   return notes
 }
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { translate, type Message } from '@/i18n'
 import { actionLabel, activeFlags, crToCephAction, isOverdue, describeAction, newActionBody, newActionError, type FrameCephActionCR } from './ceph-action'
+
+const en = (m: Message | string) => (typeof m === 'string' ? m : translate('en', m.key, m.params))
 
 function cr(spec: FrameCephActionCR['spec'], status?: FrameCephActionCR['status']): FrameCephActionCR {
   return { metadata: { name: 'x', namespace: 'frame-system' }, spec, status }
@@ -42,14 +45,14 @@ describe('ceph actions', () => {
   })
 
   it('says what out and restart cost', () => {
-    expect(describeAction('OSDOut', 8, '', 0)).toContain('active+clean')
-    expect(describeAction('SetFlag', null, 'noout', 120)).toContain('120 minutes')
+    expect(en(describeAction('OSDOut', 8, '', 0))).toContain('active+clean')
+    expect(en(describeAction('SetFlag', null, 'noout', 120))).toContain('120 minutes')
   })
 
   it('tells a sent gesture from one not sent yet', () => {
-    expect(actionLabel(crToCephAction(cr({ action: 'OSDRestart', osdID: 8 }, { phase: 'Pending' })))).toBe('Pending')
+    expect(en(actionLabel(crToCephAction(cr({ action: 'OSDRestart', osdID: 8 }, { phase: 'Pending' }))))).toBe('Pending')
     expect(
-      actionLabel(crToCephAction(cr({ action: 'OSDRestart', osdID: 8 }, { phase: 'Pending', sentAt: '2026-11-13T18:00:00Z' }))),
+      en(actionLabel(crToCephAction(cr({ action: 'OSDRestart', osdID: 8 }, { phase: 'Pending', sentAt: '2026-11-13T18:00:00Z' })))),
     ).toBe('In progress')
   })
 

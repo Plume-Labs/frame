@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { translate, type Message } from '@/i18n'
 import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, declaredInCeph, diskRole, duplicateSerials, ioIndex, mdArrays, osdsWithoutMachine, smartCell } from './disk-inventory'
 import { buildOsdRows } from './ceph-diagnostic'
 import { healthyPods, healthyProm, hwMachine, setSample, HW_NODE } from './testdata/ceph-cluster'
@@ -10,16 +11,18 @@ function diskRows(machine = hwMachine(), prom = healthyProm()) {
   return buildDiskRows(machine, osds, ioIndex(prom.diskUtil, prom.diskAwait))
 }
 
+const en = (m: Message | string | undefined) => (m === undefined ? '' : typeof m === 'string' ? m : translate('en', m.key, m.params))
+
 describe('smartCell', () => {
   it('ne fait jamais passer un silence pour un disque sain', () => {
-    expect(smartCell(null)).toBe('not read')
-    expect(smartCell({ error: 'smartctl timed out' })).toBe('no verdict')
-    expect(smartCell({ wearUsedPercent: 12 })).toBe('no verdict · 12 % used')
+    expect(en(smartCell(null))).toBe('not read')
+    expect(en(smartCell({ error: 'smartctl timed out' }))).toBe('no verdict')
+    expect(en(smartCell({ wearUsedPercent: 12 }))).toBe('no verdict · 12 % used')
   })
 
   it('distingue le verdict et garde une usure à 0', () => {
-    expect(smartCell({ passed: true, wearUsedPercent: 0 })).toBe('passed · 0 % used')
-    expect(smartCell({ passed: false })).toBe('FAILING')
+    expect(en(smartCell({ passed: true, wearUsedPercent: 0 }))).toBe('passed · 0 % used')
+    expect(en(smartCell({ passed: false }))).toBe('FAILING')
   })
 })
 
@@ -33,16 +36,17 @@ describe('buildDiskRows', () => {
   it('porte le bon OSD sur la bonne baie, par la série', () => {
     const r = diskRows()
     const bay = (b: string) => r.find((d) => d.bay === b)!
-    expect(bay('2I:6:6').role).toBe('osd.3 (hdd)')
-    expect(bay('2I:6:7').role).toBe('osd.4 (hdd)')
-    expect(bay('1I:6:4').role).toBe('osd.5 (hdd)')
+    expect(en(bay('2I:6:6').role)).toBe('osd.3 (hdd)')
+    expect(en(bay('2I:6:7').role)).toBe('osd.4 (hdd)')
+    expect(en(bay('1I:6:4').role)).toBe('osd.5 (hdd)')
     expect(bay('2I:6:6').osPath).toBe('/dev/sdg')
   })
 
   // A disk the BMC lists and the kernel does not is a row, not a hole.
   it('garde le disque vu par le BMC seul, marqué bmc-only', () => {
     const masked = diskRows().find((d) => d.serial === 'SER-MASK')!
-    expect(masked).toMatchObject({ presence: 'bmc-only', osPath: null, bmcHealth: 'OK', role: 'not presented to the OS' })
+    expect(masked).toMatchObject({ presence: 'bmc-only', osPath: null, bmcHealth: 'OK' })
+    expect(en(masked.role)).toBe('not presented to the OS')
   })
 
   it('marque os-only un disque que le BMC ne liste pas', () => {
@@ -71,9 +75,9 @@ describe('buildDiskRows', () => {
 
 describe('diskRole', () => {
   it('nomme les occupations', () => {
-    expect(diskRole(null, 'md-member', 'both')).toBe('mdadm member')
-    expect(diskRole(null, 'zfs-member', 'both')).toBe('ZFS member')
-    expect(diskRole(null, 'ceph-osd', 'both')).toBe('ceph-osd (OSD not identified)')
+    expect(en(diskRole(null, 'md-member', 'both'))).toBe('mdadm member')
+    expect(en(diskRole(null, 'zfs-member', 'both'))).toBe('ZFS member')
+    expect(en(diskRole(null, 'ceph-osd', 'both'))).toBe('ceph-osd (OSD not identified)')
   })
 })
 
@@ -140,8 +144,8 @@ describe('lot 2 — identité et appartenance publiées par l-agent et le BMC', 
 
   it('nomme le miroir md et le point de montage dans le rôle', () => {
     const r = rows()
-    expect(r.find((d) => d.serial === 'SER-SSD1')?.role).toBe('mdadm member (md0)')
-    expect(r.find((d) => d.serial === 'SER-SSD2')?.role).toBe('mounted /var/lib/data')
+    expect(en(r.find((d) => d.serial === 'SER-SSD1')?.role)).toBe('mdadm member (md0)')
+    expect(en(r.find((d) => d.serial === 'SER-SSD2')?.role)).toBe('mounted /var/lib/data')
   })
 
   it('confronte le by-id WWN à la liste de devices du CephCluster', () => {
@@ -166,8 +170,8 @@ describe('lot 2 — identité et appartenance publiées par l-agent et le BMC', 
   it('décrit le contrôleur, « not reported » pour ce qui manque', () => {
     const m = lot2Machine()
     m.inventory!.storageControllers = [{ location: 'Slot 0', model: 'P440ar', firmware: '7.00', health: 'OK' }]
-    expect(controllerLines(m)).toEqual(['Slot 0 · P440ar · fw 7.00 · health OK · cache battery not reported'])
-    expect(controllerLines(hwMachine())).toEqual([])
+    expect(controllerLines(m).map(en)).toEqual(['Slot 0 · P440ar · fw 7.00 · health OK · cache battery not reported'])
+    expect(controllerLines(hwMachine()).map(en)).toEqual([])
   })
 })
 
@@ -176,7 +180,8 @@ describe('disques non joignables', () => {
     const m = hwMachine()
     m.inventory!.drives.push({ ...m.inventory!.drives[0], serialNumber: '', location: '2I:6:9' })
     const row = diskRows(m).find((d) => d.bay === '2I:6:9')
-    expect(row).toMatchObject({ serial: '', presence: 'no-serial', role: 'serial unknown — cannot be joined' })
+    expect(row).toMatchObject({ serial: '', presence: 'no-serial' })
+    expect(en(row!.role)).toBe('serial unknown — cannot be joined')
   })
 
   it('nomme les autres machines qui portent la même série', () => {

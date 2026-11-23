@@ -4,7 +4,7 @@
 import type { OsdRow } from './ceph-diagnostic'
 import type { PgTally } from './ceph-pools'
 import { PG_DISPLAY_STATES } from './ceph-pools'
-import type { Message } from '@/i18n'
+import type { Message, MessageKey } from '@/i18n'
 
 /** "active 121 · clean 121" — only states present, in reading order. States overlap. Ceph's state names stay raw. */
 export function pgLine(t: PgTally): string | Message {
@@ -28,4 +28,14 @@ export function osdDiskLabel(o: OsdRow): Message {
     default:
       return o.disk.reason
   }
+}
+
+/** The OSD state words of the tables (Ceph's up/in, plus the console's own readings). */
+export const OSD_STATE_LABEL: Record<OsdRow['state'], MessageKey> = {
+  'up-in': 'osd.state.upIn',
+  down: 'osd.state.down',
+  out: 'osd.state.out',
+  unstable: 'osd.state.unstable',
+  settling: 'osd.state.settling',
+  unknown: 'osd.state.unknown',
 }
