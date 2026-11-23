@@ -130,7 +130,7 @@ func askAnswers(ask asker, say func(string, ...any), hw Hardware, prev Answers) 
 	if err != nil {
 		return a, err
 	}
-	for _, f := range strings.Fields(picks) {
+	for f := range strings.FieldsSeq(picks) {
 		i, e := strconv.Atoi(f)
 		if e != nil || i < 1 || i > len(hw.Disks) {
 			say("  %q is not a disk number: ignored.", clean(f))

@@ -69,10 +69,12 @@ func TestConsoleDoesNothingWithoutErase(t *testing.T) {
 func TestConsoleRefusesAWrongSerialAndRestarts(t *testing.T) {
 	var doc string
 	srv := consoleServer(t, &doc)
-	bad := []string{"tacos", "0", diskNumber(t, srv, ssdID), "wrong", "dhcp", testKey}
-	good := []string{"tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1", "dhcp", testKey, "ERASE"}
+	disk := diskNumber(t, srv, ssdID)
+	in := strings.Join([]string{
+		"tacos", "0", disk, "wrong", "dhcp", testKey,
+		"tacos", "0", disk, "2012E2A5B6C1", "dhcp", testKey, "ERASE",
+	}, "\n") + "\n"
 	var out bytes.Buffer
-	in := strings.Join(append(bad, good...), "\n") + "\n"
 	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
