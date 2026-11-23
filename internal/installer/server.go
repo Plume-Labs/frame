@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -121,23 +122,33 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	status, err := s.Run(context.WithoutCancel(r.Context()), plan)
+	if err != nil {
+		writeJSON(w, status, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"uid": plan.Spec.UID})
+}
+
+// Run renders plan and hands it to Start, once per process: the page and the
+// text console share it, so whichever is used first locks out the other. The
+// HTTP status is the one the page reports on failure.
+func (s *Server) Run(ctx context.Context, plan Plan) (int, error) {
 	doc, err := plan.Render()
 	if err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
-		return
+		return http.StatusUnprocessableEntity, err
 	}
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "an installation is already running"})
-		return
+		return http.StatusConflict, errors.New("an installation is already running")
 	}
 	s.started = true
 	s.failed = ""
 	s.mu.Unlock()
 
-	// Not r.Context(): the installer must keep going if the page is closed.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+	// Not the request's context: the installer must keep going if the page is closed.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	if err := s.Start(ctx, doc); err != nil {
 		// Never reopened: Start may have written the document and restarted the
@@ -146,10 +157,9 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.failed = err.Error()
 		s.mu.Unlock()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+		return http.StatusInternalServerError, err
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"uid": plan.Spec.UID})
+	return http.StatusAccepted, nil
 }
 
 func (s *Server) status(w http.ResponseWriter, _ *http.Request) {

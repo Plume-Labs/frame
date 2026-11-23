@@ -156,20 +156,37 @@ it.
 
 ## Guided installer (in progress)
 
-`cmd/installer` is the first stage of a guided installation: a local page that
-replaces the hand-written spec of `hack/build-iso.sh`. It is **not on the ISO yet**
-(the kiosk session and the BIOS/UEFI boot tests are the next stage) and has never
-run on real hardware. What exists and is tested:
+A second image, built by `hack/build-installer-iso.sh`, replaces the hand-written spec of
+`hack/build-iso.sh`: the Ubuntu live-server ISO plus the assistant (`cmd/installer`) and a
+cloud-init seed read from the ISO itself (`ds=nocloud;s=/cdrom/server/`). Nothing secret is on
+the medium and no provisiond is involved.
 
-- hardware detection (disks only by `by-id`, USB disks refused, serial retyped before
-  any erase), the same spec validation as the unattended image, loopback-only listener
-  with Host and Origin checks, and a single installation per run;
-- it writes `/autoinstall.yaml` and restarts `snap.subiquity.subiquity-server`, the
-  injection proven in spike S0 (UEFI, QEMU).
+    hack/build-installer-iso.sh --base ubuntu-24.04.5-live-server-amd64.iso --out hearthrack-installer.iso
 
-Not covered yet: the k3s join token (the join stays the separate step above, so the
-token is never typed into the live system), live progress, BIOS injection, the VGA
-rendering of a BMC. Every write needs a one-time token printed on the console (it is the `#…` of the URL the
-command prints). Dry run on any Linux machine, nothing is written to a disk:
+At boot the assistant starts, prints `installer: open http://127.0.0.1:8099/#<token>` on the
+console (the token is made at boot; every write needs it), and offers two faces on the same
+rules: a page on the live system's loopback, and a **text assistant on its own terminal
+(tty8)** that the screen switches to. It detects the hardware (disks only by `by-id`; USB, SD
+and mounted disks cannot be chosen), asks name, role, disk(s), network and SSH key, shows what
+the erase destroys, needs the disk's serial retyped (and `ERASE` typed in text mode), then
+writes `/autoinstall.yaml` and restarts subiquity (spike S0). The k3s join stays the
+separate step above, so the token never enters the live system.
+
+Proven in QEMU (software-emulated CPU, no KVM), by `hack/qemu-assistant-test.sh` and
+`hack/qemu-console-test.sh`:
+
+| Check | BIOS | UEFI |
+|---|---|---|
+| ISO boots, assistant up, token on the console | yes | yes |
+| install driven through the assistant's API, SSH on the right UID, role recorded | yes | yes |
+| wrong serial refused, nothing written | yes | yes |
+| answers typed on the emulated keyboard on tty8, installation started | yes | not run |
+
+**Not proven**: a browser or kiosk session (the live system has no browser: a kiosk needs
+packages that are not on the ISO, a decision for later), live progress, the rendering on a
+real VGA or BMC console, real hardware, a real keyboard layout other than US. The bench builds
+its ISO with `--test-ssh-key` and `--serial-console`; a release ISO uses neither.
+
+Dry run of the assistant on any Linux machine, nothing is written to a disk:
 
     go run ./cmd/installer --autoinstall /tmp/autoinstall.yaml --restart-subiquity=false
