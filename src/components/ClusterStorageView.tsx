@@ -8,6 +8,7 @@ import {
   crdListPath,
 } from '@/lib/frame-sdk'
 import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 import { capacityLine, cephWarningReasons, formatIec, humanizeCapacity } from '@/lib/storage'
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { AttentionBanner } from '@/components/storage/AttentionBanner'
@@ -32,10 +33,17 @@ const frame = createFrameClient()
 
 const GiB = 1024 ** 3
 
-const TIER_DETAIL: Record<string, string> = {
-  MEM: 'in-memory (fastest)',
-  SSD: 'local NVMe/SSD',
-  HDD: 'under-store (object/HDD)',
+const TIER_DETAIL: Record<string, MessageKey> = {
+  MEM: 'cst.tier.mem',
+  SSD: 'cst.tier.ssd',
+  HDD: 'cst.tier.hdd',
+}
+
+/** The trend queries' English names stay the join key; this is what the operator reads. */
+const TREND_LABEL: Record<string, MessageKey> = {
+  'Raw used': 'cst.trend.rawUsed',
+  'OSD apply latency': 'cst.trend.apply',
+  'OSD commit latency': 'cst.trend.commit',
 }
 
 function healthTone(h: string): Tone {
@@ -46,6 +54,7 @@ function healthTone(h: string): Tone {
 
 /** Alluxio stacked cache tiers (MEM -> SSD -> HDD) + cache hit-rate. Silent if absent. */
 function AlluxioTiersCard() {
+  const { t } = useI18n()
   // Alluxio's own JSON metrics endpoint, not a Kubernetes object.
   const { state } = useLiveResource<AlluxioStats>(() => frame.cluster.alluxio(), [], [], 30_000)
   if (state.phase !== 'ready') return null
@@ -56,27 +65,27 @@ function AlluxioTiersCard() {
       <CardHeader>
         <CardTitle className="font-mono text-lg flex items-center gap-2">
           <Stack className="text-primary" />
-          Alluxio Cache Tiers
+          {t('cst.alluxio')}
           <Badge variant="outline" className="ml-auto font-mono text-accent border-current gap-1">
             <Lightning size={12} />
-            {a.cacheHitRate.toFixed(0)}% cache hit
+            {t('cst.cacheHit', { pct: a.cacheHitRate.toFixed(0) })}
           </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {a.tiers.map((t) => {
-          const pct = t.totalBytes ? (t.usedBytes / t.totalBytes) * 100 : 0
+        {a.tiers.map((tier) => {
+          const pct = tier.totalBytes ? (tier.usedBytes / tier.totalBytes) * 100 : 0
           return (
-            <div key={t.name} className="space-y-1">
+            <div key={tier.name} className="space-y-1">
               <div className="text-xs text-muted-foreground uppercase tracking-wide">
-                {t.name} tier
+                {t('cst.tierName', { name: tier.name })}
               </div>
               <div className="font-mono text-2xl font-bold text-foreground">
-                {(t.totalBytes / GiB).toFixed(1)} GiB
+                {(tier.totalBytes / GiB).toFixed(1)} GiB
               </div>
               <Progress value={pct} className="h-1" />
               <div className="text-[10px] text-muted-foreground font-mono">
-                {(t.usedBytes / GiB).toFixed(1)} GiB used · {TIER_DETAIL[t.name] ?? ''}
+                {t('cst.tierUsed', { used: (tier.usedBytes / GiB).toFixed(1) })} · {TIER_DETAIL[tier.name] ? t(TIER_DETAIL[tier.name]) : ''}
               </div>
             </div>
           )
@@ -109,7 +118,7 @@ const LATENCY_GOOD_MS = 50
 const LATENCY_OK_MS = 100
 
 export function ClusterStorageView() {
-  const { tm } = useI18n()
+  const { t, tm, tn } = useI18n()
   const cephNs = config().namespaces.ceph
   // Pod namespaces come from the same integration config ceph() itself reads
   // them from — cephOsd/cephMon, not namespaces.ceph — so a Settings edit to
@@ -151,6 +160,8 @@ export function ClusterStorageView() {
   const cephEntry = cephCapacityEntry(entries)
   const usedPct = c && c.bytesTotal ? (c.bytesUsed / c.bytesTotal) * 100 : 0
   const diag = useStorageDiagnostic(storageState.phase === 'ready' ? entries : null)
+  const pgLabel = pgLine(diag.pgs)
+  const pgText = typeof pgLabel === 'string' ? pgLabel : tm(pgLabel)
   const upCount = diag.osds.filter((o) => o.up === true).length
   const inCount = diag.osds.filter((o) => o.in === true).length
 
@@ -160,7 +171,7 @@ export function ClusterStorageView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Database className="text-primary" />
-            Ceph Storage
+            {t('cst.title')}
             <Button
               variant="outline"
               size="sm"
@@ -172,25 +183,25 @@ export function ClusterStorageView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {c && (
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Stat label="Health" value={c.health.replace('HEALTH_', '')} tone={healthTone(c.health)} />
+              <Stat label={t('cst.health')} value={c.health.replace('HEALTH_', '')} tone={healthTone(c.health)} />
               <Stat
-                label="OSDs up / in"
-                value={diag.promAvailable ? `${upCount}/${inCount} of ${diag.osds.length}` : `${c.osds} pods`}
+                label={t('cst.osdsUpIn')}
+                value={diag.promAvailable ? t('cst.upInOf', { up: upCount, in: inCount, total: diag.osds.length }) : tn('cst.pods', c.osds)}
                 tone={diag.promAvailable && (upCount < diag.osds.length || inCount < diag.osds.length) ? 'warning' : undefined}
               />
               <Stat
-                label="Mon quorum"
+                label={t('cst.monQuorum')}
                 value={diag.promAvailable ? `${diag.quorum.monsInQuorum.length}/${c.mons}` : c.mons}
                 tone={diag.quorum.monsOut.length > 0 ? 'warning' : undefined}
               />
-              <Stat label="Ceph version" value={c.version || '—'} size="sm" tone="muted" />
+              <Stat label={t('cst.version')} value={c.version || '—'} size="sm" tone="muted" />
             </div>
 
             {c.health !== 'HEALTH_OK' && (
@@ -224,7 +235,7 @@ export function ClusterStorageView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <TrendUp size={16} className="text-primary" /> Last {WINDOW_HOURS}h (Prometheus / ceph-mgr)
+              <TrendUp size={16} className="text-primary" /> {t('cst.trendTitle', { hours: WINDOW_HOURS })}
             </CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -232,6 +243,7 @@ export function ClusterStorageView() {
               <TrendRow
                 key={series.metric}
                 series={series}
+                label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined}
                 windowHours={WINDOW_HOURS}
                 format={(v) => v.toFixed(1)}
                 tone={
@@ -245,38 +257,41 @@ export function ClusterStorageView() {
         </Card>
       )}
 
-      <LiveStates state={state} emptyLabel="Rook-Ceph is not installed on this cluster." />
+      <LiveStates state={state} emptyLabel={t('cst.noRook')} />
       {c && <LiveActiveFlags />}
 
       {c && (
         <>
           <Card>
             <CardHeader>
-              <CardTitle className="font-mono text-base">Placement groups and capacity</CardTitle>
+              <CardTitle className="font-mono text-base">{t('cst.pgTitle')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-xs font-mono">
               {diag.promAvailable ? (
                 <>
                   <div>
-                    PG {diag.pgs.total}: {(() => { const l = pgLine(diag.pgs); return typeof l === 'string' ? l : tm(l) })()}{' '}
-                    <span className="text-muted-foreground">(a PG carries several states; counts overlap)</span>
+                    PG {diag.pgs.total}: {pgText}{' '}
+                    <span className="text-muted-foreground">{t('cst.pgOverlap')}</span>
                   </div>
                   <div>
-                    Degraded object copies {diag.objects.degraded ?? '—'}
-                    {diag.objects.degradedPct !== null ? ` (${diag.objects.degradedPct.toFixed(1)} %)` : ''} · misplaced{' '}
-                    {diag.objects.misplaced ?? '—'} · recovery {formatIec(diag.objects.recoveryBytesPerSec)}/s
+                    {t('cst.objects', {
+                      degraded: diag.objects.degraded ?? '—',
+                      pct: diag.objects.degradedPct !== null ? ` (${diag.objects.degradedPct.toFixed(1)} %)` : '',
+                      misplaced: diag.objects.misplaced ?? '—',
+                      recovery: formatIec(diag.objects.recoveryBytesPerSec),
+                    })}
                   </div>
                   <div>
-                    Mon in quorum: {diag.quorum.monsInQuorum.join(', ') || '—'}
-                    {diag.quorum.monsOut.length ? ` · out: ${diag.quorum.monsOut.join(', ')}` : ''} · mgr active:{' '}
-                    {diag.quorum.mgrActive.join(', ') || '—'}
-                    {diag.flags.length ? ` · flags: ${diag.flags.join(', ')}` : ''}
+                    {t('cst.mons', { list: diag.quorum.monsInQuorum.join(', ') || '—' })}
+                    {diag.quorum.monsOut.length ? ` · ${t('cst.monsOut', { list: diag.quorum.monsOut.join(', ') })}` : ''} ·{' '}
+                    {t('cst.mgrActive', { list: diag.quorum.mgrActive.join(', ') || '—' })}
+                    {diag.flags.length ? ` · ${t('cst.flags', { list: diag.flags.join(', ') })}` : ''}
                   </div>
                   <CapacityByClass classes={diag.classes} />
-                  <div className="text-muted-foreground">{diag.placementLine}</div>
+                  <div className="text-muted-foreground">{tm(diag.placementLine)}</div>
                 </>
               ) : (
-                <p className="text-muted-foreground">Prometheus unreachable: PG, OSD and pool detail unknown.</p>
+                <p className="text-muted-foreground">{t('cst.promDown')}</p>
               )}
             </CardContent>
           </Card>

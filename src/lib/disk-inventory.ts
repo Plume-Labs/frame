@@ -13,6 +13,7 @@
 
 import type { Machine, DriveInfo, ObservedDisk, DiskSmart } from './machines'
 import type { OsdRow, PromSample } from './ceph-diagnostic'
+import type { Message } from '@/i18n'
 
 /** `os-unreported`: the BMC lists it and the node agent has never published — no verdict. */
 export type DiskPresence = 'both' | 'bmc-only' | 'os-only' | 'os-unreported' | 'no-serial'
@@ -36,7 +37,7 @@ export interface DiskRow {
   presence: DiskPresence
   /** The OSD whose mgr device id carries this serial. */
   osd: OsdRow | null
-  role: string
+  role: string | Message
   io: DiskIo
   // Lot 2 — from the agent (identity, mount, membership) and the BMC (drive
   // firmware and counters). null = not reported; a BMC 0 never gets here.
@@ -66,26 +67,27 @@ export function diskRole(
   occupancy: string | null,
   presence: DiskPresence,
   detail: { members?: string[]; mountPoint?: string } = {},
-): string {
+): string | Message {
   if (osd) return `${osd.name}${osd.deviceClass ? ` (${osd.deviceClass})` : ''}`
-  if (presence === 'bmc-only') return 'not presented to the OS'
-  if (presence === 'no-serial') return 'serial unknown — cannot be joined'
+  if (presence === 'bmc-only') return { key: 'dsk.role.notPresented' }
+  if (presence === 'no-serial') return { key: 'dsk.role.noSerial' }
   const members = (detail.members ?? []).join(', ')
+  const of = members ? ` (${members})` : ''
   switch (occupancy) {
     case 'ceph-osd':
-      return 'ceph-osd (OSD not identified)'
+      return { key: 'dsk.role.osdUnidentified' }
     case 'md-member':
-      return members ? `mdadm member (${members})` : 'mdadm member'
+      return { key: 'dsk.role.mdMember', params: { of } }
     case 'zfs-member':
-      return members ? `ZFS member (${members})` : 'ZFS member'
+      return { key: 'dsk.role.zfsMember', params: { of } }
     case 'mounted':
-      return detail.mountPoint ? `mounted ${detail.mountPoint}` : 'mounted'
+      return detail.mountPoint ? { key: 'dsk.role.mountedOn', params: { path: detail.mountPoint } } : { key: 'dsk.role.mounted' }
     case 'partitioned':
-      return 'partitioned'
+      return { key: 'dsk.role.partitioned' }
     case 'lvm-pv':
       return 'LVM PV'
     case 'free':
-      return 'free'
+      return { key: 'dsk.role.free' }
     case null:
     case undefined:
       return '—'
@@ -95,12 +97,11 @@ export function diskRole(
 }
 
 /** What the disk said of itself, in a table cell: silence never reads as healthy. */
-export function smartCell(s: DiskSmart | null): string {
-  if (!s) return 'not read'
-  const wear = s.wearUsedPercent === undefined ? '' : ` · ${s.wearUsedPercent} % used`
-  if (s.passed === true) return `passed${wear}`
-  if (s.passed === false) return `FAILING${wear}`
-  return `no verdict${wear}`
+export function smartCell(s: DiskSmart | null): Message {
+  if (!s) return { key: 'dsk.smart.notRead' }
+  const wear: Message | '' = s.wearUsedPercent === undefined ? '' : { key: 'dsk.smart.wear', params: { pct: s.wearUsedPercent } }
+  const verdict = s.passed === true ? 'dsk.smart.passed' : s.passed === false ? 'dsk.smart.failing' : 'dsk.smart.noVerdict'
+  return { key: verdict, params: { wear } }
 }
 
 function kernelName(path: string | null): string {
@@ -314,17 +315,19 @@ export function osdsWithoutMachine(osds: OsdRow[], machines: Machine[]): OsdRow[
 }
 
 /** The array controllers of a machine, one line each; empty when the BMC reports none. */
-export function controllerLines(machine: Machine): string[] {
-  return (machine.inventory?.storageControllers ?? []).map((c) =>
-    [
-      c.location || 'controller',
-      c.model || 'model not reported',
-      c.firmware ? `fw ${c.firmware}` : 'fw not reported',
-      `health ${c.health || 'not reported'}`,
-      `cache battery ${c.backupPowerStatus || 'not reported'}`,
-      c.cacheStatus ? `cache ${c.cacheStatus}` : '',
-    ]
-      .filter(Boolean)
-      .join(' · '),
+export function controllerLines(machine: Machine): Message[] {
+  const notReported = { key: 'dsk.ctl.notReported' } as const
+  return (machine.inventory?.storageControllers ?? []).map(
+    (c): Message => ({
+      key: 'dsk.ctl.line',
+      params: {
+        location: c.location || { key: 'dsk.ctl.controller' },
+        model: c.model || { key: 'dsk.ctl.modelNotReported' },
+        fw: c.firmware ? { key: 'dsk.ctl.fw', params: { fw: c.firmware } } : { key: 'dsk.ctl.fwNotReported' },
+        health: { key: 'dsk.ctl.health', params: { value: c.health || notReported } },
+        battery: { key: 'dsk.ctl.battery', params: { value: c.backupPowerStatus || notReported } },
+        cache: c.cacheStatus ? { key: 'dsk.ctl.cache', params: { status: c.cacheStatus } } : '',
+      },
+    }),
   )
 }

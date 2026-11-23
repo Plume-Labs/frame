@@ -1,12 +1,16 @@
 import { Fragment, useState } from 'react'
 import { smartCell, type DiskRow } from '@/lib/disk-inventory'
+import { OSD_STATE_LABEL } from '@/lib/storage-labels'
 import type { DiskClaim } from '@/lib/frame-sdk'
-import { NOT_COLLECTED } from '@/lib/storage'
+import { useI18n } from '@/i18n/context'
+import type { Message } from '@/i18n'
 
-function osCell(d: DiskRow): string {
-  if (d.presence === 'bmc-only') return 'ABSENT'
-  if (d.presence === 'os-unreported') return 'no agent report'
-  if (d.presence === 'no-serial') return 'cannot be joined (no serial)'
+type T = ReturnType<typeof useI18n>['t']
+
+function osCell(t: T, d: DiskRow): string {
+  if (d.presence === 'bmc-only') return t('mdt.absent')
+  if (d.presence === 'os-unreported') return t('mdt.noAgentReport')
+  if (d.presence === 'no-serial') return t('mdt.cannotJoin')
   return `${d.osPath ?? '—'} ${d.occupancy ?? ''}`.trim()
 }
 
@@ -23,22 +27,24 @@ function io(d: DiskRow): string {
  * A click opens the disk's sheet.
  */
 export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: DiskClaim[] }) {
+  const { t, tm } = useI18n()
+  const text = (x: string | Message) => (typeof x === 'string' ? x : tm(x))
   const [open, setOpen] = useState<string | null>(null)
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs font-mono">
         <thead className="text-muted-foreground text-left">
           <tr>
-            <th className="py-1 pr-3">bay</th>
-            <th className="pr-3">serial</th>
-            <th className="pr-3">model</th>
-            <th className="pr-3 text-right">size</th>
-            <th className="pr-3">role</th>
+            <th className="py-1 pr-3">{t('mdt.col.bay')}</th>
+            <th className="pr-3">{t('mdt.col.serial')}</th>
+            <th className="pr-3">{t('mdt.col.model')}</th>
+            <th className="pr-3 text-right">{t('osd.col.size')}</th>
+            <th className="pr-3">{t('mdt.col.role')}</th>
             <th className="pr-3">BMC</th>
             <th className="pr-3">OS</th>
-            <th className="pr-3">temp</th>
+            <th className="pr-3">{t('mdt.col.temp')}</th>
             <th className="pr-3">SMART</th>
-            <th>I/O util / await</th>
+            <th>{t('mdt.col.io')}</th>
           </tr>
         </thead>
         <tbody>
@@ -53,25 +59,25 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                 >
                   <td className="py-1 pr-3">{d.bay ?? '—'}</td>
                   <td className="pr-3">
-                    {d.serial || 'serial unknown'}
-                    {d.duplicateOn.length ? ` (also on ${d.duplicateOn.join(', ')})` : ''}
+                    {d.serial || t('mdt.serialUnknown')}
+                    {d.duplicateOn.length ? ` (${t('mdt.alsoOn', { list: d.duplicateOn.join(', ') })})` : ''}
                   </td>
                   <td className="pr-3">{d.model ?? '—'}</td>
                   <td className="pr-3 text-right">{d.sizeGB ? `${d.sizeGB} GB` : '—'}</td>
-                  <td className="pr-3 font-bold">{d.role}</td>
-                  <td className="pr-3">{d.bmcHealth ?? 'not listed'}</td>
-                  <td className="pr-3">{osCell(d)}</td>
+                  <td className="pr-3 font-bold">{text(d.role)}</td>
+                  <td className="pr-3">{d.bmcHealth ?? t('mdt.notListed')}</td>
+                  <td className="pr-3">{osCell(t, d)}</td>
                   <td
                     className={`pr-3 ${d.temperatureCelsius === null ? 'text-muted-foreground' : ''}`}
-                    title={d.temperatureCelsius === null ? 'Not reported by the BMC (0 °C is never shown)' : undefined}
+                    title={d.temperatureCelsius === null ? t('mdt.tempTitle') : undefined}
                   >
-                    {d.temperatureCelsius === null ? 'n/r' : `${d.temperatureCelsius} °C`}
+                    {d.temperatureCelsius === null ? t('mdt.notReported') : `${d.temperatureCelsius} °C`}
                   </td>
                   <td
                     className={`pr-3 ${d.smart?.passed === false ? 'text-warning font-bold' : d.smart?.passed === true ? '' : 'text-muted-foreground'}`}
                     title={d.smart?.error}
                   >
-                    {smartCell(d.smart)}
+                    {tm(smartCell(d.smart))}
                   </td>
                   <td>{io(d)}</td>
                 </tr>
@@ -79,44 +85,50 @@ export function MachineDiskTable({ rows, claims }: { rows: DiskRow[]; claims: Di
                   <tr className="bg-secondary/30">
                     <td colSpan={10} className="p-3 space-y-1">
                       <div>
-                        {d.bay ?? 'no bay'} · {d.serial} · {d.model ?? '—'} · {d.protocol ?? '—'} {d.mediaType ?? ''}
-                        {d.linkSpeedMbps ? ` · link ${d.linkSpeedMbps / 1000} Gb/s` : ''}
-                        {d.rotationSpeedRPM ? ` · ${d.rotationSpeedRPM} rpm` : ''} · fw {d.firmware ?? NOT_COLLECTED}
+                        {d.bay ?? t('mdt.noBay')} · {d.serial} · {d.model ?? '—'} · {d.protocol ?? '—'} {d.mediaType ?? ''}
+                        {d.linkSpeedMbps ? ` · ${t('mdt.link', { gbps: d.linkSpeedMbps / 1000 })}` : ''}
+                        {d.rotationSpeedRPM ? ` · ${d.rotationSpeedRPM} rpm` : ''} · {t('mdt.fw', { fw: d.firmware ?? t('stv.notCollected') })}
                       </div>
                       <div>
-                        WWN {d.wwn ?? 'not published'}
+                        WWN {d.wwn ?? t('mdt.wwnNotPublished')}
                         {d.byIdPath ? ` · ${d.byIdPath}` : ''}
-                        {d.declaredInCeph === true ? ' · declared in the CephCluster spec' : ''}
-                        {d.declaredInCeph === false && d.osd ? ' · NOT in the CephCluster device list' : ''}
-                        {d.mountPoint ? ` · mounted on ${d.mountPoint}` : ''}
-                        {d.members.length ? ` · member of ${d.members.join(', ')}` : ''}
+                        {d.declaredInCeph === true ? ` · ${t('mdt.declared')}` : ''}
+                        {d.declaredInCeph === false && d.osd ? ` · ${t('mdt.notDeclared')}` : ''}
+                        {d.mountPoint ? ` · ${t('mdt.mountedOn', { path: d.mountPoint })}` : ''}
+                        {d.members.length ? ` · ${t('mdt.memberOf', { list: d.members.join(', ') })}` : ''}
                       </div>
                       {d.osd && (
                         <div>
-                          Role: {d.osd.name} ({d.osd.deviceClass}) on {d.osd.host} · {d.osd.state} · {d.osd.pgs ?? '—'} PG ·
-                          apply/commit {d.osd.applyMs ?? '—'}/{d.osd.commitMs ?? '—'} ms
+                          {t('mdt.roleLine', {
+                            name: d.osd.name,
+                            cls: d.osd.deviceClass,
+                            host: d.osd.host,
+                            state: t(OSD_STATE_LABEL[d.osd.state]),
+                            pgs: d.osd.pgs ?? '—',
+                            apply: d.osd.applyMs ?? '—',
+                            commit: d.osd.commitMs ?? '—',
+                          })}
                         </div>
                       )}
                       <div>
-                        Sources: BMC {d.bmcHealth ?? 'not listed'}
-                        {d.bmcReasons.length ? ` (${d.bmcReasons.join(', ')})` : ''} · OS {osCell(d)}
-                        {d.presence === 'bmc-only' ? ' — seen by the BMC, not presented to the node (masked, not failed)' : ''}
+                        {t('mdt.sources', { bmc: d.bmcHealth ?? t('mdt.notListed') })}
+                        {d.bmcReasons.length ? ` (${d.bmcReasons.join(', ')})` : ''} · OS {osCell(t, d)}
+                        {d.presence === 'bmc-only' ? ` — ${t('mdt.masked')}` : ''}
                       </div>
                       {d.smart && (
                         <div>
-                          SMART: {smartCell(d.smart)}
-                          {d.smart.readAt ? ` · read ${d.smart.readAt}` : ''}
+                          SMART: {tm(smartCell(d.smart))}
+                          {d.smart.readAt ? ` · ${t('lsc.readAt', { at: d.smart.readAt })}` : ''}
                           {d.smart.error ? ` · ${d.smart.error}` : ''}
                         </div>
                       )}
                       <div className="text-muted-foreground">
-                        SMART (reallocated, pending, grown defects): {NOT_COLLECTED} · power-on hours:{' '}
-                        {d.powerOnHours ?? 'not reported'}
+                        {t('mdt.smartDetail', { value: t('stv.notCollected'), hours: d.powerOnHours ?? t('mdt.notReportedLong') })}
                       </div>
                       <div>
                         FrameDiskClaims:{' '}
                         {diskClaims.length === 0
-                          ? 'none'
+                          ? t('mdt.none')
                           : diskClaims.map((c) => `${c.name} → ${c.destination} (${c.phase})`).join(', ')}
                       </div>
                     </td>

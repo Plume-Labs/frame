@@ -17,6 +17,7 @@ import type { OsdRow, PromSample } from './ceph-diagnostic'
 import type { OwnerRef } from './workloads'
 import type { Tone } from './thresholds'
 import { quantityBytes } from './storage'
+import type { Message, Param } from '@/i18n'
 
 /**
  * The instant queries this screen adds to the Ceph diagnostic, by key.
@@ -487,21 +488,31 @@ export function volumeFillFindings(prom: Pick<VolumeLoadSnapshot, 'volUsed' | 'v
 }
 
 /** One line for a volume's physical path, for the table and for tests. */
-export function pathLine(p: VolumePath): string {
+export function pathLine(p: VolumePath): Message {
   switch (p.kind) {
     case 'ceph': {
-      const cls = p.declared ? (p.deviceClass ?? 'any class') : 'pool not declared by a CephBlockPool or CephFilesystem: every OSD listed'
-      const osds = p.osdsKnown
-        ? `${p.osds.length} OSD on ${p.hosts.length} host${p.hosts.length > 1 ? 's' : ''}`
-        : 'OSDs not collected'
-      return `ceph ${p.flavour}${p.erasure ? ' EC' : ''} · pool ${p.pool || '?'} · rule ${p.crushRule ?? 'not collected'} · ${cls} · ${osds}`
+      const cls: Param = p.declared ? (p.deviceClass ?? { key: 'vol.anyClass' }) : { key: 'vol.notDeclared' }
+      const osds: Message = p.osdsKnown
+        ? { key: 'vol.osdsOn', params: { count: p.osds.length, hosts: { key: 'vol.hosts', params: { count: p.hosts.length } } } }
+        : { key: 'vol.osdsNotCollected' }
+      return {
+        key: 'vol.path.ceph',
+        params: {
+          flavour: p.flavour,
+          ec: p.erasure ? ' EC' : '',
+          pool: p.pool || '?',
+          rule: p.crushRule ?? { key: 'stv.notCollected' },
+          cls,
+          osds,
+        },
+      }
     }
     case 'local':
-      return `local disk of ${p.node ?? 'unknown node'}${p.path ? ` · ${p.path}` : ''}`
+      return { key: 'vol.path.local', params: { node: p.node ?? { key: 'vol.unknownNode' }, path: p.path ? ` · ${p.path}` : '' } }
     case 'other':
-      return `provisioner ${p.driver}`
+      return { key: 'vol.path.other', params: { driver: p.driver } }
     default:
-      return 'not bound to a volume'
+      return { key: 'vol.path.unbound' }
   }
 }
 

@@ -7,6 +7,7 @@
 // value (an OSD that takes no data), not a placeholder.
 
 import type { StorageCapacity } from './storage'
+import type { Message } from '@/i18n'
 
 export interface CephPlacement {
   state: 'Collected' | 'NotConfigured' | 'Error' | 'AuthRefused'
@@ -60,22 +61,32 @@ export function poolPlacement(p: CephPlacement | null): Map<string, { minSize: n
 }
 
 /** One line saying where the placement figures come from, or why they are missing. */
-export function placementSourceLine(p: CephPlacement | null): string {
-  if (!p) return 'min_size, CRUSH rule and CRUSH weight: not collected (no ceph FrameStorage entry)'
+export function placementSourceLine(p: CephPlacement | null): Message {
+  const subject: Message = { key: 'plc.subject' }
+  if (!p) return { key: 'plc.none', params: { subject } }
   switch (p.state) {
     case 'Collected':
-      return `min_size, CRUSH rule and CRUSH weight: ceph-mgr dashboard, read ${p.collectedAt ?? '?'}`
+      return { key: 'plc.collected', params: { subject, at: p.collectedAt ?? '?' } }
     case 'NotConfigured':
-      return 'min_size, CRUSH rule and CRUSH weight: not collected (no read-only dashboard account configured)'
+      return { key: 'plc.notConfigured', params: { subject } }
     case 'AuthRefused':
-      return `min_size, CRUSH rule and CRUSH weight: the dashboard refused the account — no retry until the account in the Secret changes${p.collectedAt ? `; showing the read of ${p.collectedAt}` : ''}`
+      return {
+        key: 'plc.authRefused',
+        params: { subject, shown: p.collectedAt ? { key: 'plc.showingRead', params: { at: p.collectedAt } } : '' },
+      }
     default: {
-      const dates = [
-        p.poolsReadAt ? `pools ${p.poolsReadAt}` : '',
-        p.osdsReadAt ? `OSDs ${p.osdsReadAt}` : '',
-        p.rulesReadAt ? `rules ${p.rulesReadAt}` : '',
-      ].filter(Boolean)
-      return `min_size, CRUSH rule and CRUSH weight: last read failed — ${p.message || 'no reason'}${dates.length ? `; lists as read: ${dates.join(', ')}` : p.collectedAt ? `; showing the read of ${p.collectedAt}` : ''}`
+      const dates: Message[] = [
+        p.poolsReadAt ? ({ key: 'plc.datePools', params: { at: p.poolsReadAt } } as Message) : null,
+        p.osdsReadAt ? ({ key: 'plc.dateOsds', params: { at: p.osdsReadAt } } as Message) : null,
+        p.rulesReadAt ? ({ key: 'plc.dateRules', params: { at: p.rulesReadAt } } as Message) : null,
+      ].filter((d): d is Message => d !== null)
+      const list = dates.reduce<Message | null>((acc, d) => (acc ? { key: 'plc.join', params: { a: acc, b: d } } : d), null)
+      const tail: Message | '' = list
+        ? { key: 'plc.lists', params: { list } }
+        : p.collectedAt
+          ? { key: 'plc.showingRead', params: { at: p.collectedAt } }
+          : ''
+      return { key: 'plc.error', params: { subject, reason: p.message || { key: 'plc.noReason' }, tail } }
     }
   }
 }

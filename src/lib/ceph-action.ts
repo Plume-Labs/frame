@@ -7,6 +7,8 @@
  * the screen shows.
  */
 
+import type { Message, MessageKey } from '@/i18n'
+
 export type CephActionKind = 'OSDIn' | 'OSDOut' | 'OSDRestart' | 'OSDScrub' | 'OSDDeepScrub' | 'SetFlag'
 
 /** The flags the console sets, each for a while (cephmgr.SettableFlags). */
@@ -67,9 +69,18 @@ export function isTerminalAction(phase: string): boolean {
  * a sent gesture still waiting for its outcome (a restart rolling) is "In
  * progress", so nobody takes it for one that can still be withdrawn.
  */
-export function actionLabel(a: CephAction): string {
-  if (a.phase === 'Pending' && a.sentAt) return 'In progress'
-  return a.phase
+export function actionLabel(a: CephAction): Message | string {
+  if (a.phase === 'Pending' && a.sentAt) return { key: 'cax.phase.inProgress' }
+  const key = PHASE_LABEL[a.phase]
+  return key ? { key } : a.phase
+}
+
+const PHASE_LABEL: Record<string, MessageKey> = {
+  Pending: 'cax.phase.pending',
+  Active: 'cax.phase.active',
+  Done: 'cax.phase.done',
+  Refused: 'cax.phase.refused',
+  Failed: 'cax.phase.failed',
 }
 
 /** Grace after a flag's end before the banner calls it overdue. */
@@ -89,51 +100,51 @@ export function activeFlags(items: CephAction[]): CephAction[] {
 }
 
 /** What the gesture does, for the confirmation dialog. */
-export function describeAction(action: CephActionKind, osd: number | null, flag: string, minutes: number): string {
+export function describeAction(action: CephActionKind, osd: number | null, flag: string, minutes: number): Message {
   const o = `osd.${osd ?? '?'}`
   switch (action) {
     case 'OSDIn':
-      return `Mark ${o} in: Ceph moves data back onto it.`
+      return { key: 'cax.desc.in', params: { osd: o } }
     case 'OSDOut':
-      return `Mark ${o} out: Ceph copies its data to the other OSDs (one copy fewer meanwhile). Refused unless every PG is active+clean and every other OSD up and in, no other out or restart is under way (or ended less than 10 minutes ago), no OSD replacement is running, and no flag such as norecover or pause is set. Undo: mark it in.`
+      return { key: 'cax.desc.out', params: { osd: o } }
     case 'OSDRestart':
-      return `Restart ${o} (its pod is replaced). Its PGs run on one copy fewer for a minute or two. Refused on the same conditions as an out.`
+      return { key: 'cax.desc.restart', params: { osd: o } }
     case 'OSDScrub':
-      return `Ask Ceph to scrub ${o} (light check of its PGs). Ceph runs it when its scrub schedule allows.`
+      return { key: 'cax.desc.scrub', params: { osd: o } }
     case 'OSDDeepScrub':
-      return `Ask Ceph to deep-scrub ${o} (reads every object, heavy on the disk for a while).`
+      return { key: 'cax.desc.deepScrub', params: { osd: o } }
     case 'SetFlag':
-      return `Set ${flag} on the whole cluster for ${minutes} minutes. Hearthrack unsets it at the end, or when you release it. ${flagEffect(flag)}`
+      return { key: 'cax.desc.flag', params: { flag, minutes, effect: flagEffect(flag) } }
   }
 }
 
-function flagEffect(flag: string): string {
+function flagEffect(flag: string): Message | '' {
   switch (flag) {
     case 'noout':
-      return 'Meanwhile a down OSD is not marked out: no data moves, but a failure is not healed either.'
+      return { key: 'cax.flag.noout' }
     case 'norebalance':
-      return 'Meanwhile Ceph does not rebalance data that is already safe.'
+      return { key: 'cax.flag.norebalance' }
     case 'nobackfill':
-      return 'Meanwhile no backfill runs: a missing copy is not rebuilt.'
+      return { key: 'cax.flag.nobackfill' }
     case 'norecover':
-      return 'Meanwhile no recovery runs: a missing copy is not rebuilt.'
+      return { key: 'cax.flag.norecover' }
     case 'noscrub':
-      return 'Meanwhile no scrub runs.'
+      return { key: 'cax.flag.noscrub' }
     case 'nodeep-scrub':
-      return 'Meanwhile no deep scrub runs.'
+      return { key: 'cax.flag.nodeepscrub' }
   }
   return ''
 }
 
 /** Why the form cannot be sent, or null. */
-export function newActionError(action: CephActionKind, osd: string, minutes: string): string | null {
+export function newActionError(action: CephActionKind, osd: string, minutes: string): Message | null {
   if (action === 'SetFlag') {
-    if (!/^\d{1,4}$/.test(minutes.trim())) return 'The duration is a number of minutes.'
+    if (!/^\d{1,4}$/.test(minutes.trim())) return { key: 'cax.err.minutesNumber' }
     const m = Number(minutes)
-    if (m < 5 || m > 1440) return 'Between 5 minutes and 24 hours.'
+    if (m < 5 || m > 1440) return { key: 'cax.err.minutesRange' }
     return null
   }
-  if (!/^\d{1,5}$/.test(osd.trim()) || Number(osd) > 65535) return 'The OSD is a number, e.g. 8 for osd.8.'
+  if (!/^\d{1,5}$/.test(osd.trim()) || Number(osd) > 65535) return { key: 'cax.err.osdNumber' }
   return null
 }
 

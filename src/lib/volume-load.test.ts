@@ -1,3 +1,4 @@
+import { translate, type Message } from '@/i18n'
 import { describe, expect, it } from 'vitest'
 import type { OsdRow } from './ceph-diagnostic'
 import {
@@ -139,6 +140,8 @@ function inputs(over: Partial<VolumeLoadInputs> = {}): VolumeLoadInputs {
 
 const row = (rows: ReturnType<typeof buildVolumeRows>, key: string) => rows.find((r) => r.key === key)!
 
+const en = (m: Message) => translate('en', m.key, m.params)
+
 describe('buildVolumeRows', () => {
   it('walks a Ceph claim to its pool, rule, OSDs, disks and hosts', () => {
     const r = row(buildVolumeRows(inputs()), 'neura/pgdata-neura-db-0')
@@ -188,7 +191,7 @@ describe('buildVolumeRows', () => {
   it('says so when the pool is not declared by a CephBlockPool, and lists every OSD', () => {
     const r = row(buildVolumeRows(inputs({ blockPools: [] })), 'neura/pgdata-neura-db-0')
     expect(r.path.kind === 'ceph' && r.path.declared).toBe(false)
-    expect(pathLine(r.path)).toContain('not declared')
+    expect(en(pathLine(r.path))).toContain('not declared')
     expect(r.path.kind === 'ceph' && r.path.osds.length).toBe(OSDS.length)
   })
 
@@ -204,8 +207,8 @@ describe('buildVolumeRows', () => {
 describe('unknowns and special pools', () => {
   it('says the OSDs are not collected rather than showing an empty path', () => {
     const r = row(buildVolumeRows(inputs({ osds: [], osdsKnown: false })), 'neura/pgdata-neura-db-0')
-    expect(pathLine(r.path)).toContain('OSDs not collected')
-    expect(pathLine(r.path)).not.toContain('0 OSD')
+    expect(en(pathLine(r.path))).toContain('OSDs not collected')
+    expect(en(pathLine(r.path))).not.toContain('0 OSD')
   })
 
   it('follows the dataPool of an erasure-coded RBD image', () => {
@@ -223,7 +226,7 @@ describe('unknowns and special pools', () => {
       'neura/pgdata-neura-db-0',
     )
     expect(r.path.kind === 'ceph' && r.path.pool).toBe('ec-data')
-    expect(pathLine(r.path)).toContain('rbd EC')
+    expect(en(pathLine(r.path))).toContain('rbd EC')
   })
 
   it('ignores a finished pod as a consumer', () => {

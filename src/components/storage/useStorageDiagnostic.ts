@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { CephDiagnosticRaw, StorageEntry, createFrameClient } from '@/lib/frame-sdk'
 import { config } from '@/lib/frame-config'
+import type { Message } from '@/i18n'
 import { crushWeights, placementOf, placementSourceLine, poolPlacement } from '@/lib/ceph-placement'
 import type { Machine } from '@/lib/machines'
 import { buildOsdRows, type OsdRow } from '@/lib/ceph-diagnostic'
@@ -41,7 +42,7 @@ export interface StorageDiagnostic {
   cephDevices: string[]
   attention: AttentionItem[]
   /** Where min_size, CRUSH rules and weights come from, or why they are missing. */
-  placementLine: string
+  placementLine: Message
   reload: () => void
 }
 

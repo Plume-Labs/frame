@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { StorageEntry, createFrameClient } from '@/lib/frame-sdk'
 import { placementOf } from '@/lib/ceph-placement'
-import { formatIec, NOT_COLLECTED } from '@/lib/storage'
+import { formatIec } from '@/lib/storage'
+import { useI18n } from '@/i18n/context'
 import {
   FILL_CRITICAL_PCT,
   FILL_WARN_PCT,
@@ -37,6 +38,7 @@ const FILL_TEXT: Record<NonNullable<VolumeRow['fill']>, string> = {
  * volume-load.ts.
  */
 export function StorageLoadView() {
+  const { t } = useI18n()
   const { state: storageState } = useLiveResource<StorageEntry[]>(() => frame.storage.list(), [], [frame.storage.watchPath()])
   const entries = storageState.phase === 'ready' ? storageState.data : null
   const diag = useStorageDiagnostic(entries)
@@ -59,15 +61,14 @@ export function StorageLoadView() {
   const fillAlerts = rows.filter((r) => r.fill === 'warning' || r.fill === 'critical')
   const statsMissing = raw !== null && rows.length > 0 && rows.every((r) => r.usePct === null)
 
-  if (!raw) return <LiveStates state={state} emptyLabel="No volume" />
+  if (!raw) return <LiveStates state={state} emptyLabel={t('vol.none')} />
 
   return (
     <div className="space-y-6">
       {raw.unreadable.length > 0 && (
         <Card className="border-warning">
           <CardContent className="pt-6 text-xs font-mono text-warning">
-            The API refused or did not answer the list of {raw.unreadable.join(', ')} (missing permission on the console's role?). Pools
-            and attachments below may read as "not declared" when they are not.
+            {t('vol.unreadable', { list: raw.unreadable.join(', ') })}
           </CardContent>
         </Card>
       )}
@@ -76,21 +77,26 @@ export function StorageLoadView() {
         <Card className={shared.length > 0 || fillAlerts.some((r) => r.fill === 'critical') ? 'border-destructive' : undefined}>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <WarningCircle className="text-warning" /> To address
+              <WarningCircle className="text-warning" /> {t('sa.title')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1 text-xs font-mono">
               {shared.map((s) => (
                 <li key={`osd-${s.osd}`} className="text-destructive">
-                  osd.{s.osd} on {s.host} takes part in every write of pool{s.pools.length > 1 ? 's' : ''}{' '}
-                  {s.pools.join(', ')} (the only OSD of its host) and commits in {ms(s.commitMs)}: {s.volumes} volume
-                  {s.volumes > 1 ? 's' : ''} wait for it on each write.
+                  {t('vol.shared', {
+                    osd: s.osd,
+                    host: s.host,
+                    poolWord: { key: 'vol.pool', params: { count: s.pools.length } },
+                    pools: s.pools.join(', '),
+                    ms: ms(s.commitMs),
+                    volumes: { key: 'vol.volumesWait', params: { count: s.volumes } },
+                  })}
                 </li>
               ))}
               {fillAlerts.map((r) => (
                 <li key={`fill-${r.key}`} className={r.fill === 'critical' ? 'text-destructive' : 'text-warning'}>
-                  {r.key} is {r.usePct!.toFixed(1)} % full ({formatIec(r.usedBytes)} of {formatIec(r.sizeBytes)}).
+                  {t('vol.fillAlert', { key: r.key, pct: r.usePct!.toFixed(1), used: formatIec(r.usedBytes), size: formatIec(r.sizeBytes) })}
                 </li>
               ))}
             </ul>
@@ -101,7 +107,7 @@ export function StorageLoadView() {
       <Card>
         <CardHeader>
           <CardTitle className="font-mono text-lg flex items-center gap-2">
-            <HardDrives className="text-primary" /> Volumes ({rows.length})
+            <HardDrives className="text-primary" /> {t('vol.title', { count: rows.length })}
             <Button
               variant="outline"
               size="sm"
@@ -113,28 +119,28 @@ export function StorageLoadView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           {rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground font-mono">No PersistentVolumeClaim in the cluster.</p>
+            <p className="text-sm text-muted-foreground font-mono">{t('vol.empty')}</p>
           ) : (
             <table className="w-full text-xs font-mono">
               <thead className="text-muted-foreground text-left">
                 <tr>
-                  <th className="py-1 pr-3">claim</th>
-                  <th className="pr-3">used by</th>
-                  <th className="pr-3">nodes</th>
-                  <th className="pr-3 text-right">used / size</th>
-                  <th className="pr-3">class</th>
-                  <th className="pr-3">physical path</th>
-                  <th className="pr-3 text-right" title="Commit latency of the slowest OSD that may hold a copy, right now">
-                    write
+                  <th className="py-1 pr-3">{t('vol.col.claim')}</th>
+                  <th className="pr-3">{t('vol.col.usedBy')}</th>
+                  <th className="pr-3">{t('pool.col.nodes')}</th>
+                  <th className="pr-3 text-right">{t('vol.col.usedSize')}</th>
+                  <th className="pr-3">{t('pool.col.class')}</th>
+                  <th className="pr-3">{t('vol.col.path')}</th>
+                  <th className="pr-3 text-right" title={t('vol.writeTitle')}>
+                    {t('vol.col.write')}
                   </th>
-                  <th className="text-right" title="Worst 5-minute commit latency of any OSD on the path, last 24 h">
-                    worst 24 h
+                  <th className="text-right" title={t('vol.worstTitle')}>
+                    {t('vol.col.worst')}
                   </th>
                 </tr>
               </thead>
@@ -147,15 +153,16 @@ export function StorageLoadView() {
           )}
           {!osdsKnown && (
             <p className="mt-2 text-xs text-warning font-mono">
-              OSD figures not collected{diag.error ? ` (${diag.error})` : diag.loading ? ' yet' : ' (Prometheus unreachable)'}: the
-              write path, its latency and the slow-OSD banner cannot be evaluated.
+              {t('vol.noOsds', { why: diag.error ? ` (${diag.error})` : diag.loading ? t('vol.whyYet') : t('vol.whyProm') })}
             </p>
           )}
           <p className="mt-2 text-[10px] text-muted-foreground font-mono">
-            Fill from kubelet_volume_stats ({statsMissing ? `${NOT_COLLECTED} on this cluster` : 'kubelet'}); flagged at{' '}
-            {FILL_WARN_PCT} % and {FILL_CRITICAL_PCT} %. Write latency is the slowest commit of the OSDs the pool places
-            copies on (ceph_osd_commit_latency_ms); above {WRITE_SLOW_MS} ms it is flagged. Local volumes have no
-            per-disk figure here. Read-only: nothing on this screen changes a volume.
+            {t('vol.footnote', {
+              src: statsMissing ? t('vol.statsMissing') : 'kubelet',
+              warn: FILL_WARN_PCT,
+              crit: FILL_CRITICAL_PCT,
+              slow: WRITE_SLOW_MS,
+            })}
           </p>
         </CardContent>
       </Card>
@@ -164,6 +171,7 @@ export function StorageLoadView() {
 }
 
 function VolumeLine({ row: r, open, onToggle }: { row: VolumeRow; open: boolean; onToggle: () => void }) {
+  const { t, tm } = useI18n()
   const users = r.consumers.map((c) => c.workload)
   return (
     <>
@@ -175,7 +183,7 @@ function VolumeLine({ row: r, open, onToggle }: { row: VolumeRow; open: boolean;
           </button>
           {r.phase !== 'Bound' && <span className="ml-1 text-warning">{r.phase}</span>}
         </td>
-        <td className="pr-3">{users.length ? users.join(', ') : <span className="text-muted-foreground">unused</span>}</td>
+        <td className="pr-3">{users.length ? users.join(', ') : <span className="text-muted-foreground">{t('vol.unused')}</span>}</td>
         <td className="pr-3">{r.nodes.join(', ') || '—'}</td>
         <td className={`pr-3 text-right ${r.fill ? FILL_TEXT[r.fill] : ''}`}>
           {r.usePct === null ? (
@@ -187,7 +195,7 @@ function VolumeLine({ row: r, open, onToggle }: { row: VolumeRow; open: boolean;
           )}
         </td>
         <td className="pr-3">{r.storageClass ?? '—'}</td>
-        <td className="pr-3 text-muted-foreground">{pathLine(r.path)}</td>
+        <td className="pr-3 text-muted-foreground">{tm(pathLine(r.path))}</td>
         <td className={`pr-3 text-right ${TONE_TEXT[writeTone(r.likelyWrite?.ms ?? null)]}`}>
           {r.likelyWrite ? `${ms(r.likelyWrite.ms)} (osd.${r.likelyWrite.osd})` : '—'}
         </td>
@@ -207,13 +215,14 @@ function VolumeLine({ row: r, open, onToggle }: { row: VolumeRow; open: boolean;
 }
 
 function VolumeDetail({ row: r }: { row: VolumeRow }) {
+  const { t } = useI18n()
   return (
     <div className="space-y-2">
       <div>
-        reclaim policy: {r.reclaimPolicy ?? '—'}
+        {t('vol.reclaim', { policy: r.reclaimPolicy ?? '—' })}
         {r.consumers.map((c) => (
           <div key={c.workload}>
-            {c.workload}: {c.pods.map((p) => `${p.name} on ${p.node || 'unscheduled'} (${p.phase})`).join(', ')}
+            {c.workload}: {c.pods.map((p) => t('vol.podOn', { name: p.name, node: p.node || t('vol.unscheduled'), phase: p.phase })).join(', ')}
           </div>
         ))}
       </div>
@@ -222,12 +231,12 @@ function VolumeDetail({ row: r }: { row: VolumeRow }) {
           <thead className="text-muted-foreground text-left">
             <tr>
               <th className="pr-3">OSD</th>
-              <th className="pr-3">host</th>
-              <th className="pr-3">class</th>
-              <th className="pr-3">disk</th>
+              <th className="pr-3">{t('vol.col.host')}</th>
+              <th className="pr-3">{t('pool.col.class')}</th>
+              <th className="pr-3">{t('osd.col.disk')}</th>
               <th className="pr-3 text-right">commit</th>
-              <th className="pr-3 text-right">worst 24 h</th>
-              <th>on every write</th>
+              <th className="pr-3 text-right">{t('vol.col.worst')}</th>
+              <th>{t('vol.col.everyWrite')}</th>
             </tr>
           </thead>
           <tbody>
@@ -239,7 +248,7 @@ function VolumeDetail({ row: r }: { row: VolumeRow }) {
                 <td className="pr-3">{o.disk}</td>
                 <td className={`pr-3 text-right ${TONE_TEXT[writeTone(o.commitMs)]}`}>{ms(o.commitMs)}</td>
                 <td className={`pr-3 text-right ${TONE_TEXT[writeTone(o.worst24hMs)]}`}>{ms(o.worst24hMs)}</td>
-                <td>{o.onEveryWrite ? 'yes' : '—'}</td>
+                <td>{o.onEveryWrite ? t('common.yes') : '—'}</td>
               </tr>
             ))}
           </tbody>

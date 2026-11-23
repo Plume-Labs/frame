@@ -6,7 +6,7 @@ import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, osdsWi
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { MachineDiskTable } from '@/components/storage/MachineDiskTable'
 import { MdLvmCard, ZfsCard } from '@/components/storage/LocalStacksCards'
-import { osdDiskLabel } from '@/lib/storage-labels'
+import { OSD_STATE_LABEL, osdDiskLabel } from '@/lib/storage-labels'
 import type { Machine } from '@/lib/machines'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -33,7 +33,7 @@ const frame = createFrameClient()
  * truth about them, so it never enters either list above.
  */
 export function MachineDisksPanel() {
-  const { tm } = useI18n()
+  const { t, tm, tn } = useI18n()
   const { state, reload } = useLiveResource<Machine[]>(
     () => frame.machines.list(),
     [],
@@ -72,7 +72,7 @@ export function MachineDisksPanel() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <HardDrives className="text-primary" />
-            Disks
+            {t('mdp.title')}
             <Button
               variant="outline"
               size="sm"
@@ -81,14 +81,14 @@ export function MachineDisksPanel() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && (
           <CardContent className="space-y-3">
             <Input
-              placeholder="Filter by machine name…"
+              placeholder={t('mdp.filter')}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="max-w-xs font-mono text-xs"
@@ -106,10 +106,10 @@ export function MachineDisksPanel() {
                   <span className="flex-1 truncate">{m.name}</span>
                   <span className="text-muted-foreground">
                     {(m.storage?.divergences.length ?? 0) > 0
-                      ? `${m.storage!.divergences.length} divergence(s)`
+                      ? tn('mdp.divergences', m.storage!.divergences.length)
                       : m.storage
-                        ? 'no divergence'
-                        : 'never reported'}
+                        ? t('mdp.noDivergence')
+                        : t('mdp.neverReported')}
                   </span>
                 </button>
               ))}
@@ -118,7 +118,7 @@ export function MachineDisksPanel() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No machines are registered yet." />
+      <LiveStates state={state} emptyLabel={t('mdp.noMachines')} />
 
       {selected && (
         <Card>
@@ -127,39 +127,39 @@ export function MachineDisksPanel() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono">
-              <span>node {selected.nodeRef || '—'}</span>
+              <span>{t('mdp.node', { node: selected.nodeRef || '—' })}</span>
               <span className={selected.reachable ? 'text-accent' : 'text-warning'}>
-                BMC {selected.reachable ? 'reachable' : 'unreachable'}
+                {t(selected.reachable ? 'mdp.bmcReachable' : 'mdp.bmcUnreachable')}
               </span>
               {(() => {
                 const f = agentFreshness(selected.storage?.observedAt ?? null, now)
                 return (
                   <span className={f.stale ? 'text-warning' : ''}>
-                    agent {f.ageS === null ? 'never reported' : `read ${f.ageS} s ago${f.stale ? ' (stale)' : ''}`}
+                    {f.ageS === null ? t('mdp.agentNever') : t(f.stale ? 'mdp.agentStale' : 'mdp.agentRead', { s: f.ageS })}
                   </span>
                 )
               })()}
               {(() => {
-                const t = chassisDiskTemp(selected)
-                return <span>{t ? `${t.name} ${t.celsius} °C (chassis)` : 'disk temperature not reported'}</span>
+                const temp = chassisDiskTemp(selected)
+                return <span>{temp ? t('mdp.chassisTemp', { name: temp.name, c: temp.celsius }) : t('mdp.tempNotReported')}</span>
               })()}
               {diag.md
                 .filter((a) => a.node === selected.nodeRef)
                 .map((a) => (
                   <span key={a.device} className={a.degraded ? 'text-destructive' : ''}>
-                    {a.device}: {a.active}/{a.required ?? '?'} active, {a.failed} failed, {a.state}
+                    {t('mdp.mdLine', { device: a.device, active: a.active, required: a.required ?? '?', failed: a.failed, state: a.state })}
                   </span>
                 ))}
             </div>
             <div className="text-xs font-mono">
               {controllerLines(selected).length === 0 ? (
-                <span className="text-muted-foreground">Array controller: not reported by the BMC.</span>
+                <span className="text-muted-foreground">{t('mdp.noController')}</span>
               ) : (
-                controllerLines(selected).map((l) => <div key={l}>Controller {l}</div>)
+                controllerLines(selected).map((l) => <div key={tm(l)}>{t('mdp.controller', { line: tm(l) })}</div>)
               )}
             </div>
             {diskRows.length === 0 ? (
-              <p className="text-xs text-muted-foreground font-mono">No disk reported by the BMC or the node agent.</p>
+              <p className="text-xs text-muted-foreground font-mono">{t('mdp.noDisk')}</p>
             ) : (
               <MachineDiskTable rows={diskRows} claims={selectedClaims} />
             )}
@@ -167,11 +167,11 @@ export function MachineDisksPanel() {
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
                 <Warning size={12} />
-                Divergences
+                {t('mdp.divergencesTitle')}
               </div>
               {(selected.storage?.divergences ?? []).length === 0 ? (
                 <p className="text-xs text-muted-foreground font-mono">
-                  {selected.storage ? 'No divergence between the two sources.' : 'Nothing to compare yet.'}
+                  {selected.storage ? t('mdp.noDivergenceDetail') : t('mdp.nothingToCompare')}
                 </p>
               ) : (
                 <ul className="text-xs font-mono space-y-1 list-disc list-inside">
@@ -184,7 +184,7 @@ export function MachineDisksPanel() {
 
             {selectedClaims.length > 0 && (
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide">Disk claims</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide">{t('mdp.claims')}</div>
                 <ul className="text-xs font-mono space-y-1">
                   {selectedClaims.map((c) => (
                     <li key={c.name} className="flex items-center justify-between gap-2">
@@ -214,20 +214,20 @@ export function MachineDisksPanel() {
       {vmOsds.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="font-mono text-lg">Nodes without a FrameMachine</CardTitle>
+            <CardTitle className="font-mono text-lg">{t('mdp.vmNodes')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs font-mono">
             <p className="text-muted-foreground">
-              No BMC and no agent publication behind these nodes: their OSD disks are listed from Ceph alone.
+              {t('mdp.vmNodesHint')}
             </p>
             <table className="w-full">
               <thead className="text-muted-foreground text-left">
                 <tr>
-                  <th className="pr-3">node</th>
+                  <th className="pr-3">{t('osd.col.node')}</th>
                   <th className="pr-3">OSD</th>
-                  <th className="pr-3">disk</th>
-                  <th className="pr-3 text-right">size</th>
-                  <th>state</th>
+                  <th className="pr-3">{t('osd.col.disk')}</th>
+                  <th className="pr-3 text-right">{t('osd.col.size')}</th>
+                  <th>{t('osd.col.state')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -237,7 +237,7 @@ export function MachineDisksPanel() {
                     <td className="pr-3">{o.name}</td>
                     <td className="pr-3">{tm(osdDiskLabel(o))}</td>
                     <td className="pr-3 text-right">{formatIec(o.bytesTotal)}</td>
-                    <td>{o.state}</td>
+                    <td>{t(OSD_STATE_LABEL[o.state])}</td>
                   </tr>
                 ))}
               </tbody>
