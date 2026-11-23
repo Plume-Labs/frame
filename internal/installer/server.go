@@ -2,15 +2,16 @@ package installer
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +29,11 @@ type Server struct {
 	// called at most once.
 	Start func(ctx context.Context, userData string) error
 
+	// Token must accompany every write (header X-Installer-Token). It is shown
+	// on the console, so only someone at the machine can start an erase: the
+	// Host and Origin checks stop a browser page, not another local process.
+	Token string
+
 	mu      sync.Mutex
 	started bool
 	failed  string
@@ -42,7 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/summary", s.summary)
 	mux.HandleFunc("POST /api/install", s.install)
 	mux.HandleFunc("GET /api/status", s.status)
-	return guard(mux)
+	return s.guard(mux)
 }
 
 // ListenLoopback opens addr, refusing one that is not a loopback address.
@@ -61,17 +67,21 @@ func ListenLoopback(addr string) (net.Listener, error) {
 // guard refuses requests a page in the person's own browser could be tricked
 // into sending: a Host that is not loopback (DNS rebinding), or a write that
 // does not come from this page.
-func guard(next http.Handler) http.Handler {
+func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			host = r.Host
 		}
-		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		if ip := net.ParseIP(host); !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
 			http.Error(w, "bad host", http.StatusForbidden)
 			return
 		}
 		if r.Method == http.MethodPost {
+			if s.Token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Installer-Token")), []byte(s.Token)) != 1 {
+				http.Error(w, "missing or wrong token", http.StatusForbidden)
+				return
+			}
 			if r.Header.Get("Content-Type") != "application/json" {
 				http.Error(w, "json only", http.StatusUnsupportedMediaType)
 				return
@@ -123,14 +133,17 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.started = true
+	s.failed = ""
 	s.mu.Unlock()
 
 	// Not r.Context(): the installer must keep going if the page is closed.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
 	defer cancel()
 	if err := s.Start(ctx, doc); err != nil {
+		// Never reopened: Start may have written the document and restarted the
+		// installer before it failed, and a second run over a half-erased disk
+		// is worse than a reboot. The page says so.
 		s.mu.Lock()
-		s.started = false
 		s.failed = err.Error()
 		s.mu.Unlock()
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -145,6 +158,9 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	state := "idle"
 	if s.started {
 		state = "installing"
+	}
+	if s.failed != "" {
+		state = "failed"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"state": state, "error": s.failed})
 }
@@ -164,11 +180,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) (Plan, bool) {
 	}
 	plan, err := BuildPlan(hw, a, NewUID())
 	if err != nil {
-		var status = http.StatusUnprocessableEntity
-		if errors.Is(err, context.Canceled) {
-			status = http.StatusRequestTimeout
-		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return Plan{}, false
 	}
 	return plan, true

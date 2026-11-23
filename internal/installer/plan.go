@@ -58,13 +58,22 @@ func BuildPlan(hw Hardware, a Answers, uid string) (Plan, error) {
 			return Plan{}, fmt.Errorf("disk %q is not one this machine reports", c.ByID)
 		}
 		if d.Removable {
-			return Plan{}, fmt.Errorf("disk %s is removable (USB): it is probably the key this installer booted from", d.Path)
+			return Plan{}, fmt.Errorf("disk %s is removable (USB or SD): it is probably the key this installer booted from", d.Path)
 		}
+		if d.InUse {
+			return Plan{}, fmt.Errorf("disk %s has a mounted partition: it is in use by the live system", d.Path)
+		}
+		// The expected value is not repeated here: the page shows it, and a
+		// refusal that spelled it out would turn the check into a formality.
 		if strings.TrimSpace(c.Confirm) != d.Confirm() {
-			return Plan{}, fmt.Errorf("to erase %s, retype its serial exactly: %s", d.Path, d.Confirm())
+			return Plan{}, fmt.Errorf("the serial retyped for %s does not match the disk's", d.Path)
 		}
 		disks = append(disks, provision.Disk{ByID: d.ByID, SizeBytes: d.SizeBytes})
-		lines = append(lines, fmt.Sprintf("ERASE %s (%s %s, %s, serial %s)", d.Path, d.Model, d.Transport, humanBytes(d.SizeBytes), d.Confirm()))
+		line := fmt.Sprintf("ERASE %s (%s %s, %s, serial %s)", d.Path, d.Model, d.Transport, humanBytes(d.SizeBytes), d.Confirm())
+		if len(d.Contents) > 0 {
+			line += ", currently holding: " + strings.Join(d.Contents, ", ")
+		}
+		lines = append(lines, line)
 	}
 	kind := provision.LayoutSingleDisk
 	if len(disks) == 2 {

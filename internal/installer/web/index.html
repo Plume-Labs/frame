@@ -70,7 +70,7 @@ const gb = n => n >= 1e12 ? (n/1e12).toFixed(1)+" To" : Math.round(n/1e9)+" Go";
 const text = (tag, s, cls) => { const e = document.createElement(tag); e.textContent = s; if (cls) e.className = cls; return e; };
 
 async function api(path, body) {
-  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)} : {});
+  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json", "X-Installer-Token":location.hash.slice(1)}, body:JSON.stringify(body)} : {});
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
@@ -81,7 +81,8 @@ function answers() {
     byID: c.dataset.byid, confirm: document.querySelector('input[data-confirm="'+CSS.escape(c.dataset.byid)+'"]').value }));
   const lines = s => s.split("\n").map(x => x.trim()).filter(Boolean);
   return { hostname:$("hostname").value, role:$("role").value, disks, dhcp:$("dhcp").checked,
-    address:$("address").value, gateway:$("gateway").value, dns:$("dns").value.split(/\s+/).filter(Boolean),
+    address:$("dhcp").checked ? "" : $("address").value, gateway:$("dhcp").checked ? "" : $("gateway").value,
+    dns:$("dhcp").checked ? [] : $("dns").value.split(/\s+/).filter(Boolean),
     sshPublicKey:$("ssh").value, u2fKeys:lines($("u2f").value) };
 }
 
@@ -107,10 +108,10 @@ function renderHW() {
   for (const k of hw.disks) {
     const div = document.createElement("div"); div.className = "disk"+(k.removable ? " off" : "");
     const lab = document.createElement("label");
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.style.width = "auto"; cb.dataset.byid = k.byID; cb.disabled = k.removable;
-    lab.append(cb, " "+k.path+" · "+gb(k.sizeBytes)+" · "+(k.rotational ? "disque" : "SSD/NVMe")+" · "+k.model+(k.removable ? " (clé USB : non utilisable)" : ""));
-    const ser = text("div", "Numéro de série : "+(k.serial || k.byID.split("/").pop()), "muted");
-    const conf = document.createElement("input"); conf.placeholder = "Retapez le numéro de série pour autoriser l'effacement"; conf.dataset.confirm = k.byID; conf.autocomplete = "off"; conf.hidden = true;
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.style.width = "auto"; cb.dataset.byid = k.byID; cb.disabled = k.removable || k.inUse;
+    lab.append(cb, " "+k.path+" · "+gb(k.sizeBytes)+" · "+(k.rotational ? "disque" : "SSD/NVMe")+" · "+k.model+(k.removable ? " (clé ou carte amovible : non utilisable)" : k.inUse ? " (en cours d'utilisation : non utilisable)" : ""));
+    const ser = text("div", "Numéro de série : "+(k.serial || k.byID.split("/").pop())+(k.contents.length ? " · contient : "+k.contents.join(", ") : ""), "muted");
+    const conf = document.createElement("input"); conf.placeholder = "Retapez le numéro de série ci-dessus pour autoriser l'effacement"; conf.dataset.confirm = k.byID; conf.autocomplete = "off"; conf.hidden = true;
     cb.onchange = () => { conf.hidden = !cb.checked; };
     div.append(lab, ser, conf); d.append(div);
   }
@@ -119,14 +120,14 @@ function renderHW() {
 async function next() {
   $("err").textContent = "";
   try {
-    if (step === 6) { await api("/api/install", answers()); step = 7; show(); poll(); return; }
+    if (step === 6) { $("next").disabled = true; await api("/api/install", answers()); step = 7; show(); poll(); return; }
     if (step === 5) { const j = await api("/api/summary", answers()); const ul = $("summary"); ul.replaceChildren(); for (const l of j.summary) ul.append(text("li", l, l.startsWith("ERASE") ? "erase" : "")); $("ok").checked = false; }
     step++; show();
-  } catch (e) { $("err").textContent = e.message; }
+  } catch (e) { $("err").textContent = e.message; if (step === 6) $("next").disabled = !$("ok").checked; }
 }
 
 async function poll() {
-  try { const j = await api("/api/status"); if (j.error) $("progress").textContent = "Erreur : "+j.error; } catch (_) {}
+  try { const j = await api("/api/status"); if (j.state === "failed") { $("progress").textContent = "Erreur : "+j.error+". Redémarrez la machine avant de réessayer : l'installation a peut-être déjà commencé."; return; } } catch (_) {}
   if (step === 7) setTimeout(poll, 3000);
 }
 

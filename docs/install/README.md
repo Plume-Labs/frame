@@ -169,6 +169,7 @@ run on real hardware. What exists and is tested:
 
 Not covered yet: the k3s join token (the join stays the separate step above, so the
 token is never typed into the live system), live progress, BIOS injection, the VGA
-rendering of a BMC. Dry run on any Linux machine, nothing is written to a disk:
+rendering of a BMC. Every write needs a one-time token printed on the console (it is the `#…` of the URL the
+command prints). Dry run on any Linux machine, nothing is written to a disk:
 
     go run ./cmd/installer --autoinstall /tmp/autoinstall.yaml --restart-subiquity=false

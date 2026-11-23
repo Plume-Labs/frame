@@ -31,6 +31,11 @@ type Disk struct {
 	// Removable disks (the USB key this was booted from) are shown but cannot
 	// be chosen: wiping the installer's own medium mid-install ends badly.
 	Removable bool `json:"removable"`
+	// InUse: a partition of it is mounted (the live system's own medium, for
+	// one). Contents lists the filesystems and partitions found on it, so the
+	// summary says what the erase destroys.
+	InUse    bool     `json:"inUse"`
+	Contents []string `json:"contents"`
 }
 
 // Confirm is what the person retypes to authorise erasing the disk: its
@@ -71,14 +76,14 @@ type Source struct {
 // left empty; a missing disk list is an error, since nothing can be installed
 // without one.
 func Detect(ctx context.Context, src Source) (Hardware, error) {
-	var hw Hardware
+	hw := Hardware{Disks: []Disk{}, NICs: []NIC{}}
 	hw.CPUModel, hw.AVX, hw.AESNI = readCPU(filepath.Join(src.Root, "proc/cpuinfo"))
 	hw.MemBytes = readMem(filepath.Join(src.Root, "proc/meminfo"))
 	_, err := os.Stat(filepath.Join(src.Root, "sys/firmware/efi"))
 	hw.UEFI = err == nil
 	hw.NICs = readNICs(filepath.Join(src.Root, "sys/class/net"))
 
-	out, err := src.Run(ctx, "lsblk", "-J", "-b", "-d", "-o", "NAME,PATH,SIZE,ROTA,MODEL,SERIAL,TYPE,TRAN,RM")
+	out, err := src.Run(ctx, "lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,ROTA,MODEL,SERIAL,TYPE,TRAN,RM,FSTYPE,MOUNTPOINTS")
 	if err != nil {
 		return hw, fmt.Errorf("lsblk: %w", err)
 	}
@@ -95,39 +100,70 @@ func Detect(ctx context.Context, src Source) (Hardware, error) {
 		hw.Disks = append(hw.Disks, d)
 	}
 	if len(hw.Disks) == 0 {
-		return hw, fmt.Errorf("no disk with a /dev/disk/by-id name was found")
+		return hw, fmt.Errorf("no disk with a /dev/disk/by-id name was found (%d disk(s) seen without one; "+
+			"a virtual disk needs a serial)", len(disks))
 	}
 	return hw, nil
 }
 
+type lsblkNode struct {
+	Path        string      `json:"path"`
+	Size        int64       `json:"size"`
+	Rota        bool        `json:"rota"`
+	Model       string      `json:"model"`
+	Serial      string      `json:"serial"`
+	Type        string      `json:"type"`
+	Tran        string      `json:"tran"`
+	RM          bool        `json:"rm"`
+	Fstype      string      `json:"fstype"`
+	Mountpoints []*string   `json:"mountpoints"`
+	Children    []lsblkNode `json:"children"`
+}
+
 func parseLsblk(b []byte) ([]Disk, error) {
 	var doc struct {
-		Blockdevices []struct {
-			Path   string `json:"path"`
-			Size   int64  `json:"size"`
-			Rota   bool   `json:"rota"`
-			Model  string `json:"model"`
-			Serial string `json:"serial"`
-			Type   string `json:"type"`
-			Tran   string `json:"tran"`
-			RM     bool   `json:"rm"`
-		} `json:"blockdevices"`
+		Blockdevices []lsblkNode `json:"blockdevices"`
 	}
 	if err := json.Unmarshal(b, &doc); err != nil {
 		return nil, fmt.Errorf("lsblk output: %w", err)
 	}
-	var disks []Disk
+	disks := []Disk{}
 	for _, d := range doc.Blockdevices {
 		if d.Type != "disk" {
 			continue
 		}
-		disks = append(disks, Disk{
+		disk := Disk{
 			Path: d.Path, Model: strings.TrimSpace(d.Model), Serial: strings.TrimSpace(d.Serial),
 			SizeBytes: d.Size, Rotational: d.Rota, Transport: d.Tran,
-			Removable: d.RM || d.Tran == "usb",
-		})
+			// mmc is an SD card: the live medium on some machines.
+			Removable: d.RM || d.Tran == "usb" || strings.HasPrefix(filepath.Base(d.Path), "mmcblk"),
+			Contents:  []string{},
+		}
+		d.walk(&disk)
+		disks = append(disks, disk)
 	}
 	return disks, nil
+}
+
+// walk records the mounted state and the filesystems of n and everything under it.
+func (n lsblkNode) walk(d *Disk) {
+	for _, m := range n.Mountpoints {
+		if m != nil && *m != "" {
+			d.InUse = true
+		}
+	}
+	if n.Type != "disk" {
+		what := filepath.Base(n.Path)
+		if n.Fstype != "" {
+			what += " " + n.Fstype
+		}
+		d.Contents = append(d.Contents, what)
+	} else if n.Fstype != "" {
+		d.Contents = append(d.Contents, "whole disk "+n.Fstype)
+	}
+	for _, c := range n.Children {
+		c.walk(d)
+	}
 }
 
 // byIDNames maps a device path to its best by-id name: a model-and-serial name
@@ -137,6 +173,17 @@ func byIDNames(dir, root string) map[string]string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
+	}
+	// Only names that identify the hardware. lvm-pv-uuid-*, md-* and dm-* name
+	// what is ON the disk, vanish when it is erased, and would then be
+	// "confirmed" by retyping a name that is not the disk's.
+	allowed := func(n string) bool {
+		for _, p := range []string{"ata-", "scsi-", "nvme-", "virtio-", "wwn-", "usb-", "mmc-"} {
+			if strings.HasPrefix(n, p) {
+				return true
+			}
+		}
+		return false
 	}
 	rank := func(n string) int {
 		switch {
@@ -148,7 +195,7 @@ func byIDNames(dir, root string) map[string]string {
 	best := map[string]string{}
 	for _, e := range entries {
 		n := e.Name()
-		if strings.Contains(n, "-part") {
+		if strings.Contains(n, "-part") || !allowed(n) {
 			continue
 		}
 		target, err := filepath.EvalSymlinks(filepath.Join(dir, n))
@@ -169,7 +216,7 @@ func readCPU(path string) (model string, avx, aes bool) {
 	if err != nil {
 		return "", false, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -184,7 +231,7 @@ func readCPU(path string) (model string, avx, aes bool) {
 			}
 		case "flags":
 			set := map[string]bool{}
-			for _, fl := range strings.Fields(v) {
+			for fl := range strings.FieldsSeq(v) {
 				set[fl] = true
 			}
 			return model, set["avx"], set["aes"]
@@ -198,7 +245,7 @@ func readMem(path string) int64 {
 	if err != nil {
 		return 0
 	}
-	for _, l := range strings.Split(string(b), "\n") {
+	for l := range strings.SplitSeq(string(b), "\n") {
 		if rest, ok := strings.CutPrefix(l, "MemTotal:"); ok {
 			f := strings.Fields(rest)
 			if len(f) > 0 {
@@ -214,9 +261,9 @@ func readMem(path string) int64 {
 func readNICs(dir string) []NIC {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return []NIC{}
 	}
-	var nics []NIC
+	nics := []NIC{}
 	for _, e := range entries {
 		base := filepath.Join(dir, e.Name())
 		if _, err := os.Stat(filepath.Join(base, "device")); err != nil {

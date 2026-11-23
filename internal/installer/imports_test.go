@@ -12,9 +12,9 @@ import (
 func TestInstallerImportsNothingFromKubernetes(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "../../cmd/installer").Output()
 	if err != nil {
-		t.Skipf("go list unavailable: %v", err)
+		t.Fatalf("go list: %v", err)
 	}
-	for _, p := range strings.Fields(string(out)) {
+	for p := range strings.FieldsSeq(string(out)) {
 		if strings.HasPrefix(p, "k8s.io/") || strings.HasPrefix(p, "sigs.k8s.io/") ||
 			strings.HasPrefix(p, "github.com/Plume-Labs/frame/api/") ||
 			strings.HasPrefix(p, "github.com/Plume-Labs/frame/internal/controller") {
