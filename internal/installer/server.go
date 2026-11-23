@@ -34,6 +34,10 @@ type Server struct {
 	// on the console, so only someone at the machine can start an erase: the
 	// Host and Origin checks stop a browser page, not another local process.
 	Token string
+	// Keymap, when set, switches the live console to a layout (the first thing the
+	// text assistant asks, so that everything typed after it lands as typed).
+	// Best effort: its error is shown, not fatal.
+	Keymap func(layout string) error
 
 	mu      sync.Mutex
 	started bool
@@ -106,7 +110,7 @@ func (s *Server) hardware(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error(), "hardware": hw})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hardware": hw, "roles": rolesList()})
+	writeJSON(w, http.StatusOK, map[string]any{"hardware": hw, "roles": rolesList(), "keyboards": keyboardsList()})
 }
 
 func (s *Server) summary(w http.ResponseWriter, r *http.Request) {

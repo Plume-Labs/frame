@@ -36,6 +36,7 @@ func main() {
 	src := installer.Source{Root: *root, Run: run}
 	srv := &installer.Server{
 		Token:    newToken(),
+		Keymap:   loadKeys,
 		Hardware: func(ctx context.Context) (installer.Hardware, error) { return installer.Detect(ctx, src) },
 		Start: func(ctx context.Context, doc string) error {
 			if err := writeAtomic(*out, []byte(doc)); err != nil {
@@ -108,4 +109,19 @@ func runConsole(path string, srv *installer.Server) {
 	if err := installer.RunConsole(context.Background(), tty, tty, srv); err != nil {
 		log.Printf("installer: text console: %v", err)
 	}
+}
+
+// consoleKeymaps names, for each layout the installer offers, the keymap of the
+// kbd package's loadkeys.
+var consoleKeymaps = map[string]string{
+	"us": "us", "fr": "fr", "be": "be-latin1", "gb": "uk", "de": "de", "es": "es", "it": "it",
+}
+
+// loadKeys switches the live console's keyboard layout.
+func loadKeys(layout string) error {
+	name, ok := consoleKeymaps[layout]
+	if !ok {
+		return fmt.Errorf("no console keymap for layout %q", layout)
+	}
+	return exec.Command("loadkeys", name).Run()
 }

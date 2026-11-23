@@ -167,7 +167,7 @@ At boot the assistant starts, prints `installer: open http://127.0.0.1:8099/#<to
 console (the token is made at boot; every write needs it), and offers two faces on the same
 rules: a page on the live system's loopback, and a **text assistant on its own terminal
 (tty8)** that the screen switches to. It detects the hardware (disks only by `by-id`; USB, SD
-and mounted disks cannot be chosen: proven by unit tests, the benches have one virtio disk), asks name, role, disk(s), network and SSH key, shows what
+and mounted disks cannot be chosen: proven by unit tests, the benches have one virtio disk), asks keyboard layout (first, so the rest is typed as it looks), name, role, disk(s), network, SSH key and up to four security-key credentials, shows what
 the erase destroys, needs the disk's serial retyped (and `ERASE` typed in text mode), then
 writes `/autoinstall.yaml` and restarts subiquity (spike S0). The k3s join stays the
 separate step above, so the token never enters the live system.

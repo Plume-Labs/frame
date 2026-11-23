@@ -48,7 +48,7 @@ func RunConsole(ctx context.Context, in io.Reader, out io.Writer, srv *Server) e
 			say("  port %s %s link up: %v", n.Name, n.MAC, n.Up)
 		}
 
-		a, err := askAnswers(ask, say, hw, prev)
+		a, err := askAnswers(ask, say, srv.Keymap, hw, prev)
 		if err != nil {
 			return err
 		}
@@ -86,9 +86,27 @@ func RunConsole(ctx context.Context, in io.Reader, out io.Writer, srv *Server) e
 
 type asker func(prompt, def string) (string, error)
 
-func askAnswers(ask asker, say func(string, ...any), hw Hardware, prev Answers) (Answers, error) {
+func cmpDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+func askAnswers(ask asker, say func(string, ...any), keymap func(string) error, hw Hardware, prev Answers) (Answers, error) {
 	var a Answers
 	var err error
+	// First, so that everything typed after it lands as typed on the keyboard in front of you.
+	kb, err := ask("Keyboard layout ("+strings.Join(provision.KeyboardLayouts(), " ")+")", cmpDefault(prev.Keyboard, "us"))
+	if err != nil {
+		return a, err
+	}
+	a.Keyboard = strings.ToLower(kb)
+	if keymap != nil {
+		if e := keymap(a.Keyboard); e != nil {
+			say("  could not switch the console keyboard: %v", clean(e.Error()))
+		}
+	}
 	if a.Hostname, err = ask("Machine name", prev.Hostname); err != nil {
 		return a, err
 	}
@@ -165,6 +183,18 @@ func askAnswers(ask asker, say func(string, ...any), hw Hardware, prev Answers) 
 	}
 	if a.SSHPublicKey, err = ask("SSH public key (one line)", prev.SSHPublicKey); err != nil {
 		return a, err
+	}
+	say("Security keys for the local console login (hack/enroll-yubikey.sh output):")
+	say("paste one credential per line, up to %d; an empty line ends (empty from the start: no console login).", provision.MaxU2FKeys)
+	for len(a.U2FKeys) < provision.MaxU2FKeys {
+		k, err := ask("Credential "+strconv.Itoa(len(a.U2FKeys)+1), "")
+		if err != nil {
+			return a, err
+		}
+		if k == "" {
+			break
+		}
+		a.U2FKeys = append(a.U2FKeys, k)
 	}
 	return a, nil
 }

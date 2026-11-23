@@ -27,9 +27,9 @@ const (
 	u2fOrigin = "pam://hearthrack"
 	// u2fAuthFile is where the installed system reads credentials from.
 	u2fAuthFile = "/etc/Yubico/u2f_keys"
-	// maxU2FKeys: a second key for when the first is lost, and room for two
+	// MaxU2FKeys: a second key for when the first is lost, and room for two
 	// operators. More is an access list, not a recovery path.
-	maxU2FKeys = 4
+	MaxU2FKeys = 4
 	// pamU2FModule is where Ubuntu 24.04 (amd64) puts the module.
 	pamU2FModule = "/usr/lib/x86_64-linux-gnu/security/pam_u2f.so"
 )
@@ -43,8 +43,8 @@ const (
 var u2fKeyShape = regexp.MustCompile(`^[A-Za-z0-9+/_=-]{16,1000},[A-Za-z0-9+/_=-]{16,512},(es256|rs256|eddsa),[a-z+-]{0,40}$`)
 
 func validateU2FKeys(keys []string) error {
-	if len(keys) > maxU2FKeys {
-		return fmt.Errorf("u2f: at most %d keys, got %d; this is a recovery path, not an access list", maxU2FKeys, len(keys))
+	if len(keys) > MaxU2FKeys {
+		return fmt.Errorf("u2f: at most %d keys, got %d; this is a recovery path, not an access list", MaxU2FKeys, len(keys))
 	}
 	seen := map[string]bool{}
 	for i, k := range keys {

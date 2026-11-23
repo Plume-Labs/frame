@@ -34,8 +34,8 @@ func TestConsoleInstallsAfterTheTypedConfirmation(t *testing.T) {
 	var doc string
 	srv := consoleServer(t, &doc)
 	in := strings.Join([]string{
-		"tacos", "1", diskNumber(t, srv, ssdID), "2012E2A5B6C1",
-		"static", "192.168.2.201/24", "192.168.2.1", "192.168.2.1", testKey, "ERASE", "",
+		"", "tacos", "1", diskNumber(t, srv, ssdID), "2012E2A5B6C1",
+		"static", "192.168.2.201/24", "192.168.2.1", "192.168.2.1", testKey, "", "ERASE", "",
 	}, "\n")
 	var out bytes.Buffer
 	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err != nil {
@@ -53,8 +53,8 @@ func TestConsoleDoesNothingWithoutErase(t *testing.T) {
 	var doc string
 	srv := consoleServer(t, &doc)
 	in := strings.Join([]string{
-		"tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1",
-		"static", "192.168.2.201/24", "192.168.2.1", "192.168.2.1", testKey, "yes",
+		"", "tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1",
+		"static", "192.168.2.201/24", "192.168.2.1", "192.168.2.1", testKey, "", "yes",
 	}, "\n") + "\n"
 	var out bytes.Buffer
 	// "yes" is not ERASE: it starts over, and the input then ends (EOF is an error, not a loop).
@@ -71,8 +71,8 @@ func TestConsoleRefusesAWrongSerialAndRestarts(t *testing.T) {
 	srv := consoleServer(t, &doc)
 	disk := diskNumber(t, srv, ssdID)
 	in := strings.Join([]string{
-		"tacos", "0", disk, "wrong", "dhcp", testKey,
-		"tacos", "0", disk, "2012E2A5B6C1", "dhcp", testKey, "ERASE",
+		"", "tacos", "0", disk, "wrong", "dhcp", testKey, "",
+		"", "tacos", "0", disk, "2012E2A5B6C1", "dhcp", testKey, "", "ERASE",
 	}, "\n") + "\n"
 	var out bytes.Buffer
 	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err != nil {
@@ -90,7 +90,7 @@ func TestConsoleSaysWhatItIgnoresAndRefusesAnUnusableDisk(t *testing.T) {
 	var doc string
 	srv := consoleServer(t, &doc)
 	live := diskNumber(t, srv, "/dev/disk/by-id/ata-LIVE_LIVE1")
-	in := strings.Join([]string{"tacos", "9", live + " x", "LIVE1", "dhcp", testKey}, "\n") + "\n"
+	in := strings.Join([]string{"", "tacos", "9", live + " x", "LIVE1", "dhcp", testKey, ""}, "\n") + "\n"
 	var out bytes.Buffer
 	_ = RunConsole(context.Background(), strings.NewReader(in), &out, srv)
 	o := out.String()
@@ -109,7 +109,7 @@ func TestConsoleMirrorOfTwoDisks(t *testing.T) {
 	srv := consoleServer(t, &doc)
 	one := diskNumber(t, srv, ssdID)
 	two := diskNumber(t, srv, "/dev/disk/by-id/ata-ST4000_ZC1ABC")
-	in := strings.Join([]string{"tacos", "0", one + " " + two, "2012E2A5B6C1", "ZC1ABC", "dhcp", testKey, "ERASE"}, "\n") + "\n"
+	in := strings.Join([]string{"", "tacos", "0", one + " " + two, "2012E2A5B6C1", "ZC1ABC", "dhcp", testKey, "", "ERASE"}, "\n") + "\n"
 	var out bytes.Buffer
 	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
@@ -125,7 +125,7 @@ func TestConsoleReportsAFailedStartAndStops(t *testing.T) {
 		Hardware: func(context.Context) (Hardware, error) { return hw, nil },
 		Start:    func(context.Context, string) error { return errors.New("restart timed out") },
 	}
-	in := strings.Join([]string{"tacos", "0", "1", "2012E2A5B6C1", "dhcp", testKey, "ERASE"}, "\n") + "\n"
+	in := strings.Join([]string{"", "tacos", "0", "1", "2012E2A5B6C1", "dhcp", testKey, "", "ERASE"}, "\n") + "\n"
 	var out bytes.Buffer
 	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err == nil {
 		t.Fatal("a failed Start must be returned")
@@ -138,6 +138,41 @@ func TestConsoleReportsAFailedStartAndStops(t *testing.T) {
 func TestCleanDropsEscapeSequences(t *testing.T) {
 	if got := clean("evil\x1b[2Jdisk\r\n"); got != "evil[2Jdisk" {
 		t.Errorf("clean = %q", got)
+	}
+}
+
+func TestConsoleAsksKeyboardFirstAndCarriesLayoutAndSecurityKeys(t *testing.T) {
+	var doc string
+	srv := consoleServer(t, &doc)
+	var switched []string
+	srv.Keymap = func(l string) error { switched = append(switched, l); return nil }
+	in := strings.Join([]string{
+		"FR", "tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1", "dhcp", testKey,
+		u2fTestKeyA, u2fTestKeyB, "", "ERASE",
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	if err := RunConsole(context.Background(), strings.NewReader(in), &out, srv); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(switched) != 1 || switched[0] != "fr" {
+		t.Errorf("keymap switched = %v, want [fr] before anything else is typed", switched)
+	}
+	if !strings.Contains(doc, "layout: fr") || !strings.Contains(doc, "pam_u2f") || !strings.Contains(doc, "libpam-u2f") {
+		t.Error("the document lacks the layout or the console key login")
+	}
+	if !strings.Contains(out.String(), "Keyboard layout: fr") || !strings.Contains(out.String(), "2 security key") {
+		t.Errorf("the summary does not show them:\n%s", out.String())
+	}
+}
+
+func TestConsoleRefusesAKeyboardOutsideTheList(t *testing.T) {
+	var doc string
+	srv := consoleServer(t, &doc)
+	in := strings.Join([]string{"xx", "tacos", "0", diskNumber(t, srv, ssdID), "2012E2A5B6C1", "dhcp", testKey, ""}, "\n") + "\n"
+	var out bytes.Buffer
+	_ = RunConsole(context.Background(), strings.NewReader(in), &out, srv)
+	if !strings.Contains(out.String(), "Refused") || doc != "" {
+		t.Errorf("refused=%v started=%v", strings.Contains(out.String(), "Refused"), doc != "")
 	}
 }
 

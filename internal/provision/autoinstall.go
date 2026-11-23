@@ -105,6 +105,9 @@ func validate(s Spec) (validated, error) {
 	if err := validateRole(s.Role); err != nil {
 		return validated{}, err
 	}
+	if err := validateKeyboard(s.Keyboard); err != nil {
+		return validated{}, err
+	}
 
 	if s.Network.DHCP {
 		if err := validateDHCP(s.Network); err != nil {
@@ -324,7 +327,7 @@ func RenderAutoinstall(s Spec, beaconBase, token string) (string, error) {
 		Apt:      map[string]string{"fallback": "offline-install"},
 		Packages: packages,
 		Locale:   "en_US.UTF-8",
-		Keyboard: map[string]string{"layout": "us"},
+		Keyboard: map[string]string{"layout": keyboardOrUS(s.Keyboard)},
 		Network:  liveNetwork(v, s),
 		Storage: storage{
 			// No swap: the node runs kubelet.
