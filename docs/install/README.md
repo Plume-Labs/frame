@@ -167,7 +167,7 @@ At boot the assistant starts, prints `installer: open http://127.0.0.1:8099/#<to
 console (the token is made at boot; every write needs it), and offers two faces on the same
 rules: a page on the live system's loopback, and a **text assistant on its own terminal
 (tty8)** that the screen switches to. It detects the hardware (disks only by `by-id`; USB, SD
-and mounted disks cannot be chosen), asks name, role, disk(s), network and SSH key, shows what
+and mounted disks cannot be chosen: proven by unit tests, the benches have one virtio disk), asks name, role, disk(s), network and SSH key, shows what
 the erase destroys, needs the disk's serial retyped (and `ERASE` typed in text mode), then
 writes `/autoinstall.yaml` and restarts subiquity (spike S0). The k3s join stays the
 separate step above, so the token never enters the live system.
@@ -179,13 +179,16 @@ Proven in QEMU (software-emulated CPU, no KVM), by `hack/qemu-assistant-test.sh`
 |---|---|---|
 | ISO boots, assistant up, token on the console | yes | yes |
 | install driven through the assistant's API, SSH on the right UID, role recorded | yes | yes |
-| wrong serial refused, nothing written | yes | yes |
+| wrong serial answered with an error (that nothing is written is proven by unit tests, not by QEMU) | yes | yes |
 | answers typed on the emulated keyboard on tty8, installation started | yes | not run |
 
 **Not proven**: a browser or kiosk session (the live system has no browser: a kiosk needs
 packages that are not on the ISO, a decision for later), live progress, the rendering on a
 real VGA or BMC console, real hardware, a real keyboard layout other than US. The bench builds
-its ISO with `--test-ssh-key` and `--serial-console`; a release ISO uses neither.
+its ISO with `--test-ssh-key` and `--serial-console` (only together): that image is marked
+(`/frame/TEST-BUILD`), prints a red warning, and the builder refuses a release image that
+carries either. casper's "Check disk integrity" entry will call the image modified
+(`md5sum.txt` is not regenerated).
 
 Dry run of the assistant on any Linux machine, nothing is written to a disk:
 

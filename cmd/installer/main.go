@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Plume-Labs/frame/internal/installer"
@@ -24,7 +25,8 @@ func main() {
 	out := flag.String("autoinstall", "/autoinstall.yaml", "where the autoinstall document is written")
 	restart := flag.Bool("restart-subiquity", true,
 		"restart subiquity after writing, so it starts non-interactively (false: dry run)")
-	consoleTTY := flag.String("console", "", "also run the text assistant on this terminal (e.g. /dev/tty8), for screens that cannot show a page")
+	consoleTTY := flag.String("console", "",
+		"also run the text assistant on this terminal (e.g. /dev/tty8), for screens that cannot show a page")
 	root := flag.String("root", "/", "filesystem root to read the hardware from (tests)")
 	flag.Parse()
 
@@ -98,6 +100,11 @@ func runConsole(path string, srv *installer.Server) {
 		return
 	}
 	defer func() { _ = tty.Close() }()
+	// Switch the screen only now that the terminal is ours: a switch to a terminal
+	// nothing serves would leave a black screen and hide the installer's own.
+	if n := strings.TrimPrefix(path, "/dev/tty"); n != path {
+		_ = exec.Command("chvt", n).Run()
+	}
 	if err := installer.RunConsole(context.Background(), tty, tty, srv); err != nil {
 		log.Printf("installer: text console: %v", err)
 	}

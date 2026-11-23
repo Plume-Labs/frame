@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -42,7 +43,7 @@ func RunConsole(ctx context.Context, in io.Reader, out io.Writer, srv *Server) e
 		if err != nil {
 			return err
 		}
-		say("\n%s, %s RAM, %s boot, AVX %v, AES-NI %v", hw.CPUModel, humanBytes(hw.MemBytes), bootName(hw), hw.AVX, hw.AESNI)
+		say("\n%s, %s RAM, %s boot, AVX %v, AES-NI %v", clean(hw.CPUModel), humanBytes(hw.MemBytes), bootName(hw), hw.AVX, hw.AESNI)
 		for _, n := range hw.NICs {
 			say("  port %s %s link up: %v", n.Name, n.MAC, n.Up)
 		}
@@ -66,9 +67,16 @@ func RunConsole(ctx context.Context, in io.Reader, out io.Writer, srv *Server) e
 			return err
 		}
 		if ok != "ERASE" {
+			say("Not confirmed. Starting again.")
 			continue
 		}
-		if _, err := srv.Run(ctx, plan); err != nil {
+		say("Starting the installer (this can take a few minutes)...")
+		if status, err := srv.Run(ctx, plan); err != nil {
+			if status == http.StatusConflict {
+				say("An installation was already started from the page. Nothing more to do here.")
+				return nil
+			}
+			say("Failed: %v\nRestart the machine before trying again: the installer may already have started.", clean(err.Error()))
 			return err
 		}
 		say("\nInstallation started. The machine restarts by itself: remove the USB key at the first restart.")
@@ -99,6 +107,8 @@ func askAnswers(ask asker, say func(string, ...any), hw Hardware, prev Answers) 
 	}
 	if i, e := strconv.Atoi(n); e == nil && i >= 0 && i < len(roles) {
 		a.Role = roles[i]
+	} else {
+		say("  %q is not a role number: no role recorded.", clean(n))
 	}
 
 	say("Disks (everything on the chosen disk is erased):")
@@ -114,7 +124,7 @@ func askAnswers(ask asker, say func(string, ...any), hw Hardware, prev Answers) 
 		if len(d.Contents) > 0 {
 			contents = "  holds: " + strings.Join(d.Contents, ", ")
 		}
-		say("  %d) %s  %s  %s  serial %s%s%s", i+1, d.Path, humanBytes(d.SizeBytes), d.Model, d.Confirm(), contents, note)
+		say("  %d) %s  %s  %s  serial %s%s%s", i+1, d.Path, humanBytes(d.SizeBytes), clean(d.Model), clean(d.Confirm()), clean(contents), note)
 	}
 	picks, err := ask("Disk number (two numbers for a mirror, e.g. \"1 2\")", "")
 	if err != nil {
@@ -123,7 +133,8 @@ func askAnswers(ask asker, say func(string, ...any), hw Hardware, prev Answers) 
 	for _, f := range strings.Fields(picks) {
 		i, e := strconv.Atoi(f)
 		if e != nil || i < 1 || i > len(hw.Disks) {
-			continue // BuildPlan refuses an empty choice
+			say("  %q is not a disk number: ignored.", clean(f))
+			continue
 		}
 		d := hw.Disks[i-1]
 		c, err := ask("Retype the serial of "+d.Path+" to allow erasing it", "")
@@ -163,4 +174,15 @@ func bootName(hw Hardware) string {
 		return "UEFI"
 	}
 	return "BIOS"
+}
+
+// clean drops control characters (escape sequences included) from text that came
+// from the hardware before it is printed on a terminal.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }

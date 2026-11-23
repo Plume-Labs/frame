@@ -10,8 +10,8 @@ release tags follow [Semantic Versioning](https://semver.org/).
 
 - hack: `build-installer-iso.sh` adds the assistant and a cloud-init seed to the Ubuntu
   live-server ISO (GRUB `autoinstall ds=nocloud\;s=/cdrom/server/`, BIOS and UEFI kept).
-  `qemu-assistant-test.sh` and `qemu-console-test.sh` prove, in QEMU, an install driven
-  through the assistant in BIOS and UEFI and the text assistant typed on the keyboard.
+  `qemu-assistant-test.sh` proves, in QEMU, an install driven through the assistant in BIOS
+  and UEFI; `qemu-console-test.sh` proves the text assistant typed on the keyboard (BIOS only).
 - installer: text assistant (`--console /dev/tty8`) sharing the page's rules and its
   one-installation lock.
 
