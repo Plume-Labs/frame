@@ -44,6 +44,13 @@ if [ -z "$bin" ]; then bin=$w/provisiond; (cd "$here" && go build -o "$bin" ./cm
 if [ -n "${BASE_ISO:-}" ]; then mkdir -p "$w/images/base"; ln -sf "$BASE_ISO" "$w/images/base/$(basename "$BASE_ISO")"; fi
 # DHCP=1 builds with --dhcp (installed system asks QEMU's DHCP) instead of a static 10.0.2.15.
 net=(--address 10.0.2.15/24 --gateway 10.0.2.2 --dns 10.0.2.3); [ "${DHCP:-0}" = 1 ] && net=(--dhcp)
+# U2F=1 builds with a fixture credential list and checks the console-login setup
+# on the installed system. The real authentication needs a physical key and is
+# NOT proven here.
+u2f=(); if [ "${U2F:-0}" = 1 ]; then
+  printf '%s\n%s\n' 'Z3JlZW5Ub21hdG9LZXlIYW5kbGU,cHVibGljS2V5QmxvYkFBQUFBQQ==,es256,+presence+pin' 'YmFja3VwS2V5SGFuZGxlQkJC,YmFja3VwUHVibGljS2V5QkJCQg==,es256,+presence+pin' >"$w/u2f-keys.txt"
+  u2f=(--u2f-keys "$w/u2f-keys.txt")
+fi
 serial=frametest; size=$((8<<30))
 qemu-img create -q -f qcow2 "$w/disk.qcow2" 8G
 
@@ -51,7 +58,7 @@ trap '"$here/hack/build-iso.sh" --stop >/dev/null 2>&1 || true; [ -f "$w/qemu.pi
 export OUT=$w   # build-iso.sh --stop in the trap must find the same pid file
 FRAME_PROVISIOND_BIN=$bin MEDIA_BIND=127.0.0.1 "$here/hack/build-iso.sh" \
   --hostname qemu-$mode --boot "$mode" --ssh-key "$w/key.pub" --media-ip 10.0.2.2 \
-  "${net[@]}" \
+  "${net[@]}" "${u2f[@]}" \
   --disk "/dev/disk/by-id/virtio-$serial:$size"
 trap '"$here/hack/build-iso.sh" --stop >/dev/null 2>&1 || true; [ -f "$w/qemu.pid" ] && kill "$(cat "$w/qemu.pid")" 2>/dev/null || true' EXIT
 
@@ -68,6 +75,12 @@ while [ $SECONDS -lt $end ]; do
   if got=$(ssh -i "$w/key" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=5 frame@127.0.0.1 'cat /etc/frame-install-uid' 2>/dev/null) && [ -n "$got" ]; then
     echo "$got" >"$w/installed-uid"
+    if [ "${U2F:-0}" = 1 ]; then
+      ssh -i "$w/key" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null frame@127.0.0.1 \
+        'test -f /usr/lib/x86_64-linux-gnu/security/pam_u2f.so && grep -q "^auth sufficient pam_u2f.so.*pinverification=1" /etc/pam.d/login && [ "$(grep -c "^frame:" /etc/Yubico/u2f_keys)" = 1 ] && [ -f /etc/pam.d/sshd ] && [ -f /etc/pam.d/sudo ] && ! grep -qs u2f /etc/pam.d/sshd /etc/pam.d/sudo' \
+        || die "FAIL ($mode): the console key login is not set up as expected"
+      echo "u2f: module installed, login line present, sshd and sudo untouched"
+    fi
     grep -q "$got" "$w"/images/*/user-data && { echo "PASS ($mode): installed system carries the image's install UID $got"; exit 0; }
     die "FAIL ($mode): the machine answers with UID $got, which this image did not carry"
   fi

@@ -109,6 +109,35 @@ that is committed or copied:
 - As a control-plane server with etcd: follow the cluster's own runbook; it also
   changes the etcd membership and is not a step to take from this page.
 
+## Optional: YubiKey login on the local console
+
+By default the `frame` account has no password, so the machine's own keyboard and
+screen cannot log in at all: SSH (your key) is the only way in. If you want to log in at
+the console too, without a password, enrol a FIDO2 key (a YubiKey) **before building**:
+
+```
+ykman fido access change-pin                 # once per key: the console asks key + PIN
+hack/enroll-yubikey.sh -o u2f-keys.txt 2     # touch each key; the second is a spare: use a DIFFERENT physical key each round, the script cannot tell
+hack/build-iso.sh ... --u2f-keys u2f-keys.txt
+```
+
+What the installed machine gets: `libpam-u2f` (installed from the Ubuntu archive during
+the install, so the machine needs internet then; if it has none the install fails rather than
+finishing without the login), your credentials in `/etc/Yubico/u2f_keys`, and one line in
+`/etc/pam.d/login`. **Only the console login changes**: SSH stays key-only, sudo as before.
+
+- The file holds a key handle and a public key per key: nothing that opens a door without the
+  physical key and its PIN. Keep it, but it is not a secret in the way a private key is.
+- The PIN is mandatory (`pinverification=1`): a key found on a desk does not open a console.
+- **Break-glass**: your SSH key, and the spare key. There is deliberately no password fallback.
+- Credentials are bound to the fixed origin `pam://hearthrack`, so one key works on every node.
+- Up to four keys.
+
+Proven in QEMU: the package, the file, the PAM line, sshd and sudo untouched
+(`U2F=1 hack/qemu-iso-test.sh uefi`). **Not proven: a real login with a real key**: that needs a
+physical YubiKey on a real console. Try it on one node, keeping an SSH session open, before
+relying on it.
+
 ## What is proven, and what is not
 
 | Claim | Status |
