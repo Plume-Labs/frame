@@ -25,6 +25,7 @@ import {
   type InstallCreateSpec,
 } from '@/lib/installs'
 import type { Machine } from '@/lib/machines'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -88,6 +89,7 @@ export function InstallDialog({
   machines: Machine[]
   onCreated: () => void
 }) {
+  const { t, tm } = useI18n()
   const inventoried = useMemo(() => machines.filter((m) => m.inventory !== null), [machines])
 
   const [machineName, setMachineName] = useState('')
@@ -219,11 +221,11 @@ export function InstallDialog({
         sshKeyRef: sshKeyRef.trim(),
       }
       const created = await frame.installs.create(hostname.trim(), spec)
-      toast.success(`Install ${created} created for ${selectedMachine.name}`)
+      toast.success(t('inst.created', { name: created, machine: selectedMachine.name }))
       onOpenChange(false)
       onCreated()
     } catch (e) {
-      toast.error('Failed to create install', {
+      toast.error(t('inst.createFailed'), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -235,19 +237,18 @@ export function InstallDialog({
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-mono">New install</DialogTitle>
+          <DialogTitle className="font-mono">{t('inst.dlg.title')}</DialogTitle>
           <DialogDescription>
-            This erases every disk named below on the selected machine and installs Debian from
-            scratch. There is no undo — confirm only against a machine you mean to wipe.
+            {t('inst.dlg.desc')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="install-machine">Machine</Label>
+            <Label htmlFor="install-machine">{t('inst.machine')}</Label>
             <Select value={machineName} onValueChange={setMachineName}>
               <SelectTrigger id="install-machine">
-                <SelectValue placeholder="Select an inventoried machine…" />
+                <SelectValue placeholder={t('inst.machinePlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {inventoried.map((m) => (
@@ -263,19 +264,18 @@ export function InstallDialog({
             </Select>
             {inventoried.length === 0 && (
               <p className="text-[10px] text-muted-foreground">
-                No machine has been probed yet — register one and wait for its inventory before
-                installing.
+                {t('inst.noMachines')}
               </p>
             )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="install-hostname">Hostname</Label>
+              <Label htmlFor="install-hostname">{t('inst.hostname')}</Label>
               <Input id="install-hostname" value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="w3" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="install-ssh-key-ref">SSH key Secret</Label>
+              <Label htmlFor="install-ssh-key-ref">{t('inst.sshKey')}</Label>
               <Input
                 id="install-ssh-key-ref"
                 value={sshKeyRef}
@@ -287,7 +287,7 @@ export function InstallDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="install-address">Address (CIDR)</Label>
+              <Label htmlFor="install-address">{t('inst.address')}</Label>
               <Input
                 id="install-address"
                 value={address}
@@ -296,13 +296,13 @@ export function InstallDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="install-gateway">Gateway</Label>
+              <Label htmlFor="install-gateway">{t('inst.gateway')}</Label>
               <Input id="install-gateway" value={gateway} onChange={(e) => setGateway(e.target.value)} placeholder="192.0.2.1" />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="install-dns">DNS resolvers</Label>
+            <Label htmlFor="install-dns">{t('inst.dns')}</Label>
             <Input
               id="install-dns"
               value={dns}
@@ -311,15 +311,13 @@ export function InstallDialog({
               className="font-mono text-xs"
             />
             <p className="text-[10px] text-muted-foreground">
-              At least one, up to three. The installer resolves deb.debian.org with these — with
-              none it halts asking for a mirror it cannot look up, after the disks are already
-              erased.
+              {t('inst.dnsHint')}
             </p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1.5 sm:col-span-3">
-              <Label htmlFor="install-bond">LACP bond ports (optional)</Label>
+              <Label htmlFor="install-bond">{t('inst.bond')}</Label>
               <Input
                 id="install-bond"
                 value={bondPorts}
@@ -335,11 +333,11 @@ export function InstallDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="install-vlan">VLAN ID (optional)</Label>
+              <Label htmlFor="install-vlan">{t('inst.vlan')}</Label>
               <Input id="install-vlan" value={vlanID} onChange={(e) => setVlanID(e.target.value)} placeholder="20" inputMode="numeric" />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="install-vlan-port">VLAN port MAC (without a bond)</Label>
+              <Label htmlFor="install-vlan-port">{t('inst.vlanPort')}</Label>
               <Input
                 id="install-vlan-port"
                 value={vlanPort}
@@ -350,20 +348,19 @@ export function InstallDialog({
               />
             </div>
             <p className="text-[10px] text-muted-foreground sm:col-span-3">
-              {links.error ??
-                'Ports are named by MAC. The switch must still give one port the untagged DHCP install network (the seed is fetched before the bond or VLAN exists): a VLAN port is hybrid, an LACP group passes a lone port\'s traffic before negotiating. A MAC missing from the machine stops the install before any disk is touched.'}
+              {links.error ? tm(links.error) : t('inst.linksHint')}
             </p>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="install-layout">Layout</Label>
+            <Label htmlFor="install-layout">{t('inst.layout')}</Label>
             <Select value={layoutKind} onValueChange={(v) => setLayout(v as LayoutKind)}>
               <SelectTrigger id="install-layout">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="single-disk">Single disk</SelectItem>
-                <SelectItem value="mirror">Mirror (2 disks)</SelectItem>
+                <SelectItem value="single-disk">{t('inst.layout.single')}</SelectItem>
+                <SelectItem value="mirror">{t('inst.layout.mirror')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -372,7 +369,7 @@ export function InstallDialog({
             <div key={i} className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor={`install-disk-${i}-byid`}>
-                  Disk {i + 1} — /dev/disk/by-id/…
+                  {t('inst.disk', { n: i + 1 })}
                 </Label>
                 <Input
                   id={`install-disk-${i}-byid`}
@@ -383,7 +380,7 @@ export function InstallDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor={`install-disk-${i}-size`}>Size (bytes)</Label>
+                <Label htmlFor={`install-disk-${i}-size`}>{t('inst.size')}</Label>
                 <Input
                   id={`install-disk-${i}-size`}
                   type="number"
@@ -396,14 +393,14 @@ export function InstallDialog({
           ))}
 
           <div className="space-y-1.5">
-            <Label htmlFor="install-cluster">Cluster</Label>
+            <Label htmlFor="install-cluster">{t('inst.cluster')}</Label>
             <Select value={clusterMode} onValueChange={(v) => setClusterMode(v as ClusterMode)}>
               <SelectTrigger id="install-cluster">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="init">Start a new cluster (cluster-init)</SelectItem>
-                <SelectItem value="join">Join an existing cluster</SelectItem>
+                <SelectItem value="init">{t('inst.cluster.init')}</SelectItem>
+                <SelectItem value="join">{t('inst.cluster.join')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -411,7 +408,7 @@ export function InstallDialog({
           {clusterMode === 'join' && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="install-server-url">Server URL</Label>
+                <Label htmlFor="install-server-url">{t('inst.serverUrl')}</Label>
                 <Input
                   id="install-server-url"
                   value={serverURL}
@@ -420,7 +417,7 @@ export function InstallDialog({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="install-join-token-ref">Join token Secret</Label>
+                <Label htmlFor="install-join-token-ref">{t('inst.joinToken')}</Label>
                 <Input
                   id="install-join-token-ref"
                   value={joinTokenRef}
@@ -432,7 +429,7 @@ export function InstallDialog({
           )}
 
           <div className="space-y-1.5">
-            <Label htmlFor="install-k3s-version">k3s version</Label>
+            <Label htmlFor="install-k3s-version">{t('inst.k3s')}</Label>
             <Input
               id="install-k3s-version"
               value={k3sVersion}
@@ -443,24 +440,23 @@ export function InstallDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="install-boot-mode">Boot mode</Label>
+            <Label htmlFor="install-boot-mode">{t('inst.boot')}</Label>
             <Select value={bootMode} onValueChange={(v) => setBootMode(v as BootMode)}>
               <SelectTrigger id="install-boot-mode">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="UEFI">UEFI</SelectItem>
-                <SelectItem value="Legacy">Legacy BIOS</SelectItem>
+                <SelectItem value="Legacy">{t('inst.boot.legacy')}</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-[10px] text-muted-foreground">
-              Set on the machine, never inherited from it. An image that boots in the other mode
-              says nothing — it stays on a black screen until the phase times out.
+              {t('inst.bootHint')}
             </p>
           </div>
 
           <div className="space-y-1.5 pt-2 border-t border-border">
-            <Label htmlFor="install-confirm-serial">{CONFIRM_SERIAL_LABEL}</Label>
+            <Label htmlFor="install-confirm-serial">{t(CONFIRM_SERIAL_LABEL)}</Label>
             <Input
               id="install-confirm-serial"
               value={confirmSerial}
@@ -469,19 +465,19 @@ export function InstallDialog({
               className="font-mono text-xs"
               autoComplete="off"
             />
-            <p className="text-[10px] text-muted-foreground">{CONFIRM_SERIAL_HINT}</p>
+            <p className="text-[10px] text-muted-foreground">{t(CONFIRM_SERIAL_HINT)}</p>
           </div>
         </div>
 
         {blockers.length > 0 && (
           <p id="install-blockers" role="status" className="text-xs text-muted-foreground font-mono">
-            Still needed: {blockers.join(' · ')}
+            {t('inst.stillNeeded', { list: blockers.map(tm).join(' · ') })}
           </p>
         )}
 
         <DialogFooter>
           <Button variant="outline" className="font-mono" onClick={() => onOpenChange(false)} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button
             variant="destructive"
@@ -490,7 +486,7 @@ export function InstallDialog({
             aria-describedby={blockers.length > 0 ? 'install-blockers' : undefined}
             onClick={() => void handleCreate()}
           >
-            {busy ? 'Creating…' : 'Erase and install'}
+            {busy ? t('inst.creating') : t('inst.erase')}
           </Button>
         </DialogFooter>
       </DialogContent>
