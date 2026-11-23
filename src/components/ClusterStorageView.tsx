@@ -7,6 +7,7 @@ import {
   coreListPath,
   crdListPath,
 } from '@/lib/frame-sdk'
+import { useI18n } from '@/i18n/context'
 import { capacityLine, cephWarningReasons, formatIec, humanizeCapacity } from '@/lib/storage'
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
 import { AttentionBanner } from '@/components/storage/AttentionBanner'
@@ -108,6 +109,7 @@ const LATENCY_GOOD_MS = 50
 const LATENCY_OK_MS = 100
 
 export function ClusterStorageView() {
+  const { tm } = useI18n()
   const cephNs = config().namespaces.ceph
   // Pod namespaces come from the same integration config ceph() itself reads
   // them from — cephOsd/cephMon, not namespaces.ceph — so a Settings edit to
@@ -193,19 +195,22 @@ export function ClusterStorageView() {
 
             {c.health !== 'HEALTH_OK' && (
               <ul className={`text-xs font-mono space-y-0.5 list-disc list-inside ${TONE_TEXT[healthTone(c.health)]}`}>
-                {cephWarningReasons({ health: c.health, details: c.details }).map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
+                {cephWarningReasons({ health: c.health, details: c.details }).map((reason) => {
+                  const text = typeof reason === 'string' ? reason : tm(reason)
+                  return <li key={text}>{text}</li>
+                })}
               </ul>
             )}
 
             <div className="space-y-1">
               <Progress value={usedPct} className="h-3" />
               <div className="text-xs text-muted-foreground font-mono">
-                {capacityLine(
-                  cephEntry
-                    ? humanizeCapacity(cephEntry.capacity)
-                    : { usable: '', used: formatIec(c.bytesUsed), raw: formatIec(c.bytesTotal) },
+                {tm(
+                  capacityLine(
+                    cephEntry
+                      ? humanizeCapacity(cephEntry.capacity)
+                      : { usable: '', used: formatIec(c.bytesUsed), raw: formatIec(c.bytesTotal) },
+                  ),
                 )}
               </div>
             </div>

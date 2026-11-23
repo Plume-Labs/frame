@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { TONE_TEXT, Tone } from '@/lib/thresholds'
+import { useI18n } from '@/i18n/context'
 import { Database, ArrowClockwise } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -29,6 +30,7 @@ function phaseTone(phase: string): Tone {
  * in §6a: a state nobody can act on.
  */
 export function FrameStorageView() {
+  const { tm } = useI18n()
   const { state, reload } = useLiveResource<StorageEntry[]>(
     () => frame.storage.list(),
     [],
@@ -93,8 +95,8 @@ export function FrameStorageView() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-2 text-xs font-mono">
-                <div className="text-foreground">{capacityLine(e.capacity)}</div>
-                <div className="text-muted-foreground">{claimGapLine(e.storageClassName, e.claims)}</div>
+                <div className="text-foreground">{tm(capacityLine(e.capacity))}</div>
+                <div className="text-muted-foreground">{tm(claimGapLine(e.storageClassName, e.claims))}</div>
                 <div className="text-muted-foreground">
                   Available: {e.available?.message || 'unknown'}
                 </div>

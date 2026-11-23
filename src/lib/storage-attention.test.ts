@@ -5,6 +5,10 @@ import { buildOsdRows } from './ceph-diagnostic'
 import { buildPoolRows, daemonQuorum, objectHealth, setFlags } from './ceph-pools'
 import { mdArrays } from './disk-inventory'
 import { healthyPods, healthyProm, hwMachine, osdPod, setSample } from './testdata/ceph-cluster'
+import { translate, type Message } from '@/i18n'
+
+const txt = (x?: { text: string | Message }) => (!x ? undefined : typeof x.text === 'string' ? x.text : translate('en', x.text.key, x.text.params)) as string
+
 
 const NOW = Date.parse('2026-09-27T12:20:00Z')
 
@@ -45,7 +49,7 @@ describe('bandeau À traiter', () => {
     setSample(prom, 'flags', { __name__: 'ceph_osd_flag_noout' }, 1)
     setSample(prom, 'flags', { __name__: 'ceph_osd_flag_norebalance' }, 1)
     const item = attentionItems(inputs(prom)).find((a) => a.code === 'osd-flags')
-    expect(item?.text).toBe('Flags set: noout, norebalance')
+    expect(txt(item)).toBe('Flags set: noout, norebalance')
     expect(item?.severity).toBe('warning')
   })
 
@@ -54,8 +58,8 @@ describe('bandeau À traiter', () => {
     const prom = healthyProm()
     for (const id of [3, 4, 5, 6]) setSample(prom, 'osdPgs', { ceph_daemon: `osd.${id}` }, 0)
     const item = attentionItems(inputs(prom)).find((a) => a.code === 'osd-no-pg')
-    expect(item?.text).toContain('4 OSD without any PG: osd.3-6')
-    expect(item?.text).toContain('hdd')
+    expect(txt(item)).toContain('4 OSD without any PG: osd.3-6')
+    expect(txt(item)).toContain('hdd')
   })
 
   it('ne compte pas comme vide un OSD dont le nombre de PG est inconnu', () => {
@@ -69,20 +73,20 @@ describe('bandeau À traiter', () => {
     setSample(prom, 'bluestoreSlow', { ceph_daemon: 'osd.0' }, 2)
     const details = { BLUESTORE_SLOW_OP_ALERT: { message: '1 OSD(s) experiencing slow operations in BlueStore' } }
     const item = attentionItems(inputs(prom, healthyPods(), { healthDetails: details })).find((a) => a.code === 'slow-ops')
-    expect(item?.text).toContain('→ osd.0')
+    expect(txt(item)).toContain('→ osd.0')
   })
 
   it('dit quand les slow ops ne sont attribuées à aucun OSD', () => {
     const details = { BLUESTORE_SLOW_OP_ALERT: { message: '3 OSD(s) experiencing slow operations in BlueStore' } }
     const item = attentionItems(inputs(healthyProm(), healthyPods(), { healthDetails: details })).find((a) => a.code === 'slow-ops')
-    expect(item?.text).toContain('not attributed')
+    expect(txt(item)).toContain('not attributed')
   })
 
   it('remonte un pool dégradé en le nommant', () => {
     const prom = healthyProm()
     setSample(prom, 'pgStates', { __name__: 'ceph_pg_degraded', pool_id: '2' }, 5)
     const item = attentionItems(inputs(prom)).find((a) => a.code === 'pool-pg-trouble')
-    expect(item?.text).toBe('Pool replicapool: 5 degraded')
+    expect(txt(item)).toBe('Pool replicapool: 5 degraded')
   })
 
   it('met un OSD down avant tout le reste', () => {
@@ -97,14 +101,14 @@ describe('bandeau À traiter', () => {
     const pods = healthyPods()
     pods[0] = osdPod(0, { phase: 'Pending', ready: false, initDone: 1, initTotal: 4, waiting: 'init activate' })
     const item = attentionItems(inputs(healthyProm(), pods)).find((a) => a.code === 'osd-unstable')
-    expect(item?.text).toContain('osd.0 (node-a) unstable — pod in init 1/4')
+    expect(txt(item)).toContain('osd.0 (node-a) unstable — pod in init 1/4')
   })
 
   it('remonte les divergences BMC ↔ OS sans langage de panne', () => {
     const items = attentionItems(inputs(healthyProm(), healthyPods(), { machines: [hwMachine()] }))
     const div = items.find((a) => a.code === 'disk-divergence')
-    expect(div?.text).toContain('SER-MASK')
-    expect(div?.text.toLowerCase()).not.toContain('fail')
+    expect(txt(div)).toContain('SER-MASK')
+    expect(txt(div).toLowerCase()).not.toContain('fail')
     expect(div?.severity).toBe('info')
   })
 
@@ -139,7 +143,7 @@ describe('disque d-OSD absent de la liste du CephCluster', () => {
     const items = undeclaredOsdDiskItems('srv-hw', rows)
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({ code: 'osd-disk-undeclared', severity: 'warning' })
-    expect(items[0].text).toContain('osd.4 on srv-hw 2I:6:7 (SER-HDD4)')
+    expect(txt(items[0])).toContain('osd.4 on srv-hw 2I:6:7 (SER-HDD4)')
   })
 })
 
@@ -153,7 +157,7 @@ describe('absence de données', () => {
     prom.osdIn = []
     const items = attentionItems(inputs(prom))
     const item = items.find((a) => a.code === 'osd-unknown')
-    expect(item?.text).toContain('7 OSD without any ceph-mgr reading: osd.0-6')
+    expect(txt(item)).toContain('7 OSD without any ceph-mgr reading: osd.0-6')
     expect(items.length).toBeGreaterThan(0)
   })
 
@@ -167,7 +171,7 @@ describe('absence de données', () => {
 
   it('rend une ligne quand la lecture du diagnostic échoue', () => {
     expect(unreadableDiagnosticItems('HTTP 503')).toEqual([
-      { severity: 'warning', code: 'diagnostic-unreadable', text: 'Storage diagnostic unreadable: HTTP 503 — state unknown' },
+      { severity: 'warning', code: 'diagnostic-unreadable', text: { key: 'sa.diagUnreadable', params: { message: 'HTTP 503' } } },
     ])
   })
 
@@ -178,7 +182,7 @@ describe('absence de données', () => {
     const clone = hwMachine()
     clone.name = 'srv-clone'
     clone.storage!.divergences = []
-    const codes = attentionItems(inputs(healthyProm(), healthyPods(), { machines: [m, clone] })).map((a) => a.text)
+    const codes = attentionItems(inputs(healthyProm(), healthyPods(), { machines: [m, clone] })).map((a) => txt(a))
     expect(codes.some((t) => t.includes('bay 2I:6:9 reported without a serial'))).toBe(true)
     expect(codes.some((t) => t.startsWith('Serial SER-HDD3 listed by several machines: srv-hw, srv-clone'))).toBe(true)
   })
@@ -190,7 +194,8 @@ describe('OSD redémarré récemment', () => {
     pods[3] = osdPod(3, { restarts: 5, lastTerminationAt: '2026-09-27T11:33:00Z', startedAt: '2026-09-27T11:33:00Z' })
     const items = attentionItems(inputs(healthyProm(), pods))
     const item = items.find((a) => a.code === 'osd-settling')
-    expect(item).toMatchObject({ severity: 'info', text: 'osd.3 (node-hw) restarted recently: stable for 47 min, 5 restart(s) in total — watched until 1 h without a restart' })
+    expect(item).toMatchObject({ severity: 'info' })
+    expect(txt(item)).toBe('osd.3 (node-hw) restarted recently: stable for 47 min, 5 restart(s) in total — watched until 1 h without a restart')
     expect(items.map((a) => a.code)).not.toContain('osd-unstable')
   })
 })

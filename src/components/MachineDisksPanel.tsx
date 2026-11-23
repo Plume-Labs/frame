@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { DiskClaim, createFrameClient } from '@/lib/frame-sdk'
+import { useI18n } from '@/i18n/context'
 import { describeDivergence, formatIec } from '@/lib/storage'
 import { agentFreshness, buildDiskRows, chassisDiskTemp, controllerLines, osdsWithoutMachine } from '@/lib/disk-inventory'
 import { useStorageDiagnostic } from '@/components/storage/useStorageDiagnostic'
@@ -32,6 +33,7 @@ const frame = createFrameClient()
  * truth about them, so it never enters either list above.
  */
 export function MachineDisksPanel() {
+  const { tm } = useI18n()
   const { state, reload } = useLiveResource<Machine[]>(
     () => frame.machines.list(),
     [],
@@ -174,7 +176,7 @@ export function MachineDisksPanel() {
               ) : (
                 <ul className="text-xs font-mono space-y-1 list-disc list-inside">
                   {selected.storage!.divergences.map((d, i) => (
-                    <li key={`${d.serialNumber}-${i}`}>{describeDivergence(d)}</li>
+                    <li key={`${d.serialNumber}-${i}`}>{tm(describeDivergence(d))}</li>
                   ))}
                 </ul>
               )}

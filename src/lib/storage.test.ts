@@ -1,13 +1,16 @@
 import { describe, it, expect } from 'vitest'
+import { translate, type Message } from '@/i18n'
 import { describeDivergence, capacityLine, claimGapLine, cephWarningReasons, formatIec, humanizeCapacity, humanizeQuantity } from './storage'
+
+const en = (x: string | Message) => (typeof x === 'string' ? x : translate('en', x.key, x.params))
 
 describe('describeDivergence', () => {
   it('nomme la baie pour un disque que seul le BMC voit', () => {
-    const line = describeDivergence({
+    const line = en(describeDivergence({
       serialNumber: 'HDDTST05',
       reason: 'bmc-only',
       detail: 'bay 2I:6:8: the BMC lists it, the node kernel does not',
-    })
+    }))
     expect(line).toContain('HDDTST05')
     expect(line).toContain('2I:6:8')
   })
@@ -16,7 +19,7 @@ describe('describeDivergence', () => {
     // The BMC reports Health OK for the masked disk. A screen that renders
     // a divergence as a hardware fault sends someone to replace a healthy
     // drive.
-    const line = describeDivergence({ serialNumber: 'HDDTST05', reason: 'bmc-only', detail: '' })
+    const line = en(describeDivergence({ serialNumber: 'HDDTST05', reason: 'bmc-only', detail: '' }))
     expect(line.toLowerCase()).not.toContain('fail')
     expect(line.toLowerCase()).not.toContain('error')
   })
@@ -26,27 +29,27 @@ describe('describeDivergence', () => {
   // seen by the BMC and not presented to the node, or an operator reading
   // it cannot tell which side is missing it.
   it('dit que le BMC voit le disque et que le noeud ne le presente pas', () => {
-    const line = describeDivergence({ serialNumber: 'X', reason: 'bmc-only', detail: '' }).toLowerCase()
+    const line = en(describeDivergence({ serialNumber: 'X', reason: 'bmc-only', detail: '' })).toLowerCase()
     expect(line).toContain('bmc')
     expect(line).toContain('not presented to the node')
   })
 
   it('dit que le noeud voit le disque et que le BMC ne le liste pas', () => {
-    const line = describeDivergence({ serialNumber: 'X', reason: 'os-only', detail: '' }).toLowerCase()
+    const line = en(describeDivergence({ serialNumber: 'X', reason: 'os-only', detail: '' })).toLowerCase()
     expect(line).toContain('node')
     expect(line).toContain("absent from the bmc")
   })
 
   it('distingue os-only de bmc-only', () => {
-    const a = describeDivergence({ serialNumber: 'X', reason: 'bmc-only', detail: '' })
-    const b = describeDivergence({ serialNumber: 'X', reason: 'os-only', detail: '' })
+    const a = en(describeDivergence({ serialNumber: 'X', reason: 'bmc-only', detail: '' }))
+    const b = en(describeDivergence({ serialNumber: 'X', reason: 'os-only', detail: '' }))
     expect(a).not.toEqual(b)
   })
 })
 
 describe('capacityLine', () => {
   it('rend l-utilisable en premier', () => {
-    const line = capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '3.6Ti' })
+    const line = en(capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '3.6Ti' }))
     expect(line.indexOf('1.2Ti')).toBeLessThan(line.indexOf('3.6Ti'))
   })
 
@@ -54,34 +57,34 @@ describe('capacityLine', () => {
   // alongside it there is no way to read how close the cluster is to that
   // ceiling, which is the whole point of showing capacity at all.
   it('rend aussi l-utilise, pas seulement l-utilisable', () => {
-    const line = capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '3.6Ti' })
+    const line = en(capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '3.6Ti' }))
     expect(line).toContain('480Gi')
   })
 
   it('ne rend jamais le brut seul', () => {
     // This is the capacity incident, in one assertion: OSDs were sized on
     // a raw number while replication divided it by three.
-    const line = capacityLine({ usable: '', used: '', raw: '3.6Ti' })
+    const line = en(capacityLine({ usable: '', used: '', raw: '3.6Ti' }))
     expect(line).not.toEqual('3.6Ti')
     expect(line.toLowerCase()).toContain('unknown')
   })
 
   it('se passe du brut quand il manque', () => {
-    expect(capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '' })).toContain('1.2Ti')
+    expect(en(capacityLine({ usable: '1.2Ti', used: '480Gi', raw: '' }))).toContain('1.2Ti')
   })
 })
 
 describe('claimGapLine', () => {
   it('rend l-ecart lisible', () => {
-    expect(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toContain('16')
-    expect(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toContain('0')
+    expect(en(claimGapLine('ceph-rbd', { total: 16, labelled: 0 }))).toContain('16')
+    expect(en(claimGapLine('ceph-rbd', { total: 16, labelled: 0 }))).toContain('0')
   })
 
   // The count alone is meaningless without which class it is a count of:
   // a screen listing several entries side by side needs the class name in
   // the line itself, not just as a heading nothing here checks for.
   it('nomme la classe de stockage, pas seulement les comptes', () => {
-    expect(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toContain('ceph-rbd')
+    expect(en(claimGapLine('ceph-rbd', { total: 16, labelled: 0 }))).toContain('ceph-rbd')
   })
 
   // Every other case here (and the only production call site) happens to
@@ -90,13 +93,13 @@ describe('claimGapLine', () => {
   // is the only way to prove the parameter is actually threaded through —
   // 'local-path' is the cluster's other real class, not an invented one.
   it('threade le nom de classe recu, pas une constante', () => {
-    expect(claimGapLine('local-path', { total: 3, labelled: 1 })).toContain('local-path')
+    expect(en(claimGapLine('local-path', { total: 3, labelled: 1 }))).toContain('local-path')
   })
 
   it('ne presente pas zero etiquette comme une faute', () => {
     // Enforcement is opt-in per object; the normal state on day one is
     // many claims and no labels.
-    const line = claimGapLine('ceph-rbd', { total: 16, labelled: 0 }).toLowerCase()
+    const line = en(claimGapLine('ceph-rbd', { total: 16, labelled: 0 })).toLowerCase()
     expect(line).not.toContain('error')
     expect(line).not.toContain('violation')
   })
@@ -112,7 +115,7 @@ describe('cephWarningReasons', () => {
       },
     })
     expect(reasons).toHaveLength(2)
-    expect(reasons.join(' ')).toContain('no replicas')
+    expect(reasons.map(en).join(' ')).toContain('no replicas')
   })
 
   it('rend une liste vide sur HEALTH_OK', () => {
@@ -137,7 +140,7 @@ describe('cephWarningReasons', () => {
     // the screen render "healthy" for a degraded cluster.
     const reasons = cephWarningReasons({ health: 'HEALTH_WARN', details: {} })
     expect(reasons).toHaveLength(1)
-    expect(reasons[0].toLowerCase()).toContain('reason')
+    expect(en(reasons[0]).toLowerCase()).toContain('reason')
   })
 })
 
@@ -154,7 +157,7 @@ describe('humanizeQuantity', () => {
   // What the controller writes for the production pool (raw / 4).
   it('rend la capacité utilisable de prod lisible', () => {
     expect(humanizeQuantity('2782725720Ki')).toBe('2.59 TiB')
-    expect(capacityLine(humanizeCapacity({ usable: '2782725720Ki', used: '43026138Ki', raw: '11130902880Ki' }))).toBe(
+    expect(en(capacityLine(humanizeCapacity({ usable: '2782725720Ki', used: '43026138Ki', raw: '11130902880Ki' })))).toBe(
       '41.0 GiB used of 2.59 TiB usable (raw 10.4 TiB)',
     )
   })

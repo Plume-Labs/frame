@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { translate, type Message } from '@/i18n'
 import { cephCapacityEntry, crushWeights, placementOf, placementSourceLine, poolPlacement, type CephPlacement } from './ceph-placement'
 import { capacityLine } from './storage'
 import { buildPoolRows } from './ceph-pools'
@@ -7,6 +8,8 @@ import { buildOsdRows } from './ceph-diagnostic'
 import { daemonQuorum, objectHealth, setFlags } from './ceph-pools'
 import { mdArrays } from './disk-inventory'
 import { healthyPods, healthyProm, hwMachine, setSample } from './testdata/ceph-cluster'
+
+const en = (x: string | Message | undefined) => (x === undefined || typeof x === 'string' ? (x as string) : translate('en', x.key, x.params))
 
 // status.cephPlacement as the controller writes it from the anonymised
 // dashboard fixtures (internal/cephmgr/testdata).
@@ -35,7 +38,7 @@ describe('capacité utilisable par la FrameStorage', () => {
   // as the controller computes it (bytesToQuantityString).
   it('affiche l-utilisable dès qu-une entrée ceph le porte, et le brut seulement sans elle', () => {
     const withEntry = cephCapacityEntry([entry({ type: 'local-path', usable: '1Ti' }), entry({ usable: '2849511137280' })])
-    expect(capacityLine(withEntry!.capacity)).toBe('2849511137280 usable (raw 10Ti)')
+    expect(en(capacityLine(withEntry!.capacity))).toBe('2849511137280 usable (raw 10Ti)')
     expect(cephCapacityEntry([entry({ type: 'local-path', usable: '1Ti' })])).toBeUndefined()
   })
 })
@@ -78,7 +81,7 @@ describe('bandeau et poids CRUSH', () => {
     const pools = buildPoolRows(prom)
     const machine = hwMachine()
     machine.storage!.divergences = []
-    return attentionItems({
+    const text = attentionItems({
       promAvailable: true,
       osds: buildOsdRows({ prom, pods: healthyPods(), machines: [machine], now: 0, crushWeights: weights }),
       pools,
@@ -92,6 +95,7 @@ describe('bandeau et poids CRUSH', () => {
       certificateNotAfter: null,
       now: 0,
     }).find((i) => i.code === 'osd-no-pg')!.text
+    return en(text)
   }
 
   it('dit « poids 0 » quand le mgr le dit, « règle » quand le poids est positif, et ne tranche pas sans lecture', () => {
@@ -111,7 +115,7 @@ describe('échéance du certificat du dashboard', () => {
   it('avertit à J-30 et en dessous, avec le nombre de jours', () => {
     const items = certificateItems('2026-10-27T12:00:00Z', now)
     expect(items.map((i) => [i.severity, i.code])).toEqual([['warning', 'dashboard-cert-expiring']])
-    expect(items[0].text).toContain('29 day(s)')
+    expect(en(items[0].text)).toContain('expires in 29 days')
     expect(certificateItems('2026-10-28T00:00:00Z', now).map((i) => i.code)).toEqual(['dashboard-cert-expiring'])
   })
   it('passe en critique une fois expiré', () => {
