@@ -153,3 +153,22 @@ The last row is the open point: for a network without DHCP the seed would have t
 travel on the key itself and the live system would need a static address on the
 kernel command line, which needs the port's name. Not built; say so if you need
 it.
+
+## Guided installer (in progress)
+
+`cmd/installer` is the first stage of a guided installation: a local page that
+replaces the hand-written spec of `hack/build-iso.sh`. It is **not on the ISO yet**
+(the kiosk session and the BIOS/UEFI boot tests are the next stage) and has never
+run on real hardware. What exists and is tested:
+
+- hardware detection (disks only by `by-id`, USB disks refused, serial retyped before
+  any erase), the same spec validation as the unattended image, loopback-only listener
+  with Host and Origin checks, and a single installation per run;
+- it writes `/autoinstall.yaml` and restarts `snap.subiquity.subiquity-server`, the
+  injection proven in spike S0 (UEFI, QEMU).
+
+Not covered yet: the k3s join token (the join stays the separate step above, so the
+token is never typed into the live system), live progress, BIOS injection, the VGA
+rendering of a BMC. Dry run on any Linux machine, nothing is written to a disk:
+
+    go run ./cmd/installer --autoinstall /tmp/autoinstall.yaml --restart-subiquity=false
