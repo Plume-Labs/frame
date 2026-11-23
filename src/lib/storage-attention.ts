@@ -14,6 +14,7 @@ import { duplicateSerials } from './disk-inventory'
 import type { Machine } from './machines'
 import { describeDivergence } from './storage'
 import { localStackItems, nodesWithPublishedMd } from './local-storage'
+import type { Message } from '@/i18n'
 
 export type AttentionSeverity = 'critical' | 'warning' | 'info'
 
@@ -21,7 +22,8 @@ export interface AttentionItem {
   severity: AttentionSeverity
   /** Stable identifier of the rule that fired — what tests and keys use. */
   code: string
-  text: string
+  /** A Message for the UI to render, or raw text read off the cluster (a Ceph health message, a pool's own trouble line). */
+  text: string | Message
 }
 
 export interface AttentionInputs {
@@ -57,9 +59,9 @@ export function certificateItems(notAfter: string | null | undefined, now: numbe
   if (!Number.isFinite(at)) return []
   const days = Math.floor((at - now) / DAY_MS)
   if (at <= now)
-    return [{ severity: 'critical', code: 'dashboard-cert-expired', text: `ceph-mgr dashboard certificate expired on ${notAfter}: renew it (docs/storage-mgr-account.md)` }]
+    return [{ severity: 'critical', code: 'dashboard-cert-expired', text: { key: 'sa.certExpired', params: { at: notAfter ?? '' } } }]
   if (days <= CERT_WARN_DAYS)
-    return [{ severity: 'warning', code: 'dashboard-cert-expiring', text: `ceph-mgr dashboard certificate expires in ${days} day(s) (${notAfter}): renew it (docs/storage-mgr-account.md)` }]
+    return [{ severity: 'warning', code: 'dashboard-cert-expiring', text: { key: 'sa.certExpiring', params: { count: days, at: notAfter ?? '' } } }]
   return []
 }
 
@@ -75,23 +77,23 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({
       severity: 'warning',
       code: 'prometheus-unavailable',
-      text: 'Prometheus unreachable: OSD, PG and pool detail unknown (not healthy — unknown)',
+      text: { key: 'sa.promDown' },
     })
   }
 
   for (const o of i.osds) {
-    const where = o.host ? ` (${o.host})` : ''
-    if (o.state === 'down') out.push({ severity: 'critical', code: 'osd-down', text: `${o.name}${where} down` })
+    const who = { name: o.name, where: o.host ? ` (${o.host})` : '' }
+    if (o.state === 'down') out.push({ severity: 'critical', code: 'osd-down', text: { key: 'sa.osdDown', params: who } })
     else if (o.state === 'unstable')
-      out.push({ severity: 'warning', code: 'osd-unstable', text: `${o.name}${where} unstable — ${o.stateDetail}` })
+      out.push({ severity: 'warning', code: 'osd-unstable', text: { key: 'sa.osdUnstable', params: { ...who, detail: o.stateDetail } } })
     else if (o.state === 'settling')
-      out.push({ severity: 'info', code: 'osd-settling', text: `${o.name}${where} restarted recently: ${o.stateDetail}` })
-    else if (o.state === 'out') out.push({ severity: 'warning', code: 'osd-out', text: `${o.name}${where} out` })
+      out.push({ severity: 'info', code: 'osd-settling', text: { key: 'sa.osdSettling', params: { ...who, detail: o.stateDetail } } })
+    else if (o.state === 'out') out.push({ severity: 'warning', code: 'osd-out', text: { key: 'sa.osdOut', params: who } })
     if (o.disk.kind === 'physical' && o.disk.hostConflict) {
       out.push({
         severity: 'warning',
         code: 'osd-disk-host-conflict',
-        text: `${o.name}: serial ${o.disk.serial} is listed by ${o.disk.machine}, which is not node ${o.host}`,
+        text: { key: 'sa.diskHostConflict', params: { name: o.name, serial: o.disk.serial, machine: o.disk.machine ?? '', host: o.host ?? '' } },
       })
     }
   }
@@ -104,7 +106,7 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({
       severity: 'warning',
       code: 'osd-unknown',
-      text: `${unknown.length} OSD without any ceph-mgr reading: ${osdRange(unknown.map((o) => o.id))} — state unknown, not healthy`,
+      text: { key: 'sa.osdUnknown', params: { count: unknown.length, range: osdRange(unknown.map((o) => o.id)) } },
     })
   }
 
@@ -118,17 +120,17 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     // With the CRUSH weights read (ceph-mgr dashboard), say which of the
     // two causes it is; without them, say both are possible.
     const weights = empty.map((o) => o.crushWeight)
-    const why = weights.every((w) => w === null)
-      ? 'CRUSH weight 0 or not selected by any rule? (weight not collected)'
+    const why: Message = weights.every((w) => w === null)
+      ? { key: 'sa.noPgWhyUnknown' }
       : weights.every((w) => w === 0)
-        ? 'CRUSH weight 0: they take no data'
+        ? { key: 'sa.noPgWhyZero' }
         : weights.every((w) => w !== null && w > 0)
-          ? `CRUSH weight ${[...new Set(weights)].join(', ')} — not selected by any pool's CRUSH rule`
-          : `CRUSH weights ${weights.map((w) => w ?? '?').join(', ')}`
+          ? { key: 'sa.noPgWhyRule', params: { weights: [...new Set(weights)].join(', ') } }
+          : { key: 'sa.noPgWhyMixed', params: { weights: weights.map((w) => w ?? '?').join(', ') } }
     out.push({
       severity: 'warning',
       code: 'osd-no-pg',
-      text: `${empty.length} OSD without any PG: ${osdRange(empty.map((o) => o.id))}${ctx ? ` (${ctx})` : ''} — ${why}`,
+      text: { key: 'sa.osdNoPg', params: { count: empty.length, range: osdRange(empty.map((o) => o.id)), ctx: ctx ? ` (${ctx})` : '', why } },
     })
   }
 
@@ -137,33 +139,33 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({
       severity: healing ? 'warning' : 'info',
       code: 'osd-flags',
-      text: `Flags set: ${i.flags.join(', ')}`,
+      text: { key: 'sa.flags', params: { list: i.flags.join(', ') } },
     })
   }
 
   const slowCodes = Object.entries(i.healthDetails).filter(([code]) => /SLOW_OP/.test(code))
   if (slowCodes.length > 0) {
     const named = i.osds.filter((o) => (o.slowOps ?? 0) > 0 || (o.bluestoreSlow ?? 0) > 0)
-    const who = named.length
-      ? `→ ${named.map((o) => o.name).join(', ')} (slow-op counters > 0)`
-      : '→ OSD not attributed (counters at 0; mgr API not read)'
+    const who: Message = named.length
+      ? { key: 'sa.slowNamed', params: { list: named.map((o) => o.name).join(', ') } }
+      : { key: 'sa.slowUnattributed' }
     for (const [code, d] of slowCodes) {
-      out.push({ severity: 'warning', code: 'slow-ops', text: `${d.message || code} ${who}` })
+      out.push({ severity: 'warning', code: 'slow-ops', text: { key: 'sa.slowOps', params: { message: d.message || code, who } } })
     }
   }
 
   for (const p of i.pools) {
     if (!p.trouble) continue
-    out.push({ severity: p.trouble, code: 'pool-pg-trouble', text: `Pool ${p.name}: ${p.troubleDetail}` })
+    out.push({ severity: p.trouble, code: 'pool-pg-trouble', text: { key: 'sa.poolTrouble', params: { name: p.name, detail: p.troubleDetail ?? '' } } })
   }
 
   if ((i.objects.degraded ?? 0) > 0) {
     const pct = i.objects.degradedPct !== null ? ` (${i.objects.degradedPct.toFixed(1)} %)` : ''
-    out.push({ severity: 'warning', code: 'objects-degraded', text: `${i.objects.degraded} degraded object copies${pct}` })
+    out.push({ severity: 'warning', code: 'objects-degraded', text: { key: 'sa.objectsDegraded', params: { count: i.objects.degraded ?? 0, pct } } })
   }
 
   if (i.quorum.monsOut.length > 0) {
-    out.push({ severity: 'warning', code: 'mon-out-of-quorum', text: `Monitor(s) out of quorum: ${i.quorum.monsOut.join(', ')}` })
+    out.push({ severity: 'warning', code: 'mon-out-of-quorum', text: { key: 'sa.monOut', params: { list: i.quorum.monsOut.join(', ') } } })
   }
 
   // A node whose agent publishes its md arrays is judged from that (below,
@@ -174,7 +176,7 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({
       severity: 'critical',
       code: 'md-degraded',
-      text: `${a.node} ${a.device}: ${a.active} active${a.required !== null ? `/${a.required}` : ''}, ${a.failed} failed, state ${a.state}`,
+      text: { key: 'sa.mdDegraded', params: { node: a.node, device: a.device, active: a.active, required: a.required !== null ? `/${a.required}` : '', failed: a.failed, state: a.state } },
     })
   }
 
@@ -182,7 +184,7 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
 
   for (const m of i.machines) {
     for (const d of m.storage?.divergences ?? []) {
-      out.push({ severity: 'info', code: 'disk-divergence', text: `${m.name}: ${describeDivergence(d)}` })
+      out.push({ severity: 'info', code: 'disk-divergence', text: { key: 'sa.divergence', params: { machine: m.name, what: describeDivergence(d) } } })
     }
   }
 
@@ -192,7 +194,7 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
       out.push({
         severity: 'info',
         code: 'disk-no-serial',
-        text: `${m.name}: disk in bay ${d.location || '?'} reported without a serial — cannot be joined to the OS or to Ceph`,
+        text: { key: 'sa.noSerial', params: { machine: m.name, bay: d.location || '?' } },
       })
     }
   }
@@ -200,7 +202,7 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({
       severity: 'warning',
       code: 'disk-serial-duplicate',
-      text: `Serial ${serial} listed by several machines: ${names.join(', ')} — joins on it are ambiguous`,
+      text: { key: 'sa.serialDuplicate', params: { serial, list: names.join(', ') } },
     })
   }
 
@@ -208,7 +210,7 @@ export function attentionItems(i: AttentionInputs): AttentionItem[] {
     out.push({
       severity: 'info',
       code: 'no-framestorage',
-      text: 'Usable capacity unknown: no FrameStorage entry declared',
+      text: { key: 'sa.noFrameStorage' },
     })
   }
 
@@ -226,11 +228,11 @@ export function undeclaredOsdDiskItems(machine: string, rows: DiskRow[]): Attent
     .map((r) => ({
       severity: 'warning' as const,
       code: 'osd-disk-undeclared',
-      text: `${r.osd!.name} on ${machine} ${r.bay ?? ''} (${r.serial}): ${r.byIdPath} is not in the CephCluster device list`,
+      text: { key: 'sa.osdUndeclared', params: { name: r.osd!.name, machine, bay: r.bay ?? '', serial: r.serial, path: r.byIdPath ?? '' } },
     }))
 }
 
 /** The banner when the diagnostic read itself failed: never an empty list. */
 export function unreadableDiagnosticItems(message: string): AttentionItem[] {
-  return [{ severity: 'warning', code: 'diagnostic-unreadable', text: `Storage diagnostic unreadable: ${message} — state unknown` }]
+  return [{ severity: 'warning', code: 'diagnostic-unreadable', text: { key: 'sa.diagUnreadable', params: { message } } }]
 }

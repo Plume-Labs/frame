@@ -6,6 +6,8 @@
 // runs; the screens themselves cannot be unit-tested here, so every
 // decision an operator reads belongs in this file).
 
+import type { Message } from '@/i18n'
+
 export interface DiskDivergence {
   serialNumber: string
   reason: 'bmc-only' | 'os-only' | 'mismatch'
@@ -32,15 +34,15 @@ export interface ClaimCounts {
  * residual logical-unit metadata, not broken, and a screen that says
  * "failed" sends someone to replace a healthy drive.
  */
-export function describeDivergence(d: DiskDivergence): string {
-  const where = d.detail ? ` — ${d.detail}` : ''
+export function describeDivergence(d: DiskDivergence): Message {
+  const params = { serial: d.serialNumber, where: d.detail ? ` — ${d.detail}` : '' }
   switch (d.reason) {
     case 'bmc-only':
-      return `${d.serialNumber}: seen by the BMC, not presented to the node${where}`
+      return { key: 'stg.div.bmcOnly', params }
     case 'os-only':
-      return `${d.serialNumber}: seen by the node, absent from the BMC's list${where}`
+      return { key: 'stg.div.osOnly', params }
     default:
-      return `${d.serialNumber}: the two sources disagree${where}`
+      return { key: 'stg.div.mismatch', params }
   }
 }
 
@@ -51,13 +53,12 @@ export function describeDivergence(d: DiskDivergence): string {
  * OSDs on a raw number that replication divides by three. An entry with no
  * usable figure says so rather than fall back to the raw one.
  */
-export function capacityLine(c: StorageCapacity): string {
+export function capacityLine(c: StorageCapacity): Message {
   if (!c.usable) {
-    return c.raw ? `usable unknown (raw ${c.raw})` : 'usable unknown'
+    return c.raw ? { key: 'stg.cap.unknownRaw', params: { raw: c.raw } } : { key: 'stg.cap.unknown' }
   }
-  const used = c.used ? `${c.used} used of ` : ''
-  const raw = c.raw ? ` (raw ${c.raw})` : ''
-  return `${used}${c.usable} usable${raw}`
+  const params = { used: c.used, usable: c.usable, raw: c.raw ? ` (raw ${c.raw})` : '' }
+  return { key: c.used ? 'stg.cap.usedOf' : 'stg.cap.usable', params }
 }
 
 /**
@@ -65,8 +66,8 @@ export function capacityLine(c: StorageCapacity): string {
  * a fault. Enforcement is opt-in per object, so many claims and no labels
  * is the normal state the day the webhook lands.
  */
-export function claimGapLine(className: string, c: ClaimCounts): string {
-  return `${className} — ${c.total} PVC, ${c.labelled} labelled`
+export function claimGapLine(className: string, c: ClaimCounts): Message {
+  return { key: 'stg.claimGap', params: { className, total: c.total, labelled: c.labelled } }
 }
 
 /**
@@ -99,7 +100,7 @@ export interface CephHealthPayload {
  * empty list there would let the screen render a degraded cluster as
  * healthy — the failure mode this function exists to prevent.
  */
-export function cephWarningReasons(payload: CephHealthPayload): string[] {
+export function cephWarningReasons(payload: CephHealthPayload): Array<string | Message> {
   if (payload.health === 'HEALTH_OK') return []
 
   const reasons = Object.entries(payload.details ?? {})
@@ -107,7 +108,7 @@ export function cephWarningReasons(payload: CephHealthPayload): string[] {
     .filter((m) => m.length > 0)
 
   if (reasons.length === 0) {
-    return [`${payload.health} with no reason reported by the cluster`]
+    return [{ key: 'stg.ceph.noReason', params: { health: payload.health } }]
   }
   return reasons
 }

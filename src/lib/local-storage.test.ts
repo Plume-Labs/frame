@@ -6,6 +6,10 @@ import { buildPoolRows, daemonQuorum, objectHealth, setFlags } from './ceph-pool
 import { mdArrays } from './disk-inventory'
 import { healthyPods, healthyProm, hwMachine, setSample, HW_NODE } from './testdata/ceph-cluster'
 import { g9Local, zfsLocal } from './testdata/local-storage'
+import { translate, type Message } from '@/i18n'
+
+const txt = (x?: { text: string | Message }) => (!x ? undefined : typeof x.text === 'string' ? x.text : translate('en', x.text.key, x.text.params)) as string
+
 
 function machine(local = zfsLocal()) {
   const m = hwMachine()
@@ -25,20 +29,21 @@ describe('localStackItems', () => {
 
   it('signale un pool DEGRADED en critique', () => {
     const item = localStackItems(machine()).find((i) => i.code === 'zfs-pool-health')
-    expect(item).toMatchObject({ severity: 'critical', text: 'srv-hw ZFS data: pool DEGRADED' })
+    expect(item).toMatchObject({ severity: 'critical' })
+    expect(txt(item)).toBe('srv-hw ZFS data: pool DEGRADED')
   })
 
   it('signale un pool FAULTED, et rien pour un pool ONLINE', () => {
     const l = zfsLocal()
     l.zfs.pools![0].health = 'FAULTED'
-    expect(localStackItems(machine(l)).filter((i) => i.code === 'zfs-pool-health').map((i) => i.text)).toEqual([
+    expect(localStackItems(machine(l)).filter((i) => i.code === 'zfs-pool-health').map((i) => txt(i))).toEqual([
       'srv-hw ZFS data: pool FAULTED',
     ])
   })
 
   it('nomme la feuille en erreur avec son chemin dans l-arbre', () => {
     const item = localStackItems(machine()).find((i) => i.code === 'zfs-vdev')
-    expect(item?.text).toContain('raidz1-0 / /dev/disk/by-id/wwn-0x5000c500deadbe03-part1 FAULTED — 12 read, 0 write, 1200 checksum')
+    expect(txt(item)).toContain('raidz1-0 / /dev/disk/by-id/wwn-0x5000c500deadbe03-part1 FAULTED — 12 read, 0 write, 1200 checksum')
   })
 
   it('signale un scrub qui a trouvé des erreurs', () => {
@@ -53,13 +58,13 @@ describe('localStackItems', () => {
     Object.assign(l.md.arrays![0], { degraded: true, slots: 'U_', activeDisks: 1, sync: 'recovery 8.5%' })
     l.md.arrays![0].members![1].failed = true
     const item = localStackItems(machine(l)).find((i) => i.code === 'md-degraded')
-    expect(item?.text).toBe('srv-hw md0 (raid1): active [U_] 1/2 active, failed sdc2, recovery 8.5%')
+    expect(txt(item)).toBe('srv-hw md0 (raid1): active [U_] 1/2 active, failed sdc2, recovery 8.5%')
   })
 
   it('signale une pile illisible, pas une pile absente', () => {
     const l = g9Local()
     l.lvm = { state: 'error', error: 'pvs timed out after 10s' }
-    expect(localStackItems(machine(l)).map((i) => i.text)).toEqual(['srv-hw LVM: could not be read — pvs timed out after 10s (state unknown)'])
+    expect(localStackItems(machine(l)).map((i) => txt(i))).toEqual(['srv-hw LVM: could not be read — pvs timed out after 10s (state unknown)'])
   })
 
   it('signale un VG partiel', () => {
@@ -126,7 +131,7 @@ describe('bandeau', () => {
     Object.assign(l.md.arrays![0], { degraded: true, activeDisks: 1, slots: 'U_' })
     const md = attentionItems(inputs([machine(l)], prom)).filter((i) => i.code === 'md-degraded')
     expect(md).toHaveLength(1)
-    expect(md[0].text).toContain('srv-hw md0')
+    expect(txt(md[0])).toContain('srv-hw md0')
     expect(nodesWithPublishedMd([machine(l)])).toEqual(new Set([HW_NODE]))
   })
 })
@@ -136,7 +141,8 @@ describe('réserves du réaudit', () => {
     const l = zfsLocal()
     l.zfs.pools![1].errors = 'Permanent errors have been detected in the following files:'
     const item = localStackItems(machine(l)).find((i) => i.code === 'zfs-data-errors')
-    expect(item).toMatchObject({ severity: 'critical', text: 'srv-hw ZFS rpool: Permanent errors have been detected in the following files:' })
+    expect(item).toMatchObject({ severity: 'critical' })
+    expect(txt(item)).toBe('srv-hw ZFS rpool: Permanent errors have been detected in the following files:')
     expect(codes()).not.toContain('zfs-data-errors')
   })
 
@@ -146,8 +152,8 @@ describe('réserves du réaudit', () => {
       { name: 'mirror-0', depth: 0, state: 'DEGRADED' },
       { name: '12345678901234567890', depth: 1, state: 'UNAVAIL', note: 'was /dev/disk/by-id/ata-HUC10121CLAR1200_SER-HDD2-part1' },
     ]
-    const items = localStackItems(machine(l)).filter((i) => i.code === 'zfs-vdev' && i.text.includes('rpool'))
-    expect(items.map((i) => i.text)).toEqual([
+    const items = localStackItems(machine(l)).filter((i) => i.code === 'zfs-vdev' && txt(i).includes('rpool'))
+    expect(items.map((i) => txt(i))).toEqual([
       expect.stringContaining('srv-hw ZFS rpool: mirror-0 / 12345678901234567890 UNAVAIL'),
     ])
     const observed = machine().storage!.observed
@@ -157,7 +163,7 @@ describe('réserves du réaudit', () => {
   it('signale les tableaux md non listés', () => {
     const l = g9Local()
     l.md.arraysOmitted = 3
-    expect(localStackItems(machine(l)).map((i) => i.text)).toContain(
+    expect(localStackItems(machine(l)).map((i) => txt(i))).toContain(
       'srv-hw md: 3 array(s) not listed (status size limit) — their state is unknown',
     )
   })
@@ -167,7 +173,7 @@ describe('réserves du réaudit', () => {
     l.zfs.state = 'busy'
     l.zfs.readAt = '2026-09-27T11:59:00Z'
     const item = localStackItems(machine(l)).find((i) => i.code === 'local-stack-busy')
-    expect(item?.text).toBe('srv-hw ZFS: previous read still running on the node — showing the read of 2026-09-27T11:59:00Z')
+    expect(txt(item)).toBe('srv-hw ZFS: previous read still running on the node — showing the read of 2026-09-27T11:59:00Z')
     expect(stackSummary(l)).toContain('ZFS: 2 pool(s) (previous read still running)')
   })
 })

@@ -66,8 +66,9 @@ export function vdevPath(vdevs: ZVdev[], index: number): string {
 function poolItems(machine: string, p: ZPool): AttentionItem[] {
   const out: AttentionItem[] = []
   const where = `${machine} ZFS ${p.name}`
+  const at = { where }
   if ((p.health ?? '') !== POOL_OK) {
-    out.push({ severity: 'critical', code: 'zfs-pool-health', text: `${where}: pool ${p.health || 'state unknown'}` })
+    out.push({ severity: 'critical', code: 'zfs-pool-health', text: p.health ? { key: 'lst.poolHealth', params: { ...at, health: p.health } } : { key: 'lst.poolUnknown', params: at } })
   }
   const vdevs = p.vdevs ?? []
   vdevs.forEach((v, i) => {
@@ -77,19 +78,30 @@ function poolItems(machine: string, p: ZPool): AttentionItem[] {
       out.push({
         severity: 'warning',
         code: 'zfs-vdev',
-        text: `${where}: ${vdevPath(vdevs, i)} ${v.state ?? ''} — ${v.readErrors ?? 0} read, ${v.writeErrors ?? 0} write, ${v.checksumErrors ?? 0} checksum error(s)${v.note ? ` (${v.note})` : ''}`,
+        text: {
+          key: 'lst.vdev',
+          params: {
+            ...at,
+            path: vdevPath(vdevs, i),
+            state: v.state ?? '',
+            read: v.readErrors ?? 0,
+            write: v.writeErrors ?? 0,
+            checksum: v.checksumErrors ?? 0,
+            note: v.note ? ` (${v.note})` : '',
+          },
+        },
       })
     }
   })
   if ((p.scrubErrors ?? 0) > 0) {
-    out.push({ severity: 'critical', code: 'zfs-scrub-errors', text: `${where}: last scrub (${p.lastScrub ?? '?'}) found ${p.scrubErrors} error(s)` })
+    out.push({ severity: 'critical', code: 'zfs-scrub-errors', text: { key: 'lst.scrub', params: { ...at, when: p.lastScrub ?? '?', n: p.scrubErrors ?? 0 } } })
   }
   // "Permanent errors have been detected…": files already lost or damaged.
   if (p.errors && !/^No known data errors/i.test(p.errors)) {
-    out.push({ severity: 'critical', code: 'zfs-data-errors', text: `${where}: ${p.errors}` })
+    out.push({ severity: 'critical', code: 'zfs-data-errors', text: { key: 'lst.dataErrors', params: { ...at, errors: p.errors } } })
   }
   if ((p.vdevsOmitted ?? 0) > 0) {
-    out.push({ severity: 'info', code: 'zfs-vdevs-omitted', text: `${where}: ${p.vdevsOmitted} vdev row(s) not listed (status size limit)` })
+    out.push({ severity: 'info', code: 'zfs-vdevs-omitted', text: { key: 'lst.vdevsOmitted', params: { ...at, n: p.vdevsOmitted ?? 0 } } })
   }
   return out
 }
@@ -102,18 +114,18 @@ export function localStackItems(machine: Machine): AttentionItem[] {
   const m = machine.name
   for (const [stack, s] of [['ZFS', local.zfs], ['md', local.md], ['LVM', local.lvm]] as const) {
     if (s.state === 'error') {
-      out.push({ severity: 'warning', code: 'local-stack-error', text: `${m} ${stack}: could not be read — ${s.error || 'no reason given'} (state unknown)` })
+      out.push({ severity: 'warning', code: 'local-stack-error', text: { key: 'lst.stackError', params: { machine: m, stack, error: s.error || '' } } })
     } else if (s.state === 'busy') {
       out.push({
         severity: 'warning',
         code: 'local-stack-busy',
-        text: `${m} ${stack}: previous read still running on the node — showing the read of ${s.readAt ?? 'an earlier cycle'}`,
+        text: { key: s.readAt ? 'lst.stackBusy' : 'lst.stackBusyEarlier', params: { machine: m, stack, at: s.readAt ?? '' } },
       })
     }
   }
   for (const p of local.zfs.pools ?? []) out.push(...poolItems(m, p))
   if ((local.zfs.poolsOmitted ?? 0) > 0) {
-    out.push({ severity: 'warning', code: 'zfs-pools-omitted', text: `${m} ZFS: ${local.zfs.poolsOmitted} pool(s) not listed (status size limit)` })
+    out.push({ severity: 'warning', code: 'zfs-pools-omitted', text: { key: 'lst.poolsOmitted', params: { machine: m, n: local.zfs.poolsOmitted ?? 0 } } })
   }
   for (const a of local.md.arrays ?? []) {
     if (!a.degraded) continue
@@ -121,16 +133,28 @@ export function localStackItems(machine: Machine): AttentionItem[] {
     out.push({
       severity: 'critical',
       code: 'md-degraded',
-      text: `${m} ${a.name} (${a.level || 'md'}): ${a.state}${a.slots ? ` [${a.slots}]` : ''}${a.raidDisks ? ` ${a.activeDisks}/${a.raidDisks} active` : ''}${failed.length ? `, failed ${failed.join(', ')}` : ''}${a.sync ? `, ${a.sync}` : ''}`,
+      text: {
+        key: 'lst.mdDegraded',
+        params: {
+          machine: m,
+          name: a.name,
+          level: a.level || 'md',
+          state: a.state ?? '',
+          slots: a.slots ? ` [${a.slots}]` : '',
+          active: a.raidDisks ? { key: 'lst.mdActive', params: { active: a.activeDisks ?? 0, total: a.raidDisks } } : '',
+          failed: failed.length ? { key: 'lst.mdFailed', params: { list: failed.join(', ') } } : '',
+          sync: a.sync ? `, ${a.sync}` : '',
+        },
+      },
     })
   }
   if ((local.md.arraysOmitted ?? 0) > 0) {
-    out.push({ severity: 'warning', code: 'md-arrays-omitted', text: `${m} md: ${local.md.arraysOmitted} array(s) not listed (status size limit) — their state is unknown` })
+    out.push({ severity: 'warning', code: 'md-arrays-omitted', text: { key: 'lst.arraysOmitted', params: { machine: m, n: local.md.arraysOmitted ?? 0 } } })
   }
   for (const vg of local.lvm.vgs ?? []) {
     // vg_attr's 4th character: 'p' = partial, a PV is missing.
     if ((vg.attr ?? '')[3] === 'p') {
-      out.push({ severity: 'critical', code: 'lvm-vg-partial', text: `${m} LVM ${vg.name}: volume group partial — a physical volume is missing` })
+      out.push({ severity: 'critical', code: 'lvm-vg-partial', text: { key: 'lst.vgPartial', params: { machine: m, name: vg.name } } })
     }
   }
   return out
