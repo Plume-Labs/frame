@@ -1238,6 +1238,7 @@ export const en = {
   'lst.dataErrors': '{where}: {errors}',
   'lst.vdevsOmitted': '{where}: {n} vdev row(s) not listed (status size limit)',
   'lst.stackError': '{machine} {stack}: could not be read — {error} (state unknown)',
+  'lst.noReason': 'no reason given',
   'lst.stackBusy': '{machine} {stack}: previous read still running on the node — showing the read of {at}',
   'lst.stackBusyEarlier': '{machine} {stack}: previous read still running on the node — showing the read of an earlier cycle',
   'lst.poolsOmitted': '{machine} ZFS: {n} pool(s) not listed (status size limit)',

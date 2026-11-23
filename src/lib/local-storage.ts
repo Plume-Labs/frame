@@ -114,7 +114,7 @@ export function localStackItems(machine: Machine): AttentionItem[] {
   const m = machine.name
   for (const [stack, s] of [['ZFS', local.zfs], ['md', local.md], ['LVM', local.lvm]] as const) {
     if (s.state === 'error') {
-      out.push({ severity: 'warning', code: 'local-stack-error', text: { key: 'lst.stackError', params: { machine: m, stack, error: s.error || '' } } })
+      out.push({ severity: 'warning', code: 'local-stack-error', text: { key: 'lst.stackError', params: { machine: m, stack, error: s.error || { key: 'lst.noReason' } } } })
     } else if (s.state === 'busy') {
       out.push({
         severity: 'warning',
