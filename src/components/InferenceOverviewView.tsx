@@ -7,6 +7,8 @@ import { useLiveResource } from '@/hooks/useLiveResource'
 import { LiveStates } from '@/components/LiveStates'
 import { Stat, Meter } from '@/components/Primitives'
 import { TrendRow } from '@/components/Sparkline'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 import { Lightning, ArrowClockwise, Database, Gauge, Speedometer, Thermometer, TrendUp } from '@phosphor-icons/react'
 
 const frame = createFrameClient()
@@ -24,12 +26,19 @@ const TREND_QUERIES = [
   { metric: 'Requests processing', q: 'llamacpp:requests_processing' },
 ]
 
+const TREND_LABEL: Record<string, MessageKey> = {
+  'GPU utilisation': 'ovi.trend.gpu',
+  'Decode rate': 'inf.trend.decode',
+  'Requests processing': 'inf.trend.processing',
+}
+
 /**
  * Single-glance serving overview: GPU (DCGM) + llama.cpp (GPU-backed chat
  * completions) + TEI (CPU-only embeddings) side by side. The detailed
  * per-surface breakdowns still live on their own screens (GPU, KV-Cache).
  */
 export function InferenceOverviewView() {
+  const { t } = useI18n()
   // All three are proxied Prometheus /metrics endpoints, not Kubernetes
   // objects — nothing to watch. GPU and llama.cpp move within a single
   // generation; TEI's embedding queue a little slower.
@@ -58,17 +67,16 @@ export function InferenceOverviewView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <Lightning className="text-primary" />
-            Inference
+            {t('ovi.title')}
             <Button variant="outline" size="sm" className="ml-auto font-mono gap-1.5" onClick={reloadAll} disabled={loading}>
               <ArrowClockwise className={loading ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground font-mono">
-            GPU-backed serving (llama.cpp) and CPU-only embeddings (TEI) at a glance.
-            Per-surface detail: GPU and KV-Cache screens.
+            {t('ovi.desc')}
           </p>
         </CardContent>
       </Card>
@@ -83,12 +91,12 @@ export function InferenceOverviewView() {
         <Card>
           <CardHeader>
             <CardTitle className="font-mono text-base flex items-center gap-2">
-              <TrendUp size={16} className="text-primary" /> Serving chain, last {WINDOW_HOURS}h (Prometheus)
+              <TrendUp size={16} className="text-primary" /> {t('ovi.trendTitle', { hours: WINDOW_HOURS })}
             </CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             {trend.map((series) => (
-              <TrendRow key={series.metric} series={series} windowHours={WINDOW_HOURS} format={(v) => v.toFixed(1)} />
+              <TrendRow key={series.metric} series={series} label={TREND_LABEL[series.metric] ? t(TREND_LABEL[series.metric]) : undefined} windowHours={WINDOW_HOURS} format={(v) => v.toFixed(1)} />
             ))}
           </CardContent>
         </Card>
@@ -98,6 +106,7 @@ export function InferenceOverviewView() {
 }
 
 function GpuCard({ state }: { state: ReturnType<typeof useLiveResource<GpuInfo[]>>['state'] }) {
+  const { t } = useI18n()
   const gpu = state.phase === 'ready' ? state.data[0] : undefined
   const memPct = gpu?.memTotalMB ? (gpu.memUsedMB / gpu.memTotalMB) * 100 : 0
 
@@ -106,11 +115,11 @@ function GpuCard({ state }: { state: ReturnType<typeof useLiveResource<GpuInfo[]
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
           <Speedometer size={16} className="text-primary" />
-          GPU
+          {t('gpu.title')}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <LiveStates state={state} emptyLabel="No GPU / DCGM exporter not present." />
+        <LiveStates state={state} emptyLabel={t('ovi.gpu.empty')} />
         {gpu && (
           <>
             <div className="flex flex-wrap gap-2">
@@ -118,8 +127,8 @@ function GpuCard({ state }: { state: ReturnType<typeof useLiveResource<GpuInfo[]
               <Badge variant="outline" className="font-mono text-[10px] gap-1"><Thermometer size={11} />{gpu.tempC}°C</Badge>
               <Badge variant="outline" className="font-mono text-[10px] gap-1"><Lightning size={11} />{gpu.powerW.toFixed(0)}W</Badge>
             </div>
-            <Meter label="Utilisation" pct={gpu.utilPct} detail={`${gpu.utilPct}%`} />
-            <Meter label="Memory" pct={memPct} detail={`${(gpu.memUsedMB / 1024).toFixed(1)} / ${(gpu.memTotalMB / 1024).toFixed(1)} GiB`} />
+            <Meter label={t('ovi.utilisation')} pct={gpu.utilPct} detail={`${gpu.utilPct}%`} />
+            <Meter label={t('gpu.meter.memory')} pct={memPct} detail={`${(gpu.memUsedMB / 1024).toFixed(1)} / ${(gpu.memTotalMB / 1024).toFixed(1)} GiB`} />
           </>
         )}
       </CardContent>
@@ -128,6 +137,7 @@ function GpuCard({ state }: { state: ReturnType<typeof useLiveResource<GpuInfo[]
 }
 
 function LlamaCppCard({ state }: { state: ReturnType<typeof useLiveResource<InferenceStatus | null>>['state'] }) {
+  const { t } = useI18n()
   const inf = state.phase === 'ready' ? state.data : null
 
   return (
@@ -140,19 +150,19 @@ function LlamaCppCard({ state }: { state: ReturnType<typeof useLiveResource<Infe
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <LiveStates state={state} emptyLabel="No inference server (llama.cpp) deployed." />
+        <LiveStates state={state} emptyLabel={t('inf.empty')} />
         {inf && (
           <>
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline" className="font-mono text-[10px] gap-1"><Database size={11} />{inf.model}</Badge>
-              <Badge variant="outline" className="font-mono text-[10px]">{inf.slots} slots</Badge>
+              <Badge variant="outline" className="font-mono text-[10px]">{t('inf.slots', { n: inf.slots })}</Badge>
             </div>
-            <Meter label="KV cache" pct={inf.kvUsePct} detail={`${inf.kvTokens} / ${inf.nCtx}`} />
+            <Meter label={t('ovi.kv')} pct={inf.kvUsePct} detail={`${inf.kvTokens} / ${inf.nCtx}`} />
             <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <Stat icon={<Gauge size={12} />} label="Prompt tok/s" value={formatRate(inf.promptTokensPerSec)} />
-              <Stat icon={<Gauge size={12} />} label="Decode tok/s" value={formatRate(inf.predictedTokensPerSec)} />
-              <Stat label="Processing" value={`${inf.requestsProcessing}`} />
-              <Stat label="Deferred" value={`${inf.requestsDeferred}`} />
+              <Stat icon={<Gauge size={12} />} label={t('inf.prompt')} value={formatRate(inf.promptTokensPerSec)} />
+              <Stat icon={<Gauge size={12} />} label={t('inf.decode')} value={formatRate(inf.predictedTokensPerSec)} />
+              <Stat label={t('inf.processing')} value={`${inf.requestsProcessing}`} />
+              <Stat label={t('inf.deferred')} value={`${inf.requestsDeferred}`} />
             </div>
           </>
         )}
@@ -162,6 +172,7 @@ function LlamaCppCard({ state }: { state: ReturnType<typeof useLiveResource<Infe
 }
 
 function TeiCard({ state }: { state: ReturnType<typeof useLiveResource<TeiStatus | null>>['state'] }) {
+  const { t } = useI18n()
   const tei = state.phase === 'ready' ? state.data : null
   const successPct = tei && tei.requestCount ? (tei.successCount / tei.requestCount) * 100 : 100
 
@@ -175,17 +186,17 @@ function TeiCard({ state }: { state: ReturnType<typeof useLiveResource<TeiStatus
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <LiveStates state={state} emptyLabel="No embeddings server (TEI) deployed." />
+        <LiveStates state={state} emptyLabel={t('ovi.tei.empty')} />
         {tei && (
           <>
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline" className="font-mono text-[10px] gap-1"><Database size={11} />{tei.model}</Badge>
               {tei.dtype && <Badge variant="outline" className="font-mono text-[10px]">{tei.dtype}</Badge>}
             </div>
-            <Meter label="Success rate" pct={successPct} detail={`${tei.successCount} / ${tei.requestCount}`} />
+            <Meter label={t('ovi.success')} pct={successPct} detail={`${tei.successCount} / ${tei.requestCount}`} />
             <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <Stat label="Queue" value={`${tei.queueSize}`} />
-              <Stat label="Avg inference" value={`${tei.avgInferenceMs.toFixed(1)} ms`} />
+              <Stat label={t('ovi.queue')} value={`${tei.queueSize}`} />
+              <Stat label={t('ovi.avgInference')} value={`${tei.avgInferenceMs.toFixed(1)} ms`} />
             </div>
           </>
         )}
