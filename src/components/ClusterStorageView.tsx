@@ -258,7 +258,7 @@ export function ClusterStorageView() {
               {diag.promAvailable ? (
                 <>
                   <div>
-                    PG {diag.pgs.total}: {pgLine(diag.pgs)}{' '}
+                    PG {diag.pgs.total}: {(() => { const l = pgLine(diag.pgs); return typeof l === 'string' ? l : tm(l) })()}{' '}
                     <span className="text-muted-foreground">(a PG carries several states; counts overlap)</span>
                   </div>
                   <div>

@@ -3,60 +3,61 @@ import { stackSummary, vdevDisk } from '@/lib/local-storage'
 import { formatIec } from '@/lib/storage'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Stack, Database } from '@phosphor-icons/react'
+import { useI18n } from '@/i18n/context'
+import type { MessageKey } from '@/i18n'
 
-function stateLine(state: string, error: string | undefined, absent: string, readAt?: string) {
-  if (state === 'absent') return <p className="text-muted-foreground">{absent}</p>
-  if (state === 'error') return <p className="text-warning">Could not be read: {error || 'no reason given'} — state unknown.</p>
+type T = ReturnType<typeof useI18n>['t']
+
+function stateLine(t: T, state: string, error: string | undefined, absent: MessageKey, readAt?: string) {
+  if (state === 'absent') return <p className="text-muted-foreground">{t(absent)}</p>
+  if (state === 'error') return <p className="text-warning">{t('lsc.unreadable', { error: error || t('lst.noReason') })}</p>
   if (state === 'busy')
-    return (
-      <p className="text-warning">
-        Previous read still running on the node (not restarted); showing the read of {readAt ?? 'an earlier cycle'}.
-      </p>
-    )
-  return readAt ? <p className="text-muted-foreground">read {readAt}</p> : null
+    return <p className="text-warning">{t('lsc.busy', { at: readAt ?? t('lsc.earlierCycle') })}</p>
+  return readAt ? <p className="text-muted-foreground">{t('lsc.readAt', { at: readAt })}</p> : null
 }
 
-function diskLabel(machine: Machine, serial: string | undefined): string {
+function diskLabel(t: T, machine: Machine, serial: string | undefined): string {
   if (!serial) return ''
   const bay = (machine.inventory?.drives ?? []).find((d) => d.serialNumber === serial)?.location
-  return ` → ${serial}${bay ? ` (bay ${bay})` : ''}`
+  return ` → ${serial}${bay ? ` (${t('lsc.bay', { bay })})` : ''}`
 }
 
 /** The node's ZFS pools: health, capacity, scrub, vdev tree joined to disks, datasets. */
 export function ZfsCard({ machine }: { machine: Machine }) {
+  const { t, tm, tn } = useI18n()
   const local = machine.storage?.local
   const observed = machine.storage?.observed ?? []
   return (
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <Stack className="text-primary" /> ZFS on {machine.nodeRef || machine.name}
+          <Stack className="text-primary" /> {t('lsc.zfsOn', { node: machine.nodeRef || machine.name })}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-xs font-mono">
         {!local ? (
-          <p className="text-muted-foreground">{stackSummary(local)}.</p>
+          <p className="text-muted-foreground">{tm(stackSummary(local))}.</p>
         ) : (
           <>
-            {stateLine(local.zfs.state, local.zfs.error, 'No ZFS on this node (no zfs module loaded).', local.zfs.readAt)}
+            {stateLine(t, local.zfs.state, local.zfs.error, 'lsc.noZfs', local.zfs.readAt)}
             {(local.zfs.pools ?? []).map((p) => (
               <div key={p.name} className="rounded-md border border-border p-2 space-y-1">
                 <div className="flex flex-wrap gap-x-4">
                   <span className="font-bold">{p.name}</span>
                   <span className={p.health === 'ONLINE' ? 'text-accent' : 'text-destructive'}>{p.health || '?'}</span>
                   <span>
-                    {formatIec(p.allocatedBytes ?? null)} / {formatIec(p.sizeBytes ?? null)} ({formatIec(p.freeBytes ?? null)} free
+                    {formatIec(p.allocatedBytes ?? null)} / {formatIec(p.sizeBytes ?? null)} ({t('lsc.free', { size: formatIec(p.freeBytes ?? null) })}
                     {p.capacityPercent !== undefined ? `, ${p.capacityPercent} %` : ''})
                   </span>
-                  <span>frag {p.fragmentationPercent ?? '—'} %</span>
+                  <span>{t('lsc.frag', { pct: p.fragmentationPercent ?? '—' })}</span>
                 </div>
-                <div className={(p.scrubErrors ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}>scan: {p.scan || '—'}</div>
+                <div className={(p.scrubErrors ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}>{t('lsc.scan')} {p.scan || '—'}</div>
                 <div className={p.errors && !/^No known data errors/i.test(p.errors) ? 'text-destructive' : 'text-muted-foreground'}>
-                  errors: {p.errors || '—'}
+                  {t('lsc.errors')} {p.errors || '—'}
                 </div>
                 <div className="flex gap-3 text-muted-foreground">
                   <span className="flex-1">vdev</span>
-                  <span>state</span>
+                  <span>{t('osd.col.state')}</span>
                   <span className="w-28 text-right">read/write/cksum</span>
                 </div>
                 {(p.vdevs ?? []).map((v, i) => {
@@ -66,7 +67,7 @@ export function ZfsCard({ machine }: { machine: Machine }) {
                     <div key={`${i}-${v.name}`} className={`flex gap-3 ${bad ? 'text-warning' : ''}`} style={{ paddingLeft: `${v.depth * 1.25}rem` }}>
                       <span className="flex-1 truncate">
                         {v.name}
-                        {diskLabel(machine, vdevDisk(v.name, observed, v.note)?.serialNumber)}
+                        {diskLabel(t, machine, vdevDisk(v.name, observed, v.note)?.serialNumber)}
                         {v.note ? ` — ${v.note}` : ''}
                       </span>
                       <span>{v.state || ''}</span>
@@ -76,14 +77,14 @@ export function ZfsCard({ machine }: { machine: Machine }) {
                     </div>
                   )
                 })}
-                {(p.vdevsOmitted ?? 0) > 0 && <div className="text-muted-foreground">… {p.vdevsOmitted} more row(s) not listed</div>}
+                {(p.vdevsOmitted ?? 0) > 0 && <div className="text-muted-foreground">{tn('lsc.rowsOmitted', p.vdevsOmitted ?? 0)}</div>}
               </div>
             ))}
             {(local.zfs.datasets ?? []).length > 0 && (
               <details>
                 <summary className="cursor-pointer text-muted-foreground">
-                  {(local.zfs.datasets ?? []).length} dataset(s)
-                  {(local.zfs.datasetsOmitted ?? 0) > 0 ? ` (+${local.zfs.datasetsOmitted} not listed)` : ''}
+                  {tn('lsc.datasets', (local.zfs.datasets ?? []).length)}
+                  {(local.zfs.datasetsOmitted ?? 0) > 0 ? ` (${tn('lsc.datasetsOmitted', local.zfs.datasetsOmitted ?? 0)})` : ''}
                 </summary>
                 <table className="w-full mt-1">
                   <tbody>
@@ -91,8 +92,8 @@ export function ZfsCard({ machine }: { machine: Machine }) {
                       <tr key={d.name} className="border-t border-border">
                         <td className="pr-3">{d.name}</td>
                         <td className="pr-3">{d.type}</td>
-                        <td className="pr-3 text-right">{formatIec(d.usedBytes ?? null)} used</td>
-                        <td className="pr-3 text-right">{formatIec(d.availBytes ?? null)} avail</td>
+                        <td className="pr-3 text-right">{t('lsc.used', { size: formatIec(d.usedBytes ?? null) })}</td>
+                        <td className="pr-3 text-right">{t('lsc.avail', { size: formatIec(d.availBytes ?? null) })}</td>
                         <td>{d.mountPoint || '—'}</td>
                       </tr>
                     ))}
@@ -109,53 +110,60 @@ export function ZfsCard({ machine }: { machine: Machine }) {
 
 /** The node's mdadm arrays and LVM, with members/PVs named by disk serial. */
 export function MdLvmCard({ machine }: { machine: Machine }) {
+  const { t, tm, tn } = useI18n()
   const local = machine.storage?.local
   return (
     <Card>
       <CardHeader>
         <CardTitle className="font-mono text-base flex items-center gap-2">
-          <Database className="text-primary" /> md and LVM on {machine.nodeRef || machine.name}
+          <Database className="text-primary" /> {t('lsc.mdLvmOn', { node: machine.nodeRef || machine.name })}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-xs font-mono">
         {!local ? (
-          <p className="text-muted-foreground">{stackSummary(local)}.</p>
+          <p className="text-muted-foreground">{tm(stackSummary(local))}.</p>
         ) : (
           <>
             <div className="space-y-1">
               <div className="text-muted-foreground uppercase tracking-wide">mdadm</div>
-              {stateLine(local.md.state, local.md.error, 'No md array on this node.', local.md.readAt)}
+              {stateLine(t, local.md.state, local.md.error, 'lsc.noMd', local.md.readAt)}
               {(local.md.arraysOmitted ?? 0) > 0 && (
-                <p className="text-warning">{local.md.arraysOmitted} more array(s) not listed (status size limit) — their state is unknown.</p>
+                <p className="text-warning">{tn('lsc.arraysOmitted', local.md.arraysOmitted ?? 0)}</p>
               )}
               {(local.md.arrays ?? []).map((a) => (
                 <div key={a.name} className={a.degraded ? 'text-destructive' : ''}>
                   {a.name} {a.level ?? ''} {a.state}
                   {a.slots ? ` [${a.slots}]` : ''}
-                  {a.raidDisks ? ` ${a.activeDisks}/${a.raidDisks} active` : ''}
+                  {a.raidDisks ? ` ${t('lsc.active', { active: a.activeDisks ?? 0, total: a.raidDisks })}` : ''}
                   {a.sync ? ` · ${a.sync}` : ''}
-                  {a.degraded ? ' · DEGRADED' : ''}
+                  {a.degraded ? ` · ${t('lsc.degraded')}` : ''}
                   <div className="pl-4 text-muted-foreground">
                     {(a.members ?? [])
-                      .map((m) => `${m.device}${m.failed ? ' (failed)' : m.spare ? ' (spare)' : ''}${diskLabel(machine, m.serial)}`)
+                      .map((m) => `${m.device}${m.failed ? ` (${t('lsc.failed')})` : m.spare ? ` (${t('lsc.spare')})` : ''}${diskLabel(t, machine, m.serial)}`)
                       .join(' · ')}
-                    {(a.membersOmitted ?? 0) > 0 ? ` · … ${a.membersOmitted} more member(s) not listed` : ''}
+                    {(a.membersOmitted ?? 0) > 0 ? ` · ${tn('lsc.membersOmitted', a.membersOmitted ?? 0)}` : ''}
                   </div>
                 </div>
               ))}
             </div>
             <div className="space-y-1">
               <div className="text-muted-foreground uppercase tracking-wide">LVM</div>
-              {stateLine(local.lvm.state, local.lvm.error, 'LVM not in use on this node.', local.lvm.readAt)}
+              {stateLine(t, local.lvm.state, local.lvm.error, 'lsc.noLvm', local.lvm.readAt)}
               {(local.lvm.vgs ?? []).map((vg) => (
                 <div key={vg.name} className={(vg.attr ?? '')[3] === 'p' ? 'text-destructive' : ''}>
-                  VG {vg.name}: {formatIec(vg.sizeBytes ?? null)} ({formatIec(vg.freeBytes ?? null)} free) · {vg.pvCount ?? 0} PV ·{' '}
-                  {vg.lvCount ?? 0} LV · attr {vg.attr || '—'}
+                  {t('lsc.vg', {
+                    name: vg.name,
+                    size: formatIec(vg.sizeBytes ?? null),
+                    free: formatIec(vg.freeBytes ?? null),
+                    pv: vg.pvCount ?? 0,
+                    lv: vg.lvCount ?? 0,
+                    attr: vg.attr || '—',
+                  })}
                   <div className="pl-4 text-muted-foreground">
                     PV{' '}
                     {(local.lvm.pvs ?? [])
                       .filter((pv) => pv.vg === vg.name)
-                      .map((pv) => `${pv.name}${diskLabel(machine, pv.serial)}`)
+                      .map((pv) => `${pv.name}${diskLabel(t, machine, pv.serial)}`)
                       .join(' · ') || '—'}
                   </div>
                   <div className="pl-4 text-muted-foreground">
@@ -167,7 +175,7 @@ export function MdLvmCard({ machine }: { machine: Machine }) {
                   </div>
                 </div>
               ))}
-              {(local.lvm.omitted ?? 0) > 0 && <div className="text-muted-foreground">… {local.lvm.omitted} more not listed</div>}
+              {(local.lvm.omitted ?? 0) > 0 && <div className="text-muted-foreground">{tn('lsc.lvmOmitted', local.lvm.omitted ?? 0)}</div>}
             </div>
           </>
         )}

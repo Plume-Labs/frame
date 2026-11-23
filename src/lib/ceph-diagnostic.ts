@@ -17,6 +17,7 @@
 //     mgr's own `device_ids` label, `<name>=<VENDOR>_<MODEL>_<SERIAL>`.
 
 import type { Machine } from './machines'
+import type { Message } from '@/i18n'
 
 /** One sample of an instant PromQL vector. */
 export interface PromSample {
@@ -193,7 +194,7 @@ export type OsdDiskLink =
       duplicateOn: string[]
     }
   | { kind: 'virtual'; serial: string; drive: string }
-  | { kind: 'unknown'; reason: string }
+  | { kind: 'unknown'; reason: Message }
 
 /**
  * `settling`: up, in, pod running and ready, but restarted less than the
@@ -226,7 +227,8 @@ export interface OsdRow {
   deviceIds: string[]
   pod: OsdPod | null
   state: OsdState
-  stateDetail: string
+  /** Why the state is what it is: a Message, or '' when there is nothing to add. */
+  stateDetail: string | Message
   disk: OsdDiskLink
 }
 
@@ -283,7 +285,7 @@ function virtualDrive(id: string): string | null {
  */
 export function linkOsdDisk(deviceIds: string[], host: string, machines: Machine[]): OsdDiskLink {
   const id = deviceIds[0]
-  if (!id) return { kind: 'unknown', reason: 'the mgr reports no device id for this OSD' }
+  if (!id) return { kind: 'unknown', reason: { key: 'osd.noDeviceId' } }
   const drive = virtualDrive(id)
   if (drive) return { kind: 'virtual', serial: drive, drive }
 
@@ -338,14 +340,14 @@ export function durationText(ms: number): string {
  * How a running, ready pod has fared since its last restart. null when it
  * never restarted or the restart time is unknown.
  */
-export function restartHistory(pod: OsdPod, now: number, windowMs: number): { settling: boolean; text: string } | null {
+export function restartHistory(pod: OsdPod, now: number, windowMs: number): { settling: boolean; text: Message } | null {
   const last = pod.lastTerminationAt ? Date.parse(pod.lastTerminationAt) : NaN
   if (pod.restarts === 0 || !Number.isFinite(last)) return null
   const started = pod.startedAt ? Date.parse(pod.startedAt) : NaN
   const since = Number.isFinite(started) && started >= last ? started : last
   const settling = now - last < windowMs
-  const text = `stable for ${durationText(now - since)}, ${pod.restarts} restart(s) in total`
-  return { settling, text: settling ? `${text} — watched until ${durationText(windowMs)} without a restart` : text }
+  const text: Message = { key: 'osd.stable', params: { count: pod.restarts, dur: durationText(now - since) } }
+  return { settling, text: settling ? { key: 'osd.watched', params: { text, window: durationText(windowMs) } } : text }
 }
 
 function judgeOsd(
@@ -354,12 +356,12 @@ function judgeOsd(
   pod: OsdPod | null,
   now: number,
   windowMs: number,
-): { state: OsdState; detail: string } {
-  if (up === false) return { state: 'down', detail: 'down for Ceph' }
+): { state: OsdState; detail: string | Message } {
+  if (up === false) return { state: 'down', detail: { key: 'osd.downForCeph' } }
   const podTrouble = pod ? podInstability(pod, now, windowMs) : ''
   if (podTrouble) return { state: 'unstable', detail: podTrouble }
-  if (inn === false) return { state: 'out', detail: 'out of the data placement' }
-  if (up === null || inn === null) return { state: 'unknown', detail: 'no ceph-mgr reading' }
+  if (inn === false) return { state: 'out', detail: { key: 'osd.outOfPlacement' } }
+  if (up === null || inn === null) return { state: 'unknown', detail: { key: 'osd.noReading' } }
   const history = pod ? restartHistory(pod, now, windowMs) : null
   if (history?.settling) return { state: 'settling', detail: history.text }
   return { state: 'up-in', detail: history?.text ?? '' }
@@ -370,23 +372,27 @@ function judgeOsd(
  * in words. A recent restart of a pod that is now running and ready is not
  * instability — see restartHistory and the `settling` state.
  */
-export function podInstability(pod: OsdPod, now: number, windowMs = FLAP_WINDOW_MS): string {
-  const parts: string[] = []
+export function podInstability(pod: OsdPod, now: number, windowMs = FLAP_WINDOW_MS): Message | '' {
+  const waiting = pod.waiting ? ` (${pod.waiting})` : ''
+  let what: Message
   if (pod.phase !== 'Running') {
-    parts.push(
+    what =
       pod.initTotal > 0 && pod.initDone < pod.initTotal
-        ? `pod in init ${pod.initDone}/${pod.initTotal}${pod.waiting ? ` (${pod.waiting})` : ''}`
-        : `pod ${pod.phase}${pod.waiting ? ` (${pod.waiting})` : ''}`,
-    )
+        ? { key: 'osd.pod.init', params: { done: pod.initDone, total: pod.initTotal, waiting } }
+        : { key: 'osd.pod.phase', params: { phase: pod.phase, waiting } }
   } else if (!pod.ready) {
-    parts.push(`pod not ready${pod.waiting ? ` (${pod.waiting})` : ''}`)
+    what = { key: 'osd.pod.notReady', params: { waiting } }
+  } else {
+    return ''
   }
-  if (parts.length === 0) return ''
   const last = pod.lastTerminationAt ? Date.parse(pod.lastTerminationAt) : NaN
   if (pod.restarts > 0 && Number.isFinite(last) && now - last < windowMs) {
-    parts.push(`${pod.restarts} restart(s), last ${durationText(now - last)} ago`)
+    return {
+      key: 'osd.pod.withRestarts',
+      params: { what, restarts: { key: 'osd.pod.restartAgo', params: { count: pod.restarts, ago: durationText(now - last) } } },
+    }
   }
-  return parts.join(', ')
+  return what
 }
 
 export interface OsdInputs {

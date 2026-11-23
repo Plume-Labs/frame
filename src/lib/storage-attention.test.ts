@@ -195,7 +195,7 @@ describe('OSD redémarré récemment', () => {
     const items = attentionItems(inputs(healthyProm(), pods))
     const item = items.find((a) => a.code === 'osd-settling')
     expect(item).toMatchObject({ severity: 'info' })
-    expect(txt(item)).toBe('osd.3 (node-hw) restarted recently: stable for 47 min, 5 restart(s) in total — watched until 1 h without a restart')
+    expect(txt(item)).toBe('osd.3 (node-hw) restarted recently: stable for 47 min, 5 restarts in total — watched until 1 h without a restart')
     expect(items.map((a) => a.code)).not.toContain('osd-unstable')
   })
 })
