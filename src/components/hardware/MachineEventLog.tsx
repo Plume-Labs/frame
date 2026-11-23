@@ -3,6 +3,7 @@ import { ClockCounterClockwise, Warning } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
 import { TONE_TEXT } from '@/lib/thresholds'
 import { eventSeverity, type Machine, type SensorSeverity } from '@/lib/machines'
+import { useI18n } from '@/i18n/context'
 
 const SEVERITY_CLASS: Record<SensorSeverity, string> = {
   ok: TONE_TEXT.accent,
@@ -37,6 +38,7 @@ const SEVERITY_ORDER: Record<SensorSeverity, number> = { critical: 0, warning: 1
  * even confirm it reached that last page — see the banner below.
  */
 export function MachineEventLog({ machine }: { machine: Machine }) {
+  const { t, tn } = useI18n()
   const counts = Object.entries(machine.eventLogCounts).sort(
     ([a], [b]) => (SEVERITY_ORDER[eventSeverity(a)] ?? 3) - (SEVERITY_ORDER[eventSeverity(b)] ?? 3),
   )
@@ -45,16 +47,12 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
     <div className="space-y-3 font-mono text-xs">
       {machine.eventLogPossiblyStale && (
         <div className={`rounded-md border px-3 py-2 ${TONE_TEXT.warning}`}>
-          The BMC did not confirm that the page read is the most recent one: the entries
-          below may be the oldest in the log, not the newest.
+          {t('hw.events.stale')}
         </div>
       )}
       <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-2">
         <div className="text-muted-foreground">
-          {machine.eventLogTotal} entr{machine.eventLogTotal === 1 ? 'y' : 'ies'} in total in the BMC
-          log. The {machine.eventLog.length === 1 ? 'entry' : `${machine.eventLog.length} entries`} below {machine.eventLog.length === 1 ? 'is the one' : 'are the ones'} the last read actually
-          fetched — the counters that follow cover those fetched entries, not the machine's
-          whole log.
+          {tn('hw.events.total', machine.eventLogTotal)} {tn('hw.events.fetched', machine.eventLog.length)}
         </div>
         {counts.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -69,7 +67,7 @@ export function MachineEventLog({ machine }: { machine: Machine }) {
 
       {machine.eventLog.length === 0 ? (
         <div className="py-8 text-center text-muted-foreground">
-          No entries kept from the log.
+          {t('hw.events.none')}
         </div>
       ) : (
         <div className="border rounded-md divide-y">

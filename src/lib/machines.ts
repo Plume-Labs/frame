@@ -12,6 +12,7 @@
 // value it cannot vouch for. The consequence here: a machine with no sensors
 // is the normal case, not an error, and the screen must be able to say why.
 
+import type { Message } from '@/i18n'
 import type { NamespaceNode } from './workloads'
 import type { DiskDivergence } from './storage'
 
@@ -473,7 +474,7 @@ const STALE_AFTER_MS = 150_000 // two polling intervals plus a half
 // same constant for a structurally different absence (e.g. `inventory ===
 // null`) that means the same thing to an operator, so the phrasing cannot
 // drift between the two independently of each other.
-export const NEVER_READ_LABEL = 'never read'
+export const NEVER_READ_LABEL: Message = { key: 'hw.neverRead' }
 
 // `at` is whichever timestamp is under judgment — a machine's own liveness
 // is `lastProbeAt`, but a sensor reading's age is `sensorsValidAt`, and the
@@ -486,14 +487,14 @@ export function isStale(at: string | null, now: Date): boolean {
   return now.getTime() - new Date(at).getTime() > STALE_AFTER_MS
 }
 
-export function stalenessLabel(at: string | null, now: Date): string {
+export function stalenessLabel(at: string | null, now: Date): Message {
   if (at === null) return NEVER_READ_LABEL
   const seconds = Math.floor((now.getTime() - new Date(at).getTime()) / 1000)
-  if (seconds < 60) return `${seconds} s ago`
+  if (seconds < 60) return { key: 'hw.age.s', params: { n: seconds } }
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
+  if (minutes < 60) return { key: 'hw.age.min', params: { n: minutes } }
   const hours = Math.floor(minutes / 60)
-  return `${hours} h ago`
+  return { key: 'hw.age.h', params: { n: hours } }
 }
 
 export function powerActionLabel(action: string, machineName: string): string {

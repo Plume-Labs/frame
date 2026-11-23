@@ -10,6 +10,7 @@ import { MachineEventLog } from '@/components/hardware/MachineEventLog'
 import { SensorsTab } from '@/components/hardware/SensorsTab'
 import { isAdminToken } from '@/lib/auth'
 import { isStale, stalenessLabel, type Machine } from '@/lib/machines'
+import { useI18n } from '@/i18n/context'
 
 /**
  * One physical machine: what it is (Inventaire), what it is reporting right
@@ -42,6 +43,7 @@ export function MachineDetail({
   machine: Machine
   onClose: () => void
 }) {
+  const { t, tm } = useI18n()
   const now = new Date()
   const stale = isStale(machine.lastProbeAt, now)
   const token = (globalThis as Record<string, unknown>).__FRAME_TOKEN__
@@ -53,22 +55,22 @@ export function MachineDetail({
         <CardTitle className="font-mono text-lg flex items-center gap-2">
           <span className="truncate">{machine.name}</span>
           <Badge variant="outline" className="font-mono text-[10px]">
-            {machine.powerState || 'Unknown'}
+            {machine.powerState || t('hw.unknown')}
           </Badge>
           {machine.postState && (
             <Badge variant="outline" className="font-mono text-[10px]">
               {machine.postState}
             </Badge>
           )}
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose} aria-label="Close">
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose} aria-label={t('common.close')}>
             <X />
           </Button>
         </CardTitle>
         <div className="font-mono text-[10px] text-muted-foreground flex flex-wrap gap-x-4">
-          <span>address {machine.address || '—'}</span>
-          <span>node {machine.nodeRef || '—'}</span>
+          <span>{t('hw.address', { v: machine.address || '—' })}</span>
+          <span>{t('hw.node', { v: machine.nodeRef || '—' })}</span>
           <span className={stale ? 'text-warning font-medium' : undefined}>
-            last probe {stalenessLabel(machine.lastProbeAt, now)}
+            {t('hw.lastProbe', { age: tm(stalenessLabel(machine.lastProbeAt, now)) })}
           </span>
         </div>
         {!machine.reachable && (
@@ -76,7 +78,7 @@ export function MachineDetail({
             <Warning className="text-destructive shrink-0 mt-0.5" />
             <div>
               <div className="font-mono font-medium text-destructive">
-                Not reachable — {machine.reachableReason || 'Unknown reason'}
+                {t('hw.unreachable', { reason: machine.reachableReason || t('hw.unknownReason') })}
               </div>
               {machine.reachableMessage && (
                 <div className="text-muted-foreground mt-0.5">{machine.reachableMessage}</div>
@@ -90,13 +92,13 @@ export function MachineDetail({
         <Tabs defaultValue="inventory" className="gap-4">
           <TabsList>
             <TabsTrigger value="inventory" className="font-mono text-xs">
-              Inventaire
+              {t('hw.tab.inventory')}
             </TabsTrigger>
             <TabsTrigger value="sensors" className="font-mono text-xs">
-              Capteurs
+              {t('hw.tab.sensors')}
             </TabsTrigger>
             <TabsTrigger value="events" className="font-mono text-xs">
-              Journal
+              {t('hw.tab.events')}
             </TabsTrigger>
           </TabsList>
           <TabsContent value="inventory">

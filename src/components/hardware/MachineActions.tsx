@@ -21,6 +21,9 @@ import {
   type Machine,
   type PowerAction,
 } from '@/lib/machines'
+import { useI18n } from '@/i18n/context'
+import { richText } from '@/i18n/rich'
+import type { MessageKey } from '@/i18n'
 
 const frame = createFrameClient()
 
@@ -28,7 +31,7 @@ type NodeCarries = 'loading' | 'error' | number
 
 interface PendingAction {
   action: PowerAction
-  label: string
+  label: MessageKey
   /** Only set for a `DISRUPTIVE_POWER_ACTIONS` member against a machine with a `nodeRef`. */
   nodeCarries?: NodeCarries
 }
@@ -59,10 +62,11 @@ interface PendingAction {
  * unless the error has a permanent home on the panel.
  */
 export function MachineActions({ machine, admin }: { machine: Machine; admin: boolean }) {
+  const { t, tm, tn } = useI18n()
   const [pending, setPending] = useState<PendingAction | undefined>()
   const [busy, setBusy] = useState(false)
 
-  const openDialog = (action: PowerAction, label: string) => {
+  const openDialog = (action: PowerAction, label: MessageKey) => {
     const disruptive = DISRUPTIVE_POWER_ACTIONS.has(action)
     setPending({ action, label, nodeCarries: disruptive && machine.nodeRef ? 'loading' : undefined })
     if (!disruptive || !machine.nodeRef) return
@@ -81,14 +85,15 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
       })
   }
 
-  const run = async (action: PowerAction, label: string) => {
+  const run = async (action: PowerAction, labelKey: MessageKey) => {
+    const label = t(labelKey)
     setPending(undefined)
     setBusy(true)
     try {
       await frame.machines.power(machine, action)
       toast.success(label)
     } catch (e) {
-      toast.error(`Failed: ${label}`, {
+      toast.error(t('hw.act.failed', { label }), {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
@@ -108,7 +113,7 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
     <div className="space-y-3">
       {!admin && (
         <div className="font-mono text-[10px] text-muted-foreground">
-          These actions are for administrators only.
+          {t('hw.act.adminOnly')}
         </div>
       )}
 
@@ -117,8 +122,10 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
           <Warning className="text-destructive shrink-0 mt-0.5" />
           <div>
             <div className="font-medium text-destructive">
-              Last action failed ({machine.lastPowerAction || 'unknown'},{' '}
-              {stalenessLabel(machine.lastPowerActionAt, new Date())})
+              {t('hw.act.lastFailed', {
+                action: machine.lastPowerAction || t('hw.act.unknownAction'),
+                age: tm(stalenessLabel(machine.lastPowerActionAt, new Date())),
+              })}
             </div>
             <div className="text-muted-foreground mt-0.5">{machine.lastPowerActionError}</div>
           </div>
@@ -131,36 +138,36 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
           variant="outline"
           className="font-mono"
           disabled={disabled}
-          onClick={() => openDialog('On', 'Allumer')}
+          onClick={() => openDialog('On', 'hw.act.on')}
         >
-          Allumer
+          {t('hw.act.on')}
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono"
           disabled={disabled}
-          onClick={() => openDialog('GracefulShutdown', 'Graceful shutdown')}
+          onClick={() => openDialog('GracefulShutdown', 'hw.act.graceful')}
         >
-          Graceful shutdown
+          {t('hw.act.graceful')}
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono text-destructive"
           disabled={disabled}
-          onClick={() => openDialog('ForceOff', 'Force off')}
+          onClick={() => openDialog('ForceOff', 'hw.act.forceOff')}
         >
-          Force off
+          {t('hw.act.forceOff')}
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono text-destructive"
           disabled={disabled}
-          onClick={() => openDialog('ForceRestart', 'Force restart')}
+          onClick={() => openDialog('ForceRestart', 'hw.act.forceRestart')}
         >
-          Force restart
+          {t('hw.act.forceRestart')}
         </Button>
         <Button
           size="sm"
@@ -170,20 +177,20 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
           onClick={() =>
             openDialog(
               ledOn ? 'IndicatorLedOff' : 'IndicatorLedOn',
-              ledOn ? 'Turn the identification LED off' : 'Turn the identification LED on',
+              ledOn ? 'hw.act.ledOff' : 'hw.act.ledOn',
             )
           }
         >
-          Identification LED
+          {t('hw.act.led')}
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="font-mono"
           disabled={disabled}
-          onClick={() => openDialog('ClearSEL', 'Clear the event log')}
+          onClick={() => openDialog('ClearSEL', 'hw.act.clearLog')}
         >
-          Clear the log
+          {t('hw.act.clear')}
         </Button>
       </div>
 
@@ -191,70 +198,52 @@ export function MachineActions({ machine, admin }: { machine: Machine; admin: bo
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="font-mono">
-              {pending?.label}: {machine.name}
+              {pending ? t(pending.label) : ''}: {machine.name}
             </AlertDialogTitle>
             <AlertDialogDescription className="font-mono text-xs space-y-1">
               {pending?.action === 'ClearSEL' && (
-                <p>
-                  Erases the event-log history kept by the BMC. That log exists to answer "why did
-                  this machine restart" — it is the only diagnostic record that survives a power
-                  cut. Clearing it destroys the evidence of the very incident you are most likely
-                  investigating from this screen. This cannot be undone.
-                </p>
+                <p>{t('hw.act.clearDesc')}</p>
               )}
               {(pending?.action === 'IndicatorLedOn' || pending?.action === 'IndicatorLedOff') && (
-                <p>Only changes the chassis identification light — no effect on power.</p>
+                <p>{t('hw.act.ledDesc')}</p>
               )}
-              {pending?.action === 'On' && <p>Powers the machine on.</p>}
+              {pending?.action === 'On' && <p>{t('hw.act.onDesc')}</p>}
               {pending?.action === 'GracefulShutdown' && (
-                <p>
-                  Asks the operating system to shut down cleanly — an ACPI signal (the power
-                  button), not a guarantee. The operating system has to choose to answer it: a
-                  machine whose kernel is hung will ignore it and stay on. If it does not respond,
-                  "Force off" is the alternative.
-                </p>
+                <p>{t('hw.act.gracefulDesc', { alt: t('hw.act.forceOff') })}</p>
               )}
               {pending?.action === 'ForceOff' && (
-                <p>
-                  Cuts the power immediately, without letting the operating system shut down
-                  cleanly — an abrupt stop, not a clean one.
-                </p>
+                <p>{t('hw.act.forceOffDesc')}</p>
               )}
               {pending?.action === 'ForceRestart' && (
-                <p>
-                  Restarts the machine immediately, without letting the operating system shut down
-                  cleanly.
-                </p>
+                <p>{t('hw.act.forceRestartDesc')}</p>
               )}
               {pending && DISRUPTIVE_POWER_ACTIONS.has(pending.action) && (
                 <p>
                   {machine.nodeRef ? (
                     pending.nodeCarries === 'loading' ? (
-                      `Checking node ${machine.nodeRef}…`
+                      t('hw.act.checking', { node: machine.nodeRef })
                     ) : pending.nodeCarries === 'error' ? (
-                      `Could not check how many pods run on node ${machine.nodeRef} — check by hand before continuing.`
+                      t('hw.act.checkFailed', { node: machine.nodeRef })
                     ) : (
-                      <>
-                        This machine hosts node <strong>{machine.nodeRef}</strong>, carrying{' '}
-                        <strong>{pending.nodeCarries}</strong> pod
-                        {pending.nodeCarries === 1 ? '' : 's'}.
-                      </>
+                      richText(t('hw.act.carries'), {
+                        node: <strong>{machine.nodeRef}</strong>,
+                        pods: <strong>{tn('hw.act.pods', Number(pending.nodeCarries))}</strong>,
+                      })
                     )
                   ) : (
-                    "No node recorded (spec.nodeRef is not set) — if this machine does host a " +
-                    "cluster node, someone simply forgot to declare it."
+                    t('hw.act.noNode')
                   )}
                 </p>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={confirmDisabled}
               onClick={() => pending && void run(pending.action, pending.label)}
             >
-              Confirm
+              {t('common.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

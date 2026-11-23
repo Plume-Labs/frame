@@ -10,6 +10,7 @@ import { MachineDetail } from '@/components/hardware/MachineDetail'
 import { useLiveResource } from '@/hooks/useLiveResource'
 import { createFrameClient } from '@/lib/frame-sdk'
 import { isStale, NEVER_READ_LABEL, stalenessLabel, type Machine } from '@/lib/machines'
+import { useI18n } from '@/i18n/context'
 
 const frame = createFrameClient()
 
@@ -30,6 +31,7 @@ const frame = createFrameClient()
  * inside the Capteurs tab. The two are never mixed here.
  */
 export function HardwareView() {
+  const { t, tm } = useI18n()
   const { state, reload } = useLiveResource<Machine[]>(
     () => frame.machines.list(),
     [],
@@ -84,7 +86,7 @@ export function HardwareView() {
         <CardHeader>
           <CardTitle className="font-mono text-xl flex items-center gap-2">
             <HardDrives className="text-primary" />
-            Hardware
+            {t('hw.title')}
             <Button
               variant="outline"
               size="sm"
@@ -93,14 +95,14 @@ export function HardwareView() {
               disabled={state.phase === 'loading'}
             >
               <ArrowClockwise className={state.phase === 'loading' ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
           </CardTitle>
         </CardHeader>
         {state.phase === 'ready' && (
           <CardContent className="space-y-3">
             <Input
-              placeholder="Filter by name or model…"
+              placeholder={t('hw.filter')}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="max-w-xs font-mono text-xs"
@@ -119,13 +121,13 @@ export function HardwareView() {
                   >
                     <span className="flex-1 truncate">{m.name}</span>
                     <span className="text-muted-foreground w-48 truncate">
-                      {m.inventory?.model ?? NEVER_READ_LABEL}
+                      {m.inventory?.model ?? tm(NEVER_READ_LABEL)}
                     </span>
                     <Badge variant="outline" className="font-mono text-[10px]">
-                      {m.powerState || 'Unknown'}
+                      {m.powerState || t('hw.unknown')}
                     </Badge>
                     <span className={`w-28 text-right ${stale ? 'text-warning' : 'text-muted-foreground'}`}>
-                      {stalenessLabel(m.lastProbeAt, now)}
+                      {tm(stalenessLabel(m.lastProbeAt, now))}
                     </span>
                   </button>
                 )
@@ -135,7 +137,7 @@ export function HardwareView() {
         )}
       </Card>
 
-      <LiveStates state={state} emptyLabel="No machines are registered yet." />
+      <LiveStates state={state} emptyLabel={t('hw.empty')} />
 
       {selected && (
         <MachineDetail
