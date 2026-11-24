@@ -176,6 +176,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # arm64 (SiPearl/Neoverse sovereignty track) is built on release tags only:
+      # QEMU emulation is slow and the two frame-ci runners must not be loaded
+      # on every PR. Go stages cross-compile natively (BUILDPLATFORM); QEMU is
+      # only needed for the `apt-get` RUN of the agent and provisiond runtime
+      # stages.
+      - name: Set up QEMU (arm64, release tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -214,6 +225,8 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          # amd64 everywhere; amd64+arm64 on release tags only (see QEMU step).
+          platforms: ${{ startsWith(github.ref, 'refs/tags/') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
