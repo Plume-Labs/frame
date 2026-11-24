@@ -111,7 +111,7 @@ Chemin court bêta : **P1 → P6**, soit six PR. P7 à P9 ensuite.
 
 ## 6. Place dans le plan bêta
 
-Ajouté comme **bloquant B9** dans `2026-11-16-plan-beta-frame.md` : « la console se met à jour toute seule, sans `kubectl` ni Argo ». Cela **déplace** « MAJ de Frame depuis l'UI » de la section « hors bêta » (§2.3, action 1B) vers les bloquants, et retire de la page « Limites connues » (B6) la mention « pas de rollback d'application » pour les composants Hearthrack.
+Ajouté comme **bloquant B10** dans `2026-11-16-plan-beta-frame.md` : « la console se met à jour toute seule, sans `kubectl` ni Argo ». Cela **déplace** « MAJ de Frame depuis l'UI » de la section « hors bêta » (§2.3, action 1B) vers les bloquants, et retire de la page « Limites connues » (B6) la mention « pas de rollback d'application » pour les composants Hearthrack.
 
 Calendrier : P1 s'ajoute naturellement à B3 (même pipeline de release, avant Noël). P2 à P6 tiennent difficilement avant la bêta privée du 26/01 si le gel du 21/12 au 04/01 est respecté. **Reco** : P1 en décembre, P2 à P6 du 05/01 au 15/02, et la bêta privée glisse au plus tard au 15/02 (publique le 02/03 inchangée). Sinon, un contournement documenté « mise à jour manuelle » pour la bêta privée uniquement.
 
