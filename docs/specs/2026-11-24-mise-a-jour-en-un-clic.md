@@ -1,7 +1,7 @@
 # Mettre à jour Hearthrack en un clic depuis la console : spécification
 
 **Date :** 2026-11-24 · **Base :** `main` = `d11fec2`
-**Statut :** proposition, à valider par Romuald. **Aucun code d'implémentation avant validation.**
+**Statut :** **validée par Romuald le 24/11** (les 3 choix du §7). Implémentation par PR, une à la fois en CI.
 **Demande :** « Comment font les clients Hearthrack ? » Un client ne doit jamais voir Argo CD, `kubectl` ni un port-forward.
 
 ## 1. Constat
@@ -115,9 +115,10 @@ Ajouté comme **bloquant B10** dans `2026-11-16-plan-beta-frame.md` : « la cons
 
 Calendrier : P1 s'ajoute naturellement à B3 (même pipeline de release, avant Noël). P2 à P6 tiennent difficilement avant la bêta privée du 26/01 si le gel du 21/12 au 04/01 est respecté. **Reco** : P1 en décembre, P2 à P6 du 05/01 au 15/02, et la bêta privée glisse au plus tard au 15/02 (publique le 02/03 inchangée). Sinon, un contournement documenté « mise à jour manuelle » pour la bêta privée uniquement.
 
-## 7. Questions pour Romuald
+## 7. Décisions (Romuald, 24/11)
 
-1. **Moteur sans Argo** (§3.2) : tu valides de ne plus dépendre d'Argo chez le client, et de le garder seulement comme option GitOps ?
-2. **Calendrier** (§6) : bloquant pour la bêta privée (26/01 → 15/02 au pire), ou seulement pour la publique (02/03) ?
-3. **Délai de maturation** par défaut 48 h : acceptable, ou 0 pour ton cluster ?
-4. **Relectures** : P1 (`.github/`) et P2 (`config/`, `charts/`) touchent des chemins sensibles et attendent ta relecture.
+1. **Plus d'Argo chez le client** : oui. Argo reste une option GitOps (§3.6).
+2. **B10 bloque la bêta privée** : oui. Elle peut glisser du 26/01 au 15/02 au pire.
+3. **Délai de maturation** : 48 h chez les clients, **0 sur le cluster de Romuald**.
+
+Reste : P1 (`.github/`) et P2 (`config/`, `charts/`) touchent des chemins sensibles et attendent la relecture de Romuald.
