@@ -180,11 +180,10 @@ jobs:
       # QEMU emulation is slow and the two frame-ci runners must not be loaded
       # on every PR. Go stages cross-compile natively (BUILDPLATFORM); QEMU is
       # only needed for the `apt-get` RUN of the agent and provisiond runtime
-      # stages. TODO before ready: pin docker/setup-qemu-action to a full commit
-      # SHA like the other actions (repo policy), then drop this note.
+      # stages.
       - name: Set up QEMU (arm64, release tags only)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/setup-qemu-action@v3 # TODO: pin to commit SHA
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
 
