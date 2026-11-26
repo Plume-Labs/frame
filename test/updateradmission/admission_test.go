@@ -46,6 +46,11 @@ import (
 	"github.com/Plume-Labs/frame/test/manifests"
 )
 
+// ownerless is a patch that makes the garbage collector delete the object: its
+// only owner does not exist.
+const ownerless = `{"metadata":{"ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"gone",` +
+	`"uid":"00000000-0000-0000-0000-000000000001"}]}}`
+
 const (
 	ns      = "frame-system"
 	updater = "system:serviceaccount:frame-system:frame-updater"
@@ -118,18 +123,16 @@ func installPolicy(t *testing.T) {
 	}
 }
 
-func container(name, image string) corev1.Container {
+func container(name string) corev1.Container {
 	return corev1.Container{
 		Name:  name,
-		Image: image,
+		Image: oldImg,
 		Args:  []string{"--leader-elect"},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot: ptr(true),
+			RunAsNonRoot: new(true),
 		},
 	}
 }
-
-func ptr[T any](v T) *T { return &v }
 
 func labels() map[string]string { return map[string]string{"app": "t"} }
 
@@ -137,14 +140,14 @@ func deployment(name string) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr(int32(1)),
+			Replicas: new(int32(1)),
 			Selector: &metav1.LabelSelector{MatchLabels: labels()},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels()},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "frame-controller-manager",
-					InitContainers:     []corev1.Container{container("init", oldImg)},
-					Containers:         []corev1.Container{container("manager", oldImg), container("sidecar", oldImg)},
+					InitContainers:     []corev1.Container{container("init")},
+					Containers:         []corev1.Container{container("manager"), container("sidecar")},
 				},
 			},
 		},
@@ -160,7 +163,7 @@ func daemonSet(name string) *appsv1.DaemonSet {
 				ObjectMeta: metav1.ObjectMeta{Labels: labels()},
 				Spec: corev1.PodSpec{
 					HostPID:    true,
-					Containers: []corev1.Container{container("agent", oldImg)},
+					Containers: []corev1.Container{container("agent")},
 				},
 			},
 		},
@@ -235,9 +238,14 @@ func TestPolicy(t *testing.T) {
 	installPolicy(t)
 	waitEnforced(t)
 
+	// ctr wraps the fields of one container into a patch of the pod template.
+	ctr := func(fields string) string {
+		return `{"spec":{"template":{"spec":{"containers":[{` + fields + `}]}}}}`
+	}
 	img := func(c, image string) string {
 		return fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":%q,"image":%q}]}}}}`, c, image)
 	}
+	initImg := `{"spec":{"template":{"spec":{"initContainers":[{"name":"init","image":"` + newImg + `"}]}}}}`
 	cases := []struct {
 		name  string
 		body  string
@@ -246,21 +254,21 @@ func TestPolicy(t *testing.T) {
 		{"image to a digest", img("manager", newImg), true},
 		{"image of the other container to a digest", img("sidecar", newImg), true},
 		{"image to a tag", img("manager", "registry.invalid/frame-controller:latest"), false},
-		{"image to a tag with a digest-looking suffix", img("manager", "registry.invalid/x:sha256:"+strings.Repeat("a", 64)), false},
+		{"image with a digest-looking tag", img("manager", "registry.invalid/x:sha256:"+strings.Repeat("a", 64)), false},
 		{"image to a short digest", img("manager", "registry.invalid/x@sha256:abc"), false},
-		{"a new argument", `{"spec":{"template":{"spec":{"containers":[{"name":"manager","args":["--leader-elect","--x"]}]}}}}`, false},
-		{"a privileged security context", `{"spec":{"template":{"spec":{"containers":[{"name":"manager","securityContext":{"privileged":true}}]}}}}`, false},
-		{"an environment variable", `{"spec":{"template":{"spec":{"containers":[{"name":"manager","env":[{"name":"A","value":"b"}]}]}}}}`, false},
-		{"a command", `{"spec":{"template":{"spec":{"containers":[{"name":"manager","command":["sh"]}]}}}}`, false},
-		{"another container", `{"spec":{"template":{"spec":{"containers":[{"name":"extra","image":"` + newImg + `"}]}}}}`, false},
+		{"a new argument", ctr(`"name":"manager","args":["--leader-elect","--x"]`), false},
+		{"a privileged security context", ctr(`"name":"manager","securityContext":{"privileged":true}`), false},
+		{"an environment variable", ctr(`"name":"manager","env":[{"name":"A","value":"b"}]`), false},
+		{"a command", ctr(`"name":"manager","command":["sh"]`), false},
+		{"another container", ctr(`"name":"extra","image":"` + newImg + `"`), false},
 		{"another service account", `{"spec":{"template":{"spec":{"serviceAccountName":"cluster-admin"}}}}`, false},
 		{"host PID", `{"spec":{"template":{"spec":{"hostPID":true}}}}`, false},
 		{"host network", `{"spec":{"template":{"spec":{"hostNetwork":true}}}}`, false},
 		{"a volume", `{"spec":{"template":{"spec":{"volumes":[{"name":"v","hostPath":{"path":"/"}}]}}}}`, false},
-		{"an init container image", `{"spec":{"template":{"spec":{"initContainers":[{"name":"init","image":"` + newImg + `"}]}}}}`, false},
+		{"an init container image", initImg, false},
 		{"replicas", `{"spec":{"replicas":0}}`, false},
 		{"pod labels", `{"spec":{"template":{"metadata":{"labels":{"x":"y"}}}}}`, false},
-		{"an owner that does not exist", `{"metadata":{"ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"gone","uid":"00000000-0000-0000-0000-000000000001"}]}}`, false},
+		{"an owner that does not exist", ownerless, false},
 		{"a finalizer", `{"metadata":{"finalizers":["example.com/x"]}}`, false},
 		{"a label on the workload", `{"metadata":{"labels":{"x":"y"}}}`, false},
 		{"an annotation on the workload", `{"metadata":{"annotations":{"x":"y"}}}`, false},
@@ -299,14 +307,14 @@ func TestPolicy(t *testing.T) {
 		if err := admin.Create(ctx, ds); err != nil {
 			t.Fatal(err)
 		}
-		if err := patch(ctx, asUpd, ds, `{"spec":{"template":{"spec":{"containers":[{"name":"agent","image":"`+newImg+`"}]}}}}`); err != nil {
+		if err := patch(ctx, asUpd, ds, img("agent", newImg)); err != nil {
 			t.Fatalf("refused: %v", err)
 		}
 	})
 	for name, body := range map[string]string{
 		"daemonset update strategy":   `{"spec":{"updateStrategy":{"type":"OnDelete"}}}`,
 		"daemonset min ready seconds": `{"spec":{"minReadySeconds":3600}}`,
-		"daemonset owner":             `{"metadata":{"ownerReferences":[{"apiVersion":"v1","kind":"ConfigMap","name":"gone","uid":"00000000-0000-0000-0000-000000000001"}]}}`,
+		"daemonset owner":             ownerless,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ds := daemonSet("ds-" + strings.ReplaceAll(name, " ", "-"))
@@ -340,8 +348,8 @@ func TestPolicyNamesEveryField(t *testing.T) {
 	}
 	text := string(raw)
 	check := func(typ reflect.Type, prefixes []string, exempt map[string]bool) {
-		for i := 0; i < typ.NumField(); i++ {
-			name := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		for f := range typ.Fields() {
+			name := strings.Split(f.Tag.Get("json"), ",")[0]
 			if name == "" || exempt[name] {
 				continue
 			}
@@ -358,14 +366,15 @@ func TestPolicyNamesEveryField(t *testing.T) {
 	}
 	// containers is compared by its own rule, and image is the one thing the
 	// policy lets through.
-	check(reflect.TypeOf(corev1.PodSpec{}), []string{"variables.newSpec.?"}, map[string]bool{"containers": true})
-	check(reflect.TypeOf(corev1.Container{}), []string{"o.?"}, map[string]bool{"name": true, "image": true})
+	check(reflect.TypeFor[corev1.PodSpec](), []string{"variables.newSpec.?"}, map[string]bool{"containers": true})
+	check(reflect.TypeFor[corev1.Container](), []string{"o.?"}, map[string]bool{"name": true, "image": true})
 	// selector and template have their own rules.
-	check(reflect.TypeOf(appsv1.DeploymentSpec{}), []string{"variables.newWorkload.?"}, map[string]bool{"selector": true, "template": true})
-	check(reflect.TypeOf(appsv1.DaemonSetSpec{}), []string{"variables.newWorkload.?"}, map[string]bool{"selector": true, "template": true})
+	workload := map[string]bool{"selector": true, "template": true}
+	check(reflect.TypeFor[appsv1.DeploymentSpec](), []string{"variables.newWorkload.?"}, workload)
+	check(reflect.TypeFor[appsv1.DaemonSetSpec](), []string{"variables.newWorkload.?"}, workload)
 	// What the API server owns, or cannot be changed by a patch, is not the
 	// policy's concern; the rest of the metadata is.
-	check(reflect.TypeOf(metav1.ObjectMeta{}), []string{"variables.newMeta.?"}, map[string]bool{
+	check(reflect.TypeFor[metav1.ObjectMeta](), []string{"variables.newMeta.?"}, map[string]bool{
 		"name": true, "generateName": true, "namespace": true, "selfLink": true, "uid": true,
 		"resourceVersion": true, "generation": true, "creationTimestamp": true,
 		"deletionTimestamp": true, "deletionGracePeriodSeconds": true, "managedFields": true,
