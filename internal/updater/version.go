@@ -68,7 +68,7 @@ func ParseVersion(s string) (Version, error) {
 				return Version{}, fmt.Errorf("not a version: %q", s)
 			}
 			for _, c := range id {
-				if !(c == '-' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+				if c != '-' && (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 					return Version{}, fmt.Errorf("not a version: %q", s)
 				}
 			}
