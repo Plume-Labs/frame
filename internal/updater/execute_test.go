@@ -154,14 +154,14 @@ func TestNoJournalNoStep(t *testing.T) {
 	}
 }
 
-func TestRevertSurvivesACancelledContext(t *testing.T) {
+func TestACancelledContextLeavesTheUpdateToBeResumed(t *testing.T) {
 	c, j := newFake(), &fakeJournal{}
-	c.failReady["ui"] = "u2"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cc := &cancelOnUI{fakeCluster: c, cancel: cancel}
 	st := Execute(ctx, twoStepPlan(), cc, j, nil)
-	if st.Phase != PhaseRolledBack || c.image["ui"] != "u1" || c.image["controller"] != "c1" {
+	// Nothing is put back: the journal still says Applying and a restart resumes.
+	if st.Phase != PhaseApplying || c.image["ui"] != "u2" || c.image["controller"] != "c2" {
 		t.Fatalf("%+v %v", st, c.image)
 	}
 }
@@ -178,4 +178,12 @@ func (c *cancelOnUI) SetImage(ctx context.Context, comp, image string) error {
 		c.cancel()
 	}
 	return c.fakeCluster.SetImage(ctx, comp, image)
+}
+
+// WaitReady honours the context, as the real cluster does.
+func (c *cancelOnUI) WaitReady(ctx context.Context, comp string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.fakeCluster.WaitReady(ctx, comp)
 }

@@ -23,8 +23,15 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// Workload kinds the updater may patch.
+const (
+	kindDeployment = "Deployment"
+	kindDaemonSet  = "DaemonSet"
 )
 
 // Workload says where a component runs: the object to patch and the container
@@ -41,12 +48,12 @@ type Workload struct {
 // install. ui and uiproxy are two containers of one Deployment.
 func DefaultWorkloads() map[string]Workload {
 	return map[string]Workload{
-		"controller": {Kind: "Deployment", Namespace: "frame-system", Name: "frame-controller-manager", Container: "manager"},
-		"provisiond": {Kind: "Deployment", Namespace: "frame-system", Name: "frame-provisiond", Container: "provisiond"},
-		"authd":      {Kind: "Deployment", Namespace: "cluster-control", Name: "cluster-control-auth", Container: "authd"},
-		"uiproxy":    {Kind: "Deployment", Namespace: "cluster-control", Name: "cluster-control-ui", Container: "uiproxy"},
-		"ui":         {Kind: "Deployment", Namespace: "cluster-control", Name: "cluster-control-ui", Container: "ui"},
-		"agent":      {Kind: "DaemonSet", Namespace: "kube-system", Name: "frame-node-tuning-agent", Container: "agent"},
+		"controller": {Kind: kindDeployment, Namespace: "frame-system", Name: "frame-controller-manager", Container: "manager"},
+		"provisiond": {Kind: kindDeployment, Namespace: "frame-system", Name: "frame-provisiond", Container: "provisiond"},
+		"authd":      {Kind: kindDeployment, Namespace: "cluster-control", Name: "cluster-control-auth", Container: "authd"},
+		"uiproxy":    {Kind: kindDeployment, Namespace: "cluster-control", Name: "cluster-control-ui", Container: "uiproxy"},
+		"ui":         {Kind: kindDeployment, Namespace: "cluster-control", Name: "cluster-control-ui", Container: "ui"},
+		"agent":      {Kind: kindDaemonSet, Namespace: "kube-system", Name: "frame-node-tuning-agent", Container: "agent"},
 	}
 }
 
@@ -83,7 +90,7 @@ func (k *KubeCluster) SetImage(ctx context.Context, component, image string) err
 	}
 	key := types.NamespacedName{Namespace: w.Namespace, Name: w.Name}
 	switch w.Kind {
-	case "Deployment":
+	case kindDeployment:
 		var d appsv1.Deployment
 		if err := k.Client.Get(ctx, key, &d); err != nil {
 			return err
@@ -93,7 +100,7 @@ func (k *KubeCluster) SetImage(ctx context.Context, component, image string) err
 			return fmt.Errorf("deployment %s has no container %q", key, w.Container)
 		}
 		return k.Client.Patch(ctx, &d, client.StrategicMergeFrom(base))
-	case "DaemonSet":
+	case kindDaemonSet:
 		var ds appsv1.DaemonSet
 		if err := k.Client.Get(ctx, key, &ds); err != nil {
 			return err
@@ -144,7 +151,7 @@ func (k *KubeCluster) WaitReady(ctx context.Context, component string) error {
 func (k *KubeCluster) rolledOut(ctx context.Context, w Workload) (bool, string, error) {
 	key := types.NamespacedName{Namespace: w.Namespace, Name: w.Name}
 	switch w.Kind {
-	case "Deployment":
+	case kindDeployment:
 		var d appsv1.Deployment
 		if err := k.Client.Get(ctx, key, &d); err != nil {
 			return false, "", err
@@ -165,7 +172,7 @@ func (k *KubeCluster) rolledOut(ctx context.Context, w Workload) (bool, string, 
 			return false, fmt.Sprintf("%d of %d replicas ready", s.ReadyReplicas, want), nil
 		}
 		return true, "", nil
-	case "DaemonSet":
+	case kindDaemonSet:
 		var ds appsv1.DaemonSet
 		if err := k.Client.Get(ctx, key, &ds); err != nil {
 			return false, "", err
@@ -192,4 +199,69 @@ func setContainerImage(cs []corev1.Container, name, image string) bool {
 		}
 	}
 	return false
+}
+
+// Running reports the image each known component runs now. A workload this
+// install does not have is left out (an optional component), not an error.
+func (k *KubeCluster) Running(ctx context.Context) ([]Running, error) {
+	var out []Running
+	for _, name := range sortedComponentNames(k.Workloads) {
+		w := k.Workloads[name]
+		key := types.NamespacedName{Namespace: w.Namespace, Name: w.Name}
+		var containers []corev1.Container
+		switch w.Kind {
+		case kindDeployment:
+			var d appsv1.Deployment
+			if err := k.Client.Get(ctx, key, &d); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			containers = d.Spec.Template.Spec.Containers
+		case kindDaemonSet:
+			var ds appsv1.DaemonSet
+			if err := k.Client.Get(ctx, key, &ds); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			containers = ds.Spec.Template.Spec.Containers
+		default:
+			return nil, fmt.Errorf("unsupported workload kind %q", w.Kind)
+		}
+		for _, c := range containers {
+			if c.Name == w.Container {
+				out = append(out, Running{Component: name, Image: c.Image})
+			}
+		}
+	}
+	return out, nil
+}
+
+// Unready counts the known workloads whose rollout is not complete.
+func (k *KubeCluster) Unready(ctx context.Context) (int, error) {
+	n := 0
+	for _, name := range sortedComponentNames(k.Workloads) {
+		ok, _, err := k.rolledOut(ctx, k.Workloads[name])
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return 0, err
+		}
+		if !ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func sortedComponentNames(m map[string]Workload) []string {
+	imgs := make(map[string]string, len(m))
+	for n := range m {
+		imgs[n] = ""
+	}
+	return sortedComponents(imgs)
 }
