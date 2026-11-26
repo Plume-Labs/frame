@@ -139,6 +139,14 @@ thing. `make helm-parity` compares them, including this label.
   apiGroup: frame.plume-labs.io
   resource: framecephactions
   aggregate: [admin, viewer]
+- roleBase: frameupdate
+  apiGroup: frame.plume-labs.io
+  resource: frameupdates
+  aggregate: [admin, viewer]
+- roleBase: framerelease
+  apiGroup: frame.plume-labs.io
+  resource: framereleases
+  aggregate: [viewer]
 - roleBase: frameinstall
   apiGroup: frame.plume-labs.io
   resource: frameinstalls

@@ -1,0 +1,37 @@
+# No rbac.frame.plume-labs.io/tier label: no tier aggregates write access to a
+# FrameRelease (only the updater writes it). Same as the frameuser inverse case.
+
+# This rule is not used by the project frame itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants full administrative access to FrameRelease resources including bulk deletion.
+# This role is intended for administrators who manage the complete lifecycle of
+# releases including collection-level operations.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: frame
+    app.kubernetes.io/managed-by: kustomize
+  name: framerelease-admin-role
+rules:
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framereleases
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - frame.plume-labs.io
+  resources:
+  - framereleases/status
+  verbs:
+  - get
