@@ -53,14 +53,21 @@ func newSelfFixture(t *testing.T, ready int32, st *framev1beta1.UpdaterStatus) *
 		ObjectMeta: metav1.ObjectMeta{Namespace: "frame-system", Name: "frame-updater", Generation: 1},
 		Spec: appsv1.DeploymentSpec{Replicas: &one, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "updater", Image: oldUpdaterImage}}}}},
-		Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: ready},
+		Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: ready, AvailableReplicas: ready},
+	}
+	rel := &framev1beta1.FrameRelease{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "frame-system", Name: "r-1-1-0"},
+		Spec: framev1beta1.FrameReleaseSpec{Version: "1.1.0", Channel: "stable",
+			Images: map[string]string{"updater": newUpdaterImage}},
+		Status: framev1beta1.FrameReleaseStatus{Verified: true},
 	}
 	upd := &framev1beta1.FrameUpdate{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "frame-system", Name: "u1"},
+		Spec:       framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"},
 		Status:     framev1beta1.FrameUpdateStatus{Phase: framev1beta1.UpdatePhaseSucceeded, Updater: st},
 	}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(dep, upd).
-		WithStatusSubresource(upd).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(dep, upd, rel).
+		WithStatusSubresource(upd, rel).Build()
 	f := &selfFixture{c: c, now: time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)}
 	f.r = &FrameUpdateUpdaterReconciler{Client: c, Namespace: "frame-system", Now: func() time.Time { return f.now }}
 	return f
@@ -108,10 +115,16 @@ func TestUpdaterSelfUpdateAppliesThenWaitsThenReports(t *testing.T) {
 	// Ready: done, and the previous image is still on record.
 	var d appsv1.Deployment
 	_ = f.c.Get(context.Background(), client.ObjectKey{Namespace: "frame-system", Name: "frame-updater"}, &d)
-	d.Status.ReadyReplicas = 1
+	d.Status.ReadyReplicas, d.Status.AvailableReplicas = 1, 1
 	if err := f.c.Status().Update(context.Background(), &d); err != nil {
 		t.Fatal(err)
 	}
+	// First sight of it ready starts the stability window; ready is not enough.
+	f.step(t)
+	if st, _ = f.state(t); st.State != framev1beta1.UpdaterApplying || st.ReadySince == nil {
+		t.Fatalf("not yet stable: %+v", st)
+	}
+	f.now = f.now.Add(updaterStableFor + time.Second)
 	f.step(t)
 	if st, image = f.state(t); st.State != framev1beta1.UpdaterReady || image != newUpdaterImage || st.From != oldUpdaterImage {
 		t.Fatalf("final: %+v image=%s", st, image)
@@ -122,6 +135,10 @@ func TestUpdaterSelfUpdatePutsThePreviousImageBackWhenItNeverGetsReady(t *testin
 	f := newSelfFixture(t, 0, &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: framev1beta1.UpdaterPending})
 	f.step(t)
 	f.now = f.now.Add(updaterReadyDeadline + time.Second)
+	f.step(t)
+	if st, _ := f.state(t); st.State != framev1beta1.UpdaterRollingBack {
+		t.Fatalf("the intent to roll back is journalled first: %+v", st)
+	}
 	f.step(t)
 	st, image := f.state(t)
 	if st.State != framev1beta1.UpdaterRolledBack || image != oldUpdaterImage {
@@ -161,5 +178,60 @@ func TestUpdaterSelfUpdateIgnoresOtherNamespacesAndRequestsWithoutAnUpdater(t *t
 	f.step(t)
 	if _, image := f.state(t); image != oldUpdaterImage {
 		t.Fatalf("image = %s", image)
+	}
+}
+
+func TestUpdaterSelfUpdateRollsBackToATagImage(t *testing.T) {
+	// The very first self-update of an install: the Deployment ships with a tag.
+	f := newSelfFixture(t, 0, &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: framev1beta1.UpdaterPending})
+	var d appsv1.Deployment
+	_ = f.c.Get(context.Background(), client.ObjectKey{Namespace: "frame-system", Name: "frame-updater"}, &d)
+	d.Spec.Template.Spec.Containers[0].Image = "frame-updater:latest"
+	if err := f.c.Update(context.Background(), &d); err != nil {
+		t.Fatal(err)
+	}
+	f.step(t)
+	f.now = f.now.Add(updaterReadyDeadline + time.Second)
+	f.step(t)
+	f.step(t)
+	if st, image := f.state(t); st.State != framev1beta1.UpdaterRolledBack || image != "frame-updater:latest" {
+		t.Fatalf("%+v image=%s", st, image)
+	}
+}
+
+func TestUpdaterSelfUpdateDoesNotFightSomeoneElseChangingTheImage(t *testing.T) {
+	since := metav1.NewTime(time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC))
+	f := newSelfFixture(t, 0, &framev1beta1.UpdaterStatus{
+		To: newUpdaterImage, From: "frame-updater:old", State: framev1beta1.UpdaterApplying, Since: &since})
+	f.step(t) // the Deployment holds oldUpdaterImage, which is neither From nor To
+	st, image := f.state(t)
+	if st.State != framev1beta1.UpdaterFailed || image != oldUpdaterImage {
+		t.Fatalf("%+v image=%s", st, image)
+	}
+}
+
+func TestUpdaterSelfUpdateRefusesAnImageNoVerifiedReleaseNames(t *testing.T) {
+	other := "ghcr.io/plume-labs/hearthrack-updater@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	f := newSelfFixture(t, 1, &framev1beta1.UpdaterStatus{To: other, State: framev1beta1.UpdaterPending})
+	f.step(t)
+	st, image := f.state(t)
+	if st.State != framev1beta1.UpdaterFailed || image != oldUpdaterImage {
+		t.Fatalf("%+v image=%s", st, image)
+	}
+}
+
+func TestUpdaterSelfUpdateOnlyTheNewestRequestActs(t *testing.T) {
+	f := newSelfFixture(t, 0, &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: framev1beta1.UpdaterPending})
+	later := &framev1beta1.FrameUpdate{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "frame-system", Name: "u2", CreationTimestamp: metav1.NewTime(f.now.Add(time.Hour))},
+		Status:     framev1beta1.FrameUpdateStatus{Updater: &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: framev1beta1.UpdaterPending}},
+	}
+	if err := f.c.Create(context.Background(), later); err != nil {
+		t.Fatal(err)
+	}
+	f.step(t)
+	st, image := f.state(t)
+	if st.State != framev1beta1.UpdaterFailed || image != oldUpdaterImage {
+		t.Fatalf("%+v image=%s", st, image)
 	}
 }

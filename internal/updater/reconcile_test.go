@@ -343,3 +343,34 @@ func TestReconcileAsksNothingWhenTheReleaseHasNoUpdaterImage(t *testing.T) {
 		t.Fatalf("updater request = %+v", st.Updater)
 	}
 }
+
+func TestReconcileUpdaterOnlyReleaseIsNotNothingToChange(t *testing.T) {
+	withUpdater := func(r *framev1beta1.FrameRelease) {
+		// Fewer images than 1.0.0 names, so the running version stays 1.0.0.
+		r.Spec.Images = map[string]string{"ui": "ui@1.0.0", UpdaterComponent: newUpdaterImage}
+	}
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.0.1", true, withUpdater),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.0.1"}, framev1beta1.FrameUpdateStatus{}))
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	st := f.status(t)
+	if st.Phase != framev1beta1.UpdatePhaseSucceeded || st.Updater == nil || st.Updater.To != newUpdaterImage {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestReconcileWaitsWhileTheOperatorReplacesTheUpdater(t *testing.T) {
+	busy := updateReq("u0", t0.Add(-time.Hour), framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"},
+		framev1beta1.FrameUpdateStatus{Phase: framev1beta1.UpdatePhaseSucceeded,
+			Updater: &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: framev1beta1.UpdaterApplying}})
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil), busy,
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{}))
+	after, err := f.r.Reconcile(context.Background(), "u1")
+	if err != nil || after == 0 {
+		t.Fatalf("after=%v err=%v", after, err)
+	}
+	if got := f.uiImage(t); got != "ui@1.0.0,proxy@1.0.0" {
+		t.Fatalf("images = %s", got)
+	}
+}

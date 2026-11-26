@@ -196,6 +196,7 @@ rules:
   - frame.plume-labs.io
   resources:
   - framealertsubscriptions
+  - framereleases
   - frameupdates
   - frameusers
   - networkhealthpolicies

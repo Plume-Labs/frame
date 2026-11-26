@@ -175,6 +175,12 @@ spec:
                   message:
                     maxLength: 1024
                     type: string
+                  readySince:
+                    description: |-
+                      ReadySince is when the new updater was first seen ready and still is: it
+                      must stay so for a while before the update is called done.
+                    format: date-time
+                    type: string
                   since:
                     description: Since is when the operator started applying To.
                     format: date-time
@@ -183,6 +189,7 @@ spec:
                     enum:
                     - Pending
                     - Applying
+                    - RollingBack
                     - Ready
                     - RolledBack
                     - Failed

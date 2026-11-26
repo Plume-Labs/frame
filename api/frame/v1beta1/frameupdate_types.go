@@ -78,11 +78,12 @@ type UpdateComponentStatus struct {
 
 // Updater states, in the order they happen.
 const (
-	UpdaterPending    = "Pending"
-	UpdaterApplying   = "Applying"
-	UpdaterReady      = "Ready"
-	UpdaterRolledBack = "RolledBack"
-	UpdaterFailed     = "Failed"
+	UpdaterPending     = "Pending"
+	UpdaterApplying    = "Applying"
+	UpdaterRollingBack = "RollingBack"
+	UpdaterReady       = "Ready"
+	UpdaterRolledBack  = "RolledBack"
+	UpdaterFailed      = "Failed"
 )
 
 // UpdaterStatus is the self-update of the updater: the one component the
@@ -99,12 +100,16 @@ type UpdaterStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=512
 	From string `json:"from,omitempty"`
-	// +kubebuilder:validation:Enum=Pending;Applying;Ready;RolledBack;Failed
+	// +kubebuilder:validation:Enum=Pending;Applying;RollingBack;Ready;RolledBack;Failed
 	// +optional
 	State string `json:"state,omitempty"`
 	// Since is when the operator started applying To.
 	// +optional
 	Since *metav1.Time `json:"since,omitempty"`
+	// ReadySince is when the new updater was first seen ready and still is: it
+	// must stay so for a while before the update is called done.
+	// +optional
+	ReadySince *metav1.Time `json:"readySince,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=1024
 	Message string `json:"message,omitempty"`
