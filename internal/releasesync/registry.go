@@ -115,7 +115,7 @@ func readSingleLayer(img v1.Image, mediaType string, prefix bool) ([]byte, error
 	var layer *v1.Descriptor
 	for i := range m.Layers {
 		mt := string(m.Layers[i].MediaType)
-		if mt != mediaType && !(prefix && strings.HasPrefix(mt, mediaType)) {
+		if mt != mediaType && (!prefix || !strings.HasPrefix(mt, mediaType)) {
 			continue
 		}
 		if layer != nil {
