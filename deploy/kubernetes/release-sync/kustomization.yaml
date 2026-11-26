@@ -1,0 +1,15 @@
+# frame-release-sync copies signed releases from the registry into FrameRelease
+# objects. It has its own target, like the updater it feeds, and its own
+# ServiceAccount: the updater cannot write what this one writes.
+#
+# The image is the updater's (both binaries are in it); set it the same way:
+#   kustomize edit set image frame-updater=<registry>/<image>@sha256:<digest>
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- rbac.yaml
+- deployment.yaml
+
+images:
+- name: frame-updater
