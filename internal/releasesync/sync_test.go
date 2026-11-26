@@ -32,7 +32,10 @@ import (
 	framev1beta1 "github.com/Plume-Labs/frame/api/frame/v1beta1"
 )
 
-const ns = "frame-system"
+const (
+	ns          = "frame-system"
+	testVersion = "1.1.0"
+)
 
 var published = time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 
@@ -98,26 +101,27 @@ func setup(t *testing.T, reg *fakeRegistry, ver *fakeVerifier, maturation time.D
 	return &Syncer{Client: c, Namespace: ns, Registry: reg, Verifier: ver, Maturation: maturation, Now: func() time.Time { return now }}, c
 }
 
-func get(t *testing.T, c client.Client, version string) framev1beta1.FrameRelease {
+func get(t *testing.T, c client.Client) framev1beta1.FrameRelease {
 	t.Helper()
 	var r framev1beta1.FrameRelease
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: ObjectName(version)}, &r); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: ObjectName(testVersion)}, &r); err != nil {
 		t.Fatal(err)
 	}
 	return r
 }
 
-func oneRelease(v string) *fakeRegistry {
+func oneRelease() *fakeRegistry {
+	v := testVersion
 	return &fakeRegistry{versions: []string{v}, bodies: map[string][]byte{v: manifest(v, digest("a"))}, digests: map[string]string{v: digest("1")}}
 }
 
 func TestSyncRecordsAVerifiedRelease(t *testing.T) {
-	s, c := setup(t, oneRelease("1.1.0"), &fakeVerifier{}, 0, published.Add(time.Hour))
+	s, c := setup(t, oneRelease(), &fakeVerifier{}, 0, published.Add(time.Hour))
 	res, err := s.Sync(context.Background())
 	if err != nil || len(res.Verified) != 1 || len(res.Rejected) != 0 {
 		t.Fatalf("%+v %v", res, err)
 	}
-	r := get(t, c, "1.1.0")
+	r := get(t, c)
 	if !r.Status.Verified || r.Status.ManifestDigest != digest("1") || r.Spec.Images["ui"] == "" {
 		t.Fatalf("%+v", r)
 	}
@@ -129,7 +133,7 @@ func TestSyncRefusesWhatIsNotSigned(t *testing.T) {
 		"manifest": {badManifest: map[string]bool{"1.1.0": true}},
 		"image":    {badImage: map[string]bool{ref: true}},
 	} {
-		s, c := setup(t, oneRelease("1.1.0"), ver, 0, published.Add(time.Hour))
+		s, c := setup(t, oneRelease(), ver, 0, published.Add(time.Hour))
 		res, _ := s.Sync(context.Background())
 		if len(res.Rejected) != 1 || len(res.Verified) != 0 {
 			t.Fatalf("%s: %+v", name, res)
@@ -143,21 +147,21 @@ func TestSyncRefusesWhatIsNotSigned(t *testing.T) {
 }
 
 func TestSyncMakesAReleaseWaitOutTheMaturation(t *testing.T) {
-	reg, ver := oneRelease("1.1.0"), &fakeVerifier{}
+	reg, ver := oneRelease(), &fakeVerifier{}
 	s, c := setup(t, reg, ver, 48*time.Hour, published.Add(time.Hour))
 	res, _ := s.Sync(context.Background())
-	if len(res.Waiting) != 1 || get(t, c, "1.1.0").Status.Verified {
+	if len(res.Waiting) != 1 || get(t, c).Status.Verified {
 		t.Fatalf("offered before maturation: %+v", res)
 	}
 	s.Now = func() time.Time { return published.Add(49 * time.Hour) }
 	res, _ = s.Sync(context.Background())
-	if len(res.Verified) != 1 || !get(t, c, "1.1.0").Status.Verified {
+	if len(res.Verified) != 1 || !get(t, c).Status.Verified {
 		t.Fatalf("not offered after maturation: %+v", res)
 	}
 }
 
 func TestSyncNeverFollowsAChangeOfContent(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	s, c := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
 	if _, err := s.Sync(context.Background()); err != nil {
 		t.Fatal(err)
@@ -165,7 +169,7 @@ func TestSyncNeverFollowsAChangeOfContent(t *testing.T) {
 	// The registry now serves other images under the same version.
 	reg.bodies["1.1.0"] = manifest("1.1.0", digest("b"))
 	res, _ := s.Sync(context.Background())
-	r := get(t, c, "1.1.0")
+	r := get(t, c)
 	if r.Status.Verified || len(res.Rejected) != 1 {
 		t.Fatalf("followed a change: %+v", r.Status)
 	}
@@ -175,19 +179,19 @@ func TestSyncNeverFollowsAChangeOfContent(t *testing.T) {
 }
 
 func TestSyncNoticesAMovedArtifactDigest(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	s, c := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
 	_, _ = s.Sync(context.Background())
 	reg.digests["1.1.0"] = digest("2") // same bytes, another artifact
 	_, _ = s.Sync(context.Background())
-	if get(t, c, "1.1.0").Status.Verified {
+	if get(t, c).Status.Verified {
 		t.Fatal("a moved artifact was kept as verified")
 	}
 }
 
 func TestSyncDoesNotReverifyASettledRelease(t *testing.T) {
 	ver := &fakeVerifier{}
-	s, _ := setup(t, oneRelease("1.1.0"), ver, 0, published.Add(time.Hour))
+	s, _ := setup(t, oneRelease(), ver, 0, published.Add(time.Hour))
 	_, _ = s.Sync(context.Background())
 	n := ver.calls
 	_, _ = s.Sync(context.Background())
@@ -197,7 +201,7 @@ func TestSyncDoesNotReverifyASettledRelease(t *testing.T) {
 }
 
 func TestSyncRefusesAManifestWhoseVersionDiffersFromItsTag(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	reg.bodies["1.1.0"] = manifest("9.9.9", digest("a"))
 	s, _ := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
 	res, _ := s.Sync(context.Background())
@@ -228,7 +232,7 @@ func TestObjectNameIsAValidDNSLabel(t *testing.T) {
 }
 
 func TestSyncRefusesBytesThatAreNotTheSignedContent(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	// The digest is that of a genuinely signed artifact, the bytes are another
 	// release's images under this version.
 	ver := &fakeVerifier{signed: map[string][]byte{digest("1"): manifest("1.1.0", digest("a"))}}
@@ -243,12 +247,12 @@ func TestSyncRefusesBytesThatAreNotTheSignedContent(t *testing.T) {
 }
 
 func TestSyncDoesNotLetAnAntedatedManifestSkipTheMaturation(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	reg.bodies["1.1.0"] = manifest("1.1.0", digest("a")) // published 6 days before "now" below
 	now := published.Add(6 * 24 * time.Hour)
 	s, c := setup(t, reg, &fakeVerifier{}, 48*time.Hour, now)
 	res, _ := s.Sync(context.Background())
-	if len(res.Waiting) != 1 || get(t, c, "1.1.0").Status.Verified {
+	if len(res.Waiting) != 1 || get(t, c).Status.Verified {
 		t.Fatalf("an old date skipped the window: %+v", res)
 	}
 	s.Now = func() time.Time { return now.Add(49 * time.Hour) }
@@ -258,27 +262,27 @@ func TestSyncDoesNotLetAnAntedatedManifestSkipTheMaturation(t *testing.T) {
 }
 
 func TestSyncRefusesADateTooFarInTheFuture(t *testing.T) {
-	s, _ := setup(t, oneRelease("1.1.0"), &fakeVerifier{}, 0, published.Add(-30*24*time.Hour))
+	s, _ := setup(t, oneRelease(), &fakeVerifier{}, 0, published.Add(-30*24*time.Hour))
 	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 {
 		t.Fatalf("%+v", res)
 	}
 }
 
 func TestSyncDoesNotAdoptAnObjectItDidNotCreate(t *testing.T) {
-	s, c := setup(t, oneRelease("1.1.0"), &fakeVerifier{}, 0, published.Add(time.Hour))
+	s, c := setup(t, oneRelease(), &fakeVerifier{}, 0, published.Add(time.Hour))
 	pre := &framev1beta1.FrameRelease{}
 	pre.Namespace, pre.Name = ns, ObjectName("1.1.0")
 	pre.Spec.Version, pre.Spec.Channel, pre.Spec.Images = "1.1.0", "stable", map[string]string{"ui": "x@" + digest("a")}
 	if err := c.Create(context.Background(), pre); err != nil {
 		t.Fatal(err)
 	}
-	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 || get(t, c, "1.1.0").Status.Verified {
+	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 || get(t, c).Status.Verified {
 		t.Fatalf("adopted a foreign object: %+v", res)
 	}
 }
 
 func TestSyncQuarantineSticksEvenIfTheRegistryGoesBack(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	s, c := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
 	_, _ = s.Sync(context.Background())
 	good := reg.bodies["1.1.0"]
@@ -286,14 +290,14 @@ func TestSyncQuarantineSticksEvenIfTheRegistryGoesBack(t *testing.T) {
 	_, _ = s.Sync(context.Background())
 	reg.bodies["1.1.0"] = good // back to the original
 	_, _ = s.Sync(context.Background())
-	r := get(t, c, "1.1.0")
+	r := get(t, c)
 	if r.Status.Verified || r.Annotations[QuarantineAnnotation] == "" {
 		t.Fatalf("a quarantined release came back by itself: %+v", r.Status)
 	}
 }
 
 func TestSyncRefusesAMalformedArtifactDigest(t *testing.T) {
-	reg := oneRelease("1.1.0")
+	reg := oneRelease()
 	reg.digests["1.1.0"] = "sha256:short"
 	s, _ := setup(t, reg, &fakeVerifier{}, 0, published.Add(time.Hour))
 	if res, _ := s.Sync(context.Background()); len(res.Rejected) != 1 {
