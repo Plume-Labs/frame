@@ -54,6 +54,10 @@ type Reconciler struct {
 	Now      func() time.Time
 }
 
+// stepApplyingUpdater is the step shown while the operator applies the
+// updater's own image.
+const stepApplyingUpdater = "Applying updater"
+
 // Reconcile handles one request. A request that is already decided is left
 // alone; one that waits behind another update returns a delay to retry after.
 func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration, error) {
@@ -144,17 +148,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseFailed,
 			"the update was interrupted and cannot resume ("+plan.Refusal.Code+": "+plan.Refusal.Message+"): check each component's image and ready state by hand")
 	}
-	if plan.Refusal != nil && plan.Refusal.Code == RefusedNothingToChange && !resuming &&
-		askForUpdater(releases[plan.Target]) != nil {
-		// Only the updater differs (or an earlier attempt on it rolled back): there
-		// is nothing for this process to apply, and the operator is asked for it.
-		now := metav1.NewTime(r.now())
-		upd.Status.Phase = framev1beta1.UpdatePhaseApplying
-		upd.Status.FromVersion = in.Current
-		upd.Status.StartedAt = &now
-		upd.Status.Step = "Applying updater"
-		upd.Status.Updater = askForUpdater(releases[plan.Target])
-		return 10 * time.Second, r.Client.Status().Update(ctx, &upd)
+	if onlyTheUpdaterChanges(plan, resuming, releases[plan.Target]) {
+		return r.startWithUpdaterOnly(ctx, &upd, in.Current, releases[plan.Target])
 	}
 	if plan.Refusal != nil {
 		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseRefused,
@@ -188,6 +183,23 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 	return 0, r.finish(ctx, &upd, mapPhase(final.Phase), final.Message)
 }
 
+// onlyTheUpdaterChanges: nothing for this process to apply, but the release
+// names an updater image (the only change of the release, or an earlier attempt
+// on it rolled back).
+func onlyTheUpdaterChanges(p Plan, resuming bool, rel Release) bool {
+	return p.Refusal != nil && p.Refusal.Code == RefusedNothingToChange && !resuming && askForUpdater(rel) != nil
+}
+
+func (r *Reconciler) startWithUpdaterOnly(ctx context.Context, upd *framev1beta1.FrameUpdate, current string, rel Release) (time.Duration, error) {
+	now := metav1.NewTime(r.now())
+	upd.Status.Phase = framev1beta1.UpdatePhaseApplying
+	upd.Status.FromVersion = current
+	upd.Status.StartedAt = &now
+	upd.Status.Step = stepApplyingUpdater
+	upd.Status.Updater = askForUpdater(rel)
+	return 10 * time.Second, r.Client.Status().Update(ctx, upd)
+}
+
 func (r *Reconciler) awaitUpdater(ctx context.Context, key types.NamespacedName, p Plan, final State, req *framev1beta1.UpdaterStatus) error {
 	ctx = context.WithoutCancel(ctx)
 	var cur framev1beta1.FrameUpdate
@@ -195,7 +207,7 @@ func (r *Reconciler) awaitUpdater(ctx context.Context, key types.NamespacedName,
 		return err
 	}
 	base := cur.DeepCopy()
-	cur.Status.Step = "Applying updater"
+	cur.Status.Step = stepApplyingUpdater
 	cur.Status.Components = componentStatuses(p, final.Applied, "")
 	cur.Status.Updater = req
 	return r.Client.Status().Patch(ctx, &cur, client.MergeFrom(base))
