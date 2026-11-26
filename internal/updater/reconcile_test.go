@@ -413,3 +413,35 @@ func TestReconcileEndsWhenTheOperatorHasDecidedAboutTheUpdater(t *testing.T) {
 		})
 	}
 }
+
+func TestAskForUpdaterNeverAsksOnARollback(t *testing.T) {
+	rel := Release{Images: map[string]string{UpdaterComponent: newUpdaterImage}}
+	if askForUpdater(Plan{Rollback: true}, rel, t0) != nil {
+		t.Fatal("a rollback must leave the updater alone")
+	}
+	if got := askForUpdater(Plan{}, rel, t0); got == nil || got.RequestedAt == nil || got.State != framev1beta1.UpdaterPending {
+		t.Fatalf("request = %+v", got)
+	}
+}
+
+func TestReconcileGivesUpOnAnOperatorThatNeverSettlesTheUpdater(t *testing.T) {
+	asked := metav1.NewTime(t0)
+	f := newRecFixture(t, 1, release("1.0.0", true, nil), release("1.1.0", true, nil),
+		updateReq("u1", t0, framev1beta1.FrameUpdateSpec{TargetVersion: "1.1.0"}, framev1beta1.FrameUpdateStatus{
+			Phase: framev1beta1.UpdatePhaseApplying, FromVersion: "1.0.0",
+			Updater: &framev1beta1.UpdaterStatus{To: newUpdaterImage, State: framev1beta1.UpdaterPending, RequestedAt: &asked}}))
+	f.r.Now = func() time.Time { return t0.Add(updaterGiveUp + time.Minute) }
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.status(t); st.Updater.State != framev1beta1.UpdaterFailed {
+		t.Fatalf("status = %+v", st)
+	}
+	// The next pass ends the request: the other components are updated.
+	if _, err := f.r.Reconcile(context.Background(), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.status(t); st.Phase != framev1beta1.UpdatePhaseSucceeded || !strings.Contains(st.Message, "not updated") {
+		t.Fatalf("status = %+v", st)
+	}
+}

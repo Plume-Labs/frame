@@ -149,7 +149,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 			"the update was interrupted and cannot resume ("+plan.Refusal.Code+": "+plan.Refusal.Message+"): check each component's image and ready state by hand")
 	}
 	if onlyTheUpdaterChanges(plan, resuming, releases[plan.Target]) {
-		return r.startWithUpdaterOnly(ctx, &upd, in.Current, releases[plan.Target])
+		return r.startWithUpdaterOnly(ctx, &upd, plan, in.Current, releases[plan.Target])
 	}
 	if plan.Refusal != nil {
 		return 0, r.finish(ctx, &upd, framev1beta1.UpdatePhaseRefused,
@@ -174,7 +174,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 		// restart resumes from it.
 		return 5 * time.Second, nil
 	}
-	if req := askForUpdater(releases[plan.Target]); final.Phase == PhaseSucceeded && req != nil {
+	if req := askForUpdater(plan, releases[plan.Target], r.now()); final.Phase == PhaseSucceeded && req != nil {
 		// Not finished yet: the updater's own image is still to be applied. The
 		// request and "still applying" are one write, so the operator never starts
 		// on the updater while this update reads as done.
@@ -184,19 +184,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) (time.Duration,
 }
 
 // onlyTheUpdaterChanges: nothing for this process to apply, but the release
-// names an updater image (the only change of the release, or an earlier attempt
-// on it rolled back).
+// names an updater image: a release whose only change is the updater.
 func onlyTheUpdaterChanges(p Plan, resuming bool, rel Release) bool {
-	return p.Refusal != nil && p.Refusal.Code == RefusedNothingToChange && !resuming && askForUpdater(rel) != nil
+	return p.Refusal != nil && p.Refusal.Code == RefusedNothingToChange && !resuming && askForUpdater(p, rel, time.Time{}) != nil
 }
 
-func (r *Reconciler) startWithUpdaterOnly(ctx context.Context, upd *framev1beta1.FrameUpdate, current string, rel Release) (time.Duration, error) {
+func (r *Reconciler) startWithUpdaterOnly(ctx context.Context, upd *framev1beta1.FrameUpdate, p Plan, current string, rel Release) (time.Duration, error) {
 	now := metav1.NewTime(r.now())
 	upd.Status.Phase = framev1beta1.UpdatePhaseApplying
 	upd.Status.FromVersion = current
 	upd.Status.StartedAt = &now
 	upd.Status.Step = stepApplyingUpdater
-	upd.Status.Updater = askForUpdater(rel)
+	upd.Status.Updater = askForUpdater(p, rel, r.now())
 	return 10 * time.Second, r.Client.Status().Update(ctx, upd)
 }
 
@@ -216,8 +215,28 @@ func (r *Reconciler) awaitUpdater(ctx context.Context, key types.NamespacedName,
 // waitForUpdater ends the update once the operator has decided about the
 // updater's own image. The other components are updated either way, so a new
 // updater that did not become ready is a success with a message, not a failure.
+// updaterGiveUp bounds the wait for the operator: its own limits (five minutes
+// to be ready, one to be stable) with a wide margin.
+const updaterGiveUp = 20 * time.Minute
+
+func (r *Reconciler) giveUpOnUpdater(u *framev1beta1.UpdaterStatus) bool {
+	switch u.State {
+	case framev1beta1.UpdaterReady, framev1beta1.UpdaterRolledBack, framev1beta1.UpdaterFailed:
+		return false
+	}
+	return u.RequestedAt != nil && r.now().Sub(u.RequestedAt.Time) > updaterGiveUp
+}
+
 func (r *Reconciler) waitForUpdater(ctx context.Context, upd *framev1beta1.FrameUpdate) (time.Duration, error) {
 	u := upd.Status.Updater
+	if r.giveUpOnUpdater(u) {
+		// Written on its own, with a lock: if the operator has just moved the
+		// request on, its write wins and this one is refused.
+		base := upd.DeepCopy()
+		u.State = framev1beta1.UpdaterFailed
+		u.Message = "the operator did not settle the updater's image in time"
+		return 10 * time.Second, r.Client.Status().Patch(ctx, upd, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	}
 	switch u.State {
 	case framev1beta1.UpdaterReady:
 		return 0, r.finish(ctx, upd, framev1beta1.UpdatePhaseSucceeded, "")
@@ -234,12 +253,18 @@ func (r *Reconciler) waitForUpdater(ctx context.Context, upd *framev1beta1.Frame
 // askForUpdater is the request to the operator to apply the updater image the
 // release names, nil when it names none. The updater cannot apply it itself:
 // the process that drives the update would be replaced in the middle of it.
-func askForUpdater(rel Release) *framev1beta1.UpdaterStatus {
+//
+// A rollback never asks: the request names no version for the operator to check
+// the image against, and an updater from before this mechanism could not resume
+// it. The updater stays at the newer image, which is built to read what the
+// older components wrote (spec section 4.4).
+func askForUpdater(p Plan, rel Release, now time.Time) *framev1beta1.UpdaterStatus {
 	img := rel.Images[UpdaterComponent]
-	if img == "" {
+	if img == "" || p.Rollback {
 		return nil
 	}
-	return &framev1beta1.UpdaterStatus{To: img, State: framev1beta1.UpdaterPending}
+	at := metav1.NewTime(now)
+	return &framev1beta1.UpdaterStatus{To: img, State: framev1beta1.UpdaterPending, RequestedAt: &at}
 }
 
 func (r *Reconciler) now() time.Time {
