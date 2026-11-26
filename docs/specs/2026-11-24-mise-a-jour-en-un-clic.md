@@ -44,7 +44,7 @@ Il est **signé en cosign sans clé**, comme les images, avec l'identité éping
 
 Un petit binaire Go, `frame-updater`, dans `frame-system`, avec son propre compte de service. **Il remplace Argo pour le client**, il ne l'enveloppe pas :
 
-1. Lit le canal (`FrameRelease`, objet en lecture seule tenu à jour par un **synchroniseur de releases** distinct, avec son propre compte de service : lui seul écrit `status.verified` ; l'updater le lit sans jamais l'écrire) : toutes les 6 h, ou à la demande depuis la console.
+1. Lit le canal (`FrameRelease`, objet en lecture seule tenu à jour par un **synchroniseur de releases** distinct, avec son propre compte de service : lui seul écrit `status.verified` ; l'updater le lit sans jamais l'écrire ; livré : `cmd/release-sync`, dans l'image de l'updater, déploiement `deploy/kubernetes/release-sync/`) : toutes les 15 min par défaut (`--interval`), ou à la demande depuis la console.
 2. **Vérifie** la signature du manifeste puis celle de chaque image (bibliothèque `sigstore-go`, racine de confiance embarquée : pas d'appel réseau obligatoire en air-gap).
 3. À la demande d'un administrateur (`FrameUpdate`, §3.3) : contrôles préalables, application, surveillance, retour arrière automatique en cas d'échec.
 4. N'applique **que** : changement des digests d'images des charges **nommées** de Hearthrack, et mise à jour des CRD. **Jamais de prune**, jamais de suppression, jamais d'objet hors de sa liste blanche. C'est la leçon d'Argo avec élagage (sync sélective, App Diff à la main le 24/11).
@@ -122,3 +122,10 @@ Calendrier : P1 s'ajoute naturellement à B3 (même pipeline de release, avant N
 3. **Délai de maturation** : 48 h chez les clients, **0 sur le cluster de Romuald**.
 
 Reste : P1 (`.github/`) et P2 (`config/`, `charts/`) touchent des chemins sensibles et attendent la relecture de Romuald.
+
+### Vérification des signatures (livrée avec `cmd/release-sync`)
+
+- Identité acceptée pour le manifeste d'une version : le workflow `build.yml` de `Plume-Labs/frame` **sur le tag de cette version** (`@refs/tags/v<version>`), émetteur GitHub Actions. Pour une image : le même workflow sur n'importe quel tag de version (une image est signée par le tag qui l'a construite). Un build de `main` ne vaut jamais release.
+- Les deux dispositions de cosign sont acceptées : étiquette `.sig` à côté de l'image, ou bundle Sigstore attaché (référents OCI). La première est vérifiée sur une signature réelle (images publiques signées depuis GitHub Actions, identité fausse et émetteur faux refusés) ; **la seconde suit le code de `cosign verify` mais n'a pas été essayée contre une vraie signature de ce dépôt** : le premier tag publié le dira.
+- Le manifeste lu est relu **par le digest de l'artefact signé** et doit être octet pour octet le contenu signé.
+- Racine de confiance Sigstore : récupérée par TUF à chaque passage, ou fichier fourni (`--trusted-root`) pour un site sans accès sortant ; si elle ne se charge pas, rien n'est vérifié, donc rien n'est offert.

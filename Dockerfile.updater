@@ -4,6 +4,12 @@
 # (docs/specs/2026-11-24-mise-a-jour-en-un-clic.md). Its own minimal image, like
 # authd and uiproxy: it holds the one grant that can change another component's
 # image, so nothing else lives next to it.
+#
+# The image also carries /release-sync, the component that copies signed
+# releases from the registry into FrameRelease objects. They are two binaries
+# run as two Deployments under two ServiceAccounts: the updater reads what
+# release-sync verified and cannot write it. The updater is the image's
+# entrypoint; release-sync's Deployment sets its command.
 FROM --platform=$BUILDPLATFORM golang:1.27 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -17,11 +23,13 @@ COPY cmd/ cmd/
 COPY api/ api/
 COPY internal/ internal/
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -a -o updater cmd/updater/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -a -o updater cmd/updater/main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -a -o release-sync cmd/release-sync/main.go
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/updater .
+COPY --from=builder /workspace/release-sync .
 USER 65532:65532
 
 ENTRYPOINT ["/updater"]

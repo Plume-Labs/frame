@@ -1,0 +1,42 @@
+# The release syncer's whole grant: it writes FrameRelease objects (the signed
+# releases it found in the registry) and their status (what it verified), in one
+# namespace, and nothing else. It cannot touch a workload, a FrameUpdate or a
+# secret; the updater, which can change a workload's image, runs under another
+# ServiceAccount and has no write right on FrameRelease.
+#
+# That split is the point: `status.verified` is the word the updater trusts, and
+# only this account can write it, after checking the cosign signatures
+# (internal/releasesync). No `delete`: a release is never removed by the syncer,
+# a revoked or doubtful one is marked, and a person decides.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frame-release-sync
+  namespace: frame-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: frame-release-sync
+  namespace: frame-system
+rules:
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framereleases]
+    verbs: [get, list, create, update]
+  - apiGroups: [frame.plume-labs.io]
+    resources: [framereleases/status]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frame-release-sync
+  namespace: frame-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: frame-release-sync
+subjects:
+  - kind: ServiceAccount
+    name: frame-release-sync
+    namespace: frame-system
